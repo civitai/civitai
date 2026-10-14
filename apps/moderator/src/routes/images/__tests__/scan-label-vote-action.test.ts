@@ -78,6 +78,18 @@ describe('vote action', () => {
     );
   });
 
+  it('drops a comment left over from "other" when another reason is picked', async () => {
+    castVote.mockResolvedValue(recorded);
+    await actions.vote(
+      event({ itemId: '5', block: '1', reason: 'bestiality', reasonComment: 'draft' })
+    );
+    expect(castVote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        choice: { block: true, reason: 'bestiality', reasonComment: null },
+      })
+    );
+  });
+
   it.each([
     ['a block with no reason', { block: '1' }, 'Pick a reason'],
     ['an unknown reason', { block: '1', reason: 'made-up' }, 'Pick a reason'],

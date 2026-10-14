@@ -7,18 +7,12 @@ import { instrumentB2Client } from '~/server/prom/b2-put.metrics';
 import { excludedImageRow } from './appeal-decision-records';
 import { createJob } from './job';
 
-/**
- * Copies the images of decided scan label items to the scan label review bucket.
- *
- * Which items may be copied is the "ScanLabelCopyEligibility" view's decision, applied to the database
- * separately. Without the view the query fails and nothing is copied or marked; an item the view
- * leaves out is never copied. The bucket key may only write: nothing here reads back, lists or
- * deletes, and the bucket expires objects itself.
- */
+// Eligibility is decided by the "ScanLabelCopyEligibility" view, applied to the database separately.
+// The target bucket expires objects itself and accepts writes only: do not add reads or deletes.
 
 const JOB_LOG_NAME = 'scan-label-copy';
 const BATCH = 50;
-// Blocked originals are purged after about a week; an older item has nothing left to copy.
+// Must stay under the blocked-original purge age, or the copy reads originals that are gone.
 const COPY_WINDOW = Prisma.raw(`make_interval(days => 6)`);
 
 export type ScanLabelCopyStore = { put: (imageUrl: string, key: string) => Promise<void> };

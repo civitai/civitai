@@ -121,7 +121,6 @@
           bind:value={comment}
           maxlength={REASON_COMMENT_MAX}
           placeholder="Which rule, briefly"
-          required
           autofocus
         />
         <Button

@@ -55,7 +55,8 @@ const voteSchema = z
       ctx.addIssue({ code: 'custom', message: 'Add a short comment for “Other ToS violation”.' });
       return z.NEVER;
     }
-    return { ...rest, choice: { block: true, reason, reasonComment } as VoteChoice };
+    const comment = reason === REASON_NEEDING_COMMENT ? reasonComment : null;
+    return { ...rest, choice: { block: true, reason, reasonComment: comment } as VoteChoice };
   });
 
 const REFUSAL: Record<'not-open' | 'already-voted' | 'full', string> = {

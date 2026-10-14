@@ -1,12 +1,12 @@
--- Block reasons on scan label votes, and bookkeeping for the 30-day copy of reviewed images.
+-- Block reasons on scan label votes, and bookkeeping for the copy of reviewed images.
 --
 -- Apply before the build that ships it: the vote action writes "reasonComment" and the copy job writes
 -- the copy columns. Which items may be copied is decided by the "ScanLabelCopyEligibility" view, which
 -- is applied separately and is not part of this repository; until it exists the copy job copies nothing.
 --
--- The two vote constraints are NOT VALID: votes cast before reasons existed have none, and only new
--- rows are checked. Adding a NOT VALID constraint takes a brief SHARE ROW EXCLUSIVE lock and scans
--- nothing.
+-- The two vote constraints are NOT VALID: votes cast before reasons existed have none, and only
+-- rows written from now on are checked. NOT VALID skips the table scan but still takes a brief
+-- ACCESS EXCLUSIVE lock.
 
 ALTER TABLE "ScanLabelVote"
   ADD COLUMN IF NOT EXISTS "reasonComment" TEXT;
@@ -20,7 +20,6 @@ ALTER TABLE "ScanLabelVote" ADD CONSTRAINT "ScanLabelVote_reason_check" CHECK (
   )
 ) NOT VALID;
 
--- A block carries a reason, a "don't block" carries none, and 'other' carries a comment.
 ALTER TABLE "ScanLabelVote" DROP CONSTRAINT IF EXISTS "ScanLabelVote_reason_required_check";
 ALTER TABLE "ScanLabelVote" ADD CONSTRAINT "ScanLabelVote_reason_required_check" CHECK (
   ("block" = ("reason" IS NOT NULL))
