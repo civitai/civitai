@@ -1984,6 +1984,39 @@ describe('a free placement never touches the money path', () => {
   });
 });
 
+/**
+ * A zero-priced storyline continuation is NOT a free placement: it is written
+ * `free: false, amount: 0`, so it spends no daily allowance and holds no free
+ * slot, and it never calls `holdPlacementEscrow`. Settlement has no special
+ * case for it. These pin that every outcome on such a row moves no Buzz, plans
+ * no leg (a zero leg could never get a receipt and would sit in the unpaid
+ * sweep forever), and still flips the status.
+ */
+describe('a zero-priced storyline continuation', () => {
+  const zero = () => givenPlacement({ surface: 'storyline', free: false, amount: 0 });
+
+  it.each([
+    ['approve', 'approved'],
+    ['decline', 'declined'],
+    ['declineByBlock', 'declined'],
+    ['expire', 'expired'],
+    ['removeByModerator', 'removed'],
+  ] as const)('%s moves nothing and plans no leg', async (action, status) => {
+    zero();
+
+    const { settled, placement } = await settlePlacement({
+      placementId: 1,
+      action,
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(placement.status).toBe(status);
+    expect(legsFor(1)).toEqual({});
+    expect(moneyMoved()).toBe(0);
+  });
+});
+
 describe('the accept reward', () => {
   const hold = () =>
     holdPlacementEscrow({
