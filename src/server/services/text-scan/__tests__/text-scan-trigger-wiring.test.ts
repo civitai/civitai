@@ -73,12 +73,6 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   ],
   [
     'src/server/services/model.service.ts',
-    'export const privateModelFromTraining',
-    "scanEntityInBackground({ entityType: 'Model', entityId: result.id })",
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
     'export async function migrateResourceToCollection',
     "scanEntityInBackground({ entityType: 'Model', entityId })",
     1,

@@ -1,7 +1,7 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
-import { isPublicModelStatus } from '~/server/services/text-scan/public-content';
+import { isPublicModel } from '~/server/services/text-scan/public-content';
 import { removeTags } from '~/utils/string-helpers';
 
 registerTextScanProfile({
@@ -19,6 +19,7 @@ registerTextScanProfile({
         poi: true,
         minor: true,
         status: true,
+        availability: true,
         modelVersions: {
           select: { name: true, description: true, trainedWords: true },
           orderBy: { index: 'asc' },
@@ -30,7 +31,7 @@ registerTextScanProfile({
         m.id,
         {
           userId: m.userId,
-          notPublic: !isPublicModelStatus(m.status),
+          notPublic: !isPublicModel(m),
           declared: {
             nsfwLevel: m.nsfw ? NsfwLevel.XXX : NsfwLevel.PG13,
             poi: m.poi,

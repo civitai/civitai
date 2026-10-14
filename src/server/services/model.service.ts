@@ -5345,7 +5345,6 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
-    if (!user.isModerator) scanEntityInBackground({ entityType: 'Model', entityId: result.id });
     return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({

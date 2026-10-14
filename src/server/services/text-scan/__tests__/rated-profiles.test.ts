@@ -90,8 +90,7 @@ describe('rated-entity profiles', () => {
     ['Unpublished', 'Public', true],
     ['Published', 'Public', false],
     ['Scheduled', 'Public', false],
-    // Generation can use a private model, and its real-person guard reads Model.poi.
-    ['Published', 'Private', false],
+    ['Published', 'Private', true],
   ])('Model: a %s %s model loads, marked notPublic=%s', async (status, availability, notPublic) => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([
       {
