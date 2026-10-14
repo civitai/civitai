@@ -536,6 +536,17 @@ describe('the storyline continuation loop', () => {
         expect(moneyCalls().payouts).toEqual([]);
       });
 
+      // The removed chapter's row keeps holding its post, so the same post
+      // cannot come back as a new continuation, of this storyline or any other.
+      it('refuses its post as a new continuation, under any chapter', async () => {
+        await takeDown();
+
+        await expect(submit(COLLABORATOR, COLLABORATOR_POST)).rejects.toThrow(
+          /already in a storyline/
+        );
+        expect(db.rows('placement').filter((p) => p.placerId === COLLABORATOR)).toHaveLength(1);
+      });
+
       it('expires a free continuation of it, moving no money', async () => {
         const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST);
 
