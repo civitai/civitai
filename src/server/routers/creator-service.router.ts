@@ -12,23 +12,34 @@ import {
   setServiceOfferingStatus,
   upsertServiceOffering,
 } from '~/server/services/creator-service.service';
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 
 // Services live inside the Creator Shop, so every procedure needs both flags.
-const sellerProcedure = protectedProcedure
+const servicesProcedure = protectedProcedure
+  .use(isFlagProtected('creatorShop'))
+  .use(isFlagProtected('creatorServices'));
+// Offering text is public and unreviewed, so writing it takes the email/mute/onboarding gate.
+// Pause and remove stay on `servicesProcedure`: a muted seller must still be able to withdraw.
+const servicesGuardedProcedure = guardedProcedure
   .use(isFlagProtected('creatorShop'))
   .use(isFlagProtected('creatorServices'));
 
 export const creatorServiceRouter = router({
-  getSellEligibility: sellerProcedure.query(({ ctx }) => getServiceSellEligibility(ctx.user.id)),
-  getMine: sellerProcedure.query(({ ctx }) => getMyServiceOfferings(ctx.user.id)),
-  upsert: sellerProcedure
+  getSellEligibility: servicesProcedure.query(({ ctx }) => getServiceSellEligibility(ctx.user.id)),
+  getMine: servicesProcedure.query(({ ctx }) => getMyServiceOfferings(ctx.user.id)),
+  upsert: servicesGuardedProcedure
     .input(upsertServiceOfferingSchema)
     .mutation(({ input, ctx }) => upsertServiceOffering({ sellerId: ctx.user.id, input })),
-  setStatus: sellerProcedure
+  setStatus: servicesProcedure
     .input(setServiceOfferingStatusSchema)
     .mutation(({ input, ctx }) => setServiceOfferingStatus({ sellerId: ctx.user.id, input })),
-  remove: sellerProcedure
+  remove: servicesProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => removeServiceOffering({ sellerId: ctx.user.id, id: input.id })),
 
