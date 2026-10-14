@@ -1,73 +1,71 @@
 #!/usr/bin/env node
 /**
- * Blocking guard: the INSTALLED Prisma client does not rebuild a model's field map on every
- * single-record call.
+ * Blocking guard: the Prisma runtime our generated client ACTUALLY LOADS carries the field-map
+ * memo from `patches/@prisma__client@6.13.0.patch`.
  *
- * Prisma 6.x resolves `findUnique`/`findFirst`/`create`/`update`/`upsert`/`delete` (and the
- * `OrThrow` variants) through a helper that rebuilds a name->field map for the model with a
- * spread-reduce each time the method is looked up. That is O(fields^2) allocation per call:
- * on our widest model (User) it measured ~0.8 ms CPU and over 1 MB of garbage per query.
- * `patches/@prisma__client@6.13.0.patch` memoises the map. The unit test
- * `src/server/db/__tests__/prisma-field-map-memo.test.ts` is the behavioural guard, but the
- * unit job is `continue-on-error`, so this is the half that can fail a build.
+ * Prisma 6.x rebuilds a model's name->field map with a spread-reduce every time a single-record
+ * method (`findUnique`, `findFirst`, `create`, `update`, `upsert`, `delete`, the `OrThrow`
+ * variants) is looked up: O(fields^2) allocation per call, ~2.5 ms per `user.findUnique` with
+ * the engine stubbed out. The unit test `src/server/db/__tests__/prisma-field-map-memo.test.ts`
+ * is the behavioural guard, but the unit job does not fail pull requests, so this is the half
+ * that can.
  *
- * It reads node_modules rather than `patches/`, so a patch that exists but did not apply is
- * caught, and it is version-agnostic: it passes on any Prisma whose runtime has no
- * spread-reduce field map (patched, or fixed upstream as Prisma 7 does) and fails on one that
- * has it. A Prisma bump also fails `pnpm install` outright (ERR_PNPM_UNUSED_PATCH) because the
- * patch key is version-pinned; whoever hits either decides between re-porting the patch and
- * dropping it because upstream fixed it.
+ * - It reads the runtime file(s) named by the generated client's own `require(...)`, not a
+ *   hardcoded path: the patch covers `runtime/library.js` only, so a generator change that
+ *   loads a different runtime must fail here rather than pass over a file nobody loads.
+ * - It requires the patch's marker, not just the absence of the old pattern: a re-minified
+ *   rebuild in another shape would otherwise pass.
+ * - A Prisma bump already fails `pnpm install` (ERR_PNPM_UNUSED_PATCH: the patch key is
+ *   version-pinned). If the new version fixes this upstream (Prisma 7 does), delete the patch
+ *   and this step; otherwise port both.
  *
- * Usage:  node scripts/ci/assert-prisma-field-map-patch-applied.mjs [path/to/runtime/library.js]
- * Exit:   0 = no per-call field-map rebuild · 1 = rebuild present, or nothing was read
+ * Usage:  node scripts/ci/assert-prisma-field-map-patch-applied.mjs [runtime.js ...]
+ * Exit:   0 = every loaded runtime is patched · 1 = one is not, or nothing was read
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
-// The single-record method list the field-map helper is dispatched from. Its presence proves
-// we read the runtime that contains the helper, so an absent rebuild is not a vacuous pass.
-const SINGLE_RECORD_ACTIONS = '"findUnique","findUniqueOrThrow","findFirst"';
+const PATCH_MARKER = 'civitaiFieldMap(';
 const SPREAD_REDUCE_FIELD_MAP =
   /\.fields\.reduce\(\((\w+),(\w+)\)=>\(\{\.\.\.\1,\[\2\.name\]:\2\}\),\{\}\)/;
-
-function resolveRuntime() {
-  if (process.argv[2]) return process.argv[2];
-  const require = createRequire(import.meta.url);
-  return join(dirname(require.resolve('@prisma/client/package.json')), 'runtime/library.js');
-}
+const RUNTIME_REQUIRE = /require\('@prisma\/client\/(runtime\/[\w.-]+)'\)/g;
 
 function fail(message) {
   console.error(`FAIL: ${message}`);
   process.exit(1);
 }
 
-let file;
+function loadedRuntimes() {
+  const require = createRequire(import.meta.url);
+  const clientRoot = dirname(require.resolve('@prisma/client/package.json'));
+  const generated = require.resolve('.prisma/client/index.js', { paths: [clientRoot] });
+  const paths = new Set(
+    [...readFileSync(generated, 'utf8').matchAll(RUNTIME_REQUIRE)].map((m) => m[1])
+  );
+  if (paths.size === 0) fail(`${generated} requires no @prisma/client runtime; nothing was read.`);
+  return [...paths].map((p) => join(clientRoot, p.endsWith('.js') ? p : `${p}.js`));
+}
+
+let files;
 try {
-  file = resolveRuntime();
+  files = process.argv.length > 2 ? process.argv.slice(2) : loadedRuntimes();
 } catch (error) {
-  fail(
-    `could not resolve the installed @prisma/client; this check measured nothing. (${error.message})`
-  );
-}
-if (!existsSync(file)) fail(`${file} does not exist; this check measured nothing.`);
-
-const source = readFileSync(file, 'utf8');
-if (!source.includes(SINGLE_RECORD_ACTIONS)) {
-  fail(
-    `${file} has no single-record action list, so this is not the runtime the check was written ` +
-      'for and it proved nothing. Re-read the Prisma runtime and update this script.'
-  );
+  fail(`could not resolve the generated Prisma client; nothing was read. (${error.message})`);
 }
 
-const rebuild = SPREAD_REDUCE_FIELD_MAP.exec(source);
-if (rebuild) {
-  fail(
-    `${file} rebuilds the model field map with a spread-reduce (${rebuild[0]}) on every\n` +
-      'single-record call. patches/@prisma__client@6.13.0.patch replaces it with a memoised\n' +
-      'map; it is either not applied (re-run `pnpm install`) or Prisma was bumped and the patch\n' +
-      'needs porting to the new runtime.'
-  );
+for (const file of files) {
+  if (!existsSync(file)) fail(`${file} does not exist; nothing was read.`);
+  const source = readFileSync(file, 'utf8');
+  const rebuild = SPREAD_REDUCE_FIELD_MAP.exec(source);
+  if (rebuild || !source.includes(PATCH_MARKER)) {
+    fail(
+      `${file} is not patched: ${
+        rebuild ? `it rebuilds the field map per call (${rebuild[0]})` : `no ${PATCH_MARKER} marker`
+      }.\n` +
+        'Re-run `pnpm install`. If Prisma was bumped or the generator now loads another runtime,\n' +
+        'port patches/@prisma__client@6.13.0.patch to it, or delete patch and check if upstream fixed it.'
+    );
+  }
+  console.log(`ok  ${file} is patched`);
 }
-
-console.log(`ok  ${file} has no per-call spread-reduce field map`);

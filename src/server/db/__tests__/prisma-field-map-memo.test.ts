@@ -65,11 +65,13 @@ describe('Prisma per-model field map', () => {
       expect(typeof client.user.update).toBe('function');
     }
 
-    // At most one build. Unpatched 6.13.0 walks all fields on every access: 150 * fieldCount.
-    expect(user.reads()).toBeLessThanOrEqual(user.fieldCount);
+    // Exactly one build: the Proxy is a fresh cache key, so this also proves the counter sees
+    // the walk. Unpatched 6.13.0 walks all fields on every access: 150 * fieldCount.
+    expect(user.reads()).toBe(user.fieldCount);
   });
 
-  it('sends the same request for a plain single-record call on a wide model', async () => {
+  // Smoke check: a non-fluent call never reads the map, so this cannot catch a wrong one.
+  it('still sends a plain single-record call on a wide model', async () => {
     const { client, requests } = makeClient();
 
     await expect(
@@ -106,13 +108,22 @@ describe('Prisma per-model field map', () => {
         args: { where: { id: 7 }, select: { user: { select: { profile: true } } } },
       });
     }
-    // One relation-name filter per call is upstream behaviour; a per-call map rebuild would add
-    // a second full walk per call on top of it.
-    expect(image.reads()).toBeLessThanOrEqual(4 * image.fieldCount);
+    // Upstream walks the list once per call to find relation names (3 walks); one build on top of
+    // that is expected. Unpatched 6.13.0 adds a rebuild per call: 6 walks.
+    expect(image.reads()).toBeGreaterThan(3 * image.fieldCount);
+    expect(image.reads()).toBeLessThan(6 * image.fieldCount);
   });
 
-  it('keeps fluent hops pointing at the target model when relations share a name', async () => {
+  it('resolves each fluent hop to the target model, not the source', async () => {
     const { client, requests } = makeClient();
+
+    // `profilePicture` is a relation on User only, `post` on Image only.
+    const fromImage = client.image.findUnique({ where: { id: 2 } }).user() as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(typeof fromImage.profilePicture).toBe('function');
+    expect(fromImage.post).toBeUndefined();
 
     await client.user
       .findUnique({ where: { id: 1 } })
