@@ -23,7 +23,19 @@ const CHAPTER = 77;
 
 const givenStoryline = (status: 'Ongoing' | 'Complete') =>
   dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({
-    storyline: { id: 31, userId: OWNER, status, tosViolation: false, user: { username: 'o' } },
+    id: 1,
+    storylineId: 31,
+    depth: 0,
+    userId: OWNER,
+    storyline: {
+      id: 31,
+      userId: OWNER,
+      status,
+      tosViolation: false,
+      maxNsfwLevel: 4,
+      whoCanContinue: 'Anyone',
+      user: { username: 'o' },
+    },
   });
 
 const submit = () =>
@@ -38,7 +50,18 @@ const submit = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   assertCanPlace.mockResolvedValue(undefined);
-  dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: PLACER });
+  // A finished, rated continuation, so the readiness checks pass and only the
+  // status decides.
+  dbMock.dbWrite.post.findUnique.mockResolvedValue({
+    userId: PLACER,
+    publishedAt: new Date('2026-01-01'),
+    nsfwLevel: 1,
+    tosViolation: false,
+    storylineChapter: null,
+    images: [
+      { ingestion: 'Scanned', tosViolation: false, minor: false, poi: false, needsReview: null },
+    ],
+  });
   dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([]);
   dbMock.dbWrite.placement.count.mockResolvedValue(0);
   dbMock.dbWrite.placement.create.mockResolvedValue({ id: 1 });

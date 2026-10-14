@@ -1,5 +1,6 @@
-import type { Prisma } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   holdPlacementEscrow,
@@ -7,18 +8,40 @@ import {
   settlePlacement,
 } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
-import { getPlacementConfig } from '~/server/services/placement.service';
-import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
-import { writeChapterEdgeForPlacement } from '~/server/services/storyline.service';
+import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
+import {
+  resolvePlacementSpaceFor,
+  setPlacementSpace,
+} from '~/server/services/placement-space.service';
+import {
+  assertCanContinueStoryline,
+  writeChapterEdgeForPlacement,
+} from '~/server/services/storyline.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import type { PlacementSpaceMode } from '~/shared/utils/placement';
-import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
-import type { StorylineSpaceMode } from '~/shared/utils/storyline-placement';
+import type { PlacementSpaceMode, PlacementSpaceSetting } from '~/shared/utils/placement';
+import {
+  effectivePlacementPrice,
+  encodePlacementQueueCursor,
+  parsePlacementQueueCursor,
+  PLACEMENT_QUEUE_PAGE_SIZE,
+  PLACEMENT_SURFACES,
+  resolvePlacementSpace,
+} from '~/shared/utils/placement';
+import { storylineLevelAllowed } from '~/shared/utils/storyline';
+import type {
+  MyStorylineContinuation,
+  StorylineContinuationPage,
+  StorylineContinuationQueueItem,
+  StorylineContinuationStatus,
+  StorylineContinuePrice,
+  StorylineSpace,
+  StorylineSpaceMode,
+} from '~/shared/utils/storyline-placement';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const SURFACE = 'storyline' as const;
@@ -59,7 +82,58 @@ export type CreateStorylinePlacement = {
 };
 
 /** What a storyline placement carries. Storyline and parent come from the target. */
-export type StorylinePlacementData = { postId: number };
+export type StorylinePlacementData = {
+  postId: number;
+  /** The post was unfinished at submission. Present only when true. */
+  awaitingReadiness?: true;
+  /** ISO time the readiness pass admitted it. Absent on a row that never waited. */
+  readyAt?: string;
+};
+
+/** What the refusals and the readiness check read off a continuation post. */
+const continuationPostSelect = {
+  userId: true,
+  publishedAt: true,
+  nsfwLevel: true,
+  tosViolation: true,
+  storylineChapter: { select: { id: true } },
+  images: {
+    select: { ingestion: true, tosViolation: true, minor: true, poi: true, needsReview: true },
+  },
+} satisfies Prisma.PostSelect;
+
+type ContinuationPost = Prisma.PostGetPayload<{ select: typeof continuationPostSelect }>;
+
+/**
+ * Where a continuation post stands.
+ *
+ * `doomed` is a moderation verdict on the post or any image in it and never
+ * passes by waiting. `pending` is a state that resolves on its own: not
+ * published, scheduled for later, an image still scanning, or no rating yet.
+ * `inReview` is a scanned image a moderator has to look at.
+ */
+export function continuationReadiness(
+  post: Pick<ContinuationPost, 'publishedAt' | 'nsfwLevel' | 'tosViolation' | 'images'>,
+  now = new Date()
+): 'doomed' | 'pending' | 'inReview' | 'ready' {
+  if (
+    post.tosViolation ||
+    post.images.some(
+      (image) => image.tosViolation || image.minor || image.poi || image.ingestion === 'Blocked'
+    )
+  )
+    return 'doomed';
+  if (
+    !post.publishedAt ||
+    post.publishedAt > now ||
+    !post.images.length ||
+    post.images.some((image) => image.ingestion !== 'Scanned') ||
+    !post.nsfwLevel
+  )
+    return 'pending';
+  if (post.images.some((image) => image.needsReview != null)) return 'inReview';
+  return 'ready';
+}
 
 /**
  * Submits a continuation to a storyline, priced or not.
@@ -88,12 +162,21 @@ export type StorylinePlacementData = { postId: number };
  * opening every post on the site.
  *
  * Resolving the space already refuses a taken-down storyline and reads a
- * Complete one as closed.
+ * Complete one as closed. `assertCanContinueStoryline` refuses a block between
+ * the placer and the storyline's creator or the chapter's author, and a
+ * stranger on a collaborators-only storyline.
  *
- * 🔴 **No router reaches this yet, and none may until it also runs the
- * storyline's remaining checks** (blocks between the placer and the storyline's
- * creator or the chapter's author, collaborators-only) and the continuation
- * post's readiness and rating ceiling.
+ * **An endorsed collaborator's continuation is approved on the spot**, through
+ * the same settlement an owner's approval uses, so it writes its chapter edge
+ * and stamps `resolvedAt`. If that approval is refused (the edge re-checks the
+ * post), the row stays pending for the owner rather than failing the submit.
+ *
+ * **A post that is not finished yet is accepted and waits.** Unpublished,
+ * scheduled, or with an image still scanning: the row carries
+ * `awaitingReadiness`, the owner's queue hides it, and
+ * `startReadyStorylineContinuations` admits it (or refunds it) once the post
+ * is done. Only states that resolve on their own are deferred; a moderation
+ * verdict on the post or any of its images refuses here.
  */
 export async function createStorylinePlacement({
   placerId,
@@ -117,6 +200,17 @@ export async function createStorylinePlacement({
 
   if (space.ownerId === placerId) throw throwBadRequestError(STORYLINE_REFUSALS.ownStoryline);
 
+  const { isCollaborator, parent } = await assertCanContinueStoryline({ parentPostId, placerId });
+  const access = storylineContinuationAccess({
+    mode: space.mode,
+    isCollaborator,
+    whoCanContinue: parent.storyline.whoCanContinue,
+  });
+  // `closed` was refused above, before the assert, so a stranger on a closed
+  // storyline hears that it is closed rather than that it is collaborators-only.
+  if (access === 'collaboratorsOnly')
+    throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
+
   // `setPlacementSpace` never writes an open space without a price, and the
   // surface default is 0 rather than null, so this is a hand-edited row.
   if (space.price == null)
@@ -134,10 +228,27 @@ export async function createStorylinePlacement({
   // Read from the primary, because ownership decides a mutation.
   const continuation = await dbWrite.post.findUnique({
     where: { id: postId },
-    select: { userId: true },
+    select: continuationPostSelect,
   });
   if (!continuation || continuation.userId !== placerId)
     throw throwBadRequestError(STORYLINE_REFUSALS.notYourPost);
+
+  const readiness = continuationReadiness(continuation);
+  if (readiness === 'doomed') throw throwBadRequestError(STORYLINE_REFUSALS.cannotSubmit);
+  if (continuation.storylineChapter) throw throwBadRequestError(STORYLINE_REFUSALS.alreadyAChapter);
+  // A verdict on a scanned image, the same rule the remix gallery applies. Not
+  // deferred: a review can take days, longer than the window to answer.
+  if (readiness === 'inReview') throw throwBadRequestError(STORYLINE_REFUSALS.inReview);
+  // An unrated post has nothing to compare; the readiness pass compares it.
+  if (
+    readiness === 'ready' &&
+    !storylineLevelAllowed({
+      postLevel: continuation.nsfwLevel,
+      maxNsfwLevel: parent.storyline.maxNsfwLevel,
+    })
+  )
+    throw throwBadRequestError(STORYLINE_REFUSALS.aboveRating);
+  const awaitingReadiness = readiness === 'pending';
 
   // Outside the transaction: I/O, and read from the primary.
   await assertCanPlace({ ownerId: space.ownerId, placerId });
@@ -160,6 +271,19 @@ export async function createStorylinePlacement({
     if (pending >= PLACEMENT_SURFACES[SURFACE].maxPendingPerOwner)
       throw throwBadRequestError(STORYLINE_REFUSALS.pendingCap);
 
+    // Under the same lock: the post is the placer's own, so a second submit of
+    // it can only come from this placer and waits here. Any chapter, not only
+    // this one: a post can be a chapter once, anywhere.
+    const live = await tx.placement.findFirst({
+      where: {
+        surface: SURFACE,
+        status: { in: ['pending', 'approved'] },
+        data: { path: ['postId'], equals: postId },
+      },
+      select: { id: true },
+    });
+    if (live) throw throwBadRequestError(STORYLINE_REFUSALS.alreadySubmitted);
+
     return tx.placement.create({
       data: {
         surface: SURFACE,
@@ -175,36 +299,66 @@ export async function createStorylinePlacement({
         spendType,
         status: 'pending',
         expiresAt,
-        data: { postId } satisfies StorylinePlacementData,
+        data: {
+          postId,
+          ...(awaitingReadiness ? { awaitingReadiness: true } : {}),
+        } satisfies StorylinePlacementData,
       },
       select: { id: true },
     });
   });
 
-  if (amount === 0) return placement;
+  if (amount > 0) await holdOrUnwind({ placementId: placement.id, placerId, amount, spendType });
 
+  // Not until the post is ready: the edge re-checks it and would refuse. The
+  // readiness pass approves it then.
+  if (access === 'autoApprove' && !awaitingReadiness) await autoApproveContinuation(placement.id);
+
+  return placement;
+}
+
+/**
+ * Approves an endorsed collaborator's continuation. Never throws: the row is
+ * already written and paid for, and a refused approval leaves it pending in the
+ * owner's queue, which is the outcome without the endorsement.
+ */
+async function autoApproveContinuation(placementId: number) {
+  await settleStorylineContinuation({ placementId, action: 'approve' }).catch((error) =>
+    logToAxiom({
+      name: 'storyline-placement',
+      type: 'warning',
+      message: 'auto-approval refused; left pending for the owner',
+      placementId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined)
+  );
+}
+
+async function holdOrUnwind({
+  placementId,
+  placerId,
+  amount,
+  spendType,
+}: {
+  placementId: number;
+  placerId: number;
+  amount: number;
+  spendType: BuzzSpendType;
+}) {
   try {
-    await holdPlacementEscrow({
-      placementId: placement.id,
-      placerId,
-      surface: SURFACE,
-      amount,
-      spendType,
-    });
+    await holdPlacementEscrow({ placementId, placerId, surface: SURFACE, amount, spendType });
   } catch (error) {
-    await settlePlacement({ placementId: placement.id, action: 'expire' }).catch((settleError) =>
+    await settlePlacement({ placementId, action: 'expire' }).catch((settleError) =>
       logToAxiom({
         name: 'storyline-placement',
         type: 'error',
         message: 'compensating settle failed; escrow may be held for a rejected continuation',
-        placementId: placement.id,
+        placementId,
         error: settleError instanceof Error ? settleError.message : String(settleError),
       }).catch(() => undefined)
     );
     throw error;
   }
-
-  return placement;
 }
 
 /**
@@ -360,6 +514,24 @@ export async function settleStorylineContinuation({
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
       if (!parent) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
+      // The image-level rules the edge does not check. Hidden from the queue
+      // is not refused: an owner can still name an unfinished one by id, and an
+      // image can be flagged after the row was admitted.
+      // `pending` was read before this transaction, so the marker may be stale.
+      // That only ever refuses wrongly: the marker is written only by the insert
+      // in `createStorylinePlacement` and only cleared, by the guarded update in
+      // `startReadyStorylineContinuations`. Anything that sets it on an admitted
+      // row must move this check into the status flip's WHERE.
+      if ((pending.data as StorylinePlacementData | null)?.awaitingReadiness)
+        throw throwBadRequestError(STORYLINE_REFUSALS.notReady);
+      const post = await tx.post.findUnique({
+        where: { id: postId },
+        select: continuationPostSelect,
+      });
+      const readiness = post ? continuationReadiness(post) : 'doomed';
+      if (readiness === 'doomed') throw throwBadRequestError(STORYLINE_REFUSALS.cannotSubmit);
+      if (readiness !== 'ready') throw throwBadRequestError(STORYLINE_REFUSALS.notReady);
+
       await writeChapterEdgeForPlacement(
         { placementId, parentPostId, postId, placerId: pending.placerId },
         tx
@@ -401,4 +573,521 @@ export async function actOnStorylineContinuation({
     actorId: ownerId,
   });
   return { settled, status: after.status };
+}
+
+/** True for a refusal (a 400), false for anything that might pass on a retry. */
+const isRefusal = (error: unknown) => error instanceof TRPCError && error.code === 'BAD_REQUEST';
+
+const isPositiveId = (id: number | null): id is number => id != null;
+
+/**
+ * Admits continuations whose post has since finished, and refunds the ones
+ * whose post never will.
+ *
+ * The rows carry `awaitingReadiness` and are hidden from the owner's queue.
+ * Admitting one clears the marker and restarts its clock, for the reason the
+ * remix gallery gives: the window before this is the contributor's drafting
+ * time, not the owner's time to answer. An endorsed collaborator's is approved
+ * here, since the approval had to wait for a finished post.
+ *
+ * Selected in SQL so a batch holds only rows this pass can act on: a batch of
+ * drafts read every tick would starve the rows behind it. A post under review
+ * is left out of the selection for the same reason, and refunds at its deadline.
+ */
+export async function startReadyStorylineContinuations({ limit = 200 }: { limit?: number } = {}) {
+  const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT pl.id
+    FROM "Placement" pl
+    LEFT JOIN "Post" p ON p.id = (pl.data ->> 'postId')::int
+    WHERE pl.surface = ${SURFACE}
+      AND pl."targetType" = ${TARGET_TYPE}
+      AND pl.status = 'pending'
+      AND pl.data ->> 'awaitingReadiness' = 'true'
+      AND (
+        p.id IS NULL
+        OR p."tosViolation"
+        OR EXISTS (
+          SELECT 1 FROM "Image" i WHERE i."postId" = p.id
+            AND (i."tosViolation" OR i.minor OR i.poi OR i.ingestion = 'Blocked')
+        )
+        OR (
+          p."publishedAt" <= now()
+          AND p."nsfwLevel" > 0
+          AND EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" i WHERE i."postId" = p.id
+              AND (i.ingestion <> 'Scanned' OR i."needsReview" IS NOT NULL)
+          )
+        )
+      )
+    ORDER BY pl.id ASC
+    LIMIT ${limit}
+  `;
+  if (!candidates.length) return { considered: 0, started: 0, refunded: 0 };
+
+  const rows = await dbWrite.placement.findMany({
+    where: { id: { in: candidates.map((row) => row.id) }, status: 'pending' },
+    select: { id: true, targetId: true, placerId: true, amount: true, data: true },
+    orderBy: { id: 'asc' },
+  });
+  const postIds = rows.map((row) => continuationPostId(row.data)).filter(isPositiveId);
+  const posts = new Map(
+    (
+      await dbWrite.post.findMany({
+        where: { id: { in: postIds } },
+        select: { id: true, ...continuationPostSelect },
+      })
+    ).map((post) => [post.id, post])
+  );
+
+  const expiryHours = (await getPlacementConfig()).expiryHours(SURFACE);
+  let started = 0;
+  let refunded = 0;
+
+  // Caught per row: one failed settle must not abort the batch, or the same
+  // lowest id is re-read first on every tick and wedges everything behind it.
+  const refund = async (placementId: number) => {
+    const result = await settlePlacement({ placementId, action: 'expire' }).catch((error) => {
+      logToAxiom({
+        name: 'storyline-placement',
+        type: 'error',
+        message: 'readiness refund failed',
+        placementId,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => undefined);
+      return null;
+    });
+    if (result?.settled) refunded++;
+  };
+
+  for (const row of rows) {
+    // A priced row whose holds are still landing is neither admitted nor
+    // refunded: a refund now is planned from the part paid so far, and the hold
+    // that lands after it is never returned. Next tick.
+    if (
+      row.amount > 0 &&
+      !(await isPlacementEscrowFunded({ placementId: row.id, amount: row.amount }))
+    )
+      continue;
+
+    const postId = continuationPostId(row.data);
+    const post = postId ? posts.get(postId) : undefined;
+    if (!post || !row.targetId) {
+      await refund(row.id);
+      continue;
+    }
+
+    // Decided again here rather than trusting the SQL, which no unit test runs.
+    const readiness = continuationReadiness(post);
+    if (readiness === 'doomed') {
+      await refund(row.id);
+      continue;
+    }
+    if (readiness !== 'ready') continue;
+
+    let access: ReturnType<typeof storylineContinuationAccess>;
+    try {
+      const [{ isCollaborator, parent }, space] = await Promise.all([
+        assertCanContinueStoryline({ parentPostId: row.targetId, placerId: row.placerId }),
+        resolvePlacementSpaceFor({
+          surface: SURFACE,
+          targetType: TARGET_TYPE,
+          targetId: row.targetId,
+        }),
+      ]);
+      if (
+        !storylineLevelAllowed({
+          postLevel: post.nsfwLevel,
+          maxNsfwLevel: parent.storyline.maxNsfwLevel,
+        })
+      ) {
+        await refund(row.id);
+        continue;
+      }
+      access = storylineContinuationAccess({
+        mode: space.mode,
+        isCollaborator,
+        whoCanContinue: parent.storyline.whoCanContinue,
+      });
+    } catch (error) {
+      // A refusal (taken down, a block, collaborators only) does not pass by
+      // waiting. Anything else might, so the row keeps its deadline and the
+      // next tick retries.
+      if (isRefusal(error)) await refund(row.id);
+      continue;
+    }
+
+    // The marker goes in the statement that restarts the clock, and is in the
+    // WHERE, so a second pass cannot extend a deadline that is already running.
+    const claimed = await dbWrite.placement.updateMany({
+      where: { id: row.id, status: 'pending', data: { path: ['awaitingReadiness'], equals: true } },
+      data: {
+        // When the owner could first see it, for the submitted notification.
+        data: {
+          postId: post.id,
+          readyAt: new Date().toISOString(),
+        } satisfies StorylinePlacementData,
+        expiresAt: new Date(Date.now() + expiryHours * 3_600_000),
+      },
+    });
+    if (!claimed.count) continue;
+    started++;
+
+    if (access === 'autoApprove') await autoApproveContinuation(row.id);
+  }
+
+  return { considered: candidates.length, started, refunded };
+}
+
+// ---------------------------------------------------------------------------
+// Reads and the placer's own actions, for the router
+// ---------------------------------------------------------------------------
+
+const toSetting = (
+  row: { mode: string; price: number | null } | undefined
+): PlacementSpaceSetting | undefined =>
+  row ? { mode: row.mode as PlacementSpaceMode, price: row.price } : undefined;
+
+/**
+ * A storyline's continuation settings, for its creator.
+ *
+ * Resolved from the storyline's own row and the creator's account, the cascade
+ * a continuation is priced by, without needing a chapter to resolve through.
+ * Complete reads as closed, as it does for a contributor.
+ */
+export async function getStorylineSpace({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}): Promise<StorylineSpace> {
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id: storylineId },
+    select: { userId: true, status: true },
+  });
+  if (!storyline) throw throwNotFoundError('Storyline not found');
+  if (storyline.userId !== userId)
+    throw throwAuthorizationError('placement: that is not your storyline');
+
+  const rows = await dbWrite.placementSpace.findMany({
+    where: {
+      surface: SURFACE,
+      OR: [
+        { entityType: 'storyline', entityId: storylineId },
+        { entityType: 'user', entityId: userId },
+      ],
+    },
+    select: { entityType: true, mode: true, price: true },
+  });
+  const own = rows.find((row) => row.entityType === 'storyline');
+  const resolved = resolvePlacementSpace(SURFACE, {
+    storyline: toSetting(own),
+    user: toSetting(rows.find((row) => row.entityType === 'user')),
+  });
+  const { max: cap } = await placementPriceRange(userId, SURFACE);
+
+  return {
+    storylineId,
+    mode: storyline.status === 'Complete' || resolved.mode !== 'review' ? 'off' : 'review',
+    setPrice: own?.price ?? null,
+    price: effectivePlacementPrice(resolved.price, cap) ?? 0,
+    cap,
+    inherited: !own,
+  };
+}
+
+/** Writes a storyline's own level of the space. `setPlacementSpace` checks ownership. */
+export async function setStorylineSpace({
+  storylineId,
+  mode,
+  price,
+  userId,
+}: {
+  storylineId: number;
+  mode: StorylineSpaceMode;
+  price?: number | null;
+  userId: number;
+}) {
+  await setPlacementSpace({
+    surface: SURFACE,
+    entityType: 'storyline',
+    entityId: storylineId,
+    mode,
+    price,
+    userId,
+  });
+  return getStorylineSpace({ storylineId, userId });
+}
+
+/**
+ * Whether THIS viewer may continue a chapter, and at what price.
+ *
+ * The submission's own checks, so the UI offers only what the server takes. A
+ * signed-out viewer is answered as a stranger. A post that is not a chapter of
+ * a live storyline is refused outright, as the submission refuses it. The
+ * storyline's creator is told `closed`: they add chapters directly, never
+ * through a continuation.
+ */
+export async function getStorylineContinuePrice({
+  parentPostId,
+  viewerId,
+}: {
+  parentPostId: number;
+  viewerId?: number;
+}): Promise<StorylineContinuePrice> {
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: parentPostId,
+  });
+  const price = space.price ?? 0;
+  const closed = { open: false, closedReason: 'closed', price } as const;
+  const collaboratorsOnly = { open: false, closedReason: 'collaboratorsOnly', price } as const;
+  if (viewerId != null && viewerId === space.ownerId) return closed;
+
+  let isCollaborator = false;
+  let whoCanContinue: StorylineWhoCanContinue | undefined;
+  try {
+    // 0 for a signed-out viewer: no account has it, so no block or
+    // collaborator row matches and they are judged as a stranger.
+    const result = await assertCanContinueStoryline({ parentPostId, placerId: viewerId ?? 0 });
+    isCollaborator = result.isCollaborator;
+    whoCanContinue = result.parent.storyline.whoCanContinue;
+  } catch (error) {
+    if (!isRefusal(error)) throw error;
+    const { message } = error as Error;
+    if (message === STORYLINE_REFUSALS.notAChapter) throw error;
+    if (message === STORYLINE_REFUSALS.collaboratorsOnly) return collaboratorsOnly;
+    // A block between the viewer and the storyline: closed, without saying why.
+    return closed;
+  }
+
+  const access = storylineContinuationAccess({ mode: space.mode, isCollaborator, whoCanContinue });
+  if (access === 'closed') return closed;
+  if (access === 'collaboratorsOnly') return collaboratorsOnly;
+  return { open: true, closedReason: null, price };
+}
+
+const summaryPostSelect = {
+  id: true,
+  title: true,
+  nsfwLevel: true,
+  // Only an image that could be shown anywhere: scanned, unflagged, not in
+  // review. The owner reviewing is not the image's author.
+  images: {
+    where: {
+      ingestion: 'Scanned',
+      tosViolation: false,
+      minor: false,
+      poi: false,
+      needsReview: null,
+    },
+    select: { id: true, url: true, nsfwLevel: true },
+    orderBy: { index: 'asc' },
+    take: 1,
+  },
+} satisfies Prisma.PostSelect;
+
+/** A post as a queue row shows it. The cover is withheld above what the domain may serve. */
+const toPostSummary = (
+  post: Prisma.PostGetPayload<{ select: typeof summaryPostSelect }>,
+  domainLevels: number
+) => {
+  const cover = post.images[0];
+  return {
+    id: post.id,
+    title: post.title,
+    nsfwLevel: post.nsfwLevel,
+    coverImage: cover && (cover.nsfwLevel & domainLevels) !== 0 ? cover : null,
+  };
+};
+
+/**
+ * The storyline creator's review queue: pending continuations, oldest first.
+ *
+ * A row still waiting on its post's readiness is left out until the readiness
+ * pass admits it, as is one whose post has gone. Paged in SQL so a page is
+ * full of rows the queue can render.
+ */
+export async function getPendingStorylineContinuations({
+  ownerId,
+  cursor,
+  domainLevels,
+  limit = PLACEMENT_QUEUE_PAGE_SIZE,
+}: {
+  ownerId: number;
+  cursor?: string | null;
+  /** Levels this domain may serve. A cover above it comes back as `null`. */
+  domainLevels: number;
+  limit?: number;
+}): Promise<StorylineContinuationPage<StorylineContinuationQueueItem>> {
+  const keyset = parsePlacementQueueCursor(cursor);
+  const listable = await dbRead.$queryRaw<{ id: number; createdAt: Date }[]>`
+    SELECT pl.id, pl."createdAt"
+    FROM "Placement" pl
+    JOIN "Post" p ON p.id = (pl.data ->> 'postId')::int
+    WHERE pl.surface = ${SURFACE}
+      AND pl."targetType" = ${TARGET_TYPE}
+      AND pl."ownerId" = ${ownerId}
+      AND pl.status = 'pending'
+      AND pl.data ->> 'awaitingReadiness' IS NULL
+      AND NOT p."tosViolation"
+      ${
+        keyset
+          ? Prisma.sql`AND (pl."createdAt" > ${keyset.createdAt}
+              OR (pl."createdAt" = ${keyset.createdAt} AND pl.id > ${keyset.id}))`
+          : Prisma.empty
+      }
+    ORDER BY pl."createdAt" ASC, pl.id ASC
+    LIMIT ${limit + 1}
+  `;
+  const page = listable.slice(0, limit);
+  const nextCursor =
+    listable.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
+  if (!page.length) return { items: [], nextCursor };
+
+  const rows = await dbRead.placement.findMany({
+    where: { id: { in: page.map((row) => row.id) } },
+    select: {
+      id: true,
+      targetId: true,
+      amount: true,
+      data: true,
+      createdAt: true,
+      expiresAt: true,
+      placer: { select: { id: true, username: true, image: true } },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+  const postIds = rows.map((row) => continuationPostId(row.data)).filter(isPositiveId);
+  const parentIds = rows.map((row) => row.targetId).filter(isPositiveId);
+
+  const [posts, chapters] = await Promise.all([
+    dbRead.post.findMany({
+      where: { id: { in: [...new Set([...postIds, ...parentIds])] } },
+      select: summaryPostSelect,
+    }),
+    dbRead.storylineChapter.findMany({
+      where: { postId: { in: parentIds } },
+      select: {
+        postId: true,
+        storyline: { select: { id: true, title: true, maxNsfwLevel: true } },
+      },
+    }),
+  ]);
+  const postById = new Map(posts.map((post) => [post.id, post]));
+  const storylineByParent = new Map(chapters.map((chapter) => [chapter.postId, chapter.storyline]));
+
+  const items: StorylineContinuationQueueItem[] = [];
+  for (const row of rows) {
+    const postId = continuationPostId(row.data);
+    const post = postId ? postById.get(postId) : undefined;
+    const parentPost = row.targetId ? postById.get(row.targetId) : undefined;
+    const storyline = row.targetId ? storylineByParent.get(row.targetId) : undefined;
+    if (!post || !parentPost || !storyline) continue;
+    items.push({
+      id: row.id,
+      placer: row.placer,
+      amount: row.amount,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      post: toPostSummary(post, domainLevels),
+      parentPost: toPostSummary(parentPost, domainLevels),
+      storyline,
+    });
+  }
+  return { items, nextCursor };
+}
+
+/** The placer's own continuations, newest first. */
+export async function getMyStorylineContinuations({
+  placerId,
+  cursor,
+  limit = PLACEMENT_QUEUE_PAGE_SIZE,
+}: {
+  placerId: number;
+  cursor?: string | null;
+  limit?: number;
+}): Promise<StorylineContinuationPage<MyStorylineContinuation>> {
+  const keyset = parsePlacementQueueCursor(cursor);
+  const rows = await dbRead.placement.findMany({
+    where: {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      placerId,
+      ...(keyset
+        ? {
+            OR: [
+              { createdAt: { lt: keyset.createdAt } },
+              { createdAt: keyset.createdAt, id: { lt: keyset.id } },
+            ],
+          }
+        : {}),
+    },
+    select: {
+      id: true,
+      status: true,
+      amount: true,
+      createdAt: true,
+      expiresAt: true,
+      targetId: true,
+      data: true,
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+  });
+  const page = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
+
+  const items: MyStorylineContinuation[] = [];
+  for (const row of page) {
+    const postId = continuationPostId(row.data);
+    if (!postId || !row.targetId) continue;
+    items.push({
+      id: row.id,
+      status: row.status as StorylineContinuationStatus,
+      amount: row.amount,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      awaitingReadiness: (row.data as StorylinePlacementData).awaitingReadiness === true,
+      postId,
+      parentPostId: row.targetId,
+    });
+  }
+  return { items, nextCursor };
+}
+
+/**
+ * The placer withdraws a pending continuation. Settled as an expiry, so a
+ * priced one is refunded in full: nobody declined it.
+ */
+export async function retractStorylineContinuation({
+  placementId,
+  placerId,
+}: {
+  placementId: number;
+  placerId: number;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { surface: true, placerId: true, status: true, amount: true },
+  });
+  if (!placement || placement.surface !== SURFACE)
+    throw throwNotFoundError('Continuation not found');
+  if (placement.placerId !== placerId) throw throwAuthorizationError();
+  if (placement.status !== 'pending')
+    throw throwBadRequestError('storyline: this continuation has already been answered');
+  // The same race `settleStorylineContinuation` refuses: a refund planned while
+  // a hold is landing never returns that hold.
+  if (
+    placement.amount > 0 &&
+    !(await isPlacementEscrowFunded({ placementId, amount: placement.amount }))
+  )
+    throw throwBadRequestError('storyline: the payment for this continuation is still processing');
+
+  const result = await settlePlacement({ placementId, action: 'expire', actorId: placerId });
+  if (!result.settled)
+    throw throwBadRequestError('storyline: this continuation has already been answered');
+  return { retracted: true };
 }
