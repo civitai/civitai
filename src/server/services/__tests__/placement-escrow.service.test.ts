@@ -2554,6 +2554,22 @@ describe('a write inside the settlement transaction', () => {
   const CHAPTER_POST = 77;
   const CONTINUATION_POST = 88;
 
+  const SCANNED = {
+    ingestion: 'Scanned',
+    tosViolation: false,
+    minor: false,
+    poi: false,
+    needsReview: null as string | null,
+  };
+  const READY_POST = {
+    userId: PLACER,
+    publishedAt: new Date('2026-01-01'),
+    nsfwLevel: 1,
+    tosViolation: false,
+    storylineChapter: null,
+    images: [SCANNED],
+  };
+
   const givenContinuation = (overrides: Record<string, unknown> = {}) =>
     givenPlacement({
       surface: 'storyline',
@@ -2602,6 +2618,8 @@ describe('a write inside the settlement transaction', () => {
     storylineOwner.mockResolvedValue({ storyline: { userId: OWNER } });
     globalChapterFind.mockResolvedValue({ storyline: { userId: OWNER + 99 } });
     txClients.length = 0;
+    // A finished continuation post: the approval checks its images first.
+    dbWriteMock.post.findUnique.mockResolvedValue(READY_POST);
     Object.assign(dbWriteMock, {
       $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
         const placements = new Map(
@@ -2859,6 +2877,51 @@ describe('a write inside the settlement transaction', () => {
       expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
     });
 
+    // Hidden from the queue is not refused: an owner can name a row by id, and an
+    // image can be flagged after the row was admitted. Both approvals refuse.
+    it.each([
+      [
+        'still awaiting readiness',
+        { data: { postId: CONTINUATION_POST, awaitingReadiness: true } },
+        null,
+      ],
+      [
+        'with an image in review',
+        {},
+        { ...READY_POST, images: [{ ...SCANNED, needsReview: 'poi' }] },
+      ],
+      [
+        'with an image still scanning',
+        {},
+        { ...READY_POST, images: [{ ...SCANNED, ingestion: 'Pending' }] },
+      ],
+      ['with a minor image', {}, { ...READY_POST, images: [{ ...SCANNED, minor: true }] }],
+    ])('refuses to approve a continuation %s, and writes no edge', async (_, row, post) => {
+      givenContinuation({ amount: 1000, ...row });
+      await holdStoryline(1000);
+      clearMoneyMocks();
+      if (post) dbWriteMock.post.findUnique.mockResolvedValue(post);
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow(/^storyline: that post (is not ready yet|cannot be submitted)$/);
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+      expect(moneyMoved()).toBe(0);
+    });
+
+    it('refuses to approve a continuation whose post was deleted', async () => {
+      givenContinuation();
+      dbWriteMock.post.findUnique.mockResolvedValue(null);
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow('storyline: that post cannot be submitted');
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
     // A parent post deleted since submission must not trap the placer's money.
     it('still declines when the parent post is no longer a chapter', async () => {
       givenContinuation();
@@ -2867,6 +2930,17 @@ describe('a write inside the settlement transaction', () => {
       await settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER });
 
       expect(db.placements.get(1)!.status).toBe('declined');
+    });
+
+    // Petra's notification tells an auto-approval from the owner's by this.
+    it('records the owner as resolver on their approval, and nobody on an auto-approval', async () => {
+      givenContinuation();
+      await actOnStorylineContinuation({ placementId: 1, ownerId: OWNER, action: 'approve' });
+      expect(db.placements.get(1)!.resolvedById).toBe(OWNER);
+
+      givenContinuation();
+      await settleStorylineContinuation({ placementId: 1, action: 'approve' });
+      expect(db.placements.get(1)!.resolvedById).toBeNull();
     });
 
     it('writes no edge on decline', async () => {

@@ -24,7 +24,7 @@ vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
   assertCanContinueStoryline,
 }));
 
-const { startReadyStorylineContinuations } = await import(
+const { startReadyStorylineContinuations, getPendingStorylineContinuations } = await import(
   '~/server/services/storyline-placement.service'
 );
 
@@ -102,7 +102,8 @@ describe('startReadyStorylineContinuations', () => {
       status: 'pending',
       data: { path: ['awaitingReadiness'], equals: true },
     });
-    expect(data.data).toEqual({ postId: POST });
+    expect(data.data).toEqual({ postId: POST, readyAt: expect.any(String) });
+    expect(Date.parse(data.data.readyAt)).toBeGreaterThanOrEqual(before);
     const hours = (data.expiresAt.getTime() - before) / 3_600_000;
     expect(hours).toBeGreaterThanOrEqual(PLACEMENT_SURFACES.storyline.expiryHours - 0.01);
     expect(settlePlacement).not.toHaveBeenCalled();
@@ -198,5 +199,53 @@ describe('startReadyStorylineContinuations', () => {
       refunded: 0,
     });
     expect(dbMock.dbWrite.placement.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('getPendingStorylineContinuations', () => {
+  const givenQueue = (cover: { id: number; url: string; nsfwLevel: number }) => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: ROW, createdAt: new Date() }]);
+    dbMock.dbRead.placement.findMany.mockResolvedValue([
+      {
+        id: ROW,
+        targetId: CHAPTER,
+        amount: 0,
+        data: { postId: POST },
+        createdAt: new Date(),
+        expiresAt: new Date(),
+        placer: { id: PLACER, username: 'p', image: null },
+      },
+    ]);
+    dbMock.dbRead.post.findMany.mockResolvedValue([
+      { id: POST, title: 'next', nsfwLevel: cover.nsfwLevel, images: [cover] },
+      { id: CHAPTER, title: 'first', nsfwLevel: 1, images: [{ id: 2, url: 'u2', nsfwLevel: 1 }] },
+    ]);
+    dbMock.dbRead.storylineChapter.findMany.mockResolvedValue([
+      { postId: CHAPTER, storyline: { id: 5, title: 'Tale', maxNsfwLevel: 4 } },
+    ]);
+  };
+
+  // The owner reviewing is not the image's author: a cover a moderator has
+  // flagged, or that is still in review, must not reach them. Prisma is mocked,
+  // so this pins the filter the query sends.
+  it('asks only for covers that could be shown anywhere', async () => {
+    givenQueue({ id: 1, url: 'u1', nsfwLevel: 1 });
+    await getPendingStorylineContinuations({ ownerId: 10, domainLevels: 1 });
+    const { select } = dbMock.dbRead.post.findMany.mock.calls[0][0];
+    expect(select.images.where).toEqual({
+      ingestion: 'Scanned',
+      tosViolation: false,
+      minor: false,
+      poi: false,
+      needsReview: null,
+    });
+  });
+
+  it('withholds a cover above what the domain serves, and shows one within it', async () => {
+    givenQueue({ id: 1, url: 'u1', nsfwLevel: 4 });
+    const page = await getPendingStorylineContinuations({ ownerId: 10, domainLevels: 1 });
+    expect(page.items[0].post.coverImage).toBeNull();
+    expect(page.items[0].parentPost.coverImage).toEqual({ id: 2, url: 'u2', nsfwLevel: 1 });
+    expect(page.items[0].storyline).toEqual({ id: 5, title: 'Tale', maxNsfwLevel: 4 });
   });
 });

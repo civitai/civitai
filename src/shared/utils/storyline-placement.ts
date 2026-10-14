@@ -101,6 +101,7 @@ export const STORYLINE_REFUSALS = {
   alreadyAChapter: 'storyline: that post is already in a storyline',
   cannotSubmit: 'storyline: that post cannot be submitted',
   inReview: 'storyline: that post is still being reviewed',
+  notReady: 'storyline: that post is not ready yet',
   aboveRating: 'storyline: that post is rated above what this storyline allows',
   pendingCap: 'storyline: you already have the maximum continuations waiting with this creator',
   priceChanged: 'storyline: the price changed while you were deciding',

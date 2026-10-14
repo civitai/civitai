@@ -86,6 +86,8 @@ export type StorylinePlacementData = {
   postId: number;
   /** The post was unfinished at submission. Present only when true. */
   awaitingReadiness?: true;
+  /** ISO time the readiness pass admitted it. Absent on a row that never waited. */
+  readyAt?: string;
 };
 
 /** What the refusals and the readiness check read off a continuation post. */
@@ -512,6 +514,19 @@ export async function settleStorylineContinuation({
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
       if (!parent) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
+      // The image-level rules the edge does not check. Hidden from the queue
+      // is not refused: an owner can still name an unfinished one by id, and an
+      // image can be flagged after the row was admitted.
+      if ((pending.data as StorylinePlacementData | null)?.awaitingReadiness)
+        throw throwBadRequestError(STORYLINE_REFUSALS.notReady);
+      const post = await tx.post.findUnique({
+        where: { id: postId },
+        select: continuationPostSelect,
+      });
+      const readiness = post ? continuationReadiness(post) : 'doomed';
+      if (readiness === 'doomed') throw throwBadRequestError(STORYLINE_REFUSALS.cannotSubmit);
+      if (readiness !== 'ready') throw throwBadRequestError(STORYLINE_REFUSALS.notReady);
+
       await writeChapterEdgeForPlacement(
         { placementId, parentPostId, postId, placerId: pending.placerId },
         tx
@@ -693,7 +708,11 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
     const claimed = await dbWrite.placement.updateMany({
       where: { id: row.id, status: 'pending', data: { path: ['awaitingReadiness'], equals: true } },
       data: {
-        data: { postId: post.id } satisfies StorylinePlacementData,
+        // When the owner could first see it, for the submitted notification.
+        data: {
+          postId: post.id,
+          readyAt: new Date().toISOString(),
+        } satisfies StorylinePlacementData,
         expiresAt: new Date(Date.now() + expiryHours * 3_600_000),
       },
     });
@@ -840,7 +859,16 @@ const summaryPostSelect = {
   id: true,
   title: true,
   nsfwLevel: true,
+  // Only an image that could be shown anywhere: scanned, unflagged, not in
+  // review. The owner reviewing is not the image's author.
   images: {
+    where: {
+      ingestion: 'Scanned',
+      tosViolation: false,
+      minor: false,
+      poi: false,
+      needsReview: null,
+    },
     select: { id: true, url: true, nsfwLevel: true },
     orderBy: { index: 'asc' },
     take: 1,
