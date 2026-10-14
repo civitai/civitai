@@ -552,7 +552,6 @@ function HatTiles({
           <NextLink
             href={`/events/${event}#team-hats`}
             className="flex w-[104px] shrink-0 flex-col rounded-[11px] border-[1.5px] border-dashed border-white/25 text-white no-underline"
-            aria-label="Get another hat: one more post scoring"
             data-testid="event-home-block-get-hat"
           >
             <span className="grid h-[86px] place-items-center border-0 border-b-[1.5px] border-dashed border-white/15">
