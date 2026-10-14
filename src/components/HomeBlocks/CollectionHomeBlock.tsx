@@ -26,6 +26,7 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
@@ -118,6 +119,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
+  const hasInfo = !!(metadata.description || metadata.selectionNote);
+
   const MetaDataTop = (
     <Stack gap="sm">
       <Group gap="xs" justify="space-between" className={classes.header}>
@@ -125,7 +128,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
-          {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
+          {!metadata.descriptionAlwaysVisible && currentUser && hasInfo && (
             <Popover withArrow width={380}>
               <Popover.Target>
                 <Box
@@ -160,6 +163,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
                     </Anchor>
                   </Link>
                 )}
+                <SelectionNote note={metadata.selectionNote} />
               </Popover.Dropdown>
             </Popover>
           )}
