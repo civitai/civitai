@@ -7,6 +7,7 @@ import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModePr
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { StorylineEntryChip, StorylineModeChip } from '~/components/Storyline/StorylinePill';
 import { useStorylinesEnabled } from '~/components/Storyline/storyline.queries';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 function chapterPosition(storyline: ActiveStorylineMode, imageId: number) {
@@ -29,6 +30,7 @@ export function StorylineStageOverlay({
   isLastImage: boolean;
 }) {
   const storyline = useStorylineMode();
+  const currentUser = useCurrentUser();
   if (!storyline.active) return <StorylineEntryPill postId={postId} />;
 
   const { chapterId, depth } = chapterPosition(storyline, imageId);
@@ -63,10 +65,10 @@ export function StorylineStageOverlay({
         <StorylineEndOfChapter
           chapterId={end.chapterId}
           storylineId={storyline.path.storyline.id}
-          storylineTitle={storyline.path.storyline.title}
           chapterDepth={end.depth}
           chapterTombstone={end.tombstone}
           parentPostId={end.post?.id}
+          isOwner={!!currentUser && currentUser.id === storyline.path.storyline.userId}
           onContinue={storyline.continueTo}
           onClose={() => storyline.setEndOpen(false)}
         />
