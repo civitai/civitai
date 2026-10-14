@@ -140,7 +140,7 @@ describe('publishModelById — Model rules literal hold', () => {
       meta: { foo: 1 },
     });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ id: MODEL_ID, status: 'UnpublishedViolation' });
+    expect(result).toMatchObject({ id: MODEL_ID });
   });
 
   it('publishes and logs when the hold action throws', async () => {

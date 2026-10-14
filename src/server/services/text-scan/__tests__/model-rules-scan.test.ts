@@ -162,6 +162,25 @@ describe('scanEntity — after a literal hold', () => {
     await scanEntity({ entityType: 'ModelRules', entityId: 7 });
     expect(submitWorkflow).toHaveBeenCalledTimes(1);
   });
+
+  it('skips the same text and rules once a scan has recorded their hash', async () => {
+    await scanEntity({ entityType: 'ModelRules', entityId: 7 });
+    const { contentHash } = em.upsert.mock.calls[0][0].create as { contentHash: string };
+    expect(contentHash).toEqual(expect.any(String));
+    vi.mocked(submitWorkflow).mockClear();
+
+    em.findUnique.mockResolvedValue({
+      status: 'Succeeded',
+      contentHash,
+      workflowId: 'wf-1',
+      retryCount: 0,
+      updatedAt: new Date(),
+    } as never);
+    await expect(scanEntity({ entityType: 'ModelRules', entityId: 7 })).resolves.toMatchObject({
+      status: 'skipped',
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
 });
 
 describe('textScanContentHash', () => {
@@ -313,6 +332,112 @@ describe('handleTextScanCallback — ModelRules', () => {
     );
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(em.updateMany.mock.calls[0][0].data.triggeredLabels).toEqual([]);
+  });
+});
+
+describe('handleTextScanCallback — ModelRules partial verdict', () => {
+  const metadata = {
+    entityType: 'ModelRules',
+    entityId: 7,
+    emEntityType: 'ModelRules',
+    mode: 'active',
+    externalId: 'ts-ModelRules-7-abc-0-0',
+    labels: ['modelRules'],
+    promptIds: { base: 1, modelRules: 5 },
+    model: 'air:test',
+    ruleIds: [3, 8],
+    rulesFingerprint: 'fp',
+    segments: 2,
+  };
+  const partial = (matched: { ruleId: number; reason: string }[]) => {
+    const parsed = { modelRules: { matched } };
+    return {
+      data: {
+        metadata,
+        tags: ['text-scan', 'ModelRules', 'active'],
+        steps: [
+          {
+            $type: 'chatCompletion',
+            name: 'textScan',
+            metadata: { segment: 0 },
+            output: {
+              choices: [{ message: { content: JSON.stringify(parsed) }, finishReason: 'stop' }],
+              parsed,
+            },
+          },
+          {
+            $type: 'chatCompletion',
+            name: 'textScan1',
+            metadata: { segment: 1 },
+            output: {
+              choices: [{ message: { content: '{"modelRules":' }, finishReason: 'length' }],
+            },
+          },
+        ],
+      },
+    };
+  };
+  const cleanStored = {
+    workflowId: 'wf-1',
+    nsfwLevel: null,
+    triggeredLabels: [],
+    result: {
+      version: 1,
+      labels: { modelRules: { matched: [] } },
+      promptIds: { base: 1 },
+      model: 'air:old',
+      textHash: 'old',
+    },
+  };
+  const raised = () => adapter.applyTextScan.mock.calls[0]?.[0]?.outcome;
+  const snapshotsEcho = () =>
+    vi
+      .mocked(getModelRuleSnapshots)
+      .mockImplementation(async (ids) =>
+        ids.map((id) => ({ id, subject: `S${id}`, description: '', aliases: [] }))
+      );
+
+  beforeEach(() => {
+    em.findUnique.mockReset();
+    em.findUnique.mockResolvedValue(cleanStored as any);
+  });
+
+  it('raises a rule the prompt listed and that is still live', async () => {
+    snapshotsEcho();
+    vi.mocked(getWorkflow).mockResolvedValue(partial([{ ruleId: 3, reason: 'r' }]) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(raised().modelRules).toEqual({ matched: [{ ruleId: 3, reason: 'r' }] });
+  });
+
+  it('acts on nothing for a rule id the prompt did not list', async () => {
+    snapshotsEcho();
+    vi.mocked(getWorkflow).mockResolvedValue(partial([{ ruleId: 42, reason: 'r' }]) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(em.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('acts on nothing for a rule disabled since the submit', async () => {
+    vi.mocked(getModelRuleSnapshots).mockResolvedValue([]);
+    vi.mocked(getWorkflow).mockResolvedValue(partial([{ ruleId: 3, reason: 'r' }]) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(em.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps only the listed live rules when the segment names several', async () => {
+    vi.mocked(getModelRuleSnapshots).mockResolvedValue([
+      { id: 3, subject: 'S3', description: '', aliases: [] },
+    ]);
+    vi.mocked(getWorkflow).mockResolvedValue(
+      partial([
+        { ruleId: 3, reason: 'a' },
+        { ruleId: 8, reason: 'disabled' },
+        { ruleId: 42, reason: 'unlisted' },
+      ]) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(raised().modelRules).toEqual({ matched: [{ ruleId: 3, reason: 'a' }] });
   });
 });
 

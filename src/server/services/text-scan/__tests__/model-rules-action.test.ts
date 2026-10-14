@@ -99,11 +99,14 @@ describe('applyModelRulesTextScan', () => {
     expect(refreshModelData).not.toHaveBeenCalled();
   });
 
-  it('does nothing for a model that is gone or has no meta', async () => {
+  it('does nothing for a model that is gone', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
     await applyModelRulesTextScan(args([3]));
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(unpublishModelById).not.toHaveBeenCalled();
+  });
 
+  it('treats a model with no meta as having an empty one and still unpublishes it', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: null });
     await applyModelRulesTextScan(args([3]));
     expect(unpublishModelById).toHaveBeenCalledWith(
