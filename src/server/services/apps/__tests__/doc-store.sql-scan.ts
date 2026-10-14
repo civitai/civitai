@@ -9,7 +9,7 @@
 //
 // The one exception, REVIEW MAINTENANCE: a SELECT or DELETE whose every alias carries
 // `<alias>.ns LIKE 'rev:%'` in place of `ns = $2`. It must still carry `app_id = $1`,
-// except a SELECT that reads `usage_app` alone (the sweep's listing). Such a statement only
+// except a SELECT reading `usage_app` / `doc` (the sweep's listing). Such a statement only
 // works inside the store's maintenance transaction (RLS admits nothing else);
 // `isReviewMaintenanceStatement` names them so the isolation test can pin where they live.
 
@@ -101,7 +101,7 @@ export function scanStatement(sql: string): string[] {
       if (!/^\s*(WITH\s+gone\s+AS\s+\(\s*DELETE|SELECT)\b/i.test(sql)) {
         violations.push(`maintenance statement on appdata.${table} is not a SELECT or DELETE`);
       }
-      const listing = /^\s*SELECT\b/i.test(sql) && table === 'usage_app' && refs.length === 1;
+      const listing = /^\s*SELECT\b/i.test(sql) && (table === 'usage_app' || table === 'doc');
       if (!listing && !new RegExp(`\\b${a}\\.app_id\\s*=\\s*\\$1(?![0-9])`).test(sql)) {
         violations.push(`appdata.${table} ${alias} lacks ${alias}.app_id = $1`);
       }

@@ -23,9 +23,20 @@ import { createJob } from './job';
  * It lists the requests that still hold review data from the store (a review-maintenance read,
  * `DocStore.listReviewAppIds`), reads their status from the PRIMARY — a replica that has not
  * yet seen a new request would read it as missing, and missing means "purge" — and purges each
- * one that is not `pending`. A pending request is never touched. Idempotent: a purged request
- * no longer lists.
+ * one that is approved, rejected or withdrawn, or whose row is gone. A pending request is never
+ * touched. Idempotent: a purged request no longer lists.
  */
+
+/**
+ * The statuses whose review data is purged. An ALLOWLIST of final states, not "anything but
+ * pending": a status added later is kept until someone decides it is final. A request whose row
+ * no longer exists is purged too (its data can no longer be reached).
+ */
+export const REVIEW_STORAGE_PURGEABLE_STATUSES: ReadonlySet<string> = new Set([
+  'approved',
+  'rejected',
+  'withdrawn',
+]);
 
 /** Requests purged per run at most; a backlog drains over several runs. */
 export const REVIEW_STORAGE_SWEEP_BATCH = 50;
@@ -36,8 +47,8 @@ export const REVIEW_STORAGE_SWEEP_PAGE = 200;
 export type SweepReviewStorageResult = {
   /** Requests holding review data that the run looked at. */
   scanned: number;
-  /** Still pending: left alone. */
-  pending: number;
+  /** Still pending, or in a status not known to be final: left alone. */
+  kept: number;
   purged: number;
   /** Purge failed; the request lists again next run. */
   failed: number;
@@ -55,7 +66,7 @@ export async function sweepReviewStorage(
   const store = opts.store ?? getDocStore();
   const batch = opts.batch ?? REVIEW_STORAGE_SWEEP_BATCH;
   const page = opts.page ?? REVIEW_STORAGE_SWEEP_PAGE;
-  const result: SweepReviewStorageResult = { scanned: 0, pending: 0, purged: 0, failed: 0 };
+  const result: SweepReviewStorageResult = { scanned: 0, kept: 0, purged: 0, failed: 0 };
 
   let after = '';
   for (;;) {
@@ -71,8 +82,9 @@ export async function sweepReviewStorage(
       opts.jobContext?.checkIfCanceled();
       after = id;
       result.scanned += 1;
-      if (status.get(id) === 'pending') {
-        result.pending += 1;
+      const s = status.get(id);
+      if (s !== undefined && !REVIEW_STORAGE_PURGEABLE_STATUSES.has(s)) {
+        result.kept += 1;
         continue;
       }
       try {

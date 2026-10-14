@@ -10,8 +10,8 @@
 // `withTx`) is the second, independent layer.
 //
 // The ONE exception is review maintenance (`purgeReview`, `listReviewAppIds`):
-// statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (listing: `ns LIKE 'rev:%'`
-// on `usage_app` alone), run only inside `maintenanceTx`, whose transaction-local
+// statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
+// on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
 // admit — review namespaces only, read and delete only.
 //
@@ -585,13 +585,16 @@ const SQL_REVIEW_PURGE = [
   SELECT count(*)::int AS n FROM gone`,
 ] as const;
 
-// The publish requests that still have review data, in id order after a keyset cursor. Every
-// review namespace that holds any row has a `usage_app` row (a document create charges it, and
-// marks, counters and tombstones exist only beside a document), so listing that table is
-// complete. $1 cursor (exclusive), $2 limit.
-const SQL_REVIEW_APP_IDS = `SELECT u.app_id FROM appdata.usage_app u
-  WHERE u.ns LIKE 'rev:%' AND u.app_id > $1
-  GROUP BY u.app_id ORDER BY u.app_id LIMIT $2::int`;
+// The publish requests that still have review data, in id order after a keyset cursor. From
+// `usage_app` AND `doc`: a document inserted by a write that overlapped a purge can commit
+// after the purge deleted its namespace's `usage_app` row, leaving a document with no usage
+// row; tallies, marks and index rows exist only beside a document, and a tombstone's write
+// holds the document's lock, which the purge waits for. $1 cursor (exclusive), $2 limit.
+const SQL_REVIEW_APP_IDS = `SELECT r.app_id FROM (
+    SELECT u.app_id FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' AND u.app_id > $1
+    UNION
+    SELECT d.app_id FROM appdata.doc d WHERE d.ns LIKE 'rev:%' AND d.app_id > $1
+  ) r ORDER BY r.app_id LIMIT $2::int`;
 
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.

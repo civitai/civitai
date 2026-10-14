@@ -1,6 +1,7 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { sweepReviewStorage } from '~/server/jobs/sweep-review-storage';
 import type { DocStore } from '~/server/services/apps/doc-store';
 import { createDocStore, reviewNamespace } from '~/server/services/apps/doc-store';
 import {
@@ -18,6 +19,18 @@ import {
 import { APPDATA_TABLES } from '~/server/services/apps/__tests__/doc-store.sql-scan';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const live = vi.hoisted(() => ({ store: undefined as unknown }));
+// The job wrapper resolves the process store; point it at this file's.
+vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => live.store }));
+// createJob wraps the handler in lock/metric machinery; hand back what the test asserts on.
+vi.mock('../job', () => ({
+  createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({ name, cron, fn }),
+}));
+
+const { sweepReviewStorage, sweepReviewStorageJob } = await import(
+  '~/server/jobs/sweep-review-storage'
+);
 
 /**
  * The review-storage sweep against the REAL store (embedded Postgres, the real migration, the
@@ -62,6 +75,7 @@ async function rows(appId: string, nsLike = 'rev:%'): Promise<number> {
 beforeAll(async () => {
   h = await createPgliteHarness({ rls: true });
   store = createDocStore({ db: h.db });
+  live.store = store;
 });
 
 afterAll(async () => {
@@ -96,7 +110,7 @@ describe('sweepReviewStorage', () => {
 
     expect(await sweepReviewStorage({ store })).toEqual({
       scanned: 5,
-      pending: 1,
+      kept: 1,
       purged: 4,
       failed: 0,
     });
@@ -116,7 +130,7 @@ describe('sweepReviewStorage', () => {
     const before = await rows(pending);
     expect(await sweepReviewStorage({ store })).toEqual({
       scanned: 1,
-      pending: 1,
+      kept: 1,
       purged: 0,
       failed: 0,
     });
@@ -131,11 +145,20 @@ describe('sweepReviewStorage', () => {
       await request('rejected'),
       await request('rejected'),
     ];
-    const first = await sweepReviewStorage({ store, batch: 2, page: 1 });
-    expect(first).toMatchObject({ purged: 2, pending: 2 });
+    // The loop is bounded by the data alone: a cursor that stopped advancing would re-list the
+    // first pending request forever. Fail loudly after far more steps than this data needs.
+    let steps = 0;
+    const jobContext = {
+      checkIfCanceled: () => {
+        steps += 1;
+        if (steps > 50) throw new Error('sweep did not terminate');
+      },
+    };
+    const first = await sweepReviewStorage({ store, batch: 2, page: 1, jobContext });
+    expect(first).toMatchObject({ purged: 2, kept: 2 });
     expect(await rows(decided[2])).toBeGreaterThan(0);
-    const second = await sweepReviewStorage({ store, batch: 2, page: 1 });
-    expect(second).toMatchObject({ purged: 1, pending: 2 });
+    const second = await sweepReviewStorage({ store, batch: 2, page: 1, jobContext });
+    expect(second).toMatchObject({ purged: 1, kept: 2 });
     expect(await rows(decided[2])).toBe(0);
   });
 
@@ -149,11 +172,30 @@ describe('sweepReviewStorage', () => {
         return store.purgeReview(id);
       },
     };
+    const counter = async (outcome: string) => {
+      const prom = await import('prom-client');
+      const m = prom.register.getSingleMetric('civitai_app_block_review_storage_sweep_total');
+      return (
+        (m ? (await m.get()).values : []).find((v) => v.labels.outcome === outcome)?.value ?? 0
+      );
+    };
+    const before = { purged: await counter('purged'), failed: await counter('failed') };
     expect(await sweepReviewStorage({ store: flaky })).toMatchObject({ purged: 1, failed: 1 });
+    expect({ purged: await counter('purged'), failed: await counter('failed') }).toEqual({
+      purged: before.purged + 1,
+      failed: before.failed + 1,
+    });
     expect(await rows(fine)).toBe(0);
     expect(await rows(stuck)).toBeGreaterThan(0);
     expect(await sweepReviewStorage({ store })).toMatchObject({ purged: 1, failed: 0 });
     expect(await rows(stuck)).toBe(0);
+  });
+
+  it('purges only final statuses: a status it does not know is kept', async () => {
+    const unknown = await request('changes_requested');
+    const before = await rows(unknown);
+    expect(await sweepReviewStorage({ store })).toMatchObject({ kept: 1, purged: 0 });
+    expect(await rows(unknown)).toBe(before);
   });
 
   it('a store with no connection stops the run (storage_disabled), it does not count a failure per request', async () => {
@@ -165,9 +207,54 @@ describe('sweepReviewStorage', () => {
   });
 
   it('every statement the sweep sent passed the recorder', () => {
-    expect(h.statements.some((s) => /SELECT u\.app_id FROM appdata\.usage_app u/.test(s.sql))).toBe(
+    expect(h.statements.some((s) => /FROM appdata\.usage_app u WHERE u\.ns LIKE/.test(s.sql))).toBe(
       true
     );
     expect(h.violations).toEqual([]);
+  });
+});
+
+describe('sweepReviewStorageJob', () => {
+  const job = sweepReviewStorageJob as unknown as {
+    name: string;
+    cron: string;
+    fn: (ctx: unknown) => Promise<Record<string, unknown>>;
+  };
+
+  it('is the hourly sweep-review-storage job, registered with the job runner', () => {
+    expect({ name: job.name, cron: job.cron }).toEqual({
+      name: 'sweep-review-storage',
+      cron: '35 * * * *',
+    });
+    const route = readFileSync(
+      path.resolve(__dirname, '../../../pages/api/webhooks/run-jobs/[[...run]].ts'),
+      'utf8'
+    );
+    expect(route).toMatch(
+      /^import \{ sweepReviewStorageJob \} from '~\/server\/jobs\/sweep-review-storage';$/m
+    );
+    // Inside the jobs array, not merely imported.
+    expect(route).toMatch(/^  sweepReviewStorageJob,$/m);
+  });
+
+  it('runs the sweep against the process store and returns its result', async () => {
+    await request('rejected');
+    const result = await job.fn({ checkIfCanceled: () => undefined });
+    expect(result).toMatchObject({ purged: 1, failed: 0 });
+  });
+
+  it('FAIL-OPEN: no store connection returns { disabled }, any other error returns { error }', async () => {
+    live.store = createDocStore({ db: null });
+    try {
+      expect(await job.fn({ checkIfCanceled: () => undefined })).toEqual({ disabled: true });
+      live.store = {
+        listReviewAppIds: async () => {
+          throw new Error('appdata down');
+        },
+      };
+      expect(await job.fn({ checkIfCanceled: () => undefined })).toEqual({ error: true });
+    } finally {
+      live.store = store;
+    }
   });
 });

@@ -56,6 +56,7 @@ describe('scanner controls', () => {
       // Review maintenance: keyed on the request; the usage_app-only listing need not be.
       `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
       `SELECT u.app_id FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' AND u.app_id > $1`,
+      `SELECT d.app_id FROM appdata.doc d WHERE d.ns LIKE 'rev:%' AND d.app_id > $1`,
     ]) {
       expect({ ok, v: scanStatement(ok) }).toEqual({ ok, v: [] });
     }
@@ -102,7 +103,7 @@ describe('scanner controls', () => {
         `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
         /lacks u\.app_id = \$1/,
       ],
-      [`SELECT d.key FROM appdata.doc d WHERE d.ns LIKE 'rev:%'`, /lacks d\.app_id = \$1/],
+      [`SELECT t.key FROM appdata.doc_tally t WHERE t.ns LIKE 'rev:%'`, /lacks t\.app_id = \$1/],
       [
         `UPDATE appdata.doc d SET version = 1 WHERE d.app_id = $1 AND d.ns LIKE 'rev:%'`,
         /is not a SELECT or DELETE/,
@@ -235,6 +236,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.functional.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
+    // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
+    'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
     'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
     'server/services/apps/doc-store.ts',

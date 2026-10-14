@@ -165,13 +165,62 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           [app, ns]
         );
         await h.raw(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ($1, $2)`, [app, ns]);
+        // One row in each of the other five tables too, so every table's policy is probed.
+        await h.raw(
+          `INSERT INTO appdata.doc_index (app_id, ns, coll, scope_uid, key, name, v_type, v_text)
+           VALUES ($1, $2, 'c', 0, 'k', 'i', 'string', 'v')`,
+          [app, ns]
+        );
+        await h.raw(
+          `INSERT INTO appdata.doc_tally (app_id, ns, coll, key, kind, name, count)
+           VALUES ($1, $2, 'c', 'k', 'counter', 'n', 1)`,
+          [app, ns]
+        );
+        await h.raw(
+          `INSERT INTO appdata.doc_mark (app_id, ns, coll, key, name, user_id) VALUES ($1, $2, 'c', 'k', 'n', 7)`,
+          [app, ns]
+        );
+        await h.raw(
+          `INSERT INTO appdata.doc_tomb (app_id, ns, coll, scope_uid, key, seq) VALUES ($1, $2, 'c', 0, 'gone', 1)`,
+          [app, ns]
+        );
+        await h.raw(`INSERT INTO appdata.usage_user (app_id, ns, user_id) VALUES ($1, $2, 7)`, [
+          app,
+          ns,
+        ]);
+      }
+    });
+
+    const OTHER_TABLES = ['doc_index', 'doc_tally', 'doc_mark', 'doc_tomb', 'usage_user'];
+
+    it('every table: bound to a request, reads only its review rows; bound to none, reads nothing outside doc and usage_app', async () => {
+      const c = await h.rawAsRole();
+      try {
+        for (const t of [...OTHER_TABLES, 'doc', 'usage_app']) {
+          await c.query(begin(REQ, 'on'));
+          expect({ t, rows: pairs(await c.query(`SELECT app_id, ns FROM appdata.${t}`)) }).toEqual({
+            t,
+            rows: [`${REQ}|rev:${REQ}:7`, `${REQ}|rev:${REQ}:8`],
+          });
+          await c.query('ROLLBACK');
+        }
+        for (const t of OTHER_TABLES) {
+          await c.query(begin('', 'on'));
+          expect({ t, rows: await c.query(`SELECT app_id FROM appdata.${t}`) }).toEqual({
+            t,
+            rows: [],
+          });
+          await c.query('ROLLBACK');
+        }
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        await c.close();
       }
     });
 
     it('positive control: the superuser sees every seeded row', async () => {
       const want = SEED.map(([a, n]) => `${a}|${n}`).sort();
-      expect(await all('doc')).toEqual(want);
-      expect(await all('usage_app')).toEqual(want);
+      for (const t of APPDATA_TABLES) expect({ t, rows: await all(t) }).toEqual({ t, rows: want });
     });
 
     it('on, bound to a request: reads and deletes ONLY that request’s review rows — never prod or dev', async () => {
@@ -182,9 +231,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           `${REQ}|rev:${REQ}:7`,
           `${REQ}|rev:${REQ}:8`,
         ]);
-        // usage_app lists every app's review rows (the sweep's listing), still no prod or dev.
         expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.usage_app`))).toEqual([
-          `${OTHER}|rev:${OTHER}:7`,
           `${REQ}|rev:${REQ}:7`,
           `${REQ}|rev:${REQ}:8`,
         ]);
@@ -211,16 +258,19 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
       expect(await all('doc')).toHaveLength(SEED.length);
     });
 
-    it('on, bound to no request: lists review rows on usage_app only, and deletes nothing', async () => {
+    it('on, bound to no request: reads every app’s review rows on doc and usage_app (the listing) — still no prod or dev — and deletes nothing', async () => {
       const c = await h.rawAsRole();
       try {
         await c.query(begin('', 'on'));
-        expect(await c.query(`SELECT app_id FROM appdata.doc`)).toEqual([]);
-        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.usage_app`))).toEqual([
+        const reviewRows = [
           `${OTHER}|rev:${OTHER}:7`,
           `${REQ}|rev:${REQ}:7`,
           `${REQ}|rev:${REQ}:8`,
-        ]);
+        ];
+        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.doc`))).toEqual(reviewRows);
+        expect(pairs(await c.query(`SELECT app_id, ns FROM appdata.usage_app`))).toEqual(
+          reviewRows
+        );
         expect(await c.query(`DELETE FROM appdata.usage_app RETURNING 1`)).toEqual([]);
         expect(await c.query(`DELETE FROM appdata.doc RETURNING 1`)).toEqual([]);
       } finally {

@@ -35,8 +35,9 @@
 --   (`rev:<publishRequestId>:<moderatorUid>`) of a decided publish request. A
 --   transaction that also sets `appdata.review_maintenance` to 'on' may read and
 --   delete rows whose `ns` starts with `rev:` AND whose `app_id` is the request
---   in `appdata.app_id`; on `usage_app` it may also list review rows of any app
---   (read only), which is how the sweep finds requests to purge. It can never
+--   in `appdata.app_id`; bound to no request, it may read the review rows of any
+--   app on `doc` and `usage_app` (read only), which is how the sweep finds
+--   requests to purge. It can never
 --   see or touch a `prod` or `dev:` row, and never insert or update anything.
 --   Only the purge and sweep functions in `doc-store.ts` set it.
 --
@@ -243,14 +244,18 @@ BEGIN
     -- UPDATE policy admits it, so WITH CHECK stays the scope policy's alone.
     EXECUTE format('DROP POLICY IF EXISTS appdata_review_read ON appdata.%I', t);
     EXECUTE format('DROP POLICY IF EXISTS appdata_review_delete ON appdata.%I', t);
+    -- Reads are keyed on the bound request like deletes, except that on `doc` and
+    -- `usage_app` a transaction bound to NO request may read every app's review rows: that is
+    -- the sweep's listing of requests that still hold review data.
     EXECUTE format(
       'CREATE POLICY appdata_review_read ON appdata.%I FOR SELECT '
       'USING (current_setting(''appdata.review_maintenance'', true) = ''on'' '
-      'AND ns LIKE ''rev:%%'' %s)',
+      'AND ns LIKE ''rev:%%'' '
+      'AND (app_id = NULLIF(current_setting(''appdata.app_id'', true), '''')%s))',
       t,
-      -- usage_app: any app's review rows, so the sweep can list the requests to purge.
-      CASE WHEN t = 'usage_app' THEN ''
-        ELSE 'AND app_id = NULLIF(current_setting(''appdata.app_id'', true), '''')' END);
+      CASE WHEN t IN ('doc', 'usage_app')
+        THEN ' OR NULLIF(current_setting(''appdata.app_id'', true), '''') IS NULL'
+        ELSE '' END);
     EXECUTE format(
       'CREATE POLICY appdata_review_delete ON appdata.%I FOR DELETE '
       'USING (current_setting(''appdata.review_maintenance'', true) = ''on'' '

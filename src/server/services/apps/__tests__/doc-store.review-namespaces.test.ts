@@ -248,6 +248,13 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       }
       expect(seen).toEqual([...seen].sort());
       expect(seen.filter((id) => id.startsWith(`pubreq_${tag}`))).toEqual(ids);
+      // A document whose usage_app row is gone (a write that overlapped a purge) still lists.
+      await h.raw(`DELETE FROM appdata.usage_app WHERE app_id = $1`, [ids[2]]);
+      expect(
+        (await store.listReviewAppIds({ after: `pubreq_${tag}`, limit: 10 })).filter((id) =>
+          id.startsWith(`pubreq_${tag}`)
+        )
+      ).toEqual(ids);
       // A request whose review data is purged no longer lists.
       await store.purgeReview(ids[1]);
       const again = await store.listReviewAppIds({ after: `pubreq_${tag}`, limit: 10 });
@@ -258,7 +265,7 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
   it('every appdata statement carried its bound app id and namespace (or request) as $1', () => {
     // Positive control: the recorder saw the purge and the listing.
     expect(h.statements.some((s) => /DELETE FROM appdata\.usage_app u/.test(s.sql))).toBe(true);
-    expect(h.statements.some((s) => /SELECT u\.app_id FROM appdata\.usage_app u/.test(s.sql))).toBe(
+    expect(h.statements.some((s) => /FROM appdata\.usage_app u WHERE u\.ns LIKE/.test(s.sql))).toBe(
       true
     );
     expect(h.violations).toEqual([]);
