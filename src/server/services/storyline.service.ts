@@ -526,12 +526,14 @@ export async function addOwnerChapter({
         id: true,
         storylineId: true,
         depth: true,
+        removedAt: true,
         storyline: { select: { userId: true, maxNsfwLevel: true, tosViolation: true } },
       },
     });
     if (!parent) throw throwNotFoundError('Chapter not found');
     if (parent.storyline.userId !== userId) throw throwAuthorizationError();
     if (parent.storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+    if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be continued');
 
     await assertPostCanBeChapter(tx, {
       postId,
@@ -975,6 +977,7 @@ export async function getStorylinesForPosts({
   > = {};
   for (const c of chapters) {
     if (c.postId == null || !c.post) continue;
+    // As getStorylineChapterTombstone: only moderators are shown a removed chapter.
     if (c.removedAt && !viewer?.isModerator) continue;
     if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;

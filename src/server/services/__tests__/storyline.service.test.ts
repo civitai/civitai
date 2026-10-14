@@ -1984,8 +1984,9 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
 
 describe('a chapter whose placement was removed', () => {
   const REMOVED_AT = new Date('2026-10-14');
+  // The removed chapters below are by STRANGER, so `author` is their author and `reader` is not.
   const viewers = {
-    stranger: { id: STRANGER },
+    reader: { id: 99 },
     author: { id: STRANGER },
     moderator: { id: MODERATOR, isModerator: true },
   };
@@ -2026,7 +2027,7 @@ describe('a chapter whose placement was removed', () => {
         (c) => c.tombstone
       );
 
-    expect(await tombstones(viewers.stranger)).toEqual([null, 'removed', null]);
+    expect(await tombstones(viewers.reader)).toEqual([null, 'removed', null]);
     expect(await tombstones(viewers.author)).toEqual([null, 'removed', null]);
     expect(await tombstones(viewers.moderator)).toEqual([null, null, null]);
     // Both arms of the walk carry the column, or every chapter above the target reads as kept.
@@ -2034,6 +2035,8 @@ describe('a chapter whose placement was removed', () => {
     expect(sql).toContain('SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops');
     expect(sql).toContain('SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1');
     expect(sql).toContain('SELECT id, "postId", depth, "removedAt" FROM path');
+    // Selected only, never filtered on: the walk must reach past a removed chapter.
+    expect(sql.match(/"removedAt"/g)).toHaveLength(3);
   });
 
   it('is a removed tombstone on the main route', async () => {
@@ -2044,16 +2047,20 @@ describe('a chapter whose placement was removed', () => {
     ] as never);
     r.post.findMany.mockResolvedValue([post(102, OWNER), post(103, STRANGER)] as never);
     r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
-    const ahead = await getStorylineCanonAhead({
-      chapterId: 2,
-      viewer: viewers.stranger,
-      browsingLevel: NsfwLevel.PG,
-    });
-    expect(ahead.map((c) => [c.chapterId, c.tombstone, c.post])).toEqual([[3, 'removed', null]]);
+    const ahead = (viewer: { id: number; isModerator?: boolean }) =>
+      getStorylineCanonAhead({ chapterId: 2, viewer, browsingLevel: NsfwLevel.PG });
+    expect((await ahead(viewers.reader)).map((c) => [c.chapterId, c.tombstone, c.post])).toEqual([
+      [3, 'removed', null],
+    ]);
+    expect((await ahead(viewers.author)).map((c) => c.tombstone)).toEqual(['removed']);
+    expect((await ahead(viewers.moderator)).map((c) => [c.tombstone, c.post?.id])).toEqual([
+      [null, 103],
+    ]);
     const sql = rawSql(r.$queryRaw.mock.calls[0]);
     expect(sql).toContain('SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops');
     expect(sql).toContain('SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1');
     expect(sql).toContain('SELECT id, "postId", depth, "removedAt" FROM main');
+    expect(sql.match(/"removedAt"/g)).toHaveLength(3);
   });
 
   it('is a removed tombstone among the ways on, and asks for the column', async () => {
@@ -2075,15 +2082,26 @@ describe('a chapter whose placement was removed', () => {
       child(11, null),
       child(12, REMOVED_AT),
     ] as never);
-    const children = await getStorylineChildren({
-      chapterId: 1,
-      viewer: viewers.stranger,
-      browsingLevel: NsfwLevel.PG,
-      readersByChapterId: new Map(),
-    });
-    expect(children.map((c) => [c.chapterId, c.tombstone])).toEqual([
+    const tombstones = async (viewer: { id: number; isModerator?: boolean }) =>
+      (
+        await getStorylineChildren({
+          chapterId: 1,
+          viewer,
+          browsingLevel: NsfwLevel.PG,
+          readersByChapterId: new Map(),
+        })
+      ).map((c) => [c.chapterId, c.tombstone]);
+    expect(await tombstones(viewers.reader)).toEqual([
       [11, null],
       [12, 'removed'],
+    ]);
+    expect(await tombstones(viewers.author)).toEqual([
+      [11, null],
+      [12, 'removed'],
+    ]);
+    expect(await tombstones(viewers.moderator)).toEqual([
+      [11, null],
+      [12, null],
     ]);
     expect(r.storylineChapterEdge.findMany.mock.calls[0][0]).toMatchObject({
       select: { chapter: { select: { removedAt: true } } },
@@ -2115,7 +2133,7 @@ describe('a chapter whose placement was removed', () => {
       Object.keys(
         await getStorylinesForPosts({ postIds: [1, 2], viewer, browsingLevel: NsfwLevel.PG })
       );
-    // STRANGER is the removed chapter's author here.
+    expect(await pills(viewers.reader)).toEqual(['1']);
     expect(await pills(viewers.author)).toEqual(['1']);
     expect(await pills(viewers.moderator)).toEqual(['1', '2']);
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
@@ -2128,7 +2146,7 @@ describe('a chapter whose placement was removed', () => {
     r.$queryRaw.mockResolvedValue([] as never);
     r.user.findMany.mockResolvedValue([] as never);
     r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
-    await getStoryline({ id: 10, viewer: viewers.stranger, browsingLevel: NsfwLevel.PG });
+    await getStoryline({ id: 10, viewer: viewers.reader, browsingLevel: NsfwLevel.PG });
     const sqls = r.$queryRaw.mock.calls.map(rawSql);
     const counts = sqls.find((sql) => sql.includes('COUNT(DISTINCT'));
     const credits = sqls.find((sql) => sql.includes('GROUP BY c."userId"'));
@@ -2198,6 +2216,24 @@ describe('a chapter whose placement was removed', () => {
         (c) => (c[0] as { where: { postId?: number } }).where.postId === 500
       )?.[0]
     ).toMatchObject({ select: { removedAt: true } });
+  });
+
+  it('cannot be continued by the owner directly either', async () => {
+    w.storylineChapter.findUnique.mockResolvedValue({
+      id: 20,
+      storylineId: 10,
+      depth: 1,
+      removedAt: REMOVED_AT,
+      storyline: { userId: OWNER, maxNsfwLevel: NsfwLevel.R, tosViolation: false },
+    } as never);
+    w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+    await expect(
+      addOwnerChapter({ parentChapterId: 20, postId: 600, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(w.storylineChapter.create).not.toHaveBeenCalled();
+    expect(w.storylineChapter.findUnique.mock.calls[0][0]).toMatchObject({
+      select: { removedAt: true },
+    });
   });
 
   it('cannot be made the main route, and canon is left as it was', async () => {
