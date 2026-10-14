@@ -328,33 +328,40 @@ export async function settleStorylineContinuation({
   )
     throw throwBadRequestError('storyline: the payment for this continuation is still processing');
 
-  if (action === 'decline') return settlePlacement({ placementId, action, actorId });
-
   return settlePlacement({
     placementId,
     action,
     actorId,
     inTransaction: async (tx, pending) => {
       const postId = continuationPostId(pending.data);
-      if (pending.targetType !== 'post' || !pending.targetId || !postId)
-        throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
+      const parentPostId = pending.targetType === 'post' ? pending.targetId : null;
 
-      // Who approved and who is paid is `ownerId`; the edge goes into the
-      // storyline the parent chapter belongs to. They must be the same person,
-      // or a chapter's author could accept continuations into, and be paid for,
-      // somebody else's story. Checked here, against the primary, whatever the
-      // submission path resolved.
-      const parent = await tx.storylineChapter.findUnique({
-        where: { postId: pending.targetId },
-        select: { storyline: { select: { userId: true } } },
-      });
+      // Who answers and who is paid (the owner's share, or the decline fee) is
+      // `ownerId`; the story is the parent chapter's storyline. They must be the
+      // same person, or a chapter's author could accept continuations into, or
+      // collect fees from, somebody else's story. Checked in this transaction,
+      // whatever the submission path resolved.
+      const parent = parentPostId
+        ? await tx.storylineChapter.findUnique({
+            where: { postId: parentPostId },
+            select: { storyline: { select: { userId: true } } },
+          })
+        : null;
       if (parent && parent.storyline.userId !== pending.ownerId)
         throw new Error(
           `storyline: placement ${placementId} is not owned by its storyline's owner`
         );
 
+      // A decline goes through without a chapter: it writes nothing, and a
+      // parent post deleted since must not trap the placer's money in a queue.
+      if (action === 'decline') return;
+
+      if (!parentPostId || !postId)
+        throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
+      if (!parent) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
       await writeChapterEdgeForPlacement(
-        { placementId, parentPostId: pending.targetId, postId, placerId: pending.placerId },
+        { placementId, parentPostId, postId, placerId: pending.placerId },
         tx
       );
     },

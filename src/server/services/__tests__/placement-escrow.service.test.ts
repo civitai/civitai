@@ -2585,7 +2585,13 @@ describe('a write inside the settlement transaction', () => {
    */
   const realTransaction = dbWriteMock.$transaction;
   const txClients: unknown[] = [];
-  const storylineOwner = dbWriteMock.storylineChapter.findUnique as unknown as ReturnType<
+  /**
+   * The parent chapter lookup, on the transaction's client only. The global
+   * `dbWrite` answers with someone else's storyline, so the owner check read
+   * through the wrong client refuses every approval and is seen.
+   */
+  const storylineOwner = vi.fn();
+  const globalChapterFind = dbWriteMock.storylineChapter.findUnique as unknown as ReturnType<
     typeof vi.fn
   >;
   beforeEach(() => {
@@ -2594,6 +2600,7 @@ describe('a write inside the settlement transaction', () => {
     // The parent chapter's storyline belongs to the placement's owner, as it must.
     storylineOwner.mockReset();
     storylineOwner.mockResolvedValue({ storyline: { userId: OWNER } });
+    globalChapterFind.mockResolvedValue({ storyline: { userId: OWNER + 99 } });
     txClients.length = 0;
     Object.assign(dbWriteMock, {
       $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
@@ -2602,6 +2609,11 @@ describe('a write inside the settlement transaction', () => {
         );
         const legs = new Map([...db.legs].map(([key, row]) => [key, structuredClone(row)]));
         const tx = Object.create(dbWriteMock);
+        // Defined, not assigned: `dbWrite` is a proxy whose set trap would take
+        // a plain assignment through the prototype and give it to the global client.
+        Object.defineProperty(tx, 'storylineChapter', {
+          value: { findUnique: storylineOwner },
+        });
         txClients.push(tx);
         try {
           return await realTransaction(() => fn(tx));
@@ -2617,6 +2629,7 @@ describe('a write inside the settlement transaction', () => {
   });
   afterEach(() => {
     Object.assign(dbWriteMock, { $transaction: realTransaction });
+    globalChapterFind.mockReset();
   });
 
   describe('settlePlacement', () => {
@@ -2818,6 +2831,42 @@ describe('a write inside the settlement transaction', () => {
       expect(storylineOwner).toHaveBeenCalledWith(
         expect.objectContaining({ where: { postId: CHAPTER_POST } })
       );
+    });
+
+    it('refuses a decline whose owner is not the storyline owner, and moves nothing', async () => {
+      givenContinuation({ amount: 1000 });
+      await holdStoryline(1000);
+      clearMoneyMocks();
+      storylineOwner.mockResolvedValue({ storyline: { userId: OWNER + 1 } });
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER })
+      ).rejects.toThrow("is not owned by its storyline's owner");
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(moneyMoved()).toBe(0);
+    });
+
+    it('refuses an approval whose parent post is no longer a chapter', async () => {
+      givenContinuation();
+      storylineOwner.mockResolvedValue(null);
+
+      await expect(
+        settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
+      ).rejects.toThrow('not a chapter of an open storyline');
+
+      expect(db.placements.get(1)!.status).toBe('pending');
+      expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
+    });
+
+    // A parent post deleted since submission must not trap the placer's money.
+    it('still declines when the parent post is no longer a chapter', async () => {
+      givenContinuation();
+      storylineOwner.mockResolvedValue(null);
+
+      await settleStorylineContinuation({ placementId: 1, action: 'decline', actorId: OWNER });
+
+      expect(db.placements.get(1)!.status).toBe('declined');
     });
 
     it('writes no edge on decline', async () => {
