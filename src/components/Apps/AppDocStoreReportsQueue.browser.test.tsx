@@ -10,6 +10,7 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 type Row = Record<string, unknown>;
 const m = vi.hoisted(() => ({
   rows: [] as Row[],
+  truncated: false,
   listInputs: [] as Record<string, unknown>[],
   hideCalls: [] as Record<string, unknown>[],
   deleteCalls: [] as Record<string, unknown>[],
@@ -46,16 +47,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   // with the measured procedures. Anything else under `apps` would be a fixture defect.
   const docStore: Record<string, unknown> = {
     listReported: {
-      useInfiniteQuery: (input: Record<string, unknown>) => {
+      useQuery: (input: Record<string, unknown>) => {
         m.listInputs.push(input);
         return {
-          data: { pages: [{ items: m.rows, nextCursor: null }] },
+          data: { items: m.rows, truncated: m.truncated },
           isLoading: false,
           isFetching: false,
           error: null,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
           refetch: vi.fn(),
         };
       },
@@ -131,7 +129,6 @@ function row(over: Row = {}): Row {
     collection: 'posts',
     key: 'k-17',
     reports: 4,
-    lastReportedAt: new Date('2026-10-05T10:00:00Z'),
     createdAt: new Date('2026-10-01T10:00:00Z'),
     updatedAt: new Date('2026-10-02T10:00:00Z'),
     author: { kind: 'user', userId: 31, username: 'author-a' },
@@ -145,6 +142,7 @@ function row(over: Row = {}): Row {
 
 beforeEach(() => {
   m.rows = [];
+  m.truncated = false;
   m.listInputs = [];
   m.hideCalls = [];
   m.deleteCalls = [];
@@ -170,24 +168,31 @@ describe('AppDocStoreReportsQueue', () => {
     expect(page.getByTestId('doc-store-report-hidden').elements()).toHaveLength(0);
   });
 
-  test('defaults the query to visible docs, most reported first', async () => {
+  test('defaults the query to visible docs; no truncation notice when nothing was cut', async () => {
     renderWithProviders(<AppDocStoreReportsQueue />);
     await expect.element(page.getByTestId('doc-store-reports-queue')).toBeVisible();
-    expect(m.listInputs.at(-1)).toStrictEqual({ status: 'open', sort: 'reports', limit: 50 });
+    expect(m.listInputs.at(-1)).toStrictEqual({ status: 'open' });
+    expect(page.getByTestId('doc-store-reports-truncated').elements()).toHaveLength(0);
     await expect
       .element(page.getByText('No reported documents match these filters.'))
       .toBeVisible();
   });
 
-  test('changing status and sort re-queries with them', async () => {
+  test('changing the status re-queries with it', async () => {
     renderWithProviders(<AppDocStoreReportsQueue />);
     await userEvent.click(page.getByTestId('doc-store-reports-status'));
     await userEvent.click(page.getByRole('option', { name: 'Hidden' }));
-    await userEvent.click(page.getByTestId('doc-store-reports-sort'));
-    await userEvent.click(page.getByRole('option', { name: 'Newest report' }));
+    await expect.poll(() => m.listInputs.at(-1)).toStrictEqual({ status: 'hidden' });
+  });
+
+  test('a truncated list says so plainly, above the rows', async () => {
+    m.rows = [row()];
+    m.truncated = true;
+    renderWithProviders(<AppDocStoreReportsQueue />);
     await expect
-      .poll(() => m.listInputs.at(-1))
-      .toStrictEqual({ status: 'hidden', sort: 'newest', limit: 50 });
+      .element(page.getByTestId('doc-store-reports-truncated'))
+      .toHaveTextContent('Not every reported document is shown');
+    await expect.element(page.getByTestId('doc-store-report-row')).toBeVisible();
   });
 
   test('hide needs a reason, then sends the target and the reason, and refreshes the queue', async () => {

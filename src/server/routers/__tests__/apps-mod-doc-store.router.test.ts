@@ -22,7 +22,11 @@ vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () =>
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { appsModRouter } from '~/server/routers/apps-shared.router';
 import { createDocStore } from '~/server/services/apps/doc-store';
-import { MOD_APP_CONCURRENCY } from '~/server/services/apps/doc-store-moderation.service';
+import {
+  MOD_APP_CONCURRENCY,
+  MOD_QUEUE_MAX,
+  MOD_QUEUE_PER_APP,
+} from '~/server/services/apps/doc-store-moderation.service';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -160,10 +164,11 @@ async function report(app: { id: string }, coll: typeof POSTS, key: string, n: n
 
 /**
  * A: posts/a1 ×3, posts/a0 ×3, board/a2 ×1.   B: posts/b1 ×2, posts/b2 ×1.   C: posts/c1 ×3.
- * Cross-app order by reports (DESC on reports, app, collection, key):
+ * Every document gets the same update time, so the order is reports, then app, collection
+ * and key (all DESC):
  *   C/posts/c1:3, A/posts/a1:3, A/posts/a0:3, B/posts/b1:2, B/posts/b2:1, A/board/a2:1
- * (a1/a0 tie on count, app and collection: the per-app SQL orders them by key, and the merge
- * must keep that order.)
+ * (a1/a0 tie on count, time, app and collection: the per-app SQL orders them by key, and the
+ * merge must keep that order.)
  */
 async function seedQueue() {
   await h.store.put(v(APP_A), POSTS, 'a1', { status: 'open', score: 5 });
@@ -179,6 +184,7 @@ async function seedQueue() {
   await report(APP_B, POSTS, 'b1', 2);
   await report(APP_B, POSTS, 'b2', 1);
   await report(APP_C, POSTS, 'c1', 3);
+  await harness.raw(`UPDATE appdata.doc SET updated_at = '2026-03-01T00:00:00Z'`);
 }
 const EXPECTED_ORDER = [
   'apb_MODC/posts/c1:3',
@@ -235,12 +241,31 @@ describe('access: session moderators only', () => {
   });
 });
 
+/** A synthetic store row for the cap tests, which do not need real documents. */
+function fakeRow(key: string, reports: number) {
+  const at = new Date('2026-03-01T00:00:00Z');
+  return {
+    collection: 'posts',
+    key,
+    reports,
+    createdAt: at,
+    updatedAt: at,
+    authorKind: 'user' as const,
+    authorUid: VIEWER_1,
+    hiddenAt: null,
+    hiddenBy: null,
+    sizeBytes: 10,
+    version: 1,
+    revision: 1,
+  };
+}
+
 describe('listReported: the cross-app queue', () => {
-  it('merges every app, most-reported first, with app/collection/key as tiebreaks', async () => {
+  it('merges every app: most reports, then app/collection/key as tiebreaks; not truncated', async () => {
     await seedQueue();
     const out = await caller().listReported({});
     expect(out.items.map(tag)).toEqual(EXPECTED_ORDER);
-    expect(out.nextCursor).toBeNull();
+    expect(out.truncated).toBe(false);
     const a1 = out.items.find((i) => i.key === 'a1')!;
     expect(a1).toMatchObject({
       appSlug: 'mod-a-store',
@@ -250,69 +275,73 @@ describe('listReported: the cross-app queue', () => {
     expect(out.items.find((i) => i.key === 'b1')!.appSlug).toBe('mod-b');
   });
 
-  it('pages across app boundaries with no duplicates or gaps, at every page size', async () => {
+  it('a more recent update outranks the app/collection/key tiebreak, across apps', async () => {
     await seedQueue();
-    for (const limit of [1, 2, 3, 4]) {
-      const seen: string[] = [];
-      let cursor: string | undefined;
-      for (let i = 0; i < 10; i++) {
-        const page = await caller().listReported({ limit, cursor });
-        seen.push(...page.items.map(tag));
-        if (!page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-      expect({ limit, seen }).toEqual({ limit, seen: EXPECTED_ORDER });
-    }
+    await harness.raw(
+      `UPDATE appdata.doc SET updated_at = '2026-03-02T00:00:00Z' WHERE app_id = $1 AND key = 'a0'`,
+      [APP_A.id]
+    );
+    expect((await caller().listReported({})).items.slice(0, 3).map(tag)).toEqual([
+      'apb_MODA/posts/a0:3',
+      'apb_MODC/posts/c1:3',
+      'apb_MODA/posts/a1:3',
+    ]);
   });
 
-  it('newest sorts by the latest report across apps', async () => {
+  it('asks the store once per app, for one row more than it keeps per app', async () => {
     await seedQueue();
-    const at: [string, string, string][] = [
-      [APP_B.id, 'b2', '2026-05-05T00:00:00Z'],
-      [APP_A.id, 'a2', '2026-05-04T00:00:00Z'],
-      [APP_C.id, 'c1', '2026-05-03T00:00:00Z'],
-      [APP_A.id, 'a1', '2026-05-02T00:00:00Z'],
-      [APP_B.id, 'b1', '2026-05-01T00:00:00Z'],
-      [APP_A.id, 'a0', '2026-04-30T00:00:00Z'],
-    ];
-    for (const [app, key, t] of at) {
-      await harness.raw(
-        `UPDATE appdata.doc_mark SET created_at = $3 WHERE app_id = $1 AND key = $2`,
-        [app, key, t]
-      );
-    }
-    const out = await caller().listReported({ sort: 'newest', limit: 2 });
-    const next = await caller().listReported({
-      sort: 'newest',
-      limit: 10,
-      cursor: out.nextCursor!,
-    });
-    expect([...out.items, ...next.items].map((i) => `${i.appBlockId}/${i.key}`)).toEqual(
-      at.map(([app, key]) => `${app}/${key}`)
+    const spy = vi.spyOn(h.store.moderation, 'listReported');
+    await caller().listReported({ status: 'hidden' });
+    expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(APPS.map((a) => a.id).sort());
+    expect(spy.mock.calls.map((c) => c[2])).toEqual(
+      APPS.map(() => ({ status: 'hidden', limit: MOD_QUEUE_PER_APP + 1 }))
     );
   });
 
-  it('one app only, and refuses a cursor from the other sort or a forged one', async () => {
-    await seedQueue();
-    const out = await caller().listReported({ appBlockId: APP_B.id });
-    expect(out.items.map(tag)).toEqual(['apb_MODB/posts/b1:2', 'apb_MODB/posts/b2:1']);
-    const first = await caller().listReported({ limit: 1 });
-    await expect(
-      caller().listReported({ sort: 'newest', cursor: first.nextCursor! })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    await expect(caller().listReported({ cursor: 'not-a-cursor' })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
-    await expect(caller().listReported({ appBlockId: 'apb_NOPE' })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    });
+  it('truncated when one app has more than the per-app cap; exactly the cap is not', async () => {
+    for (const [n, truncated] of [
+      [MOD_QUEUE_PER_APP, false],
+      [MOD_QUEUE_PER_APP + 1, true],
+    ] as const) {
+      vi.spyOn(h.store.moderation, 'listReported').mockImplementation(async (appId) =>
+        appId === APP_B.id
+          ? Array.from({ length: n }, (_, i) => fakeRow(`k${String(i).padStart(3, '0')}`, 1))
+          : []
+      );
+      const out = await caller().listReported({});
+      expect({ n, kept: out.items.length, truncated: out.truncated }).toEqual({
+        n,
+        kept: MOD_QUEUE_PER_APP,
+        truncated,
+      });
+      vi.restoreAllMocks();
+    }
   });
 
-  it('asks the store once per app', async () => {
-    await seedQueue();
-    const spy = vi.spyOn(h.store.moderation, 'listReported');
-    await caller().listReported({});
-    expect(spy.mock.calls.map((c) => c[0]).sort()).toEqual(APPS.map((a) => a.id).sort());
+  it('truncated when the apps together exceed the total cap, keeping the most reported', async () => {
+    // Enough apps that each stays under the per-app cap while the sum exceeds the total cap,
+    // so only the TOTAL cap can be what truncates.
+    const apps = Math.ceil((MOD_QUEUE_MAX + 1) / MOD_QUEUE_PER_APP) + 1;
+    const perApp = Math.ceil((MOD_QUEUE_MAX + 1) / apps);
+    expect(perApp).toBeLessThan(MOD_QUEUE_PER_APP);
+    mockRead.appBlock.findMany.mockImplementationOnce(async () =>
+      Array.from({ length: apps }, (_, i) => ({
+        id: `apb_TOT${i}`,
+        blockId: `tot${i}`,
+        appListing: null,
+      }))
+    );
+    vi.spyOn(h.store.moderation, 'listReported').mockImplementation(async () =>
+      Array.from({ length: perApp }, (_, i) => fakeRow(`k${String(i).padStart(3, '0')}`, 1 + i))
+    );
+    const out = await caller().listReported({});
+    expect(out.items).toHaveLength(MOD_QUEUE_MAX);
+    expect(out.truncated).toBe(true);
+    // Highest counts first, and every row cut was one with the lowest count (1).
+    const cut = apps * perApp - MOD_QUEUE_MAX;
+    expect(cut).toBeGreaterThan(0);
+    expect(out.items[0].reports).toBe(perApp);
+    expect(out.items.filter((i) => i.reports === 1)).toHaveLength(apps - cut);
   });
 
   it('keeps exactly MOD_APP_CONCURRENCY per-app store calls in flight, not more', async () => {
@@ -336,11 +365,6 @@ describe('listReported: the cross-app queue', () => {
       calls: ids.length,
       peak: MOD_APP_CONCURRENCY,
     });
-  });
-
-  it('accepts the largest page size (the store is asked for limit + 1)', async () => {
-    await seedQueue();
-    expect((await caller().listReported({ limit: 100 })).items.map(tag)).toEqual(EXPECTED_ORDER);
   });
 });
 

@@ -49,9 +49,6 @@ async function mapped<T>(fn: () => Promise<T>): Promise<T> {
           cause: err,
         });
       }
-      if (err.kind === 'invalid_cursor') {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'invalid cursor', cause: err });
-      }
       throw new TRPCError({
         code: 'NOT_FOUND',
         message: err.kind === 'app_not_found' ? 'app block not found' : 'document not found',
@@ -80,15 +77,11 @@ async function mapped<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export const appsModDocStoreRouter = router({
-  /** Reported shared documents, most-reported (or most recently reported) first. */
+  /** Reported shared documents across apps, most reported first; capped, not paged (`truncated`). */
   listReported: moderatorProcedure
     .input(
       z.object({
-        appBlockId: appBlockIdInput.optional(),
         status: z.enum(['open', 'hidden', 'all']).default('open'),
-        sort: z.enum(['reports', 'newest']).default('reports'),
-        limit: z.number().int().min(1).max(100).default(50),
-        cursor: z.string().max(1024).optional(),
       })
     )
     .query(({ input }) => mapped(() => listReportedDocs(input))),

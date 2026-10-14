@@ -1388,22 +1388,12 @@ function translatePgError(err: unknown): unknown {
 // Moderators act on SHARED documents only (`scope_uid = 0`): reports exist only
 // there, and private per-viewer documents are not a moderation surface.
 
-export type ModeratedDocSort = 'reports' | 'newest';
 export type ModeratedDocStatus = 'open' | 'hidden' | 'all';
-
-/** A keyset position in the cross-app order `(sortValue, appId, collection, key)`, all descending. */
-export type ModeratedDocPosition = {
-  sortValue: string;
-  appId: string;
-  collection: string;
-  key: string;
-};
 
 export type ReportedDocRow = {
   collection: string;
   key: string;
   reports: number;
-  lastReportedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   authorKind: 'user' | 'app' | 'counter';
@@ -1415,11 +1405,9 @@ export type ReportedDocRow = {
   version: number;
   /** The document's revision (`seq`): pass it back to bind an action to exactly this state. */
   revision: number;
-  /** The keyset value for the requested sort, as a decimal bigint. */
-  sortValue: string;
 };
 
-export type ModeratedDoc = Omit<ReportedDocRow, 'sortValue' | 'lastReportedAt'> & {
+export type ModeratedDoc = ReportedDocRow & {
   data: Record<string, unknown>;
   /** md5 of the stored jsonb text — what an audit row records instead of the content. */
   dataMd5: string;
@@ -1438,14 +1426,16 @@ type ModerationDeps = {
 };
 
 // Reported shared documents of one (app, ns): a positive `report` mark tally joined to
-// its document. $1 app, $2 ns, $3 the report mark name.
+// its document. $1 app, $2 ns, $3 the report mark name; the caller appends a status
+// condition, the order and `LIMIT $4`.
 const SQL_MOD_REPORTED = `SELECT d.coll, d.key, d.author_uid, d.author_kind, d.created_at, d.updated_at,
-    d.hidden_at, d.hidden_by, d.size_bytes, d.version, d.seq, t.count AS reports,
-    (SELECT max(rm.created_at) FROM appdata.doc_mark rm
-      WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = t.coll AND rm.key = t.key AND rm.name = $3) AS last_reported_at
+    d.hidden_at, d.hidden_by, d.size_bytes, d.version, d.seq, t.count AS reports
   FROM appdata.doc_tally t
   JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = t.coll AND d.scope_uid = 0 AND d.key = t.key
   WHERE t.app_id = $1 AND t.ns = $2 AND t.kind = 'mark' AND t.name = $3 AND t.count > 0`;
+
+/** The one queue order, applied per app here and again across apps by the caller. */
+const MOD_QUEUE_ORDER = `ORDER BY t.count DESC, d.updated_at DESC, d.coll DESC, d.key DESC`;
 
 // One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
 const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.seq, d.size_bytes,
@@ -1473,8 +1463,6 @@ const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hid
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
   FOR UPDATE`;
 
-const SORT_VALUE_SHAPE = /^[0-9]{1,18}$/;
-
 function assertModTarget(collection: string, key: string): void {
   if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
   assertKey(key);
@@ -1498,69 +1486,33 @@ const modCtx = (appId: string, ns: string): DocStoreContext => ({ appId, ns, vie
 
 function createModeration({ withTx, charge }: ModerationDeps) {
   /**
-   * Reported shared documents of ONE app, in the cross-app order
-   * `(sortValue DESC, appId DESC, collection DESC, key DESC)`, after `after` and at most
-   * `limit`. `reports` sorts by report count; `newest` by the latest report's time
-   * (microseconds since epoch). The caller merges apps; `appId` is constant here, so
-   * the app component of the keyset is resolved in TypeScript (app ids are ASCII, so
-   * JS order equals the bytewise order the columns use).
+   * The first `limit` reported shared documents of ONE app: most reports, then most recently
+   * updated, then collection and key (all descending). The caller asks for one more than it
+   * keeps, to know whether the app was cut off.
    */
   async function listReported(
     appId: string,
     ns: string,
-    opts: {
-      sort: ModeratedDocSort;
-      status: ModeratedDocStatus;
-      after?: ModeratedDocPosition;
-      limit: number;
-    }
+    opts: { status: ModeratedDocStatus; limit: number }
   ): Promise<ReportedDocRow[]> {
     if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > B.listLimitMax + 1) {
       throw invalid(`limit must be 1–${B.listLimitMax + 1}`);
     }
-    const params: unknown[] = [appId, ns, REPORT_MARK];
-    const p = (v: unknown) => {
-      params.push(v);
-      return `$${params.length}`;
-    };
     const statusCond =
       opts.status === 'open'
-        ? 'AND q.hidden_at IS NULL'
+        ? 'AND d.hidden_at IS NULL'
         : opts.status === 'hidden'
-        ? 'AND q.hidden_at IS NOT NULL'
+        ? 'AND d.hidden_at IS NOT NULL'
         : '';
-    const sv =
-      opts.sort === 'reports'
-        ? 'q.reports'
-        : `COALESCE((extract(epoch FROM q.last_reported_at) * 1000000)::bigint, 0)`;
-    let cursorCond = '';
-    if (opts.after) {
-      const a = opts.after;
-      if (!SORT_VALUE_SHAPE.test(a.sortValue) || !APP_ID_SHAPE.test(a.appId)) {
-        throw invalid('invalid cursor');
-      }
-      assertModTarget(a.collection, a.key);
-      const v = `${p(a.sortValue)}::bigint`;
-      if (appId < a.appId) cursorCond = `AND r.sv <= ${v}`;
-      else if (appId > a.appId) cursorCond = `AND r.sv < ${v}`;
-      else {
-        cursorCond = `AND (r.sv, r.coll, r.key) < (${v}, ${p(a.collection)}::text, ${p(
-          a.key
-        )}::text)`;
-      }
-    }
-    const sql = [
-      `SELECT r.* FROM (SELECT q.*, ${sv} AS sv FROM (${SQL_MOD_REPORTED}) q WHERE true ${statusCond}) r`,
-      `WHERE true ${cursorCond}`,
-      `ORDER BY r.sv DESC, r.coll DESC, r.key DESC`,
-      `LIMIT ${p(opts.limit)}::int`,
-    ].join('\n');
-    const rows = await withTx(modCtx(appId, ns), async (c) => (await c.query(sql, params)).rows);
+    const sql = `${SQL_MOD_REPORTED} ${statusCond}\n  ${MOD_QUEUE_ORDER}\n  LIMIT $4::int`;
+    const rows = await withTx(
+      modCtx(appId, ns),
+      async (c) => (await c.query(sql, [appId, ns, REPORT_MARK, opts.limit])).rows
+    );
     return rows.map((r) => ({
       collection: r.coll as string,
       key: r.key as string,
       reports: Number(r.reports),
-      lastReportedAt: r.last_reported_at ? new Date(r.last_reported_at as string | Date) : null,
       createdAt: new Date(r.created_at as string | Date),
       updatedAt: new Date(r.updated_at as string | Date),
       authorKind: r.author_kind as ReportedDocRow['authorKind'],
@@ -1570,7 +1522,6 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       sizeBytes: Number(r.size_bytes),
       version: Number(r.version),
       revision: Number(r.seq),
-      sortValue: String(r.sv),
     }));
   }
 

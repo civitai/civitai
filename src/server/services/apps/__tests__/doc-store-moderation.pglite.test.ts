@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDocStore } from '~/server/services/apps/doc-store';
-import type { DocStore, ModeratedDocPosition } from '~/server/services/apps/doc-store';
+import type { DocStore } from '~/server/services/apps/doc-store';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { createPgliteHarness } from './doc-store.harness';
 import type { Harness } from './doc-store.harness';
@@ -59,16 +59,16 @@ function defineModerationSuite(rls: boolean) {
     app: string,
     opts: Partial<Parameters<DocStore['moderation']['listReported']>[2]> = {}
   ) =>
-    (
-      await store.moderation.listReported(app, NS_PROD, {
-        sort: 'reports',
-        status: 'all',
-        limit: 50,
-        ...opts,
-      })
-    ).map((r) => `${r.collection}/${r.key}:${r.reports}`);
+    (await store.moderation.listReported(app, NS_PROD, { status: 'all', limit: 50, ...opts })).map(
+      (r) => `${r.collection}/${r.key}:${r.reports}`
+    );
 
-  /** Seed: five reported shared docs with report counts 3, 1, 2, 2, 2; one unreported; one report withdrawn. */
+  /**
+   * Seed: five reported shared docs with report counts 3, 1, 2, 2, 2; one unreported; one
+   * report withdrawn. Among the three with 2 reports, `board/b1` was updated last (so it
+   * comes first although `board` < `posts`), and `posts/p6` / `posts/p3` share an update time
+   * (so only the key orders them).
+   */
   async function seedQueue(app: string) {
     const v1 = ctx(app, NS_PROD, VIEWER_1);
     for (const k of ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'])
@@ -77,66 +77,46 @@ function defineModerationSuite(rls: boolean) {
     await report(app, POSTS, 'p1', R1, R2, R3);
     await report(app, POSTS, 'p2', R1);
     await report(app, POSTS, 'p3', R2, R3);
-    // Ties p3 on count AND collection, so only the key orders them.
     await report(app, POSTS, 'p6', R1, R3);
     await report(app, BOARD, 'b1', R1, R3);
     await report(app, POSTS, 'p5', R2);
     await store.unmark(ctx(app, NS_PROD, R2), POSTS, 'p5', 'report');
-    // Distinct latest-report times, in an order unlike the count order: p2, b1, p1, p3
-    // (p6 keeps the baseline time, so it is last).
-    const latest: [string, string, string][] = [
-      ['posts', 'p2', '2026-03-04T00:00:00Z'],
-      ['board', 'b1', '2026-03-03T00:00:00Z'],
-      ['posts', 'p1', '2026-03-02T00:00:00Z'],
-      ['posts', 'p3', '2026-03-01T00:00:00Z'],
-    ];
+    await h.raw(`UPDATE appdata.doc SET updated_at = '2026-02-01T00:00:00Z' WHERE app_id = $1`, [
+      app,
+    ]);
     await h.raw(
-      `UPDATE appdata.doc_mark SET created_at = '2026-01-01T00:00:00Z' WHERE app_id = $1 AND name = 'report'`,
+      `UPDATE appdata.doc SET updated_at = '2026-02-05T00:00:00Z' WHERE app_id = $1 AND key = 'b1'`,
       [app]
     );
-    for (const [coll, key, at] of latest) {
-      await h.raw(
-        `UPDATE appdata.doc_mark SET created_at = $4 WHERE app_id = $1 AND coll = $2 AND key = $3
-           AND name = 'report' AND user_id = (SELECT max(user_id) FROM appdata.doc_mark
-             WHERE app_id = $1 AND coll = $2 AND key = $3 AND name = 'report')`,
-        [app, coll, key, at]
-      );
-    }
   }
 
   describe('report queue (one app)', () => {
-    it('lists only reported shared docs, most-reported first, collection then key DESC on ties', async () => {
+    it('lists only reported shared docs: most reports, then latest update, then collection and key', async () => {
       const app = freshApp('modq');
       await seedQueue(app);
       expect(await queue(app)).toEqual([
         'posts/p1:3',
+        'board/b1:2',
         'posts/p6:2',
         'posts/p3:2',
-        'board/b1:2',
         'posts/p2:1',
       ]);
     });
 
-    it('newest: by the latest report time, not by count or key', async () => {
-      const app = freshApp('modnew');
+    it('stops at the limit, keeping the head of the order', async () => {
+      const app = freshApp('modlim');
       await seedQueue(app);
-      expect(await queue(app, { sort: 'newest' })).toEqual([
-        'posts/p2:1',
-        'board/b1:2',
-        'posts/p1:3',
-        'posts/p3:2',
-        'posts/p6:2',
-      ]);
+      expect(await queue(app, { limit: 3 })).toEqual(['posts/p1:3', 'board/b1:2', 'posts/p6:2']);
+      await expectCode(
+        store.moderation.listReported(app, NS_PROD, { status: 'all', limit: 0 }),
+        'invalid_request'
+      );
     });
 
-    it('carries the author, timestamps and hidden state for moderators', async () => {
+    it('carries the author, timestamps, revision and hidden state for moderators', async () => {
       const app = freshApp('modrow');
       await seedQueue(app);
-      const [top] = await store.moderation.listReported(app, NS_PROD, {
-        sort: 'reports',
-        status: 'all',
-        limit: 1,
-      });
+      const [top] = await store.moderation.listReported(app, NS_PROD, { status: 'all', limit: 1 });
       expect(top).toMatchObject({
         collection: 'posts',
         key: 'p1',
@@ -145,54 +125,9 @@ function defineModerationSuite(rls: boolean) {
         authorUid: VIEWER_1,
         hiddenAt: null,
         hiddenBy: null,
-        sortValue: '3',
-        lastReportedAt: new Date('2026-03-02T00:00:00Z'),
+        updatedAt: new Date('2026-02-01T00:00:00Z'),
+        revision: (await store.moderation.get(app, NS_PROD, 'posts', 'p1'))!.revision,
       });
-    });
-
-    it('pages with a keyset position for each relation of the cursor app to this app', async () => {
-      const app = freshApp('modpage');
-      await seedQueue(app);
-      const page = async (after: ModeratedDocPosition) =>
-        (
-          await store.moderation.listReported(app, NS_PROD, {
-            sort: 'reports',
-            status: 'all',
-            limit: 50,
-            after,
-          })
-        ).map((r) => `${r.collection}/${r.key}`);
-      // Same app, same count and collection: only the key separates p6 from p3.
-      expect(await page({ sortValue: '2', appId: app, collection: 'posts', key: 'p6' })).toEqual([
-        'posts/p3',
-        'board/b1',
-        'posts/p2',
-      ]);
-      // Same app: strictly after (2, posts, p3).
-      expect(await page({ sortValue: '2', appId: app, collection: 'posts', key: 'p3' })).toEqual([
-        'board/b1',
-        'posts/p2',
-      ]);
-      // Cursor in an app that sorts AFTER this one (DESC): equal counts of this app come later.
-      expect(await page({ sortValue: '2', appId: 'zz_after', collection: 'a', key: 'a' })).toEqual([
-        'posts/p6',
-        'posts/p3',
-        'board/b1',
-        'posts/p2',
-      ]);
-      // Cursor in an app that sorts BEFORE this one: only strictly smaller counts remain.
-      expect(await page({ sortValue: '2', appId: 'AA_before', collection: 'a', key: 'a' })).toEqual(
-        ['posts/p2']
-      );
-      await expectCode(
-        store.moderation.listReported(app, NS_PROD, {
-          sort: 'reports',
-          status: 'all',
-          limit: 5,
-          after: { sortValue: '1; DROP', appId: app, collection: 'posts', key: 'p1' },
-        }),
-        'invalid_request'
-      );
     });
 
     it('status filters open / hidden / all', async () => {
@@ -200,15 +135,14 @@ function defineModerationSuite(rls: boolean) {
       await seedQueue(app);
       await store.moderation.setHidden(app, NS_PROD, 'posts', 'p1', true, MOD);
       expect(await queue(app, { status: 'open' })).toEqual([
+        'board/b1:2',
         'posts/p6:2',
         'posts/p3:2',
-        'board/b1:2',
         'posts/p2:1',
       ]);
       expect(await queue(app, { status: 'hidden' })).toEqual(['posts/p1:3']);
       expect(await queue(app, { status: 'all' })).toHaveLength(5);
       const [hidden] = await store.moderation.listReported(app, NS_PROD, {
-        sort: 'reports',
         status: 'hidden',
         limit: 5,
       });
@@ -583,7 +517,7 @@ describe('runtime isolation shape of every moderation statement', () => {
       5
     );
     expect(
-      statements.filter((s) => /\(r\.sv, r\.coll, r\.key\) </.test(s.sql)).length
+      statements.filter((s) => /ORDER BY t\.count DESC, d\.updated_at DESC/.test(s.sql)).length
     ).toBeGreaterThan(0);
     expect(harnesses.flatMap((x) => x.violations)).toEqual([]);
   });

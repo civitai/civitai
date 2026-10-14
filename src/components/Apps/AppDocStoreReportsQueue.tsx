@@ -1,4 +1,5 @@
 import {
+  Alert,
   Badge,
   Button,
   Center,
@@ -12,7 +13,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { formatDate } from '~/utils/date-helpers';
@@ -23,25 +24,20 @@ import type { RouterOutput } from '~/types/router';
 /**
  * `/apps/review` → "Storage reports": shared documents in the App Blocks document store that
  * viewers reported, across every app, with hide / unhide / delete (`apps.mod.docStore.*`).
- * Every action requires a reason, which is written to the app's moderation history.
+ * Every action requires a reason, which is written to the moderation audit log. The list is
+ * capped rather than paged; when it was cut off, it says so.
  */
 
 type Row = RouterOutput['apps']['mod']['docStore']['listReported']['items'][number];
 type Status = 'open' | 'hidden' | 'all';
-type Sort = 'reports' | 'newest';
 type Action = 'hide' | 'unhide' | 'delete';
 
 const DATE_FORMAT = 'MMM D, YYYY HH:mm';
-const PAGE_LIMIT = 50;
 
 const STATUS_OPTIONS = [
   { value: 'open', label: 'Visible to the app' },
   { value: 'hidden', label: 'Hidden' },
   { value: 'all', label: 'All' },
-];
-const SORT_OPTIONS = [
-  { value: 'reports', label: 'Most reported' },
-  { value: 'newest', label: 'Newest report' },
 ];
 
 export const DOC_STORE_ACTION_COPY: Record<
@@ -181,11 +177,6 @@ function ReportRow({
           <Text size="xs" c="dimmed">
             Updated {formatDate(row.updatedAt, DATE_FORMAT)}
           </Text>
-          {row.lastReportedAt && (
-            <Text size="xs" c="dimmed">
-              Last reported {formatDate(row.lastReportedAt, DATE_FORMAT)}
-            </Text>
-          )}
         </Group>
       </Stack>
     </Paper>
@@ -194,17 +185,13 @@ function ReportRow({
 
 export function AppDocStoreReportsQueue() {
   const [status, setStatus] = useState<Status>('open');
-  const [sort, setSort] = useState<Sort>('reports');
   const [viewing, setViewing] = useState<Row | null>(null);
   const [pending, setPending] = useState<{ row: Row; action: Action } | null>(null);
   const [reason, setReason] = useState('');
 
   const utils = trpc.useUtils();
-  const list = trpc.apps.mod.docStore.listReported.useInfiniteQuery(
-    { status, sort, limit: PAGE_LIMIT },
-    { getNextPageParam: (last) => last.nextCursor ?? undefined, retry: false }
-  );
-  const rows = useMemo(() => list.data?.pages.flatMap((p) => p.items) ?? [], [list.data]);
+  const list = trpc.apps.mod.docStore.listReported.useQuery({ status }, { retry: false });
+  const rows = list.data?.items ?? [];
 
   const close = () => {
     setPending(null);
@@ -260,15 +247,6 @@ export function AppDocStoreReportsQueue() {
           w={200}
           data-testid="doc-store-reports-status"
         />
-        <Select
-          label="Sort"
-          data={SORT_OPTIONS}
-          value={sort}
-          allowDeselect={false}
-          onChange={(v) => setSort((v as Sort) ?? 'reports')}
-          w={180}
-          data-testid="doc-store-reports-sort"
-        />
       </Group>
 
       {list.isLoading ? (
@@ -282,7 +260,16 @@ export function AppDocStoreReportsQueue() {
           isRetrying={list.isFetching}
           title="Couldn’t load storage reports"
         />
-      ) : !rows.length ? (
+      ) : null}
+
+      {list.data?.truncated && (
+        <Alert color="yellow" variant="light" data-testid="doc-store-reports-truncated">
+          Not every reported document is shown: the list is capped per app and in total. Hide or
+          delete the ones here, or narrow the status filter, to see the rest.
+        </Alert>
+      )}
+
+      {list.isLoading || list.error ? null : !rows.length ? (
         <Text c="dimmed" py="lg" ta="center">
           No reported documents match these filters.
         </Text>
@@ -297,17 +284,6 @@ export function AppDocStoreReportsQueue() {
               onAction={(action) => setPending({ row, action })}
             />
           ))}
-          {list.hasNextPage && (
-            <Center>
-              <Button
-                variant="default"
-                onClick={() => list.fetchNextPage()}
-                loading={list.isFetchingNextPage}
-              >
-                Load more
-              </Button>
-            </Center>
-          )}
         </Stack>
       )}
 
