@@ -33,6 +33,7 @@ import {
 } from '$lib/server/text-scan-lab/prompt-save';
 import { runTry } from '$lib/server/text-scan-lab/try';
 import { promptAuthors } from '$lib/server/text-scan-lab/version';
+import { cancelAction, quoteAction, startAction } from '$lib/server/text-scan-tests/form-actions';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { MODEL_RULES_POLICY_KEY } from '$lib/text-scan-lab/types';
 
@@ -237,4 +238,8 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     return restorePrompt({ ...input, key: MODEL_RULES_POLICY_KEY });
   }),
+
+  quoteRun: (event) => quoteAction(event, 'modelRules'),
+  startRun: (event) => startAction(event, 'modelRules'),
+  cancelRun: cancelAction,
 };

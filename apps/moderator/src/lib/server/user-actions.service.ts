@@ -74,6 +74,8 @@ export type JsonResult =
       ok: false;
       error: string;
       requestNeverSent?: boolean;
+      /** No session to forward — no cookie, or no request in scope; the request was never sent. */
+      noSession?: true;
       status?: number;
       /** The recovered text alone, without the action label, so a caller that overrides the message
        *  can still carry what the far side said. */
@@ -98,6 +100,8 @@ async function postJson(opts: {
   label: string;
   auth: 'webhook' | 'session';
   timeoutMs: number;
+  /** `'session'` only: forward this cookie instead of the current request's. */
+  cookie?: string;
 }): Promise<JsonResult> {
   const base = civitaiAppUrl();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -107,20 +111,24 @@ async function postJson(opts: {
     // Throws when there is no request in scope (a job, a script). That is a programming error rather
     // than a runtime condition, but it must not surface to the operator as a bare 500.
     let cookie: string | null;
-    try {
-      cookie = getRequestEvent().request.headers.get('cookie');
-    } catch {
-      return {
-        ok: false,
-        error: `${opts.label} must be called while handling a request.`,
-        requestNeverSent: true,
-      };
-    }
+    if (opts.cookie !== undefined) cookie = opts.cookie;
+    else
+      try {
+        cookie = getRequestEvent().request.headers.get('cookie');
+      } catch {
+        return {
+          ok: false,
+          error: `${opts.label} must be called while handling a request.`,
+          requestNeverSent: true,
+          noSession: true,
+        };
+      }
     if (!cookie)
       return {
         ok: false,
         error: `${opts.label} failed: no session to forward.`,
         requestNeverSent: true,
+        noSession: true,
       };
     headers.cookie = cookie;
   } else {
@@ -217,6 +225,28 @@ export const callModEndpoint = (
   timeoutMs = 30_000
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
+
+/** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
+export const callModEndpointAs = (
+  cookie: string,
+  path: ModEndpoint,
+  body: Record<string, unknown>,
+  label: string,
+  timeoutMs = 30_000
+): Promise<JsonResult> =>
+  postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs, cookie });
+
+/**
+ * The session cookie of the request being handled; null outside a request or without one.
+ * It is the moderator's session: keep it in memory only, never log or store it.
+ */
+export function requestCookie(): string | null {
+  try {
+    return getRequestEvent().request.headers.get('cookie') || null;
+  } catch {
+    return null;
+  }
+}
 
 // Best-effort: the resolve already committed, and a missed bust is a stale read that expires with the cache.
 export const bustModelVersionCache = (versionIds: number[]): Promise<JsonResult> =>

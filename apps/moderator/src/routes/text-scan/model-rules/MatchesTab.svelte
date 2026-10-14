@@ -12,8 +12,10 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import CursorPager from '$lib/components/CursorPager.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
+  import AddToSetDialog from '$lib/components/text-scan-tests/AddToSetDialog.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { matchSourceLabel, matchSourceVariant } from '$lib/model-rules';
+  import { expectedFromOutput } from '$lib/text-scan-tests/expected';
   import { urlWith } from '$lib/url';
   import type { PageData } from './$types';
 
@@ -22,12 +24,20 @@
     query,
     civitaiUrl,
     url,
+    canCapture,
   }: {
     matches: NonNullable<PageData['matches']>;
     query: PageData['query'];
     civitaiUrl: string;
     url: URL;
+    canCapture: boolean;
   } = $props();
+
+  type MatchRow = NonNullable<PageData['matches']>['items'][number];
+  const savedRules = (row: MatchRow) =>
+    row.matches
+      .filter((m) => m.ruleId > 0)
+      .map((m) => ({ id: m.ruleId, subject: m.subject ?? `Rule ${m.ruleId}` }));
 
   const MODES = [
     { value: 'all', label: 'All' },
@@ -99,6 +109,22 @@
                 {row.modelName ?? `Model ${row.modelId}`}
               </a>
               <div class="text-xs text-dark-2">#{row.modelId}</div>
+              {#if canCapture}
+                <AddToSetDialog
+                  workspace="modelRules"
+                  entityType="ModelRules"
+                  labels={['modelRules']}
+                  entityId={row.modelId}
+                  fields={null}
+                  origin="matches"
+                  prefill={expectedFromOutput(
+                    null,
+                    ['modelRules'],
+                    row.matches.map((m) => m.ruleId)
+                  )}
+                  ruleChoices={savedRules(row)}
+                />
+              {/if}
             </TableCell>
             <TableCell class="align-top">
               <Badge variant={row.mode === 'active' ? 'default' : 'secondary'}>{row.mode}</Badge>

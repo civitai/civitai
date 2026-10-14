@@ -1,14 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The real module imports `$app/server`, which only exists inside SvelteKit.
-vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
+vi.mock('../user-actions.service', () => ({
+  callModEndpoint: vi.fn(),
+  callModEndpointAs: vi.fn(),
+}));
 
-const { callModEndpoint } = await import('../user-actions.service');
+const { callModEndpoint, callModEndpointAs } = await import('../user-actions.service');
 const { restErrorReason } = await import('../rest-error-reason');
-const { LabHarnessError, StalePromptError, composeEntities, getPrompts, putPrompt, scanTexts } =
-  await import('../text-scan-lab/harness-client');
+const {
+  LabHarnessError,
+  StalePromptError,
+  composeEntities,
+  getPrompts,
+  putPrompt,
+  quoteTexts,
+  scanTexts,
+} = await import('../text-scan-lab/harness-client');
 
 const call = vi.mocked(callModEndpoint);
+const callAs = vi.mocked(callModEndpointAs);
 
 const texts = (n: number) =>
   Array.from({ length: n }, (_, i) => ({
@@ -29,6 +40,7 @@ const scannedOk = (key: string) => ({
 
 beforeEach(() => {
   call.mockReset();
+  callAs.mockReset();
 });
 
 describe('scanTexts', () => {
@@ -478,5 +490,97 @@ describe('putPrompt', () => {
     expect(await refusedOf()).toBe(true);
     call.mockResolvedValueOnce({ ok: false, status: 502, error: 'down' });
     expect(await refusedOf()).toBe(false);
+  });
+});
+
+describe('explicit credentials', () => {
+  const okScan = async (_cookie: string, _path: string, body: Record<string, unknown>) => ({
+    ok: true as const,
+    body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
+  });
+
+  it('sends a given credential through callModEndpointAs, never the request session', async () => {
+    callAs.mockImplementation(okScan);
+    const { results } = await scanTexts('Model', texts(2), {}, 'civ-token=synthetic');
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+    expect(callAs.mock.calls[0][0]).toBe('civ-token=synthetic');
+    expect(callAs.mock.calls[0][1]).toBe('text-scan');
+  });
+
+  it('composes entities with a given credential', async () => {
+    callAs.mockResolvedValue({ ok: true, body: { results: [] } });
+    await composeEntities('Model', [1], 'civ-token=synthetic');
+    expect(call).not.toHaveBeenCalled();
+    expect(callAs.mock.calls[0][0]).toBe('civ-token=synthetic');
+  });
+
+  it.each([
+    {
+      requestNeverSent: true,
+      noSession: true as const,
+      error: 'Text-scan scan failed: no session to forward.',
+    },
+    { status: 401, error: 'Text-scan scan: sign in again' },
+    { status: 403, error: 'Text-scan scan: missing permission' },
+  ])('marks a first-request auth refusal (%o)', async (failure) => {
+    call.mockResolvedValue({ ok: false, ...failure });
+    const error = await scanTexts('Model', texts(1)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LabHarnessError);
+    expect((error as InstanceType<typeof LabHarnessError>).authRefused).toBe(true);
+  });
+
+  it('does not mark a first-request validation refusal as an auth refusal', async () => {
+    call.mockResolvedValue({ ok: false, status: 400, error: 'Text-scan scan: bad request' });
+    const error = await scanTexts('Model', texts(1)).catch((e: unknown) => e);
+    expect((error as InstanceType<typeof LabHarnessError>).authRefused).toBe(false);
+  });
+
+  it('flags a run whose later request was refused for auth', async () => {
+    call
+      .mockResolvedValueOnce({ ok: true, body: { results: texts(8).map((t) => scannedOk(t.key)) } })
+      .mockResolvedValueOnce({ ok: false, status: 401, error: 'Text-scan scan: sign in again' });
+    const run = await scanTexts('Model', texts(16));
+    expect(run.authRefused).toBe(true);
+  });
+
+  it('does not flag a run whose later request failed for another reason', async () => {
+    call
+      .mockResolvedValueOnce({ ok: true, body: { results: texts(8).map((t) => scannedOk(t.key)) } })
+      .mockResolvedValueOnce({ ok: false, status: 502, error: 'Text-scan scan returned 502.' });
+    const run = await scanTexts('Model', texts(16));
+    expect(run.authRefused).toBeUndefined();
+  });
+});
+
+describe('quoteTexts', () => {
+  const credential = 'civ-token=synthetic';
+
+  it('prices texts at concurrency 8 under the given credential, sending prompt overrides only when there are some', async () => {
+    callAs.mockResolvedValue({ ok: true, body: { count: 2, quoted: 2, maxCostTotal: 1 } });
+    expect(await quoteTexts('CommentV2', texts(2), undefined, credential)).toEqual({
+      count: 2,
+      quoted: 2,
+      maxCostTotal: 1,
+    });
+    expect(call).not.toHaveBeenCalled();
+    expect(callAs.mock.calls[0][0]).toBe(credential);
+    expect(callAs.mock.calls[0][2]).toEqual({
+      action: 'quoteTexts',
+      entityType: 'CommentV2',
+      texts: texts(2),
+      concurrency: 8,
+    });
+    await quoteTexts('CommentV2', texts(1), { 'label:scam': 'synthetic draft' }, credential);
+    expect(callAs.mock.calls[1][2]).toMatchObject({
+      promptOverrides: { 'label:scam': 'synthetic draft' },
+    });
+  });
+
+  it('throws LabHarnessError when the harness refuses', async () => {
+    callAs.mockResolvedValue({ ok: false, error: 'Text-scan quote returned 400.', status: 400 });
+    await expect(quoteTexts('CommentV2', texts(1), undefined, credential)).rejects.toBeInstanceOf(
+      LabHarnessError
+    );
   });
 });

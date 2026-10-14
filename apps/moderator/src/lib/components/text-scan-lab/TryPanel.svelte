@@ -3,6 +3,8 @@
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
   import { itemChanged, runIsStale, type TryResult } from '$lib/text-scan-lab/try';
   import type { PromptKey } from '$lib/text-scan-lab/types';
+  import { workspaceOf } from '$lib/text-scan-tests/expected';
+  import type { Workspace } from '$lib/text-scan-tests/types';
   import PromptSent from './PromptSent.svelte';
   import TryForm from './TryForm.svelte';
   import TryItemCard from './TryItemCard.svelte';
@@ -14,6 +16,8 @@
     only,
     draftsError,
     onedit = null,
+    workspace,
+    canCapture,
   }: {
     prompts: string;
     rules: string;
@@ -21,6 +25,8 @@
     only: 'ModelRules' | null;
     draftsError: string | null;
     onedit?: ((key: PromptKey) => void) | null;
+    workspace: Workspace;
+    canCapture: boolean;
   } = $props();
 
   let result = $state<TryResult | null>(null);
@@ -32,6 +38,11 @@
     result ? result.items.filter((item) => itemChanged(item, result!.labels)) : []
   );
   const visible = $derived(result ? (onlyChanged && result.edited ? changed : result.items) : []);
+  const capture = $derived(
+    canCapture && result && workspaceOf(result.entityType) === workspace
+      ? { workspace, entityType: result.entityType }
+      : null
+  );
   const sides = $derived(
     result
       ? [
@@ -91,6 +102,7 @@
         current={result.current}
         edited={result.edited}
         {onedit}
+        {capture}
       />
     {/each}
     {#if onlyChanged && result.edited && !changed.length}

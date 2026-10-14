@@ -217,4 +217,12 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   are moved to Prompts by a one-off migration applied after the moderator deploy.
   The lab, Try on both pages included, accepts up to 600,000 characters per text, so a long text scans
   as up to three segments; its quotes and results report the segment count.
+  Both workspaces also have a **Test sets** tab beside Try. "Add to test set" on a Try result or a Matches
+  row saves the text (re-composed on the server for an entity) with the verdict the moderator expects:
+  an nsfw range, yes/no per flag, or the Model rules that should match, any of them left unscored. A run
+  scores the production prompts (the baseline) and the moderator's draft against those expectations in
+  the background and lists cases whose verdict flipped first; Model rules are scored on LLM matches and
+  literal hits together, and matches on unsaved rules are shown as new rule hits. Sets, runs and results
+  live in the moderator database (`apps/moderator/text-scan-test-sets/`); curating sets and cancelling
+  another moderator's run need `textScan.testSets.edit`, running them only the workspace page.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.
