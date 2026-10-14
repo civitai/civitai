@@ -51,6 +51,7 @@ export const appRouter = router({
   notification: lazy(() => import('./notification.router').then((m) => m.notificationRouter)),
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
+  storyline: lazy(() => import('./storyline.router').then((m) => m.storylineRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   postPreset: lazy(() => import('./post-preset.router').then((m) => m.postPresetRouter)),
   promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
