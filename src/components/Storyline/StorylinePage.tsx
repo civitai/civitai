@@ -25,7 +25,7 @@ import { StorylineHero, useStorylineFirstImage } from '~/components/Storyline/St
 import { getStorylineTombstoneLabel } from '~/components/Storyline/storyline-mode.utils';
 import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
@@ -132,7 +132,7 @@ function StorylineHeader({
             <Text span size="sm" c="dimmed">
               Started by
             </Text>
-            <UserAvatarSimple {...storyline.user} />
+            <UserAvatar user={storyline.user} withUsername linkToProfile size="xs" />
           </div>
         </div>
       </div>
@@ -333,7 +333,7 @@ function StorylineContributors({ contributors }: { contributors: Storyline['cont
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
         {contributors.map(({ user, role }) => (
           <li key={user.id} className="flex items-center justify-between gap-2">
-            <UserAvatarSimple {...user} />
+            <UserAvatar user={user} withUsername linkToProfile size="md" withDecorations />
             <StorylineRoleChip role={role} />
           </li>
         ))}

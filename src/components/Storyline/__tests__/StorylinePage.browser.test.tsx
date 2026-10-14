@@ -113,8 +113,8 @@ vi.mock('~/components/Post/Detail/PostComments', () => ({
     return <div>Comments for post {postId}</div>;
   },
 }));
-vi.mock('~/components/UserAvatar/UserAvatarSimple', () => ({
-  UserAvatarSimple: ({ username }: { username: string }) => <span>{username}</span>,
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: ({ user }: { user: { username: string } }) => <span>{user.username}</span>,
 }));
 
 beforeEach(() => {
