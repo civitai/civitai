@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
 import {
   getStorylineStep,
   getStorylineWalk,
@@ -6,6 +7,8 @@ import {
   orderPathImages,
   parseIdParam,
   resolvePendingContinue,
+  uniquePostIds,
+  withStorylineNavigation,
 } from '~/components/Storyline/storyline-mode.utils';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 
@@ -150,5 +153,47 @@ describe('getStorylineStep', () => {
     [2, 3, 'previous', 'move'],
   ] as const)('index %i of %i, %s -> %s', (index, length, direction, expected) => {
     expect(getStorylineStep(index, length, direction)).toBe(expected);
+  });
+});
+
+describe('withStorylineNavigation', () => {
+  const nav = (index: number) => ({ index, next: vi.fn(), previous: vi.fn() });
+
+  it('hands back the carousel untouched outside a storyline, so the feed still loops', () => {
+    const carousel = nav(2);
+    expect(withStorylineNavigation(carousel, 3, undefined)).toBe(carousel);
+  });
+
+  it('opens the end-of-chapter view past the last image instead of wrapping to the first', () => {
+    const carousel = nav(2);
+    const onEnd = vi.fn();
+    withStorylineNavigation(carousel, 3, onEnd).next();
+    expect(onEnd).toHaveBeenCalledTimes(1);
+    expect(carousel.next).not.toHaveBeenCalled();
+  });
+
+  it('moves within the path and stays put before the first image', () => {
+    const middle = nav(1);
+    withStorylineNavigation(middle, 3, vi.fn()).next();
+    expect(middle.next).toHaveBeenCalledTimes(1);
+    const first = nav(0);
+    withStorylineNavigation(first, 3, vi.fn()).previous();
+    expect(first.previous).not.toHaveBeenCalled();
+  });
+});
+
+describe('uniquePostIds', () => {
+  it('keeps arrival order, drops repeats and images with no post', () => {
+    expect(
+      uniquePostIds([{ postId: 3 }, { postId: 1 }, { postId: 3 }, { postId: null }, {}])
+    ).toEqual([3, 1]);
+  });
+});
+
+describe('isAdjacent', () => {
+  it('treats the first and last slides as neighbours only when looping', () => {
+    expect(isAdjacent(4, 0, 5, true)).toBe(true);
+    expect(isAdjacent(4, 0, 5, false)).toBe(false);
+    expect(isAdjacent(1, 0, 5, false)).toBe(true);
   });
 });

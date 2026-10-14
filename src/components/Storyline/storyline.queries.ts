@@ -1,5 +1,5 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import {
@@ -21,6 +21,7 @@ export type { StorylinePathChapter };
 export const STORYLINE_POSTS_CHUNK = 100;
 /** Matches the `limit` cap on the image feed schema. */
 const PATH_IMAGES_LIMIT = 200;
+const PATH_IMAGES_MAX_PAGES = 10;
 
 export function useStorylinesEnabled() {
   return !!useFeatureFlags().storylines;
@@ -93,12 +94,21 @@ export function useStorylinePathImages(chapters: StorylinePathChapter[] | undefi
     () => (chapters ?? []).flatMap((c) => (c.post ? [c.post.id] : [])),
     [chapters]
   );
-  const { images, isLoading, isFetching } = useQueryImages(
+  const { images, data, isLoading, isFetching, hasNextPage, fetchNextPage } = useQueryImages(
     { postIds, browsingLevel, limit: PATH_IMAGES_LIMIT },
     { enabled: postIds.length > 0, keepPreviousData: true }
   );
+  // The walk needs the whole path, and an image missing from it reads as "not on this path".
+  const pages = data?.pages.length ?? 0;
+  useEffect(() => {
+    if (hasNextPage && !isFetching && pages < PATH_IMAGES_MAX_PAGES) fetchNextPage();
+  }, [hasNextPage, isFetching, pages, fetchNextPage]);
   const ordered = useMemo(() => orderPathImages(images, postIds), [images, postIds]);
-  return { images: ordered, isLoading: postIds.length > 0 && isLoading, isFetching };
+  return {
+    images: ordered,
+    isLoading: postIds.length > 0 && isLoading,
+    isFetching: isFetching || (!!hasNextPage && pages < PATH_IMAGES_MAX_PAGES),
+  };
 }
 
 // The procedures below are owned by the storyline services and are not on the router yet; these

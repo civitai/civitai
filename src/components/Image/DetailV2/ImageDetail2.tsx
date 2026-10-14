@@ -35,7 +35,10 @@ import {
 import { useEffect, useMemo, useRef } from 'react';
 import { StorylineBanner, StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
-import { getStorylineStep } from '~/components/Storyline/storyline-mode.utils';
+import {
+  getStorylineStep,
+  withStorylineNavigation,
+} from '~/components/Storyline/storyline-mode.utils';
 import { useRouter } from 'next/router';
 import clsx from 'clsx';
 import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
@@ -172,20 +175,11 @@ export function ImageDetail2() {
 
   const storyline = useStorylineMode();
   const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
-  const navigation = storyline.active
-    ? {
-        ...carouselNavigation,
-        next: () => {
-          const step = getStorylineStep(carouselNavigation.index, images.length, 'next');
-          if (step === 'end') storyline.setEndOpen(true);
-          else carouselNavigation.next();
-        },
-        previous: () => {
-          const step = getStorylineStep(carouselNavigation.index, images.length, 'previous');
-          if (step === 'move') carouselNavigation.previous();
-        },
-      }
-    : carouselNavigation;
+  const navigation = withStorylineNavigation(
+    carouselNavigation,
+    images.length,
+    storyline.active ? () => storyline.setEndOpen(true) : undefined
+  );
 
   // Deferred to the carousel settling rather than run per slide change: the URL
   // replace pushes a global store update that re-renders every useBrowserRouter

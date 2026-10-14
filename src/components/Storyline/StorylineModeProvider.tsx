@@ -114,9 +114,17 @@ export function StorylineModeProvider({
     isFetching: imagesFetching,
   } = useStorylinePathImages(path?.chapters);
 
-  const [endOpen, setEndOpen] = useState(false);
+  // The end view and the trust below belong to the chapter that set them, so neither survives
+  // the URL moving to another chapter by any route but taking a branch.
+  const [endOpenFor, setEndOpenFor] = useState<number>();
+  const endOpen = !!chapterId && endOpenFor === chapterId;
+  const setEndOpen = useCallback(
+    (open: boolean) => setEndOpenFor(open ? chapterId : undefined),
+    [chapterId]
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingChapterId, setPendingChapterId] = useState<number>();
+  const [trustedChapterId, setTrustedChapterId] = useState<number>();
 
   const walk = useMemo(
     () => getStorylineWalk(path?.chapters ?? [], images),
@@ -125,7 +133,7 @@ export function StorylineModeProvider({
 
   const enter = useCallback((id: number) => go({ chapterId: id }), [go]);
   const leave = useCallback(() => {
-    setEndOpen(false);
+    setEndOpenFor(undefined);
     setDrawerOpen(false);
     go({ chapterId: undefined });
   }, [go]);
@@ -134,7 +142,7 @@ export function StorylineModeProvider({
     (id: number) => {
       const imageId = walk.firstImageIdByChapterId.get(id);
       if (!imageId) return;
-      setEndOpen(false);
+      setEndOpenFor(undefined);
       setDrawerOpen(false);
       go({ imageId, chapterId });
     },
@@ -146,6 +154,7 @@ export function StorylineModeProvider({
       if (chapterId)
         tracking.trackBranchChoice({ fromChapterId: chapterId, toChapterId: child.chapterId });
       setDrawerOpen(false);
+      setTrustedChapterId(child.chapterId);
       setPendingChapterId(child.chapterId);
       go({ chapterId: child.chapterId });
     },
@@ -158,6 +167,7 @@ export function StorylineModeProvider({
   const pathEndId = path?.chapters[path.chapters.length - 1]?.chapterId;
   useEffect(() => {
     if (!pendingChapterId) return;
+    if (pendingChapterId !== chapterId) return setPendingChapterId(undefined);
     const next = resolvePendingContinue({
       pendingChapterId,
       pathEndId,
@@ -166,15 +176,21 @@ export function StorylineModeProvider({
     });
     if (next.kind === 'wait') return;
     setPendingChapterId(undefined);
-    if (next.kind === 'end') return setEndOpen(true);
-    setEndOpen(false);
-    go({ imageId: next.imageId, chapterId: pendingChapterId });
-  }, [pendingChapterId, pathEndId, imagesFetching, walk, go]);
+    if (next.kind === 'end') return setEndOpenFor(pendingChapterId);
+    setEndOpenFor(undefined);
+    // The router updates synchronously and re-runs this before the cleared state lands; only
+    // navigate once, or the two chase each other.
+    if (routeImageId !== next.imageId) go({ imageId: next.imageId, chapterId: pendingChapterId });
+  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId]);
 
-  // The URL's chapter is only trusted for the image it is shown with: a link pairing an image
-  // with an unrelated storyline must not put that image under the storyline's banner.
+  // The URL's chapter is trusted only for an image on its path, or for a branch the reader took
+  // from inside the storyline: a link pairing an image with an unrelated storyline must not put
+  // that image under the storyline's banner.
   const onPath = !!routeImageId && walk.chapterIdByImageId.has(routeImageId);
-  const inStoryline = !!chapterId && !!path && (onPath || !!pendingChapterId || endOpen);
+  useEffect(() => {
+    if (onPath && chapterId) setTrustedChapterId(chapterId);
+  }, [onPath, chapterId]);
+  const inStoryline = !!chapterId && !!path && (onPath || trustedChapterId === chapterId);
 
   const value = useMemo<StorylineModeState>(() => {
     if (!chapterId || !path || !inStoryline) return { active: false, enter };

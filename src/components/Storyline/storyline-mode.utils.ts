@@ -105,3 +105,24 @@ export function getStorylineStep(index: number, length: number, direction: 'next
   if (direction === 'next') return index >= length - 1 ? 'end' : 'move';
   return index > 0 ? 'move' : 'stay';
 }
+
+/** Carousel navigation that stops at a storyline's ends; outside one (`onEnd` absent) it loops. */
+export function withStorylineNavigation<
+  T extends { index: number; next: () => void; previous: () => void }
+>(navigation: T, length: number, onEnd: (() => void) | undefined): T {
+  if (!onEnd) return navigation;
+  return {
+    ...navigation,
+    next: () => {
+      if (getStorylineStep(navigation.index, length, 'next') === 'end') onEnd();
+      else navigation.next();
+    },
+    previous: () => {
+      if (getStorylineStep(navigation.index, length, 'previous') === 'move') navigation.previous();
+    },
+  };
+}
+
+export function uniquePostIds(images: { postId?: number | null }[] | undefined) {
+  return [...new Set((images ?? []).flatMap((image) => (image.postId ? [image.postId] : [])))];
+}

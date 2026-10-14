@@ -13,6 +13,7 @@ import { useResizeObserver } from '~/hooks/useResizeObserver';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
+import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
@@ -234,13 +235,6 @@ export function ImageDetailCarousel({
       </Embla>
     </div>
   );
-}
-
-// a looping carousel's first and last slides are neighbors
-function isAdjacent(i: number, index: number, length: number, loop: boolean) {
-  if (length < 2) return i === index;
-  const distance = Math.abs(i - index);
-  return (loop ? Math.min(distance, length - distance) : distance) <= 1;
 }
 
 function ImageContent({
