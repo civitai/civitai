@@ -47,7 +47,8 @@ const CONFIG = { model: 'air:test', maxInputChars: 1000, thinking: false };
 const w = dbMock.dbWrite;
 const ID = 10;
 const OWNER = 3;
-const HASH = 'hash-of-this-title';
+// The hash of the title the fixture storyline has now: a verdict on any other text is stale.
+const HASH = textScanTextHash(storylineTextScanSubject({ userId: OWNER, title: 'A story' }));
 
 const before = (over: Record<string, unknown> = {}) => ({
   userId: OWNER,

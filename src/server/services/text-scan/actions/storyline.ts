@@ -3,6 +3,8 @@ import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createNotification } from '~/server/services/notification.service';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
+import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
 export const STORYLINE_TITLE_MODERATED = 'storyline-title-moderated';
 
@@ -71,8 +73,14 @@ export async function applyStorylineTextScan({
     },
   });
   if (!before) return;
+  // A verdict on text the title no longer has (it was edited after the scan was sent) may only
+  // restrict: take down, mark a minor, raise the rating. It never lifts, clears or lowers; the
+  // scan of the current title, which the edit started, settles those.
+  const current =
+    textHash ===
+    textScanTextHash(storylineTextScanSubject({ userId: before.userId, title: before.title }));
 
-  if (outcome.nsfw) {
+  if (outcome.nsfw && (current || outcome.nsfw.detectedLevel > before.nsfwLevel)) {
     const level = outcome.nsfw.detectedLevel;
     await dbWrite.storyline.updateMany({ where: { id: entityId }, data: { nsfwLevel: level } });
     // A moderator's ruling stands in for the scan's, so a changed scan level changes nothing.
@@ -93,7 +101,7 @@ export async function applyStorylineTextScan({
 
   // Only an answered minor label moves the flag: a missing one leaves it as it was. Written before
   // any lift below, so a storyline coming back up is never shown uncapped, even if a write fails.
-  if (outcome.minor) {
+  if (outcome.minor && (current || minor)) {
     const { count } = await dbWrite.storyline.updateMany({
       where: { id: entityId, minorByScan: !minor },
       data: { minorByScan: minor },
@@ -124,7 +132,7 @@ export async function applyStorylineTextScan({
         { storylineId: entityId, takenDown: true },
         workflowId
       );
-  } else if (outcome.poi && outcome.minor) {
+  } else if (current && outcome.poi && outcome.minor) {
     await liftScanTakedown(entityId);
   }
 }
