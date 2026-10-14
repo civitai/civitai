@@ -409,6 +409,18 @@ describe('handleTextScanCallback — ModelRules partial verdict', () => {
     expect(raised().modelRules).toEqual({ matched: [{ ruleId: 3, reason: 'r' }] });
   });
 
+  it('records which rules matched, as they read, on the raised row', async () => {
+    snapshotsEcho();
+    vi.mocked(getWorkflow).mockResolvedValue(partial([{ ruleId: 3, reason: 'r' }]) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    const { data } = em.updateMany.mock.calls[1][0] as any;
+    expect(data.result.modelRules).toEqual({
+      fingerprint: 'fp',
+      snapshot: [{ id: 3, subject: 'S3', description: '', aliases: [] }],
+      literalRuleIds: [],
+    });
+  });
+
   it('acts on nothing for a rule id the prompt did not list', async () => {
     snapshotsEcho();
     vi.mocked(getWorkflow).mockResolvedValue(partial([{ ruleId: 42, reason: 'r' }]) as any);

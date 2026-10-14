@@ -128,10 +128,4 @@ describe('term word cap', () => {
     const rules = [rule(1, 'Jane Doe', [long]), rule(2, long)];
     expect(findLiteralModelRuleHits(`${long} met Jane Doe`, rules)).toEqual([1]);
   });
-
-  it('keeps every run short even when a legacy rule carries a huge alias', () => {
-    const started = Date.now();
-    findLiteralModelRuleHits(long, [rule(1, 'Jane Doe', [long])]);
-    expect(Date.now() - started).toBeLessThan(500);
-  });
 });

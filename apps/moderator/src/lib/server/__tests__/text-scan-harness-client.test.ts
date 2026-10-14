@@ -162,6 +162,18 @@ describe('scanTexts', () => {
     expect(call).toHaveBeenCalledTimes(1);
   });
 
+  it('records per-text errors for a 422 on the first chunk instead of throwing (invalid, not refused)', async () => {
+    call.mockResolvedValue({ ok: false, status: 422, error: 'Text-scan scan returned 422.' });
+
+    const { results } = await scanTexts('Model', texts(2));
+
+    expect(isRefused({ ok: false, status: 422, error: 'x' })).toBe(false);
+    expect(isRejected({ ok: false, status: 422, error: 'x' })).toBe(true);
+    expect(results).toEqual(
+      texts(2).map(({ key }) => ({ key, ok: false, error: 'Text-scan scan returned 422.' }))
+    );
+  });
+
   it('turns a failed chunk into per-text errors and keeps scanning', async () => {
     const ok = (n: number, from: number) => ({
       ok: true as const,

@@ -220,6 +220,31 @@ describe('restoreModelRuleVersion', () => {
     expect(captured.some((s) => s.startsWith('update'))).toBe(false);
   });
 
+  it('refuses a flagged version when the rule already sits flagged and disabled', async () => {
+    answers.rule = [
+      {
+        ...RULE,
+        enabled: false,
+        definition: { ...SEMANTIC, needsAttention: true },
+      },
+    ];
+    answers.version = [
+      { definition: { ...SEMANTIC, needsAttention: true }, enabled: true, reason: null },
+    ];
+    await expect(restoreModelRuleVersion(7, 2, 5)).rejects.toBeInstanceOf(RestoreRefusedError);
+    expect(captured.some((s) => s.startsWith('update') || s.startsWith('insert'))).toBe(false);
+  });
+
+  it('says whether the restored rule came back flagged', async () => {
+    answers.history = [{ id: 1 }];
+    answers.version = [
+      { ...OLD, enabled: true, definition: { ...OLD.definition, needsAttention: true } },
+    ];
+    expect(await restoreModelRuleVersion(7, 2, 5)).toMatchObject({ flagged: true });
+    answers.version = [OLD];
+    expect(await restoreModelRuleVersion(7, 2, 5)).toMatchObject({ flagged: false });
+  });
+
   it('refuses a version that no longer fits the rule schema', async () => {
     answers.version = [{ ...OLD, definition: { ...OLD.definition, aliases: ['  '] } }];
     await expect(restoreModelRuleVersion(7, 2, 5)).rejects.toBeInstanceOf(RestoreRefusedError);

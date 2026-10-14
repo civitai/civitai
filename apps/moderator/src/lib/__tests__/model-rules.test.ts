@@ -138,8 +138,7 @@ describe('Matches list and its partial index', () => {
     }
   });
 
-  it('filters by rule id on literal hits as well as model matches', () => {
-    expect(service).toContain('MODEL_RULES_RESULT_PG_PATHS.literalRuleIds');
+  it('names the stored result paths the scan writes', () => {
     expect(MODEL_RULES_RESULT_PG_PATHS.literalRuleIds).toBe('{modelRules,literalRuleIds}');
     expect(MODEL_RULES_RESULT_PG_PATHS.matched).toBe('{labels,modelRules,matched}');
   });

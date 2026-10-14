@@ -217,8 +217,8 @@ describe('publishPrivateModel text scan', () => {
   });
 
   it.each([
-    ['a moderator', true, 0],
-    ['a non-moderator', false, 1],
+    ['enforceModelRules off (a moderator publish)', true, 0],
+    ['enforceModelRules on (a non-moderator publish)', false, 1],
   ])('queues the ModelRules scan for %s publish: %s time(s)', async (_who, isModerator, times) => {
     dbMock.dbWrite.post.findMany
       .mockResolvedValueOnce([{ modelVersionId: PUBLISHED }])

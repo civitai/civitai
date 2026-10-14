@@ -159,6 +159,22 @@ describe('restoreRule', () => {
   });
 });
 
+describe('restoreRule messages', () => {
+  it('names a plain restore', async () => {
+    service.restoreModelRuleVersion.mockResolvedValue({ cacheStale: false, flagged: false });
+    expect(await post('restoreRule', { ruleId: '3', versionId: '2' })).toMatchObject({
+      message: 'Restored rule 3.',
+    });
+  });
+
+  it('says a flagged version came back needing review and disabled', async () => {
+    service.restoreModelRuleVersion.mockResolvedValue({ cacheStale: false, flagged: true });
+    expect(await post('restoreRule', { ruleId: '3', versionId: '2' })).toMatchObject({
+      message: 'Restored rule 3 as needing review (disabled).',
+    });
+  });
+});
+
 describe('try', () => {
   it('always judges as Model rules, with only the page grant', async () => {
     harness.scanTexts.mockResolvedValue({ results: [], system: null, rules: null });
