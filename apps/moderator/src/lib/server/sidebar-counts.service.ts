@@ -78,9 +78,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     countNewFeedback(),
     countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
     countRemovedAppeals(),
-    // Bounded: a cold fill costs ~10s (see `getMinorQueueCounts`). The race does not cancel it, so the
-    // fill still lands in its own cache and the badge appears on the next refresh.
-    bounded(getMinorQueueCounts),
+    // Bounded tighter than the default: every verdict busts this cache, so a cold ~10s fill (see
+    // `getMinorQueueCounts`) is routine. The race does not cancel it, so the fill still lands in its
+    // own cache and the badge returns on a later refresh.
+    bounded(getMinorQueueCounts, 1_000),
     // The page's own facet query, so the badge always equals the queue's "All" total.
     getMinorFlagAppealGroups({}),
   ]);
