@@ -55,7 +55,8 @@ export function StorylineHero({
                     'absolute inset-0 size-full object-cover',
                     backdrop && 'scale-[1.15] blur-[28px] saturate-[1.2]'
                   )}
-                  style={{ objectPosition: `center ${position}%` }}
+                  // EdgeImage caps its width at the requested size; the hero fills the page width.
+                  style={{ objectPosition: `center ${position}%`, maxWidth: 'none' }}
                   data-testid={backdrop ? 'storyline-hero-backdrop' : 'storyline-hero-image'}
                 />
               ) : (

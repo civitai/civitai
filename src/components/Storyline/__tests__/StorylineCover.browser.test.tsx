@@ -102,6 +102,8 @@ describe('StorylineHero', () => {
     await expect.element(img).toBeInTheDocument();
     expect(img.element().className).not.toContain('blur');
     expect((img.element() as HTMLElement).style.objectPosition).toBe('center 20%');
+    // EdgeImage caps its width at the size it requests; the hero must span the page anyway.
+    expect((img.element() as HTMLElement).style.maxWidth).toBe('none');
   });
 
   test('an image the guard hides stays a hash, backdrop or not', async () => {
