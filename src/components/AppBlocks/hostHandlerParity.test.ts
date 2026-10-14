@@ -99,18 +99,31 @@ const HOSTS: HostFile[] = ['IframeHost.tsx', 'PageBlockHost.tsx', 'InlineHost.ts
 
 /**
  * Types whose replies are pinned in a test of a SHARED module, not a host test. A pin there
- * counts for each host, because both hosts reply through that module, except for the reply a
- * host writes itself. `hostWritesError` lists each host that writes an error reply of its own
- * outside the module. Such a host needs an error pin from its own test.
+ * counts for each host, because both hosts reply through that module. A host whose own source
+ * also sends the reply (`sendsOf`, below) needs a pin from its own test as well.
  */
-const SHARED_MODULE_PINS: Partial<
-  Record<InventoryType, { hostWritesError: Array<'IframeHost' | 'PageBlockHost'> }>
-> = {
-  // Shared module: handleEstimateBatch (estimateBatchGate.ts). It hands the no-token case back
-  // to the host (`onNoToken`). PageBlockHost answers it with the shared NACK, which the NACK
-  // sweep pins. IframeHost writes the reply inline.
-  ESTIMATE_WORKFLOW_BATCH: { hostWritesError: ['IframeHost'] },
+const SHARED_MODULE_PINS: Partial<Record<InventoryType, string>> = {
+  // handleEstimateBatch hands the no-token case back to the host (`onNoToken`).
+  ESTIMATE_WORKFLOW_BATCH: 'both hosts reply through handleEstimateBatch (estimateBatchGate.ts)',
 };
+
+/**
+ * The `send('<reply>', …)` calls in a host's own source, comments stripped. `count` is every
+ * such call; `literals` is the text of each one whose payload is an object literal. Only a
+ * quoted reply type is seen: a send through a variable, as the shared modules do, is not.
+ */
+function sendsOf(
+  host: 'IframeHost' | 'PageBlockHost',
+  reply: string
+): { count: number; literals: string[] } {
+  const src = HOST_SRC[`${host}.tsx`];
+  return {
+    count: (src.match(new RegExp(`send\\(\\s*'${reply}'`, 'g')) ?? []).length,
+    literals: [...src.matchAll(new RegExp(`send\\(\\s*'${reply}',\\s*\\{[\\s\\S]*?\\);`, 'g'))].map(
+      (m) => m[0]
+    ),
+  };
+}
 
 /**
  * Types that get no error reply except the shared dispatcher's NACK. Their error shape is
@@ -319,6 +332,7 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       expect([...new Set(pins.map((p) => p.type))].sort()).toEqual(unforwarded);
 
       const names = (list: readonly string[]) => parseDeclaredKeys(list);
+      let ownSharedSends = 0;
       for (const type of unforwarded) {
         const spec = INVENTORY[type];
         const mine = pins.filter((p) => p.type === type);
@@ -328,11 +342,24 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
             (p) => p.host === host || (p.host === 'shared' && type in SHARED_MODULE_PINS)
           );
           expect(fromHost, `${type}: no pin from a ${host} test`).toBe(true);
-          if (SHARED_MODULE_PINS[type]?.hostWritesError.includes(host)) {
+          if (type in SHARED_MODULE_PINS) {
+            // A reply the host writes itself is not the shared module's, so the shared pin does
+            // not cover it.
+            const own = sendsOf(host, spec.reply);
             expect(
-              mine.some((p) => p.host === host && p.outcome === 'error'),
-              `${type}: ${host} writes its own error reply, and no ${host} test pins it`
-            ).toBe(true);
+              own.literals.length,
+              `${type}: ${host} sends ${spec.reply} a non-literal payload`
+            ).toBe(own.count);
+            ownSharedSends += own.literals.length;
+            for (const call of own.literals) {
+              // A spread could carry an `error` this classification cannot see.
+              expect(call, `${type}: ${host} spreads into the payload`).not.toContain('...');
+              const outcome = /\berror\b/.test(call) ? 'error' : 'success';
+              expect(
+                mine.some((p) => p.host === host && p.outcome === outcome),
+                `${type}: ${host} writes its own ${outcome} ${spec.reply}, and no ${host} test pins one`
+              ).toBe(true);
+            }
           }
         }
         for (const outcome of ['success', 'error'] as const) {
@@ -359,6 +386,9 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
           );
         }
       }
+      // Positive control for the host-written check above: IframeHost writes the batch
+      // no-token reply inline. If no host writes one any more, delete this line.
+      expect(ownSharedSends, 'host-written replies of SHARED_MODULE_PINS types').toBeGreaterThan(0);
     });
 
     it('a NACK_ONLY_ERRORS type has no host-written error reply', () => {
@@ -369,19 +399,15 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
         const reply = INVENTORY[type].reply;
         for (const host of ['IframeHost', 'PageBlockHost'] as const) {
           if (INVENTORY[type][host] !== 'required') continue;
-          const src = HOST_SRC[`${host}.tsx`];
-          const anySend = src.match(new RegExp(`send\\(\\s*'${reply}'`, 'g')) ?? [];
-          const literalSends = [
-            ...src.matchAll(new RegExp(`send\\(\\s*'${reply}',\\s*\\{[\\s\\S]*?\\);`, 'g')),
-          ];
-          expect(
-            anySend.length,
-            `${type}: positive control, ${host} sends ${reply}`
-          ).toBeGreaterThan(0);
-          expect(literalSends.length, `${type}: ${host} sends ${reply} a non-literal payload`).toBe(
-            anySend.length
+          const sends = sendsOf(host, reply);
+          expect(sends.count, `${type}: positive control, ${host} sends ${reply}`).toBeGreaterThan(
+            0
           );
-          for (const [call] of literalSends) {
+          expect(
+            sends.literals.length,
+            `${type}: ${host} sends ${reply} a non-literal payload`
+          ).toBe(sends.count);
+          for (const call of sends.literals) {
             expect(call, `${type}: ${host} writes an error`).not.toMatch(/\berror\b/);
             expect(call, `${type}: ${host} spreads into the payload`).not.toContain('...');
           }
