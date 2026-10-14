@@ -288,6 +288,9 @@ const markBody = z.strictObject({});
  */
 export const STORAGE_BODY_LIMIT_BYTES = DOC_STORE_BOUNDS.docBytes + 16 * 1024;
 
+/** The request body stopped arriving (the client disconnected). Answered quietly. */
+class BodyAbortedError extends Error {}
+
 /** Read and parse a JSON request body; `undefined` when there is none. Only POST and PUT. */
 async function readJsonBody(req: NextApiRequest): Promise<unknown> {
   if (req.method !== 'POST' && req.method !== 'PUT') return undefined;
@@ -299,11 +302,17 @@ async function readJsonBody(req: NextApiRequest): Promise<unknown> {
   if (Number.isFinite(declared) && declared > STORAGE_BODY_LIMIT_BYTES) throw tooLarge();
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of req as unknown as AsyncIterable<Buffer | string>) {
-    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-    size += buf.length;
-    if (size > STORAGE_BODY_LIMIT_BYTES) throw tooLarge();
-    chunks.push(buf);
+  try {
+    for await (const chunk of req as unknown as AsyncIterable<Buffer | string>) {
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      size += buf.length;
+      if (size > STORAGE_BODY_LIMIT_BYTES) throw tooLarge();
+      chunks.push(buf);
+    }
+  } catch (err) {
+    if (err instanceof DocStoreError) throw err;
+    // The client went away mid-body (`aborted`, `ECONNRESET`): not a fault of ours.
+    throw new BodyAbortedError();
   }
   if (size === 0) return undefined;
   try {
@@ -826,6 +835,14 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       const reply = await run(req, body, match.route, access, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
+      if (err instanceof BodyAbortedError) {
+        // A client abort is not a server fault: no error log, and nothing written to a
+        // connection that is already gone. A still-open one gets a plain refusal.
+        if (!req.destroyed && !res.destroyed && !res.writableEnded) {
+          res.status(400).json(envelope('invalid_request', 'request body was not received'));
+        }
+        return;
+      }
       sendError(res, err);
     }
   };

@@ -309,6 +309,8 @@ async function call(opts: {
   origin?: string;
   rawBody?: string;
   contentLength?: number;
+  /** A body stream to use as the request instead of one built from `body` / `rawBody`. */
+  stream?: Readable;
 }): Promise<Reply> {
   const segments = opts.path.split('/').filter(Boolean);
   // The route reads its own body (Next's parser is off), so the request is a real stream of
@@ -319,7 +321,7 @@ async function call(opts: {
       : opts.body === undefined
       ? ''
       : JSON.stringify(opts.body);
-  const req = Object.assign(Readable.from(text ? [Buffer.from(text)] : []), {
+  const req = Object.assign(opts.stream ?? Readable.from(text ? [Buffer.from(text)] : []), {
     method: opts.method,
     url: `/api/v1/blocks/storage${opts.path}`,
     query: { ...(opts.query ?? {}), ...(segments.length ? { path: segments } : {}) },
@@ -1432,5 +1434,73 @@ describe('round 1: approved manifests, dot keys, CORS default, failures, deletes
     ).toMatchObject({
       code: 'not_author',
     });
+  });
+
+  it('a request body aborted mid-stream is refused quietly: no fault log, nothing written to the dead socket', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    // The client disconnects while the route is reading: the first pull gets part of the
+    // body, the next one finds the connection reset.
+    let pulls = 0;
+    const stream = new Readable({
+      read() {
+        pulls += 1;
+        if (pulls === 1) this.push(Buffer.from('{"data":{"partial":'));
+        else this.destroy(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }));
+      },
+    });
+    loggingMock.logToAxiom.mockClear();
+    const r = await call({ token: t, method: 'PUT', path: '/prefs/k', stream });
+    expect(pulls).toBeGreaterThanOrEqual(2);
+    // Nothing written: no status set and no body.
+    expect(r.status).toBe(0);
+    expect(r.body).toBeUndefined();
+    const faults = loggingMock.logToAxiom.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { name?: string }).name === 'app-blocks-doc-store-route-fault'
+    );
+    expect(faults).toEqual([]);
+    // Nothing reached the store.
+    expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [A.id])).toEqual([]);
+  });
+
+  it('a collection using a deferred feature is refused at the route: no tally charge, no write budget, no moderation scan', async () => {
+    const { scanSharedData, scanCounterKey } = await import(
+      '~/server/services/apps/shared-data-moderation'
+    );
+    const { A } = freshApps('approved', {
+      scopes: contract.defaultScopes,
+      storage: {
+        collections: {
+          budgeted: {
+            visibility: 'shared',
+            write: 'own',
+            counters: ['n'],
+            dailyWritesPerAuthor: 50,
+          },
+        },
+      },
+    });
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    vi.mocked(scanSharedData).mockClear();
+    vi.mocked(scanCounterKey).mockClear();
+    const evalsBefore = lua.calls.length;
+    const inc = await call({ token: t, method: 'POST', path: '/budgeted/k/counters/n' });
+    const put = await call({
+      token: t,
+      method: 'PUT',
+      path: '/budgeted/k',
+      body: { data: { t: 'x' } },
+    });
+    for (const r of [inc, put]) {
+      expect(r.status).toBe(400);
+      expect(r.body).toMatchObject({
+        code: 'invalid_request',
+        details: { collection: 'budgeted' },
+      });
+    }
+    expect([...kv.keys()].filter((k) => k.includes(':docs-'))).toEqual([]);
+    expect(lua.calls.length).toBe(evalsBefore);
+    expect(vi.mocked(scanSharedData)).not.toHaveBeenCalled();
+    expect(vi.mocked(scanCounterKey)).not.toHaveBeenCalled();
   });
 });
