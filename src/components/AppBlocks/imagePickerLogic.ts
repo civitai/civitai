@@ -1,3 +1,4 @@
+import { PICKER_JUMP_MIN_DATE } from '~/server/schema/blocks/block-image-picker.schema';
 import { isCivitaiHostedImageUrl } from '~/server/schema/blocks/civitai-image-url';
 import type { PostedPickableImage } from '~/server/services/blocks/block-image-picker.logic';
 import {
@@ -262,7 +263,8 @@ export function pickerGridLayout(
 /**
  * A native date input's `YYYY-MM-DD` as the newest moment a "jump to date" list may show: the END
  * of that day in the viewer's time zone, so images from the chosen day itself are listed. `null`
- * for an empty or malformed value, which means "no bound": the list starts at the newest image.
+ * for an empty, malformed or impossible value, or one before `PICKER_JUMP_MIN_DATE` (a year still
+ * being typed reads as 0002, 0020, 0202): no bound, the list starts at the newest image.
  */
 export function jumpDateToBound(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -273,7 +275,7 @@ export function jumpDateToBound(value: string): Date | null {
   if (bound.getFullYear() !== year || bound.getMonth() !== month || bound.getDate() !== day) {
     return null;
   }
-  return bound;
+  return bound < PICKER_JUMP_MIN_DATE ? null : bound;
 }
 
 /** A local date as the `YYYY-MM-DD` a native date input takes. */

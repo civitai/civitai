@@ -14,11 +14,12 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -26,6 +27,7 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { PICKER_JUMP_MIN_DATE } from '~/server/schema/blocks/block-image-picker.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -48,8 +50,8 @@ import {
 type PickableImage = {
   /** What the grid renders: a storage key (posted) or the output's own url (generated). */
   thumbnail: string;
-  /** When the image was posted or generated, for its label. */
-  createdAt?: Date;
+  /** Day posted or generated, formatted once per page rather than per render. */
+  dateLabel?: string;
   pick: BlockPickedImageInfo;
 };
 
@@ -66,9 +68,22 @@ const EMPTY_MESSAGE: Record<BlockImagePickerSource, string> = {
   generated: 'None of your generated images can be used here yet.',
 };
 
+// `formatDate(undefined)` formats NOW, which would label an undated image with today.
+const dateLabelOf = (date: Date | undefined) => (date ? formatDate(date) : undefined);
+
 /** Space the grid keeps around its tiles, so a selected tile's ring is not clipped. */
 const GRID_INSET_PX = 4;
 const TRAY_THUMB_PX = 48;
+/**
+ * Width every thumbnail (grid and tray) is requested at. Tiles are 88-247px (`pickerGridLayout`),
+ * which the image CDN's 320 rung covers; `hiDpi` adds its 512 rung for a 2x screen. A width taken
+ * from the tile would land a narrow phone's ~90px tile on the 96 rung, which has no 2x variant
+ * (the next rung is 320), so a dense screen would get a blurry image. One width also lets the
+ * tray reuse the grid's already-loaded image.
+ */
+const THUMB_WIDTH = 320;
+/** How long a jump-to date has to hold still before the list is refetched for it. */
+const JUMP_DEBOUNCE_MS = 400;
 
 /**
  * Host modal behind PageBlockHost's `OPEN_IMAGE_PICKER`: the viewer picks from their own posted
@@ -128,11 +143,14 @@ export default function BlockImagePickerModal({
   const multiple = max !== null;
   const atMax = multiple && selected.length >= max;
 
-  function toggle(image: PickableImage) {
-    setSelected((current) =>
-      togglePickedImage(current, { ...image.pick, thumbnail: image.thumbnail }, max)
-    );
-  }
+  // Stable, so a memoised tile is not re-rendered by every render of the modal.
+  const toggle = useCallback(
+    (image: PickableImage) =>
+      setSelected((current) =>
+        togglePickedImage(current, { ...image.pick, thumbnail: image.thumbnail }, max)
+      ),
+    [max]
+  );
 
   function remove(image: SelectedImage) {
     setSelected((current) => removePickedImage(current, image));
@@ -159,8 +177,7 @@ export default function BlockImagePickerModal({
     onJumpTo: (value: string) => setJumpTo((current) => ({ ...current, [s]: value })),
   });
 
-  // Signed in, the modal is a fixed-height column whose body fills it. Signed out it holds two
-  // lines, so it keeps Mantine's own sizing.
+  // Signed-out content is two lines: it keeps Mantine's own sizing.
   const columnStyles = signedOut
     ? undefined
     : {
@@ -250,7 +267,6 @@ export default function BlockImagePickerModal({
   );
 }
 
-/** The current picks from every tab, in pick order, each removable. */
 function SelectedTray({
   selected,
   onRemove,
@@ -280,7 +296,7 @@ function SelectedTray({
                   alt=""
                   src={image.thumbnail}
                   type="image"
-                  width={TRAY_THUMB_PX}
+                  width={THUMB_WIDTH}
                   hiDpi
                   sourceWidth={image.width}
                   loading="lazy"
@@ -327,7 +343,6 @@ function SourceGrid({
   onJumpTo,
   ...selection
 }: GridSelection & JumpTo & { source: BlockImagePickerSource; dropPostedPicks: () => void }) {
-  // The newest moment the list shows; `undefined` lists from the newest image.
   const toDate = useMemo(() => jumpDateToBound(jumpTo) ?? undefined, [jumpTo]);
   return (
     <>
@@ -355,19 +370,34 @@ function JumpToDate({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const isMobile = useIsMobile({ type: 'media' });
+  // What the input holds while the viewer edits it. A native date input reports `''` until every
+  // part of the date is filled in, and steps through a whole date per arrow-key press, so a date is
+  // applied once it has held still; an input left empty is applied when it loses focus.
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const [settled] = useDebouncedValue(draft, JUMP_DEBOUNCE_MS);
+  const apply = useRef(onChange);
+  apply.current = onChange;
+  useEffect(() => {
+    if (settled !== value && jumpDateToBound(settled)) apply.current(settled);
+    // `value` is read, not watched: a change to it already resets the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled]);
   const today = toDateInputValue(new Date());
   return (
     <Group gap="xs" mb="xs" wrap="nowrap" align="flex-end" className="shrink-0">
       <TextInput
         type="date"
-        size="xs"
+        // 16px text on a phone: iOS zooms the page into any field set smaller when it is focused.
+        size={isMobile ? 'md' : 'xs'}
         label="Jump to date"
-        value={value}
+        value={draft}
+        min={toDateInputValue(PICKER_JUMP_MIN_DATE)}
         max={today}
-        // A partly typed or impossible date is not applied: the list stays where it is.
-        onChange={(event) => {
-          const next = event.currentTarget.value;
-          if (next === '' || jumpDateToBound(next)) onChange(next);
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onBlur={() => {
+          if (draft === '' && value !== '') onChange('');
         }}
         className="max-w-[200px] flex-1"
       />
@@ -390,25 +420,23 @@ function PostedGrid({
   ...selection
 }: GridSelection & { dropPostedPicks: () => void; toDate: Date | undefined }) {
   const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage, refetch } =
-    trpc.blockImagePicker.getPosted.useInfiniteQuery(
-      // No key at all without a date, so the newest-first list is keyed as it always was.
-      toDate ? { toDate } : {},
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-        // The server filters by the viewer's browsing level, which is not part of the query key.
-        // The app caches queries forever by default, so without these a reopened picker would list
-        // what an earlier level allowed.
-        gcTime: 0,
-        staleTime: 0,
-      }
-    );
+    trpc.blockImagePicker.getPosted.useInfiniteQuery(toDate ? { toDate } : {}, {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      // The server filters by the viewer's browsing level, which is not part of the query key.
+      // The app caches queries forever by default, so without these a reopened picker would list
+      // what an earlier level allowed.
+      gcTime: 0,
+      staleTime: 0,
+    });
 
   const images = useMemo(
     () =>
       (data?.pages ?? []).flatMap((page) =>
         page.items.flatMap((item): PickableImage[] => {
           const pick = projectPostedPick(item);
-          return pick ? [{ thumbnail: item.key, createdAt: item.createdAt, pick }] : [];
+          return pick
+            ? [{ thumbnail: item.key, dateLabel: dateLabelOf(item.createdAt), pick }]
+            : [];
         })
       ),
     [data]
@@ -459,7 +487,9 @@ function GeneratedGrid({ toDate, ...selection }: GridSelection & { toDate: Date 
       data.flatMap((workflow) =>
         workflow.succeededOutput.flatMap((output): PickableImage[] => {
           const pick = projectGeneratedPick(output, browsingLevel);
-          return pick ? [{ thumbnail: output.url, createdAt: workflow.createdAt, pick }] : [];
+          return pick
+            ? [{ thumbnail: output.url, dateLabel: dateLabelOf(workflow.createdAt), pick }]
+            : [];
         })
       ),
     [data, browsingLevel]
@@ -494,7 +524,6 @@ type PickGridProps = GridSelection & {
   hasMore: boolean;
   onLoadMore: () => unknown;
   onRetry: () => unknown;
-  /** The list starts at a jumped-to date rather than the newest image. */
   bounded: boolean;
 };
 
@@ -615,8 +644,8 @@ function PickGrid({
  * page would otherwise keep every tile, and every decoded image, in the document. `children` (the
  * loader, retry or "Load more") follows the last row.
  *
- * Rows are square tiles laid out from the box's own width; a separate component so the box exists
- * when its measuring effect runs (the grid above returns early while loading or empty).
+ * A separate component so the scroll box exists when its measuring effect runs (`PickGrid` returns
+ * early while loading or empty).
  */
 function VirtualTiles({
   source,
@@ -670,7 +699,7 @@ function VirtualTiles({
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {virtualizer.getVirtualItems().map((row) => (
           <div
-            key={row.key}
+            key={row.index}
             style={{
               position: 'absolute',
               top: 0,
@@ -704,7 +733,7 @@ function VirtualTiles({
   );
 }
 
-function PickTile({
+const PickTile = memo(function PickTile({
   source,
   index,
   image,
@@ -722,7 +751,7 @@ function PickTile({
   onToggle: (image: PickableImage) => void;
 }) {
   const disabled = atMax && !isSelected;
-  const date = image.createdAt ? `, ${formatDate(image.createdAt)}` : '';
+  const date = image.dateLabel ? `, ${image.dateLabel}` : '';
   return (
     <UnstyledButton
       aria-label={`${SOURCE_LABEL[source]} image ${index + 1}${date}`}
@@ -740,9 +769,8 @@ function PickTile({
         alt=""
         src={image.thumbnail}
         type="image"
-        // The tile's own size; the image CDN snaps it to its width ladder and `hiDpi` adds the
-        // variant for a dense screen. Generated outputs are served as-is: their url is passed through.
-        width={size}
+        // Generated outputs are not storage keys: their url is passed through unresized.
+        width={THUMB_WIDTH}
         hiDpi
         sourceWidth={image.pick.width}
         loading="lazy"
@@ -755,4 +783,4 @@ function PickTile({
       )}
     </UnstyledButton>
   );
-}
+});

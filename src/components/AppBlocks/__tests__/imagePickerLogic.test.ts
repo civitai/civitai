@@ -443,6 +443,30 @@ describe('jumpDateToBound', () => {
     }
   });
 
+  it('means no bound for a year still being typed, or any day before 2000', () => {
+    for (const value of ['0002-06-30', '0020-06-30', '0202-06-30', '1999-12-30']) {
+      expect(jumpDateToBound(value)).toBeNull();
+    }
+    expect(jumpDateToBound('2000-01-02')).toEqual(new Date(2000, 0, 2, 23, 59, 59, 999));
+  });
+
+  it("is the end of the viewer's own day, not UTC's, in a zone ahead of and behind UTC", () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Tokyo'; // UTC+9, no DST
+      expect(jumpDateToBound('2024-06-30')?.toISOString()).toBe('2024-06-30T14:59:59.999Z');
+      // 20:00 UTC on Jun 30 is already Jul 1 in Tokyo.
+      expect(toDateInputValue(new Date('2024-06-30T20:00:00.000Z'))).toBe('2024-07-01');
+
+      process.env.TZ = 'America/Los_Angeles'; // UTC-7 in June
+      expect(jumpDateToBound('2024-06-30')?.toISOString()).toBe('2024-07-01T06:59:59.999Z');
+      expect(toDateInputValue(new Date('2024-07-01T03:00:00.000Z'))).toBe('2024-06-30');
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+
   it('round-trips with toDateInputValue', () => {
     const day = new Date(2025, 0, 5, 9, 30);
     expect(toDateInputValue(day)).toBe('2025-01-05');

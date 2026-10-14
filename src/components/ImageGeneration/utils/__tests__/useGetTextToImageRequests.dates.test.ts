@@ -6,12 +6,8 @@ import type * as GenerationRequestHooks from '~/components/ImageGeneration/utils
 import type * as Trpc from '~/utils/trpc';
 
 /**
- * The date bounds `useGetTextToImageRequests` hands the tRPC query.
- *
- * The App Blocks image picker passes `ignoreFilters` (the generator queue's own filters must not
- * narrow it) and brings its own `toDate` for "jump to date". The hook used to spread the caller's
- * input and then write the queue filter's dates over it, so the picker's bound was silently
- * replaced by `undefined` and the jump did nothing. This asserts the input the query receives.
+ * The date bounds `useGetTextToImageRequests` hands the tRPC query. The App Blocks image picker
+ * passes `ignoreFilters` and its own `toDate` ("jump to date"); that `toDate` must reach the query.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -73,12 +69,15 @@ describe('useGetTextToImageRequests — date bounds reaching the query', () => {
     mocks.filters = { fromDate: QUEUE_FROM, toDate: QUEUE_TO };
   });
 
+  // Regression: red at origin/main, where the queue filter's (here ignored, so undefined) dates
+  // were written over the caller's.
   it("keeps a caller's own toDate when the queue's filters are ignored", () => {
     const input = queriedInput({ toDate: PICKED }, { enabled: true, ignoreFilters: true });
     expect(input.toDate).toBe(PICKED);
     expect(input.fromDate).toBeUndefined();
   });
 
+  // Invariant guard.
   it('sends no bound when neither the caller nor the queue has one', () => {
     mocks.filters = {};
     const input = queriedInput({}, { enabled: true });
@@ -86,8 +85,18 @@ describe('useGetTextToImageRequests — date bounds reaching the query', () => {
     expect(input.fromDate).toBeUndefined();
   });
 
+  // Invariant guard.
   it("uses the queue's own date filter when it is not ignored", () => {
     const input = queriedInput({}, { enabled: true });
+    expect(input.toDate).toBe(QUEUE_TO);
+    expect(input.fromDate).toBe(QUEUE_FROM);
+  });
+
+  it("prefers the queue's date filter over a caller's when both are set", () => {
+    const input = queriedInput(
+      { toDate: PICKED, fromDate: new Date(2020, 0, 1) },
+      { enabled: true }
+    );
     expect(input.toDate).toBe(QUEUE_TO);
     expect(input.fromDate).toBe(QUEUE_FROM);
   });

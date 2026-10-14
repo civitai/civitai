@@ -1,9 +1,12 @@
 import * as z from 'zod';
 
+/** Earliest "jump to date" accepted: older than any image, and refuses a half-typed year (0202). */
+export const PICKER_JUMP_MIN_DATE = new Date('2000-01-01T00:00:00.000Z');
+
 export const getBlockPickablePostedImagesSchema = z.object({
   limit: z.number().int().min(1).max(100).default(40),
   cursor: z.number().int().positive().optional(),
   /** List only images created at or before this moment: the picker's "jump to date". */
-  toDate: z.date().optional(),
+  toDate: z.date().min(PICKER_JUMP_MIN_DATE).optional(),
 });
 export type GetBlockPickablePostedImagesInput = z.infer<typeof getBlockPickablePostedImagesSchema>;

@@ -126,6 +126,25 @@ const cancelButton = () =>
   ) as HTMLButtonElement;
 const scroller = () =>
   document.querySelector<HTMLElement>('[data-testid="block-image-picker-scroll"]');
+const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Use and Cancel lie inside the dialog's own box (not clipped by it) and inside the window. */
+function expectFooterOnScreen(dialog: HTMLElement, vp: Viewport) {
+  for (const button of [confirmButton(), cancelButton()]) {
+    expect(box(button).top).toBeGreaterThanOrEqual(Math.max(0, box(dialog).top));
+    expect(box(button).bottom).toBeLessThanOrEqual(Math.min(vp.height, box(dialog).bottom));
+  }
+}
+
+/** Mounted tiles may cover the visible rows plus the virtualizer's overscan (2) either side. */
+function expectWindowedTileCount(grid: HTMLElement) {
+  const tiles = postedTiles().map((t) => box(t));
+  const columns = tiles.filter((t) => t.top === tiles[0].top).length;
+  const rowHeight = tiles[0].height + 8;
+  const visibleRows = Math.ceil(grid.clientHeight / rowHeight) + 1;
+  expect(tiles.length).toBeGreaterThan(columns);
+  expect(tiles.length).toBeLessThanOrEqual(columns * (visibleRows + 2 * 2));
+}
 
 const PHONES: Viewport[] = [
   { width: 360, height: 640 },
@@ -147,20 +166,42 @@ describe('BlockImagePickerModal geometry with a large library', () => {
 
       expect(box(dialog)).toMatchObject({ width: vp.width, height: vp.height });
       expect(dialog.scrollHeight).toBe(dialog.clientHeight);
+      expect(dialog.scrollWidth).toBe(dialog.clientWidth);
       const grid = scroller();
       if (!grid) throw new Error('grid scroller did not render');
       // The grid is under pressure: it, not the modal, holds the overflow.
       expect(grid.scrollHeight).toBeGreaterThan(grid.clientHeight);
+      expectFooterOnScreen(dialog, vp);
 
-      for (const button of [confirmButton(), cancelButton()]) {
-        expect(box(button).top).toBeGreaterThanOrEqual(0);
-        expect(box(button).bottom).toBeLessThanOrEqual(vp.height);
-      }
       // Three tiles to a row at phone width.
       const [first, second, third, fourth] = postedTiles().map((t) => box(t));
       expect(first.top).toBe(second.top);
       expect(second.top).toBe(third.top);
       expect(fourth.top).toBeGreaterThan(first.top);
+    }
+  );
+
+  // Regression (no tray at origin/main): picks add the tray above the footer; the footer stays on
+  // screen and the grid keeps at least a row of height.
+  test.each([PHONES[0], DESKTOPS[0]])(
+    '$width x $height: with picks in the tray, Use and Cancel stay on screen',
+    async (vp) => {
+      setLibrary(200);
+      const dialog = await openPicker(vp);
+      tileNamed(1)?.click();
+      tileNamed(2)?.click();
+      const tray = await vi.waitUntil(() =>
+        document.querySelector<HTMLElement>('[data-testid="block-image-picker-tray"]')
+      );
+      await nextLayout();
+
+      expect(tray.querySelectorAll('[role="listitem"]')).toHaveLength(2);
+      expectFooterOnScreen(dialog, vp);
+      expect(dialog.scrollHeight).toBe(dialog.clientHeight);
+      expect(dialog.scrollWidth).toBe(dialog.clientWidth);
+      const grid = scroller();
+      if (!grid) throw new Error('grid scroller did not render');
+      expect(grid.clientHeight).toBeGreaterThanOrEqual(box(postedTiles()[0]).height);
     }
   );
 
@@ -175,8 +216,8 @@ describe('BlockImagePickerModal geometry with a large library', () => {
 
       expect(box(dialog).width).toBeLessThanOrEqual(800);
       expect(box(dialog).height).toBeLessThan(vp.height);
-      expect(box(confirmButton()).bottom).toBeLessThanOrEqual(vp.height);
-      expect(box(cancelButton()).bottom).toBeLessThanOrEqual(vp.height);
+      expect(Math.abs(box(dialog).left - (vp.width - box(dialog).right))).toBeLessThanOrEqual(1);
+      expectFooterOnScreen(dialog, vp);
     }
   );
 
@@ -186,36 +227,39 @@ describe('BlockImagePickerModal geometry with a large library', () => {
     async (vp) => {
       const fetchNextPage = setLibrary(600);
       await openPicker(vp);
-
-      const atTop = postedTiles().length;
-      expect(atTop).toBeGreaterThan(5);
-      expect(atTop).toBeLessThan(100);
-
       const grid = scroller();
       if (!grid) throw new Error('grid scroller did not render');
+
+      expectWindowedTileCount(grid);
+      // Past the loader's start-up delay: nothing is fetched while the end of the list is far away.
+      await settle(1700);
+      expect(fetchNextPage).not.toHaveBeenCalled();
+
       grid.scrollTop = grid.scrollHeight;
       await vi.waitUntil(() => tileNamed(600), { timeout: 5000 });
       expect(tileNamed(1)).toBeNull();
-      expect(postedTiles().length).toBeLessThan(100);
+      expectWindowedTileCount(grid);
       // The loader below the last row is now in view.
       await vi.waitFor(() => expect(fetchNextPage).toHaveBeenCalled(), { timeout: 6000 });
     }
   );
 
-  // Regression: at origin/main every thumbnail asks for the 450 rendition, whatever the tile.
-  test.each([PHONES[1], DESKTOPS[1]])(
-    '$width x $height: a thumbnail is requested at the tile size, with a 2x variant',
+  // Regression: at origin/main every thumbnail asks for the 450 rendition. Measured at the
+  // narrowest phone too, where a width taken from the ~88px tile would land on the 96 rung, which
+  // has no 2x variant.
+  test.each([{ width: 320, height: 640 }, PHONES[1], DESKTOPS[1]])(
+    '$width x $height: a thumbnail is requested at the 320 rung, with a 512 2x variant',
     async (vp) => {
-      setLibrary(40);
+      setLibrary(200);
       await openPicker(vp);
 
       const tile = tileNamed(1);
       const img = tile?.querySelector('img');
       if (!tile || !img) throw new Error('first tile did not render');
-      // ~100-120px tiles: the image CDN's 320 rung covers them at 1x, its 512 rung at 2x.
       expect(box(tile).width).toBeGreaterThan(80);
-      expect(box(tile).width).toBeLessThanOrEqual(160);
+      expect(box(tile).width).toBeLessThanOrEqual(250);
       expect(box(tile).height).toBe(box(tile).width);
+      // Literal rungs of the image CDN's width ladder (`COMMON_IMAGE_WIDTHS`).
       expect(img.getAttribute('src')).toMatch(/\/width=320[,/]/);
       expect(img.getAttribute('srcset')).toMatch(/\/width=512[,/]/);
     }

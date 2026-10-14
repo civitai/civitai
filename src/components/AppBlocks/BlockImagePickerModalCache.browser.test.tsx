@@ -419,10 +419,12 @@ describe('BlockImagePickerModal posted list and the query cache', () => {
     await expect.element(count).toHaveTextContent('1 of 5 selected');
 
     await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
-    await vi.waitFor(() =>
-      expect(mocks.fetchPosted).toHaveBeenLastCalledWith(undefined, {
-        toDate: new Date(2024, 5, 30, 23, 59, 59, 999),
-      })
+    await vi.waitFor(
+      () =>
+        expect(mocks.fetchPosted).toHaveBeenLastCalledWith(undefined, {
+          toDate: new Date(2024, 5, 30, 23, 59, 59, 999),
+        }),
+      { timeout: 5000 }
     );
     // The list on screen is the older one, and the pick made from the newer one is still held.
     await expect.element(firstTile()).toHaveAttribute('aria-pressed', 'false');
@@ -432,7 +434,7 @@ describe('BlockImagePickerModal posted list and the query cache', () => {
     expect(onResolved).toHaveBeenCalledWith([pickOf(MATURE)]);
   });
 
-  // Guard for the rule the date jump must not weaken: a list reset at the SAME date (what the
+  // Invariant guard for the rule the date jump must not weaken: a list reset at the SAME date (what the
   // settings provider does when a level change has been saved) still drops the posted picks. Red
   // at origin/main only because there is no date control; the rule itself held there.
   test('a list reset while a date is set still drops the posted picks', async () => {
@@ -441,10 +443,12 @@ describe('BlockImagePickerModal posted list and the query cache', () => {
 
     openPicker({ max: 5 });
     await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
-    await vi.waitFor(() =>
-      expect(mocks.fetchPosted).toHaveBeenLastCalledWith(undefined, {
-        toDate: new Date(2024, 5, 30, 23, 59, 59, 999),
-      })
+    await vi.waitFor(
+      () =>
+        expect(mocks.fetchPosted).toHaveBeenLastCalledWith(undefined, {
+          toDate: new Date(2024, 5, 30, 23, 59, 59, 999),
+        }),
+      { timeout: 5000 }
     );
     await userEvent.click(firstTile());
     const count = page.getByTestId('block-image-picker-count');

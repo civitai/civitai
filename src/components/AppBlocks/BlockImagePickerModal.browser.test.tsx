@@ -614,7 +614,6 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
 
     const tray = page.getByRole('list', { name: 'Selected images' });
     const removePosted = tray.getByRole('button', { name: 'Remove selected image 1 (Posted)' });
-    // The posted pick is listed while its own tab is not on screen.
     await expect.element(removePosted).toBeInTheDocument();
     await expect
       .element(tray.getByRole('button', { name: 'Remove selected image 2 (Generated)' }))
@@ -663,11 +662,13 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await userEvent.click(tile('Posted image 2'));
     await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
 
-    await vi.waitFor(() =>
-      expect(mocks.postedQuery).toHaveBeenLastCalledWith(
-        { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) },
-        expect.anything()
-      )
+    await vi.waitFor(
+      () =>
+        expect(mocks.postedQuery).toHaveBeenLastCalledWith(
+          { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) },
+          expect.anything()
+        ),
+      { timeout: 5000 }
     );
     await expect.element(tile('Posted image 1')).toHaveAttribute('aria-pressed', 'false');
     expect(postedTiles()).toHaveLength(1);
@@ -675,8 +676,9 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await expect.element(count).toHaveTextContent('1 of 5 selected');
 
     await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
-    await vi.waitFor(() =>
-      expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything())
+    await vi.waitFor(
+      () => expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything()),
+      { timeout: 5000 }
     );
     await expect.element(tile('Posted image 2')).toHaveAttribute('aria-pressed', 'true');
 
@@ -692,15 +694,17 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await expect.element(tile('Generated image 1')).toBeInTheDocument();
     await userEvent.fill(page.getByLabelText('Jump to date'), '2025-01-05');
 
-    await vi.waitFor(() =>
-      expect(mocks.generatedQuery).toHaveBeenLastCalledWith(
-        { tags: ['img'], toDate: new Date(2025, 0, 5, 23, 59, 59, 999) },
-        { enabled: true, ignoreFilters: true }
-      )
+    await vi.waitFor(
+      () =>
+        expect(mocks.generatedQuery).toHaveBeenLastCalledWith(
+          { tags: ['img'], toDate: new Date(2025, 0, 5, 23, 59, 59, 999) },
+          { enabled: true, ignoreFilters: true }
+        ),
+      { timeout: 5000 }
     );
   });
 
-  // Red at origin/main: a tile was named by its index alone.
+  // Regression: at origin/main a tile was named by its index alone.
   test('labels a tile with when the image was posted', async () => {
     setPosted([postedItem(1, { createdAt: new Date(2024, 5, 30, 12) })]);
     openModal({ sources: ['posted'] });
@@ -708,5 +712,44 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await expect
       .element(page.getByRole('button', { name: 'Posted image 1, Jun 30, 2024', exact: true }))
       .toBeInTheDocument();
+  });
+
+  // Regression: at origin/main there is no date bound, so no message for an empty one.
+  test('a date with nothing on or before it says so, and offers the way back', async () => {
+    mocks.postedQuery.mockImplementation((input: { toDate?: Date }) => ({
+      data: { pages: [{ items: input.toDate ? [] : [postedItem(1)] }] },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(async () => undefined),
+      refetch: vi.fn(async () => undefined),
+    }));
+    openModal({ sources: ['posted'] });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2001-01-01');
+    await expect
+      .element(
+        page.getByText('None of your images from on or before this date can be used here.'),
+        {
+          timeout: 5000,
+        }
+      )
+      .toBeInTheDocument();
+    await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+  });
+
+  // Regression: a year still being typed must not be sent as a bound (0202 would list nothing
+  // after a scan of the whole library).
+  test('a half-typed year is not applied', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '0202-06-30');
+    await settle(800);
+    for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({});
   });
 });
