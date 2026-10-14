@@ -1621,9 +1621,9 @@ type StorylineImageGate = {
 };
 
 /**
- * The cached hidden set every image read applies (images and tags the reader hid, the tags
- * moderated for everyone, the site's defaults for a signed-out reader), plus the browsing-settings
- * exclusions every image feed applies server-side for this level.
+ * The cached hidden set every image read applies (images and tags the reader hid, the site's
+ * defaults for a signed-out reader), plus the browsing-settings exclusions every image feed
+ * applies server-side for this level.
  *
  * Read on first use and once per request, so a read with no image to show reads nothing.
  */
@@ -1642,17 +1642,18 @@ function getStorylineImageGate(
         getAllHiddenForUser(viewer ? { userId: viewer.id } : {}),
         enforceBlockedBrowsingTags(enforced, { id: viewer?.id, isModerator: viewer?.isModerator }),
       ]);
+      // As the image feeds' middleware (middleware.trpc.ts): only tags the reader hid, and an
+      // image hidden through a tag only while that tag is one of them. hiddenTags also carries
+      // every tag rated above PG, which a reader's level, not a hide, decides.
+      const hiddenTagIds = hidden.hiddenTags.filter((tag) => tag.hidden).map((tag) => tag.id);
       return {
         viewer,
         browsingLevel,
         blockedUserIds,
-        hiddenImageIds: hidden.hiddenImages.map((image) => image.id),
-        hiddenTagIds: [
-          ...new Set([
-            ...hidden.hiddenTags.map((tag) => tag.id),
-            ...(enforced.excludedTagIds ?? []),
-          ]),
-        ],
+        hiddenImageIds: hidden.hiddenImages
+          .filter((image) => !image.tagId || hiddenTagIds.includes(image.tagId))
+          .map((image) => image.id),
+        hiddenTagIds: [...new Set([...hiddenTagIds, ...(enforced.excludedTagIds ?? [])])],
       };
     })());
 }
