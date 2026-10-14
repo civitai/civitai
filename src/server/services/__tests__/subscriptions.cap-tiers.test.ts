@@ -101,4 +101,9 @@ describe('getCapTiers', () => {
     await expect(getCapTiers([])).resolves.toEqual(new Map());
     expect(findMany).not.toHaveBeenCalled();
   });
+
+  it('selects the owner of each row, so rows key to their user', async () => {
+    await getCapTiers([1, 2]);
+    expect(findMany.mock.calls[0][0]).toMatchObject({ select: { userId: true } });
+  });
 });

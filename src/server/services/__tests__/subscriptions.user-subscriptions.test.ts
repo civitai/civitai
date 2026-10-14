@@ -150,6 +150,43 @@ describe('getAllUserSubscriptions', () => {
     ]);
   });
 
+  it('asks for exactly the columns its readers use', async () => {
+    await getAllUserSubscriptions(7);
+    expect((findMany.mock.calls[0][0] as { select: unknown }).select).toEqual({
+      id: true,
+      status: true,
+      cancelAtPeriodEnd: true,
+      cancelAt: true,
+      canceledAt: true,
+      currentPeriodStart: true,
+      currentPeriodEnd: true,
+      createdAt: true,
+      endedAt: true,
+      metadata: true,
+      buzzType: true,
+      product: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          metadata: true,
+          provider: true,
+          active: true,
+        },
+      },
+      price: {
+        select: {
+          id: true,
+          unitAmount: true,
+          interval: true,
+          intervalCount: true,
+          currency: true,
+          active: true,
+        },
+      },
+    });
+  });
+
   it('keeps every other column of the row as the database returned it', async () => {
     const [first] = await getAllUserSubscriptions(7);
     const { price: _price, ...rest } = ROWS[0];

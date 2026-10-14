@@ -218,6 +218,33 @@ describe('placementPriceRanges', () => {
     expect(ranges.get(9)).toMatchObject({ score: 0, tier: 'free', max: 100 });
   });
 
+  it('reads each creator score by id, from the stored total', async () => {
+    queryRaw.mockResolvedValue([]);
+    getCapTiers.mockResolvedValue(new Map());
+    await placementPriceRanges([4, 5], 'storyline');
+    const [strings, ...values] = queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
+      `SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score FROM "User" WHERE id = ANY(?::int[])`
+    );
+    expect(values).toEqual([[4, 5]]);
+  });
+
+  it('uses a config it is handed instead of reading one, and prices the surface asked', async () => {
+    queryRaw.mockResolvedValue([{ id: 1, score: 0 }]);
+    getCapTiers.mockResolvedValue(new Map([[1, null]]));
+    const config = await getPlacementConfig();
+    findUnique.mockClear();
+    const ranges = await placementPriceRanges([1], 'sticker', config);
+    expect(findUnique).not.toHaveBeenCalled();
+    queryRaw.mockResolvedValue([{ score: 0 }]);
+    getCapTier.mockResolvedValue(null);
+    expect(ranges.get(1)).toEqual(await placementPriceRange(1, 'sticker'));
+    expect(ranges.get(1)?.min).toBe(PLACEMENT_SURFACES.sticker.serverMinPrice);
+  });
+
   it('reads nothing for no creators', async () => {
     await expect(placementPriceRanges([], 'storyline')).resolves.toEqual(new Map());
     expect(queryRaw).not.toHaveBeenCalled();

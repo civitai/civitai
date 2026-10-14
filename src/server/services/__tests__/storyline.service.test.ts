@@ -7,13 +7,19 @@ import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 
-const { getAllHiddenForUser, getBlockedPairIds, hiddenUsersCached, placementPriceRanges } =
-  vi.hoisted(() => ({
-    getAllHiddenForUser: vi.fn(),
-    getBlockedPairIds: vi.fn(),
-    hiddenUsersCached: vi.fn(),
-    placementPriceRanges: vi.fn(),
-  }));
+const {
+  enforceBlockedBrowsingTags,
+  getAllHiddenForUser,
+  getBlockedPairIds,
+  hiddenUsersCached,
+  placementPriceRanges,
+} = vi.hoisted(() => ({
+  enforceBlockedBrowsingTags: vi.fn(),
+  getAllHiddenForUser: vi.fn(),
+  getBlockedPairIds: vi.fn(),
+  hiddenUsersCached: vi.fn(),
+  placementPriceRanges: vi.fn(),
+}));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   // Straight through to the origin; caching is not what these tests are about.
@@ -29,6 +35,9 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
     ...(await importOriginal<typeof UserPreferencesService>()).HiddenUsers,
     getCached: hiddenUsersCached,
   },
+}));
+vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
+  enforceBlockedBrowsingTags,
 }));
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
@@ -127,6 +136,8 @@ beforeEach(() => {
   getAllHiddenForUser.mockResolvedValue({ hiddenImages: [], hiddenTags: [] });
   placementPriceRanges.mockReset();
   placementPriceRanges.mockResolvedValue(new Map());
+  enforceBlockedBrowsingTags.mockReset();
+  enforceBlockedBrowsingTags.mockResolvedValue({ emptyResult: false });
   bustFetchThroughCache.mockReset();
   blockedPairs = [];
   answerRaw(w);
@@ -1616,6 +1627,16 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     placementPriceRanges.mockImplementation(((ids: number[]) =>
       Promise.resolve(new Map(ids.map((id) => [id, { max }])))) as never);
 
+  /** The nth raw query as Postgres gets it, whitespace collapsed. */
+  const sqlAt = (n: number) => {
+    const [strings, ...values] = r.$queryRaw.mock.calls[n] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const composed = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return { text: composed.sql.replace(/\s+/g, ' '), values: composed.values };
+  };
+
   const feed = (viewer?: { id: number }) =>
     getStorylinesInfinite({
       filter: 'all',
@@ -1667,10 +1688,10 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     expect(sql).toContain('AND i.id <> ALL(?::int[])');
     // Whitespace-insensitive, anchored on the NOT EXISTS so a negation dropped in front is caught.
     expect(sql.replace(/\s+/g, ' ')).toContain(
-      'AND NOT EXISTS ( SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" = ANY(?::int[]) AND toi.disabled = false )'
+      'AND (NOT EXISTS ( SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" = ANY(?::int[]) AND toi.disabled = false ) OR i."userId" = ?)'
     );
     expect(sql).toContain('ORDER BY i."postId", i.index NULLS LAST, i.id');
-    expect(values).toEqual([[501], NsfwLevel.PG, [77, 78], [5, 6]]);
+    expect(values).toEqual([[501], STRANGER, NsfwLevel.PG, [77, 78], [5, 6], STRANGER]);
     expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: STRANGER });
   });
 
@@ -1775,5 +1796,149 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
       'userPrice',
     ])
       expect(item).not.toHaveProperty(key);
+  });
+
+  it('gives no cover when chapter 1 is above the story rating, even inside the reader level', async () => {
+    answer([feedRow(1, { rootNsfwLevel: NsfwLevel.X })]);
+    const page = await getStorylinesInfinite({
+      filter: 'all',
+      sort: 'newest',
+      limit: 24,
+      viewer: { id: STRANGER },
+      browsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
+    });
+    expect(page.items[0].coverImage).toBeNull();
+    expect(r.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('never covers with a minor, real-person or someone else private image', async () => {
+    answer([feedRow(1)]);
+    await feed({ id: STRANGER });
+    const { text, values } = sqlAt(1);
+    expect(text).toContain('JOIN "Post" p ON p.id = i."postId"');
+    expect(text).toContain('AND i.minor = false AND i.poi = false');
+    expect(text).toContain(`AND (p.availability <> 'Private' OR p."userId" = ?)`);
+    expect(values.filter((v) => v === STRANGER)).toHaveLength(2);
+  });
+
+  it('adds the browsing-settings tag exclusions for the reader level to the hidden tags', async () => {
+    enforceBlockedBrowsingTags.mockImplementation((async (input: { excludedTagIds?: number[] }) => {
+      input.excludedTagIds = [6, 9];
+      return { emptyResult: false };
+    }) as never);
+    getAllHiddenForUser.mockResolvedValue({ hiddenImages: [], hiddenTags: [{ id: 5 }, { id: 6 }] });
+    answer([feedRow(1)]);
+    await feed({ id: STRANGER });
+    expect(enforceBlockedBrowsingTags).toHaveBeenCalledWith(
+      expect.objectContaining({ browsingLevel: NsfwLevel.PG }),
+      expect.objectContaining({ id: STRANGER })
+    );
+    expect(sqlAt(1).values).toContainEqual([5, 6, 9]);
+  });
+
+  it('shows no price, rather than failing the page, when owner caps cannot be read', async () => {
+    placementPriceRanges.mockRejectedValue(new Error('cap read failed'));
+    answer([feedRow(1, { storylineMode: 'review', storylinePrice: 40 }), feedRow(2)]);
+    const page = await feed({ id: STRANGER });
+    expect(page.items.map((item) => item.continuePrice)).toEqual([null, null]);
+    expect(page.items[0].coverImage?.id).toBe(9501);
+  });
+
+  it('prices each card at its own owner cap, and an owner with no cap as unknown', async () => {
+    answer([
+      feedRow(1, { storylineMode: 'review', storylinePrice: 400 }),
+      feedRow(2, { storylineMode: 'review', storylinePrice: 400 }),
+      feedRow(3, { storylineMode: 'review', storylinePrice: 400 }),
+    ]);
+    placementPriceRanges.mockResolvedValue(
+      new Map([
+        [1001, { max: 50 }],
+        [1002, { max: 250 }],
+      ])
+    );
+    const page = await feed({ id: STRANGER });
+    expect(page.items.map((item) => item.continuePrice)).toEqual([50, 250, null]);
+  });
+
+  it('joins each card to its own storyline space and its owner account space', async () => {
+    answer([feedRow(1)]);
+    await feed({ id: STRANGER });
+    const { text } = sqlAt(0);
+    expect(text).toContain(
+      `LEFT JOIN "PlacementSpace" ss ON ss.surface = 'storyline' AND ss."entityType" = 'storyline' AND ss."entityId" = st.id`
+    );
+    expect(text).toContain(
+      `LEFT JOIN "PlacementSpace" us ON us.surface = 'storyline' AND us."entityType" = 'user' AND us."entityId" = st."userId"`
+    );
+    expect(text).toContain(
+      'ss.mode AS "storylineMode", ss.price AS "storylinePrice", us.mode AS "userMode", us.price AS "userPrice"'
+    );
+    expect(text).toContain(
+      'rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel", rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation"'
+    );
+    expect(text).toContain('u."bannedAt", u."deletedAt"');
+  });
+
+  it('reads covers by post, from the storyline that post opens, with every column a card renders', async () => {
+    answer([feedRow(1)]);
+    await feed({ id: STRANGER });
+    const { text } = sqlAt(1);
+    expect(text).toContain(
+      'SELECT DISTINCT ON (i."postId") i."postId", i.id, i.url, i.type, i."nsfwLevel", i.hash, i.width, i.height, i."userId", i.minor, i.poi FROM "Image" i'
+    );
+    expect(text).toContain('JOIN "Storyline" st ON st.id = c."storylineId"');
+    expect(text).toContain('WHERE i."postId" = ANY(');
+    expect(text).toContain('AND i."acceptableMinor" = false');
+    // The reader's own image is exempt from their hidden tags, as in image reads.
+    expect(text).toContain('AND toi.disabled = false ) OR i."userId" = ');
+  });
+
+  it('returns the cover as read, keyed by its post', async () => {
+    answer([feedRow(1)]);
+    const [item] = (await feed({ id: STRANGER })).items;
+    const { postId: _postId, ...expected } = cover(501);
+    expect(item.coverImage).toEqual(expected);
+  });
+
+  it.each([
+    ['the owner is banned', { bannedAt: new Date('2026-10-02') }],
+    ['the owner is deleted', { deletedAt: new Date('2026-10-02') }],
+    ['chapter 1 is outside the reader level', { rootNsfwLevel: NsfwLevel.PG13 }],
+  ])('gives no cover when %s', async (_name, overrides) => {
+    answer([feedRow(1, overrides)]);
+    const [item] = (await feed({ id: STRANGER })).items;
+    expect(item.coverImage).toBeNull();
+    expect(r.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives no cover from an owner the reader is in a block with', async () => {
+    getBlockedPairIds.mockResolvedValue([1001]);
+    answer([feedRow(1)]);
+    const [item] = (await feed({ id: STRANGER })).items;
+    expect(item.coverImage).toBeNull();
+  });
+
+  it('gives the owner a cover from their own unpublished chapter 1', async () => {
+    answer([feedRow(1, { rootPublishedAt: null })]);
+    const [item] = (await feed({ id: 1001 })).items;
+    expect(item.coverImage?.id).toBe(9501);
+  });
+
+  it('is not open to a signed-out reader on a collaborators-only storyline', async () => {
+    answer([feedRow(1, { whoCanContinue: 'Collaborators' })]);
+    const [item] = (await feed(undefined)).items;
+    expect(item.open).toBe(false);
+  });
+
+  it('leaves Complete storylines out of the open filter', async () => {
+    answer([]);
+    await getStorylinesInfinite({
+      filter: 'open',
+      sort: 'newest',
+      limit: 24,
+      viewer: { id: STRANGER },
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(sqlAt(0).text).toContain(`st.status <> 'Complete'`);
   });
 });
