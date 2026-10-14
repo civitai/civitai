@@ -33,7 +33,10 @@ import {
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
-import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  getHighestBrowsingLevelBit,
+} from '~/shared/constants/browsingLevel.constants';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 type Viewer = { id: number; isModerator?: boolean } | undefined;
@@ -473,14 +476,22 @@ async function assertCeilingKeepsFirstChapter(storylineId: number, maxNsfwLevel:
     where: { storylineId, depth: 0 },
     select: { post: { select: { nsfwLevel: true, tosViolation: true } } },
   });
-  const post = root?.post;
-  if (!post || post.tosViolation || !post.nsfwLevel) return;
-  const highest = getHighestBrowsingLevelBit(post.nsfwLevel);
-  if (highest === NsfwLevel.Blocked) return;
-  if (highest > maxNsfwLevel)
+  const floor = firstChapterFloor(root?.post);
+  if (floor !== null && floor > maxNsfwLevel)
     throw throwBadRequestError(
       "The maximum rating cannot be below your first chapter's rating. Choose a higher rating"
     );
+}
+
+/**
+ * The rating chapter 1 holds the ceiling to: its most severe image. Null when there is nothing to
+ * keep, because the post is gone, taken down, not yet rated or rated Blocked. Shared by the floor
+ * and the owner's settings read, so the two cannot disagree.
+ */
+function firstChapterFloor(post: { nsfwLevel: number; tosViolation: boolean } | null | undefined) {
+  if (!post || post.tosViolation || !post.nsfwLevel) return null;
+  const highest = getHighestBrowsingLevelBit(post.nsfwLevel);
+  return highest === NsfwLevel.Blocked ? null : highest;
 }
 
 /** The owner continuing their own story directly; everyone else continues through a placement. */
@@ -831,10 +842,13 @@ export async function getStorylineCanonAhead({
 }
 
 /**
- * Every chapter's rating, for the owner choosing a ceiling: so the settings can warn how many
- * chapters a lower one would hide. Owner and moderators only; the ratings of chapters a reader is
- * not shown are not theirs to see. `rootNsfwLevel` is chapter 1's, null when it is gone or not
- * yet rated; `chapterLevels` are the later chapters' rated posts, in depth order.
+ * Chapter ratings for the owner choosing a ceiling, so the settings can warn how many chapters a
+ * lower one would hide. Owner and moderators only, and always as the owner sees the story: a
+ * chapter the owner is shown as a tombstone (taken down, unpublished, by a banned author or one in
+ * a block with them) is left out, its rating not theirs to see and not hidden by any ceiling.
+ *
+ * `rootNsfwLevel` is chapter 1's level, null when the floor has nothing to keep (see
+ * `firstChapterFloor`); `chapterLevels` are the later chapters' levels, in depth order.
  */
 export async function getStorylineChapterLevels({
   id,
@@ -845,18 +859,46 @@ export async function getStorylineChapterLevels({
   userId: number;
   isModerator?: boolean;
 }) {
-  await getOwnedStoryline({ storylineId: id, userId, isModerator });
-  const rows = await dbRead.$queryRaw<{ depth: number; nsfwLevel: number }[]>`
-    SELECT c.depth, p."nsfwLevel"
-    FROM "StorylineChapter" c
-    JOIN "Post" p ON p.id = c."postId"
-    WHERE c."storylineId" = ${id} AND p."nsfwLevel" <> 0
-    ORDER BY c.depth, c.id
-  `;
+  const storyline = await getOwnedStoryline({ storylineId: id, userId, isModerator });
+  const owner = { id: storyline.userId };
+  const [rows, blockedUserIds] = await Promise.all([
+    dbRead.$queryRaw<
+      {
+        depth: number;
+        userId: number;
+        nsfwLevel: number;
+        publishedAt: Date | null;
+        tosViolation: boolean;
+        bannedAt: Date | null;
+        deletedAt: Date | null;
+      }[]
+    >`
+      SELECT c.depth, p."userId", p."nsfwLevel", p."publishedAt", p."tosViolation",
+        u."bannedAt", u."deletedAt"
+      FROM "StorylineChapter" c
+      JOIN "Post" p ON p.id = c."postId"
+      JOIN "User" u ON u.id = p."userId"
+      WHERE c."storylineId" = ${id}
+      ORDER BY c.depth, c.id
+    `,
+    getViewerExcludedIds(owner),
+  ]);
   const root = rows.find((row) => row.depth === 0);
+  // Shown to the owner whatever the ceiling: judged at the highest ceiling and every level, so
+  // only the reasons a ceiling cannot change are applied.
+  const shownToOwner = (row: (typeof rows)[number]) =>
+    !getStorylineChapterTombstone({
+      post: { id: 0, ...row, user: { bannedAt: row.bannedAt, deletedAt: row.deletedAt } },
+      viewer: owner,
+      maxNsfwLevel: NsfwLevel.XXX,
+      browsingLevel: allBrowsingLevelsFlag,
+      blockedUserIds,
+    });
   return {
-    rootNsfwLevel: root?.nsfwLevel ?? null,
-    chapterLevels: rows.filter((row) => row.depth > 0).map((row) => row.nsfwLevel),
+    rootNsfwLevel: root && firstChapterFloor(root) !== null ? root.nsfwLevel : null,
+    chapterLevels: rows
+      .filter((row) => row.depth > 0 && shownToOwner(row))
+      .map((row) => row.nsfwLevel),
   };
 }
 

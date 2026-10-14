@@ -284,12 +284,17 @@ describe('storyline router: canon ahead', () => {
 
 describe('storyline router: chapter levels and the ceiling floor', () => {
   const w = dbMock.dbWrite;
+  const shownChapter = {
+    publishedAt: new Date('2026-10-01'),
+    tosViolation: false,
+    ...notBanned,
+  };
 
   beforeEach(() => {
     w.storyline.findUnique.mockResolvedValue(xStory as never);
     r.$queryRaw.mockResolvedValue([
-      { depth: 0, nsfwLevel: NsfwLevel.X },
-      { depth: 1, nsfwLevel: NsfwLevel.PG },
+      { depth: 0, userId: OWNER, nsfwLevel: NsfwLevel.X, ...shownChapter },
+      { depth: 1, userId: AUTHOR, nsfwLevel: NsfwLevel.PG, ...shownChapter },
     ] as never);
   });
 

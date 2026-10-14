@@ -5,7 +5,6 @@ import type * as UserPreferencesService from '~/server/services/user-preferences
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
-import { STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
 
 const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
   getBlockedPairIds: vi.fn(),
@@ -1234,13 +1233,16 @@ describe('getStorylinesInfinite', () => {
 
 describe('updateStoryline: the ceiling cannot drop below chapter 1', () => {
   /**
-   * Answers the first-chapter read by the depth it asks for: chapter 1 at depth 0, chapter 3 at
-   * any other. A check that read some chapter other than the first would get chapter 3's rating.
+   * Answers the first-chapter read by what it asks for: this storyline's chapter 1 only for
+   * storyline 10 at depth 0. A read of another chapter, or of another storyline, gets an X-rated
+   * chapter 3 instead, so a check that asked the wrong question refuses where it should not.
    */
   const chapters = (first: Record<string, unknown> | null, third = { nsfwLevel: NsfwLevel.X }) =>
-    w.storylineChapter.findFirst.mockImplementation(((args: { where: { depth?: number } }) =>
+    w.storylineChapter.findFirst.mockImplementation(((args: {
+      where: { storylineId?: number; depth?: number };
+    }) =>
       Promise.resolve(
-        args.where.depth === 0
+        args.where.storylineId === 10 && args.where.depth === 0
           ? first && { post: first }
           : { post: { tosViolation: false, ...third } }
       )) as never);
@@ -1309,6 +1311,7 @@ describe('updateStoryline: the ceiling cannot drop below chapter 1', () => {
 });
 
 describe('getStorylineCanonAhead', () => {
+  const READER_AUTHOR = 6;
   const post = (id: number, userId: number, overrides: Record<string, unknown> = {}) => ({
     id,
     userId,
@@ -1321,38 +1324,84 @@ describe('getStorylineCanonAhead', () => {
   });
 
   beforeEach(() => {
+    // Ceiling R; chapter 1 PG.
     r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
-    // The canon route from chapter 2: 2 -> 3 (taken down) -> 4.
+    // The canon route from chapter 2: 2 -> 3 (taken down) -> 4 -> 5 (R) -> 6 (X) -> 7 (by a user
+    // the reader blocked) -> 8 (unpublished, by READER_AUTHOR).
     r.$queryRaw.mockResolvedValue([
       { id: 2, postId: 102, depth: 1 },
       { id: 3, postId: 103, depth: 2 },
       { id: 4, postId: 104, depth: 3 },
+      { id: 5, postId: 105, depth: 4 },
+      { id: 6, postId: 106, depth: 5 },
+      { id: 7, postId: 107, depth: 6 },
+      { id: 8, postId: 108, depth: 7 },
     ] as never);
     r.post.findMany.mockResolvedValue([
       post(102, OWNER),
       post(103, OWNER, { tosViolation: true }),
       post(104, OWNER),
+      post(105, OWNER, { nsfwLevel: NsfwLevel.R }),
+      post(106, OWNER, { nsfwLevel: NsfwLevel.X }),
+      post(107, BLOCKED),
+      post(108, READER_AUTHOR, { publishedAt: null }),
     ] as never);
     r.storylineChapterEdge.groupBy.mockResolvedValue([
       { parentChapterId: 3, _count: { _all: 1 } },
       { parentChapterId: 4, _count: { _all: 3 } },
     ] as never);
+    // The reader blocked BLOCKED, who wrote chapter 7; the owner is not in a block with anyone.
+    getBlockedPairIds.mockResolvedValue([BLOCKED]);
   });
 
-  it('returns the canon chapters after the one asked about, tombstones kept', async () => {
+  const tombstonesFor = async (viewerId: number) =>
+    (
+      await getStorylineCanonAhead({
+        chapterId: 2,
+        viewer: { id: viewerId },
+        browsingLevel: NsfwLevel.PG | NsfwLevel.PG13,
+      })
+    ).map((c) => [c.chapterId, c.tombstone]);
+
+  it('returns the canon chapters after the one asked about, each judged for this reader', async () => {
+    expect(await tombstonesFor(READER_AUTHOR)).toEqual([
+      [3, 'removed'],
+      [4, null],
+      [5, 'browsingLevel'],
+      [6, 'aboveStoryRating'],
+      [7, 'unavailable'],
+      // Their own unpublished chapter, which only its author is shown.
+      [8, null],
+    ]);
+    expect(getBlockedPairIds).toHaveBeenCalledWith(READER_AUTHOR);
+  });
+
+  it('hides an unpublished chapter from everyone but its author', async () => {
+    expect((await tombstonesFor(STRANGER)).at(-1)).toEqual([8, 'unavailable']);
+  });
+
+  it('counts the ways on from each chapter', async () => {
     const ahead = await getStorylineCanonAhead({
       chapterId: 2,
-      viewer: { id: STRANGER },
+      viewer: undefined,
       browsingLevel: NsfwLevel.PG,
     });
-    expect(ahead.map((c) => [c.chapterId, c.tombstone, c.childCount])).toEqual([
-      [3, 'removed', 1],
-      [4, null, 3],
+    expect(ahead.slice(0, 3).map((c) => [c.chapterId, c.childCount])).toEqual([
+      [3, 1],
+      [4, 3],
+      [5, 0],
     ]);
   });
 
-  it('walks the canon edges from the chapter asked about, capped', async () => {
+  it('is empty for a chapter with no canon child', async () => {
+    r.$queryRaw.mockResolvedValue([{ id: 2, postId: 102, depth: 1 }] as never);
+    await expect(
+      getStorylineCanonAhead({ chapterId: 2, viewer: undefined, browsingLevel: NsfwLevel.PG })
+    ).resolves.toEqual([]);
+  });
+
+  it('walks the canon edges from the chapter asked about, at most 199 steps', async () => {
     await getStorylineCanonAhead({ chapterId: 2, viewer: undefined, browsingLevel: NsfwLevel.PG });
     const [strings, ...values] = r.$queryRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
@@ -1361,7 +1410,9 @@ describe('getStorylineCanonAhead', () => {
     const sql = strings.join('?');
     expect(sql).toContain('WHERE c.id = ?');
     expect(sql).toContain('e."parentChapterId" = main.id AND e.canon');
-    expect(values).toEqual([2, STORYLINE_PATH_LIMIT - 1]);
+    expect(sql).toContain('WHERE main.hops < ?');
+    expect(sql).toContain('ORDER BY depth');
+    expect(values).toEqual([2, 199]);
   });
 
   it('serves nothing when the story is outside the reader level', async () => {
@@ -1397,48 +1448,103 @@ describe('getStorylineCanonAhead', () => {
 });
 
 describe('getStorylineChapterLevels', () => {
+  const HIDDEN = 11;
+  const row = (depth: number, nsfwLevel: number, overrides: Record<string, unknown> = {}) => ({
+    depth,
+    userId: STRANGER,
+    nsfwLevel,
+    publishedAt: new Date('2026-10-01'),
+    tosViolation: false,
+    bannedAt: null,
+    deletedAt: null,
+    ...overrides,
+  });
+
   beforeEach(() => {
     w.storyline.findUnique.mockResolvedValue(storylineRow() as never);
     r.$queryRaw.mockResolvedValue([
-      { depth: 0, nsfwLevel: NsfwLevel.PG13 },
-      { depth: 1, nsfwLevel: NsfwLevel.R },
-      { depth: 2, nsfwLevel: NsfwLevel.X },
-      { depth: 2, nsfwLevel: NsfwLevel.PG },
+      row(0, NsfwLevel.PG13, { userId: OWNER }),
+      row(1, NsfwLevel.R),
+      row(2, NsfwLevel.X),
+      row(2, NsfwLevel.PG, { userId: OWNER }),
     ] as never);
   });
 
-  it('gives the owner chapter 1 rating apart from the later chapters', async () => {
+  it('gives the owner chapter 1 level apart from the later chapters', async () => {
     await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toEqual({
       rootNsfwLevel: NsfwLevel.PG13,
       chapterLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.PG],
     });
   });
 
-  it('reads rated chapters of this storyline only, in one query', async () => {
+  it('reads this storyline chapters in depth order, in one query', async () => {
     await getStorylineChapterLevels({ id: 10, userId: OWNER });
     expect(r.$queryRaw).toHaveBeenCalledTimes(1);
     const [strings, ...values] = r.$queryRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       ...unknown[]
     ];
-    expect(strings.join('?')).toContain('WHERE c."storylineId" = ? AND p."nsfwLevel" <> 0');
+    const sql = strings.join('?');
+    expect(sql).toContain('WHERE c."storylineId" = ?\n');
+    expect(sql).toContain('ORDER BY c.depth, c.id');
     expect(values).toEqual([10]);
   });
 
-  it('says chapter 1 has no rating when it is gone or unrated', async () => {
-    r.$queryRaw.mockResolvedValue([{ depth: 1, nsfwLevel: NsfwLevel.R }] as never);
+  it('leaves out every later chapter the owner is shown as a tombstone', async () => {
+    getBlockedPairIds.mockResolvedValue([BLOCKED]);
+    hiddenUsersCached.mockResolvedValue([{ id: HIDDEN }]);
+    r.$queryRaw.mockResolvedValue([
+      row(0, NsfwLevel.PG, { userId: OWNER }),
+      row(1, NsfwLevel.R),
+      row(1, NsfwLevel.X, { tosViolation: true }),
+      row(1, NsfwLevel.X, { publishedAt: null }),
+      row(1, NsfwLevel.X, { bannedAt: new Date('2026-10-02') }),
+      row(1, NsfwLevel.X, { deletedAt: new Date('2026-10-02') }),
+      row(1, NsfwLevel.X, { userId: BLOCKED }),
+      row(1, NsfwLevel.X, { userId: HIDDEN }),
+      row(1, NsfwLevel.Blocked),
+      row(1, 0),
+    ] as never);
     await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toEqual({
-      rootNsfwLevel: null,
+      rootNsfwLevel: NsfwLevel.PG,
       chapterLevels: [NsfwLevel.R],
+    });
+    expect(getBlockedPairIds).toHaveBeenCalledWith(OWNER);
+    expect(hiddenUsersCached).toHaveBeenCalledWith({ userId: OWNER });
+  });
+
+  it('counts the owner own unpublished chapter, which the owner is shown', async () => {
+    r.$queryRaw.mockResolvedValue([
+      row(0, NsfwLevel.PG, { userId: OWNER }),
+      row(1, NsfwLevel.X, { userId: OWNER, publishedAt: null }),
+    ] as never);
+    await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toMatchObject({
+      chapterLevels: [NsfwLevel.X],
     });
   });
 
-  it('lets a moderator read them, and refuses everyone else', async () => {
+  it.each([
+    ['gone', []],
+    ['unrated', [row(0, 0, { userId: OWNER })]],
+    ['taken down', [row(0, NsfwLevel.R, { userId: OWNER, tosViolation: true })]],
+    ['blocked', [row(0, NsfwLevel.Blocked, { userId: OWNER })]],
+  ])('has no chapter 1 level when chapter 1 is %s, as the floor does', async (_name, rows) => {
+    r.$queryRaw.mockResolvedValue(rows as never);
+    await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toMatchObject({
+      rootNsfwLevel: null,
+    });
+  });
+
+  it('answers a moderator as the owner sees the story', async () => {
     await getStorylineChapterLevels({ id: 10, userId: MODERATOR, isModerator: true });
+    expect(getBlockedPairIds).toHaveBeenCalledWith(OWNER);
+  });
+
+  it('refuses everyone but the owner and moderators', async () => {
     for (const userId of [COLLABORATOR, STRANGER])
       await expect(getStorylineChapterLevels({ id: 10, userId })).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
-    expect(r.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(r.$queryRaw).not.toHaveBeenCalled();
   });
 });
