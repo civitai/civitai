@@ -35,8 +35,9 @@ export type CachedLookupOptions<T extends object> = {
   staleWhileRevalidateTtl?: number;
   // --- In-process (per-pod) L1 in front of the Redis per-id cache -----------------------------------
   // Opt-in. When `localTtl` (SECONDS) is set, resolved per-id values are also held in a bounded per-pod
-  // LRU. An L1 hit skips the ENTIRE Redis GET fan-out for that id — the win on hot feed hydration,
-  // where packed.mGet decomposes into per-id GETs (no MGET across cluster slots).
+  // LRU. An L1 hit skips the Redis read for that id entirely — the win on hot feed hydration.
+  // (On a cluster packed.mGet reads a batch with one script call per master; see
+  // ./cluster-batched-get. An L1 hit still saves the Redis-side work and the decode.)
   //
   // 🔴 CORRECTNESS: the L1 is per-pod and CANNOT see a cross-pod `bust`/`refresh`, so a mutation
   // propagates with up to `localTtl` extra staleness on pods holding a copy. Enable ONLY on near-static

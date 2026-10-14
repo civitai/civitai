@@ -13,6 +13,7 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
+import { batchedGet } from './cluster-batched-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
 import {
@@ -1626,6 +1627,32 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
+  // Raw multi-key read behind packed.mGet. On the cache CLUSTER this is one script call per owning
+  // master (./cluster-batched-get) instead of one GET per key; anywhere else, and with
+  // REDIS_CLUSTER_BATCHED_GET_ENABLED=false, it is the original per-key GETs.
+  // The script runs through bufferClient like the GETs did, so it is instrumented, deadline-bound
+  // and routing-retried by the same `_execute` wrapper, and its reply elements are Buffers.
+  const clusterSelf = (client as any)._self ?? client;
+  const batchedGetEnabled =
+    type === 'cache' && config.cluster && config.clusterBatchedGetEnabled !== false;
+  const getBuffers = (keys: K[]): Promise<(Buffer | null)[]> => {
+    if (!batchedGetEnabled || keys.length <= 1)
+      return Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+    return batchedGet<Buffer>(keys, {
+      get: (key) => bufferClient.get<Buffer>(key as K),
+      evalSha: (sha, args) => (bufferClient as any).evalSha(sha, args),
+      eval: (script, args) => (bufferClient as any).eval(script, args),
+      nodeOf: (slot) => clusterSelf.slots?.[slot]?.master?.address,
+      isValue: (v): v is Buffer => Buffer.isBuffer(v),
+      onFallback: (err, keyCount) =>
+        log(
+          `Batched cluster GET fell back to per-key GETs for ${keyCount} keys: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        ),
+    });
+  };
+
   client.packed = {
     async get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null> {
       const result = await bufferClient.get<Buffer>(key);
@@ -1639,9 +1666,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       return safeUnpack<T>(result, () => client.unlink(key));
     },
 
-    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
+    // Not a native MGET (CROSSSLOT on a cluster): see getBuffers above.
     async mGet<T>(keys: K[], packedOptions?: PackedOptions): Promise<(T | null)[]> {
-      const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+      const results = await getBuffers(keys);
       // SYMMETRIC with `set(..., { compress: true })`, same as the single-key `get` above.
       // The batched read is the one a per-id cache (createCachedArray) actually uses, so a
       // compressed writer that could not opt its mGet in would corrupt every read.

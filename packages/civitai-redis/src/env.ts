@@ -21,6 +21,13 @@ export const redisEnvSchema = z
       (x) => x !== 'false',
       z.boolean().default(true)
     ),
+    // Read a multi-key packed mGet with one script call per owning master instead of one GET per
+    // key (see ./cluster-batched-get). ON by default; only the literal string 'false' disables it,
+    // which restores the per-key GETs.
+    REDIS_CLUSTER_BATCHED_GET_ENABLED: z.preprocess(
+      (x) => x !== 'false',
+      z.boolean().default(true)
+    ),
     // sysRedis HA (Phase 1): when REDIS_SYS_SENTINELS is set the system client is built
     // via Sentinel discovery instead of the single REDIS_SYS_URL connection. Comma-separated
     // host:port list, e.g. "<sentinel-service>.<namespace>.svc.cluster.local:26379".
@@ -227,6 +234,7 @@ function buildEnv() {
     clusterNodes: parsed.data.REDIS_CLUSTER_NODES,
     clusterRefreshInterval: parsed.data.REDIS_CLUSTER_REFRESH_INTERVAL,
     clusterErrorRediscoverEnabled: parsed.data.REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED,
+    clusterBatchedGetEnabled: parsed.data.REDIS_CLUSTER_BATCHED_GET_ENABLED,
     sysSentinels: parsed.data.REDIS_SYS_SENTINELS,
     sysSentinelName: parsed.data.REDIS_SYS_SENTINEL_NAME,
     sysSentinelPassword: parsed.data.REDIS_SYS_SENTINEL_PASSWORD,
