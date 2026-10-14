@@ -820,6 +820,22 @@ describe('the storyline continuation loop', () => {
   });
 });
 
+describe('a continuation of a taken-down storyline', () => {
+  // Its chapters stay, but none can take a continuation any more: declining
+  // would pay the owner for something they could not accept.
+  it('cannot be declined for a fee', async () => {
+    charge(100);
+    const { id } = await submit(STRANGER, STRANGER_POST, 100);
+    db.update('storyline', { id: STORYLINE }, { tosViolation: true });
+
+    await expect(
+      actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+    ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+    expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+    expect(moneyCalls().payouts).toEqual([]);
+  });
+});
+
 const queueOf = async (ownerId: number) =>
   (await getPendingStorylineContinuations({ ownerId, domainLevels: ALL_LEVELS })).items;
 

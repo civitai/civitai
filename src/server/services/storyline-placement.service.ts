@@ -505,18 +505,23 @@ export async function settleStorylineContinuation({
       const parent = parentPostId
         ? await tx.storylineChapter.findUnique({
             where: { postId: parentPostId },
-            select: { removedAt: true, storyline: { select: { userId: true } } },
+            select: {
+              removedAt: true,
+              storyline: { select: { userId: true, tosViolation: true } },
+            },
           })
         : null;
       if (parent && parent.storyline.userId !== pending.ownerId)
         throw new Error(
           `storyline: placement ${placementId} is not owned by its storyline's owner`
         );
-      // A parent that is no longer a live chapter (removed, its post deleted, or
-      // never found) can never take the continuation, so declining it would pay
-      // the owner a fee for something they could not accept. Refused for both
-      // answers; `settleOrphanedContinuations` refunds it in full instead.
-      if (!parent || parent.removedAt) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+      // A parent that is no longer a live chapter (removed, its post deleted,
+      // never found, or in a taken-down storyline) can never take the
+      // continuation, so declining it would pay the owner a fee for something
+      // they could not accept. Refused for both answers; it is refunded in full
+      // instead, by `settleOrphanedContinuations` or at its deadline.
+      if (!parent || parent.removedAt || parent.storyline.tosViolation)
+        throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
       // A decline writes no chapter.
       if (action === 'decline') return;
