@@ -748,6 +748,33 @@ export const appStorageLatencyHistogram = registerHistogram({
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
 });
 
+// App Blocks SHARED (cross-user) storage — the `apps.shared.*` procedures and the
+// `/api/v1/blocks/shared-storage/*` routes, which call the same functions. Exposed:
+// `civitai_app_block_shared_storage_{ops_total,latency_seconds}`.
+//
+// A separate pair rather than a `storage` label on the KV pair above, for two reasons. The
+// latency histogram needs different buckets: a shared write can wait on an external moderation
+// call, so its tail runs to seconds where the KV histogram stops at 2.5s, and one histogram has
+// one bucket set. And the two surfaces have different `op` and `outcome` domains, so a merged
+// series would hold pairs that can never move.
+//
+// No per-app, per-key or per-user label: the number of apps grows without bound.
+// Prefix-relative names, like the KV pair. Pinned by
+// `__tests__/app-block-storage-metric-names.test.ts`; seeded to 0 by
+// `src/server/prom/app-block-shared-storage.metrics.ts`, which also lists every op and outcome.
+export const appSharedStorageOpsCounter = registerCounterWithLabels({
+  name: 'block_shared_storage_ops_total',
+  help: 'App Blocks shared storage operations by op and outcome',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+export const appSharedStorageLatencyHistogram = registerHistogram({
+  name: 'block_shared_storage_latency_seconds',
+  help: 'App Blocks shared storage operation latency, including moderation and rate-limit checks',
+  labelNames: ['op'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+});
+
 // Image ingestion / scan pipeline. The image-ingestion path (submit → scanner →
 // webhook write-back → cron drain) previously had ZERO Prometheus coverage; these
 // give per-lane submission volume, webhook-outcome split, cron throughput, and (via

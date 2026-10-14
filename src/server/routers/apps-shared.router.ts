@@ -47,6 +47,7 @@ import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
 import {
   blockTokenRefusalError,
   resolveBlockToken,
+  type BlockTokenRefusal,
 } from '~/server/services/blocks/block-bridge-auth.service';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -87,6 +88,12 @@ import {
   reserveSharedWrite,
 } from '~/server/utils/shared-storage-rate-limit';
 import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
+import {
+  tagSharedStorageOutcome,
+  withSharedStorageMetrics,
+  type SharedStorageOp,
+  type SharedStorageOutcome,
+} from '~/server/prom/app-block-shared-storage.metrics';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
@@ -233,24 +240,20 @@ function requireFiniteCounter(raw: string | null | undefined, label: string): nu
 // `appsSharedRouter`/`appsModRouter` and the counter helpers. Import the
 // predicate from the service that owns it.
 
-type SharedOp =
-  | 'list'
-  | 'get'
-  | 'getCount'
-  | 'append'
-  // Author-scoped in-place edit of an OWN published row (write-gated exactly like
-  // append: shared:write scope + min-trust). Author-only; see the `update` mutation.
-  | 'update'
-  | 'vote'
-  | 'unvote'
-  | 'withdraw'
-  | 'report'
-  // App Blocks play-counts (block REST endpoints /api/v1/blocks/shared-storage/*):
-  //   - 'increment' is a WRITE (min-trust gated like append/vote — anti-inflation)
-  //   - 'getTop' is a READ (anon-allowed like list/getCount)
-  | 'increment'
-  | 'getTop';
+// `update` is an author-only edit of an own row; `increment` (play-counts) is a write and
+// min-trust gated like `vote`; `getTop` is an anon-allowed read.
+type SharedOp = SharedStorageOp;
 const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCount', 'getTop']);
+
+// `not_found` here is the token's app block, not a shared row, so it counts as a token refusal.
+const TOKEN_REFUSAL_OUTCOME: Record<BlockTokenRefusal, SharedStorageOutcome> = {
+  invalid_token: 'unauthorized',
+  revoked: 'unauthorized',
+  not_found: 'unauthorized',
+  not_approved: 'unauthorized',
+  invalid_slug: 'error',
+  consent_unavailable: 'error',
+};
 
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
@@ -312,7 +315,12 @@ export async function resolveSharedContext(
     metrics: 'none',
     slugCheck: true,
   });
-  if (!resolved.ok) throw blockTokenRefusalError(resolved.refusal);
+  if (!resolved.ok) {
+    throw tagSharedStorageOutcome(
+      blockTokenRefusalError(resolved.refusal),
+      TOKEN_REFUSAL_OUTCOME[resolved.refusal]
+    );
+  }
   const { claims, slug, approval } = resolved;
   // Cannot happen under the options above (`slugCheck: true`, `approval: 'strict'`); the
   // resolver's result is not narrowed by its options, so this states it instead of casting.
@@ -323,10 +331,13 @@ export async function resolveSharedContext(
   // Per-op scope assertion (re-checks the issuance contract at point of use).
   const requiredScope = READ_OPS.has(op) ? SHARED_READ_SCOPE : SHARED_WRITE_SCOPE;
   if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: `shared storage ${op} requires the ${requiredScope} scope`,
-    });
+    throw tagSharedStorageOutcome(
+      new TRPCError({
+        code: 'FORBIDDEN',
+        message: `shared storage ${op} requires the ${requiredScope} scope`,
+      }),
+      'unauthorized'
+    );
   }
 
   // parseSubjectUserId throws a plain ForbiddenError on a malformed `sub`; surface
@@ -335,7 +346,10 @@ export async function resolveSharedContext(
   try {
     userId = parseSubjectUserId(claims.sub);
   } catch {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'invalid token subject' });
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'FORBIDDEN', message: 'invalid token subject' }),
+      'unauthorized'
+    );
   }
   // Hydrate the TOKEN SUBJECT (block-token path has no ctx.user) — needed for both
   // the flag segment eval and the trust gate.
@@ -368,7 +382,10 @@ export async function resolveSharedContext(
   // `assert-compiled-branches.mjs` — in the second case update the watchlist entry in the
   // same commit.
   if (userId != null && !subjectUser) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' });
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' }),
+      'unauthorized'
+    );
   }
 
   // Dedicated kill-switch, evaluated with the subject's context so the flag's
@@ -377,7 +394,10 @@ export async function resolveSharedContext(
   // deliberate: that is a global eval, i.e. the flag's BASE value, and anon shared
   // access is exactly the GA widening a base-`enabled` flip is meant to perform.
   if (!(await isAppBlocksSharedStorageEnabled({ user: subjectUser ?? undefined }))) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' });
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' }),
+      'disabled'
+    );
   }
 
   if (!READ_OPS.has(op)) {
@@ -390,7 +410,11 @@ export async function resolveSharedContext(
     }
     // Keyed on the SUBJECT (from the verified block token), never client-forgeable input.
     const hasLinkedOAuth = subjectUser ? await hasLinkedOAuthAccount(subjectUser) : false;
-    assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
+    try {
+      assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
+    } catch (err) {
+      throw tagSharedStorageOutcome(err, 'trust_refused');
+    }
   }
 
   return {
@@ -570,7 +594,7 @@ function toSharedKvItem(r: SharedKvRow): SharedKvItem {
  * Do not restore the security framing; it would read as an invariant that the
  * response shape contradicts two functions up.
  */
-export async function listSharedRows(
+async function listSharedRowsUnmetered(
   blockToken: string,
   {
     prefix,
@@ -675,7 +699,7 @@ export async function listSharedRows(
  * direct key fetch can NOT leak a withdrawn / moderator-hidden row the paged
  * list excludes.
  */
-export async function getSharedRow(
+async function getSharedRowUnmetered(
   blockToken: string,
   key: string
 ): Promise<{ item: SharedKvItem | null }> {
@@ -702,7 +726,7 @@ export async function getSharedRow(
  * entry per requested key (the single-key `getCount` procedure is this function
  * with a one-element array; there is no second query shape for it).
  */
-export async function getSharedCounts(
+async function getSharedCountsUnmetered(
   blockToken: string,
   keys: string[]
 ): Promise<{ counts: Record<string, number> }> {
@@ -812,7 +836,7 @@ function asTransactionFault<T>(op: Promise<T>): Promise<T> {
  * (C2/C3/M1) synchronously, the per-user + per-app row caps + byte quota, and the
  * per-(user,app) write budget — all before the row lands.
  */
-export async function appendSharedRow(
+async function appendSharedRowUnmetered(
   blockToken: string,
   value: SharedValueInput
 ): Promise<{ key: string }> {
@@ -860,10 +884,13 @@ async function appendWithinBudget(
     ).rows[0]?.n ?? '0'
   );
   if (userRowCount + 1 > SHARED_KV_PER_USER_ROW_CAP) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'you have reached the maximum number of submissions for this app',
-    });
+    throw tagSharedStorageOutcome(
+      new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'you have reached the maximum number of submissions for this app',
+      }),
+      'user_row_cap_exceeded'
+    );
   }
 
   // Per-app byte + row quota (shared with the per-user kv path), read together with
@@ -889,10 +916,16 @@ async function appendWithinBudget(
   // changing either term.
   const storedByteSize = requireStoredSize(quota?.stored_size_bytes);
   if (usedBytes + storedByteSize > APP_QUOTA_BYTES) {
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' }),
+      'quota_exceeded'
+    );
   }
   if (rowCount + 1 > APP_ROW_LIMIT) {
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app row limit exceeded' });
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app row limit exceeded' }),
+      'quota_exceeded'
+    );
   }
 
   const key = newUlid();
@@ -953,7 +986,7 @@ async function appendWithinBudget(
  * author_user_id, created_at, and the row's votes/counters/reports are PRESERVED.
  * Shares append's write budget so an edit isn't an unbounded write.
  */
-export async function updateSharedRow(
+async function updateSharedRowUnmetered(
   blockToken: string,
   key: string,
   value: SharedValueInput
@@ -1115,7 +1148,10 @@ async function updateWithinBudget(
   // giving append a delta.
   const isNonIncreasing = netDelta <= 0;
   if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' }),
+      'quota_exceeded'
+    );
   }
 
   // In-place UPDATE under the quota GUC (the shared_kv UPDATE trigger reclaims the
@@ -1166,7 +1202,7 @@ async function updateWithinBudget(
  * increment is ATOMICALLY gated on the vote row actually inserting (H1: a double
  * vote is a no-op, the counter never inflates). Rate-limited per (user, app).
  */
-export async function voteSharedRow(blockToken: string, key: string): Promise<{ count: number }> {
+async function voteSharedRowUnmetered(blockToken: string, key: string): Promise<{ count: number }> {
   const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'vote');
   const uid = userId as number;
 
@@ -1215,7 +1251,10 @@ export async function voteSharedRow(blockToken: string, key: string): Promise<{ 
  * number of vote rows deleted (0 or 1); the `CHECK(count >= 0)` constraint blocks
  * any underflow (H1). Rate-limited on the same per (user, app) vote bucket.
  */
-export async function unvoteSharedRow(blockToken: string, key: string): Promise<{ count: number }> {
+async function unvoteSharedRowUnmetered(
+  blockToken: string,
+  key: string
+): Promise<{ count: number }> {
   const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'unvote');
   const uid = userId as number;
 
@@ -1243,7 +1282,7 @@ export async function unvoteSharedRow(blockToken: string, key: string): Promise<
  * row ONLY when author_user_id = subject; the FK cascade drops its votes +
  * counter. SET LOCAL GUC so the quota trigger reclaims the bytes/row.
  */
-export async function withdrawSharedRow(
+async function withdrawSharedRowUnmetered(
   blockToken: string,
   key: string
 ): Promise<{ ok: true; deleted: boolean }> {
@@ -1305,7 +1344,7 @@ async function syncStoreItem(args: SyncSubListingForSharedRowArgs): Promise<void
  * the write scope + trust gate (only eligible users can report, to bound report
  * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
  */
-export async function reportSharedRow(
+async function reportSharedRowUnmetered(
   blockToken: string,
   key: string,
   reasonInput?: string
@@ -1368,6 +1407,74 @@ export async function reportSharedRow(
   ).catch(() => {});
 
   return { ok: true as const };
+}
+
+// The exported entry point of every shared storage op. The tRPC procedures below and the REST
+// routes under `src/pages/api/v1/blocks/shared-storage/` call these, never the `…Unmetered`
+// bodies, which is what makes each call record exactly once whichever transport it came in on.
+
+/** @see listSharedRowsUnmetered */
+export async function listSharedRows(
+  blockToken: string,
+  opts: { prefix?: string; limit: number; cursor?: string; mine?: boolean }
+) {
+  return withSharedStorageMetrics('list', () => listSharedRowsUnmetered(blockToken, opts));
+}
+
+/** @see getSharedRowUnmetered */
+export async function getSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('get', () => getSharedRowUnmetered(blockToken, key));
+}
+
+/** @see getSharedCountsUnmetered */
+export async function getSharedCounts(blockToken: string, keys: string[]) {
+  return withSharedStorageMetrics('getCount', () => getSharedCountsUnmetered(blockToken, keys));
+}
+
+/** @see appendSharedRowUnmetered */
+export async function appendSharedRow(blockToken: string, value: SharedValueInput) {
+  return withSharedStorageMetrics('append', () => appendSharedRowUnmetered(blockToken, value));
+}
+
+/** @see updateSharedRowUnmetered */
+export async function updateSharedRow(blockToken: string, key: string, value: SharedValueInput) {
+  return withSharedStorageMetrics('update', () => updateSharedRowUnmetered(blockToken, key, value));
+}
+
+/** @see voteSharedRowUnmetered */
+export async function voteSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('vote', () => voteSharedRowUnmetered(blockToken, key));
+}
+
+/** @see unvoteSharedRowUnmetered */
+export async function unvoteSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('unvote', () => unvoteSharedRowUnmetered(blockToken, key));
+}
+
+/** @see withdrawSharedRowUnmetered */
+export async function withdrawSharedRow(blockToken: string, key: string) {
+  return withSharedStorageMetrics('withdraw', () => withdrawSharedRowUnmetered(blockToken, key));
+}
+
+/** @see reportSharedRowUnmetered */
+export async function reportSharedRow(blockToken: string, key: string, reasonInput?: string) {
+  return withSharedStorageMetrics('report', () =>
+    reportSharedRowUnmetered(blockToken, key, reasonInput)
+  );
+}
+
+/** @see incrementSharedCounterUnmetered */
+export async function incrementSharedCounter(blockToken: string, key: string) {
+  return withSharedStorageMetrics('increment', () =>
+    incrementSharedCounterUnmetered(blockToken, key)
+  );
+}
+
+/** @see getTopSharedCountersUnmetered */
+export async function getTopSharedCounters(blockToken: string, prefix: string, limit: number) {
+  return withSharedStorageMetrics('getTop', () =>
+    getTopSharedCountersUnmetered(blockToken, prefix, limit)
+  );
 }
 
 export const appsSharedRouter = router({
@@ -1494,7 +1601,7 @@ const COUNTER_KEY_MAX = 64;
  * write-scope + min-trust gate + rate limit + the app byte/row quota trigger are
  * the bounds.
  */
-export async function incrementSharedCounter(
+async function incrementSharedCounterUnmetered(
   blockToken: string,
   key: string
 ): Promise<{ key: string; count: number }> {
@@ -1605,7 +1712,7 @@ export async function incrementSharedCounter(
  * the shared:read scope). Hidden anchor rows are excluded. `limit` is bounded by
  * the caller. Returns `[{ key, count }]`.
  */
-export async function getTopSharedCounters(
+async function getTopSharedCountersUnmetered(
   blockToken: string,
   prefix: string,
   limit: number
@@ -1802,7 +1909,10 @@ async function assertSharedValueSafeAndSerialize(params: {
       const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
       // An outage the belt refused on (its blocklist read failing) stays our fault on the
       // refusal too, so the write budget refunds it instead of charging the caller.
-      throw isEscalatedServerFault(e) ? escalateToServerFault(refusal) : refusal;
+      if (isEscalatedServerFault(e)) {
+        throw tagSharedStorageOutcome(escalateToServerFault(refusal), 'moderation_unavailable');
+      }
+      throw tagSharedStorageOutcome(refusal, 'moderation_blocked');
     }
     throw e;
   }
@@ -1932,11 +2042,14 @@ async function enforceScan(
       },
       'block-audit'
     ).catch(() => undefined);
-    throw escalateToServerFault(
-      new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'Content could not be reviewed right now. Please try again.',
-      })
+    throw tagSharedStorageOutcome(
+      escalateToServerFault(
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Content could not be reviewed right now. Please try again.',
+        })
+      ),
+      'moderation_unavailable'
     );
   }
 }
@@ -2004,7 +2117,10 @@ async function refuseSharedTextHit(
       : hit.category === 'overflow'
       ? 'Data is too large or too deeply nested to review'
       : 'Content flagged for review';
-  throw new TRPCError({ code: 'BAD_REQUEST', message });
+  throw tagSharedStorageOutcome(
+    new TRPCError({ code: 'BAD_REQUEST', message }),
+    'moderation_blocked'
+  );
 }
 
 async function insertSharedReport(
