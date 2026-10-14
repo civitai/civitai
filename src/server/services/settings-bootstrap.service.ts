@@ -183,9 +183,21 @@ export async function resolveSettingsBootstrapForRender(
     setHeader: () => undefined,
   } as unknown as AuthArgs['res'];
 
+  // The caller logs the rejection's message. Over HTTP the route's own catch swallowed these,
+  // so a raw message never reached that log; database clients put connection details in theirs,
+  // so only the name and code travel.
+  const bootstrap = resolveSettingsBootstrap({ req, res }).catch((e: unknown) => {
+    const code = (e as { code?: unknown } | null)?.code;
+    const name = e instanceof Error ? e.name : 'unknown';
+    throw new Error(
+      `settings bootstrap failed: ${[name, typeof code === 'string' ? code : undefined]
+        .filter(Boolean)
+        .join(' ')}`
+    );
+  });
   const payload = await withTimeoutFallback<
     Awaited<ReturnType<typeof resolveSettingsBootstrap>> | typeof TIMED_OUT
-  >(resolveSettingsBootstrap({ req, res }), RENDER_DEADLINE_MS, TIMED_OUT);
+  >(bootstrap, RENDER_DEADLINE_MS, TIMED_OUT);
   if (payload === TIMED_OUT) {
     throw new Error(`settings bootstrap timed out after ${RENDER_DEADLINE_MS}ms`);
   }

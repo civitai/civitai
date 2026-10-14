@@ -93,6 +93,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 
 import handler from '~/pages/api/user/settings';
 import { resolveSettingsBootstrapForRender } from '~/server/services/settings-bootstrap.service';
+import { setSessionCookie } from '~/server/auth/civ-cookie';
 
 const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   const json = vi.fn();
@@ -305,6 +306,12 @@ describe('settings bootstrap during a server render', () => {
   });
 
   it('resolves the session from the page headers and cookies, never its URL or its response', async () => {
+    // Records on `req.context` the way the real lookup does, so the isolation assertion below
+    // can see a leak instead of passing because nothing ever wrote.
+    h.session.mockImplementation(async ({ req }: { req: { context?: unknown } }) => {
+      req.context = { session: null };
+      return null;
+    });
     const page = pageRequest();
     await resolveSettingsBootstrapForRender(page as unknown as RenderRequest);
 
@@ -318,8 +325,12 @@ describe('settings bootstrap during a server render', () => {
     expect('context' in page).toBe(false);
     // A response the lookup can write cookies to without throwing, and that is not the
     // page's: over HTTP those writes landed on an internal response that was discarded.
-    expect(typeof res.setHeader).toBe('function');
-    expect(() => res.setHeader('Set-Cookie', ['x=1'])).not.toThrow();
+    // Driven through the real cookie writer the session roll/upgrade paths use, so a writer
+    // that starts needing another response method fails here.
+    const token = `e30.${Buffer.from(JSON.stringify({ exp: 4102444800 })).toString(
+      'base64url'
+    )}.sig`;
+    expect(() => setSessionCookie(res, token, { host: 'civitai.com' })).not.toThrow();
   });
 
   it('rejects at the 8s render ceiling when the session lookup never replies', async () => {
@@ -340,10 +351,14 @@ describe('settings bootstrap during a server render', () => {
   });
 
   it('rejects when the session lookup fails, where the route answers a body with no session key', async () => {
-    h.session.mockRejectedValue(new Error('hub down'));
+    // Shaped like a database client error: connection details in the message, a code beside it.
+    h.session.mockRejectedValue(
+      Object.assign(new Error('connect ECONNREFUSED db.internal.example:5432'), { code: 'P1001' })
+    );
+    // Only name and code travel — the caller logs this message, and the route used to swallow it.
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
-    ).rejects.toThrow('hub down');
+    ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();
@@ -363,6 +378,8 @@ describe('settings bootstrap during a server render', () => {
 
   it.each([
     ['2500', 'settings bootstrap timed out after 2500ms'],
+    // Zero is "unset", as it always was for this variable, not a 0ms deadline.
+    ['0', 'settings bootstrap timed out after 8000ms'],
     // A zero or negative override must not make every render the degraded one.
     ['-1', 'settings bootstrap timed out after 1000ms'],
   ])('takes the ceiling from APP_SETTINGS_FETCH_TIMEOUT_MS=%s', async (value, message) => {

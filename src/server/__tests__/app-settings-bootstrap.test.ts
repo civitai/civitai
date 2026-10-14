@@ -152,6 +152,21 @@ describe('_app settings bootstrap — read in-process', () => {
     expect(h.bootstrap.mock.calls[0]![0]).toBe(ctx.ctx.req);
   });
 
+  it('logs the alertable marker when it degrades', async () => {
+    // Log-based alerting matches this exact prefix: a degraded bootstrap renders a 200, so this
+    // line is the only signal that every page is rendering signed-out.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fail(new Error('settings bootstrap timed out after 8000ms'));
+    try {
+      await getInitialProps(makeCtx());
+      expect(warn).toHaveBeenCalledWith(
+        '[_app] settings bootstrap fetch failed, rendering without it: settings bootstrap timed out after 8000ms'
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('does not read the bootstrap at all on a client-side navigation', async () => {
     await getInitialProps(makeClientNavCtx());
     expect(h.bootstrap).not.toHaveBeenCalled();
