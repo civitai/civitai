@@ -369,6 +369,24 @@ describe('closeAppealsOnDeletedModel against Postgres', () => {
     expect(holder.notify).not.toHaveBeenCalled();
   });
 
+  it('closes nothing for a model that is not deleted', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "deletedAt", "deletedBy") VALUES (8003, NULL, NULL), (8004, now(), 1);
+      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+        "buzzTransactionId") VALUES
+        (205, 44, 'Model', 8003, 'Pending', '2026-09-01', '2026-09-01', 'appeal-44-1'),
+        (206, 45, 'Model', 8004, 'Pending', '2026-09-01', '2026-09-01', NULL);
+    `);
+
+    await closeAppealsOnDeletedModel({ modelId: 8003 });
+    await closeAppealsOnDeletedModel({ modelId: 8004 });
+
+    const rows = await appeals();
+    expect(rows.get(205)).toMatchObject({ status: 'Pending', resolvedAt: null });
+    expect(rows.get(206)).toMatchObject({ status: 'Void' });
+    expect(refundedPrefixes()).toEqual([]);
+  });
+
   it('never throws when the database does', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('db down'));
 

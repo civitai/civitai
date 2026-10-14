@@ -1188,9 +1188,10 @@ export async function closeAppealsDeletedByOwner({
 export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number }) {
   try {
     const pending = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Appeal"
-      WHERE "entityType" = 'Model'::"EntityType" AND "entityId" = ${modelId}
-        AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
+      SELECT a.id FROM "Appeal" a
+      WHERE a."entityType" = 'Model'::"EntityType" AND a."entityId" = ${modelId}
+        AND a.status = 'Pending'::"AppealStatus" AND a."entityRemovedAt" IS NULL
+        AND NOT EXISTS (SELECT 1 FROM "Model" m WHERE m.id = a."entityId" AND m."deletedAt" IS NULL)
     `;
     const closed = await closeOrphans(
       pending.map((a) => a.id),
