@@ -1,6 +1,5 @@
 import {
   Alert,
-  AspectRatio,
   Box,
   Button,
   Center,
@@ -10,25 +9,39 @@ import {
   Stack,
   Tabs,
   Text,
+  TextInput,
   ThemeIcon,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { IconCheck } from '@tabler/icons-react';
+import { IconCheck, IconX } from '@tabler/icons-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { PICKER_JUMP_MIN_DATE } from '~/server/schema/blocks/block-image-picker.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { formatDateNullable } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import {
   isSamePick,
+  jumpDateToBound,
   MAX_EMPTY_AUTO_PAGES,
+  PICKER_TILE_GAP_PX,
+  PICKER_JUMP_DEBOUNCE_MS,
+  pickerGridLayout,
   projectGeneratedPick,
   projectPostedPick,
+  removePickedImage,
+  shouldDropPostedPicks,
+  toDateInputValue,
   togglePickedImage,
   type BlockImagePickerSource,
   type BlockPickedImageInfo,
@@ -37,8 +50,13 @@ import {
 type PickableImage = {
   /** What the grid renders: a storage key (posted) or the output's own url (generated). */
   thumbnail: string;
+  /** Day posted or generated. */
+  dateLabel?: string;
   pick: BlockPickedImageInfo;
 };
+
+/** A pick plus what the selected tray needs to draw it. The extra fields never reach `onResolved`. */
+type SelectedImage = BlockPickedImageInfo & { thumbnail: string };
 
 const SOURCE_LABEL: Record<BlockImagePickerSource, string> = {
   posted: 'Posted',
@@ -50,9 +68,24 @@ const EMPTY_MESSAGE: Record<BlockImagePickerSource, string> = {
   generated: 'None of your generated images can be used here yet.',
 };
 
+/** Space the grid keeps around its tiles, so a selected tile's ring is not clipped. */
+const GRID_INSET_PX = 4;
+const TRAY_THUMB_PX = 48;
+/**
+ * Width every thumbnail (grid and tray) is requested at. A width taken from the tile can land a
+ * narrow phone on the 96 rung, which has no 2x variant (next rung 320), so a dense screen gets a
+ * blurry image. One width also lets the tray reuse the grid's image.
+ */
+const THUMB_WIDTH = 320;
+
 /**
  * Host modal behind PageBlockHost's `OPEN_IMAGE_PICKER`: the viewer picks from their own posted
  * and generated images. The app never sees the library, only what `onResolved` is given.
+ *
+ * Laid out as a fixed-height column — header, grid, footer — so the grid is the only thing that
+ * scrolls and the footer's confirm button is always on screen. Full screen on a phone-width
+ * viewport: the modal is portalled to `document.body`, so the viewport is the box that matters
+ * (the same call `ReviewListingModal` makes), not `useIsMobile`'s container default.
  */
 export default function BlockImagePickerModal({
   sources,
@@ -66,9 +99,15 @@ export default function BlockImagePickerModal({
   onResolved: (picked: BlockPickedImageInfo[]) => void;
 }) {
   const dialog = useDialogContext();
+  const isMobile = useIsMobile({ type: 'media' });
   const { signedOut, requireSignIn } = useSignInToUpload();
   const [source, setSource] = useState<BlockImagePickerSource>(sources[0]);
-  const [selected, setSelected] = useState<BlockPickedImageInfo[]>([]);
+  const [selected, setSelected] = useState<SelectedImage[]>([]);
+  // Per source, the day the viewer jumped to (`YYYY-MM-DD`), kept while they switch tabs.
+  const [jumpTo, setJumpTo] = useState<Record<BlockImagePickerSource, string>>({
+    posted: '',
+    generated: '',
+  });
 
   // The viewer's own level with the domain cap applied: what the server reads for the posted tab.
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -97,12 +136,21 @@ export default function BlockImagePickerModal({
   const multiple = max !== null;
   const atMax = multiple && selected.length >= max;
 
-  function toggle(image: BlockPickedImageInfo) {
-    setSelected((current) => togglePickedImage(current, image, max));
+  // Stable, so a memoised tile is not re-rendered by every render of the modal.
+  const toggle = useCallback(
+    (image: PickableImage) =>
+      setSelected((current) =>
+        togglePickedImage(current, { ...image.pick, thumbnail: image.thumbnail }, max)
+      ),
+    [max]
+  );
+
+  function remove(image: SelectedImage) {
+    setSelected((current) => removePickedImage(current, image));
   }
 
   function confirm() {
-    onResolved(selected);
+    onResolved(selected.map(({ thumbnail: _thumbnail, ...pick }) => pick));
     dialog.onClose();
   }
 
@@ -112,17 +160,52 @@ export default function BlockImagePickerModal({
   }
 
   const title = multiple && max > 1 ? `Choose up to ${max} images` : 'Choose an image';
-  const grid = { selected, atMax, onToggle: toggle, browsingLevel, dropPostedPicks };
+  const gridFor = (s: BlockImagePickerSource) => ({
+    selected,
+    atMax,
+    onToggle: toggle,
+    browsingLevel,
+    dropPostedPicks,
+    jumpTo: jumpTo[s],
+    onJumpTo: (value: string) => setJumpTo((current) => ({ ...current, [s]: value })),
+  });
+
+  // Signed-out content is two lines: it keeps Mantine's own sizing.
+  const columnStyles = signedOut
+    ? undefined
+    : {
+        content: {
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          height: isMobile ? '100dvh' : 'min(760px, calc(100dvh - 2 * var(--modal-y-offset)))',
+        } satisfies CSSProperties,
+        header: { flexShrink: 0 } satisfies CSSProperties,
+        body: {
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+        } satisfies CSSProperties,
+      };
 
   return (
-    <Modal {...dialog} withCloseButton size={800} title={title}>
+    <Modal
+      {...dialog}
+      withCloseButton
+      size={800}
+      fullScreen={isMobile}
+      title={title}
+      styles={columnStyles}
+      data-testid="block-image-picker"
+    >
       {signedOut ? (
         <Stack gap="md" align="flex-start">
           <Text size="sm">Sign in to choose from your images.</Text>
           <Button onClick={signIn}>Sign in</Button>
         </Stack>
       ) : (
-        <Stack gap="md">
+        <Stack gap="sm" className="min-h-0 flex-1">
           <Text size="xs" c="dimmed">
             Your images that your content settings allow and that have finished scanning.
           </Text>
@@ -132,8 +215,9 @@ export default function BlockImagePickerModal({
               value={source}
               onChange={(value) => value && setSource(value as BlockImagePickerSource)}
               keepMounted={false}
+              className="flex min-h-0 flex-1 flex-col"
             >
-              <Tabs.List mb="sm">
+              <Tabs.List mb="xs">
                 {sources.map((s) => (
                   <Tabs.Tab key={s} value={s}>
                     {SOURCE_LABEL[s]}
@@ -141,76 +225,223 @@ export default function BlockImagePickerModal({
                 ))}
               </Tabs.List>
               {sources.map((s) => (
-                <Tabs.Panel key={s} value={s}>
-                  <SourceGrid source={s} {...grid} />
+                <Tabs.Panel key={s} value={s} className="flex min-h-0 flex-1 flex-col">
+                  <SourceGrid source={s} {...gridFor(s)} />
                 </Tabs.Panel>
               ))}
             </Tabs>
           ) : (
-            <SourceGrid source={source} {...grid} />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <SourceGrid source={source} {...gridFor(source)} />
+            </div>
           )}
 
-          <Group justify="space-between">
-            <Text size="sm" c="dimmed" data-testid="block-image-picker-count">
-              {multiple ? `${selected.length} of ${max} selected` : ''}
-            </Text>
-            <Group gap="xs">
-              <Button variant="default" onClick={dialog.onClose}>
-                Cancel
-              </Button>
-              <Button onClick={confirm} disabled={selected.length === 0}>
-                {selected.length > 1 ? `Use ${selected.length} images` : 'Use image'}
-              </Button>
+          <Stack gap="xs" className="shrink-0">
+            {multiple && selected.length > 0 && (
+              <SelectedTray selected={selected} onRemove={remove} />
+            )}
+            <Group justify="space-between" wrap="nowrap">
+              <Text size="sm" c="dimmed" data-testid="block-image-picker-count">
+                {multiple ? `${selected.length} of ${max} selected` : ''}
+              </Text>
+              <Group gap="xs" wrap="nowrap">
+                <Button variant="default" onClick={dialog.onClose}>
+                  Cancel
+                </Button>
+                <Button onClick={confirm} disabled={selected.length === 0}>
+                  {selected.length > 1 ? `Use ${selected.length} images` : 'Use image'}
+                </Button>
+              </Group>
             </Group>
-          </Group>
+          </Stack>
         </Stack>
       )}
     </Modal>
   );
 }
 
+function SelectedTray({
+  selected,
+  onRemove,
+}: {
+  selected: SelectedImage[];
+  onRemove: (image: SelectedImage) => void;
+}) {
+  return (
+    <div
+      role="list"
+      aria-label="Selected images"
+      data-testid="block-image-picker-tray"
+      className="flex gap-2 overflow-x-auto pb-1"
+    >
+      {selected.map((image, index) => {
+        const label = `Remove selected image ${index + 1} (${SOURCE_LABEL[image.source]})`;
+        return (
+          <div role="listitem" key={`${image.source}:${image.url}`} className="shrink-0">
+            <Tooltip label={label} withinPortal>
+              <UnstyledButton
+                aria-label={label}
+                onClick={() => onRemove(image)}
+                className="relative block overflow-hidden rounded-md"
+                style={{ width: TRAY_THUMB_PX, height: TRAY_THUMB_PX }}
+              >
+                <EdgeMedia
+                  alt=""
+                  src={image.thumbnail}
+                  type="image"
+                  width={THUMB_WIDTH}
+                  hiDpi
+                  sourceWidth={image.width}
+                  loading="lazy"
+                  className="size-full object-cover"
+                />
+                <span className="absolute inset-x-0 bottom-0 bg-black/60 text-center text-[10px] leading-4 text-white">
+                  {SOURCE_LABEL[image.source]}
+                </span>
+                <ThemeIcon
+                  size={16}
+                  radius="xl"
+                  color="dark"
+                  className="absolute right-0.5 top-0.5"
+                  aria-hidden
+                >
+                  <IconX size={10} />
+                </ThemeIcon>
+              </UnstyledButton>
+            </Tooltip>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 type GridSelection = {
   browsingLevel: number;
-  selected: BlockPickedImageInfo[];
+  selected: SelectedImage[];
   atMax: boolean;
-  onToggle: (image: BlockPickedImageInfo) => void;
+  onToggle: (image: PickableImage) => void;
+};
+
+type JumpTo = {
+  /** The day jumped to, `YYYY-MM-DD`, or `''` for the newest images. */
+  jumpTo: string;
+  onJumpTo: (value: string) => void;
 };
 
 function SourceGrid({
   source,
   dropPostedPicks,
+  jumpTo,
+  onJumpTo,
   ...selection
-}: GridSelection & { source: BlockImagePickerSource; dropPostedPicks: () => void }) {
-  return source === 'posted' ? (
-    <PostedGrid dropPostedPicks={dropPostedPicks} {...selection} />
-  ) : (
-    <GeneratedGrid {...selection} />
+}: GridSelection & JumpTo & { source: BlockImagePickerSource; dropPostedPicks: () => void }) {
+  const toDate = useMemo(() => jumpDateToBound(jumpTo) ?? undefined, [jumpTo]);
+  return (
+    <>
+      <JumpToDate source={source} value={jumpTo} onChange={onJumpTo} />
+      {source === 'posted' ? (
+        <PostedGrid dropPostedPicks={dropPostedPicks} toDate={toDate} {...selection} />
+      ) : (
+        <GeneratedGrid toDate={toDate} {...selection} />
+      )}
+    </>
+  );
+}
+
+/**
+ * "Jump to date": restarts the list at the chosen day instead of the newest image, so an older
+ * image is reached without scrolling through everything after it. A native date input: on a phone
+ * it opens the platform's own picker, where reaching a year back is a couple of flicks.
+ */
+function JumpToDate({
+  source,
+  value,
+  onChange,
+}: {
+  source: BlockImagePickerSource;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const isMobile = useIsMobile({ type: 'media' });
+  // What the input holds while the viewer edits it. A native date input reports `''` until every
+  // part of the date is filled in, and steps through a whole date per arrow-key press; a whole date
+  // is applied once it has held still for `PICKER_JUMP_DEBOUNCE_MS`, so the grid is replaced once
+  // rather than flashing through every intermediate date.
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const pending = useRef<number>();
+  const apply = useRef(onChange);
+  apply.current = onChange;
+  useEffect(() => () => window.clearTimeout(pending.current), []);
+
+  function applyNow(next: string) {
+    window.clearTimeout(pending.current);
+    onChange(next);
+  }
+
+  const today = toDateInputValue(new Date());
+  return (
+    <Group gap="xs" mb="xs" wrap="nowrap" align="flex-end" className="shrink-0">
+      <TextInput
+        type="date"
+        // 16px text on a phone: iOS zooms the page into any field set smaller when it is focused.
+        size={isMobile ? 'md' : 'xs'}
+        label="Jump to date"
+        value={draft}
+        min={toDateInputValue(PICKER_JUMP_MIN_DATE)}
+        max={today}
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          setDraft(next);
+          window.clearTimeout(pending.current);
+          if (jumpDateToBound(next)) {
+            pending.current = window.setTimeout(() => apply.current(next), PICKER_JUMP_DEBOUNCE_MS);
+          }
+        }}
+        onBlur={(event) => {
+          // Emptied, not half-edited (a half-edited date also reads `''`, but as bad input).
+          const input = event.currentTarget;
+          if (input.value === '' && !input.validity.badInput && value !== '') applyNow('');
+        }}
+        className="max-w-[200px] flex-1"
+      />
+      {value ? (
+        <Button size="xs" variant="subtle" onClick={() => applyNow('')}>
+          Back to newest
+        </Button>
+      ) : (
+        <Text size="xs" c="dimmed" pb={6}>
+          Newest {SOURCE_LABEL[source].toLowerCase()} images first
+        </Text>
+      )}
+    </Group>
   );
 }
 
 function PostedGrid({
   dropPostedPicks,
+  toDate,
   ...selection
-}: GridSelection & { dropPostedPicks: () => void }) {
+}: GridSelection & { dropPostedPicks: () => void; toDate: Date | undefined }) {
   const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage, refetch } =
-    trpc.blockImagePicker.getPosted.useInfiniteQuery(
-      {},
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-        // The server filters by the viewer's browsing level, which is not part of the query key.
-        // The app caches queries forever by default, so without these a reopened picker would list
-        // what an earlier level allowed.
-        gcTime: 0,
-        staleTime: 0,
-      }
-    );
+    trpc.blockImagePicker.getPosted.useInfiniteQuery(toDate ? { toDate } : {}, {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      // The server filters by the viewer's browsing level, which is not part of the query key.
+      // The app caches queries forever by default, so without these a reopened picker would list
+      // what an earlier level allowed.
+      gcTime: 0,
+      staleTime: 0,
+    });
 
   const images = useMemo(
     () =>
       (data?.pages ?? []).flatMap((page) =>
         page.items.flatMap((item): PickableImage[] => {
           const pick = projectPostedPick(item);
-          return pick ? [{ thumbnail: item.key, pick }] : [];
+          return pick
+            ? [{ thumbnail: item.key, dateLabel: formatDateNullable(item.createdAt), pick }]
+            : [];
         })
       ),
     [data]
@@ -220,15 +451,16 @@ function PostedGrid({
   // which a loading flag cannot be relied on to show: a reset that is answered at once never
   // renders as loading.
   const listKey = data?.pages[0];
+  const bound = toDate?.getTime();
 
-  // When the list on screen is replaced by another, picks made from the old one go with it. The
-  // first list after a mount replaces nothing: the tab was left and the picks were meant to stay.
-  const previousListKey = useRef(listKey);
+  // When the list on screen is replaced by another at the same date, picks made from the old one go
+  // with it; a jump to another date keeps them (`shouldDropPostedPicks`).
+  const listed = useRef({ listKey, bound });
   useEffect(() => {
-    const previous = previousListKey.current;
-    previousListKey.current = listKey;
-    if (previous !== undefined && previous !== listKey) dropPostedPicks();
-  }, [listKey, dropPostedPicks]);
+    const previous = listed.current;
+    listed.current = { listKey, bound };
+    if (shouldDropPostedPicks(previous, { listKey, bound })) dropPostedPicks();
+  }, [listKey, bound, dropPostedPicks]);
 
   return (
     <PickGrid
@@ -241,16 +473,17 @@ function PostedGrid({
       hasMore={!!hasNextPage}
       onLoadMore={fetchNextPage}
       onRetry={data ? fetchNextPage : refetch}
+      bounded={!!toDate}
       {...selection}
     />
   );
 }
 
-function GeneratedGrid(selection: GridSelection) {
+function GeneratedGrid({ toDate, ...selection }: GridSelection & { toDate: Date | undefined }) {
   const { browsingLevel } = selection;
   const { data, isFetching, isFetchingNextPage, isError, hasNextPage, fetchNextPage, refetch } =
     useGetTextToImageRequests(
-      { tags: [WORKFLOW_TAGS.IMAGE] },
+      { tags: [WORKFLOW_TAGS.IMAGE], ...(toDate ? { toDate } : {}) },
       { enabled: true, ignoreFilters: true }
     );
 
@@ -259,7 +492,9 @@ function GeneratedGrid(selection: GridSelection) {
       data.flatMap((workflow) =>
         workflow.succeededOutput.flatMap((output): PickableImage[] => {
           const pick = projectGeneratedPick(output, browsingLevel);
-          return pick ? [{ thumbnail: output.url, pick }] : [];
+          return pick
+            ? [{ thumbnail: output.url, dateLabel: formatDateNullable(workflow.createdAt), pick }]
+            : [];
         })
       ),
     [data, browsingLevel]
@@ -268,7 +503,7 @@ function GeneratedGrid(selection: GridSelection) {
   return (
     <PickGrid
       source="generated"
-      listKey={selection.browsingLevel}
+      listKey={`${browsingLevel}:${toDate?.getTime() ?? ''}`}
       images={images}
       loading={isFetching && !isFetchingNextPage && data.length === 0}
       failed={isError}
@@ -276,25 +511,13 @@ function GeneratedGrid(selection: GridSelection) {
       hasMore={!!hasNextPage}
       onLoadMore={fetchNextPage}
       onRetry={data.length > 0 ? fetchNextPage : refetch}
+      bounded={!!toDate}
       {...selection}
     />
   );
 }
 
-function PickGrid({
-  source,
-  listKey,
-  images,
-  loading,
-  failed,
-  fetching,
-  hasMore,
-  onLoadMore,
-  onRetry,
-  selected,
-  atMax,
-  onToggle,
-}: GridSelection & {
+type PickGridProps = GridSelection & {
   source: BlockImagePickerSource;
   /** Changes when the list is replaced by a different one, not when it gains a page. */
   listKey: unknown;
@@ -306,7 +529,24 @@ function PickGrid({
   hasMore: boolean;
   onLoadMore: () => unknown;
   onRetry: () => unknown;
-}) {
+  bounded: boolean;
+};
+
+function PickGrid({
+  source,
+  listKey,
+  images,
+  loading,
+  failed,
+  fetching,
+  hasMore,
+  onLoadMore,
+  onRetry,
+  bounded,
+  selected,
+  atMax,
+  onToggle,
+}: PickGridProps) {
   // Pages in a row that added nothing pickable. An app can open this modal without a gesture, so
   // loading the next page automatically has to stop somewhere for a library with nothing to offer.
   const [emptyStreak, setEmptyStreak] = useState(0);
@@ -339,7 +579,7 @@ function PickGrid({
 
   if (loading) {
     return (
-      <Center py="xl">
+      <Center py="xl" className="flex-1">
         <Loader />
       </Center>
     );
@@ -348,7 +588,9 @@ function PickGrid({
   if (images.length === 0 && !hasMore && !failed) {
     return (
       <Text size="sm" c="dimmed" py="xl" ta="center">
-        {EMPTY_MESSAGE[source]}
+        {bounded
+          ? 'None of your images from on or before this date can be used here.'
+          : EMPTY_MESSAGE[source]}
       </Text>
     );
   }
@@ -356,42 +598,13 @@ function PickGrid({
   const autoLoad = hasMore && !failed && emptyStreak < MAX_EMPTY_AUTO_PAGES;
 
   return (
-    <Box mah={440} style={{ overflowY: 'auto' }}>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2 p-1">
-        {images.map(({ thumbnail, pick }, index) => {
-          const isSelected = selected.some((s) => isSamePick(s, pick));
-          const disabled = atMax && !isSelected;
-          return (
-            <UnstyledButton
-              key={pick.url}
-              aria-label={`${SOURCE_LABEL[source]} image ${index + 1}`}
-              aria-pressed={isSelected}
-              disabled={disabled}
-              onClick={() => onToggle(pick)}
-              className={clsx(
-                'relative overflow-hidden rounded-md',
-                isSelected && 'ring-2 ring-blue-5',
-                disabled && 'cursor-not-allowed opacity-40'
-              )}
-            >
-              <AspectRatio ratio={1}>
-                <EdgeMedia
-                  alt=""
-                  src={thumbnail}
-                  type="image"
-                  width={450}
-                  className="size-full object-cover"
-                />
-              </AspectRatio>
-              {isSelected && (
-                <ThemeIcon size="sm" radius="xl" className="absolute right-1.5 top-1.5">
-                  <IconCheck size={14} />
-                </ThemeIcon>
-              )}
-            </UnstyledButton>
-          );
-        })}
-      </div>
+    <VirtualTiles
+      source={source}
+      images={images}
+      selected={selected}
+      atMax={atMax}
+      onToggle={onToggle}
+    >
       {failed ? (
         <Alert color="red" variant="light" mt="sm">
           <Group justify="space-between" gap="xs">
@@ -427,6 +640,161 @@ function PickGrid({
           </Button>
         </Stack>
       ) : null}
+    </VirtualTiles>
+  );
+}
+
+/**
+ * The grid's scroll box. Only the rows in or near view are mounted: a library loaded page after
+ * page would otherwise keep every tile, and every decoded image, in the document. `children` (the
+ * loader, retry or "Load more") follows the last row.
+ *
+ * A separate component so the scroll box exists when its measuring effect runs (`PickGrid` returns
+ * early while loading or empty).
+ */
+function VirtualTiles({
+  source,
+  images,
+  selected,
+  atMax,
+  onToggle,
+  children,
+}: Pick<GridSelection, 'selected' | 'atMax' | 'onToggle'> & {
+  source: BlockImagePickerSource;
+  images: PickableImage[];
+  children: React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setWidth(el.clientWidth - GRID_INSET_PX * 2);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const { columns, tile } = pickerGridLayout(width);
+  const rowHeight = tile + PICKER_TILE_GAP_PX;
+  const rowCount = width > 0 ? Math.ceil(images.length / columns) : 0;
+
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    paddingStart: GRID_INSET_PX,
+    overscan: 2,
+  });
+
+  // Every row's size is `rowHeight`; the virtualizer caches sizes, so a new width re-lays them out.
+  useEffect(() => {
+    virtualizer.measure();
+  }, [virtualizer, rowHeight]);
+
+  return (
+    <Box
+      ref={scrollRef}
+      className="min-h-0 flex-1"
+      style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+      data-testid="block-image-picker-scroll"
+    >
+      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        {virtualizer.getVirtualItems().map((row) => (
+          <div
+            key={row.index}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: GRID_INSET_PX,
+              right: GRID_INSET_PX,
+              transform: `translateY(${row.start}px)`,
+              display: 'grid',
+              gridTemplateColumns: `repeat(${columns}, ${tile}px)`,
+              gap: PICKER_TILE_GAP_PX,
+            }}
+          >
+            {images
+              .slice(row.index * columns, row.index * columns + columns)
+              .map((image, offset) => (
+                <PickTile
+                  key={image.pick.url}
+                  source={source}
+                  index={row.index * columns + offset}
+                  image={image}
+                  size={tile}
+                  isSelected={selected.some((s) => isSamePick(s, image.pick))}
+                  atMax={atMax}
+                  onToggle={onToggle}
+                />
+              ))}
+          </div>
+        ))}
+      </div>
+      {children}
     </Box>
   );
 }
+
+const PickTile = memo(function PickTile({
+  source,
+  index,
+  image,
+  size,
+  isSelected,
+  atMax,
+  onToggle,
+}: {
+  source: BlockImagePickerSource;
+  index: number;
+  image: PickableImage;
+  size: number;
+  isSelected: boolean;
+  atMax: boolean;
+  onToggle: (image: PickableImage) => void;
+}) {
+  const disabled = atMax && !isSelected;
+  const date = image.dateLabel ? `, ${image.dateLabel}` : '';
+  return (
+    <UnstyledButton
+      aria-label={`${SOURCE_LABEL[source]} image ${index + 1}${date}`}
+      aria-pressed={isSelected}
+      disabled={disabled}
+      onClick={() => onToggle(image)}
+      className={clsx(
+        'relative overflow-hidden rounded-md',
+        isSelected && 'ring-2 ring-blue-5',
+        disabled && 'cursor-not-allowed opacity-40'
+      )}
+      style={{ width: size, height: size }}
+    >
+      <EdgeMedia
+        alt=""
+        src={image.thumbnail}
+        type="image"
+        // Generated outputs are not storage keys: their url is passed through unresized.
+        width={THUMB_WIDTH}
+        hiDpi
+        sourceWidth={image.pick.width}
+        loading="lazy"
+        className="size-full object-cover"
+      />
+      {image.dateLabel && (
+        // Visible copy of the date in the label; the label already carries it for assistive tech.
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 text-center text-[11px] leading-4 text-white"
+        >
+          {image.dateLabel}
+        </span>
+      )}
+      {isSelected && (
+        <ThemeIcon size="sm" radius="xl" className="absolute right-1.5 top-1.5">
+          <IconCheck size={14} />
+        </ThemeIcon>
+      )}
+    </UnstyledButton>
+  );
+});

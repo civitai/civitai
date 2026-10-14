@@ -88,7 +88,10 @@ vi.mock('~/components/ImageGeneration/utils/generationRequestHooks', async (orig
 // eslint-disable-next-line import/first
 import BlockImagePickerModal from '~/components/AppBlocks/BlockImagePickerModal';
 // eslint-disable-next-line import/first
-import type { BlockImagePickerSource } from '~/components/AppBlocks/imagePickerLogic';
+import {
+  PICKER_JUMP_DEBOUNCE_MS,
+  type BlockImagePickerSource,
+} from '~/components/AppBlocks/imagePickerLogic';
 // eslint-disable-next-line import/first
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 // eslint-disable-next-line import/first
@@ -157,6 +160,19 @@ function setGenerated(outputs: unknown[], over: Record<string, unknown> = {}) {
 }
 
 const LOAD_MORE_NOTE = 'No usable images found in the most recent pages.';
+
+/**
+ * Fill a date input, failing as "the harness was too slow" when the fill alone outlasted the
+ * debounce: a test that relies on acting before a date is applied means nothing past that point.
+ */
+async function fillWithinDebounce(input: ReturnType<typeof page.getByLabelText>, value: string) {
+  const started = performance.now();
+  await userEvent.fill(input, value);
+  expect(
+    performance.now() - started,
+    `the fill took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
+  ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
+}
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function openModal(props: { sources?: BlockImagePickerSource[]; max?: number | null } = {}) {
@@ -586,5 +602,293 @@ describe('BlockImagePickerModal', () => {
     expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1);
     expect(dialogIsOpen()).toBe(false);
     expect(onResolved).not.toHaveBeenCalled();
+  });
+});
+
+const postedTiles = () => page.getByRole('button', { name: /^Posted image / }).elements();
+
+describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    mocks.currentUser = { id: 1 };
+    mocks.browsingLevel = 3;
+    mocks.postedQuery.mockReset();
+    mocks.generatedQuery.mockReset();
+    setPosted([]);
+    setGenerated([]);
+  });
+
+  // Regression: at origin/main there is no tray, so a pick on the other tab is invisible.
+  test('multi pick: the tray shows picks from both tabs, and removing one deselects it', async () => {
+    setPosted([postedItem(1), postedItem(2)]);
+    setGenerated([output('gen-a')]);
+    const onResolved = openModal({ max: 5 });
+
+    await userEvent.click(tile('Posted image 2'));
+    await userEvent.click(page.getByRole('tab', { name: 'Generated' }));
+    await userEvent.click(tile('Generated image 1'));
+
+    const tray = page.getByRole('list', { name: 'Selected images' });
+    const removePosted = tray.getByRole('button', { name: 'Remove selected image 1 (Posted)' });
+    await expect.element(removePosted).toBeInTheDocument();
+    await expect
+      .element(tray.getByRole('button', { name: 'Remove selected image 2 (Generated)' }))
+      .toBeInTheDocument();
+    expect(tray.getByRole('listitem').elements()).toHaveLength(2);
+
+    await userEvent.click(removePosted);
+    const count = page.getByTestId('block-image-picker-count');
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+    expect(tray.getByRole('listitem').elements()).toHaveLength(1);
+    await userEvent.click(page.getByRole('tab', { name: 'Posted' }));
+    await expect.element(tile('Posted image 2')).toHaveAttribute('aria-pressed', 'false');
+
+    await userEvent.click(confirmButton());
+    expect(onResolved).toHaveBeenCalledWith([
+      { source: 'generated', url: blobUrl('gen-a'), width: 832, height: 1216, nsfwLevel: 1 },
+    ]);
+  });
+
+  // Invariant guard (no tray at origin/main either): a single pick has nothing to collect.
+  test('single pick: no tray', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+
+    await userEvent.click(tile('Posted image 1'));
+    await expect.element(tile('Posted image 1')).toHaveAttribute('aria-pressed', 'true');
+    expect(page.getByTestId('block-image-picker-tray').query()).toBeNull();
+  });
+
+  // Regression: at origin/main there is no way to start the list anywhere but the newest image.
+  test('jumping to a date asks the posted list for that day, and keeps the picks', async () => {
+    const newest = { data: { pages: [{ items: [postedItem(1), postedItem(2)] }] } };
+    const older = { data: { pages: [{ items: [postedItem(30)] }] } };
+    mocks.postedQuery.mockImplementation((input: { toDate?: Date }) => ({
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(async () => undefined),
+      refetch: vi.fn(async () => undefined),
+      // A new first page for a new date, as the real query gives: the list is replaced.
+      ...(input.toDate ? older : newest),
+    }));
+    const onResolved = openModal({ sources: ['posted'], max: 5 });
+
+    await userEvent.click(tile('Posted image 2'));
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+
+    await vi.waitFor(
+      () =>
+        expect(mocks.postedQuery).toHaveBeenLastCalledWith(
+          { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) },
+          expect.anything()
+        ),
+      { timeout: 5000 }
+    );
+    await expect.element(tile('Posted image 1')).toHaveAttribute('aria-pressed', 'false');
+    expect(postedTiles()).toHaveLength(1);
+    const count = page.getByTestId('block-image-picker-count');
+    await expect.element(count).toHaveTextContent('1 of 5 selected');
+
+    await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
+    await vi.waitFor(
+      () => expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything()),
+      { timeout: 5000 }
+    );
+    await expect.element(tile('Posted image 2')).toHaveAttribute('aria-pressed', 'true');
+
+    await userEvent.click(confirmButton());
+    expect(onResolved).toHaveBeenCalledWith([postedPick(2)]);
+  });
+
+  // Regression: at origin/main the generated tab has no date control.
+  test('jumping to a date asks the generated list for that day', async () => {
+    setGenerated([output('gen-a')]);
+    openModal({ sources: ['generated'] });
+
+    await expect.element(tile('Generated image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2025-01-05');
+
+    await vi.waitFor(
+      () =>
+        expect(mocks.generatedQuery).toHaveBeenLastCalledWith(
+          { tags: ['img'], toDate: new Date(2025, 0, 5, 23, 59, 59, 999) },
+          { enabled: true, ignoreFilters: true }
+        ),
+      { timeout: 5000 }
+    );
+  });
+
+  // Regression: at origin/main a tile was named by its index alone.
+  test('labels a tile with when the image was posted', async () => {
+    setPosted([postedItem(1, { createdAt: new Date(2024, 5, 30, 12) })]);
+    openModal({ sources: ['posted'] });
+
+    await expect
+      .element(page.getByRole('button', { name: 'Posted image 1, Jun 30, 2024', exact: true }))
+      .toBeInTheDocument();
+  });
+
+  test('shows the posted date on the tile itself, not only in its label', async () => {
+    setPosted([postedItem(1, { createdAt: new Date(2024, 5, 30, 12) }), postedItem(2)]);
+    openModal({ sources: ['posted'] });
+
+    const dated = page.getByRole('button', { name: 'Posted image 1, Jun 30, 2024', exact: true });
+    await expect.element(dated).toHaveTextContent('Jun 30, 2024');
+    // An undated image shows no date at all, not today's.
+    await expect.element(tile('Posted image 2')).toBeInTheDocument();
+    expect(tile('Posted image 2').element().textContent).toBe('');
+  });
+
+  test('shows the generated date on the tile, from the workflow it came with', async () => {
+    mocks.generatedQuery.mockReturnValue({
+      data: [{ createdAt: new Date(2025, 0, 5, 9), succeededOutput: [output('gen-a')] }],
+      isFetching: false,
+      isFetchingNextPage: false,
+      isError: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(async () => undefined),
+      refetch: vi.fn(async () => undefined),
+    });
+    openModal({ sources: ['generated'] });
+
+    await expect
+      .element(page.getByRole('button', { name: 'Generated image 1, Jan 5, 2025', exact: true }))
+      .toHaveTextContent('Jan 5, 2025');
+  });
+
+  // Invariant guard (red at origin/main only because there is no date control).
+  test('a date with nothing on or before it says so, and offers the way back', async () => {
+    mocks.postedQuery.mockImplementation((input: { toDate?: Date }) => ({
+      data: { pages: [{ items: input.toDate ? [] : [postedItem(1)] }] },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(async () => undefined),
+      refetch: vi.fn(async () => undefined),
+    }));
+    openModal({ sources: ['posted'] });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2001-01-01');
+    await expect
+      .element(
+        page.getByText('None of your images from on or before this date can be used here.'),
+        {
+          timeout: 5000,
+        }
+      )
+      .toBeInTheDocument();
+    await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+  });
+
+  // Regression: a year still being typed is not applied, so the grid does not flash empty for it.
+  test('a half-typed year is not applied', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '0202-06-30');
+    // The input really holds the half-typed year, so the absence below is not a dropped fill.
+    await expect.element(page.getByLabelText('Jump to date')).toHaveValue('0202-06-30');
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
+    for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({});
+  });
+
+  // A date is applied once it holds still, not on every change; an emptied input on blur.
+  test('a date is applied after it holds still, and an emptied input returns to newest on blur', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    const input = page.getByLabelText('Jump to date');
+
+    await fillWithinDebounce(input, '2024-06-30');
+    // Straight after the change: not applied yet.
+    expect(mocks.postedQuery).not.toHaveBeenCalledWith(
+      { toDate: expect.anything() },
+      expect.anything()
+    );
+    await vi.waitFor(
+      () =>
+        expect(mocks.postedQuery).toHaveBeenLastCalledWith(
+          { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) },
+          expect.anything()
+        ),
+      { timeout: 5000 }
+    );
+
+    await userEvent.clear(input);
+    await expect.element(input).toHaveValue('');
+    // Click away: Tab inside a native date input only moves between its own parts.
+    await userEvent.click(page.getByText('Choose an image'));
+    expect(document.activeElement).not.toBe(input.element());
+    await vi.waitFor(
+      () => expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything()),
+      { timeout: 5000 }
+    );
+  });
+
+  const JUNE_30 = { toDate: new Date(2024, 5, 30, 23, 59, 59, 999) };
+  const JULY_15 = { toDate: new Date(2024, 6, 15, 23, 59, 59, 999) };
+  const boundsQueried = () =>
+    mocks.postedQuery.mock.calls.map(([input]) => (input as { toDate?: Date }).toDate?.getTime());
+
+  async function applyJune30() {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+    await vi.waitFor(
+      () => expect(mocks.postedQuery).toHaveBeenLastCalledWith(JUNE_30, expect.anything()),
+      { timeout: 5000 }
+    );
+  }
+
+  test('Back to newest cancels a date still waiting to be applied', async () => {
+    await applyJune30();
+    const started = performance.now();
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-07-15');
+    await userEvent.click(page.getByRole('button', { name: 'Back to newest' }));
+    expect(
+      performance.now() - started,
+      `fill + click took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
+    ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
+
+    expect(mocks.postedQuery).toHaveBeenLastCalledWith({}, expect.anything());
+    expect(boundsQueried()).not.toContain(JULY_15.toDate.getTime());
+  });
+
+  test('a date emptied before it settles is never applied', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'] });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    const input = page.getByLabelText('Jump to date');
+    const started = performance.now();
+    await userEvent.fill(input, '2024-06-30');
+    await userEvent.clear(input);
+    expect(
+      performance.now() - started,
+      `fill + clear took longer than the ${PICKER_JUMP_DEBOUNCE_MS}ms debounce`
+    ).toBeLessThan(PICKER_JUMP_DEBOUNCE_MS);
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
+
+    expect(boundsQueried().filter((bound) => bound !== undefined)).toEqual([]);
+  });
+
+  test('blurring a half-edited date keeps the date that is applied', async () => {
+    await applyJune30();
+    const input = page.getByLabelText('Jump to date');
+    await userEvent.click(input);
+    await userEvent.keyboard('{Backspace}');
+    // The setup really produced a half-edited field, not an empty one.
+    expect((input.element() as HTMLInputElement).validity.badInput).toBe(true);
+    await userEvent.click(page.getByText('Choose an image'));
+    await settle(PICKER_JUMP_DEBOUNCE_MS * 2);
+
+    expect(mocks.postedQuery).toHaveBeenLastCalledWith(JUNE_30, expect.anything());
   });
 });
