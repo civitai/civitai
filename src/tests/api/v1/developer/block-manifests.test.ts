@@ -88,9 +88,75 @@ beforeEach(() => {
   });
   mockDbRead.appBlock.findUnique.mockResolvedValue(null);
   mockDbWrite.appBlock.upsert.mockResolvedValue({ id: 'ab_new', status: 'pending' });
+  mockDbWrite.appBlock.findMany.mockResolvedValue([]);
+  mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([]);
 });
 
 describe('POST /api/v1/developer/block-manifests', () => {
+  describe('storage slug collision', () => {
+    const bodyFor = (blockId: string) => ({
+      ...VALID_BODY,
+      manifest: { ...VALID_BODY.manifest, blockId },
+    });
+
+    beforeEach(() => {
+      mockDbWrite.appBlock.findMany.mockResolvedValue([
+        { blockId: 'tile-grid' },
+        { blockId: 'score-board' },
+      ]);
+    });
+
+    it('409s a NEW blockId whose storage slug an existing app already uses, without writing', async () => {
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor('tile--grid') }), res);
+      expect(res._status).toBe(409);
+      expect(res._body).toEqual({
+        error: 'blockId conflict',
+        details: [
+          'blockId "tile--grid" is too similar to the existing app "tile-grid": both would use the storage name "tile_grid", because a run of hyphens counts as a single separator. Choose a different blockId.',
+        ],
+      });
+      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+    });
+
+    it('409s a NEW blockId that collides with a pending submission', async () => {
+      mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([{ slug: 'route-map' }]);
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor('route---map') }), res);
+      expect(res._status).toBe(409);
+      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+    });
+
+    it('accepts an unrelated NEW blockId', async () => {
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor('route-map') }), res);
+      expect(res._status).toBe(200);
+      expect(mockDbWrite.appBlock.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts an update to an EXISTING block even when a colliding sibling exists', async () => {
+      mockDbRead.appBlock.findUnique.mockResolvedValue({
+        id: 'ab_existing',
+        manifest: { something: 'old' },
+        status: 'approved',
+        trustTier: 'unverified',
+        renderMode: 'iframe',
+      });
+      mockDbWrite.appBlock.findMany.mockResolvedValue([
+        { blockId: 'tile-grid' },
+        { blockId: 'tile--grid' },
+      ]);
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor('tile--grid') }), res);
+      expect(res._status).toBe(200);
+      expect(mockDbWrite.appBlock.upsert).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('H-1: update branch sets status=pending (re-enters moderation)', async () => {
     mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: 'ab_existing',

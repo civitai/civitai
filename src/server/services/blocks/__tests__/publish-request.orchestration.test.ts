@@ -111,6 +111,7 @@ const {
         updateMany: vi.fn(),
         findUnique: vi.fn(),
         findFirst: vi.fn(),
+        findMany: vi.fn<DelegateMock>(async () => []),
       },
       // `findUnique` added (W13 auto-create-on-approve): approveRequest re-reads
       // the freshly-approved AppBlock's own columns off the PRIMARY to map it into
@@ -124,6 +125,7 @@ const {
         update: vi.fn(),
         updateMany: vi.fn(),
         findUnique: vi.fn(),
+        findMany: vi.fn<DelegateMock>(async () => []),
       },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
@@ -370,6 +372,8 @@ beforeEach(() => {
   // W13 category-on-approve default: the no-clobber category `updateMany` is a
   // no-op unless a test opts in (the default manifest declares no category).
   mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
+  mockDbWrite.appBlock.findMany.mockResolvedValue([]);
+  mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([]);
   // Item 1 audit fix (onsite reset re-approve scan gate) defaults: no reset listing
   // to gate (findFirst → null → gate skipped, the existing restore updateMany still
   // runs), no screenshots, every queried image `Scanned`. A scan-gate test overrides.
@@ -1503,6 +1507,59 @@ describe('approveRequest', () => {
     });
     mockForgejo.ensurePushWebhook.mockResolvedValue(undefined);
     mockForgejo.commitFiles.mockResolvedValue({ sha: 'commit_sha_abc' });
+  });
+
+  it('refuses a first version whose storage slug another app already uses, before creating the OAuth client, repo or app block', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ slug: 'hel-lo' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbWrite.appBlock.findMany.mockResolvedValue([
+      { blockId: 'hel--lo' },
+      { blockId: 'he-llo' },
+    ]);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(
+      'Cannot approve: blockId "hel-lo" is too similar to the existing app "hel--lo": both would use the storage name "hel_lo", because a run of hyphens counts as a single separator. Choose a different blockId.'
+    );
+    expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
+    expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+  });
+
+  it('approves a first version when the other apps use different storage slugs', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbWrite.appBlock.findMany.mockResolvedValue([
+      { blockId: 'hel--lo' },
+      { blockId: 'he-llo' },
+    ]);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).resolves.toMatchObject({ isFirstVersion: true });
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+  });
+
+  it('a colliding PENDING request does not block a first-version approve', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ slug: 'hel-lo' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([{ slug: 'hel--lo' }]);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).resolves.toMatchObject({ isFirstVersion: true });
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {

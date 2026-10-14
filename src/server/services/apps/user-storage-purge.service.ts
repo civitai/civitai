@@ -99,6 +99,7 @@ import { requireAppsDb } from '~/server/db/appsDb';
 import { logToAxiom } from '~/server/logging/client';
 import { newAppListingModerationEventId, newUlid } from '~/server/utils/app-block-ids';
 import { appSchemaIdent, isValidAppSlug, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { groupBlocksByStorageSlug } from '~/server/services/apps/storage-slug-claims';
 
 /**
  * The SAME datastream `apps.router`'s storage ops write to, not a new one.
@@ -383,8 +384,10 @@ async function readSchemaShape(): Promise<Map<string, SchemaTables>> {
  * true and irrelevant — underscores were never the failure mode; hyphen RUNS
  * are.)
  *
- * Two such blocks therefore share one `kv` table, and nothing upstream prevents
- * it. The consequence is the worst kind: a purge aimed at one app deletes the
+ * Two such blocks therefore share one `kv` table. Registration refuses a NEW
+ * colliding blockId (`storageSlugConflictMessage`), but that check has no
+ * database constraint behind it and cannot cover blocks that already collide.
+ * The consequence is the worst kind: a purge aimed at one app deletes the
  * user's rows for BOTH, decrements only the named app's `quota`, and leaves the
  * other app's `user_quota` holding exactly the phantom balance this service
  * warns about elsewhere — a counter for rows that no longer exist, which keeps
@@ -408,14 +411,13 @@ async function resolveSchemaOwnership(): Promise<{
   });
   const bySchema = new Map<string, BlockIdentity & { storageSlug: string }>();
   const collidingSchemas = new Set<string>();
-  for (const b of blocks) {
-    const storageSlug = sanitizeAppSlug(b.blockId);
-    if (!storageSlug) continue;
+  for (const [storageSlug, claimants] of groupBlocksByStorageSlug(blocks)) {
     const schemaName = `app_${storageSlug}`;
-    if (bySchema.has(schemaName)) {
+    if (claimants.length > 1) {
       collidingSchemas.add(schemaName);
       continue;
     }
+    const [b] = claimants;
     bySchema.set(schemaName, {
       appBlockId: b.id,
       slug: b.appListing?.slug ?? b.blockId,
@@ -423,7 +425,6 @@ async function resolveSchemaOwnership(): Promise<{
       storageSlug,
     });
   }
-  for (const name of collidingSchemas) bySchema.delete(name);
   return { bySchema, collidingSchemas };
 }
 
