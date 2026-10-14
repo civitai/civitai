@@ -24,7 +24,6 @@ export const serviceOfferingSelect = {
   title: true,
   description: true,
   price: true,
-  acceptsBlue: true,
   previewKind: true,
   deliveryDays: true,
   revisionsIncluded: true,
@@ -33,6 +32,20 @@ export const serviceOfferingSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.ServiceOfferingSelect;
+
+/**
+ * Whether Active offerings count as shop items when publishing. Only the owner's own session
+ * carries the owner's flags, so a moderator acting for a seller fails closed to cosmetics-only.
+ */
+export const servicesCountForPublish = ({
+  shopOwnerId,
+  callerId,
+  callerHasServicesFlag,
+}: {
+  shopOwnerId: number;
+  callerId: number;
+  callerHasServicesFlag: boolean;
+}) => shopOwnerId === callerId && callerHasServicesFlag;
 
 export type ServiceSellEligibility = {
   canSell: boolean;

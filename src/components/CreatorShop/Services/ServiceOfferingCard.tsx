@@ -1,4 +1,4 @@
-import { Badge, Group, Paper, Stack, Text } from '@mantine/core';
+import { Group, Paper, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
@@ -11,7 +11,7 @@ export function ServiceOfferingCard({
 }: {
   offering: Pick<
     ServiceOffering,
-    'title' | 'description' | 'price' | 'acceptsBlue' | 'deliveryDays' | 'revisionsIncluded'
+    'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded'
   >;
   footer?: ReactNode;
 }) {
@@ -35,11 +35,6 @@ export function ServiceOfferingCard({
             variant="transparent"
             className="!px-0"
           />
-          {offering.acceptsBlue && (
-            <Badge variant="light" color="blue" radius="sm">
-              Blue OK
-            </Badge>
-          )}
         </Group>
       </Stack>
       {footer}

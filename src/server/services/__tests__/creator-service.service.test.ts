@@ -10,6 +10,7 @@ import {
   SERVICE_MAX_ACTIVE_OFFERINGS,
   SERVICES_MIN_CREATOR_SCORE,
 } from '~/shared/constants/creator-service.constants';
+import { upsertServiceOfferingSchema } from '~/server/schema/creator-service.schema';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
@@ -190,4 +191,15 @@ describe('storefront read', () => {
     await getShopServiceOfferings({ userId: SELLER, viewerId: SELLER });
     expect(dbMock.dbRead.serviceOffering.findMany).toHaveBeenCalledTimes(1);
   });
+});
+
+// Decision (Justin, 2026-10-14): no Blue Buzz for services in v1. `acceptsBlue` keeps its column
+// default of false; nothing a client sends can set it. Remove this only when Blue ships with a fee.
+it('drops a client-sent acceptsBlue before it reaches the write', async () => {
+  seller();
+  const input = upsertServiceOfferingSchema.parse({ ...fields, acceptsBlue: true, publish: true });
+  expect(input).not.toHaveProperty('acceptsBlue');
+  await upsertServiceOffering({ sellerId: SELLER, input });
+  const [args] = dbMock.dbWrite.serviceOffering.create.mock.calls[0] as [{ data: object }];
+  expect(args.data).not.toHaveProperty('acceptsBlue');
 });

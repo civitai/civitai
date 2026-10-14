@@ -15,6 +15,3 @@ export const SERVICE_TITLE_MIN = 3;
 export const SERVICE_TITLE_MAX = 100;
 export const SERVICE_DESCRIPTION_MAX = 2_000;
 export const SERVICE_MAX_ACTIVE_OFFERINGS = 20;
-
-// Hidden until a Blue Buzz fee rate is decided; `acceptsBlue` stays false until then.
-export const SERVICE_BLUE_BUZZ_ENABLED = false;

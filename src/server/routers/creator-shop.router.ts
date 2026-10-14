@@ -56,6 +56,7 @@ import {
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { servicesCountForPublish } from '~/server/services/creator-service.service';
 import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import * as z from 'zod';
@@ -267,8 +268,11 @@ export const creatorShopRouter = router({
       return updateCreatorShopSettings({
         ...patch,
         userId,
-        // Only the owner's own session carries the owner's flags; acting for someone else fails closed.
-        servicesEnabled: userId === ctx.user.id && ctx.features.creatorServices,
+        servicesEnabled: servicesCountForPublish({
+          shopOwnerId: userId,
+          callerId: ctx.user.id,
+          callerHasServicesFlag: ctx.features.creatorServices,
+        }),
       });
     }),
   // #endregion

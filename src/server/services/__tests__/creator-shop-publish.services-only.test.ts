@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserService from '~/server/services/user.service';
 import { updateCreatorShopSettings } from '~/server/services/creator-shop.service';
+import { servicesCountForPublish } from '~/server/services/creator-service.service';
 import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
@@ -47,5 +48,29 @@ describe('publishing a shop with no cosmetics', () => {
   it('refuses with creatorServices on when no offering is Active (Draft or Paused only)', async () => {
     activeOfferings(0);
     expect(await publish(true)).toBe(EMPTY_SHOP);
+  });
+});
+
+// Decision (Creator Services P1): the router can only see the CALLER's flags, so the services
+// count applies to an owner publishing their own shop. A moderator publishing for a seller gets
+// the cosmetics-only rule rather than borrowing the moderator's flags. Keep it fail-closed.
+describe('servicesCountForPublish', () => {
+  const MOD = 1;
+  it('counts services for the owner with the flag on', () => {
+    expect(
+      servicesCountForPublish({ shopOwnerId: USER, callerId: USER, callerHasServicesFlag: true })
+    ).toBe(true);
+  });
+
+  it('does not count them for a moderator acting for the owner, flag on or not', () => {
+    expect(
+      servicesCountForPublish({ shopOwnerId: USER, callerId: MOD, callerHasServicesFlag: true })
+    ).toBe(false);
+  });
+
+  it('does not count them for the owner with the flag off', () => {
+    expect(
+      servicesCountForPublish({ shopOwnerId: USER, callerId: USER, callerHasServicesFlag: false })
+    ).toBe(false);
   });
 });
