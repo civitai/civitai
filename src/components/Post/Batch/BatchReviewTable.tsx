@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { formatDate } from '~/utils/date-helpers';
 import type { ReviewPost } from './batch-composer.store';
@@ -11,6 +12,7 @@ import type { ReviewPost } from './batch-composer.store';
 const ROW_HEIGHT = 56;
 const CARD_HEIGHT = 148;
 const THUMBS_SHOWN = 4;
+const THUMB_WIDTH = 96;
 
 export function BatchReviewTable({
   posts,
@@ -110,19 +112,19 @@ function ReviewRow({
 
   const thumbs = (
     <div className="flex items-center gap-0.5">
-      {post.media.slice(0, THUMBS_SHOWN).map((item) =>
-        item.type === 'video' ? (
-          <video
-            key={item.url}
-            src={item.objectUrl}
-            muted
-            className="size-8 rounded object-cover"
-          />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={item.url} src={item.objectUrl} alt="" className="size-8 rounded object-cover" />
-        )
-      )}
+      {post.media.slice(0, THUMBS_SHOWN).map((item) => (
+        <EdgeMedia
+          key={item.url}
+          src={item.url}
+          type={item.type}
+          name={item.name}
+          width={THUMB_WIDTH}
+          anim={false}
+          loading="lazy"
+          alt=""
+          className="size-8 rounded object-cover"
+        />
+      ))}
       {post.media.length > THUMBS_SHOWN && (
         <Text size="xs" c="dimmed">
           +{post.media.length - THUMBS_SHOWN}
