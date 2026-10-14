@@ -14,6 +14,9 @@ import { storylineUrl } from '~/components/Storyline/storyline-routes';
  * anything about Buzz: a continuation may be priced at zero, and a decline's fee and refund settle
  * after the row is resolved, so a money sentence could be false when it is read.
  *
+ * A fee-waived decline was made by the system (a block, a host that can no longer be shown), not
+ * by the owner, so it is not announced as theirs.
+ *
  * Every type drops a pair with a block between them. A block declines the pair's pending
  * continuations in both directions, and without the filter that decline is announced to the
  * blocked side, naming the blocker.
@@ -57,6 +60,7 @@ const resolvedQuery = ({
       ) as "details"
     ${continuationRows({ named: 'owner' })}
       AND p.status = '${status}'
+      ${status === 'declined' ? 'AND NOT p."feeWaived"' : ''}
       AND p."resolvedAt" IS NOT NULL
       AND p."resolvedAt" > '${lastSent}'
   )

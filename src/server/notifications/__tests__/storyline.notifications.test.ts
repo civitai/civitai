@@ -70,8 +70,11 @@ describe('storyline continuation notifications', () => {
 
   it.each(CASES)('$type builds its message from keys the query emits', async (c) => {
     const sql = await query(c.type);
-    for (const key of ['storylineId', 'storylineTitle', c.usernameKey])
-      expect(sql).toContain(`'${key}', `);
+    expect(sql).toContain(`'storylineId', s.id`);
+    expect(sql).toContain(`'storylineTitle', s.title`);
+    expect(sql).toContain(`'${c.usernameKey}', u.username`);
+    // The detail fetcher reads this key for the avatar of the person named.
+    expect(sql).toContain(`'${c.named}', p."${c.named}"`);
 
     expect(
       message(c.type, { storylineId: 7, storylineTitle: 'The Patch', [c.usernameKey]: 'tehalex86' })
@@ -80,6 +83,8 @@ describe('storyline continuation notifications', () => {
 
   it.each(CASES)('$type reads only its own storyline rows, once each', async (c) => {
     const sql = await query(c.type);
+    expect(sql).toContain(`JOIN "StorylineChapter" c ON c."postId" = p."targetId"`);
+    expect(sql).toContain(`JOIN "Storyline" s ON s.id = c."storylineId"`);
     expect(sql).toContain(`p.surface = 'storyline'`);
     expect(sql).toContain(`p."targetType" = 'post'`);
     expect(sql.match(/p\.status = '\w+'/g)).toEqual([`p.status = '${c.status}'`]);
@@ -110,6 +115,11 @@ describe('storyline continuation notifications', () => {
       expect(sql).toContain(notBlockedBetween(`p."${c.recipient}"`, `p."${c.named}"`));
     }
   );
+
+  it('announces only declines the owner made', async () => {
+    expect(await query('storyline-continuation-declined')).toContain(`AND NOT p."feeWaived"`);
+    expect(await query('storyline-continuation-approved')).not.toContain('feeWaived');
+  });
 
   it.each(CASES)('$type says nothing about Buzz', (c) => {
     const { message: text } = message(c.type, {
