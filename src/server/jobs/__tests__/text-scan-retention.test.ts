@@ -32,6 +32,7 @@ const { getTextScanMode, getTextScanWebSearchMode } = await import(
 const shadowRows: Record<string, number[]> = {
   'Post:shadow': [9, 8],
   'Comment:shadow': [5, 4],
+  'Model:shadow': [3, 2],
   'Model:search-shadow': [3, 2],
 };
 
@@ -99,6 +100,37 @@ describe('text-scan-retention', () => {
       graduatedWebSearchEntityTypes: ['Model'],
     });
   });
+
+  it.each([
+    [
+      'the main rollout graduates Model but the search rollout does not',
+      'active',
+      'shadow',
+      ['Model'],
+      [],
+    ],
+    [
+      'the search rollout graduates Model but the main rollout does not',
+      'shadow',
+      'active',
+      [],
+      ['Model'],
+    ],
+  ] as const)(
+    '%s: graduates each row family on its own rollout',
+    async (_, main, search, graduated, graduatedWebSearch) => {
+      vi.mocked(getTextScanMode).mockImplementation(async (entityType) =>
+        entityType === 'Model' ? main : 'shadow'
+      );
+      vi.mocked(getTextScanWebSearchMode).mockResolvedValue(search);
+      await textScanRetention.run().result;
+      expect(cleanupTextScanRows).toHaveBeenCalledWith({
+        graduatedEntityTypes: graduated,
+        graduatedWebSearchEntityTypes: graduatedWebSearch,
+        olderThanDays: 30,
+      });
+    }
+  );
 
   it('lets a helper failure surface to the job runner', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');

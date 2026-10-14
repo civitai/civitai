@@ -85,6 +85,21 @@ describe('cleanupTextScanRows', () => {
     expect(result).toEqual({ shadowDeleted: 15, cleanDeleted: 0, exhausted: true });
   });
 
+  it('deletes only the web-search shadow rows when no main entity type has graduated', async () => {
+    em.findMany.mockResolvedValueOnce(ids(2)).mockResolvedValueOnce([]);
+    const result = await cleanupTextScanRows({
+      graduatedEntityTypes: [],
+      graduatedWebSearchEntityTypes: ['Model'],
+      cleanRowEntityTypes: [],
+      olderThanDays: 14,
+    });
+    expect(em.findMany.mock.calls[0][0].where).toEqual({
+      entityType: { in: ['Model:search-shadow'] },
+      updatedAt: { lt: new Date('2026-09-17T00:00:00Z') },
+    });
+    expect(result).toEqual({ shadowDeleted: 2, cleanDeleted: 0, exhausted: false });
+  });
+
   it('does nothing when no entity types are named', async () => {
     await cleanupTextScanRows({
       graduatedEntityTypes: [],

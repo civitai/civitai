@@ -137,7 +137,14 @@ import {
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
-import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
+import {
+  summarizeTextScan,
+  type TextScanModeratorSummary,
+} from '~/server/services/text-scan/moderator-summary';
+import {
+  TEXT_SCAN_WEB_SEARCH_LABELS,
+  textScanEmEntityType,
+} from '~/server/services/text-scan/mode';
 import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import {
@@ -5074,8 +5081,38 @@ export async function bustFeaturedModelsCache() {
 // locked / marked nsfw / hidden so mods can self-triage instead of escalating
 // (automated actions such as the profanity nsfw-lock or the text-scan nsfw flag are otherwise
 // invisible to them).
+const textScanRowSelect = {
+  status: true,
+  nsfwLevel: true,
+  triggeredLabels: true,
+  result: true,
+  updatedAt: true,
+} as const;
+
+// Once the web-search pass is active, the main pass is submitted without poi/minor and those
+// verdicts live on the search row instead.
+function withWebSearchVerdict(
+  main: TextScanModeratorSummary | null,
+  search: TextScanModeratorSummary | null
+): TextScanModeratorSummary | null {
+  if (!main || !search) return main ?? search;
+  const fromSearch = (label: string) =>
+    (TEXT_SCAN_WEB_SEARCH_LABELS as readonly string[]).includes(label);
+  return {
+    ...main,
+    triggeredLabels: [
+      ...main.triggeredLabels.filter((label) => !fromSearch(label)),
+      ...search.triggeredLabels.filter(fromSearch),
+    ],
+    reasons: [
+      ...main.reasons.filter(({ label }) => !fromSearch(label)),
+      ...search.reasons.filter(({ label }) => fromSearch(label)),
+    ],
+  };
+}
+
 export async function getModelModerationDetail({ id }: { id: number }) {
-  const [model, scan] = await Promise.all([
+  const [model, scan, searchScan] = await Promise.all([
     dbRead.model.findUnique({
       where: { id },
       select: {
@@ -5095,13 +5132,16 @@ export async function getModelModerationDetail({ id }: { id: number }) {
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Model', entityId: id } },
-      select: {
-        status: true,
-        nsfwLevel: true,
-        triggeredLabels: true,
-        result: true,
-        updatedAt: true,
+      select: textScanRowSelect,
+    }),
+    dbRead.entityModeration.findUnique({
+      where: {
+        entityType_entityId: {
+          entityType: textScanEmEntityType('Model', 'active', 'web-search'),
+          entityId: id,
+        },
       },
+      select: textScanRowSelect,
     }),
   ]);
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
@@ -5130,7 +5170,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
         }
       : null,
     textModeration: meta.textModeration ?? null,
-    textScan: summarizeTextScan(scan),
+    textScan: withWebSearchVerdict(summarizeTextScan(scan), summarizeTextScan(searchScan)),
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,

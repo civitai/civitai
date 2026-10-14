@@ -126,9 +126,9 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const submittedActive = mode === 'active';
   const ctx = { workflowId, entityType, entityId, emEntityType };
 
-  // After a rollback the old pipeline owns the live row again, and plan 02's floor reads it. A search
-  // pass only follows the main mode: its edit's main pass was submitted without poi/minor, so
-  // ignoring it after a search-only rollback would leave that edit with no poi/minor verdict.
+  // After a rollback the old pipeline owns the live row again. Gate every pass, search included, on
+  // the main mode only: after a search-only rollback the main scan has stopped asking for poi/minor,
+  // so dropping this search verdict would leave that edit with no poi/minor verdict at all.
   if (submittedActive && (await getTextScanMode(entityType, entityId)) !== 'active')
     return log('info', 'mode left active before the callback; live row not written', ctx);
 

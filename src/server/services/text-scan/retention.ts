@@ -43,7 +43,7 @@ export async function cleanupTextScanRows({
   maxBatches = 50,
 }: {
   graduatedEntityTypes: TextScanEntityType[];
-  /** Graduated by the web-search rollout; only their `:search-shadow` rows go. */
+  /** Only their `:search-shadow` rows are deleted; the main `:shadow` rows follow `graduatedEntityTypes`. */
   graduatedWebSearchEntityTypes?: TextScanEntityType[];
   cleanRowEntityTypes?: TextScanEntityType[];
   olderThanDays: number;
