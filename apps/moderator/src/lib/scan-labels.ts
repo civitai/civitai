@@ -7,6 +7,59 @@ export const LEASE_MS = 2 * 60_000;
 /** Mirrors the `ScanLabelQuota."dailyVotes"` default and floor in the migration. */
 export const DEFAULT_DAILY_QUOTA = 50;
 
+/**
+ * Why a moderator voted Block. Every reason is offered on every item, whatever the scan flagged.
+ * 🔴 The ids are STORED values, mirrored by the CHECK on `ScanLabelVote.reason`: change both together.
+ */
+export const BLOCK_REASONS = [
+  {
+    id: 'minor-sexual',
+    label: 'Minor / sexual or suggestive',
+    help: 'A character depicted as under 18 in nudity, sexual activity, or sexualized clothing/poses, in any rendering style.',
+  },
+  {
+    id: 'minor-photoreal',
+    label: 'Photorealistic minor',
+    help: 'A photorealistic depiction of someone under 18, including otherwise nonsexual scenes.',
+  },
+  {
+    id: 'minor-violence',
+    label: 'Minor / violence or abuse',
+    help: 'Abuse, exploitation, endangerment, or violence involving a minor; exclude ordinary play, sports, and minor accidental injuries.',
+  },
+  {
+    id: 'real-person',
+    label: 'Real person',
+    help: 'A recognizable likeness of an actual person, in any context. A realistic-looking fictional person does not qualify just because the rendering is photorealistic.',
+  },
+  {
+    id: 'bestiality',
+    label: 'Bestiality',
+    help: 'Sexual activity involving animals or feral creatures; animal ears or a tail alone do not establish this.',
+  },
+  {
+    id: 'non-consent',
+    label: 'Sexual violence / non-consent',
+    help: 'Sexual activity involving force, coercion, or someone unable to consent, such as an unconscious person. Restraints alone do not establish non-consent.',
+  },
+  {
+    id: 'graphic-violence',
+    label: 'Graphic violence / abuse',
+    help: 'Human death, torture, mutilation, graphic injuries, or domestic/animal abuse covered by the content rules, not simply anything that looks realistic.',
+  },
+  {
+    id: 'other',
+    label: 'Other ToS violation',
+    help: 'Another specific violation (e.g. prohibited bodily waste, incest, hate/extremism, self-harm). Requires a short comment.',
+  },
+] as const;
+
+export type BlockReason = (typeof BLOCK_REASONS)[number]['id'];
+export const BLOCK_REASON_IDS = BLOCK_REASONS.map((r) => r.id) as [BlockReason, ...BlockReason[]];
+/** The one reason that needs a comment. */
+export const REASON_NEEDING_COMMENT: BlockReason = 'other';
+export const REASON_COMMENT_MAX = 500;
+
 export const scanLabelFiltersSchema = z.object({
   day: z
     .string()
