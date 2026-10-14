@@ -1,7 +1,6 @@
 import { Alert, Group, Loader, Modal } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { useQueryImages } from '~/components/Image/image.utils';
 import {
   StorylineContinueForm,
   type StorylineSubmitOutcome,
@@ -65,14 +64,6 @@ export default function StorylineContinueModal({
     { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
-  // TODO: the one client image read left in this modal. Swap `cover` to the server's chapter 1
-  // `firstImage` once storyline.getById's mainPath (or getPath) carries it, and drop this query.
-  const coverPostId = storyline?.mainPath[0]?.post?.id;
-  const { images: coverImages, isLoading: coverLoading } = useQueryImages(
-    { postId: coverPostId, limit: 1, withMeta: false, include: [] },
-    { enabled: !!coverPostId }
-  );
-  const cover = coverPostId ? (coverLoading ? undefined : coverImages[0] ?? null) : null;
   const terms = useStorylineContinueTerms(parentPostId, { enabled });
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
 
@@ -135,7 +126,7 @@ export default function StorylineContinueModal({
         <StorylineContinueForm
           viewerId={currentUser.id}
           storyline={storyline}
-          cover={cover}
+          cover={storyline.coverImage}
           parentName={parentName}
           closedReason={terms.data.closedReason}
           price={terms.data.price}

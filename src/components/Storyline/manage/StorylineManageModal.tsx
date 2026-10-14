@@ -4,6 +4,7 @@ import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-route
 import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/StorylineCollaboratorsPanel';
 import { StorylineCoversRow } from '~/components/Storyline/manage/StorylineCoversRow';
 import { StorylineSettingsForm } from '~/components/Storyline/manage/StorylineSettingsForm';
+import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import {
   useStorylineChapterLevels,
   useStorylineSpace,
@@ -51,12 +52,15 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
     <Modal
       {...dialog}
       title={
-        <Text component="span" fw={600}>
-          <Text component="span" c="dimmed" inherit>
-            Manage
-          </Text>{' '}
-          {storyline?.title ?? 'storyline'}
-        </Text>
+        <Group gap="sm" wrap="nowrap">
+          {storyline && <StorylineThumb image={storyline.coverImage} width={24} />}
+          <Text component="span" fw={600} lineClamp={1}>
+            <Text component="span" c="dimmed" inherit>
+              Manage
+            </Text>{' '}
+            {storyline?.title ?? 'storyline'}
+          </Text>
+        </Group>
       }
       size="lg"
     >
