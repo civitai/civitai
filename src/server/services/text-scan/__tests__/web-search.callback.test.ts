@@ -170,6 +170,24 @@ describe('handleTextScanCallback — web-search pass', () => {
     expect(outcome.poi.newlyDetected).toBe(true);
   });
 
+  it.each([
+    ['submitted with poi/minor', mainMeta],
+    [
+      'submitted without poi/minor',
+      { ...mainMeta, labels: ['nsfw'], promptIds: { base: 1, nsfw: 2 } },
+    ],
+  ])('main active pass %s: the verdict log lists only the labels it acted on', async (_, meta) => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow(meta, { nsfw: { level: 'x', reason: 'r' }, ...FLAGGED }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    const [{ outcome }] = adapter.applyTextScan.mock.calls[0];
+    const [verdict] = verdicts();
+    expect(verdict.tags).toBe(outcome.triggeredLabels.join(','));
+    expect(verdict.poi).toBe(outcome.poi?.detected);
+    expect(verdict.minor).toBe(outcome.minor?.detected);
+  });
+
   it('ignores a web-search workflow whose row key or entity type does not fit', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
       workflow({ ...searchMeta('active'), emEntityType: 'Model' }) as any
