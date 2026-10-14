@@ -525,7 +525,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       offset = 6_000;
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_err', bytes: pngBytes() });
       await vi.waitFor(() => expect(repliesFor(replies, 'rq_err')).toHaveLength(2));
-      // Past the 60 s upload window too: three uploads already spent it.
+      // Past the 60 s upload window too, so this holds whatever the window's count is.
       offset = 61_000;
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_ok', bytes: pngBytes() });
       await vi.waitFor(() => expect(repliesFor(replies, 'rq_ok')).toHaveLength(2));
@@ -596,22 +596,23 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     }
   });
 
-  test(`the ${
-    UPLOAD_BYTES_MAX_PER_WINDOW + 1
-  }th upload inside the window is busy and never uploads`, async () => {
+  // Literal counts, not the constant: a test that loops to the limit passes at any limit.
+  test('eight uploads inside the window are admitted; the 9th is busy and never uploads', async () => {
     h.gate.mockResolvedValue({ status: 'pending' });
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
-    for (let i = 0; i <= UPLOAD_BYTES_MAX_PER_WINDOW; i++) {
+    for (let i = 0; i < 9; i++) {
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: `rq_${i}`, bytes: pngBytes() });
     }
     await vi.waitFor(() =>
-      expect(repliesFor(replies, `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`)).toEqual([
-        { requestId: `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`, error: 'busy' },
-      ])
+      expect(repliesFor(replies, 'rq_8')).toEqual([{ requestId: 'rq_8', error: 'busy' }])
     );
-    await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW));
+    await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(8));
+    await settle();
+    expect(h.uploadToCF).toHaveBeenCalledTimes(8);
+    // The 4th through 8th are in flight (the scan is pending), not refused.
+    for (const i of [3, 4, 5, 6, 7]) expect(repliesFor(replies, `rq_${i}`)).toEqual([]);
     replies.stop();
   });
 
