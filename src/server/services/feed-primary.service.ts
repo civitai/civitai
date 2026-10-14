@@ -170,7 +170,7 @@ export async function serveFromFeed<T extends { id: number }>(
     count('served');
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
   }
-  const mapping = mapSearchInputToFeedQuery(input, 'primary');
+  const mapping = mapSearchInputToFeedQuery(input, 'primary', deps.route);
   if (!mapping.ok) {
     const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_UNPARSED;
     count(rejected ? 'rejected' : 'unmapped', mapping.reason);
