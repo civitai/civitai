@@ -692,13 +692,15 @@ const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
 // FOR UPDATE for both sets: the authored ones are deleted, which needs it, and a single statement
 // has a single strength. Taking a weaker lock on the marked ones would need a second statement
 // (or an upgrade later), which is the interleaving this exists to remove. The cost: a viewer
-// marking one of those documents waits for the wipe to commit (bounded by LOCK_TIMEOUT).
+// marking or incrementing one of those documents waits for the wipe to commit (bounded by
+// LOCK_TIMEOUT).
 // After this statement, the only document rows the wipe writes are (a) shared documents in this
 // lock set — deleted by `deleteLockedSharedDocs` (authored), uid-cleared by
 // `SQL_WIPE_RELEASE_COUNTER_DOCS` (counter) — and (b) the user's own PRIVATE documents
 // (`SQL_WIPE_PRIVATE_DOCS`, `scope_uid` = the user), which no other wipe ever locks: every other
 // wipe's lock set is shared documents only. Every tally and mark row it changes belongs to a
-// document in this set. (Leaving the counter documents out of this set deadlocked two wipes of
+// document in this set, except a document the user's own in-flight write commits between
+// statements, which the second pass locks. (Leaving the counter documents out of this set deadlocked two wipes of
 // users who had reported each other's counter documents.) `authored` marks the documents to
 // delete: user-authored only, never a counter document, which outlives its creator; the same
 // delete path a moderator delete takes.
@@ -1740,9 +1742,11 @@ function buildDocStore(deps: DocStoreDeps) {
       // found by a re-run. The second pass re-runs the single ordered lock statement, so it
       // takes document locks after the usage locks — the reverse of LOCK ORDER. It already holds
       // every document lock from the first pass, so a new lock can only be on a document the
-      // in-flight writer created or a document this user marked meanwhile; it can deadlock only
-      // against this same user's own concurrent write. Postgres then aborts this namespace's
-      // transaction whole, and it is reported in `failures` for a re-run.
+      // in-flight writer created or a document this user marked meanwhile. That document can
+      // also be locked by someone else (a moderator delete, or another wipe) who then waits on
+      // this user's usage row, so the second pass can deadlock with them in that narrow window.
+      // Postgres then aborts one side whole; for this wipe the namespace is reported in
+      // `failures` for a re-run.
       await c.query(SQL_WIPE_USAGE_USER, args);
       await settle(await wipeDocs());
       // The second pass refunds the author of any document it deleted, which re-creates the
