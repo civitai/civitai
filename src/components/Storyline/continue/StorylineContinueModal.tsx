@@ -56,7 +56,7 @@ export default function StorylineContinueModal({
     { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
-  const terms = useStorylineContinueTerms(parentPostId);
+  const terms = useStorylineContinueTerms(parentPostId, { enabled });
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
 
   const firstPage = postPages?.pages[0];
@@ -81,8 +81,10 @@ export default function StorylineContinueModal({
         </Group>
       ) : !storylineId || !storyline ? (
         <Alert color="gray">This chapter is not part of a storyline you can continue.</Alert>
-      ) : !terms.data || submit.unavailable ? (
+      ) : terms.unavailable ? (
         <Alert color="gray">Continuing storylines is not open yet.</Alert>
+      ) : !terms.data ? (
+        <Alert color="red">Couldn&apos;t load what continuing this storyline costs.</Alert>
       ) : (
         <StorylineContinueForm
           viewerId={currentUser.id}
@@ -99,8 +101,14 @@ export default function StorylineContinueModal({
           error={submit.error}
           outcome={outcome}
           onSubmit={() => {
-            if (!postId || !terms.data) return;
-            submit.mutate({ parentPostId, postId, expectedPrice: terms.data.price });
+            const post = posts.find((candidate) => candidate.id === postId);
+            if (!post || !terms.data) return;
+            submit.mutate({
+              parentPostId,
+              postId: post.id,
+              expectedPrice: terms.data.price,
+              awaitingScan: !post.nsfwLevel,
+            });
           }}
         />
       )}

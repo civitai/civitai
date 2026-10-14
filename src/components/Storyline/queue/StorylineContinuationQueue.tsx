@@ -57,7 +57,10 @@ export function StorylineContinuationQueue() {
       });
     } finally {
       setBusy(null);
-      await Promise.all([utils.placement.invalidate(), utils.storyline.invalidate()]);
+      await Promise.all([
+        utils.placement.getPendingStorylineContinuations.invalidate(),
+        utils.storyline.getById.invalidate({ id: row.storyline.id }),
+      ]);
     }
   };
 

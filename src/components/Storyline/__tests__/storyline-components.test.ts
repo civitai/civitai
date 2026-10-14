@@ -525,3 +525,14 @@ describe('StorylineCollaboratorsPanel', () => {
     expect(el.querySelector('[aria-label="Remove tehalex"]')).toBeNull();
   });
 });
+
+describe('isStorylineNotAvailable', () => {
+  it('treats only the not-available refusal as "not yet", never another refusal', async () => {
+    const { isStorylineNotAvailable } = await import('~/components/Storyline/storyline.data');
+    const { STORYLINE_REFUSALS } = await import('~/shared/utils/storyline-placement');
+
+    expect(isStorylineNotAvailable({ message: STORYLINE_REFUSALS.notAvailable })).toBe(true);
+    expect(isStorylineNotAvailable({ message: STORYLINE_REFUSALS.notOpen })).toBe(false);
+    expect(isStorylineNotAvailable(null)).toBe(false);
+  });
+});
