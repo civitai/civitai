@@ -13,7 +13,7 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
-import { createClusterBufferGet } from './cluster-batched-get';
+import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
 import {
@@ -1031,6 +1031,52 @@ export interface InstrumentCommandsOptions {
 }
 
 /**
+ * Account a batch of `count` CLUSTER commands that is sent outside `_execute` (the pipelined
+ * multi-key GET talks to a node client directly, so instrumentCommands never sees it) exactly as
+ * `count` separate commands would be: `count` on the inflight gauge and on the self-heal inflight
+ * counter while it runs, one deadline over the batch, and on settle `count` duration samples and
+ * `count` slow-settle observations. So a stuck 200-key read still looks like 200 stuck commands
+ * to the wedge signals.
+ *
+ * Exported (with injectable `opts`) for tests.
+ */
+export function trackClusterCommands<T>(
+  count: number,
+  run: () => Promise<T>,
+  opts: { deadlineMs?: number; slowCommandMs?: number } = {}
+): Promise<T> {
+  const deadlineMs = opts.deadlineMs ?? config?.clusterCommandTimeoutMs ?? 0;
+  const slowCommandMs = opts.slowCommandMs ?? config?.clusterSelfHealSlowCommandMs ?? 0;
+  const labels = { client: 'cluster' } as const;
+  // Captured once so inc/dec stay balanced (see instrumentCommands).
+  const metrics = getRedisMetrics();
+  for (let i = 0; i < count; i++) {
+    metrics?.redisCommandsInflight.inc(labels);
+    incClusterInflight();
+  }
+  const start = Date.now();
+  let settled = false;
+  const done = () => {
+    if (settled) return;
+    settled = true;
+    const durationMs = Date.now() - start;
+    for (let i = 0; i < count; i++) {
+      decClusterInflight();
+      metrics?.redisCommandsInflight.dec(labels);
+      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
+      recordClusterCommandSettle(durationMs, slowCommandMs);
+    }
+  };
+  let executed: Promise<T>;
+  try {
+    executed = run();
+  } catch (err) {
+    executed = Promise.reject(err);
+  }
+  return withCommandDeadline(executed, deadlineMs).finally(done);
+}
+
+/**
  * Wrap the per-client command chokepoint so EVERY command is counted in the inflight gauge
  * and timed. The chokepoint differs by kind: SINGLE client -> `sendCommand`; CLUSTER client
  * -> `_execute` (typed methods route through it, not the top-level sendCommand). The cluster
@@ -1627,14 +1673,21 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
-  // Raw multi-key read behind packed.mGet. On the cache CLUSTER this is one script call per owning
-  // master (./cluster-batched-get) instead of one GET per key; anywhere else, and with
-  // REDIS_CLUSTER_BATCHED_GET_ENABLED=false, it is the original per-key GETs.
-  // The script runs through bufferClient like the GETs did, so it is instrumented, deadline-bound
-  // and routing-retried by the same `_execute` wrapper, and its reply elements are Buffers.
+  // Raw multi-key read behind packed.mGet. On the cache CLUSTER the GETs are grouped by owning
+  // master and written to that node's connection together (./cluster-pipelined-get) instead of
+  // one routed GET per key; anywhere else, and with REDIS_CLUSTER_BATCHED_GET_ENABLED=false, it is
+  // the original per-key GETs. The pipelined GETs bypass `_execute`, so trackClusterCommands
+  // accounts each batch as its key count in the inflight, deadline and duration signals; any key
+  // re-read on its own goes through bufferClient as before.
   const batchedGet =
     type === 'cache' && config.cluster && config.clusterBatchedGetEnabled !== false
-      ? createClusterBufferGet(bufferClient as any, (client as any)._self ?? client, log)
+      ? createClusterPipelinedGet({
+          get: (key) => bufferClient.get<Buffer>(key as K),
+          cluster: (client as any)._self ?? client,
+          typeMapping: { [RESP_TYPES.BLOB_STRING]: Buffer },
+          track: (count, run) => trackClusterCommands(count, run),
+          log,
+        })
       : undefined;
   const getBuffers = (keys: K[]): Promise<(Buffer | null)[]> =>
     batchedGet ? batchedGet(keys) : Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
@@ -1819,8 +1872,8 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
-  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually. (packed.mGet batches per master
-  // via ./cluster-batched-get; this string-mode wrapper has no hot caller and stays per-key.)
+  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually. (packed.mGet pipelines per master
+  // via ./cluster-pipelined-get; this string-mode wrapper has no hot caller and stays per-key.)
   const originalMGet = baseClient.mGet?.bind(baseClient);
   client.mGet = async function (...args: any[]): Promise<any> {
     const keys = args[0] as K[];

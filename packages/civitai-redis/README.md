@@ -25,7 +25,7 @@ builds its own client (caching, pub/sub, or to inject `isRevoked` into the auth 
 | `REDIS_CLUSTER` | no | `true` to treat `REDIS_URL` as a cluster |
 | `REDIS_SYS_SENTINELS` / `_NAME` | no | sysRedis HA via Sentinel discovery |
 | `REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED` | no | default on; `false` stops a cluster node's connection errors from triggering a slot-map re-read (the node-address-change fix) |
-| `REDIS_CLUSTER_BATCHED_GET_ENABLED` | no | default on; `false` makes `packed.mGet` on a cluster issue one GET per key instead of one script call per master (needs Redis ≥ 7.0) |
+| `REDIS_CLUSTER_BATCHED_GET_ENABLED` | no | default on; `false` makes `packed.mGet` on a cluster issue one routed GET per key instead of pipelining each master's GETs together |
 | `REDIS_SYS_COMMAND_TIMEOUT_MS` | no | sys per-command backstop, default `30000`; `0` disables it |
 
 `loadRedisEnv()` **requires both `REDIS_URL` and `REDIS_SYS_URL`** — a partial config throws. Dozens of
@@ -59,7 +59,7 @@ Reference: the auth app ([apps/auth](../../apps/auth)) wires both clients.
 
 The `*.integration.test.ts` files run a real 3-master Redis cluster in docker. Two move a node to a
 new address and stop a node under a forced self-heal; they are **one-time evidence** for the
-node-address-change fix. A third (`cluster-batched-get`) counts the commands a 200-key `packed.mGet`
+node-address-change fix. A third (`cluster-pipelined-get`) checks the batches a 200-key `packed.mGet`
 sends and reads through a slot migration. All are run by hand to show red on the old code and green on
 the new — **not
 ongoing coverage**: CI does not run them (they need `REDIS_CLUSTER_IT=1` and docker), so outside

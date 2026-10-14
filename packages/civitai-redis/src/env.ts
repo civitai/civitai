@@ -21,9 +21,9 @@ export const redisEnvSchema = z
       (x) => x !== 'false',
       z.boolean().default(true)
     ),
-    // Read a multi-key packed mGet with one script call per owning master instead of one GET per
-    // key (see ./cluster-batched-get). ON by default; only the literal string 'false' disables it,
-    // which restores the per-key GETs.
+    // Read a multi-key packed mGet with one pipelined write per owning master instead of one
+    // routed GET per key (see ./cluster-pipelined-get). ON by default; only the literal string
+    // 'false' disables it, which restores the per-key GETs.
     REDIS_CLUSTER_BATCHED_GET_ENABLED: z.preprocess(
       (x) => x !== 'false',
       z.boolean().default(true)

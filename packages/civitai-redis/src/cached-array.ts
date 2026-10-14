@@ -36,8 +36,8 @@ export type CachedLookupOptions<T extends object> = {
   // --- In-process (per-pod) L1 in front of the Redis per-id cache -----------------------------------
   // Opt-in. When `localTtl` (SECONDS) is set, resolved per-id values are also held in a bounded per-pod
   // LRU. An L1 hit skips the Redis read for that id entirely — the win on hot feed hydration.
-  // (On a cluster packed.mGet reads a batch with one script call per master; see
-  // ./cluster-batched-get. An L1 hit still saves the Redis-side work and the decode.)
+  // (On a cluster packed.mGet pipelines a batch's GETs per master; see ./cluster-pipelined-get.
+  // An L1 hit still saves the Redis-side work and the decode.)
   //
   // 🔴 CORRECTNESS: the L1 is per-pod and CANNOT see a cross-pod `bust`/`refresh`, so a mutation
   // propagates with up to `localTtl` extra staleness on pods holding a copy. Enable ONLY on near-static
