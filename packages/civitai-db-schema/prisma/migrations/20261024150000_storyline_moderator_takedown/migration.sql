@@ -7,8 +7,9 @@
 --
 -- MANUAL APPLY: a human applies this per environment, after
 -- 20261024140000_storyline_title_moderation, BEFORE the code that reads it ships. Additive: one
--- column with a constant default (no table rewrite). No backfill: a takedown written by hand
--- before this, with neither flag set, stays down, and no scan or restore lifts it.
+-- column with a constant default (no table rewrite). No backfill: nothing has written a moderator
+-- takedown yet. A takedown written by hand must set this column too: a row with only
+-- `tosViolation` set is lifted by a scan that flags the title and a later clean rescan.
 SET lock_timeout = '3s';
 
 ALTER TABLE "Storyline" ADD COLUMN "tosViolationByModerator" BOOLEAN NOT NULL DEFAULT false;
