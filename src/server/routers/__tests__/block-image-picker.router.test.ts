@@ -1,0 +1,74 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { OnboardingSteps } from '~/server/common/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+vi.mock('~/env/client', () => ({
+  env: { NEXT_PUBLIC_IMAGE_LOCATION: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA' },
+}));
+
+const { blockImagePickerRouter } = await import('~/server/routers/block-image-picker.router');
+
+/**
+ * Where `blockImagePicker.getPosted` gets the level it filters by: the session user's own setting
+ * and the request's domain, through the real router and service down to the query arguments.
+ */
+
+type Viewer = { showNsfw: boolean; browsingLevel: number };
+
+const caller = (viewer: Viewer | null, features: { canViewNsfw: boolean }) =>
+  blockImagePickerRouter.createCaller({
+    user: viewer && {
+      id: 8123,
+      isModerator: false,
+      muted: false,
+      onboarding: OnboardingSteps.Buzz,
+      ...viewer,
+    },
+    acceptableOrigin: true,
+    tokenScope: TokenScope.Full,
+    features,
+  } as never);
+
+const queriedWhere = () => dbMock.dbRead.image.findMany.mock.calls[0][0].where;
+
+describe('blockImagePicker.getPosted', () => {
+  beforeEach(() => {
+    dbMock.dbRead.image.findMany.mockReset();
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+  });
+
+  it("filters by the session user's own browsing level where the domain caps nothing", async () => {
+    await caller({ showNsfw: true, browsingLevel: 12 }, { canViewNsfw: true }).getPosted({});
+
+    expect(queriedWhere().userId).toBe(8123);
+    expect(queriedWhere().nsfwLevel).toEqual({ in: [4, 8] });
+  });
+
+  it('caps the level on a domain that does not serve mature content', async () => {
+    await caller({ showNsfw: true, browsingLevel: 28 }, { canViewNsfw: false }).getPosted({});
+
+    expect(queriedWhere().nsfwLevel).toEqual({ in: [1, 2] });
+  });
+
+  it('lists PG only for a viewer who has mature content turned off', async () => {
+    await caller({ showNsfw: false, browsingLevel: 31 }, { canViewNsfw: true }).getPosted({});
+
+    expect(queriedWhere().nsfwLevel).toEqual({ in: [1] });
+  });
+
+  it('ignores a browsing level sent in the input', async () => {
+    await caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
+      browsingLevel: 31,
+    } as never);
+
+    expect(queriedWhere().nsfwLevel).toEqual({ in: [1, 2] });
+  });
+
+  it('refuses a signed-out caller without querying', async () => {
+    await expect(caller(null, { canViewNsfw: true }).getPosted({})).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
+  });
+});
