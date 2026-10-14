@@ -5,6 +5,7 @@ import { followersAmong } from '$lib/server/followers';
 import {
   contentFk,
   keysetClause,
+  listedToViewer,
   ownsContent,
   safeProfilePictureUrl,
   type ReactorEntity,
@@ -68,7 +69,7 @@ export async function getCollectors(
     FROM (
       SELECT c."userId", min(ci."createdAt") AS "createdAt", count(DISTINCT c.id)::int AS collections
       FROM ${source}
-      WHERE ${visible} ${bound}
+      WHERE ${visible} AND ${listedToViewer('c.userId', ownerId)} ${bound}
       GROUP BY c."userId"
       ORDER BY c."userId" ${order}
       LIMIT ${REACTORS_PAGE_SIZE + 1}
