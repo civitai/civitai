@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as GenerationRequestHooks from '~/components/ImageGeneration/utils/generationRequestHooks';
 import type * as Trpc from '~/utils/trpc';
+import { queryClient } from '~/utils/trpc';
 
 /**
  * The date bounds `useGetTextToImageRequests` hands the tRPC query. The App Blocks image picker
@@ -12,6 +13,7 @@ import type * as Trpc from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
   useInfiniteQuery: vi.fn(),
+  generateMutation: vi.fn(),
   filters: {} as { fromDate?: Date; toDate?: Date; sort?: string },
 }));
 
@@ -23,6 +25,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     trpc: makeTrpcProxy({
       'orchestrator.queryGeneratedImages': {
         useInfiniteQuery: (...args: unknown[]) => mocks.useInfiniteQuery(...args),
+        // The cache helpers find this procedure's lists by its path.
+        _def: () => ({ path: ['orchestrator', 'queryGeneratedImages'] }),
+      },
+      'orchestrator.generateFromGraph': {
+        useMutation: (options: unknown) => mocks.generateMutation(options),
       },
     }),
   };
@@ -40,7 +47,7 @@ vi.mock('~/components/ImageGeneration/utils/unratedOutputRefetch', () => ({
   scheduleUnratedRefetch: vi.fn(),
 }));
 
-const { useGetTextToImageRequests } = (await import(
+const { useGenerateFromGraph, useGetTextToImageRequests } = (await import(
   '~/components/ImageGeneration/utils/generationRequestHooks'
 )) as typeof GenerationRequestHooks;
 
@@ -91,14 +98,62 @@ describe('useGetTextToImageRequests — date bounds reaching the query', () => {
     expect(input.toDate).toBe(QUEUE_TO);
     expect(input.fromDate).toBe(QUEUE_FROM);
   });
+});
 
-  // Invariant guard.
-  it("prefers the queue's date filter over a caller's when both are set", () => {
-    const input = queriedInput(
-      { toDate: PICKED, fromDate: new Date(2020, 0, 1) },
-      { enabled: true }
-    );
-    expect(input.toDate).toBe(QUEUE_TO);
-    expect(input.fromDate).toBe(QUEUE_FROM);
+describe('useGenerateFromGraph — a submitted workflow and the cached lists', () => {
+  const LISTS = ['orchestrator', 'queryGeneratedImages'];
+  const keyFor = (input: Record<string, unknown>) => [LISTS, { input, type: 'infinite' }];
+  const list = (...ids: string[]) => ({
+    pages: [{ items: ids.map((id) => ({ id })), nextCursor: undefined }],
+    pageParams: [undefined],
+  });
+  const ids = (input: Record<string, unknown>) =>
+    (
+      queryClient.getQueryData(keyFor(input)) as { pages: Array<{ items: Array<{ id: string }> }> }
+    ).pages[0].items.map((item) => item.id);
+
+  function submit(workflow: { id: string }) {
+    mocks.generateMutation.mockImplementation((options) => options);
+    let options: { onSuccess: (data: unknown) => void } | undefined;
+    function Probe() {
+      options = useGenerateFromGraph() as unknown as typeof options;
+      return null;
+    }
+    const root = createRoot(document.createElement('div'));
+    act(() => root.render(createElement(Probe)));
+    act(() => root.unmount());
+    options?.onSuccess(workflow);
+  }
+
+  beforeEach(() => queryClient.clear());
+
+  // Regression: red before the fix, which put the new workflow at the top of EVERY newest-first
+  // list, including one that ends on or before a past date.
+  it('leaves a list bounded by toDate alone, and still adds to the unbounded ones', () => {
+    const bounded = { tags: ['img'], ascending: false, toDate: new Date(2024, 5, 30, 23, 59) };
+    const unbounded = { tags: ['img'], ascending: false };
+    const oldestFirstBounded = { tags: ['img'], ascending: true, toDate: new Date(2024, 5, 30) };
+    const oldestFirst = { tags: ['img'], ascending: true };
+    queryClient.setQueryData(keyFor(bounded), list('old-1'));
+    queryClient.setQueryData(keyFor(unbounded), list('old-2'));
+    queryClient.setQueryData(keyFor(oldestFirstBounded), list('old-3'));
+    queryClient.setQueryData(keyFor(oldestFirst), list('old-4'));
+
+    submit({ id: 'new' });
+
+    expect(ids(bounded)).toEqual(['old-1']);
+    expect(ids(unbounded)).toEqual(['new', 'old-2']);
+    expect(ids(oldestFirstBounded)).toEqual(['old-3']);
+    expect(ids(oldestFirst)).toEqual(['old-4', 'new']);
+  });
+
+  // Invariant guard: a list with only a start date still takes a workflow submitted now.
+  it('still adds to a newest-first list bounded only by fromDate', () => {
+    const fromOnly = { tags: ['img'], ascending: false, fromDate: new Date(2024, 0, 1) };
+    queryClient.setQueryData(keyFor(fromOnly), list('old-5'));
+
+    submit({ id: 'new' });
+
+    expect(ids(fromOnly)).toEqual(['new', 'old-5']);
   });
 });

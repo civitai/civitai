@@ -730,6 +730,34 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
       .toBeInTheDocument();
   });
 
+  test('shows the posted date on the tile itself, not only in its label', async () => {
+    setPosted([postedItem(1, { createdAt: new Date(2024, 5, 30, 12) }), postedItem(2)]);
+    openModal({ sources: ['posted'] });
+
+    const dated = page.getByRole('button', { name: 'Posted image 1, Jun 30, 2024', exact: true });
+    await expect.element(dated).toHaveTextContent('Jun 30, 2024');
+    // An undated image shows no date at all, not today's.
+    await expect.element(tile('Posted image 2')).toBeInTheDocument();
+    expect(tile('Posted image 2').element().textContent).toBe('');
+  });
+
+  test('shows the generated date on the tile, from the workflow it came with', async () => {
+    mocks.generatedQuery.mockReturnValue({
+      data: [{ createdAt: new Date(2025, 0, 5, 9), succeededOutput: [output('gen-a')] }],
+      isFetching: false,
+      isFetchingNextPage: false,
+      isError: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(async () => undefined),
+      refetch: vi.fn(async () => undefined),
+    });
+    openModal({ sources: ['generated'] });
+
+    await expect
+      .element(page.getByRole('button', { name: 'Generated image 1, Jan 5, 2025', exact: true }))
+      .toHaveTextContent('Jan 5, 2025');
+  });
+
   // Invariant guard (red at origin/main only because there is no date control).
   test('a date with nothing on or before it says so, and offers the way back', async () => {
     mocks.postedQuery.mockImplementation((input: { toDate?: Date }) => ({
@@ -757,8 +785,7 @@ describe('BlockImagePickerModal: tray, jump to date, tile labels', () => {
     await expect.element(tile('Posted image 1')).toBeInTheDocument();
   });
 
-  // Regression: a year still being typed must not be sent as a bound (0202 would list nothing
-  // after a scan of the whole library).
+  // Regression: a year still being typed is not applied, so the grid does not flash empty for it.
   test('a half-typed year is not applied', async () => {
     setPosted([postedItem(1)]);
     openModal({ sources: ['posted'] });

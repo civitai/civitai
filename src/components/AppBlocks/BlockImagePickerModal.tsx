@@ -365,8 +365,9 @@ function JumpToDate({
 }) {
   const isMobile = useIsMobile({ type: 'media' });
   // What the input holds while the viewer edits it. A native date input reports `''` until every
-  // part of the date is filled in, and steps through a whole date per arrow-key press, so a whole
-  // date is applied once it has held still for `PICKER_JUMP_DEBOUNCE_MS`.
+  // part of the date is filled in, and steps through a whole date per arrow-key press; a whole date
+  // is applied once it has held still for `PICKER_JUMP_DEBOUNCE_MS`, so the grid is replaced once
+  // rather than flashing through every intermediate date.
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const pending = useRef<number>();
@@ -780,6 +781,15 @@ const PickTile = memo(function PickTile({
         loading="lazy"
         className="size-full object-cover"
       />
+      {image.dateLabel && (
+        // Visible copy of the date in the label; the label already carries it for assistive tech.
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 text-center text-[11px] leading-4 text-white"
+        >
+          {image.dateLabel}
+        </span>
+      )}
       {isSelected && (
         <ThemeIcon size="sm" radius="xl" className="absolute right-1.5 top-1.5">
           <IconCheck size={14} />

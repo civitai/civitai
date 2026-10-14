@@ -260,14 +260,19 @@ export function pickerGridLayout(
   return { columns, tile };
 }
 
-/** How long a jump-to date has to hold still before the list is refetched for it. */
+/**
+ * How long a jump-to date has to hold still before the list is replaced for it. Applying every
+ * intermediate value as it is typed or stepped through would swap the grid to a new, briefly empty
+ * list on each one; the list is replaced once, for the date the viewer stops on.
+ */
 export const PICKER_JUMP_DEBOUNCE_MS = 400;
 
 /**
  * A native date input's `YYYY-MM-DD` as the newest moment a "jump to date" list may show: the END
  * of that day in the viewer's time zone, so images from the chosen day itself are listed. `null`
- * for an empty, malformed or impossible value, or one before `PICKER_JUMP_MIN_DATE` (a year still
- * being typed reads as 0002, 0020, 0202): no bound, the list starts at the newest image.
+ * for an empty, malformed or impossible value, or one before `PICKER_JUMP_MIN_DATE`: no bound, the
+ * list starts at the newest image. A year still being typed reads as 0002, 0020, 0202; were those
+ * applied, the grid would flash empty for a date nobody meant.
  */
 export function jumpDateToBound(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);

@@ -1,6 +1,10 @@
 import * as z from 'zod';
 
-/** Earliest "jump to date" accepted: older than any image, and refuses a half-typed year (0202). */
+/**
+ * Earliest "jump to date" accepted. A year still being typed reads as 0002, 0020, 0202; the picker
+ * does not apply those (the grid would flash empty for a date nobody meant), and this keeps the
+ * procedure's input to the same dates.
+ */
 export const PICKER_JUMP_MIN_DATE = new Date('2000-01-01T00:00:00.000Z');
 
 export const getBlockPickablePostedImagesSchema = z.object({

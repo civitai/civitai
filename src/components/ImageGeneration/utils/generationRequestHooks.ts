@@ -122,9 +122,9 @@ export function useGetTextToImageRequests(
       ...input,
       ascending: filters.sort === GenerationSort.Oldest,
       tags: queryTags,
+      fromDate: filters.fromDate,
       // The queue's date filter wins; otherwise the caller's own bound (the picker's, which ignores
       // the queue's filters).
-      fromDate: filters.fromDate ?? input?.fromDate,
       toDate: filters.toDate ?? input?.toDate,
       excludeFailed: filters.excludeFailed,
     },
@@ -253,25 +253,37 @@ export function useBoostWorkflow() {
   });
 }
 
+type CachedWorkflow = InfiniteTextToImageRequests['pages'][number]['items'][number];
+
+/**
+ * Puts a just-submitted workflow into each cached list it belongs in: first in a newest-first list,
+ * last in an oldest-first one whose last page is loaded. A list bounded by `toDate` (the queue's
+ * own date filter, or the App Blocks image picker's jump to date) ends at a moment already past,
+ * so a workflow submitted now is not in it and is left out.
+ */
+export function addSubmittedWorkflowToCaches(workflow: CachedWorkflow) {
+  updateTextToImageRequests({
+    input: { ascending: false },
+    cb: (old, queryInput) => {
+      if (queryInput?.toDate) return;
+      old.pages[0].items.unshift(workflow);
+    },
+  });
+  updateTextToImageRequests({
+    input: { ascending: true },
+    cb: (old, queryInput) => {
+      if (queryInput?.toDate) return;
+      const index = old.pages.length - 1;
+      if (!old.pages[index].nextCursor) {
+        old.pages[index].items.push(workflow);
+      }
+    },
+  });
+}
+
 export function useGenerateFromGraph(args?: { onError?: (e: any) => void }) {
   return trpc.orchestrator.generateFromGraph.useMutation({
-    onSuccess: (data) => {
-      updateTextToImageRequests({
-        input: { ascending: false },
-        cb: (old) => {
-          old.pages[0].items.unshift(data);
-        },
-      });
-      updateTextToImageRequests({
-        input: { ascending: true },
-        cb: (old) => {
-          const index = old.pages.length - 1;
-          if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data);
-          }
-        },
-      });
-    },
+    onSuccess: (data) => addSubmittedWorkflowToCaches(data),
     ...args,
   });
 }

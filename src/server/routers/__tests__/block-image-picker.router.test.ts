@@ -81,7 +81,7 @@ describe('blockImagePicker.getPosted', () => {
   it.each([
     ['a string', '2024-06-30'],
     ['an invalid Date', new Date('nope')],
-    ['a day before 2000 (a half-typed year)', new Date('0202-06-30T23:59:59.999Z')],
+    ['a day before 2000 (what a half-typed year reads as)', new Date('0202-06-30T23:59:59.999Z')],
   ])('rejects a jump-to date that is %s, without querying', async (_name, toDate) => {
     await expect(
       caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
