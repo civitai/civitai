@@ -21,12 +21,12 @@ vi.mock('~/server/services/storyline-chapter-removal.service', () => ({
 }));
 // The refund of continuations under a removed chapter, so each takedown path can be seen asking
 // for it after its commit. Its own behaviour is tested in storyline-continuation-loop.test.ts.
-const settleContinuationsUnderRemovedChapters = vi.fn(async (..._a: unknown[]) => ({
+const settleOrphanedContinuations = vi.fn(async (..._a: unknown[]) => ({
   considered: 0,
   settled: 0,
 }));
 vi.mock('~/server/services/storyline-placement.service', () => ({
-  settleContinuationsUnderRemovedChapters,
+  settleOrphanedContinuations,
 }));
 // The event points hook, so each takedown path can be seen handing its ids over. The hook's own
 // behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
@@ -624,8 +624,8 @@ describe('a storyline chapter taken down with its placement', () => {
     expect(onPlacementsTakenDown).not.toHaveBeenCalled();
   });
 
-  // A retry after a partial failure: the placement is already removed, so the
-  // flip matches nothing, but the tombstone is still asked for and finishes.
+  // The tombstone is asked for every id given, whatever the flip matched (here,
+  // a row another takedown flipped between the read and this write).
   it('still asks for the tombstone when the takedown flips nothing', async () => {
     placementFindMany
       .mockResolvedValueOnce([])
@@ -675,7 +675,7 @@ describe('a storyline chapter taken down with its placement', () => {
         events.push('commit');
         return result;
       });
-      settleContinuationsUnderRemovedChapters.mockImplementation(async () => {
+      settleOrphanedContinuations.mockImplementation(async () => {
         events.push('settle');
         return { considered: 0, settled: 0 };
       });
@@ -683,15 +683,13 @@ describe('a storyline chapter taken down with its placement', () => {
       await run();
 
       expect(events).toEqual(['tombstone', 'commit', 'settle']);
-      expect(settleContinuationsUnderRemovedChapters.mock.calls).toEqual([
-        [{ removedPlacementIds: ids }],
-      ]);
+      expect(settleOrphanedContinuations.mock.calls).toEqual([[{ removedPlacementIds: ids }]]);
     });
 
-    // The takedown has happened; the removed-parent job settles what this left.
+    // The takedown has happened; the orphaned-continuation job settles what this left.
     it('does not fail the takedown when settling them fails', async () => {
       placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
-      settleContinuationsUnderRemovedChapters.mockRejectedValueOnce(new Error('buzz down'));
+      settleOrphanedContinuations.mockRejectedValueOnce(new Error('buzz down'));
 
       await expect(
         removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
@@ -707,7 +705,7 @@ describe('a storyline chapter taken down with its placement', () => {
       await expect(
         removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
       ).rejects.toThrow('already removed');
-      expect(settleContinuationsUnderRemovedChapters).toHaveBeenCalledWith({
+      expect(settleOrphanedContinuations).toHaveBeenCalledWith({
         removedPlacementIds: [STORYLINE_PLACEMENT],
       });
     });
@@ -719,7 +717,7 @@ describe('a storyline chapter taken down with its placement', () => {
       await expect(
         removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
       ).rejects.toThrow('lock timeout');
-      expect(settleContinuationsUnderRemovedChapters).not.toHaveBeenCalled();
+      expect(settleOrphanedContinuations).not.toHaveBeenCalled();
     });
   });
 

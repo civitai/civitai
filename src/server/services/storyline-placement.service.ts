@@ -512,18 +512,17 @@ export async function settleStorylineContinuation({
         throw new Error(
           `storyline: placement ${placementId} is not owned by its storyline's owner`
         );
-      // A removed parent can never take the continuation, so declining it would
-      // pay the owner a fee for something they could not accept. It is settled
-      // as an expiry instead (`settleContinuationsUnderRemovedChapters`).
-      if (parent?.removedAt) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+      // A parent that is no longer a live chapter (removed, its post deleted, or
+      // never found) can never take the continuation, so declining it would pay
+      // the owner a fee for something they could not accept. Refused for both
+      // answers; `settleOrphanedContinuations` refunds it in full instead.
+      if (!parent || parent.removedAt) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
-      // A decline goes through without a chapter: it writes nothing, and a
-      // parent post deleted since must not trap the placer's money in a queue.
+      // A decline writes no chapter.
       if (action === 'decline') return;
 
       if (!parentPostId || !postId)
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
-      if (!parent) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
       // The image-level rules the edge does not check. Hidden from the queue
       // is not refused: an owner can still name an unfinished one by id, and an
@@ -939,8 +938,8 @@ const toPostSummary = (
  * The storyline creator's review queue: pending continuations, oldest first.
  *
  * A row still waiting on its post's readiness is left out until the readiness
- * pass admits it, as is one whose post has gone, and one continuing a chapter
- * that has been removed (it can no longer be answered, only refunded). Paged in
+ * pass admits it, as is one whose post has gone, and one whose parent is no
+ * longer a live chapter (it can no longer be answered, only refunded). Paged in
  * SQL so a page is full of rows the queue can render.
  */
 export async function getPendingStorylineContinuations({
@@ -966,9 +965,9 @@ export async function getPendingStorylineContinuations({
       AND pl.status = 'pending'
       AND pl.data ->> 'awaitingReadiness' IS NULL
       AND NOT p."tosViolation"
-      AND NOT EXISTS (
+      AND EXISTS (
         SELECT 1 FROM "StorylineChapter" sc
-        WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NOT NULL
+        WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NULL
       )
       ${
         keyset
@@ -1196,22 +1195,27 @@ export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?
 }
 
 /**
- * Settles pending continuations of chapters that have been removed, as an
- * expiry: the placer did nothing wrong, so whatever was taken is returned in
+ * Settles pending continuations whose parent is no longer a live chapter, as
+ * an expiry: the placer did nothing wrong, so whatever was taken is returned in
  * full, and the owner, who can no longer accept them, earns no fee.
  *
- * Run right after a takedown with the ids it took down, and by a job for every
- * removed chapter, which finishes what a failed or interrupted run left. The
- * removal itself does not depend on either: from its commit the owner's queue
- * hides these rows and an approval or a decline is refused, so until one of
- * these runs, or the row's own deadline passes, nobody can be paid for it.
+ * A parent stops being a live chapter when it is removed, or when its post is
+ * deleted, which empties the chapter's `postId`. Either way nothing can find
+ * it from the continuation again, so both are matched the same way: no live
+ * chapter holds the continuation's target post.
  *
- * A priced row whose holds are not all receipted is left alone: settling it
- * would plan the refund from the part paid so far. The unfunded sweep settles
- * it once it is stale. Settling only claims a row that is still pending, so a
- * second run moves no money twice.
+ * Run right after a takedown with the ids it took down, and by a job for all
+ * of them, which also finishes what a failed or interrupted run left. Neither
+ * is what keeps the owner from being paid: from the removal's commit the
+ * owner's queue hides these rows and an approval or a decline is refused.
+ *
+ * A priced row whose holds are not all receipted is left out: settling it
+ * would plan the refund from the part paid so far, and selecting it would let
+ * a backlog of them fill the batch. The unfunded sweep settles it once it is
+ * stale. Settling only claims a row that is still pending, so a second run
+ * moves no money twice.
  */
-export async function settleContinuationsUnderRemovedChapters({
+export async function settleOrphanedContinuations({
   removedPlacementIds,
   limit = 200,
 }: { removedPlacementIds?: number[]; limit?: number } = {}) {
@@ -1219,14 +1223,20 @@ export async function settleContinuationsUnderRemovedChapters({
   const rows = await dbWrite.$queryRaw<{ id: number; amount: number }[]>`
     SELECT pl.id, pl.amount
     FROM "Placement" pl
-    JOIN "StorylineChapter" sc ON sc."postId" = pl."targetId"
     WHERE pl.surface = ${SURFACE}
       AND pl."targetType" = ${TARGET_TYPE}
       AND pl.status = 'pending'
-      AND sc."removedAt" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "StorylineChapter" sc
+        WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NULL
+      )
+      AND (pl.amount = 0 OR ${receiptedHolds} >= pl.amount)
       ${
         removedPlacementIds
-          ? Prisma.sql`AND sc."placementId" IN (${Prisma.join(removedPlacementIds)})`
+          ? Prisma.sql`AND pl."targetId" IN (
+              SELECT "postId" FROM "StorylineChapter"
+              WHERE "placementId" IN (${Prisma.join(removedPlacementIds)})
+            )`
           : Prisma.empty
       }
     ORDER BY pl.id ASC
@@ -1248,7 +1258,7 @@ export async function settleContinuationsUnderRemovedChapters({
       await logToAxiom({
         name: 'storyline-placement',
         type: 'error',
-        message: 'continuation under a removed chapter: settle failed',
+        message: 'orphaned continuation: settle failed',
         placementId: row.id,
         error: error instanceof Error ? error.message : String(error),
       }).catch(() => undefined);

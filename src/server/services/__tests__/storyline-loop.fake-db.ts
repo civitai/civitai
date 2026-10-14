@@ -392,10 +392,10 @@ export function createFakeDb() {
       if (text.includes('pl."createdAt" >')) throw new Error('fake db: queue keyset not modelled');
       const [surface, targetType, ownerId, limit] = v as [string, string, number, number];
       // Modelled only while the statement carries the clause, so dropping it is caught here.
-      const hidesRemovedParents = text
+      const needsLiveParent = text
         .replace(/\s+/g, ' ')
         .includes(
-          'NOT EXISTS ( SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NOT NULL )'
+          'AND EXISTS ( SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NULL )'
         );
       const rows = tables.placement.filter((pl) => {
         const data = pl.data as Row | null;
@@ -403,7 +403,7 @@ export function createFakeDb() {
         const parent = tables.storylineChapter.find((c) => same(c.postId, pl.targetId));
         return (
           !!post &&
-          !(hidesRemovedParents && parent?.removedAt != null) &&
+          !(needsLiveParent && (!parent || parent.removedAt != null)) &&
           pl.surface === surface &&
           pl.targetType === targetType &&
           pl.ownerId === ownerId &&
@@ -416,21 +416,58 @@ export function createFakeDb() {
         .slice(0, limit)
         .map((pl) => ({ id: pl.id, createdAt: pl.createdAt }));
     }
-    if (text.includes('JOIN "StorylineChapter" sc ON sc."postId" = pl."targetId"')) {
-      // Pending continuations of removed chapters; optionally of chapters these placements added.
-      const filtered = text.includes('sc."placementId" IN (');
-      const [surface, targetType, ...rest] = v as [string, string, ...number[]];
+    if (
+      text.includes('sc."postId" = pl."targetId" AND sc."removedAt" IS NULL') &&
+      text.includes('pl.amount = 0 OR')
+    ) {
+      // Orphaned continuations: pending, whose target no live chapter holds, fully paid or
+      // free; optionally only those continuing chapters these placements added. Every clause
+      // is required by its text, so a statement that drops one is refused rather than answered.
+      const compact = text.replace(/\s+/g, ' ');
+      const clauses = [
+        `WHERE pl.surface = $1 AND pl."targetType" = $2 AND pl.status = 'pending'`,
+        `AND NOT EXISTS ( SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = pl."targetId" AND sc."removedAt" IS NULL )`,
+        `AND (pl.amount = 0 OR ( SELECT COALESCE(SUM(t.amount), 0) FROM "PlacementTransaction" t WHERE t."placementId" = pl.id AND t.kind IN ($3,$4) AND t."transactionId" IS NOT NULL ) >= pl.amount)`,
+        'ORDER BY pl.id ASC LIMIT',
+      ];
+      const missing = clauses.filter((clause) => !compact.includes(clause));
+      if (missing.length)
+        throw new Error(`fake db: orphan selection lacks ${missing.join(' | ')}: ${compact}`);
+      const filtered = compact.includes(
+        'AND pl."targetId" IN ( SELECT "postId" FROM "StorylineChapter" WHERE "placementId" IN ('
+      );
+      const [surface, targetType, holdFee, holdPrincipal, ...rest] = v as [
+        string,
+        string,
+        string,
+        string,
+        ...number[]
+      ];
       const placementIds = filtered ? rest.slice(0, -1) : null;
       const limit = rest[rest.length - 1];
+      const receipted = (placementId: unknown) =>
+        tables.placementTransaction
+          .filter(
+            (t) =>
+              same(t.placementId, placementId) &&
+              (t.kind === holdFee || t.kind === holdPrincipal) &&
+              t.transactionId != null
+          )
+          .reduce((sum, t) => sum + (t.amount as number), 0);
       const rows = tables.placement.filter((pl) => {
-        const parent = tables.storylineChapter.find((c) => same(c.postId, pl.targetId));
+        const live = tables.storylineChapter.some(
+          (c) => same(c.postId, pl.targetId) && c.removedAt == null
+        );
+        const taken = tables.storylineChapter.filter(
+          (c) => c.postId != null && placementIds?.some((id) => same(id, c.placementId))
+        );
         return (
-          !!parent &&
-          parent.removedAt != null &&
-          (!placementIds || placementIds.some((id) => same(id, parent.placementId))) &&
           pl.surface === surface &&
           pl.targetType === targetType &&
-          pl.status === 'pending'
+          pl.status === 'pending' &&
+          !live &&
+          ((pl.amount as number) === 0 || receipted(pl.id) >= (pl.amount as number)) &&
+          (!placementIds || taken.some((c) => same(c.postId, pl.targetId)))
         );
       });
       return order(rows, [{ id: 'asc' }])

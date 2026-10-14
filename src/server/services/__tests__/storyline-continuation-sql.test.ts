@@ -52,7 +52,7 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
 
 const {
   getPendingStorylineContinuations,
-  settleContinuationsUnderRemovedChapters,
+  settleOrphanedContinuations,
   settleStaleUnfundedContinuations,
   startReadyStorylineContinuations,
 } = await import('~/server/services/storyline-placement.service');
@@ -108,7 +108,7 @@ const SCHEMA = [
      "transactionId" TEXT, amount INTEGER NOT NULL, "lastAttemptAt" TIMESTAMP(3),
      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'))`,
   `CREATE TABLE "StorylineChapter" (
-     id INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL UNIQUE, "placementId" INTEGER UNIQUE,
+     id INTEGER PRIMARY KEY, "postId" INTEGER UNIQUE, "placementId" INTEGER UNIQUE,
      "removedAt" TIMESTAMP(3))`,
 ];
 
@@ -242,15 +242,17 @@ const FIXTURE = [
   placement({ id: 210, ownerId: 7, surface: 'sticker', createdAt: ago(110) }),
   placement({ id: 211, ownerId: 7, targetType: 'model', createdAt: ago(100) }),
   placement({ id: 212, ownerId: 7, targetId: 600, createdAt: ago(170) }), // its chapter was removed
+  placement({ id: 213, ownerId: 7, targetId: 999, createdAt: ago(165) }), // its target is no chapter
 
   // Chapters. Every row above continues 500, a live chapter, so a filter that
-  // reads any chapter as removed empties the queue.
+  // reads any chapter as gone empties the queue. Chapter 5 was removed and then
+  // its post deleted, which empties its postId; its post was 900.
   `INSERT INTO "StorylineChapter" (id, "postId", "placementId", "removedAt") VALUES
-     (1, 500, 9000, NULL), (2, 600, 9001, ${ago(5)}), (3, 700, 9002, NULL), (4, 800, 9003, ${ago(
-    5
-  )})`,
+     (1, 500, 9000, NULL), (2, 600, 9001, ${ago(5)}), (3, 700, 9002, NULL),
+     (4, 800, 9003, ${ago(5)}), (5, NULL, 9004, ${ago(5)})`,
 
-  // Continuations of removed chapters (4xx); 402 is inserted first, so the order is the statement's.
+  // Continuations whose parent is no longer a live chapter (4xx); 402 is inserted
+  // first, so the order is the statement's.
   placement({ id: 402, targetId: 800 }),
   placement({ id: 401, targetId: 600 }),
   placement({ id: 403, targetId: 700 }), // its chapter is live
@@ -258,6 +260,10 @@ const FIXTURE = [
   placement({ id: 405, targetId: 600, surface: 'sticker' }),
   placement({ id: 406, targetId: 600, targetType: 'model' }),
   placement({ id: 407, targetId: 999 }), // not a chapter
+  placement({ id: 408, targetId: 900 }), // its chapter's post was deleted
+  placement({ id: 409, targetId: 600, amount: 100 }), // its payment never landed
+  placement({ id: 410, targetId: 600, amount: 100 }),
+  ...funded(410, 100),
 
   // Stale unfunded sweep (3xx): priced, pending, not awaiting.
   placement({ id: 301, amount: 100, createdAt: ago(20) }), // no legs at all
@@ -419,16 +425,18 @@ describe.skipIf(!testDatabaseUrl)('storyline continuation statements on PostgreS
     expect(ids()).toEqual([300, 301]);
   });
 
-  it("selects pending continuations of removed chapters, or of the ones a takedown's placements added", async () => {
-    await settleContinuationsUnderRemovedChapters();
-    // 212 is in the owner's queue fixture, and continues the removed 600 too.
-    expect(ids()).toEqual([212, 401, 402]);
+  it("selects paid pending continuations whose parent is no longer a live chapter, or of a takedown's chapters", async () => {
+    await settleOrphanedContinuations();
+    // 212 and 213 are in the owner's queue fixture and orphaned too.
+    expect(ids()).toEqual([212, 213, 401, 402, 407, 408, 410]);
 
     selected = [];
-    await settleContinuationsUnderRemovedChapters({ removedPlacementIds: [9001] });
-    await settleContinuationsUnderRemovedChapters({ removedPlacementIds: [9003, 9002] });
-    await settleContinuationsUnderRemovedChapters({ limit: 1 });
-    expect([ids(0), ids(1), ids(2)]).toEqual([[212, 401], [402], [212]]);
+    await settleOrphanedContinuations({ removedPlacementIds: [9001] });
+    await settleOrphanedContinuations({ removedPlacementIds: [9003, 9002] });
+    // Its post is gone, so the takedown's own run cannot find it; the job above did.
+    await settleOrphanedContinuations({ removedPlacementIds: [9004] });
+    await settleOrphanedContinuations({ limit: 1 });
+    expect([ids(0), ids(1), ids(2), ids(3)]).toEqual([[212, 401, 410], [402], [], [212]]);
   });
 
   // The selection sums receipted hold legs. It can do that only because a second leg of one

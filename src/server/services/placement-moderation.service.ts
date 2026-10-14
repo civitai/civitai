@@ -161,16 +161,16 @@ const takeDownApproved = (
  *
  * After the commit, because settling moves Buzz. A failure is logged, not
  * thrown: the takedown has happened, and from its commit those rows can no
- * longer be answered; the removed-parent job settles whatever this left.
+ * longer be answered; the orphaned-continuation job settles whatever this left.
  * Imported on use, because the storyline layer imports this module.
  */
 async function settleContinuationsOf(placementIds: number[]) {
   if (!placementIds.length) return;
   try {
-    const { settleContinuationsUnderRemovedChapters } = await import(
+    const { settleOrphanedContinuations } = await import(
       '~/server/services/storyline-placement.service'
     );
-    await settleContinuationsUnderRemovedChapters({ removedPlacementIds: placementIds });
+    await settleOrphanedContinuations({ removedPlacementIds: placementIds });
   } catch (error) {
     await logToAxiom({
       name: 'placement-moderation',

@@ -54,7 +54,7 @@ const {
   createStorylinePlacement,
   actOnStorylineContinuation,
   getPendingStorylineContinuations,
-  settleContinuationsUnderRemovedChapters,
+  settleOrphanedContinuations,
 } = await import('~/server/services/storyline-placement.service');
 const { removePlacementByModerator } = await import(
   '~/server/services/placement-moderation.service'
@@ -508,7 +508,8 @@ describe('the storyline continuation loop', () => {
         dbMock.dbWrite.$queryRaw.mockImplementation(
           async (strings: unknown, ...values: unknown[]) => {
             const text = Array.isArray(strings) ? strings.join('?') : String(strings);
-            if (text.includes('JOIN "StorylineChapter" sc')) throw new Error('outage');
+            if (text.includes('"StorylineChapter"') && text.includes('pl.amount = 0 OR'))
+              throw new Error('outage');
             return real(strings as never, ...values);
           }
         );
@@ -579,7 +580,7 @@ describe('the storyline continuation loop', () => {
         expect(moneyCalls().refunds.sort()).toEqual(refunded);
 
         await expect(takeDown()).rejects.toThrow('already removed');
-        await expect(settleContinuationsUnderRemovedChapters()).resolves.toEqual({
+        await expect(settleOrphanedContinuations()).resolves.toEqual({
           considered: 0,
           settled: 0,
         });
@@ -594,7 +595,7 @@ describe('the storyline continuation loop', () => {
         await takeDown();
         restore();
 
-        await expect(settleContinuationsUnderRemovedChapters()).resolves.toEqual({
+        await expect(settleOrphanedContinuations()).resolves.toEqual({
           considered: 1,
           settled: 1,
         });
@@ -690,8 +691,136 @@ describe('the storyline continuation loop', () => {
         expect(moneyCalls().refunds).toEqual([]);
         expect(await queue()).toEqual([]);
       });
+
+      // One row's settle failing must not stop the rows after it.
+      it('settles the rest when one continuation fails to', async () => {
+        charge(100);
+        const { id: first } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+        publishedPost(502, STRANGER, PG);
+        const { id: second } = await submit(STRANGER, 502, 100, COLLABORATOR_POST);
+        refundMultiAccountTransaction.mockImplementation(
+          async ({ externalTransactionIdPrefix }: { externalTransactionIdPrefix: string }) => {
+            if (externalTransactionIdPrefix.startsWith(`placement-${first}-`))
+              throw new Error('buzz down');
+            return {
+              externalTransactionIdPrefix,
+              refundedTransactions: [
+                { refundTransactionId: `refund-${externalTransactionIdPrefix}` },
+              ],
+            };
+          }
+        );
+
+        await takeDown();
+
+        expect(db.row('placement', { id: second })).toMatchObject({ status: 'expired' });
+        expect(
+          moneyCalls()
+            .refunds.filter((prefix) => prefix.startsWith(`placement-${second}-`))
+            .sort()
+        ).toEqual([`placement-${second}-holdFee`, `placement-${second}-holdPrincipal`]);
+        expect(moneyCalls().payouts).toEqual([]);
+      });
+
+      it('falls back to its own deadline for a free continuation too, moving no money', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const submittedAt = Date.now();
+        const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST);
+        failSettling();
+        await takeDown();
+
+        vi.setSystemTime(submittedAt + 7 * 24 * 3_600_000 + 60_000);
+        await expect(expirePlacements()).resolves.toMatchObject({ expired: 1 });
+
+        expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+        expect(moneyCalls()).toEqual({ holds: [], payouts: [], refunds: [] });
+      });
+
+      // Then its post is deleted, which empties the removed chapter's postId:
+      // nothing finds the parent by its post any more.
+      describe('and its post is then deleted', () => {
+        const deleteParentPost = () =>
+          db.update('storylineChapter', { postId: COLLABORATOR_POST }, { postId: null });
+
+        it('cannot be declined for a fee, and stays out of the queue', async () => {
+          charge(100);
+          const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+          failSettling();
+          await takeDown();
+          deleteParentPost();
+
+          await expect(
+            actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+          ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+          expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+          expect(moneyCalls().payouts).toEqual([]);
+          expect(await queue()).toEqual([]);
+        });
+
+        it('is refunded in full by the job, once', async () => {
+          charge(100);
+          const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+          const restore = failSettling();
+          await takeDown();
+          restore();
+          deleteParentPost();
+
+          await expect(settleOrphanedContinuations()).resolves.toEqual({
+            considered: 1,
+            settled: 1,
+          });
+          await expect(settleOrphanedContinuations()).resolves.toEqual({
+            considered: 0,
+            settled: 0,
+          });
+
+          expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+          expect(moneyCalls().payouts).toEqual([]);
+          expect(moneyCalls().refunds.sort()).toEqual([
+            `placement-${id}-holdFee`,
+            `placement-${id}-holdPrincipal`,
+          ]);
+          expect(
+            db
+              .rows('placementTransaction')
+              .filter((leg) => leg.placementId === id)
+              .map((leg) => [leg.kind, leg.amount])
+              .sort()
+          ).toEqual([
+            ['feeToPlacer', 30],
+            ['holdFee', 30],
+            ['holdPrincipal', 70],
+            ['principalToPlacer', 70],
+          ]);
+        });
+      });
+    });
+
+    // The old rule let an owner decline, and keep the fee, once the chapter's
+    // post was deleted. They could never have accepted it, so it is refunded
+    // instead. Deliberate: if you restore the old decline, the fee comes back.
+    it('refunds a continuation whose parent post was deleted, rather than letting it be declined for a fee', async () => {
+      charge(100);
+      const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
+      db.update('storylineChapter', { postId: COLLABORATOR_POST }, { postId: null });
+
+      expect(await queueOf(OWNER)).toEqual([]);
+      await expect(
+        actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+      ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+
+      await expect(settleOrphanedContinuations()).resolves.toEqual({ considered: 1, settled: 1 });
+      expect(db.row('placement', { id })).toMatchObject({ status: 'expired' });
+      expect(moneyCalls().payouts).toEqual([]);
+      expect(moneyCalls().refunds.sort()).toEqual([
+        `placement-${id}-holdFee`,
+        `placement-${id}-holdPrincipal`,
+      ]);
     });
   });
 });
+
+const queueOf = async (ownerId: number) =>
+  (await getPendingStorylineContinuations({ ownerId, domainLevels: ALL_LEVELS })).items;
 
 afterAll(() => vi.useRealTimers());
