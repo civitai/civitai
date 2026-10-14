@@ -751,7 +751,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       JOIN "Thread" t ON t.id = c."threadId"
       LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
       LEFT JOIN "app_listings" al ON al."serial_id" = COALESCE(root."appListingId", t."appListingId")
-      WHERE (c."createdAt" > '2026-01-01T00:00:00.000Z')
+      WHERE c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
+      AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
       AND c.content LIKE '%"mention:%'
       AND t."questionId" IS NULL
       AND t."answerId" IS NULL
@@ -773,7 +774,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       JOIN "User" u ON c."userId" = u.id
       JOIN "Model" m ON m.id = c."modelId"
       WHERE m."userId" > 0
-      AND (c."createdAt" > '2026-01-01T00:00:00.000Z')
+      AND c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
+      AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
       AND c.content LIKE '%"mention:%'
       UNION
       SELECT DISTINCT
