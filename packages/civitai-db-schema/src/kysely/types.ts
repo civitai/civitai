@@ -4499,6 +4499,7 @@ export type ScanLabelCopyObject = {
   imageId: number;
   createdAt: Generated<Timestamp>;
   withdrawnAt: Timestamp | null;
+  removedAt: Timestamp | null;
   withdrawReason: string | null;
   withdrawError: string | null;
 };

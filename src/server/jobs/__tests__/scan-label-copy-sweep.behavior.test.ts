@@ -32,6 +32,7 @@ const MIGRATIONS = [
   '20261022140000_scan_label_outcomes',
   '20261023130000_scan_label_reasons_copy',
   '20261023140000_scan_label_copy_sweep',
+  '20261024130000_scan_label_copy_removed_at',
 ].map((dir) =>
   path.resolve(
     __dirname,
@@ -312,6 +313,91 @@ describe('sweepScanLabelCopies', () => {
     await holder.db.exec(`DELETE FROM "ScanLabelCopyObject"`);
     await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
     const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual(['1/key-1']);
+  });
+
+  it('finishes a delete whose sweep died after claiming it, once the claim is an hour old', async () => {
+    // A sweep claimed the row, then died before remove() finished; the item no longer holds the key.
+    await copied(1);
+    await holder.db.exec(`UPDATE "ScanLabelItem" SET "copyKey" = NULL, "copyState" = 'failed'`);
+    await holder.db.exec(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now() - interval '2 hours', "withdrawReason" = 'excluded'`
+    );
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual(['1/key-1']);
+    const { rows } = await holder.db.query<{ removedAt: Date | null }>(
+      `SELECT "removedAt" FROM "ScanLabelCopyObject"`
+    );
+    expect(rows[0].removedAt).not.toBeNull();
+  });
+
+  it('re-takes a claim on a row a late upload re-armed after it was stamped removed', async () => {
+    // A late upload re-armed this row after an earlier sweep stamped it removed: live, but stamped.
+    await copied(1);
+    await holder.db.exec(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = NULL, "removedAt" = now() - interval '3 hours'`
+    );
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    // The next sweep claims it and dies inside remove(); capture the row as that death leaves it.
+    let atDeath: { removedAt: Date | null; withdrawReason: string | null } | undefined;
+    const dying = {
+      remove: async () => {
+        atDeath = (
+          await holder.db.query<{ removedAt: Date | null; withdrawReason: string | null }>(
+            `SELECT "removedAt", "withdrawReason" FROM "ScanLabelCopyObject"`
+          )
+        ).rows[0];
+      },
+    };
+    await sweepScanLabelCopies({ store: dying });
+    await holder.db.query(
+      `UPDATE "ScanLabelCopyObject"
+       SET "withdrawnAt" = now() - interval '2 hours', "removedAt" = $1, "withdrawReason" = $2`,
+      [atDeath!.removedAt, atDeath!.withdrawReason]
+    );
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual(['1/key-1']);
+  });
+
+  it('does not stamp removed a row a late upload re-armed during the delete', async () => {
+    await copied(1);
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    const rearming = {
+      remove: async () => {
+        await holder.db.exec(
+          `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = NULL, "withdrawReason" = NULL, "removedAt" = NULL`
+        );
+      },
+    };
+    await sweepScanLabelCopies({ store: rearming });
+    const { rows } = await holder.db.query<{ removedAt: Date | null }>(
+      `SELECT "removedAt" FROM "ScanLabelCopyObject"`
+    );
+    expect(rows[0].removedAt).toBeNull();
+  });
+
+  it('leaves a fresh claim to the sweep that holds it', async () => {
+    await copied(1);
+    await holder.db.exec(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now() - interval '10 minutes', "withdrawReason" = 'excluded'`
+    );
+    await holder.db.exec(`UPDATE "ScanLabelItem" SET "copyKey" = NULL`);
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    expect(removed).toEqual([]);
+  });
+
+  it('never deletes a finished withdrawal again, however old', async () => {
+    await copied(1);
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    const { removed, store } = removing();
+    await sweepScanLabelCopies({ store });
+    await holder.db.exec(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now() - interval '2 hours'`
+    );
     await sweepScanLabelCopies({ store });
     expect(removed).toEqual(['1/key-1']);
   });

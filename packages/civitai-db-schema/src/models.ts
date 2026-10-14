@@ -4312,6 +4312,7 @@ export interface ScanLabelCopyObject {
   imageId: number;
   createdAt: Date;
   withdrawnAt: Date | null;
+  removedAt: Date | null;
   withdrawReason: string | null;
   withdrawError: string | null;
 }

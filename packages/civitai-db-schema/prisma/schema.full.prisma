@@ -6930,6 +6930,7 @@ model ScanLabelCopyObject {
   imageId        Int
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)
   withdrawnAt    DateTime? @db.Timestamptz(3)
+  removedAt      DateTime? @db.Timestamptz(3)
   withdrawReason String?
   withdrawError  String?
 }
