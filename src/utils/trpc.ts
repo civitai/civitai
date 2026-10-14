@@ -509,7 +509,7 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
  * Get headers for each request
  * @see https://trpc.io/docs/v10/client/headers
  */
-export function getHeaders(ctx?: NextPageContext) {
+function getHeaders(ctx?: NextPageContext) {
   return function () {
     return { ...ctx?.req?.headers, ...headers, ...pageRouteHeaders() };
   };

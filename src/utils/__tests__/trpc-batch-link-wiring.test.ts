@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type * as TrpcClientModule from '@trpc/client';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 
@@ -16,7 +16,20 @@ import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
  * The spy delegates to the real link, so nothing about the module's behaviour is faked.
  */
 
-const h = vi.hoisted(() => ({ batchLinkOptions: [] as Record<string, unknown>[] }));
+const h = vi.hoisted(() => ({
+  batchLinkOptions: [] as Record<string, unknown>[],
+  plainLinkOptions: [] as Record<string, unknown>[],
+  router: null as null | { pathname: string },
+}));
+
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  default: {
+    get router() {
+      return h.router;
+    },
+  },
+}));
 
 vi.mock('@trpc/client', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcClientModule>();
@@ -25,6 +38,10 @@ vi.mock('@trpc/client', async (importOriginal) => {
     httpBatchStreamLink: (options: Record<string, unknown>) => {
       h.batchLinkOptions.push(options);
       return actual.httpBatchStreamLink(options as never);
+    },
+    httpLink: (options: Record<string, unknown>) => {
+      h.plainLinkOptions.push(options);
+      return actual.httpLink(options as never);
     },
   };
 });
@@ -52,6 +69,27 @@ describe('the browser batch link is built with the shared item cap', () => {
     // asserted here rather than left implicit — and it must not silently change with the cap.
     for (const options of h.batchLinkOptions) {
       expect(options.maxURLLength).toBe(2083);
+    }
+  });
+});
+
+describe('every tRPC link sends the page route header', () => {
+  beforeAll(async () => {
+    await import('~/utils/trpc');
+  });
+  afterEach(() => {
+    h.router = null;
+    vi.unstubAllGlobals();
+  });
+
+  it('on the batch and the non-batch links', () => {
+    expect(h.batchLinkOptions.length).toBeGreaterThan(0);
+    expect(h.plainLinkOptions.length).toBeGreaterThan(0);
+    vi.stubGlobal('window', {});
+    h.router = { pathname: '/models/[id]/[[...slug]]' };
+    for (const options of [...h.batchLinkOptions, ...h.plainLinkOptions]) {
+      const headers = (options.headers as () => Record<string, string>)();
+      expect(headers['x-page-route']).toBe('/models/[id]/[[...slug]]');
     }
   });
 });

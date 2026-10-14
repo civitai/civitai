@@ -7,7 +7,7 @@ import {
 } from '@civitai/telemetry/client';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { pageRouteLabel } from '~/server/utils/page-routes';
-import { PAGE_ROUTE_HEADER } from '~/utils/page-route-header';
+import { PAGE_ROUTE_HEADER } from '~/shared/constants/page-route.constants';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 
 export const TRPC_CALLS_METRIC = PROM_PREFIX + 'trpc_calls_total';
