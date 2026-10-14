@@ -11,6 +11,7 @@ import {
 } from '~/components/Storyline/storyline.queries';
 import {
   buildSubwayStops,
+  getForkShare,
   getStorylineChapterName,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -113,19 +114,15 @@ export function StorylineDrawer({
                     <BranchRow
                       key={child.chapterId}
                       child={child}
-                      share={
-                        isEnd && endShares?.enough
-                          ? endShares.shares[child.chapterId] ?? 0
-                          : undefined
-                      }
+                      share={isEnd ? getForkShare(endShares, child.chapterId)?.percent : undefined}
                       onClick={() => continueTo(child, { from: chapter.chapterId })}
                     />
                   ))}
                 </ul>
               )}
-              {isEnd && endShares && !endShares.enough && (
+              {isEnd && endShares?.total === 0 && branches.length > 0 && (
                 <Text size="xs" c="dimmed" pl={36} data-testid="storyline-shares-pending">
-                  Not enough readers yet ({endShares.total} of {endShares.minChoices} choices)
+                  Be the first to choose
                 </Text>
               )}
             </li>
@@ -150,6 +147,7 @@ function BranchRow({
   onClick,
 }: {
   child: StorylineChild;
+  /** Percent of readers, shown only at the end of the path. */
   share: number | undefined;
   onClick: () => void;
 }) {
@@ -157,7 +155,7 @@ function BranchRow({
     <li>
       <UnstyledButton
         onClick={onClick}
-        className="flex w-full items-center gap-2 rounded border border-dashed border-violet-5 px-2 py-1 text-left"
+        className="flex w-full items-center gap-2 rounded border border-dashed border-[var(--mantine-color-violet-5)] px-2 py-1 text-left"
         data-testid="storyline-branch"
         data-chapter-id={child.chapterId}
         data-tombstone={child.tombstone ?? undefined}
@@ -172,7 +170,7 @@ function BranchRow({
         )}
         {share != null && (
           <Badge size="xs" variant="light">
-            {Math.round(share * 100)}%
+            {share}%
           </Badge>
         )}
       </UnstyledButton>

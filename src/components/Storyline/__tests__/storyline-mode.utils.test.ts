@@ -3,6 +3,7 @@ import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.ut
 import {
   buildSubwayStops,
   canonAheadForkStops,
+  getForkShare,
   getPathImagesPaging,
   getStorylineChapterName,
   getStorylineStep,
@@ -288,6 +289,24 @@ describe('getStorylineChapterName', () => {
     expect(getStorylineChapterName(hidden(3, 2))).toBe(
       'This chapter is hidden by your browsing level'
     );
+  });
+});
+
+describe('getForkShare', () => {
+  it('reads each way as a percent and its readers, a way nobody took as 0', () => {
+    const shares = { total: 8, shares: { 1: 0.75, 2: 0.25 } };
+    expect([getForkShare(shares, 1), getForkShare(shares, 3)]).toEqual([
+      { percent: 75, readers: 6 },
+      { percent: 0, readers: 0 },
+    ]);
+  });
+
+  it('gives nothing before the shares are read, at zero, or when a split is withheld', () => {
+    expect([
+      getForkShare(undefined, 1),
+      getForkShare({ total: 0, shares: {} }, 1),
+      getForkShare({ total: 3, shares: {} }, 1),
+    ]).toEqual([null, null, null]);
   });
 });
 

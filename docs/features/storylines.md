@@ -16,11 +16,12 @@ version as designed rather than what is live today.
   move on to the next chapter, instead of paging the feed. A banner says which storyline you are in;
   leaving returns you to where you were in the feed.
 - **Where am I.** The pill opens a map of the storyline: the main path as a timeline, the forks off it,
-  and how readers have split at each fork once enough of them have chosen. Any chapter on the map can
+  and how readers have split at each fork, from the first recorded choice. Any chapter on the map can
   be jumped to. On mobile the map is full screen.
-- **End of a chapter.** At the end of a chapter the reader picks how to continue. The main path is
-  shown first and largest, then continuations by the storyline's endorsed collaborators, then
-  everyone else's, ordered by how many readers took them.
+- **End of a chapter.** At the end of a chapter the reader picks how to continue. Each way on shows
+  its first image and its share of readers. The main path is shown first and largest, with Read as
+  the main action, then continuations by the storyline's endorsed collaborators, then everyone
+  else's, ordered by how many readers took them. Writing a continuation sits below.
 - **Creating the next section.** A reader can ask to make their own continuation. Until that tool
   ships, this joins an early-access list.
 - **Content level.** Every storyline has a maximum content level set by its creator. A chapter above

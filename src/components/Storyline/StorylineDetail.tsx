@@ -109,6 +109,8 @@ export function StorylineStageOverlay({
         <StorylineEndOfChapter
           chapterId={end.chapterId}
           storylineId={storyline.path.storyline.id}
+          storylineTitle={storyline.path.storyline.title}
+          chapterDepth={end.depth}
           chapterTombstone={end.tombstone}
           parentPostId={end.post?.id}
           onContinue={storyline.continueTo}

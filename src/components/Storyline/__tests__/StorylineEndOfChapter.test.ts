@@ -4,11 +4,19 @@ import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
+import type * as ImageGuardModule from '~/components/ImageGuard/ImageGuard2';
+import type * as EdgeMediaModule from '~/components/EdgeMedia/EdgeMedia';
+import type * as ImageHashModule from '~/components/ImageHash/ImageHash';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 
 const mocks = vi.hoisted(() => ({
   children: [] as StorylineChild[],
-  forkShares: { enough: false, total: 0, minChoices: 20, shares: {} as Record<number, number> },
+  isLoading: false,
+  forkShares: { enough: false, total: 0, minChoices: 20, shares: {} as Record<number, number> } as
+    | { enough: boolean; total: number; minChoices: number; shares: Record<number, number> }
+    | undefined,
+  // What the image guard decides: true shows the picture, false the blurred hash.
+  safe: true,
   trackCreateClick: vi.fn(),
   trigger: vi.fn(),
   terms: null as null | {
@@ -21,7 +29,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesModule>()),
-  useStorylineChildren: () => ({ data: mocks.children, isLoading: false }),
+  useStorylineChildren: () => ({
+    data: mocks.isLoading ? undefined : mocks.children,
+    isLoading: mocks.isLoading,
+  }),
   useStorylineForkShares: () => ({ data: mocks.forkShares }),
   useStorylineContinueTerms: () => mocks.terms,
   useStorylineTracking: () => ({
@@ -33,6 +44,33 @@ vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: mock
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,
 }));
+// The guard and the media element need the session and the CDN; here the guard's verdict is a
+// switch, and its toggle and the hash leave a marker.
+vi.mock('~/components/ImageGuard/ImageGuard2', async (importOriginal) => {
+  const { createElement: h } = await import('react');
+  return {
+    ...(await importOriginal<typeof ImageGuardModule>()),
+    ImageGuard2: Object.assign(
+      ({ children }: { children: (safe: boolean) => unknown }) => children(mocks.safe),
+      { BlurToggle: () => h('button', { 'data-testid': 'blur-toggle' }) }
+    ),
+  };
+});
+vi.mock('~/components/ImageHash/ImageHash', async (importOriginal) => {
+  const { createElement: h } = await import('react');
+  return {
+    ...(await importOriginal<typeof ImageHashModule>()),
+    MediaHash: () => h('div', { 'data-testid': 'media-hash' }),
+  };
+});
+vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => {
+  const { createElement: h } = await import('react');
+  return {
+    ...(await importOriginal<typeof EdgeMediaModule>()),
+    EdgeMedia: ({ src, ...props }: { src: string; 'data-testid'?: string }) =>
+      h('img', { src, 'data-testid': props['data-testid'] }),
+  };
+});
 vi.mock('~/components/Storyline/StorylineEarlyAccessModal', () => ({
   StorylineEarlyAccessModal: () => null,
 }));
@@ -48,13 +86,14 @@ import {
 function child(
   chapterId: number,
   rank: StorylineChild['rank'],
-  title: string | null
+  title: string | null,
+  depth = 4
 ): StorylineChild {
   return title === null
-    ? { chapterId, depth: 4, tombstone: 'removed', post: null, rank, createdAt: new Date(0) }
+    ? { chapterId, depth, tombstone: 'removed', post: null, rank, createdAt: new Date(0) }
     : {
         chapterId,
-        depth: 4,
+        depth,
         tombstone: null,
         post: { id: chapterId * 10, title, userId: chapterId, username: `user${chapterId}` },
         rank,
@@ -71,7 +110,14 @@ function render(props: { parentPostId?: number } = {}) {
       createElement(
         MantineProvider,
         { forceColorScheme: 'light' },
-        createElement(StorylineEndOfChapter, { chapterId: 4, storylineId: 9, onContinue, ...props })
+        createElement(StorylineEndOfChapter, {
+          chapterId: 4,
+          storylineId: 9,
+          storylineTitle: 'The Patch',
+          chapterDepth: 3,
+          onContinue,
+          ...props,
+        })
       )
     );
   });
@@ -81,70 +127,40 @@ function render(props: { parentPostId?: number } = {}) {
 const forks = (container: HTMLElement) => [
   ...container.querySelectorAll<HTMLElement>('[data-testid="storyline-fork"]'),
 ];
+const within = (el: HTMLElement, testId: string) =>
+  el.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
 
 describe('StorylineEndOfChapter', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    mocks.forkShares = { enough: false, total: 0, minChoices: 20, shares: {} };
+    mocks.isLoading = false;
+    mocks.safe = true;
+    mocks.forkShares = { enough: false, total: 0, minChoices: 1, shares: {} };
     mocks.trackCreateClick.mockClear();
     mocks.trigger.mockClear();
     mocks.terms = null;
     onContinue = vi.fn();
   });
 
-  it('keeps the server order and makes only the first fork the main path', () => {
+  it('names the storyline and the chapter that ended', () => {
+    mocks.children = [child(5, 'canon', 'Kept')];
+    expect(render().textContent).toContain('The Patch · end of chapter 4');
+  });
+
+  it('keeps the server order; only the first fork leads, with Read as its action', () => {
     mocks.children = [
       child(5, 'canon', 'The thrift store closes down'),
       child(6, 'endorsed', 'A museum buys the frame'),
       child(7, 'community', 'Video: the cat comes back'),
     ];
-    const container = render();
-    const cards = forks(container);
+    const cards = forks(render());
     expect(cards.map((c) => c.dataset.rank)).toEqual(['canon', 'endorsed', 'community']);
-    // Only the main path carries the inline Read button.
-    expect(cards.map((c) => c.textContent?.includes('Read'))).toEqual([true, false, false]);
+    expect(cards.map((c) => !!within(c, 'storyline-read-next'))).toEqual([true, false, false]);
+    expect(within(cards[0], 'storyline-read-next')?.textContent).toBe('Read chapter 5');
 
-    act(() => cards[1].click());
-    expect(onContinue).toHaveBeenCalledWith(expect.objectContaining({ chapterId: 6 }));
-  });
-
-  it('shows a removed continuation as a tombstone instead of failing on its missing post', () => {
-    mocks.children = [child(5, 'canon', 'Kept'), child(8, 'community', null)];
-    const container = render();
-    expect(forks(container)[1].textContent).toContain('This chapter was removed');
-  });
-
-  it('shows every fork with its share once enough readers have chosen', () => {
-    mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
-    mocks.forkShares = { enough: true, total: 40, minChoices: 20, shares: { 5: 0.73 } };
-    const container = render();
-    const [main, other] = forks(container);
-    expect(main.textContent).toContain('73% of readers');
-    // A fork nobody has taken yet reads 0%, not blank, once the split is shown.
-    expect(other.textContent).toContain('0% of readers');
-    expect(container.querySelector('[data-testid="storyline-shares-pending"]')).toBeNull();
-  });
-
-  it('shows no percentages and says how far off the threshold is when too few have chosen', () => {
-    mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
-    mocks.forkShares = { enough: false, total: 3, minChoices: 20, shares: {} };
-    const container = render();
-    expect(forks(container).map((f) => f.textContent?.includes('% of readers'))).toEqual([
-      false,
-      false,
-    ]);
-    expect(
-      container.querySelector('[data-testid="storyline-shares-pending"]')?.textContent
-    ).toContain('3 of 20 choices');
-  });
-
-  it('tags each fork with its chapter id and any tombstone, for the end-to-end spec', () => {
-    mocks.children = [child(5, 'canon', 'Kept'), child(8, 'community', null)];
-    const container = render();
-    expect(forks(container).map((f) => [f.dataset.chapterId, f.dataset.tombstone])).toEqual([
-      ['5', undefined],
-      ['8', 'removed'],
-    ]);
+    act(() => within(cards[0], 'storyline-read-next')?.click());
+    act(() => within(cards[1], 'storyline-fork-open')?.click());
+    expect(onContinue.mock.calls.map(([c]) => c.chapterId)).toEqual([5, 6]);
   });
 
   it('keeps the server order even where it differs from rank order', () => {
@@ -153,10 +169,194 @@ describe('StorylineEndOfChapter', () => {
       child(5, 'canon', 'Canon'),
       child(6, 'endorsed', 'Endorsed'),
     ];
-    const container = render();
-    const cards = forks(container);
+    const cards = forks(render());
     expect(cards.map((c) => c.dataset.chapterId)).toEqual(['7', '5', '6']);
-    expect(cards.map((c) => c.textContent?.endsWith('Read'))).toEqual([true, false, false]);
+    expect(cards.map((c) => !!within(c, 'storyline-read-next'))).toEqual([true, false, false]);
+  });
+
+  it("shows each way's first image, and a placeholder where the read gave none", () => {
+    const cover = {
+      id: 501,
+      url: 'cover-501',
+      type: 'image' as const,
+      width: 832,
+      height: 1216,
+      nsfwLevel: 1,
+      hash: null,
+      userId: 5,
+    };
+    mocks.children = [
+      { ...child(5, 'canon', 'Kept'), firstImage: cover },
+      { ...child(6, 'community', 'Other'), firstImage: null },
+    ] as StorylineChild[];
+    const [lead, other] = forks(render());
+    expect([
+      within(lead, 'storyline-chapter-image')?.getAttribute('src'),
+      within(other, 'storyline-chapter-image'),
+      within(other, 'blur-toggle'),
+    ]).toEqual(['cover-501', null, null]);
+  });
+
+  it('names each way with its title and who wrote which chapter', () => {
+    mocks.children = [child(5, 'canon', 'The thrift store', 5), child(6, 'community', null, 5)];
+    const [lead, other] = forks(render());
+    expect([
+      within(lead, 'storyline-fork-name')?.textContent,
+      within(lead, 'storyline-fork-byline')?.textContent,
+      within(lead, 'storyline-read-next')?.textContent,
+      within(other, 'storyline-fork-byline')?.textContent,
+    ]).toEqual(['The thrift store', 'Chapter 6 by user5', 'Read chapter 6', 'Chapter 6']);
+  });
+
+  // An untitled chapter is named "Chapter N", so its byline does not say the number twice.
+  it('drops the chapter number from the byline of an untitled chapter', () => {
+    mocks.children = [child(5, 'canon', '', 5)];
+    const lead = forks(render())[0];
+    expect([
+      within(lead, 'storyline-fork-name')?.textContent,
+      within(lead, 'storyline-fork-byline')?.textContent,
+    ]).toEqual(['Chapter 6', 'by user5']);
+  });
+
+  it('counts the other paths, and has no such header when there is only one way', () => {
+    mocks.children = [
+      child(5, 'canon', 'A'),
+      child(6, 'community', 'B'),
+      child(7, 'community', 'C'),
+    ];
+    expect(render().textContent).toContain('Other paths2');
+    document.body.innerHTML = '';
+    mocks.children = [child(5, 'canon', 'A')];
+    expect(render().textContent).not.toContain('Other paths');
+  });
+
+  it('leads with a hidden way as a labelled placeholder the reader can still step past', () => {
+    mocks.children = [child(5, 'canon', null), child(6, 'community', 'B')];
+    const lead = forks(render())[0];
+    expect([
+      within(lead, 'storyline-read-next'),
+      within(lead, 'storyline-chapter-image-hidden-label')?.textContent,
+      within(lead, 'storyline-rank-chip')?.textContent,
+    ]).toEqual([null, 'This chapter was removed', 'Canon']);
+    act(() => within(lead, 'storyline-fork-open')?.click());
+    expect(onContinue.mock.calls.map(([c]) => c.chapterId)).toEqual([5]);
+  });
+
+  it('blurs a cover the guard holds back, and keeps its toggle', () => {
+    mocks.safe = false;
+    mocks.children = [
+      {
+        ...child(5, 'canon', 'Kept'),
+        firstImage: {
+          id: 501,
+          url: 'cover-501',
+          type: 'image' as const,
+          width: 832,
+          height: 1216,
+          nsfwLevel: 16,
+          hash: 'LKO2?U%2Tw=w]~RBVZRi};RPxuwH',
+          userId: 5,
+        },
+      },
+    ] as StorylineChild[];
+    const lead = forks(render())[0];
+    expect([
+      !!within(lead, 'storyline-chapter-image'),
+      !!within(lead, 'media-hash'),
+      !!within(lead, 'blur-toggle'),
+    ]).toEqual([false, true, true]);
+  });
+
+  it('marks canon and endorsed ways, and nothing on a community one', () => {
+    mocks.children = [
+      child(5, 'canon', 'A'),
+      child(6, 'endorsed', 'B'),
+      child(7, 'community', 'C'),
+    ];
+    expect(
+      forks(render()).map((c) => within(c, 'storyline-rank-chip')?.textContent ?? null)
+    ).toEqual(['Canon', 'Endorsed', null]);
+  });
+
+  it('shows a hidden way as a placeholder that still lets the reader step past it', () => {
+    mocks.children = [child(5, 'canon', 'Kept'), child(8, 'community', null)];
+    const hidden = forks(render())[1];
+    expect(hidden.textContent).toContain('This chapter was removed');
+    expect(within(hidden, 'storyline-chapter-image-hidden')).not.toBeNull();
+    act(() => within(hidden, 'storyline-fork-open')?.click());
+    expect(onContinue.mock.calls.map(([c]) => c.chapterId)).toEqual([8]);
+  });
+
+  it('tags each fork with its chapter id and any tombstone, for the end-to-end spec', () => {
+    mocks.children = [child(5, 'canon', 'Kept'), child(8, 'community', null)];
+    expect(forks(render()).map((f) => [f.dataset.chapterId, f.dataset.tombstone])).toEqual([
+      ['5', undefined],
+      ['8', 'removed'],
+    ]);
+  });
+
+  // Settled with Justin: shares show from the first recorded choice; the minimum is copy only.
+  it('shows each way share from the first choice, with the readers behind the lead', () => {
+    mocks.children = [
+      child(5, 'canon', 'Kept'),
+      child(6, 'community', 'Other'),
+      child(7, 'community', 'Untaken'),
+    ];
+    mocks.forkShares = {
+      enough: false,
+      total: 13,
+      minChoices: 20,
+      shares: { 5: 8 / 13, 6: 5 / 13 },
+    };
+    const cards = forks(render());
+    expect(cards.map((c) => within(c, 'storyline-share-percent')?.textContent)).toEqual([
+      '62%',
+      '38%',
+      '0%',
+    ]);
+    expect(within(cards[0], 'storyline-share-caption')?.textContent).toBe(
+      'of readers went this way · 8 readers'
+    );
+  });
+
+  it('says one reader, not one readers', () => {
+    mocks.children = [child(5, 'canon', 'Kept')];
+    mocks.forkShares = { enough: true, total: 1, minChoices: 1, shares: { 5: 1 } };
+    const lead = forks(render())[0];
+    expect([
+      within(lead, 'storyline-share-percent')?.textContent,
+      within(lead, 'storyline-share-caption')?.textContent,
+    ]).toEqual(['100%', 'of readers went this way · 1 reader']);
+  });
+
+  it('invites the first choice when nobody has chosen, and shows no percentages', () => {
+    mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
+    const container = render();
+    expect(within(forks(container)[0], 'storyline-share-first')?.textContent).toBe(
+      'Be the first to choose'
+    );
+    expect(container.textContent).not.toContain('%');
+  });
+
+  // "Be the first" is a claim about the count, so it waits for the count.
+  it('says nothing about choices while the shares are not read yet', () => {
+    mocks.children = [child(5, 'canon', 'Kept'), child(6, 'community', 'Other')];
+    mocks.forkShares = undefined;
+    const container = render();
+    expect([
+      container.querySelector('[data-testid="storyline-share-first"]'),
+      container.textContent?.includes('%'),
+    ]).toEqual([null, false]);
+  });
+
+  it('shows a skeleton of the lead while the ways on load', () => {
+    mocks.isLoading = true;
+    const container = render();
+    expect([
+      !!container.querySelector('[data-testid="storyline-end-skeleton"]'),
+      forks(container).length,
+      container.textContent?.includes('The story stops here'),
+    ]).toEqual([true, 0, false]);
   });
 
   it('offers continuing with a post only when the chapter has a post', () => {
@@ -166,6 +366,23 @@ describe('StorylineEndOfChapter', () => {
     expect(render({ parentPostId: 15 }).querySelector(sel)).not.toBeNull();
     document.body.innerHTML = '';
     expect(render({}).querySelector(sel)).toBeNull();
+  });
+
+  it('puts writing below every path, outside the cards', () => {
+    mocks.children = [
+      child(5, 'canon', 'A'),
+      child(6, 'community', 'B'),
+      child(7, 'community', 'C'),
+    ];
+    const container = render();
+    const cards = forks(container);
+    const create = container.querySelector('[data-testid="storyline-create-block"]');
+    if (!create) throw new Error('no create block');
+    const last = cards[cards.length - 1];
+    expect([
+      !!(last.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING),
+      cards.some((c) => c.contains(create)),
+    ]).toEqual([true, false]);
   });
 
   it('records the click on Create the next section and opens the early access prompt', () => {

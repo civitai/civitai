@@ -9,11 +9,16 @@ import { StorylineDrawer } from '~/components/Storyline/StorylineDrawer';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 
+const mocks = vi.hoisted(() => ({
+  pathChildren: new Map<number, unknown[]>(),
+  shares: undefined as undefined | { total: number; shares: Record<number, number> },
+}));
+
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesModule>()),
-  useStorylinePathChildren: () => new Map(),
+  useStorylinePathChildren: () => mocks.pathChildren,
   useStorylineCanonAhead: () => ({ ahead: [], childrenByChapterId: new Map(), isLoading: false }),
-  useStorylineForkShares: () => ({ data: undefined }),
+  useStorylineForkShares: () => ({ data: mocks.shares }),
 }));
 vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
 
@@ -30,6 +35,36 @@ function render(element: ReturnType<typeof createElement>) {
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  mocks.pathChildren = new Map();
+  mocks.shares = undefined;
+});
+
+function openDrawer(chapterIds = [1]) {
+  const storyline = {
+    path: {
+      storyline: { id: 2, title: 'The Patch' },
+      chapters: chapterIds.map((chapterId, depth) => ({
+        chapterId,
+        depth,
+        post: null,
+        tombstone: null,
+      })),
+    },
+    drawerOpen: true,
+    setDrawerOpen: vi.fn(),
+    jumpToChapter: vi.fn(),
+    continueTo: vi.fn(),
+  } as unknown as ActiveStorylineMode;
+  render(createElement(StorylineDrawer, { storyline, currentChapterId: 1 }));
+  return storyline;
+}
+
+const branch = (chapterId: number) => ({
+  chapterId,
+  depth: 1,
+  rank: 'community',
+  tombstone: null,
+  post: { id: chapterId * 10, title: `Way ${chapterId}`, userId: 3, username: 'u' },
 });
 
 describe('StorylinePill', () => {
@@ -71,5 +106,37 @@ describe('StorylineDrawer', () => {
     ]).toEqual(['rgba(0, 0, 0, 0)', '']);
     act(() => overlay?.click());
     expect(storyline.setDrawerOpen).toHaveBeenCalledWith(false);
+  });
+
+  it('shows the share of each way off the end from the first choice', () => {
+    mocks.pathChildren = new Map([[1, [branch(2), branch(3)]]]);
+    mocks.shares = { total: 4, shares: { 2: 0.75 } };
+    openDrawer();
+    const rows = [...document.body.querySelectorAll('[data-testid="storyline-branch"]')];
+    expect(rows.map((r) => r.textContent)).toEqual(['Way 275%', 'Way 30%']);
+    expect(document.body.querySelector('[data-testid="storyline-shares-pending"]')).toBeNull();
+  });
+
+  it('shows shares only where the path ends, not on branches left behind', () => {
+    mocks.pathChildren = new Map([
+      [1, [branch(2), branch(5)]],
+      [2, [branch(3)]],
+    ]);
+    mocks.shares = { total: 4, shares: { 3: 1 } };
+    openDrawer([1, 2]);
+    const rows = [...document.body.querySelectorAll('[data-testid="storyline-branch"]')];
+    expect(rows.map((r) => r.textContent)).toEqual(['Way 5', 'Way 3100%']);
+  });
+
+  it('invites the first choice when nobody has chosen', () => {
+    mocks.pathChildren = new Map([[1, [branch(2)]]]);
+    mocks.shares = { total: 0, shares: {} };
+    openDrawer();
+    expect(
+      document.body.querySelector('[data-testid="storyline-shares-pending"]')?.textContent
+    ).toBe('Be the first to choose');
+    expect(document.body.querySelector('[data-testid="storyline-branch"]')?.textContent).toBe(
+      'Way 2'
+    );
   });
 });
