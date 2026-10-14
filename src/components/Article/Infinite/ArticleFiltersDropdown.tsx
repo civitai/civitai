@@ -178,6 +178,9 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
         radius={12}
         opened={opened}
         onClose={close}
+        onChange={(next) => {
+          if (!next) close();
+        }}
         middlewares={{ flip: true, shift: true }}
       >
         <Popover.Target>{target}</Popover.Target>
