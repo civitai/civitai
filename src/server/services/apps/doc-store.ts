@@ -73,7 +73,6 @@ import { newUlid } from '~/server/utils/app-block-ids';
 import type {
   AccountWipeNamespaceResult,
   AccountWipeResult,
-  DocAuthor,
   DocCollection,
   DocIndexType,
   DocListQuery,
@@ -181,14 +180,13 @@ function assertWipeUserId(userId: number): void {
 }
 
 /**
- * Whether `ns` belongs to `userId` alone: their dev namespace, or one of their review
- * namespaces. Only that user's tokens resolve to it (`doc-store-access.ts`), so every row in it
- * is theirs.
+ * Whether `ns` is `userId`'s own dev namespace: only that user's dev tokens resolve to it
+ * (`doc-store-access.ts`), so every row in it is theirs and the wipe deletes all of it. A review
+ * namespace is not treated so: it belongs to the reviewing moderator, and is purged when the
+ * request is decided and by the hourly sweep; the wipe handles it like any other namespace.
  */
 function ownsNamespace(userId: number, ns: string): boolean {
-  if (ns === `dev:${userId}`) return true;
-  const review = REVIEW_NS.exec(ns);
-  return review !== null && Number(review[2]) === userId;
+  return ns === `dev:${userId}`;
 }
 
 type WritePolicy = 'own' | 'owner' | 'none';
@@ -683,12 +681,27 @@ const SQL_WIPE_NAMESPACE = [
 const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
     WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int RETURNING d.size_bytes)
   SELECT count(*)::int AS docs, COALESCE(sum(gone.size_bytes), 0)::bigint AS bytes FROM gone`;
-// Shared documents the user authored, hidden or not, locked in key order. They are DELETED — the
-// owner's decision for this moderator content-removal path — through the same
-// `deleteLockedSharedDocs` the moderator delete uses (tallies, marks, refunds, tombstone).
-const SQL_WIPE_LOCK_AUTHORED = `SELECT d.coll, d.key, d.size_bytes, d.author_uid FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'user'
-    AND d.author_uid = $3::int
+// EVERY shared document the wipe will touch in this namespace — the ones the user authored
+// (hidden or not), which it deletes, and the ones the user marked, whose tallies it decrements —
+// locked in ONE statement, in (coll, key) order. Two wipes of users who authored and marked each
+// other's documents then queue on the first document they share instead of each holding its own
+// author's documents and waiting for the other's: with the authored set and the marked set
+// locked by separate statements, that deadlocked every time on a real server.
+// FOR UPDATE for both sets: the authored ones are deleted, which needs it, and a single statement
+// has a single strength. Taking a weaker lock on the marked ones would need a second statement
+// (or an upgrade later), which is the interleaving this exists to remove. The cost: a viewer
+// marking one of those documents waits for the wipe to commit (bounded by LOCK_TIMEOUT).
+// No later statement locks a document or a tally first: every tally the wipe changes belongs to
+// a document locked here. `authored` tells the two sets apart; the authored ones are deleted
+// through `deleteLockedSharedDocs`, the same path a moderator delete takes.
+const SQL_WIPE_LOCK_DOCS = `SELECT d.coll, d.key, d.size_bytes, d.author_uid,
+    (d.author_kind = 'user' AND d.author_uid = $3::int) AS authored
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0
+    AND ((d.author_kind = 'user' AND d.author_uid = $3::int)
+      OR EXISTS (SELECT 1 FROM appdata.doc_mark lm
+        WHERE lm.app_id = $1 AND lm.ns = $2 AND lm.coll = d.coll AND lm.key = d.key
+          AND lm.user_id = $3::int))
   ORDER BY d.coll, d.key
   FOR UPDATE OF d`;
 // Counter-created documents whose creation was charged to the user: the uid was kept ONLY for
@@ -699,30 +712,6 @@ const SQL_WIPE_RELEASE_COUNTER_DOCS = `WITH done AS (UPDATE appdata.doc d
       AND d.author_uid = $3::int
     RETURNING 1)
   SELECT count(*)::int AS n FROM done`;
-// Any other shared document still naming the user as its last writer (none can today: under
-// `own` only the author writes); the uid must not survive anywhere.
-const SQL_WIPE_LAST_WRITER = `UPDATE appdata.doc d SET last_writer_uid = NULL
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.last_writer_uid = $3::int`;
-// KEY SHARE on every document the user marked, in key order, before their mark and tally rows
-// (LOCK ORDER (1) before (1b)): an author or moderator deleting one of those documents waits for
-// this transaction instead of deadlocking against it on the tally rows.
-const SQL_WIPE_LOCK_MARKED = `SELECT d.coll, d.key FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0
-    AND EXISTS (SELECT 1 FROM appdata.doc_mark lm
-      WHERE lm.app_id = $1 AND lm.ns = $2 AND lm.coll = d.coll AND lm.key = d.key
-        AND lm.user_id = $3::int)
-  ORDER BY d.coll, d.key
-  FOR KEY SHARE OF d`;
-// The tally rows those marks count, locked in key order before any is changed: two wipes of
-// different users who marked the same documents then queue on the first shared tally instead of
-// each holding one and waiting for the other (KEY SHARE above does not order them).
-const SQL_WIPE_LOCK_TALLIES = `SELECT 1 AS ok FROM appdata.doc_tally t
-  WHERE t.app_id = $1 AND t.ns = $2 AND t.kind = 'mark'
-    AND EXISTS (SELECT 1 FROM appdata.doc_mark tm
-      WHERE tm.app_id = $1 AND tm.ns = $2 AND tm.coll = t.coll AND tm.key = t.key
-        AND tm.name = t.name AND tm.user_id = $3::int)
-  ORDER BY t.coll, t.key, t.name
-  FOR UPDATE OF t`;
 // The user's marks, reports included, and the same statement takes each from its tally: the
 // two can never disagree. A tally already below its marks (drift; the reconciler's to report)
 // stops at 0 rather than failing the wipe on the `doc_tally_nonnegative` CHECK.
@@ -783,25 +772,6 @@ const listMarkedByMe = (name: string, user: string) => `EXISTS (SELECT 1 FROM ap
 // Row mapping
 // ---------------------------------------------------------------------------
 
-/**
- * The author is read from `author_kind` alone, never inferred from a NULL `author_uid`: a counter
- * document whose creator's account was wiped has a NULL uid too. The `doc_author_identity` CHECK
- * guarantees a `user` row has a uid.
- */
-function toDocAuthor(row: Record<string, unknown>, ctx: DocStoreContext): DocAuthor {
-  switch (row.author_kind) {
-    case 'user': {
-      const uid = Number(row.author_uid);
-      return { kind: 'user', uid, isViewer: uid === ctx.viewerUid };
-    }
-    case 'app':
-    case 'counter':
-      return { kind: row.author_kind };
-    default:
-      throw new Error(`doc-store: unknown author kind ${String(row.author_kind)}`);
-  }
-}
-
 function toDocRecord(
   row: Record<string, unknown>,
   ctx: DocStoreContext,
@@ -822,13 +792,19 @@ function toDocRecord(
       else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
     }
   }
+  const authorUid = row.author_uid === null ? null : Number(row.author_uid);
   return {
     key: row.key as string,
     data: row.data as Record<string, unknown>,
     version: Number(row.version),
     createdAt: new Date(row.created_at as string | Date),
     updatedAt: new Date(row.updated_at as string | Date),
-    author: toDocAuthor(row, ctx),
+    author:
+      row.author_kind === 'counter'
+        ? { kind: 'counter' }
+        : row.author_kind === 'app' || authorUid === null
+        ? { kind: 'app' }
+        : { kind: 'user', uid: authorUid, isViewer: authorUid === ctx.viewerUid },
     counters,
     marks,
     viewer:
@@ -1684,7 +1660,7 @@ function buildDocStore(deps: DocStoreDeps) {
     ns: string
   ): Promise<AccountWipeNamespaceResult> {
     // The viewer is the account being wiped, so a review namespace's context check passes only
-    // for that account's own review namespace (`assertContext`).
+    // for a review namespace of that account (`assertContext`); any other is refused, as a failure.
     const ctx: DocStoreContext = { appId, ns, viewerUid: userId };
     const result: AccountWipeNamespaceResult = {
       appId,
@@ -1707,18 +1683,19 @@ function buildDocStore(deps: DocStoreDeps) {
       }
       const args = [appId, ns, userId];
       /**
-       * The document rows naming the user (LOCK ORDER (1)): the shared documents they authored
-       * are locked, their private documents deleted, counter documents released. Nothing is
-       * charged here; `settle` does that once every row lock is held.
+       * The document rows (LOCK ORDER (1)): every shared document the wipe touches is locked in
+       * one ordered statement (`SQL_WIPE_LOCK_DOCS`), then the private documents are deleted and
+       * the counter documents released. Nothing is charged here; `settle` does that once every
+       * row lock is held.
        */
       const wipeDocs = async () => {
-        const authored = (await c.query(SQL_WIPE_LOCK_AUTHORED, args)).rows.map(toLockedSharedDoc);
+        const locked = (await c.query(SQL_WIPE_LOCK_DOCS, args)).rows;
+        const authored = locked.filter((r) => r.authored === true).map(toLockedSharedDoc);
         const priv = await c.query(SQL_WIPE_PRIVATE_DOCS, args);
         const deleted = { docs: n(priv, 'docs'), bytes: n(priv, 'bytes') };
         result.privateDocs += deleted.docs;
         result.privateBytes += deleted.bytes;
         result.counterDocsReleased += n(await c.query(SQL_WIPE_RELEASE_COUNTER_DOCS, args));
-        await c.query(SQL_WIPE_LAST_WRITER, args);
         return { authored, deleted };
       };
       /**
@@ -1740,8 +1717,8 @@ function buildDocStore(deps: DocStoreDeps) {
         }
       };
       const first = await wipeDocs();
-      await c.query(SQL_WIPE_LOCK_MARKED, args);
-      await c.query(SQL_WIPE_LOCK_TALLIES, args);
+      // Every tally this changes belongs to a document `wipeDocs` locked, so no other wipe can
+      // hold one of them (LOCK ORDER (1b) after (1)).
       result.marks = n(await c.query(SQL_WIPE_MARKS, args), 'marks');
       await settle(first);
       // A write by this user that was in flight when the statements above took their snapshots
@@ -1749,10 +1726,12 @@ function buildDocStore(deps: DocStoreDeps) {
       // the row that counted that document. The second pass (a new statement, so a new
       // snapshot) sees what that writer committed, so no document naming the user outlives the
       // usage row a re-run would find it by. A write that starts later recreates the row and is
-      // found by a re-run. The second pass takes document locks after the usage locks — the
-      // reverse of LOCK ORDER — so it can deadlock only against this same user's own
-      // concurrent write; Postgres then aborts this namespace's transaction whole, and it is
-      // reported in `failures` for a re-run.
+      // found by a re-run. The second pass re-runs the single ordered lock statement, so it
+      // takes document locks after the usage locks — the reverse of LOCK ORDER. It already holds
+      // every document lock from the first pass, so a new lock can only be on a document the
+      // in-flight writer created or a document this user marked meanwhile; it can deadlock only
+      // against this same user's own concurrent write. Postgres then aborts this namespace's
+      // transaction whole, and it is reported in `failures` for a re-run.
       await c.query(SQL_WIPE_USAGE_USER, args);
       await settle(await wipeDocs());
       // The second pass refunds the author of any document it deleted, which re-creates the
@@ -1767,7 +1746,7 @@ function buildDocStore(deps: DocStoreDeps) {
    * ACCOUNT WIPE (`removeAllContent`, a moderator content-removal action): remove one user from
    * the document store, in every app and namespace they have rows in. Per namespace, in one
    * transaction:
-   *   - their own namespaces (`dev:<uid>`, `rev:<request>:<uid>`) are deleted outright;
+   *   - their own dev namespace (`dev:<uid>`) is deleted outright;
    *   - elsewhere, their private documents are deleted (index rows with them) and refunded to the
    *     app; their marks — reports included — are deleted and each tally decremented; the shared
    *     documents they authored are DELETED, hidden or not, exactly as a moderator delete does

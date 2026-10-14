@@ -149,8 +149,8 @@ export type AccountWipeNamespaceResult = {
   appId: string;
   ns: string;
   /**
-   * `namespace`: the namespace was the account's own (`dev:<uid>`, `rev:<request>:<uid>`), so
-   * every row in it was deleted. `user`: a namespace other users share (`prod`), so only what
+   * `namespace`: the namespace was the account's own dev namespace (`dev:<uid>`), so every row in
+   * it was deleted. `user`: a namespace other users share (`prod`), so only what
    * names the account was deleted (or, for a counter document, released).
    */
   mode: 'namespace' | 'user';

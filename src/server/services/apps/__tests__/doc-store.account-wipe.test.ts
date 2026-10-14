@@ -44,8 +44,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * real Postgres when `APPDATA_TEST_DATABASE_URL` is set (plus a concurrency case there).
  *
  * Namespaces covered: `prod` (shared by every viewer: only what names the account), the account's
- * own `dev:<uid>` and `rev:<request>:<uid>` (deleted outright), and another user's `dev:<uid>`
- * (untouched). Expected values are literals, never read back from the store under test.
+ * own `dev:<uid>` (deleted outright), its own `rev:<request>:<uid>` (handled like `prod`: review
+ * namespaces are purged with their request), and another user's `dev:` and `rev:` (untouched). Expected values are literals, never read back from the store under test.
  */
 
 // Pairwise distinct, and distinct from every id and literal the other suites use.
@@ -59,7 +59,11 @@ const NOTES: DocCollection = {
   config: decl({ visibility: 'private', indexes: { tag: 'string' } }),
 };
 
-/** Every place a user id can be stored, and how many rows still hold `uid` there. */
+/**
+ * Every place a VIEWER's user id can be stored, and how many rows still hold `uid` there.
+ * `doc.hidden_by` is deliberately excluded: it records the moderator who hid a document, and
+ * moderator-action metadata is kept by design.
+ */
 async function rowsNaming(h: Harness, appId: string, uid: number): Promise<Record<string, number>> {
   const probes: Record<string, string> = {
     'doc.scope_uid': `SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1 AND scope_uid = $2`,
@@ -365,7 +369,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('every app and namespace the account has rows in', () => {
-    it('handles every app; deletes the account’s own dev and review namespaces outright; leaves another user’s dev namespace alone', async () => {
+    it('handles every app; deletes the account’s own dev namespace outright and wipes its review namespace per user; leaves another user’s dev namespace alone', async () => {
       const app1 = freshApp('WIPEMULTI1');
       const app2 = freshApp('WIPEMULTI2');
       const markOnly = freshApp('WIPEMULTI3');
@@ -416,15 +420,12 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
           { appId: app1, ns: NS_PROD, mode: 'user', marks: 0, sharedDocs: 2 },
           { appId: app2, ns: NS_PROD, mode: 'user', marks: 0, sharedDocs: 2 },
           { appId: markOnly, ns: NS_PROD, mode: 'user', marks: 1, sharedDocs: 0 },
-          { appId: req, ns: ownRev, mode: 'namespace', marks: 0, sharedDocs: 0 },
+          { appId: req, ns: ownRev, mode: 'user', marks: 0, sharedDocs: 2 },
         ].sort((a, b) => (a.appId + a.ns < b.appId + b.ns ? -1 : 1))
       );
 
-      // The account's own namespaces: no row of any kind is left.
-      for (const [appId, ns] of [
-        [app1, ownDev],
-        [req, ownRev],
-      ]) {
+      // The account's own dev namespace: no row of any kind is left.
+      for (const [appId, ns] of [[app1, ownDev]]) {
         for (const t of APPDATA_TABLES) {
           const [r] = await h.raw(
             `SELECT count(*)::int AS n FROM appdata.${t} WHERE app_id = $1 AND ns = $2`,
@@ -458,6 +459,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         [app1, otherDev],
         [app2, NS_PROD],
         [markOnly, NS_PROD],
+        [req, ownRev],
       ]) {
         await assertUsageConsistent(h, appId, ns);
       }
@@ -549,25 +551,15 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect(left.n).toBe(0);
     });
 
-    it('a tally already below its marks (drift) stops at 0 instead of failing the wipe; a doc whose last writer is the account loses that uid', async () => {
+    it('a tally already below its marks (drift) stops at 0 instead of failing the wipe', async () => {
       const app = await seedProd('WIPEDRIFT');
       await h.raw(
         `UPDATE appdata.doc_tally SET count = 0 WHERE app_id = $1 AND key = 'post-o' AND kind = 'mark' AND name = 'star'`,
         [app]
       );
-      // Not producible under `own` today; the uid must still not survive.
-      await h.raw(
-        `UPDATE appdata.doc SET last_writer_uid = $2 WHERE app_id = $1 AND key = 'post-o'`,
-        [app, WIPED]
-      );
       const out = await maint.wipeAccount(WIPED);
       expect(out.failures).toEqual([]);
       expect(await tally(h, app, 'posts', 'post-o', 'mark', 'star')).toBe(0);
-      expect(await rawDoc(h, app, NS_PROD, 'posts', 'post-o')).toMatchObject({
-        author_kind: 'user',
-        author_uid: OTHER,
-        last_writer_uid: null,
-      });
       expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
     });
 
@@ -703,9 +695,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       )
     ).toBe(true);
     expect(
-      h.statements.some((s) =>
-        /AND d\.author_kind = 'user'\s+AND d\.author_uid = \$3::int/.test(s.sql)
-      )
+      h.statements.some((s) => /OR EXISTS \(SELECT 1 FROM appdata\.doc_mark lm/.test(s.sql))
     ).toBe(true);
     expect(h.violations).toEqual([]);
   });
@@ -786,6 +776,36 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
       await assertUsageConsistent(h, app, NS_PROD);
     }
   );
+
+  it('two accounts that authored posts and marked each other’s are wiped concurrently without deadlock, round after round', async () => {
+    const store = createDocStore({ db: h.db });
+    const maint = createDocStoreMaintenance({ db: h.db });
+    const ROUNDS = 10;
+    for (let round = 0; round < ROUNDS; round++) {
+      const app = freshApp('WIPECROSS');
+      const a = ctx(app, NS_PROD, WIPED);
+      const b = ctx(app, NS_PROD, OTHER);
+      for (const [c, tag] of [
+        [a, 'a'],
+        [b, 'b'],
+      ] as const) {
+        await store.put(c, POSTS, `post-${tag}1`, { status: 'open' });
+        await store.put(c, POSTS, `post-${tag}2`, { status: 'open' });
+      }
+      for (const key of ['post-b1', 'post-b2']) await store.mark(a, POSTS, key, 'vote');
+      for (const key of ['post-a1', 'post-a2']) await store.mark(b, POSTS, key, 'vote');
+
+      const [wa, wb] = await Promise.all([maint.wipeAccount(WIPED), maint.wipeAccount(OTHER)]);
+      expect({ round, failures: [...wa.failures, ...wb.failures] }).toEqual({
+        round,
+        failures: [],
+      });
+      expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
+      expect(await rowsNaming(h, app, OTHER)).toEqual(NAMES_NOBODY);
+      expect(await h.raw(`SELECT key FROM appdata.doc WHERE app_id = $1`, [app])).toEqual([]);
+      await assertUsageConsistent(h, app, NS_PROD);
+    }
+  });
 
   it('marks, unmarks and an author delete running alongside the wipe neither deadlock nor leave a tally out of step with its marks', async () => {
     const store = createDocStore({ db: h.db });

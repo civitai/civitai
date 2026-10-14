@@ -319,36 +319,6 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
     });
   });
 
-  describe('doc_author_identity: who a document names', () => {
-    const insert = (key: string, kind: string, author: number | null) =>
-      h.raw(
-        `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind, author_uid)
-         VALUES ('ab_RLSAUTHORID', 'prod', 'c', 0, $1, '{}', 1, 1, $2, $3)`,
-        [key, kind, author]
-      );
-    it('a user document must name its author, and the kind is one of user, app, counter', async () => {
-      for (const [key, kind, author] of [
-        ['u-null', 'user', null],
-        ['x-deleted', 'deleted', null],
-        ['x-kind', 'someone', null],
-      ] as const) {
-        expect({ key, msg: await rejects(insert(key, kind, author)) }).toEqual({
-          key,
-          msg: expect.stringMatching(/check constraint "doc_author_(identity|kind)"/),
-        });
-      }
-      // Positive controls: each kind in its valid shape is accepted.
-      await insert('ok-user', 'user', 7);
-      await insert('ok-counter-released', 'counter', null);
-      await insert('ok-app', 'app', null);
-      expect(
-        (
-          await h.raw(`SELECT key FROM appdata.doc WHERE app_id = 'ab_RLSAUTHORID' ORDER BY key`)
-        ).map((r) => r.key)
-      ).toEqual(['ok-app', 'ok-counter-released', 'ok-user']);
-    });
-  });
-
   describe('account-wipe enumeration (appdata.account_wipe_uid)', () => {
     // Two users with rows in every table, in two apps and in prod, both users' dev namespaces
     // and a review namespace — every row naming its user in every column that can.

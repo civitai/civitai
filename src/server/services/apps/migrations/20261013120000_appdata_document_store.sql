@@ -93,21 +93,10 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
   CONSTRAINT doc_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_pkey PRIMARY KEY (app_id, ns, coll, scope_uid, key),
   CONSTRAINT doc_size_cap CHECK (size_bytes <= 65536),
+  -- 'counter': created by the first increment of a counter; no user author.
+  CONSTRAINT doc_author_kind CHECK (author_kind IN ('user', 'app', 'counter')),
   CONSTRAINT doc_version_positive CHECK (version >= 1)
 );
-
--- Who wrote a document. 'user': a viewer, `author_uid`. 'app': the app owner (no uid).
--- 'counter': created by the first increment of a counter; `author_uid` is only the user its
--- creation was charged to (NULL once that account's content is wiped).
--- Dropped and re-added so a re-apply over a table created with another list converges.
-ALTER TABLE appdata.doc DROP CONSTRAINT IF EXISTS doc_author_kind;
-ALTER TABLE appdata.doc ADD CONSTRAINT doc_author_kind
-  CHECK (author_kind IN ('user', 'app', 'counter'));
--- A user-authored document names its author: readers map the author from `author_kind` alone, so
--- a 'user' row without a uid would have no author to show.
-ALTER TABLE appdata.doc DROP CONSTRAINT IF EXISTS doc_author_identity;
-ALTER TABLE appdata.doc ADD CONSTRAINT doc_author_identity
-  CHECK (author_kind <> 'user' OR author_uid IS NOT NULL);
 
 -- When a moderator last dismissed the document's reports (reviewed and kept): only report
 -- marks made after it count as open. NULL = never dismissed. A separate ADD COLUMN so a

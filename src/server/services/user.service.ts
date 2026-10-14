@@ -30,7 +30,6 @@ import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import { articleMetrics, modelMetrics, postMetrics, userMetrics } from '~/server/metrics';
-import type { DocStoreAccountWipeOutcome } from '~/server/metrics/app-block-runtime.metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
 import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
@@ -1664,8 +1663,7 @@ export const removeAllContent = async ({
  * private documents, authored shared documents and marks deleted, usage released, in
  * every app. Same posture as the per-user storage purge above, for the same reasons: it runs
  * LAST, in a separate database with no transaction spanning the two, and NEVER throws into the
- * wipe — every outcome is counted (`civitai_app_block_doc_store_account_wipe_total`), and a
- * failure is also logged.
+ * wipe — a failure is logged, as the purge above logs its own.
  *
  * RETRY: nothing retries it automatically. A wiped account leaves no state in the main database
  * that a sweep could find it by (the user row stays, with no flag), so the review-storage sweep's
@@ -1674,17 +1672,12 @@ export const removeAllContent = async ({
  * only removes what is still there. A namespace that failed rolled back in full.
  */
 async function wipeAccountFromDocStore(userId: number): Promise<void> {
-  const record = (outcome: DocStoreAccountWipeOutcome) =>
-    import('~/server/metrics/app-block-runtime.metrics')
-      .then((m) => m.recordDocStoreAccountWipe(outcome))
-      .catch(() => undefined);
   try {
     const { getDocStoreMaintenance } = await import(
       '~/server/services/apps/doc-store-maintenance.instance'
     );
     const result = await getDocStoreMaintenance().wipeAccount(userId);
     if (result.failures.length > 0) {
-      await record('partial');
       // eslint-disable-next-line no-console
       console.warn(
         `[removeAllContent] App Blocks document store wipe INCOMPLETE (userId=${userId}): ` +
@@ -1693,21 +1686,15 @@ async function wipeAccountFromDocStore(userId: number): Promise<void> {
           `re-run user.removeAllContent for this user to retry. Failures: ` +
           result.failures.map((f) => `${f.appId}/${f.ns}: ${f.error}`).join('; ')
       );
-      return;
     }
-    await record(result.namespaces.length > 0 ? 'wiped' : 'nothing');
   } catch (err) {
     const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
-    if (isDocStoreError(err, 'storage_disabled')) {
-      // No store connection, or one the store refuses: nothing can be removed through it.
-      // Counted, not logged, because that is every wipe in an environment without the store.
-      // Rows CAN survive here if the store was configured, written to, and then disabled or
-      // pointed at a role it refuses (logged once, by the store instance): the counter is the
-      // signal, and re-running the wipe once the store is back removes them.
-      await record('disabled');
-      return;
-    }
-    await record('failed');
+    // No store connection, or one the store refuses: nothing can be removed through it. Not
+    // logged, because that is every wipe in an environment without the store. Rows CAN survive
+    // here if the store was configured, written to, and then disabled or pointed at a role it
+    // refuses (logged once, by the store instance); re-running the wipe once the store is back
+    // removes them.
+    if (isDocStoreError(err, 'storage_disabled')) return;
     // eslint-disable-next-line no-console
     console.warn(
       `[removeAllContent] App Blocks document store wipe failed (userId=${userId}); ` +

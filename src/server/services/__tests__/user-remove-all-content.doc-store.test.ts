@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
 import type * as UserStoragePurge from '~/server/services/apps/user-storage-purge.service';
 import type { DocStoreDb, DocStoreMaintenance } from '~/server/services/apps/doc-store';
 
@@ -17,17 +16,28 @@ import type { DocStoreDb, DocStoreMaintenance } from '~/server/services/apps/doc
 
 const { holder, recorded } = vi.hoisted(() => ({
   holder: { maintenance: null as unknown as DocStoreMaintenance },
+  /** What each `wipeAccount` call the wipe made came back with — proof it was called, and how. */
   recorded: [] as string[],
 }));
 
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
-  getDocStoreMaintenance: () => holder.maintenance,
-}));
-vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
-  ...(await importOriginal<typeof RuntimeMetrics>()),
-  recordDocStoreAccountWipe: (outcome: string) => {
-    recorded.push(outcome);
-  },
+  getDocStoreMaintenance: () => ({
+    ...holder.maintenance,
+    wipeAccount: async (userId: number) => {
+      try {
+        const r = await holder.maintenance.wipeAccount(userId);
+        recorded.push(
+          r.failures.length > 0 ? 'partial' : r.namespaces.length > 0 ? 'wiped' : 'nothing'
+        );
+        return r;
+      } catch (err) {
+        recorded.push(
+          (err as { code?: string }).code === 'storage_disabled' ? 'disabled' : 'failed'
+        );
+        throw err;
+      }
+    },
+  }),
 }));
 vi.mock('~/server/services/apps/user-storage-purge.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserStoragePurge>()),
@@ -196,7 +206,7 @@ describe('removeAllContent → document store', () => {
     warn.mockRestore();
   });
 
-  it('an account with nothing in the store counts as nothing, quietly', async () => {
+  it('an account with nothing in the store: the wipe runs and logs nothing', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await removeAllContent({ id: 4_299 });
     expect(recorded).toEqual(['nothing']);
@@ -206,7 +216,7 @@ describe('removeAllContent → document store', () => {
     warn.mockRestore();
   });
 
-  it('🔴 NEGATIVE CONTROL: a store failure does not reject the wipe or undo it; it is counted and logged, and a re-run finishes the job', async () => {
+  it('🔴 NEGATIVE CONTROL: a store failure does not reject the wipe or undo it; it is logged, and a re-run finishes the job', async () => {
     const app = await seed();
     const before = await state(app);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -242,7 +252,7 @@ describe('removeAllContent → document store', () => {
     warn.mockRestore();
   });
 
-  it('a namespace that failed is reported as partial, with the remedy', async () => {
+  it('a namespace that failed is logged as incomplete, with the remedy', async () => {
     const app = await seed();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     holder.maintenance = {
@@ -263,7 +273,7 @@ describe('removeAllContent → document store', () => {
     warn.mockRestore();
   });
 
-  it('no store configured: counted as disabled, not logged', async () => {
+  it('no store configured: not logged', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     holder.maintenance = createDocStoreMaintenance({ db: null });
     await removeAllContent({ id: TARGET });
