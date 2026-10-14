@@ -23,10 +23,23 @@ import { getRandomInt } from '~/utils/number-helpers';
 //      exported runHealthChecks() — one source of truth, identical disable
 //      lists / per-check timeouts / overall deadline / prom metrics).
 //
-// Probes (startup + readiness) point HERE; liveness stays on /api/live. The
-// manifest probe-path change is a SEPARATE follow-up — this route must exist in
-// the running image BEFORE any probe is repointed at it, or every pod fails
-// startup. Same WebhookEndpoint `?token` gate as /api/health.
+// This route is the STARTUP probe target; steady-state readiness probes /api/health.
+// Liveness stays on /api/live. Same WebhookEndpoint `?token` gate as /api/health.
+//
+// 🔴 That split is load-bearing, and it is why this call passes `mode: 'startup'`.
+// The DB write checks are fail-CLOSED here and fail-OPEN on /api/health:
+//   - a pod that has NEVER reached the database must not enter the pool (here),
+//   - a pod already serving that LOSES write must stay in the pool and degrade
+//     (/api/health) — otherwise a stall on the shared write primary fails the
+//     check on every replica in the same probe window and empties the load
+//     balancer while every process is alive and idle.
+// A startup probe stops running once it first succeeds, and a restarted pod runs
+// it again, so fail-closed-at-boot is preserved for the lifetime of the pod.
+//
+// 🔴 If a deployment ever repoints its READINESS probe at this route, that
+// fail-open protection is silently lost and a write-primary stall sheds the whole
+// fleet again. Readiness belongs on /api/health. See STARTUP_ONLY_CRITICAL_CHECKS
+// in health.ts.
 export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
   const warm = isWarm();
@@ -68,7 +81,9 @@ export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse
     return;
   }
 
-  const { healthy, results } = await runHealthChecks(signal);
+  // 'startup' keeps the DB write checks CRITICAL — fail closed. See the block
+  // comment above; the default ('readiness') deliberately does not.
+  const { healthy, results } = await runHealthChecks(signal, { mode: 'startup' });
 
   res.off('close', onClose);
 
