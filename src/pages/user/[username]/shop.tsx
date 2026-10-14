@@ -55,7 +55,7 @@ function UserShopPage() {
   const { updateSettings } = useMutateCreatorShop();
   const ownedCosmeticIds = useOwnedCosmeticIds();
   const features = useFeatureFlags();
-  const servicesEnabled = features.creatorServices && !!user?.id;
+  const servicesEnabled = !!features.creatorServices && !!user?.id;
   const { offerings: services, isLoading: servicesLoading } = useQueryShopServices(
     user?.id ?? 0,
     servicesEnabled
