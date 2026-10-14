@@ -13,12 +13,14 @@ export type DocCollectionConfig = {
   /**
    * Shared collections only. Defaults to `own`.
    *   own    — viewers create; only the author updates or deletes.
-   *   anyone — viewers create, update and delete any document.
-   *   owner  — only the app owner writes documents.
+   *   owner  — only the app owner writes documents (owner writes are a later
+   *            phase, so today nobody does).
    *   none   — nobody writes documents; they exist only because a declared
-   *            counter was incremented (which creates the document — under
-   *            own, anyone and none; never under owner).
-   * Counters and marks are not document writes and are allowed under all four.
+   *            counter was incremented, which creates the document.
+   *   anyone — part of the manifest shape but NOT SUPPORTED YET: the store
+   *            refuses a collection declaring it.
+   * Counters and marks are not document writes and are allowed under every
+   * policy; only under `none` does an increment create an absent document.
    */
   write?: 'own' | 'anyone' | 'owner' | 'none';
   counters?: string[];
@@ -27,6 +29,7 @@ export type DocCollectionConfig = {
   /** Index name → type. The name is a dot path into `data`, at most 3 segments. */
   indexes?: Record<string, DocIndexType>;
   showAuthor?: boolean;
+  /** Part of the manifest shape but NOT SUPPORTED YET: the store refuses a collection declaring it. */
   ttlSeconds?: number;
   maxEntries?: number;
 };
@@ -62,7 +65,6 @@ export type DocRecord = {
   version: number;
   createdAt: Date;
   updatedAt: Date;
-  expiresAt: Date | null;
   author: DocAuthor;
   counters: Record<string, number>;
   marks: Record<string, number>;
@@ -70,11 +72,9 @@ export type DocRecord = {
   viewer: { marks: string[] } | null;
 };
 
-export type DocRangeFilter = { gte?: string | number; lte?: string | number; prefix?: string };
-
 export type DocListQuery = {
-  /** Equality on up to two declared indexes, and/or a range on the sort index. */
-  where?: Record<string, string | number | boolean | DocRangeFilter>;
+  /** Equality on ONE declared index. */
+  where?: Record<string, string | number | boolean>;
   /** `[-]key|createdAt|updatedAt|<index>|counter:<name>|mark:<name>`. Default `key`. */
   sort?: string;
   author?: 'me';
@@ -112,7 +112,7 @@ export const DOC_STORE_BOUNDS = {
   stringIndexBytes: 128,
   indexPathSegments: 3,
   indexesPerCollection: 4,
-  equalityFilters: 2,
+  equalityFilters: 1,
   listLimitMax: 100,
   listLimitDefault: 25,
   getManyMax: 100,

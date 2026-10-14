@@ -9,10 +9,18 @@
 -- WHAT IT CREATES: one fixed schema `appdata` with seven tables shared by every
 --   app (an `app_id` column, not a schema per app), their indexes, row-level
 --   security policies, and one NOLOGIN role `appdata_rw` holding the DML grants.
---   After applying, grant that role to the role the web app connects as:
---     GRANT appdata_rw TO <web app role>;
---   Row-level security does NOT apply to a superuser or a BYPASSRLS role, so
---   the web app role must be neither for the second isolation layer to bind.
+--
+-- AFTER APPLYING (also manual): the document store uses its OWN connection,
+--   `APPDATA_DATABASE_URL`, never the existing apps connection. Create a LOGIN
+--   role for it that holds only `appdata_rw`, and confirm row-level security
+--   binds it before setting the env var:
+--     CREATE ROLE <login role> LOGIN PASSWORD '<secret>' NOSUPERUSER NOBYPASSRLS;
+--     GRANT appdata_rw TO <login role>;
+--     SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = '<login role>';
+--       -- both must be false
+--   The store checks the same two attributes on first use and refuses every
+--   call (`storage_disabled`) if either is true; with the env var unset it is
+--   disabled outright.
 --
 -- ISOLATION: the only code that touches these tables is
 --   `src/server/services/apps/doc-store.ts`. Every statement there carries
