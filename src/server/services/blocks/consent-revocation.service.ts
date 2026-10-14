@@ -90,8 +90,7 @@ import {
  * no consent-gated scope cannot be affected by any marker. That keeps every app whose
  * scopes are all exempt — the four legacy `apps:storage:*` scopes, `apps:storage`,
  * `collections:read:self`/`write:self` — out of the coupling (an app declaring the
- * consent-gated `apps:storage:publish` is IN it only for a viewer who granted it, since the
- * mint withholds an ungranted gated scope from the token)
+ * consent-gated `apps:storage:publish` is IN it for any viewer who granted it)
  * entirely, which is keyed on the app's MANIFEST, not on the route.
  *
  * ⚠️ DO NOT QUOTE "20 of the 29 scope-bound routes" FOR THIS PREDICATE — that figure belongs to
