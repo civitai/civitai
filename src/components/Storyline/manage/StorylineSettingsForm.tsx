@@ -3,13 +3,12 @@ import { useEffect, useState } from 'react';
 import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
 import { StorylinePriceInput } from '~/components/Storyline/settings/StorylinePriceInput';
 import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
-import type { StorylineContinueMode } from '~/components/Storyline/storyline-ui';
+import type { StorylineWhoCanContinue } from '~/components/Storyline/storyline-ui';
 
 export type StorylineStatusValue = 'Ongoing' | 'Complete';
 
 /** The storyline's placement space as its owner reads it. */
 export type StorylineSpaceSettings = {
-  mode: StorylineContinueMode;
   /** The price stored on this storyline; `null` follows the creator's default. */
   setPrice: number | null;
   /** What a contributor is charged now, after inheritance and the cap. */
@@ -20,19 +19,25 @@ export type StorylineSpaceSettings = {
 export function StorylineSettingsForm({
   status,
   maxNsfwLevel,
+  whoCanContinue,
   space,
   onStatusChange,
   onRatingChange,
-  onSpaceChange,
+  onWhoCanContinueChange,
+  onPriceChange,
   disabled,
 }: {
   status: StorylineStatusValue;
   maxNsfwLevel: number;
+  /** `null` where the storyline does not report it yet. */
+  whoCanContinue: StorylineWhoCanContinue | null;
   /** `null` while loading, or where the space cannot be read. */
   space: StorylineSpaceSettings | null;
   onStatusChange: (status: StorylineStatusValue) => void;
   onRatingChange: (level: number) => void;
-  onSpaceChange: (next: { mode: StorylineContinueMode; price: number | null }) => void;
+  onWhoCanContinueChange: (value: StorylineWhoCanContinue) => void;
+  /** `null` returns the storyline to the creator's default price. */
+  onPriceChange: (price: number | null) => void;
   disabled?: boolean;
 }) {
   // Local so the thumb follows the drag; the write happens on release.
@@ -68,9 +73,9 @@ export function StorylineSettingsForm({
           Who can continue
         </Text>
         <StorylineContinueModeInput
-          value={space?.mode ?? 'review'}
-          disabled={disabled || !space || complete}
-          onChange={(mode) => space && onSpaceChange({ mode, price: space.setPrice })}
+          value={whoCanContinue ?? 'Anyone'}
+          disabled={disabled || !whoCanContinue || complete}
+          onChange={onWhoCanContinueChange}
         />
         <Text size="xs" c="dimmed">
           {complete
@@ -101,7 +106,7 @@ export function StorylineSettingsForm({
               type="button"
               size="xs"
               disabled={disabled}
-              onClick={() => onSpaceChange({ mode: space.mode, price: null })}
+              onClick={() => onPriceChange(null)}
             >
               Use my default
             </Anchor>
@@ -115,7 +120,7 @@ export function StorylineSettingsForm({
           onChange={setPrice}
           onCommit={(value) => {
             setPrice(value);
-            if (space) onSpaceChange({ mode: space.mode, price: value });
+            onPriceChange(value);
           }}
         />
         <Text size="xs" c="dimmed">

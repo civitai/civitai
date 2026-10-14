@@ -23,8 +23,7 @@ const verdict = (
     postLevel: NsfwLevel.PG,
     viewerId: contributor,
     storyline: story(),
-    mode: 'review',
-    isCollaborator: false,
+    closedReason: null,
     ...overrides,
   });
 
@@ -59,16 +58,19 @@ describe('storylineSubmitVerdict', () => {
     });
   });
 
-  test('collaborators-only refuses strangers and lets collaborators through', () => {
-    expect(verdict({ mode: 'off' })).toEqual({ allowed: false, reason: 'collaboratorsOnly' });
-    expect(verdict({ mode: 'off', isCollaborator: true })).toEqual({
-      allowed: true,
-      awaitingScan: false,
+  test("the server's closed reason refuses before any post is judged", () => {
+    expect(verdict({ closedReason: 'collaboratorsOnly' })).toEqual({
+      allowed: false,
+      reason: 'collaboratorsOnly',
+    });
+    expect(verdict({ closedReason: 'closed', postLevel: NsfwLevel.XXX })).toEqual({
+      allowed: false,
+      reason: 'closed',
     });
   });
 
-  test('a collaborator is still held to the ceiling', () => {
-    expect(verdict({ isCollaborator: true, postLevel: NsfwLevel.XXX })).toEqual({
+  test('an open storyline still holds everyone to the ceiling', () => {
+    expect(verdict({ postLevel: NsfwLevel.XXX })).toEqual({
       allowed: false,
       reason: 'aboveRating',
     });

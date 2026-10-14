@@ -1,14 +1,17 @@
 import type { StorylineSpaceSettings } from '~/components/Storyline/manage/StorylineSettingsForm';
-import type { StorylineContinueMode } from '~/components/Storyline/storyline-ui';
+import type {
+  StorylineClosedReason,
+  StorylineWhoCanContinue,
+} from '~/components/Storyline/storyline-ui';
 import type { StorylineSubmitOutcome } from '~/components/Storyline/continue/StorylineContinueForm';
 import type { StorylineQueueRow } from '~/components/Storyline/queue/StorylineQueueList';
 
 /**
- * The storyline's placement space, for its owner.
+ * The storyline's price, for its owner.
  *
- * The read and write live in the placement router, which does not serve the storyline surface
- * yet. Until it does this reports `unavailable` and the settings form disables those controls,
- * rather than showing a default the server never said.
+ * Every seam in this file stands in for a procedure that is not written yet. Each reports itself
+ * unavailable and the UI disables or explains, rather than showing a default the server never
+ * said.
  */
 export function useStorylineSpace(
   _storylineId: number,
@@ -17,14 +20,23 @@ export function useStorylineSpace(
   data: StorylineSpaceSettings | null;
   unavailable: boolean;
   isSaving: boolean;
-  save: (next: { mode: StorylineContinueMode; price: number | null }) => void;
+  save: (price: number | null) => void;
 } {
   return { data: null, unavailable: true, isSaving: false, save: () => undefined };
 }
 
-/** What a contributor is told before submitting: the price and who may continue. */
-export function useStorylineContinueTerms(_storylineId: number | null): {
-  data: { price: number; mode: StorylineContinueMode } | null;
+/** Who may continue, from the storyline itself. */
+export function useStorylineWhoCanContinue(_storylineId: number): {
+  value: StorylineWhoCanContinue | null;
+  isSaving: boolean;
+  save: (value: StorylineWhoCanContinue) => void;
+} {
+  return { value: null, isSaving: false, save: () => undefined };
+}
+
+/** What a contributor is told before submitting: the price, and whether they may continue. */
+export function useStorylineContinueTerms(_parentPostId: number): {
+  data: { open: boolean; price: number; closedReason: StorylineClosedReason | null } | null;
   isLoading: boolean;
 } {
   return { data: null, isLoading: false };

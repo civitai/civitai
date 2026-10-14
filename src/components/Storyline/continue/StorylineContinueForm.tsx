@@ -5,7 +5,7 @@ import {
   storylinePriceLabel,
   storylineRatingLabel,
   storylineSubmitVerdict,
-  type StorylineContinueMode,
+  type StorylineClosedReason,
 } from '~/components/Storyline/storyline-ui';
 
 export type StorylineContinuePost = { id: number; title: string | null; nsfwLevel: number };
@@ -17,13 +17,14 @@ const refusalCopy = {
   ownStoryline: 'This is your storyline. Add your next chapter from the storyline page instead.',
   complete: 'This storyline is complete and is not taking continuations.',
   collaboratorsOnly: 'Only the creator’s endorsed collaborators can continue this storyline.',
+  closed: 'This storyline is not taking continuations right now.',
 } as const;
 
 export function StorylineContinueForm({
   viewerId,
   storyline,
   parentTitle,
-  mode,
+  closedReason,
   price,
   isCollaborator,
   posts,
@@ -43,7 +44,8 @@ export function StorylineContinueForm({
     maxNsfwLevel: number;
   };
   parentTitle: string | null;
-  mode: StorylineContinueMode;
+  /** From the server's read for this viewer; `null` when they may continue. */
+  closedReason: StorylineClosedReason | null;
   price: number;
   isCollaborator: boolean;
   /** The viewer's own posts to choose from. */
@@ -62,8 +64,7 @@ export function StorylineContinueForm({
     postLevel: post?.nsfwLevel ?? 0,
     viewerId,
     storyline,
-    mode,
-    isCollaborator,
+    closedReason,
   });
 
   if (outcome) return <StorylineSubmitted outcome={outcome} price={price} />;

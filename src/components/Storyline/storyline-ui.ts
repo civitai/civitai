@@ -6,16 +6,22 @@ import { placementPriceCaption } from '~/shared/utils/placement';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
 
-/** Who may continue a storyline. The values are the storyline placement space's modes. */
-export type StorylineContinueMode = 'review' | 'off';
+/**
+ * Who may continue a storyline; the values of the `StorylineWhoCanContinue` column. Endorsed
+ * collaborators may always continue, and skip review.
+ */
+export type StorylineWhoCanContinue = 'Anyone' | 'Collaborators';
 
-export const STORYLINE_CONTINUE_MODES = [
-  { value: 'review', label: 'Anyone, I review first' },
-  { value: 'off', label: 'Only collaborators' },
-] as const satisfies readonly { value: StorylineContinueMode; label: string }[];
+export const STORYLINE_WHO_CAN_CONTINUE = [
+  { value: 'Anyone', label: 'Anyone, I review first' },
+  { value: 'Collaborators', label: 'Only collaborators' },
+] as const satisfies readonly { value: StorylineWhoCanContinue; label: string }[];
 
-export const isStorylineContinueMode = (value: unknown): value is StorylineContinueMode =>
-  value === 'review' || value === 'off';
+export const isStorylineWhoCanContinue = (value: unknown): value is StorylineWhoCanContinue =>
+  value === 'Anyone' || value === 'Collaborators';
+
+/** Why the server says this viewer cannot continue a storyline right now. */
+export type StorylineClosedReason = 'closed' | 'collaboratorsOnly';
 
 export function storylinePriceLabel(price: number) {
   return price > 0 ? `${numberWithCommas(price)} Buzz` : 'Free';
@@ -49,7 +55,7 @@ export type StorylineSubmitVerdict =
   | { allowed: true; awaitingScan: boolean }
   | {
       allowed: false;
-      reason: 'ownStoryline' | 'complete' | 'collaboratorsOnly' | 'aboveRating';
+      reason: 'ownStoryline' | 'complete' | StorylineClosedReason | 'aboveRating';
     };
 
 /**
@@ -63,18 +69,17 @@ export function storylineSubmitVerdict({
   postLevel,
   viewerId,
   storyline,
-  mode,
-  isCollaborator,
+  closedReason,
 }: {
   postLevel: number;
   viewerId: number;
   storyline: { userId: number; status: 'Ongoing' | 'Complete'; maxNsfwLevel: number };
-  mode: StorylineContinueMode;
-  isCollaborator: boolean;
+  /** From the server's read for this viewer; `null` when they may continue. */
+  closedReason: StorylineClosedReason | null;
 }): StorylineSubmitVerdict {
   if (storyline.userId === viewerId) return { allowed: false, reason: 'ownStoryline' };
   if (storyline.status === 'Complete') return { allowed: false, reason: 'complete' };
-  if (mode === 'off' && !isCollaborator) return { allowed: false, reason: 'collaboratorsOnly' };
+  if (closedReason) return { allowed: false, reason: closedReason };
   if (!postLevel) return { allowed: true, awaitingScan: true };
   if (!storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel }))
     return { allowed: false, reason: 'aboveRating' };

@@ -1,8 +1,8 @@
 import { SegmentedControl } from '@mantine/core';
 import {
-  isStorylineContinueMode,
-  STORYLINE_CONTINUE_MODES,
-  type StorylineContinueMode,
+  isStorylineWhoCanContinue,
+  STORYLINE_WHO_CAN_CONTINUE,
+  type StorylineWhoCanContinue,
 } from '~/components/Storyline/storyline-ui';
 
 /**
@@ -15,8 +15,8 @@ export function StorylineContinueModeInput({
   onChange,
   disabled,
 }: {
-  value: StorylineContinueMode;
-  onChange: (mode: StorylineContinueMode) => void;
+  value: StorylineWhoCanContinue;
+  onChange: (value: StorylineWhoCanContinue) => void;
   disabled?: boolean;
 }) {
   return (
@@ -25,8 +25,11 @@ export function StorylineContinueModeInput({
       fullWidth
       disabled={disabled}
       value={value}
-      onChange={(next) => isStorylineContinueMode(next) && onChange(next)}
-      data={STORYLINE_CONTINUE_MODES.map((mode) => ({ value: mode.value, label: mode.label }))}
+      onChange={(next) => isStorylineWhoCanContinue(next) && onChange(next)}
+      data={STORYLINE_WHO_CAN_CONTINUE.map((option) => ({
+        value: option.value,
+        label: option.label,
+      }))}
     />
   );
 }

@@ -48,7 +48,7 @@ export default function StorylineContinueModal({
     { enabled: !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId });
-  const terms = useStorylineContinueTerms(storylineId ?? null);
+  const terms = useStorylineContinueTerms(parentPostId);
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
 
   const posts = (postPages?.pages.flatMap((page) => page.items) ?? [])
@@ -74,7 +74,7 @@ export default function StorylineContinueModal({
           viewerId={currentUser.id}
           storyline={storyline}
           parentTitle={parentPost?.title ?? null}
-          mode={terms.data.mode}
+          closedReason={terms.data.closedReason}
           price={terms.data.price}
           isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
           posts={posts}

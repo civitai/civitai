@@ -119,7 +119,7 @@ function continueForm(overrides: Partial<React.ComponentProps<typeof StorylineCo
     viewerId: contributor,
     storyline: story,
     parentTitle: 'Framed in a thrift store',
-    mode: 'review',
+    closedReason: null,
     price: 0,
     isCollaborator: false,
     posts,
@@ -163,7 +163,7 @@ describe('StorylineContinueForm', () => {
   });
 
   it('says collaborators-only before any post is picked', () => {
-    const el = render(continueForm({ mode: 'off' }));
+    const el = render(continueForm({ closedReason: 'collaboratorsOnly' }));
     const text = visibleText(el);
 
     expect(text).toContain(

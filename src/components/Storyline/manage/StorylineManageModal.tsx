@@ -3,7 +3,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/StorylineCollaboratorsPanel';
 import { StorylineSettingsForm } from '~/components/Storyline/manage/StorylineSettingsForm';
-import { useStorylineSpace } from '~/components/Storyline/storyline.data';
+import {
+  useStorylineSpace,
+  useStorylineWhoCanContinue,
+} from '~/components/Storyline/storyline.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -26,6 +29,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
   });
   const isOwner = !!currentUser && storyline?.userId === currentUser.id;
   const space = useStorylineSpace(storylineId, { enabled: isOwner });
+  const whoCanContinue = useStorylineWhoCanContinue(storylineId);
 
   const invalidate = () => utils.storyline.getById.invalidate({ id: storylineId });
   const update = trpc.storyline.update.useMutation({
@@ -71,13 +75,15 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             <StorylineSettingsForm
               status={storyline.status}
               maxNsfwLevel={storyline.maxNsfwLevel}
+              whoCanContinue={whoCanContinue.value}
               space={space.data}
-              disabled={update.isPending || space.isSaving}
+              disabled={update.isPending || space.isSaving || whoCanContinue.isSaving}
               onStatusChange={(status) => update.mutate({ id: storylineId, status })}
               onRatingChange={(maxNsfwLevel) => update.mutate({ id: storylineId, maxNsfwLevel })}
-              onSpaceChange={space.save}
+              onWhoCanContinueChange={whoCanContinue.save}
+              onPriceChange={space.save}
             />
-            {space.unavailable && (
+            {(space.unavailable || !whoCanContinue.value) && (
               <Text size="xs" c="dimmed" mt="sm">
                 Who can continue and the price are not available yet.
               </Text>
