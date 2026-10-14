@@ -22,6 +22,9 @@ const {
   textScanWebSearchAdapters,
   TEXT_SCAN_RETRY_CONTENT,
 } = await import('~/server/services/text-scan/adapter');
+const { TEXT_SCAN_ENTITY_GONE, TEXT_SCAN_ENTITY_NOT_PUBLIC } = await import(
+  '~/server/services/text-scan/route'
+);
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
 const { getTextScanMode, getTextScanWebSearchMode } = await import(
@@ -48,6 +51,15 @@ describe('createTextScanAdapter', () => {
     expect(map.get(1)).toBe(TEXT_SCAN_RETRY_CONTENT);
   });
 
+  // Omitting it would take the cron's missing path and delete the row, and with it the stored
+  // verdict a rating floor still reads.
+  it('resolves a not-public entity whatever its length, so its row is kept', async () => {
+    load.mockResolvedValue(
+      new Map([[1, { fields: [{ heading: 'Name', text: 'hi' }], declared: {}, notPublic: true }]])
+    );
+    expect([...(await adapter.resolveContent([1])).keys()]).toEqual([1]);
+  });
+
   it('resolves a short marker, not the composed text, however long the text is', async () => {
     load.mockResolvedValue(
       new Map([[1, { fields: [{ heading: 'Name', text: 'x'.repeat(500_000) }], declared: {} }]])
@@ -68,6 +80,19 @@ describe('createTextScanAdapter', () => {
     expect(await adapter.submit({ entityId: 1, content: '' })).toBeNull();
     vi.mocked(scanEntity).mockResolvedValue({ status: 'failed' });
     expect(await adapter.submit({ entityId: 1, content: '' })).toBeNull();
+  });
+
+  it('returns the gone marker when the entity can no longer be loaded', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'missing' });
+    expect(await adapter.submit({ entityId: 1, content: '' })).toBe(TEXT_SCAN_ENTITY_GONE);
+    expect(
+      await textScanWebSearchAdapters()['Model:search'].submit({ entityId: 1, content: '' })
+    ).toBe(TEXT_SCAN_ENTITY_GONE);
+  });
+
+  it('returns the not-public marker for an entity that exists but is not public', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'not-public' });
+    expect(await adapter.submit({ entityId: 1, content: '' })).toBe(TEXT_SCAN_ENTITY_NOT_PUBLIC);
   });
 
   it.each([

@@ -42,6 +42,7 @@ describe('selectUnratedRefetch', () => {
         workflow('pending', [image('c', { available: false })]),
         workflow('audio', [image('d', { type: 'audio' })]),
         workflow('mesh', [image('e', { type: 'model3d' })]),
+        workflow('unscanned', [image('f', { type: 'video', nsfwLevel: 'na' })]),
       ],
       new Map()
     );

@@ -78,11 +78,14 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
       'goods:purchase:self',
       'apps:storage:shared:read',
       'apps:storage:shared:write',
-      // REVIEW \ PRIVATE_RUN — the three subtractions. Storage functions only under the
-      // review sandbox's disposable schema, and `buzz:read:self` is consent-gated and
-      // withheld by the DEFAULT review allowlist for a reason that names this surface.
+      // REVIEW \ PRIVATE_RUN — the subtractions. Storage functions only under the
+      // review sandbox's disposable schema / review namespace, and `buzz:read:self` is
+      // consent-gated and withheld by the DEFAULT review allowlist for a reason that names
+      // this surface.
       'apps:storage:read',
       'apps:storage:write',
+      'apps:storage',
+      'apps:storage:publish',
       'buzz:read:self',
       // The survivor, i.e. the positive control.
       'models:read:self',
@@ -129,14 +132,26 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
     // from its source — which makes them the whole value of the derivation.
     for (const audience of ['owner', 'editor', 'moderator'] as const) {
       const granted = clampPrivateRunScopes(
-        ['apps:storage:read', 'apps:storage:write', 'buzz:read:self'],
+        [
+          'apps:storage:read',
+          'apps:storage:write',
+          'apps:storage',
+          'apps:storage:publish',
+          'buzz:read:self',
+        ],
         audience
       );
       expect(granted, `audience=${audience}`).toEqual(['user:read:self']);
     }
     // …and the REVIEW set really does grant them, so the row above is a real difference
     // rather than two empty sets agreeing.
-    for (const s of ['apps:storage:read', 'apps:storage:write', 'buzz:read:self']) {
+    for (const s of [
+      'apps:storage:read',
+      'apps:storage:write',
+      'apps:storage',
+      'apps:storage:publish',
+      'buzz:read:self',
+    ]) {
       expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(s), s).toBe(true);
       expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.has(s), s).toBe(false);
     }

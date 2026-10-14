@@ -1,28 +1,27 @@
 <script lang="ts">
-  import { applyAction, enhance } from '$app/forms';
+  import { applyAction } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { urlWith } from '$lib/url';
+  import VoteForm from './VoteForm.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let submitting = $state(false);
-  let voteForm = $state<HTMLFormElement | null>(null);
   let shownAt = 0;
   $effect.pre(() => {
     void data.card?.itemId;
     shownAt = Date.now();
   });
 
-  // Blurred so B / N work again: the key handler ignores events from the filter controls.
+  // Blurred so the vote keys work again: the key handler ignores events from the filter controls.
   const setFilter = async (key: 'day' | 'version', value: string) => {
     await goto(urlWith(page.url, { [key]: value }), { keepFocus: true });
     (document.activeElement as HTMLElement | null)?.blur();
@@ -51,24 +50,8 @@
     };
   };
 
-  const vote = (block: boolean) => {
-    if (!voteForm || submitting) return;
-    const button = voteForm.querySelector<HTMLButtonElement>(`button[value="${block ? '1' : '0'}"]`);
-    voteForm.requestSubmit(button);
-  };
-
-  const onKeydown = (e: KeyboardEvent) => {
-    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
-    const target = e.target as HTMLElement | null;
-    if (target?.closest('input, textarea, select, [role="combobox"], [role="listbox"]')) return;
-    if (e.key === 'b' || e.key === 'B') vote(true);
-    else if (e.key === 'n' || e.key === 'N') vote(false);
-  };
-
   const versionLabel = $derived(data.version || 'All versions');
 </script>
-
-<svelte:window onkeydown={onKeydown} />
 
 <div class="mx-auto flex max-w-5xl flex-col gap-4">
   <header class="flex flex-wrap items-end justify-between gap-3">
@@ -150,35 +133,7 @@
             class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
           />
         </div>
-        <form
-          method="POST"
-          action="?/vote"
-          use:enhance={submitVote}
-          bind:this={voteForm}
-          class="grid grid-cols-2 gap-3"
-        >
-          <input type="hidden" name="itemId" value={data.card.itemId} />
-          <Button
-            type="submit"
-            name="block"
-            value="1"
-            variant="destructive"
-            size="lg"
-            disabled={submitting}
-          >
-            Block <span class="ml-2 text-xs opacity-70">B</span>
-          </Button>
-          <Button
-            type="submit"
-            name="block"
-            value="0"
-            variant="secondary"
-            size="lg"
-            disabled={submitting}
-          >
-            Don’t block <span class="ml-2 text-xs opacity-70">N</span>
-          </Button>
-        </form>
+        <VoteForm itemId={data.card.itemId} {submitting} onsubmit={submitVote} />
       </section>
     {/key}
   {:else}

@@ -4271,6 +4271,10 @@ export interface ScanLabelItem {
   actionStartedAt: Date | null;
   actionResult: string | null;
   actionError: string | null;
+  copyState: string | null;
+  copyKey: string | null;
+  copiedAt: Date | null;
+  copyError: string | null;
   createdAt: Date;
 }
 
@@ -4291,6 +4295,7 @@ export interface ScanLabelVote {
   userId: number;
   block: boolean;
   reason: string | null;
+  reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Date;
 }
@@ -4299,6 +4304,16 @@ export interface ScanLabelClaim {
   itemId: number;
   userId: number;
   expiresAt: Date;
+}
+
+export interface ScanLabelCopyObject {
+  key: string;
+  itemId: number;
+  imageId: number;
+  createdAt: Date;
+  withdrawnAt: Date | null;
+  withdrawReason: string | null;
+  withdrawError: string | null;
 }
 
 export interface ScanLabelQuota {

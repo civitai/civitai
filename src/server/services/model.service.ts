@@ -143,7 +143,11 @@ import type { holdModelForLiteralRules } from '~/server/services/text-scan/actio
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import { scanEntityInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
+import {
+  scanEntitiesInBackground,
+  scanEntityInBackground,
+  scanModelAndRules,
+} from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -3562,12 +3566,27 @@ export const publishModelById = async ({
   // search-index update batch.
   const posts = await dbWrite.post.findMany({
     where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
-    select: { id: true },
+    select: { id: true, modelVersionId: true },
   });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
+
+  // Unchanged text dedups to a no-op on a republish, so no republish guard.
+  submitModelTextModeration({
+    id: model.id,
+    name: model.name,
+    description: model.description,
+    rules: false,
+  }).catch(() => null);
+  if (includeVersions)
+    scanEntitiesInBackground(
+      'Post',
+      posts
+        .filter((p) => p.modelVersionId && versionIds.includes(p.modelVersionId))
+        .map((p) => p.id)
+    );
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
@@ -5363,7 +5382,6 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
-    if (!user.isModerator) scanModelAndRules(result.id);
     return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({
@@ -5394,7 +5412,15 @@ export const publishPrivateModel = async (
   // Primary: the stored meta decides the publish gates and the cannotPromote value restored.
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
-    select: { id: true, userId: true, availability: true, status: true, meta: true },
+    select: {
+      id: true,
+      userId: true,
+      name: true,
+      description: true,
+      availability: true,
+      status: true,
+      meta: true,
+    },
   });
 
   if (!model) throw throwNotFoundError('Model not found');
@@ -5553,6 +5579,23 @@ export const publishPrivateModel = async (
   if (updatedImageIds.length > 0) {
     await imagesMetricsSearchIndex.queueUpdate(
       updatedImageIds.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
+
+  if (publishVersions) {
+    submitModelTextModeration({
+      id: model.id,
+      name: model.name,
+      description: model.description,
+      rules: false,
+    }).catch(() => null);
+    const posts = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: versionIds }, userId: model.userId },
+      select: { id: true },
+    });
+    scanEntitiesInBackground(
+      'Post',
+      posts.map((p) => p.id)
     );
   }
 

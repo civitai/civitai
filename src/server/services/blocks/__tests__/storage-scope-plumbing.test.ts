@@ -37,8 +37,7 @@ import { FIXED_SCOPE_NOTES } from '~/components/Apps/scopeConsentRows';
  * ledger, modelled on `store-items-scope-plumbing.test.ts`: each seam fails silently on its
  * own (an unbound scope 403s every route that requires it, a gated scope with no prompt is
  * stripped at mint, a non-sensitive publish scope ships past review unexplained, one in a
- * dev or review allowlist reaches a token before the storage routes and their dev
- * namespace exist).
+ * mint allowlist reaches a token class the storage routes do not confine).
  */
 const BASE = 'apps:storage';
 const PUBLISH = 'apps:storage:publish';
@@ -127,23 +126,50 @@ describe('storage scopes — runtime binding', () => {
   });
 });
 
-describe('storage scopes — never minted for dev or review tokens yet', () => {
-  const ALLOWLISTS = {
-    DEV_TOKEN_SCOPE_ALLOWLIST,
+describe('storage scopes — which mints carry them', () => {
+  // The bearer dev token carries both: the storage routes confine it to `dev:<uid>`.
+  it('DEV_TOKEN_SCOPE_ALLOWLIST admits both, and its clamp keeps both', () => {
+    expect(DEV_TOKEN_SCOPE_ALLOWLIST.has(BASE)).toBe(true);
+    expect(DEV_TOKEN_SCOPE_ALLOWLIST.has(PUBLISH)).toBe(true);
+    const granted = clampDevScopes({
+      scopeSource: [BASE, PUBLISH, 'user:read:self'],
+      oauthAllowed: null,
+      spendEntitled: false,
+      spendRequested: false,
+      allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
+    });
+    expect(granted).toEqual([BASE, PUBLISH, 'user:read:self']);
+  });
+
+  // The run-for-real review mint carries both: the storage routes confine its token to the
+  // reviewing moderator's own `rev:<publishRequestId>:<uid>` namespace (`doc-store-access.ts`).
+  it('REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST admits both, and its clamp keeps both', () => {
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(BASE)).toBe(true);
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(PUBLISH)).toBe(true);
+    const granted = clampDevScopes({
+      scopeSource: [BASE, PUBLISH, 'user:read:self'],
+      oauthAllowed: null,
+      spendEntitled: true,
+      spendRequested: true,
+      allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).toEqual([BASE, PUBLISH, 'user:read:self']);
+  });
+
+  const WITHHOLDING = {
     TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     REVIEW_MINT_SCOPE_ALLOWLIST,
-    REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
   };
 
   // Each allowlist must visibly ADMIT a known scope, so "absent" below is a finding about
   // the set and not about an empty or misnamed object.
-  it.each(Object.entries(ALLOWLISTS))('%s admits user:read:self but neither scope', (_n, set) => {
+  it.each(Object.entries(WITHHOLDING))('%s admits user:read:self but neither scope', (_n, set) => {
     expect(set.has('user:read:self')).toBe(true);
     expect(set.has(BASE)).toBe(false);
     expect(set.has(PUBLISH)).toBe(false);
   });
 
-  it.each(Object.entries(ALLOWLISTS))('the %s clamp strips both', (_n, allowlist) => {
+  it.each(Object.entries(WITHHOLDING))('the %s clamp strips both', (_n, allowlist) => {
     const granted = clampDevScopes({
       scopeSource: [BASE, PUBLISH, 'user:read:self'],
       oauthAllowed: null,

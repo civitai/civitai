@@ -11,11 +11,32 @@ import { createDocStore } from '~/server/services/apps/doc-store';
 import type { DocStore } from '~/server/services/apps/doc-store';
 import type {
   DocCollection,
+  DocCollectionConfig,
+  DocIndexType,
   DocStoreContext,
   DocStoreErrorCode,
 } from '~/server/services/apps/doc-store.types';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import type { Harness } from './doc-store.harness';
+
+/**
+ * A collection declaration in the manifest parser's shape (`DocCollectionConfig`
+ * IS `DeclaredStorageCollection`), from the terse literal the cases below write:
+ * omitted lists are empty and `indexes` is given as an object.
+ */
+export function decl(
+  c: Partial<Omit<DocCollectionConfig, 'indexes'>> &
+    Pick<DocCollectionConfig, 'visibility'> & { indexes?: Record<string, DocIndexType> }
+): DocCollectionConfig {
+  return {
+    kind: 'docs',
+    counters: [],
+    marks: [],
+    showAuthor: false,
+    ...c,
+    indexes: new Map(Object.entries(c.indexes ?? {})),
+  };
+}
 
 // Pairwise-distinct identities, distinct from every literal the assertions use.
 export const APP_A = 'ab_ISOLATIONAPPA';
@@ -25,29 +46,29 @@ export const NS_DEV = 'dev:4711';
 export const VIEWER_1 = 101;
 export const VIEWER_2 = 202;
 
-export const PREFS: DocCollection = { name: 'prefs', config: { visibility: 'private' } };
+export const PREFS: DocCollection = { name: 'prefs', config: decl({ visibility: 'private' }) };
 export const POSTS: DocCollection = {
   name: 'posts',
-  config: {
+  config: decl({
     visibility: 'shared',
     write: 'own',
     marks: ['vote', 'star'],
     counters: ['vote', 'views'],
     indexes: { status: 'string', score: 'number', 'meta.tag': 'string', at: 'time' },
-  },
+  }),
 };
 export const BOARD: DocCollection = {
   name: 'board',
-  config: { visibility: 'shared', write: 'own' },
+  config: decl({ visibility: 'shared', write: 'own' }),
 };
 /** Counter-only: no document writes by anyone; documents exist through increments. */
 export const TALLIES: DocCollection = {
   name: 'tallies',
-  config: { visibility: 'shared', write: 'none', counters: ['plays'] },
+  config: decl({ visibility: 'shared', write: 'none', counters: ['plays'] }),
 };
 export const PLAYS: DocCollection = {
   name: 'plays',
-  config: { visibility: 'shared', write: 'owner', counters: ['plays'] },
+  config: decl({ visibility: 'shared', write: 'owner', counters: ['plays'] }),
 };
 
 export const ctx = (appId: string, ns: string, viewerUid: number | null): DocStoreContext => ({
@@ -130,11 +151,11 @@ export async function assertNumericRetypeIsolated(store: DocStore, appId: string
   ] as const) {
     const asNumber: DocCollection = {
       name,
-      config: { visibility: 'shared', indexes: { f: 'number' } },
+      config: decl({ visibility: 'shared', indexes: { f: 'number' } }),
     };
     const retyped: DocCollection = {
       name,
-      config: { visibility: 'shared', indexes: { f: newType } },
+      config: decl({ visibility: 'shared', indexes: { f: newType } }),
     };
     await store.put(who, asNumber, 'num-1', { f: 1 });
     await store.put(who, asNumber, 'num-7', { f: 7 });
@@ -333,13 +354,19 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       const anyone: DocCollection = {
         name: 'anyone',
-        config: { visibility: 'shared', write: 'anyone' },
+        config: decl({ visibility: 'shared', write: 'anyone' }),
       };
-      const ttl: DocCollection = { name: 'ttl', config: { visibility: 'private', ttlSeconds: 60 } };
-      const log: DocCollection = { name: 'log', config: { visibility: 'private', kind: 'log' } };
+      const ttl: DocCollection = {
+        name: 'ttl',
+        config: decl({ visibility: 'private', ttlSeconds: 60 }),
+      };
+      const log: DocCollection = {
+        name: 'log',
+        config: decl({ visibility: 'private', kind: 'log' }),
+      };
       const capped: DocCollection = {
         name: 'capped',
-        config: { visibility: 'shared', maxEntries: 100, counters: ['n'] },
+        config: decl({ visibility: 'shared', maxEntries: 100, counters: ['n'] }),
       };
       for (const coll of [anyone, ttl, log, capped]) {
         await expectCode(store.put(v1, coll, 'k', { a: 1 }), 'invalid_request');
@@ -431,7 +458,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('report');
       await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
       expect(
-        await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report', { reason: 'spam' })
+        await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report')
       ).toEqual({
         marked: true,
         count: null,
@@ -439,10 +466,6 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
       expect(doc?.marks).toEqual({ vote: 0, star: 0 });
       expect(doc?.viewer).toEqual({ marks: ['report'] });
-      await expectCode(
-        store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote', { reason: 'x' }),
-        'invalid_request'
-      );
       await expectCode(
         store.list(ctx(app, NS_PROD, VIEWER_2), POSTS, { sort: '-mark:report' }),
         'index_not_declared'
@@ -453,11 +476,11 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('latedecl');
       const before: DocCollection = {
         name: 'late',
-        config: { visibility: 'shared', write: 'own' },
+        config: decl({ visibility: 'shared', write: 'own' }),
       };
       const after: DocCollection = {
         name: 'late',
-        config: { visibility: 'shared', write: 'own', counters: ['hits'] },
+        config: decl({ visibility: 'shared', write: 'own', counters: ['hits'] }),
       };
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, before, 'old', { a: 1 });
@@ -473,7 +496,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('report_decl');
       const coll: DocCollection = {
         name: 'flagged',
-        config: { visibility: 'shared', write: 'own', marks: ['vote', 'report'] },
+        config: decl({ visibility: 'shared', write: 'own', marks: ['vote', 'report'] }),
       };
       await store.put(ctx(app, NS_PROD, VIEWER_1), coll, 'k', { a: 1 });
       await store.mark(ctx(app, NS_PROD, VIEWER_2), coll, 'k', 'report');
@@ -605,7 +628,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       // The same collection later declared `own`: its counter docs stay unowned.
       const flipped: DocCollection = {
         name: TALLIES.name,
-        config: { visibility: 'shared', write: 'own', counters: ['plays'] },
+        config: decl({ visibility: 'shared', write: 'own', counters: ['plays'] }),
       };
       await store.put(v1, flipped, 'mine', { a: 1 });
       const keys = (q: Parameters<DocStore['list']>[2]) =>
@@ -945,11 +968,11 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       const asNumber: DocCollection = {
         name: 'retyped',
-        config: { visibility: 'shared', indexes: { rank: 'number' } },
+        config: decl({ visibility: 'shared', indexes: { rank: 'number' } }),
       };
       const asString: DocCollection = {
         name: 'retyped',
-        config: { visibility: 'shared', indexes: { rank: 'string' } },
+        config: decl({ visibility: 'shared', indexes: { rank: 'string' } }),
       };
       for (const [k, r] of [
         ['n1', 3],
@@ -986,9 +1009,9 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       const declared: DocCollection = {
         name: 'redecl',
-        config: { visibility: 'shared', indexes: { status: 'string' } },
+        config: decl({ visibility: 'shared', indexes: { status: 'string' } }),
       };
-      const undeclared: DocCollection = { name: 'redecl', config: { visibility: 'shared' } };
+      const undeclared: DocCollection = { name: 'redecl', config: decl({ visibility: 'shared' }) };
       await store.put(v1, declared, 'k', { status: 'open' });
       await store.put(v1, undeclared, 'k', { status: 'closed' });
       expect(await h.raw(`SELECT 1 FROM appdata.doc_index WHERE app_id = $1`, [app])).toEqual([]);
@@ -1000,7 +1023,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('prividx');
       const coll: DocCollection = {
         name: 'notes',
-        config: { visibility: 'private', indexes: { tag: 'string' } },
+        config: decl({ visibility: 'private', indexes: { tag: 'string' } }),
       };
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       const v2 = ctx(app, NS_PROD, VIEWER_2);
@@ -1022,7 +1045,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('cursor');
       const coll: DocCollection = {
         name: 'wide',
-        config: { visibility: 'shared', write: 'own', indexes: { label: 'string' } },
+        config: decl({ visibility: 'shared', write: 'own', indexes: { label: 'string' } }),
       };
       // 128 bytes each: 3-byte chars, 4-byte chars (surrogate pairs in JS), mixed.
       const labels = [

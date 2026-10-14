@@ -77,8 +77,36 @@ describe('rated-entity profiles', () => {
       'Trained words': 'a, b',
     });
     expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [1] }, deletedAt: null } })
+      expect.objectContaining({
+        where: { id: { in: [1] }, deletedAt: null },
+      })
     );
+  });
+
+  // Every reader but the scan needs non-public models too: a moderator ruling or an appeal on a
+  // model its owner has since unpublished still hashes its text.
+  it.each([
+    ['Draft', 'Public', true],
+    ['Unpublished', 'Public', true],
+    ['Published', 'Public', false],
+    ['Scheduled', 'Public', false],
+    ['Published', 'Private', true],
+  ])('Model: a %s %s model loads, marked notPublic=%s', async (status, availability, notPublic) => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 9,
+        name: 'x',
+        description: null,
+        nsfw: false,
+        poi: false,
+        minor: false,
+        status,
+        availability,
+        modelVersions: [],
+      },
+    ]);
+    expect(Boolean((await load('Model')).notPublic)).toBe(notPublic);
   });
 
   it('Model: an nsfw model is declared at the top level', async () => {
@@ -146,6 +174,20 @@ describe('rated-entity profiles', () => {
     const subject = await load('Challenge');
     expect(subject.userId).toBe(9);
     expect(subject.text).toMatchObject({ 'Theme elements': 'rain, city', Description: 'D' });
+  });
+
+  it.each([
+    [null, true],
+    [new Date('2099-01-01'), false],
+    [new Date('2020-01-01'), false],
+  ])('Post: publishedAt %s loads, marked notPublic=%s', async (publishedAt, notPublic) => {
+    dbMock.dbWrite.post.findMany.mockResolvedValue([
+      { id: 1, userId: 9, title: 'T', detail: null, nsfwLevel: 1, publishedAt },
+    ]);
+    expect(Boolean((await load('Post')).notPublic)).toBe(notPublic);
+    expect(dbMock.dbWrite.post.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] } } })
+    );
   });
 
   it('reads the primary, so a scan right after a save sees the new text', async () => {

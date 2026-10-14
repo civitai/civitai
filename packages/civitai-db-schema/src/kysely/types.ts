@@ -4503,6 +4503,15 @@ export type ScanLabelClaim = {
   userId: number;
   expiresAt: Timestamp;
 };
+export type ScanLabelCopyObject = {
+  key: string;
+  itemId: number;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+  withdrawnAt: Timestamp | null;
+  withdrawReason: string | null;
+  withdrawError: string | null;
+};
 export type ScanLabelFlag = {
   id: Generated<number>;
   itemId: number;
@@ -4530,6 +4539,10 @@ export type ScanLabelItem = {
   actionStartedAt: Timestamp | null;
   actionResult: string | null;
   actionError: string | null;
+  copyState: string | null;
+  copyKey: string | null;
+  copiedAt: Timestamp | null;
+  copyError: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type ScanLabelQuota = {
@@ -4544,6 +4557,7 @@ export type ScanLabelVote = {
   userId: number;
   block: boolean;
   reason: string | null;
+  reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Generated<Timestamp>;
 };
@@ -5538,6 +5552,7 @@ export type DB = {
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
   ScanLabelClaim: ScanLabelClaim;
+  ScanLabelCopyObject: ScanLabelCopyObject;
   ScanLabelFlag: ScanLabelFlag;
   ScanLabelItem: ScanLabelItem;
   ScanLabelQuota: ScanLabelQuota;

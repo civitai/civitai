@@ -2024,6 +2024,13 @@ describe('apps.mod.* mount seam', () => {
 
   it('exposes EXACTLY the moderator procedures, no more and no fewer', () => {
     expect(modProcedurePaths()).toEqual([
+      // Document-store moderation; behaviour through this mount is in
+      // `apps-mod-doc-store.router.test.ts`.
+      'mod.docStore.delete',
+      'mod.docStore.dismissReports',
+      'mod.docStore.get',
+      'mod.docStore.listReported',
+      'mod.docStore.setHidden',
       'mod.purgeSharedRow',
       'mod.userStorage.preview',
       'mod.userStorage.purgeAccount',

@@ -35,6 +35,7 @@ export const postedPickableSelect = {
   width: true,
   height: true,
   nsfwLevel: true,
+  createdAt: true,
 } satisfies Prisma.ImageSelect;
 
 export type PostedPickableRow = Prisma.ImageGetPayload<{ select: typeof postedPickableSelect }>;
@@ -47,6 +48,8 @@ export type PostedPickableImage = {
   width: number;
   height: number;
   nsfwLevel: number;
+  /** For the picker's own tile label. Never sent to the app. */
+  createdAt: Date;
 };
 
 /** Widest rendition a pick is served at: the width the upload bridge already hands apps. */
@@ -91,5 +94,6 @@ export function projectPostedPickableImage(row: PostedPickableRow): PostedPickab
     width: rendition.width,
     height: rendition.height,
     nsfwLevel: row.nsfwLevel,
+    createdAt: row.createdAt,
   };
 }

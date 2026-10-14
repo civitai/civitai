@@ -1,17 +1,20 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
+import { isPublicModel } from '~/server/services/text-scan/public-content';
 import type { TextScanSubject } from '~/server/services/text-scan/types';
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { removeTags } from '~/utils/string-helpers';
 
 const PUBLIC_STATUSES = [ModelStatus.Published, ModelStatus.Scheduled];
-import { removeTags } from '~/utils/string-helpers';
 
 /**
  * Shared with the `ModelRules` profile, so both scans read the same model text. `publicOnly` loads
  * only what the public can see: a Published or Scheduled, non-Private model and its public versions.
- * `prePublish` loads a model that is not public yet as the post-publish scan will see it, so the two
- * text hashes agree: any status, and the public versions plus the ones this publish makes public.
+ * The default load returns a model whatever its state and marks it `notPublic`; only `scanEntity`
+ * skips it, so rulings and the lab still read it. `prePublish` loads a model that is not public yet
+ * as the post-publish scan will see it, so the two text hashes agree: any status, and the public
+ * versions plus the ones this publish makes public.
  */
 export async function loadModelScanSubjects(
   ids: number[],
@@ -40,6 +43,8 @@ export async function loadModelScanSubjects(
       nsfw: true,
       poi: true,
       minor: true,
+      status: true,
+      availability: true,
       modelVersions: {
         ...(prePublish
           ? { where: { OR: [publicVersions, { id: { in: prePublish.versionIds } }] } }
@@ -56,6 +61,8 @@ export async function loadModelScanSubjects(
       m.id,
       {
         userId: m.userId,
+        // A prePublish load is the pre-publish text for a hash, not a scan, so it is never gated.
+        ...(!prePublish && !isPublicModel(m) ? { notPublic: true } : {}),
         declared: {
           nsfwLevel: m.nsfw ? NsfwLevel.XXX : NsfwLevel.PG13,
           poi: m.poi,

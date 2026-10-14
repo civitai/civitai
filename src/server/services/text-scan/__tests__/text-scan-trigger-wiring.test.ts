@@ -73,12 +73,6 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   ],
   [
     'src/server/services/model.service.ts',
-    'export const privateModelFromTraining',
-    'scanModelAndRules(result.id)',
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
     'export async function migrateResourceToCollection',
     'modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }))',
     1,
@@ -86,7 +80,7 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/services/model-moderation.adapter.ts',
     'export async function submitModelTextModeration(',
-    "if (model.isModerator) return;\n\n  scanEntityInBackground({ entityType: 'ModelRules', entityId: model.id })",
+    "if (model.isModerator) return;\n\n  if (model.rules !== false)\n    scanEntityInBackground({ entityType: 'ModelRules', entityId: model.id })",
     1,
   ],
   [
@@ -144,15 +138,15 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     1,
   ],
   [
-    'src/server/services/post.service.ts',
-    'export const createPost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'src/server/services/model-version.service.ts',
+    'export const publishModelVersionById',
+    'scanEntitiesInBackground(',
     1,
   ],
   [
-    'src/server/services/post.service.ts',
-    'export const updatePost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'src/server/jobs/process-scheduled-publishing.ts',
+    'export const processScheduledPublishing',
+    'scanEntitiesInBackground(',
     1,
   ],
   [

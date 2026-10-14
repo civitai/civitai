@@ -12,7 +12,11 @@ import type {
   NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
-import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
+import {
+  exceedsNsfwLevel,
+  isPrivateMature,
+  isMature,
+} from '~/shared/constants/orchestrator.constants';
 import {
   orchestratorCompletedStatuses,
   orchestratorRefundableStatuses,
@@ -39,6 +43,7 @@ export interface WorkflowDataOptions {
 }
 
 export const PENDING_RATING = 'pendingRating';
+export const NSFW_CAPPED = 'nsfwCapped';
 
 /**
  * An image or video reported available before it is rated. Audio is never rated, and a 3D mesh
@@ -52,7 +57,10 @@ export function isUnratedOutput(
   return !output.blockedReason || output.blockedReason === 'none';
 }
 
-type BlobOptions = WorkflowDataOptions & { allowMatureContent?: boolean | null };
+type BlobOptions = WorkflowDataOptions & {
+  allowMatureContent?: boolean | null;
+  nsfwCap?: NsfwLevel | null;
+};
 
 // =============================================================================
 // WorkflowData
@@ -78,7 +86,11 @@ export class WorkflowData {
     Object.assign(this, workflow);
 
     // Initialize chain: StepData → BlobData with parent refs
-    const blobOptions: BlobOptions = { allowMatureContent: this.allowMatureContent, ...options };
+    const blobOptions: BlobOptions = {
+      allowMatureContent: this.allowMatureContent,
+      nsfwCap: this.nsfwCap,
+      ...options,
+    };
     this.steps = (this.steps ?? []).map((rawStep: any) => {
       if (rawStep instanceof StepData) {
         rawStep._setWorkflow(this);
@@ -346,6 +358,7 @@ export abstract class BlobData {
   constructor({
     data,
     allowMatureContent,
+    nsfwCap,
     step,
     index,
     domain,
@@ -378,6 +391,9 @@ export abstract class BlobData {
       // not yet shown.
       if (holdUnrated && isUnratedOutput(data)) {
         this.blockedReason = PENDING_RATING;
+      } else if (nsfwCap && exceedsNsfwLevel(data.nsfwLevel, nsfwCap)) {
+        // The orchestrator reports these available but serves a placeholder in their place.
+        this.blockedReason = NSFW_CAPPED;
       } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
         this.blockedReason = 'privateGen';
       } else if (isMature(data.nsfwLevel)) {

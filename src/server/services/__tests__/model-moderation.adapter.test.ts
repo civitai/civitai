@@ -62,6 +62,7 @@ const { isFlipt } = await import('~/server/flipt/client');
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { getDbWithoutLag } = await import('~/server/db/db-lag-helpers');
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
+const { TEXT_SCAN_ENTITY_NOT_PUBLIC } = await import('~/server/services/text-scan/route');
 
 const SUBMIT_FLAG = 'model-text-moderation-xguard';
 const APPLY_FLAG = 'model-text-moderation-xguard-apply';
@@ -496,7 +497,10 @@ describe('modelModerationAdapter.applyResult', () => {
 });
 
 describe('modelModerationAdapter.submit', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 5 });
+  });
 
   it('submits the full label list at low priority, recorded for review, when the flag is on', async () => {
     flags({ [SUBMIT_FLAG]: true });
@@ -525,6 +529,16 @@ describe('modelModerationAdapter.submit', () => {
 
     expect(submitTextModeration).not.toHaveBeenCalled();
     expect(result).toBeUndefined();
+  });
+
+  it('returns the not-public marker instead of submitting a model that is not public', async () => {
+    flags({ [SUBMIT_FLAG]: true });
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+
+    const result = await modelModerationAdapter.submit({ entityId: 5, content: 'some text' });
+
+    expect(submitTextModeration).not.toHaveBeenCalled();
+    expect(result).toBe(TEXT_SCAN_ENTITY_NOT_PUBLIC);
   });
 
   // The cron asks this BEFORE it spends a retry. A declined submit is indistinguishable from a
@@ -562,6 +576,15 @@ describe('modelModerationAdapter.resolveContent', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
 
     expect((await modelModerationAdapter.resolveContent([1, 2])).size).toBe(0);
+  });
+
+  // Only a deleted model is gone; a not-public one keeps its row and verdict, and submit parks it.
+  it('omits only deleted models', async () => {
+    await modelModerationAdapter.resolveContent([1]);
+
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] }, deletedAt: null } })
+    );
   });
 });
 

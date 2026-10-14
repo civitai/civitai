@@ -31,8 +31,10 @@ vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
 const modelActions = {
   unpublishReportedModel: vi.fn(),
   takeDownReportedModel: vi.fn(),
+  bringBackReportedModel: vi.fn(),
   setReportedModelSfwOnly: vi.fn(),
   setReportedModelMinor: vi.fn(),
+  unsetReportedModelMinor: vi.fn(),
 };
 vi.mock('$lib/server/model-moderation.service', () => modelActions);
 const delistGame = vi.fn();
@@ -313,32 +315,43 @@ describe('moderateModel action', () => {
     for (const fn of Object.values(modelActions)) fn.mockResolvedValue({ ok: true });
   });
 
-  it('acts on the model the REPORT names, then sets the report Actioned', async () => {
-    // A posted modelId is ignored: a stale tab must not act on one model and close a report about another.
+  it('acts on the model the REPORT names, and never touches the report', async () => {
+    // A posted modelId is ignored: a stale tab must not act on one model while a moderator believes
+    // they are looking at another.
     const result = await moderate({ modelAction: 'takeDown', modelId: '99' });
 
     expect(getReportedModelId).toHaveBeenCalledWith(55);
     expect(modelActions.takeDownReportedModel).toHaveBeenCalledWith(4201);
-    expect(setReportStatus).toHaveBeenCalledWith({
-      id: 55,
-      status: ReportStatus.Actioned,
-      userId: 7,
-      ip: '203.0.113.9',
-    });
-    expect(result).toEqual({
-      success: true,
-      moderated: 'Taken down model #4201; report actioned',
-    });
+    // Closing the report is the Report status buttons' job. Actioned pays the reporters, which must
+    // not happen as a side effect of a model button.
+    expect(setReportStatus).not.toHaveBeenCalled();
+    expect(result).toEqual({ success: true, moderated: 'Taken down model #4201' });
   });
 
-  it('takes down only for a holder of model.takeDown', async () => {
+  it.each([
+    ['setMinor', 'setReportedModelMinor', [4201], 'Flagged as minor'],
+    ['unsetMinor', 'unsetReportedModelMinor', [4201], 'Unflagged as minor'],
+    ['setSfwOnly', 'setReportedModelSfwOnly', [4201, true], 'Set as SFW-only'],
+    ['unsetSfwOnly', 'setReportedModelSfwOnly', [4201, false], 'Allowed NSFW on'],
+    ['bringBack', 'bringBackReportedModel', [4201], 'Brought back'],
+  ] as const)('%s calls %s', async (modelAction, fn, args, done) => {
+    const result = await moderate({ modelAction });
+    expect(modelActions[fn]).toHaveBeenCalledWith(...args);
+    expect(result).toEqual({ success: true, moderated: `${done} model #4201` });
+  });
+
+  it.each(['takeDown', 'bringBack'])('%s needs model.takeDown — both directions, one grant', async (modelAction) => {
     grants = {};
-    expect(failure(await moderate({ modelAction: 'takeDown' }))).toEqual({
+    expect(failure(await moderate({ modelAction }))).toEqual({
       status: 403,
       error: 'This action requires the “Take down a model (ownership / claim)” permission.',
     });
     expect(modelActions.takeDownReportedModel).not.toHaveBeenCalled();
-    expect(setReportStatus).not.toHaveBeenCalled();
+    expect(modelActions.bringBackReportedModel).not.toHaveBeenCalled();
+  });
+
+  it('has no republish: undoing a violation unpublish is an appeal, not a report button', async () => {
+    expect(failure(await moderate({ modelAction: 'republish' })).status).toBe(400);
   });
 
   it('has no delete: a report is answered by taking a model down, never by destroying it', async () => {
@@ -346,22 +359,12 @@ describe('moderateModel action', () => {
     expect(setReportStatus).not.toHaveBeenCalled();
   });
 
-  it('leaves the report open when the main app refuses', async () => {
+  it('passes a refusal from the main app straight through', async () => {
     modelActions.takeDownReportedModel.mockResolvedValue({ ok: false, error: 'Take down returned 500.' });
 
     expect(failure(await moderate({ modelAction: 'takeDown' }))).toEqual({
       status: 400,
       error: 'Take down returned 500.',
-    });
-    expect(setReportStatus).not.toHaveBeenCalled();
-  });
-
-  it('says the model changed even when the report vanished meanwhile', async () => {
-    setReportStatus.mockResolvedValue({ ok: false, error: 'That report no longer exists. Reload.' });
-
-    expect(failure(await moderate({ modelAction: 'setSfwOnly' }))).toEqual({
-      status: 410,
-      error: 'Set as SFW-only, but That report no longer exists. Reload.',
     });
   });
 

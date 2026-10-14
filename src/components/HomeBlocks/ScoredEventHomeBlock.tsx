@@ -165,9 +165,10 @@ export function ScoredEventHomeBlock({
       ) : (
         <>
           {copy.title}{' '}
+          {/* Its own line, and never broken, so no word of it is left alone on a line. */}
           {copy.accent && (
             <span
-              className={styles.accent}
+              className={clsx(styles.accent, 'block w-fit whitespace-nowrap')}
               style={{ backgroundImage: `linear-gradient(90deg, ${colors.join(', ')})` }}
             >
               {copy.accent}
@@ -546,17 +547,21 @@ function HatTiles({
         </NextLink>
       ) : (
         shown < HOME_BLOCK_HAT_TILES && (
+          // Laid out like a hat tile, a plus for its picture and two short lines for its name and
+          // points, so the words fit its width without wrapping.
           <NextLink
             href={`/events/${event}#team-hats`}
-            className="grid w-[104px] shrink-0 place-items-center rounded-[11px] border-[1.5px] border-dashed border-white/25 p-2 text-center text-xs font-bold text-white no-underline"
+            className="flex w-[104px] shrink-0 flex-col rounded-[11px] border-[1.5px] border-dashed border-white/25 text-white no-underline"
             data-testid="event-home-block-get-hat"
           >
-            <span>
-              <IconPlus size={20} className="mx-auto block text-gray-4" />
-              Get another hat
-              <span className="block text-[11px] font-medium text-gray-5">
-                One more post scoring
+            <span className="grid h-[86px] place-items-center border-0 border-b-[1.5px] border-dashed border-white/15">
+              <span className="grid size-[34px] place-items-center rounded-full bg-white/10">
+                <IconPlus size={20} className="text-gray-4" />
               </span>
+            </span>
+            <span className="block px-2 pb-1.5 pt-1 text-[11px]">
+              <span className="block truncate font-bold">Another hat</span>
+              <span className="block truncate font-medium text-gray-5">+1 post scoring</span>
             </span>
           </NextLink>
         )

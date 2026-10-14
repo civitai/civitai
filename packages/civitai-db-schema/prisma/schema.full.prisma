@@ -6880,6 +6880,10 @@ model ScanLabelItem {
   actionStartedAt DateTime? @db.Timestamptz(3)
   actionResult    String?
   actionError     String?
+  copyState       String?
+  copyKey         String?
+  copiedAt        DateTime? @db.Timestamptz(3)
+  copyError       String?
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)
 }
 
@@ -6900,9 +6904,10 @@ model ScanLabelFlag {
 model ScanLabelVote {
   itemId    Int
   userId    Int
-  block     Boolean
-  reason    String?
-  msOnItem  Int?
+  block         Boolean
+  reason        String?
+  reasonComment String?
+  msOnItem      Int?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@id([itemId, userId])
@@ -6916,6 +6921,17 @@ model ScanLabelClaim {
 
   @@id([itemId, userId])
   @@index([userId])
+}
+
+// Every object the scan label copy job wrote; no FK so a copy stays tracked after its item is deleted.
+model ScanLabelCopyObject {
+  key            String    @id
+  itemId         Int
+  imageId        Int
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  withdrawnAt    DateTime? @db.Timestamptz(3)
+  withdrawReason String?
+  withdrawError  String?
 }
 
 model ScanLabelQuota {

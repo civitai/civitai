@@ -27,6 +27,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),
   '/api/mod/minor-flag/revert': () => import('~/pages/api/mod/minor-flag/revert'),
   '/api/mod/minor-flag/set-minor': () => import('~/pages/api/mod/minor-flag/set-minor'),
+  '/api/mod/model/bring-back': () => import('~/pages/api/mod/model/bring-back'),
   '/api/mod/model/bump': () => import('~/pages/api/mod/model/bump'),
   '/api/mod/model/set-sfw-only': () => import('~/pages/api/mod/model/set-sfw-only'),
   '/api/mod/model/take-down': () => import('~/pages/api/mod/model/take-down'),

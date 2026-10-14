@@ -9,6 +9,7 @@ import {
 } from '~/server/services/text-scan/mode';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import { subjectTextLength } from '~/server/services/text-scan/prompt';
+import { toSubmittedWorkflow } from '~/server/services/text-scan/route';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 
@@ -28,7 +29,7 @@ export async function submitViaTextScan(entityType: TextScanEntityType, entityId
       },
       data: { retryCount: { increment: 1 } },
     });
-  return result.status === 'submitted' ? { id: result.workflowId } : null;
+  return toSubmittedWorkflow(result);
 }
 
 export function createTextScanShadowAdapter(entityType: TextScanEntityType): ModerationAdapter {
@@ -55,15 +56,10 @@ export function textScanWebSearchAdapters() {
         textScanEmEntityType(entityType, mode, 'web-search'),
         {
           ...createTextScanAdapter(entityType, {}),
-          submit: async ({ entityId }) => {
-            const result = await scanEntity({
-              entityType,
-              entityId,
-              fromRetry: true,
-              pass: 'web-search',
-            });
-            return result.status === 'submitted' ? { id: result.workflowId } : null;
-          },
+          submit: async ({ entityId }) =>
+            toSubmittedWorkflow(
+              await scanEntity({ entityType, entityId, fromRetry: true, pass: 'web-search' })
+            ),
           isEnabled: async ({ entityId }) =>
             (await getTextScanWebSearchMode(entityType, entityId)) === mode,
         },
@@ -82,12 +78,13 @@ export function createTextScanAdapter(
       if (!profile) return new Map();
       const subjects = await profile.load(ids);
       const minChars = profile.minChars ?? 1;
-      // Omitted ids take the retry cron's missing path (row deleted) instead of failing forever.
+      // Omitted ids take the retry cron's missing path (row deleted) instead of failing forever;
+      // a not-public entity is kept so its row, and the verdict on it, survive.
       // `submit` rescans from the entity and ignores the content, so a marker avoids holding a
       // whole batch of composed text in memory.
       return new Map(
         [...subjects]
-          .filter(([, subject]) => subjectTextLength(subject) >= minChars)
+          .filter(([, subject]) => subject.notPublic || subjectTextLength(subject) >= minChars)
           .map(([id]) => [id, TEXT_SCAN_RETRY_CONTENT])
       );
     },

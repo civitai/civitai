@@ -40,6 +40,8 @@ export type TextScanSubject = {
   declared: TextScanDeclared;
   /** The account a verdict is about: the owner, or for ChatMessage the window's sender. */
   userId?: number;
+  /** Exists but is not public: the scan skips it; every other reader still gets it. */
+  notPublic?: boolean;
   meta?: Record<string, unknown>;
 };
 
@@ -48,7 +50,7 @@ export type TextScanProfile = {
   labels: TextScanLabel[];
   /** Compared against `subjectTextLength` (raw trimmed field text, no headings). */
   minChars?: number;
-  /** Entities that no longer exist are absent from the map. */
+  /** Entities that no longer exist are absent from the map; ones that are not public are not. */
   load: (ids: number[]) => Promise<Map<number, TextScanSubject>>;
 };
 

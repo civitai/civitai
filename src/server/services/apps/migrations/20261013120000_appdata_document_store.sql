@@ -31,6 +31,16 @@
 --   transaction. A statement run without those settings sees no rows and cannot
 --   insert any.
 --
+--   The one exception is REVIEW MAINTENANCE: deleting the review namespaces
+--   (`rev:<publishRequestId>:<moderatorUid>`) of a decided publish request. A
+--   transaction that also sets `appdata.review_maintenance` to 'on' may read and
+--   delete rows whose `ns` starts with `rev:` AND whose `app_id` is the request
+--   in `appdata.app_id`; bound to no request, it may read the review rows of any
+--   app on `doc` and `usage_app` (read only), which is how the sweep finds
+--   requests to purge. It can never
+--   see or touch a `prod` or `dev:` row, and never insert or update anything.
+--   Only the purge and sweep functions in `doc-store.ts` set it.
+--
 -- IDEMPOTENT: every statement is IF NOT EXISTS, or a DROP IF EXISTS + CREATE
 --   inside this one transaction; safe to re-run. ROLLBACK: the sibling file
 --   `20261013120000_appdata_document_store.down.sql` (destroys all data in it).
@@ -79,6 +89,14 @@ CREATE TABLE IF NOT EXISTS appdata.doc (
   CONSTRAINT doc_author_kind CHECK (author_kind IN ('user', 'app', 'counter')),
   CONSTRAINT doc_version_positive CHECK (version >= 1)
 );
+
+-- When a moderator last dismissed the document's reports (reviewed and kept): only report
+-- marks made after it count as open. NULL = never dismissed. A separate ADD COLUMN so a
+-- re-apply over a table created before the column existed still adds it.
+ALTER TABLE appdata.doc ADD COLUMN IF NOT EXISTS reports_dismissed_at timestamptz;
+-- The moderators' hidden view: hidden documents only (few), so it never reads the whole app.
+CREATE INDEX IF NOT EXISTS doc_hidden_idx
+  ON appdata.doc (app_id, ns, scope_uid, coll, key) WHERE hidden_at IS NOT NULL;
 
 -- `author=me` lists.
 CREATE INDEX IF NOT EXISTS doc_author_idx
@@ -165,6 +183,11 @@ CREATE TABLE IF NOT EXISTS appdata.doc_mark (
   CONSTRAINT doc_mark_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT doc_mark_pkey PRIMARY KEY (app_id, ns, coll, key, name, user_id)
 );
+-- The moderators' report queue: every mark of ONE name in an app (`report`), without reading
+-- the app's other marks. Neither the primary key nor `doc_mark_user_idx` has `name` right
+-- after (app_id, ns). One more btree entry per mark write.
+CREATE INDEX IF NOT EXISTS doc_mark_name_idx
+  ON appdata.doc_mark (app_id, ns, name, coll, key);
 -- `markedBy=me` lists and account deletion.
 CREATE INDEX IF NOT EXISTS doc_mark_user_idx
   ON appdata.doc_mark (app_id, ns, coll, user_id, name, key);
@@ -229,6 +252,28 @@ BEGIN
       'AND ns = NULLIF(current_setting(''appdata.ns'', true), '''')) '
       'WITH CHECK (app_id = NULLIF(current_setting(''appdata.app_id'', true), '''') '
       'AND ns = NULLIF(current_setting(''appdata.ns'', true), ''''))',
+      t);
+    -- Review maintenance (see the header). Read and delete only: no INSERT or
+    -- UPDATE policy admits it, so WITH CHECK stays the scope policy's alone.
+    EXECUTE format('DROP POLICY IF EXISTS appdata_review_read ON appdata.%I', t);
+    EXECUTE format('DROP POLICY IF EXISTS appdata_review_delete ON appdata.%I', t);
+    -- Reads are keyed on the bound request like deletes, except that on `doc` and
+    -- `usage_app` a transaction bound to NO request may read every app's review rows: that is
+    -- the sweep's listing of requests that still hold review data.
+    EXECUTE format(
+      'CREATE POLICY appdata_review_read ON appdata.%I FOR SELECT '
+      'USING (current_setting(''appdata.review_maintenance'', true) = ''on'' '
+      'AND ns LIKE ''rev:%%'' '
+      'AND (app_id = NULLIF(current_setting(''appdata.app_id'', true), '''')%s))',
+      t,
+      CASE WHEN t IN ('doc', 'usage_app')
+        THEN ' OR NULLIF(current_setting(''appdata.app_id'', true), '''') IS NULL'
+        ELSE '' END);
+    EXECUTE format(
+      'CREATE POLICY appdata_review_delete ON appdata.%I FOR DELETE '
+      'USING (current_setting(''appdata.review_maintenance'', true) = ''on'' '
+      'AND ns LIKE ''rev:%%'' '
+      'AND app_id = NULLIF(current_setting(''appdata.app_id'', true), ''''))',
       t);
   END LOOP;
 END
