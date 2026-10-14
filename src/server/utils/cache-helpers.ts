@@ -410,6 +410,31 @@ export async function fetchThroughCache<T>(
   }
 }
 
+/**
+ * Writes a fresh `fetchThroughCache` entry, as a refill after an origin fetch would. For a write
+ * that knows the new value: marking the entry stale instead (`bustFetchThroughCache`) leaves the
+ * old value to any read that loses the refill lock, so a reader can be shown the count from
+ * before their own write. Best-effort, as the refill's own write is.
+ */
+export async function setFetchThroughCache<T>(
+  key: RedisKeyTemplateCache,
+  data: T,
+  options: Pick<FetchThroughCacheOptions, 'ttl' | 'compress' | 'cacheName'> = {}
+) {
+  const ttl = options.ttl ?? CacheTTL.sm;
+  const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
+  try {
+    await redis.packed.set(
+      key,
+      toCache,
+      { EX: ttl * 2 },
+      { compress: options.compress ?? false, cacheName: options.cacheName }
+    );
+  } catch (err) {
+    logSysRedisFailOpen('write-degraded', 'setFetchThroughCache set (cache cluster)', err, { key });
+  }
+}
+
 export async function bustFetchThroughCache(
   key: RedisKeyTemplateCache,
   // `compress` MUST match the setting the corresponding fetchThroughCache() uses for

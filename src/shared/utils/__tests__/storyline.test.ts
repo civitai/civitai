@@ -219,14 +219,15 @@ describe('getStorylineChapterTombstone', () => {
 });
 
 describe('storylineShareMinChoices', () => {
+  // The default is 1: shares show from the first choice, and the minimum only words the copy.
   it.each([
-    [undefined, 20],
-    ['', 20],
-    ['0', 20],
-    ['-3', 20],
-    ['1.5', 20],
-    ['abc', 20],
-    ['1e3', 20],
+    [undefined, 1],
+    ['', 1],
+    ['0', 1],
+    ['-3', 1],
+    ['1.5', 1],
+    ['abc', 1],
+    ['1e3', 1],
     ['1', 1],
     [' 7 ', 7],
     ['20', 20],
@@ -236,7 +237,7 @@ describe('storylineShareMinChoices', () => {
 });
 
 describe('toStorylineForkShares', () => {
-  it('gives no shares below the minimum, but still the total so far', () => {
+  it('gives every way on its count and share from the first choice, below the minimum too', () => {
     expect(
       toStorylineForkShares(
         new Map([
@@ -245,10 +246,16 @@ describe('toStorylineForkShares', () => {
         ]),
         20
       )
-    ).toEqual({ enough: false, total: 3, minChoices: 20, shares: {} });
+    ).toEqual({
+      enough: false,
+      total: 3,
+      minChoices: 20,
+      counts: { 11: 2, 12: 1 },
+      shares: { 11: 2 / 3, 12: 1 / 3 },
+    });
   });
 
-  it('gives each way on its share once the minimum is reached', () => {
+  it('says enough once the minimum is reached', () => {
     expect(
       toStorylineForkShares(
         new Map([
@@ -257,10 +264,32 @@ describe('toStorylineForkShares', () => {
         ]),
         20
       )
-    ).toEqual({ enough: true, total: 20, minChoices: 20, shares: { 11: 0.75, 12: 0.25 } });
+    ).toEqual({
+      enough: true,
+      total: 20,
+      minChoices: 20,
+      counts: { 11: 15, 12: 5 },
+      shares: { 11: 0.75, 12: 0.25 },
+    });
   });
 
-  it('never claims enough with no readers, whatever the minimum', () => {
-    expect(toStorylineForkShares(new Map(), 1)).toMatchObject({ enough: false, total: 0 });
+  it('shows a single first choice as the whole share', () => {
+    expect(toStorylineForkShares(new Map([[11, 1]]), 1)).toEqual({
+      enough: true,
+      total: 1,
+      minChoices: 1,
+      counts: { 11: 1 },
+      shares: { 11: 1 },
+    });
+  });
+
+  it('never claims enough, or divides by zero, with no readers', () => {
+    expect(toStorylineForkShares(new Map(), 1)).toEqual({
+      enough: false,
+      total: 0,
+      minChoices: 1,
+      counts: {},
+      shares: {},
+    });
   });
 });

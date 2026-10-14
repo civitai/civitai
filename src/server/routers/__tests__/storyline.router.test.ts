@@ -19,7 +19,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   // Straight through to the origin; caching is not what these tests are about.
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
-  bustFetchThroughCache: vi.fn(),
+  setFetchThroughCache: vi.fn(),
 }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),

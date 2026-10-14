@@ -150,8 +150,8 @@ export function getStorylineChapterTombstone({
   return null;
 }
 
-/** Readers who must choose at a fork before shares are shown, unless the server overrides it. */
-export const STORYLINE_SHARE_MIN_CHOICES_DEFAULT = 20;
+/** Choices at a fork before the copy calls its shares settled, unless the server overrides it. */
+export const STORYLINE_SHARE_MIN_CHOICES_DEFAULT = 1;
 
 /**
  * The fork-share minimum from its raw setting: a whole number of at least 1, or the default for
@@ -165,17 +165,26 @@ export function storylineShareMinChoices(raw: string | undefined) {
 }
 
 /**
- * Each way on's share of the readers who chose at a fork. Below `minChoices` no share is given
- * (`enough: false`), because with a handful of readers every fork reads as a coin toss; the
- * total is still reported so a reader can see how far off it is.
+ * Each way on's count and share of the readers who chose at a fork, from the first choice. A way
+ * nobody took is absent from both. `enough` (at least `minChoices` choices) is for the copy, which
+ * can say how settled the shares are; it withholds nothing.
  */
 export function toStorylineForkShares(
   counts: ReadonlyMap<number, number>,
   minChoices: number
-): { enough: boolean; total: number; minChoices: number; shares: Record<number, number> } {
+): {
+  enough: boolean;
+  total: number;
+  minChoices: number;
+  counts: Record<number, number>;
+  shares: Record<number, number>;
+} {
   const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
-  const enough = total >= minChoices && total > 0;
+  const byChapter: Record<number, number> = {};
   const shares: Record<number, number> = {};
-  if (enough) for (const [chapterId, n] of counts) shares[chapterId] = n / total;
-  return { enough, total, minChoices, shares };
+  for (const [chapterId, n] of counts) {
+    byChapter[chapterId] = n;
+    if (total > 0) shares[chapterId] = n / total;
+  }
+  return { enough: total >= minChoices && total > 0, total, minChoices, counts: byChapter, shares };
 }
