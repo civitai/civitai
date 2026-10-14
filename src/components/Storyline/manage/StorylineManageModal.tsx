@@ -2,6 +2,7 @@ import { Alert, Badge, Button, Group, Loader, Modal, Tabs, Text } from '@mantine
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/StorylineCollaboratorsPanel';
+import { StorylineCoversRow } from '~/components/Storyline/manage/StorylineCoversRow';
 import { StorylineSettingsForm } from '~/components/Storyline/manage/StorylineSettingsForm';
 import {
   useStorylineChapterLevels,
@@ -89,6 +90,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
 
           <Tabs.Panel value="settings">
             <StorylineSettingsForm
+              coverRow={<StorylineCoversRow storylineId={storylineId} />}
               status={storyline.status}
               maxNsfwLevel={storyline.maxNsfwLevel}
               whoCanContinue={storyline.whoCanContinue}

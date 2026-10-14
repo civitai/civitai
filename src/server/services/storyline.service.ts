@@ -904,13 +904,16 @@ export async function getStoryline({
   const ownerUser = toCastUser(user);
   const isOwnerView = viewer?.id === storyline.userId || !!viewer?.isModerator;
   const firstChapter = mainPath[0]?.depth === 0 ? mainPath[0] : undefined;
+  const banner = chosen(id, heroImageId);
   return {
     ...rest,
     user: ownerUser,
     // The banner: the owner's banner pick, else their cover pick, else chapter 1's first image,
     // each only if this reader may see it. Never a hidden pick shown blurred.
-    heroImage:
-      chosen(id, heroImageId) ?? chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
+    heroImage: banner ?? chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
+    // Whether heroImage is the banner pick, so the page shows it as a wide banner at its focus
+    // rather than a portrait it must blur. Readers get no pick ids to compare.
+    heroIsBanner: !!banner,
     // The card's picture, as the feed shows it: the cover pick, else chapter 1's first image.
     coverImage: chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
     // The raw picks, for the owner's picker only.

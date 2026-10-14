@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as DialogProviderMod from '~/components/Dialog/DialogProvider';
+import type * as ImageUtilsMod from '~/components/Image/image.utils';
 import { NsfwLevel } from '~/server/common/enums';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
@@ -14,13 +15,17 @@ import {
 /**
  * The start form sends the post, the title and the ceiling the creator chose, and refuses a ceiling
  * below chapter 1's own rating: a storyline whose first chapter is above its ceiling would hide its
- * own start.
+ * own start. Beside the title it shows the post's first image, which becomes the cover, and it
+ * says in chips what continuing will cost and who reviews it.
  */
 
 const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   onClose: vi.fn(),
   options: {} as { onSuccess?: (data: { id: number }) => Promise<void> },
+  imageQuery: vi.fn(),
+  images: [] as unknown[],
+  imagesLoading: false,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -38,6 +43,29 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
+vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUtilsMod>()),
+  useQueryImages: (input: unknown, options: unknown) => {
+    mocks.imageQuery(input, options);
+    return { images: mocks.images, isLoading: mocks.imagesLoading };
+  },
+}));
+vi.mock('~/components/Storyline/StorylineThumb', () => ({
+  StorylineThumb: ({
+    image,
+    ratio,
+  }: {
+    image: { url: string } | null | undefined;
+    ratio?: string;
+  }) => (
+    <div
+      data-testid="thumb"
+      data-image={image === undefined ? 'loading' : image?.url ?? 'none'}
+      data-ratio={ratio ?? '3/4'}
+    />
+  ),
+}));
+
 vi.mock('~/components/Dialog/DialogProvider', async (orig) => ({
   ...(await orig<typeof DialogProviderMod>()),
   useDialogContext: () => ({ opened: true, onClose: mocks.onClose, zIndex: 200 }),
@@ -46,6 +74,9 @@ vi.mock('~/components/Dialog/DialogProvider', async (orig) => ({
 beforeEach(() => {
   mocks.mutate.mockReset();
   mocks.onClose.mockReset();
+  mocks.imageQuery.mockReset();
+  mocks.images = [{ id: 5, url: 'first-of-41', type: 'image', nsfwLevel: 1 }];
+  mocks.imagesLoading = false;
   vi.mocked(useRouter().push).mockClear();
 });
 
@@ -72,6 +103,47 @@ describe('StartStorylineModal', () => {
       maxNsfwLevel: NsfwLevel.X,
       whoCanContinue: 'Collaborators',
     });
+  });
+
+  test("shows the post's first image as chapter 1 and the cover", async () => {
+    renderWithProviders(<StartStorylineModal postId={41} postNsfwLevel={NsfwLevel.PG} />);
+
+    const cover = page.getByTestId('storyline-start-cover');
+    await expect.element(cover).toHaveTextContent('Chapter 1 and the cover');
+    const thumb = cover.getByTestId('thumb').element();
+    expect(thumb.getAttribute('data-image')).toBe('first-of-41');
+    expect(thumb.getAttribute('data-ratio')).toBe('4/5');
+    expect(mocks.imageQuery).toHaveBeenLastCalledWith(
+      expect.objectContaining({ postId: 41, limit: 1 }),
+      { enabled: true }
+    );
+  });
+
+  test('the cover is loading until the image read answers, then none if it found none', async () => {
+    mocks.imagesLoading = true;
+    const first = await renderWithProviders(
+      <StartStorylineModal postId={41} postNsfwLevel={NsfwLevel.PG} />
+    );
+    await expect
+      .element(page.getByTestId('storyline-start-cover').getByTestId('thumb'))
+      .toHaveAttribute('data-image', 'loading');
+    await first.unmount();
+
+    mocks.imagesLoading = false;
+    mocks.images = [];
+    renderWithProviders(<StartStorylineModal postId={41} postNsfwLevel={NsfwLevel.PG} />);
+    await expect
+      .element(page.getByTestId('storyline-start-cover').getByTestId('thumb'))
+      .toHaveAttribute('data-image', 'none');
+  });
+
+  test('the chips say it is free and who reviews, following the choice', async () => {
+    renderWithProviders(<StartStorylineModal postId={41} postNsfwLevel={NsfwLevel.PG} />);
+
+    const terms = page.getByTestId('storyline-start-terms');
+    await expect.element(terms).toHaveTextContent(/^Free to continueAnyone · you review$/);
+    await page.getByText('Only collaborators').click();
+    await expect.element(terms).toHaveTextContent(/^Free to continueCollaborators only$/);
   });
 
   test('anyone can continue unless the creator says otherwise', async () => {

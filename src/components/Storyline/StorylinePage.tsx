@@ -1,6 +1,7 @@
 import { ActionIcon, Alert, Button, Container, Skeleton, Text, Title } from '@mantine/core';
 import {
   IconBook2,
+  IconEyeOff,
   IconGitFork,
   IconPlayerPlayFilled,
   IconPlus,
@@ -19,11 +20,12 @@ import {
   StorylinePriceChip,
   StorylineRankChip,
   StorylineRoleChip,
+  StorylineShareChip,
   StorylineStat,
   StorylineStatusChip,
   storylineCardClass,
 } from '~/components/Storyline/StorylineChips';
-import { StorylineHero, useStorylineFirstImage } from '~/components/Storyline/StorylineCover';
+import { StorylineHero } from '~/components/Storyline/StorylineCover';
 import {
   getForkShare,
   getStorylineChapterName,
@@ -57,7 +59,6 @@ export function StorylinePage({ id }: { id: number }) {
   // The server tells the owner "closed": they add chapters directly, never as a continuation.
   // That is about them, not the storyline, so the owner is shown no closed chip or sentence.
   const shownTerms = storyline?.viewerRole === 'owner' ? null : terms;
-  const cover = useStorylineFirstImage(rootPost?.id ?? null);
 
   if (storylineQuery.isLoading) return <StorylinePageSkeleton />;
   if (!storyline)
@@ -71,12 +72,15 @@ export function StorylinePage({ id }: { id: number }) {
 
   return (
     <div className="pb-10">
-      {/* No banner can be picked yet: chapter 1's portrait shows as a backdrop. */}
-      <StorylineHero image={cover} backdrop />
+      {/* Only a picked banner shows sharp; the fallback is a portrait, so a blurred backdrop. */}
+      <StorylineHero
+        image={storyline.heroImage}
+        position={storyline.heroImagePosition}
+        backdrop={!storyline.heroIsBanner}
+      />
       <Container size="lg" className="relative mt-[-70px] flex flex-col gap-5 sm:mt-[-120px]">
         <StorylineHeader
           storyline={storyline}
-          cover={cover}
           rootPostId={rootPost?.id ?? null}
           lastPostId={lastPost?.id ?? null}
           terms={shownTerms}
@@ -103,13 +107,11 @@ export function StorylinePage({ id }: { id: number }) {
 
 function StorylineHeader({
   storyline,
-  cover,
   rootPostId,
   lastPostId,
   terms,
 }: {
   storyline: Storyline;
-  cover: ReturnType<typeof useStorylineFirstImage>;
   rootPostId: number | null;
   lastPostId: number | null;
   terms: ContinueTerms;
@@ -124,7 +126,7 @@ function StorylineHeader({
       <div className="flex min-w-0 flex-1 items-end gap-3.5">
         <div className="mt-[-50px] w-[92px] shrink-0 sm:mt-[-80px] sm:w-[150px]">
           <StorylineThumb
-            image={cover}
+            image={storyline.coverImage}
             width={150}
             fluid
             className="rounded-[10px] border-[3px] border-solid border-gray-0 shadow-lg dark:border-dark-6"
@@ -143,7 +145,7 @@ function StorylineHeader({
             <Text span size="sm" c="dimmed">
               Started by
             </Text>
-            <UserAvatar user={storyline.user} withUsername linkToProfile size="xs" />
+            <UserAvatar user={storyline.user} withUsername linkToProfile size="sm" />
           </div>
         </div>
       </div>
@@ -297,27 +299,42 @@ function ChapterStop({ chapter, endorsed }: { chapter: PathChapter; endorsed: bo
         {number}
       </span>
       {post ? (
-        <div className="min-w-0">
-          {/* An untitled chapter is named by its number, so the eyebrow would only repeat it. */}
-          {post.title && (
-            <Text size="xs" fw={700} c="dimmed">
-              Chapter {number}
-            </Text>
-          )}
-          <Text
-            component={Link}
+        <div className="flex gap-3.5">
+          {/* The name below is the link; the picture repeats it for the pointer only. */}
+          <Link
             href={`/posts/${post.id}`}
-            fw={700}
-            lh={1.25}
-            className="text-[15px] hover:underline sm:text-[17px]"
+            tabIndex={-1}
+            aria-hidden
+            className="w-[84px] shrink-0 sm:w-[112px]"
           >
-            {post.title || `Chapter ${number}`}
-          </Text>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <Text size="xs" c="dimmed">
-              by {post.username}
+            <StorylineThumb
+              image={chapter.firstImage}
+              width={112}
+              ratio="4/5"
+              fluid
+              className="rounded-lg"
+            />
+          </Link>
+          <div className="min-w-0 flex-1 pt-0.5">
+            {/* An untitled chapter is named by its number, so the eyebrow would only repeat it. */}
+            {post.title && (
+              <Text size="xs" fw={700} c="dimmed">
+                Chapter {number}
+              </Text>
+            )}
+            <Text
+              component={Link}
+              href={`/posts/${post.id}`}
+              fw={700}
+              lh={1.25}
+              className="text-[15px] hover:underline sm:text-[17px]"
+            >
+              {post.title || `Chapter ${number}`}
             </Text>
-            {endorsed && <StorylineRoleChip role="endorsed" />}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <UserAvatar user={post.user} withUsername linkToProfile size="xs" />
+              {endorsed && <StorylineRoleChip role="endorsed" />}
+            </div>
           </div>
         </div>
       ) : (
@@ -346,40 +363,64 @@ function StorylineForkPaths({ chapterId, count }: { chapterId: number; count: nu
         The story forks here · {count} paths
       </div>
       {children && (
-        <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
+        <ul className="m-0 mt-2.5 flex list-none gap-2.5 overflow-x-auto p-0 pb-1">
           {children.map((child) => {
             const share = getForkShare(shares, child.chapterId);
+            const name = getStorylineChapterName(child);
             return (
               <li
                 key={child.chapterId}
-                className="flex flex-wrap items-center gap-x-2 gap-y-1"
+                className="w-[120px] shrink-0 sm:w-[140px]"
                 data-testid="storyline-fork-path"
               >
-                <StorylineRankChip rank={child.rank} />
                 {child.post ? (
                   <>
-                    <Text
-                      component={Link}
-                      href={`/posts/${child.post.id}`}
-                      size="sm"
-                      fw={600}
-                      className="hover:underline"
-                    >
-                      {getStorylineChapterName(child)}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      by {child.post.username}
+                    <Link href={`/posts/${child.post.id}`} className="group block">
+                      <StorylineThumb
+                        image={child.firstImage}
+                        width={140}
+                        fluid
+                        className="rounded-lg"
+                      >
+                        <span className="absolute left-1.5 top-1.5">
+                          <StorylineRankChip rank={child.rank} onImage />
+                        </span>
+                        {share && (
+                          <StorylineShareChip
+                            percent={share.percent}
+                            className="absolute bottom-1.5 right-1.5"
+                          />
+                        )}
+                      </StorylineThumb>
+                      <Text
+                        size="sm"
+                        fw={700}
+                        lh={1.2}
+                        mt={6}
+                        lineClamp={2}
+                        className="group-hover:underline"
+                      >
+                        {name}
+                      </Text>
+                    </Link>
+                    <Text size="xs" c="dimmed" lineClamp={1}>
+                      {child.post.username}
                     </Text>
                   </>
                 ) : (
-                  <Text size="sm" c="dimmed">
-                    {getStorylineChapterName(child)}
-                  </Text>
-                )}
-                {share && (
-                  <Text size="xs" c="dimmed" fw={700} className="ml-auto">
-                    {share.percent}%
-                  </Text>
+                  // A way on this reader may not see keeps its place and share, with no link.
+                  <div className="relative flex aspect-[3/4] flex-col items-center justify-center gap-1.5 rounded-lg border-[1.5px] border-dashed border-gray-4 p-2 text-center dark:border-dark-3">
+                    <IconEyeOff size={22} className="text-gray-6 dark:text-dark-2" aria-hidden />
+                    <Text size="xs" c="dimmed" lh={1.25}>
+                      {name}
+                    </Text>
+                    {share && (
+                      <StorylineShareChip
+                        percent={share.percent}
+                        className="absolute bottom-1.5 right-1.5"
+                      />
+                    )}
+                  </div>
                 )}
               </li>
             );
@@ -394,9 +435,16 @@ function StorylineContributors({ contributors }: { contributors: Storyline['cont
   return (
     <Section icon={<IconUsers size={18} />} title="Contributors" id="storyline-contributors">
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
-        {contributors.map(({ user, role }) => (
+        {contributors.map(({ user, role, chapterCount }) => (
           <li key={user.id} className="flex items-center justify-between gap-2">
-            <UserAvatar user={user} withUsername linkToProfile size="md" withDecorations />
+            <UserAvatar
+              user={user}
+              withUsername
+              linkToProfile
+              size="md"
+              withDecorations
+              subText={`${chapterCount} ${chapterCount === 1 ? 'chapter' : 'chapters'}`}
+            />
             <StorylineRoleChip role={role} />
           </li>
         ))}
