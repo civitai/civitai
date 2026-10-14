@@ -158,6 +158,9 @@ const WRITE_SCOPE_LABELS = new Map<string, string>([
   // is already in READ_SCOPE_LABELS.
   ['apps:storage:write', 'App-local storage writes'],
   ['apps:storage:shared:write', 'Shared storage writes'],
+  // Document store. Its base scope `apps:storage` has no row of its own: that spelling is
+  // already the legacy bridge's telemetry label above, so the two share one bucket.
+  ['apps:storage:publish', 'Shared storage publishes'],
   ['collections:write:self', 'Collection updates'],
   ['user-settings:write', 'Block settings saves'],
   // Distinct label ON PURPOSE, even though it is the same operation as the row above.

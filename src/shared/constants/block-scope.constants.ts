@@ -25,6 +25,9 @@
  */
 
 import { TokenScope } from './token-scope.constants';
+// Client-safe and import-free apart from the equally import-free `manifest-bounded-parse`,
+// so this adds no server or third-party edge to the client graph.
+import { APP_STORAGE_BASE_SCOPE } from './block-storage.constants';
 // 🔴 `import type`, NOT a value import, and the distinction is load-bearing for this
 // module. `app-capabilities.constants` itself imports from `~/server/services/blocks/…`,
 // so a VALUE import would pull a server path into a module this file's own header keeps
@@ -92,6 +95,30 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // apps that declare it, never to a pre-approval dev-tunnel/dev-token session.
   'apps:storage:shared:read': SKIP_OAUTH_CHECK,
   'apps:storage:shared:write': SKIP_OAUTH_CHECK,
+  // apps:storage / apps:storage:publish — the DOCUMENT STORE that replaces the four scopes
+  // above (which stay live, unchanged, until every app has migrated off the old routes).
+  // What an app may store is declared per collection in the manifest's `storage` block
+  // (`block-storage.constants.ts`), so two scopes suffice where four restated the
+  // declaration and could disagree with it:
+  //
+  //   - `apps:storage` — reads, the viewer's private collections, marks and counters.
+  //     CONSENT-EXEMPT (scope-grant.service.ts): it reaches only this app's own store.
+  //     A manifest that declares any collection must request it.
+  //   - `apps:storage:publish` — create or edit documents in SHARED collections under
+  //     the viewer's identity, i.e. content other viewers read. SENSITIVE (needs a
+  //     justification) and CONSENT-GATED: deliberately absent from CONSENT_EXEMPT_SCOPES,
+  //     so a token carries it only after the viewer granted it for this app. Required by
+  //     any shared collection whose `write` is not `owner`.
+  //
+  // SKIP_OAUTH_CHECK for the same reason as the rest of the storage family. Neither is in
+  // any dev, tunnel or review mint allowlist yet: no route accepts them until the storage
+  // routes land, and the dev namespace those routes need does not exist yet either.
+  //
+  // 🔴 `apps:storage` (no trailing colon) does NOT start with APP_STORAGE_SCOPE_PREFIX,
+  // which is why APP_STORAGE_SCOPES below matches the family by `isAppStorageScope`
+  // rather than by the prefix alone.
+  'apps:storage': SKIP_OAUTH_CHECK,
+  'apps:storage:publish': SKIP_OAUTH_CHECK,
   // collections:read:self / collections:write:self — the App Blocks Collections
   // surface (discover + read public collections and the viewer's OWN collections;
   // follow/bookmark a collection on the viewer's behalf). Same no-OAuth-bit
@@ -213,8 +240,12 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * app-storage op 401s. `BlockManifestValidator` refuses the combination
  * for exactly this reason — see `oauthAppStorageConflictError`.
  *
- * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
- * `apps:storage:*` scope is covered the day it is added rather than silently exempt.
+ * DERIVED from the scope vocabulary above by family, never re-typed, so a new
+ * `apps:storage:*` scope is covered the day it is added rather than silently exempt. The
+ * family is the bare `apps:storage` plus everything under the `apps:storage:` prefix: the
+ * document-store scopes (`apps:storage`, `apps:storage:publish`) are served by storage
+ * routes that are not written yet, and until those routes are shown to accept an OAuth
+ * bearer the conservative answer is to refuse `auth: "oauth"` alongside them too.
  * The derived membership is pinned (on growth AND shrink) by the
  * `APP_STORAGE_SCOPES (the auth:"oauth" conflict set)` suite in
  * `src/shared/constants/__tests__/block-scope.constants.test.ts` — if that ledger fails
@@ -228,9 +259,12 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * those empties out, this family stops needing the manifest refusal at all.
  */
 export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
-export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(
-  (scope) => scope.startsWith(APP_STORAGE_SCOPE_PREFIX)
-);
+/** Is `scope` in the app-storage family: `apps:storage` itself or anything under `apps:storage:`? */
+export function isAppStorageScope(scope: string): boolean {
+  return scope === APP_STORAGE_BASE_SCOPE || scope.startsWith(APP_STORAGE_SCOPE_PREFIX);
+}
+export const APP_STORAGE_SCOPES: readonly string[] =
+  Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(isAppStorageScope);
 
 /**
  * The app-storage scopes present in a manifest's declared `scopes`, in the order the
@@ -723,6 +757,7 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - read the viewer's Buzz balance   (`buzz:read:self`)
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
  *   - write data OTHER users see       (`apps:storage:shared:write`,
+ *                                       `apps:storage:publish`,
  *                                       `posts:write:self`,
  *                                       `apps:store:items:write`)
  *
@@ -747,6 +782,9 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   'buzz:read:self',
   'collections:read:private',
   'apps:storage:shared:write',
+  // The document store's successor to `apps:storage:shared:write`: documents in a shared
+  // collection, authored under the viewer's identity, read by every viewer of the app.
+  'apps:storage:publish',
   // Writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
   // The most consequential entry in this set: `apps:storage:shared:write` is
   // visible to other viewers OF THAT APP, this one is visible to the whole site

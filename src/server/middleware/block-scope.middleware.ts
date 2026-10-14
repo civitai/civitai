@@ -1219,6 +1219,22 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'apps:storage': {
+        // DOCUMENT STORE, base scope. An anonymous viewer may READ shared collections
+        // (they are public within the app), so the binding cannot demand a subject. Every
+        // other operation under this scope — private collections, marks, counters — is
+        // refused for an anonymous viewer by the storage route itself, per op, which is
+        // where the operation is known. No request-shape binding; presence is the check.
+        break;
+      }
+      case 'apps:storage:publish': {
+        // Authoring a document in a shared collection is ALWAYS attributed to a user, so
+        // an anonymous subject can never hold it (mirrors apps:storage:shared:write).
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       case 'apps:storage:shared:read': {
         // SHARED (app-global) READS are allowed for anon — the shared list +
         // counts are public within the app (the real per-op authorization + the
