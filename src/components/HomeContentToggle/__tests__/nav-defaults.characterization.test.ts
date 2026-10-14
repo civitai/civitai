@@ -155,3 +155,22 @@ describe('the apps pill gate', () => {
     expect(bar.map((e) => e.key)).toEqual(['home', 'updates', 'models', 'images', 'videos']);
   });
 });
+
+// The all-on and all-off vectors cannot tell `features.storylines` from any other flag.
+describe('the storylines entry', () => {
+  const flagsExcept = (...off: string[]): FeatureAccess =>
+    new Proxy({} as FeatureAccess, {
+      get: (_target, key) => !(off as readonly string[]).includes(key as string),
+    }) as FeatureAccess;
+  const onlyFlag = (on: string): FeatureAccess =>
+    new Proxy({} as FeatureAccess, { get: (_target, key) => key === on }) as FeatureAccess;
+
+  it('shows with its own flag alone, in More', () => {
+    expect(resolve(onlyFlag('storylines')).more.map((e) => e.key)).toEqual(['storylines']);
+  });
+
+  it('hides with every flag but its own', () => {
+    const { bar, more } = resolve(flagsExcept('storylines'));
+    expect([...bar, ...more].map((e) => e.key)).not.toContain('storylines');
+  });
+});

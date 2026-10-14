@@ -1,5 +1,15 @@
-import { Badge, Center, Loader, SegmentedControl, Select, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  Center,
+  Loader,
+  SegmentedControl,
+  Select,
+  Text,
+} from '@mantine/core';
 import { useMemo, useState } from 'react';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -30,13 +40,13 @@ type Filter = (typeof STORYLINE_FEED_FILTERS)[number]['value'];
 type Sort = (typeof STORYLINE_FEED_SORTS)[number]['value'];
 
 /** Each storyline's cover is the first image of its chapter 1, read for the whole page at once. */
-function useCovers(items: StorylineCard[]) {
+function useCovers(items: StorylineCard[], browsingLevel: number) {
   const postIds = useMemo(
     () => items.flatMap((item) => (item.rootPostId ? [item.rootPostId] : [])),
     [items]
   );
   const { images } = useQueryImages(
-    { postIds, limit: 200, withMeta: false, include: [] },
+    { postIds, browsingLevel, limit: 200, withMeta: false, include: [] },
     { enabled: postIds.length > 0 }
   );
   return useMemo(() => {
@@ -53,13 +63,15 @@ function useCovers(items: StorylineCard[]) {
 export function StorylinesFeed() {
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('newest');
-  const { data, isLoading, hasNextPage, fetchNextPage, isFetching } =
+  // The same level the covers are read at, so the list and its covers cannot disagree.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const { data, isLoading, isError, refetch, hasNextPage, fetchNextPage, isFetching } =
     trpc.storyline.getInfinite.useInfiniteQuery(
-      { filter, sort, limit: 24 },
+      { filter, sort, limit: 24, browsingLevel },
       { getNextPageParam: (last) => last.nextCursor }
     );
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
-  const covers = useCovers(items);
+  const covers = useCovers(items, browsingLevel);
 
   return (
     <div className="flex flex-col gap-4">
@@ -84,6 +96,12 @@ export function StorylinesFeed() {
         <Center p="xl">
           <Loader />
         </Center>
+      ) : isError && !items.length ? (
+        <Alert color="red" title="Couldn't load storylines">
+          <Button size="xs" variant="light" color="red" onClick={() => refetch()}>
+            Try again
+          </Button>
+        </Alert>
       ) : !items.length ? (
         <NoContent message="No storylines match." />
       ) : (

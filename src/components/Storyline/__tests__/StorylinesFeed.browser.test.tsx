@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
   imagesInput: vi.fn(),
   items: [] as Record<string, unknown>[],
   images: [] as Record<string, unknown>[],
+  safe: true,
+  failed: false,
+  refetch: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -27,7 +30,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         useInfiniteQuery: (input: unknown) => {
           mocks.feedInput(input);
           return {
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+            data: mocks.failed
+              ? undefined
+              : { pages: [{ items: mocks.items, nextCursor: undefined }] },
+            isError: mocks.failed,
+            refetch: mocks.refetch,
             isLoading: false,
             hasNextPage: false,
             fetchNextPage: vi.fn(),
@@ -47,8 +54,11 @@ vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
 }));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
   ImageGuard2: ({ children }: { children: (safe: boolean) => React.ReactNode }) => (
-    <>{children(true)}</>
+    <>{children(mocks.safe)}</>
   ),
+}));
+vi.mock('~/components/ImageHash/ImageHash', () => ({
+  MediaHash: () => <span>blurred cover</span>,
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => <img alt="cover" src={`https://cdn.test/${src}`} />,
@@ -67,6 +77,9 @@ const card = (id: number, rootPostId: number | null, extra: Record<string, unkno
 });
 
 beforeEach(() => {
+  mocks.safe = true;
+  mocks.failed = false;
+  mocks.refetch.mockReset();
   mocks.feedInput.mockReset();
   mocks.imagesInput.mockReset();
   mocks.items = [
@@ -103,29 +116,60 @@ describe('StorylinesFeed', () => {
       links.elements().map((a) => a.querySelector('.mantine-Badge-label')?.textContent)
     ).toEqual(['Ongoing', 'Complete', 'Ongoing']);
 
-    // One image read for the whole page, for the chapter-1 posts it has.
+    // One image read for the whole page, for the chapter-1 posts it has, at the list's own level.
+    const level = mocks.feedInput.mock.lastCall?.[0].browsingLevel;
+    expect(level).toEqual(expect.any(Number));
     expect(mocks.imagesInput).toHaveBeenLastCalledWith(
-      expect.objectContaining({ postIds: [70, 30] })
+      expect.objectContaining({ postIds: [70, 30], browsingLevel: level })
     );
   });
 
-  test('passes the filter and sort to the server', async () => {
+  test.each([
+    ['Ongoing', 'ongoing'],
+    ['Open for continuations', 'open'],
+    ['Complete', 'complete'],
+  ])('the %s filter is sent to the server as %s', async (label, filter) => {
     renderWithProviders(<StorylinesFeed />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
-    expect(mocks.feedInput).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'all', sort: 'newest' })
-    );
+    expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ filter: 'all' }));
 
-    await page.getByText('Open for continuations').click();
+    await page.getByRole('radiogroup', { name: 'Show' }).getByText(label, { exact: true }).click();
     await expect
       .poll(() => mocks.feedInput.mock.lastCall?.[0])
-      .toEqual(expect.objectContaining({ filter: 'open', sort: 'newest' }));
+      .toEqual(expect.objectContaining({ filter, sort: 'newest' }));
+  });
+
+  test('passes the sort to the server', async () => {
+    renderWithProviders(<StorylinesFeed />);
+    await expect.element(page.getByRole('link').first()).toBeVisible();
+    expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ sort: 'newest' }));
+
+    await page.getByText('Open for continuations').click();
 
     await page.getByRole('textbox', { name: 'Sort' }).click();
     await page.getByRole('option', { name: 'Most chapters' }).click();
     await expect
       .poll(() => mocks.feedInput.mock.lastCall?.[0])
       .toEqual(expect.objectContaining({ filter: 'open', sort: 'mostChapters' }));
+  });
+
+  test('an unsafe cover stays blurred', async () => {
+    mocks.safe = false;
+    renderWithProviders(<StorylinesFeed />);
+
+    await expect.element(page.getByRole('link').first()).toBeVisible();
+    expect(page.getByRole('img', { name: 'cover' }).elements()).toHaveLength(0);
+    expect(page.getByText('blurred cover').elements()).toHaveLength(2);
+  });
+
+  test('a failed load says so and offers a retry, not an empty feed', async () => {
+    mocks.failed = true;
+    renderWithProviders(<StorylinesFeed />);
+
+    await expect.element(page.getByText("Couldn't load storylines")).toBeVisible();
+    expect(page.getByText('No storylines match.').elements()).toHaveLength(0);
+    await page.getByRole('button', { name: 'Try again' }).click();
+    expect(mocks.refetch).toHaveBeenCalledTimes(1);
   });
 
   test('says so when nothing matches', async () => {
