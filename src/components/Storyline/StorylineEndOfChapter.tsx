@@ -12,6 +12,7 @@ import {
   IconArrowRight,
   IconCrown,
   IconGitFork,
+  IconLock,
   IconPlus,
   IconRosetteDiscountCheck,
   IconRoute,
@@ -61,16 +62,15 @@ export function openStorylineEarlyAccess({
 export function StorylineEndOfChapter({
   chapterId,
   storylineId,
-  storylineTitle,
   chapterDepth,
   chapterTombstone,
   parentPostId,
+  isOwner = false,
   onContinue,
   onClose,
 }: {
   chapterId: number;
   storylineId: number;
-  storylineTitle: string;
   /** Depth of the chapter that ends here (chapter 1 is depth 0). */
   chapterDepth: number;
   chapterTombstone?: Parameters<typeof getStorylineTombstoneLabel>[0] | null;
@@ -78,6 +78,8 @@ export function StorylineEndOfChapter({
   onClose?: () => void;
   /** The post of the chapter that ends here; absent when it is a tombstone. */
   parentPostId?: number;
+  /** The reader made this storyline: they add chapters directly, never by continuing it. */
+  isOwner?: boolean;
 }) {
   const { data: children, isLoading } = useStorylineChildren(chapterId);
   const { data: forkShares } = useStorylineForkShares(chapterId);
@@ -104,9 +106,7 @@ export function StorylineEndOfChapter({
               component="div"
             >
               <IconRoute size={15} className="shrink-0" />
-              <span className="truncate">
-                {storylineTitle} · end of chapter {chapterDepth + 1}
-              </span>
+              <span className="truncate">End of chapter {chapterDepth + 1}</span>
             </Text>
             <Title order={2} className="mt-1 text-2xl font-extrabold @md:text-[30px]">
               {ended ? 'The story stops here, for now' : 'What happens next?'}
@@ -167,7 +167,7 @@ export function StorylineEndOfChapter({
           >
             Create the next section
           </Button>
-          {parentPostId && <StorylineContinueWithPost parentPostId={parentPostId} />}
+          {parentPostId && !isOwner && <StorylineContinueWithPost parentPostId={parentPostId} />}
         </div>
       </div>
     </div>
@@ -252,7 +252,11 @@ function LeadFork({
         image={child.firstImage}
         hidden={hidden}
         hiddenLabel={hidden ? name : undefined}
-        className="aspect-[4/5] max-h-[440px] w-full @md:w-[210px] @md:flex-none"
+        className={clsx(
+          'w-full @md:aspect-[4/5] @md:max-h-none @md:w-[210px] @md:flex-none',
+          child.firstImage || hidden ? 'aspect-[4/5] max-h-[440px]' : 'aspect-video max-h-[160px]'
+        )}
+        emptyIcon="route"
         overlay={
           <div className="absolute left-2 top-2">
             <RankChip rank={child.rank} onImage />
@@ -342,6 +346,7 @@ function OtherFork({
         image={child.firstImage}
         hidden={hidden}
         className="aspect-[3/4] w-full @md:w-[84px] @md:flex-none"
+        emptyIcon="photo"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="min-h-[22px]">
@@ -419,8 +424,8 @@ function LeadSkeleton() {
 }
 
 const closedCopy = {
-  closed: 'This storyline is not taking continuations right now.',
-  collaboratorsOnly: "Only the storyline's collaborators can continue it.",
+  closed: 'Closed to new chapters',
+  collaboratorsOnly: 'Collaborators only',
 } as const;
 
 /** Submit a post the reader already made as the next chapter, through the storyline's review. */
@@ -429,9 +434,17 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
   if (!terms) return null;
   if (!terms.open)
     return terms.closedReason ? (
-      <Text size="sm" c="dimmed" className="w-full" data-testid="storyline-continue-closed">
+      <Badge
+        size="lg"
+        radius="xl"
+        variant="light"
+        color="gray"
+        leftSection={<IconLock size={14} />}
+        className="normal-case"
+        data-testid="storyline-continue-closed"
+      >
         {closedCopy[terms.closedReason]}
-      </Text>
+      </Badge>
     ) : null;
 
   return (

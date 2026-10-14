@@ -1,4 +1,4 @@
-import { IconEyeOff } from '@tabler/icons-react';
+import { IconEyeOff, IconPhoto, IconRoute } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -29,8 +29,10 @@ const STRIPES = clsx(
 );
 
 /**
- * Portrait chapter art: the cover through the normal image guard, or a striped placeholder for a
- * chapter the reader cannot open. The overlay (a rank chip) shows on both.
+ * Portrait chapter art: the cover through the normal image guard; a striped placeholder for a
+ * chapter the reader cannot open; and, when `emptyIcon` is set and there is no picture the reader
+ * may see, the storyline gradient with that icon, so the two empty states never read alike. The
+ * overlay (a rank chip) shows on all three.
  */
 export function StorylineChapterImage({
   image,
@@ -39,6 +41,7 @@ export function StorylineChapterImage({
   className,
   overlay,
   explain = true,
+  emptyIcon,
 }: {
   image: StorylineCoverImage | null | undefined;
   hidden: boolean;
@@ -47,6 +50,8 @@ export function StorylineChapterImage({
   overlay?: ReactNode;
   /** The guard's "This image is rated / Show" overlay; too big for a small thumb. */
   explain?: boolean;
+  /** Draw a missing picture as the storyline gradient with this icon (otherwise a plain surface). */
+  emptyIcon?: 'route' | 'photo';
 }) {
   if (hidden)
     return (
@@ -64,6 +69,20 @@ export function StorylineChapterImage({
             {hiddenLabel}
           </span>
         )}
+        {overlay}
+      </div>
+    );
+  if (!image && emptyIcon)
+    return (
+      <div
+        className={clsx(
+          'relative flex items-center justify-center overflow-hidden rounded-lg text-white/60',
+          'bg-[linear-gradient(135deg,rgba(121,80,242,.3),rgba(34,139,230,.3))]',
+          className
+        )}
+        data-testid="storyline-chapter-image-empty"
+      >
+        {emptyIcon === 'route' ? <IconRoute size={32} /> : <IconPhoto size={20} />}
         {overlay}
       </div>
     );

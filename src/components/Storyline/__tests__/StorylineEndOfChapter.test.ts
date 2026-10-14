@@ -102,7 +102,7 @@ function child(
 }
 
 let onContinue = vi.fn();
-function render(props: { parentPostId?: number } = {}) {
+function render(props: { parentPostId?: number; isOwner?: boolean } = {}) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   act(() => {
@@ -113,7 +113,6 @@ function render(props: { parentPostId?: number } = {}) {
         createElement(StorylineEndOfChapter, {
           chapterId: 4,
           storylineId: 9,
-          storylineTitle: 'The Patch',
           chapterDepth: 3,
           onContinue,
           ...props,
@@ -142,9 +141,14 @@ describe('StorylineEndOfChapter', () => {
     onContinue = vi.fn();
   });
 
-  it('names the storyline and the chapter that ended', () => {
+  it('names the chapter that ended, and leaves the storyline to the chip', () => {
     mocks.children = [child(5, 'canon', 'Kept')];
-    expect(render().textContent).toContain('The Patch · end of chapter 4');
+    // The chip above the card already names the storyline.
+    const text = render().textContent;
+    expect([text?.includes('End of chapter 4'), text?.includes('The Patch')]).toEqual([
+      true,
+      false,
+    ]);
   });
 
   it('keeps the server order; only the first fork leads, with Read as its action', () => {
@@ -194,7 +198,21 @@ describe('StorylineEndOfChapter', () => {
       within(lead, 'storyline-chapter-image')?.getAttribute('src'),
       within(other, 'storyline-chapter-image'),
       within(other, 'blur-toggle'),
-    ]).toEqual(['cover-501', null, null]);
+      !!within(other, 'storyline-chapter-image-empty'),
+    ]).toEqual(['cover-501', null, null, true]);
+  });
+
+  // A missing picture is not a hidden chapter: the gradient, never the stripes.
+  it('draws a lead with no picture as the storyline gradient, short on a phone', () => {
+    mocks.children = [{ ...child(5, 'canon', 'Kept'), firstImage: null }] as StorylineChild[];
+    const lead = forks(render())[0];
+    const empty = within(lead, 'storyline-chapter-image-empty');
+    expect([
+      !!empty,
+      !!within(lead, 'storyline-chapter-image-hidden'),
+      empty?.classList.contains('aspect-video'),
+      empty?.classList.contains('@md:aspect-[4/5]'),
+    ]).toEqual([true, false, true, true]);
   });
 
   it('names each way with its title and who wrote which chapter', () => {
@@ -368,6 +386,24 @@ describe('StorylineEndOfChapter', () => {
     expect(render({}).querySelector(sel)).toBeNull();
   });
 
+  // The owner adds chapters directly; the continue terms answer them "closed", which would read
+  // as the storyline being shut. Say nothing instead.
+  it('says nothing about continuing to the storyline owner', () => {
+    mocks.children = [];
+    mocks.terms = { open: false, price: 0, closedReason: 'closed' };
+    const container = render({ parentPostId: 15, isOwner: true });
+    expect([
+      container.querySelector('[data-testid="storyline-continue-closed"]'),
+      container.querySelector('[data-testid="storyline-continue-with-post"]'),
+      !!container.querySelector('[data-testid="storyline-create-next"]'),
+    ]).toEqual([null, null, true]);
+    document.body.innerHTML = '';
+    expect(
+      render({ parentPostId: 15 }).querySelector('[data-testid="storyline-continue-closed"]')
+        ?.textContent
+    ).toBe('Closed to new chapters');
+  });
+
   it('puts writing below every path, outside the cards', () => {
     mocks.children = [
       child(5, 'canon', 'A'),
@@ -442,14 +478,14 @@ describe('StorylineContinueWithPost', () => {
     mocks.terms = { open: false, price: 0, closedReason: 'closed' };
     const c = renderButton();
     expect(button(c)).toBeNull();
-    expect(closed(c)).toBe('This storyline is not taking continuations right now.');
+    expect(closed(c)).toBe('Closed to new chapters');
   });
 
   it('has no button and says why when only collaborators may continue', () => {
     mocks.terms = { open: false, price: 0, closedReason: 'collaboratorsOnly' };
     const c = renderButton();
     expect(button(c)).toBeNull();
-    expect(closed(c)).toBe("Only the storyline's collaborators can continue it.");
+    expect(closed(c)).toBe('Collaborators only');
   });
 
   it('shows nothing while the terms cannot be read', () => {
