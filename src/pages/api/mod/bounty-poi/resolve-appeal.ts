@@ -10,6 +10,7 @@ export default defineModeratorEndpoint('bountyPoi.resolveAppeal', {
     'Upholding refuses if the bounty is no longer flagged.',
     'Overturning restores the prior availability and keeps `poi` locked false.',
     'Overturning refuses, leaving the appeal open, when the bounty text cannot be read.',
+    '`rescanQueued` is always false and kept for compatibility: an overturn covers the text as last scanned.',
   ],
   rateLimit: bountyPoiRateLimit,
   input: z.object({

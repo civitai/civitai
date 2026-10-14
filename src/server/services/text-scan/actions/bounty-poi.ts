@@ -5,14 +5,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { createNotification } from '~/server/services/notification.service';
 import { resolveEntityAppeal } from '~/server/services/report.service';
-import {
-  loadTextScanTextHash,
-  queueTextScanRescan,
-} from '~/server/services/text-scan/actions/appeal-text-hash';
+import { loadGrantTextHash } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
   buildTextScanFlagEntry,
   hasOpenTextScanFlag,
-  readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
 } from '~/server/services/text-scan/flag-snapshot';
 import type { PoiMinorResult } from '~/server/services/text-scan/actions/model-poi-minor';
@@ -109,7 +105,6 @@ export async function resolveBountyPoiAppeal({
     where: { id: bountyId },
     select: { poi: true, meta: true },
   });
-  let rescanQueued = false;
 
   if (uphold) {
     if (!bounty?.poi || !hasOpenTextScanFlag(bounty.meta, 'poi'))
@@ -124,13 +119,11 @@ export async function resolveBountyPoiAppeal({
       WHERE b.id = ${bountyId} AND b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' IS NOT NULL
     `;
   } else {
-    const currentHash = await loadTextScanTextHash('Bounty', bountyId);
-    if (!currentHash)
+    const grantHash = await loadGrantTextHash('Bounty', bountyId);
+    if (!grantHash)
       throw throwBadRequestError(
         "Could not read this bounty's text, so the grant cannot record what it covers. The appeal is still open."
       );
-    const flaggedHash = readTextScanFlags(bounty?.meta)?.poi?.textHash;
-    rescanQueued = !!flaggedHash && flaggedHash !== currentHash;
     const restored = await dbWrite.$executeRaw`
       UPDATE "Bounty" b
       SET poi = FALSE,
@@ -144,7 +137,7 @@ export async function resolveBountyPoiAppeal({
             jsonb_build_object(
               'at', now(),
               'by', ${userId}::int,
-              'textHash', COALESCE(b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash', ${currentHash}::text),
+              'textHash', ${grantHash}::text,
               'via', 'appeal'
             )
           )
@@ -160,6 +153,6 @@ export async function resolveBountyPoiAppeal({
     userId,
   });
 
-  if (rescanQueued) await queueTextScanRescan('Bounty', bountyId);
-  return { rescanQueued };
+  // The grant covers the scanned text, so nothing is rescanned. Consumers still read the field.
+  return { rescanQueued: false };
 }

@@ -310,12 +310,13 @@ async function notifyModelOwner({
 export async function grantModelTextScanPoi({
   modelId,
   userId,
-  currentHash,
+  grantHash,
 }: {
   modelId: number;
   userId: number;
-  currentHash: string | null;
+  grantHash: string;
 }) {
+  if (!grantHash) throw new Error('A granted appeal needs the grant hash it covers');
   const before = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
@@ -358,7 +359,7 @@ export async function grantModelTextScanPoi({
           jsonb_build_object(
             'at', now(),
             'by', ${userId}::int,
-            'textHash', COALESCE(${currentHash}::text, m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash'),
+            'textHash', ${grantHash}::text,
             'via', 'appeal'
           )
         )
@@ -415,18 +416,19 @@ export async function stampModelTextScanAppeal({
   userId,
   decision,
   labels,
-  currentHash = null,
+  grantHash = null,
 }: {
   modelId: number;
   userId: number;
   decision: 'appealGranted' | 'appealUpheld';
   labels: TextScanFlagLabel[];
-  currentHash?: string | null;
+  grantHash?: string | null;
 }) {
   if (!labels.length) return;
-  // A grant covers the text the moderator reviewed. Stamping the flagged hash instead leaves an
-  // owner's later edit uncovered, and the next scan of it re-flags and erases the grant.
-  const grantHash = decision === 'appealGranted' ? currentHash : null;
+  // A grant covers the text the moderator reviewed. Falling back to the flagged hash would leave an
+  // owner's later edit uncovered, and the next scan of it would re-flag and erase the grant.
+  if (decision === 'appealGranted' && !grantHash)
+    throw new Error('A granted appeal needs the grant hash it covers');
   await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
@@ -437,7 +439,9 @@ export async function stampModelTextScanAppeal({
             ${decision}::text, jsonb_build_object(
               'at', now(),
               'by', ${userId}::int,
-              'textHash', COALESCE(${grantHash}::text, m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash'),
+              'textHash', COALESCE(${
+                decision === 'appealGranted' ? grantHash : null
+              }::text, m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash'),
               'via', 'appeal'
             )
           )

@@ -11,7 +11,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import {
-  loadTextScanTextHash,
+  loadGrantTextHash,
   stampModeratorTextScanRuling,
 } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
@@ -766,13 +766,14 @@ export async function resolveMinorFlagAppeal({
   const upheld = flagged.filter((label) => decide(label) === 'uphold');
   const overturned = flagged.filter((label) => decide(label) === 'overturn');
 
-  let currentHash: string | null = null;
+  let grantHash = '';
   if (overturned.length) {
-    currentHash = await loadTextScanTextHash('Model', modelId);
-    if (!currentHash)
+    const loaded = await loadGrantTextHash('Model', modelId);
+    if (!loaded)
       throw throwBadRequestError(
         "Could not read this model's text, so the grant cannot record what it covers. The appeal is still open."
       );
+    grantHash = loaded;
   }
 
   if (upheld.includes('minor')) await confirmMinorHashAutoFlag({ modelId, userId });
@@ -793,7 +794,7 @@ export async function resolveMinorFlagAppeal({
       userId,
       decision: 'appealGranted',
       labels: ['minor'],
-      currentHash,
+      grantHash,
     });
     const snapshot = meta?.minorFlagSnapshot;
     const origin = snapshot?.confirmedFrom ?? snapshot?.source;
@@ -802,7 +803,7 @@ export async function resolveMinorFlagAppeal({
       await revertMinorHashAutoFlag({ modelId, userId });
     else await setModelMinor({ id: modelId, minor: false, userId });
   }
-  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId, currentHash });
+  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId, grantHash });
 
   const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({
