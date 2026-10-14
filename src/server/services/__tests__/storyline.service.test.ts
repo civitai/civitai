@@ -24,9 +24,9 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   // Straight through to the origin; caching is not what these tests are about.
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
-  bustFetchThroughCache,
+  setFetchThroughCache,
 }));
-const bustFetchThroughCache = vi.hoisted(() => vi.fn());
+const setFetchThroughCache = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getAllHiddenForUser,
@@ -138,7 +138,7 @@ beforeEach(() => {
   placementPriceRanges.mockResolvedValue(new Map());
   enforceBlockedBrowsingTags.mockReset();
   enforceBlockedBrowsingTags.mockResolvedValue({ emptyResult: false });
-  bustFetchThroughCache.mockReset();
+  setFetchThroughCache.mockReset();
   blockedPairs = [];
   answerRaw(w);
 });
@@ -934,16 +934,17 @@ describe('fork shares', () => {
     r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
   });
 
-  it('gives no shares below 20 choices by default, with the total so far', async () => {
+  it('gives every way on its count and share from the first choice, by default', async () => {
     choices([
       [11, 12],
       [12, 7],
     ]);
     await expect(getStorylineForkShares(read)).resolves.toEqual({
-      enough: false,
+      enough: true,
       total: 19,
-      minChoices: 20,
-      shares: {},
+      minChoices: 1,
+      counts: { 11: 12, 12: 7 },
+      shares: { 11: 12 / 19, 12: 7 / 19 },
     });
     expect(w.storylineBranchChoice.groupBy.mock.calls[0][0]).toMatchObject({
       by: ['chapterId'],
@@ -951,29 +952,41 @@ describe('fork shares', () => {
     });
   });
 
-  it('gives shares at 20 choices', async () => {
+  it('withholds counts and shares below a raised STORYLINE_SHARE_MIN_CHOICES, then shows them', async () => {
+    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '5' });
     choices([
-      [11, 15],
-      [12, 5],
+      [11, 3],
+      [12, 1],
     ]);
-    await expect(getStorylineForkShares(read)).resolves.toMatchObject({
+    await expect(getStorylineForkShares(read)).resolves.toEqual({
+      enough: false,
+      total: 4,
+      minChoices: 5,
+      counts: {},
+      shares: {},
+    });
+    choices([
+      [11, 4],
+      [12, 1],
+    ]);
+    await expect(getStorylineForkShares(read)).resolves.toEqual({
       enough: true,
-      shares: { 11: 0.75, 12: 0.25 },
+      total: 5,
+      minChoices: 5,
+      counts: { 11: 4, 12: 1 },
+      shares: { 11: 0.8, 12: 0.2 },
     });
   });
 
-  it('follows STORYLINE_SHARE_MIN_CHOICES, and ignores an invalid one', async () => {
-    choices([[11, 1]]);
-    setEnv({ STORYLINE_SHARE_MIN_CHOICES: '1' });
-    await expect(getStorylineForkShares(read)).resolves.toMatchObject({
-      enough: true,
-      minChoices: 1,
-      shares: { 11: 1 },
-    });
+  it('falls back to a minimum of 1 for an invalid STORYLINE_SHARE_MIN_CHOICES', async () => {
     setEnv({ STORYLINE_SHARE_MIN_CHOICES: '0' });
-    await expect(getStorylineForkShares(read)).resolves.toMatchObject({
-      enough: false,
-      minChoices: 20,
+    choices([[11, 1]]);
+    await expect(getStorylineForkShares(read)).resolves.toEqual({
+      enough: true,
+      total: 1,
+      minChoices: 1,
+      counts: { 11: 1 },
+      shares: { 11: 1 },
     });
   });
 
@@ -995,7 +1008,7 @@ describe('recording engagement', () => {
     r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
   });
 
-  it("records a reader's latest choice, only for a real way on, and clears the cached counts", async () => {
+  it("records a reader's latest choice, only for a real way on, and writes the new counts through", async () => {
     w.storylineChapterEdge.findUnique.mockResolvedValue(null as never);
     await expect(
       recordStorylineBranchChoice({
@@ -1006,9 +1019,12 @@ describe('recording engagement', () => {
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(w.storylineBranchChoice.upsert).not.toHaveBeenCalled();
-    expect(bustFetchThroughCache).not.toHaveBeenCalled();
+    expect(setFetchThroughCache).not.toHaveBeenCalled();
 
     w.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 12 } as never);
+    w.storylineBranchChoice.groupBy.mockResolvedValue([
+      { chapterId: 12, _count: { _all: 3 } },
+    ] as never);
     await recordStorylineBranchChoice({
       viewer: reader,
       browsingLevel: PG,
@@ -1023,8 +1039,17 @@ describe('recording engagement', () => {
       create: { userId: STRANGER, parentChapterId: 1, chapterId: 12 },
       update: { chapterId: 12 },
     });
-    expect(bustFetchThroughCache).toHaveBeenCalledTimes(1);
-    expect(bustFetchThroughCache).toHaveBeenCalledWith('packed:caches:storyline-fork-counts:1');
+    expect(setFetchThroughCache).toHaveBeenCalledTimes(1);
+    expect(setFetchThroughCache).toHaveBeenCalledWith('packed:caches:storyline-fork-counts:1', [
+      [12, 3],
+    ]);
+    // The counts written are read after the choice, from the primary, so they include it.
+    expect(w.storylineBranchChoice.groupBy.mock.calls[0][0]).toMatchObject({
+      where: { parentChapterId: 1 },
+    });
+    expect(w.storylineBranchChoice.groupBy.mock.invocationCallOrder[0]).toBeGreaterThan(
+      w.storylineBranchChoice.upsert.mock.invocationCallOrder[0]
+    );
   });
 
   it('gives no vote to a reader who cannot see the story', async () => {

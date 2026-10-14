@@ -4,7 +4,11 @@ import { env } from '~/env/server';
 import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  fetchThroughCache,
+  setFetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
@@ -1204,18 +1208,21 @@ export async function getStorylineChildren({
 const forkCountsKey = (chapterId: number) =>
   `${REDIS_KEYS.CACHES.STORYLINE_FORK_COUNTS}:${chapterId}` as const;
 
-/** Readers' latest choice per way on from a chapter, as `[childChapterId, readers]` pairs. */
-function getForkCounts(chapterId: number) {
-  return fetchThroughCache(forkCountsKey(chapterId), async () => {
-    // The primary, not a replica: a reader's choice clears this key, and a refill from a lagging
-    // replica would cache the count from before their choice.
-    const rows = await dbWrite.storylineBranchChoice.groupBy({
-      by: ['chapterId'],
-      where: { parentChapterId: chapterId },
-      _count: { _all: true },
-    });
-    return rows.map((r) => [r.chapterId, r._count._all] as [number, number]);
+/**
+ * Readers' latest choice per way on from a chapter, as `[childChapterId, readers]` pairs. From the
+ * primary, not a replica: it is read straight after a choice is written.
+ */
+async function readForkCounts(chapterId: number) {
+  const rows = await dbWrite.storylineBranchChoice.groupBy({
+    by: ['chapterId'],
+    where: { parentChapterId: chapterId },
+    _count: { _all: true },
   });
+  return rows.map((r) => [r.chapterId, r._count._all] as [number, number]);
+}
+
+function getForkCounts(chapterId: number) {
+  return fetchThroughCache(forkCountsKey(chapterId), () => readForkCounts(chapterId));
 }
 
 /** The ways-on reader counts as a map, for ordering children. */
@@ -1224,8 +1231,8 @@ export async function getStorylineReaderCounts(chapterId: number) {
 }
 
 /**
- * Each way on's share of the readers who chose at the end of a chapter. Below the minimum
- * (`STORYLINE_SHARE_MIN_CHOICES`, default 20) `enough` is false and no share is given.
+ * How the readers who chose at the end of a chapter went: each way on's count and share, once
+ * `STORYLINE_SHARE_MIN_CHOICES` (default 1) choices have been made; below that, only the total.
  */
 /** Not found unless this reader can see the storyline `chapterId` belongs to. */
 async function assertStorylineReadableByChapter(
@@ -1285,8 +1292,22 @@ export async function recordStorylineBranchChoice({
     create: { userId, parentChapterId: fromChapterId, chapterId: toChapterId },
     update: { chapterId: toChapterId },
   });
-  // So the reader sees their own choice counted on the next read.
-  await bustFetchThroughCache(forkCountsKey(fromChapterId));
+  // Written through rather than marked stale, so the reader's next read counts their choice even
+  // when it loses the refill lock to a read beside it. The choice is saved by now: if the count
+  // cannot be read, mark the entry stale as before rather than fail the request.
+  const key = forkCountsKey(fromChapterId);
+  try {
+    await setFetchThroughCache(key, await readForkCounts(fromChapterId));
+  } catch (error) {
+    logToAxiom({
+      name: 'storyline-engagement',
+      type: 'warning',
+      message: 'fork counts not written through after a choice; marked stale',
+      chapterId: fromChapterId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+    await bustFetchThroughCache(key).catch(() => undefined);
+  }
 }
 
 /**
