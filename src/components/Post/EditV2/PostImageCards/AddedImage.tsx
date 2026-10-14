@@ -26,6 +26,7 @@ import {
   IconCopyPlus,
   IconChevronDown,
   IconChevronUp,
+  IconArrowsExchange,
   IconDotsVertical,
   IconEye,
   IconEyeOff,
@@ -53,6 +54,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
+import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
@@ -131,6 +133,8 @@ type State = {
   needsReview: string | null;
   isMinor: boolean;
   onDelete: () => void;
+  /** Absent when the image cannot be moved out of this post. */
+  onMove?: () => void;
   onEditMetaClick: () => void;
   isDeleting: boolean;
   isUpdating: boolean;
@@ -196,11 +200,12 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const storedImage = useImageStore(image);
   const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages, postId] = usePostEditStore((state) => [
+  const [images, updateImage, setImages, postId, postPublishedAt] = usePostEditStore((state) => [
     state.images,
     state.updateImage,
     state.setImages,
     state.post?.id,
+    state.post?.publishedAt,
   ]);
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
@@ -233,16 +238,18 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #endregion
 
   // #region [delete image]
-  const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => {
-      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
-      if (postId)
-        queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-          if (!old) return old;
+  const removeFromEditor = (id: number) => {
+    setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
+    if (postId)
+      queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+        if (!old) return old;
 
-          return { ...old, images: old.images?.filter((x) => x.id !== id) };
-        });
-    },
+        return { ...old, images: old.images?.filter((x) => x.id !== id) };
+      });
+  };
+
+  const deleteImageMutation = trpc.image.delete.useMutation({
+    onSuccess: (_, { id }) => removeFromEditor(id),
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
@@ -259,6 +266,19 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         },
       });
     else deleteImageMutation.mutate({ id: image.id });
+  };
+  // #endregion
+
+  // #region [move image]
+  const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const canMove =
+    isOwner && !!postId && id > 0 && !!postPublishedAt && new Date(postPublishedAt) <= new Date();
+  const handleMove = () => {
+    if (!postId) return;
+    dialogStore.trigger({
+      component: MoveImageToPostModal,
+      props: { fromPostId: postId, imageId: id, onMoved: () => removeFromEditor(id) },
+    });
   };
   // #endregion
 
@@ -329,6 +349,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         needsReview: needsReview ?? null,
         isMinor,
         onDelete: handleDelete,
+        onMove: canMove ? handleMove : undefined,
         onEditMetaClick: handleEditMetaClick,
         isDeleting: deleteImageMutation.isPending,
         isUpdating: updateImageMutation.isPending,
@@ -1241,7 +1262,7 @@ function EditDetail() {
 
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
-  const { image, isBlocked, onDelete, isDeleting, onEditMetaClick, needsReview, isMinor } =
+  const { image, isBlocked, onDelete, onMove, isDeleting, onEditMetaClick, needsReview, isMinor } =
     useAddedImageContext();
   const { metadata, url, type, id, nsfwLevel, poi } = image;
   // Only the owner can hat their images; a moderator editing this post would be refused.
@@ -1317,6 +1338,11 @@ function PostImage() {
               <div className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                 <PlacementSpaceToggle level="image" entityId={image.id} />
               </div>
+            )}
+            {!isBlocked && onMove && (
+              <Menu.Item leftSection={<IconArrowsExchange size={16} />} onClick={onMove}>
+                Move to another post
+              </Menu.Item>
             )}
             <Menu.Item
               color="red"
