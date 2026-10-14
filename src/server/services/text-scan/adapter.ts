@@ -2,17 +2,17 @@ import { dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import {
   getTextScanMode,
+  getTextScanWebSearchMode,
   TEXT_SCAN_ENTITY_TYPES,
+  TEXT_SCAN_WEB_SEARCH_ENTITY_TYPES,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
-import {
-  composeUserMessage,
-  getTextScanConfig,
-  subjectTextLength,
-} from '~/server/services/text-scan/prompt';
+import { subjectTextLength } from '~/server/services/text-scan/prompt';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
+
+export const TEXT_SCAN_RETRY_CONTENT = 'text-scan';
 
 // Only the retry cron calls an adapter's submit, and it has already bumped the row it resubmits.
 export async function submitViaTextScan(entityType: TextScanEntityType, entityId: number) {
@@ -47,6 +47,31 @@ export function textScanShadowAdapters() {
   );
 }
 
+/** Retry-cron adapters for the web-search rows; enabled only while the search mode matches. */
+export function textScanWebSearchAdapters() {
+  return Object.fromEntries(
+    TEXT_SCAN_WEB_SEARCH_ENTITY_TYPES.flatMap((entityType) =>
+      (['shadow', 'active'] as const).map((mode): [string, ModerationAdapter] => [
+        textScanEmEntityType(entityType, mode, 'web-search'),
+        {
+          ...createTextScanAdapter(entityType, {}),
+          submit: async ({ entityId }) => {
+            const result = await scanEntity({
+              entityType,
+              entityId,
+              fromRetry: true,
+              pass: 'web-search',
+            });
+            return result.status === 'submitted' ? { id: result.workflowId } : null;
+          },
+          isEnabled: async ({ entityId }) =>
+            (await getTextScanWebSearchMode(entityType, entityId)) === mode,
+        },
+      ])
+    )
+  );
+}
+
 export function createTextScanAdapter(
   entityType: TextScanEntityType,
   hooks: Pick<ModerationAdapter, 'applyTextScan' | 'applyFailure'>
@@ -55,13 +80,15 @@ export function createTextScanAdapter(
     resolveContent: async (ids) => {
       const profile = getTextScanProfile(entityType);
       if (!profile) return new Map();
-      const [subjects, config] = await Promise.all([profile.load(ids), getTextScanConfig()]);
+      const subjects = await profile.load(ids);
       const minChars = profile.minChars ?? 1;
       // Omitted ids take the retry cron's missing path (row deleted) instead of failing forever.
+      // `submit` rescans from the entity and ignores the content, so a marker avoids holding a
+      // whole batch of composed text in memory.
       return new Map(
         [...subjects]
           .filter(([, subject]) => subjectTextLength(subject) >= minChars)
-          .map(([id, subject]) => [id, composeUserMessage(subject, config.maxInputChars)])
+          .map(([id]) => [id, TEXT_SCAN_RETRY_CONTENT])
       );
     },
     submit: ({ entityId }) => submitViaTextScan(entityType, entityId),

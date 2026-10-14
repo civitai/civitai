@@ -1203,9 +1203,12 @@ export interface ModelMetric {
   nsfwLevel: number;
   userId: number;
   lastVersionAt: Date | null;
+  publishedAt: Date | null;
   mode: ModelModifier | null;
   status: ModelStatus;
   availability: Availability;
+  hotScore: number | null;
+  uniqueGeneratorCount: number;
 }
 
 export interface ModelVersionMetric {
@@ -1238,6 +1241,10 @@ export interface ModelBaseModelMetric {
   poi: boolean;
   minor: boolean;
   updatedAt: Date;
+  hotScore: number | null;
+  generationCount: number | null;
+  uniqueGeneratorCount: number | null;
+  publishedAt: Date | null;
 }
 
 export interface ModelMetricDaily {
@@ -3179,6 +3186,18 @@ export interface CreatorMilestoneCosmetic {
   cosmetic?: Cosmetic;
 }
 
+export interface CreatorScoreGrant {
+  id: number;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+}
+
 export interface UserCreatorMilestone {
   userId: number;
   user?: User;
@@ -3327,6 +3346,7 @@ export interface Article {
   coverId: number | null;
   coverImage?: Image | null;
   publishedAt: Date | null;
+  scheduledAt: Date | null;
   contentScannedAt: Date | null;
   ingestion: ArticleIngestionStatus;
   scanRequestedAt: Date | null;
@@ -4233,6 +4253,60 @@ export interface AppealDecisionRecord {
 export interface AppealTrainingObjectDeletion {
   key: string;
   createdAt: Date;
+}
+
+export interface ScanLabelItem {
+  id: number;
+  imageId: number;
+  lane: string;
+  firstFlaggedAt: Date;
+  status: string;
+  voidReason: string | null;
+  votes: number;
+  blockVotes: number;
+  outcome: string | null;
+  unanimous: boolean | null;
+  decidedAt: Date | null;
+  actionedAt: Date | null;
+  actionStartedAt: Date | null;
+  actionResult: string | null;
+  actionError: string | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelFlag {
+  id: number;
+  itemId: number;
+  source: string;
+  flaggerVersion: string;
+  reason: string | null;
+  workflowId: string;
+  flaggedAt: Date;
+  snapshot: JsonValue | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelVote {
+  itemId: number;
+  userId: number;
+  block: boolean;
+  reason: string | null;
+  msOnItem: number | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelClaim {
+  itemId: number;
+  userId: number;
+  expiresAt: Date;
+}
+
+export interface ScanLabelQuota {
+  userId: number;
+  dailyVotes: number;
+  active: boolean;
+  updatedBy: number | null;
+  updatedAt: Date;
 }
 
 export interface AuctionBase {

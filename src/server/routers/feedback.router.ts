@@ -1,6 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
-import { createFeedback, isFeedbackAreaEnabled } from '~/server/services/feedback.service';
+import {
+  createFeedback,
+  FEEDBACK_AREA_DISABLED_MESSAGE,
+  isFeedbackAreaEnabled,
+} from '~/server/services/feedback.service';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedureAllowUnverifiedEmail, router } from '~/server/trpc';
@@ -31,10 +35,7 @@ export const feedbackRouter = router({
       const enabled = await isFeedbackAreaEnabled({ area: input.area, user: ctx.user });
       // Loud rather than dropped: if the area went off mid-typing, say so.
       if (!enabled)
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Feedback is not being collected here right now.',
-        });
+        throw new TRPCError({ code: 'FORBIDDEN', message: FEEDBACK_AREA_DISABLED_MESSAGE });
       return createFeedback({ ...input, userId: ctx.user.id });
     }),
 });

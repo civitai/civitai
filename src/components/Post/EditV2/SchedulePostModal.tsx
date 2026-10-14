@@ -38,11 +38,14 @@ export function SchedulePostModal({
   onSubmit,
   publishedAt,
   publishingModel,
+  entity = 'post',
 }: {
   onSubmit: (date: Date) => void;
   publishedAt?: Date | null;
   publishingModel?: boolean;
+  entity?: 'post' | 'article';
 }) {
+  const noun = publishingModel ? 'model' : entity;
   const dialog = useDialogContext();
   const today = new Date();
   const minDate = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
@@ -61,19 +64,13 @@ export function SchedulePostModal({
   return (
     <Modal
       {...dialog}
-      title={
-        <Text className="font-semibold">
-          {publishingModel ? 'Schedule your model' : 'Schedule your post'}
-        </Text>
-      }
+      title={<Text className="font-semibold">Schedule your {noun}</Text>}
       size="md"
       centered
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          {publishingModel
-            ? 'Select the date and time you want to publish this model.'
-            : 'Select the date and time you want to publish this post.'}
+          Select the date and time you want to publish this {noun}.
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
           <Stack gap="xl">

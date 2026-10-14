@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
@@ -33,6 +34,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     stuckIngestion,
     ingestionErrors,
     feedbackNew,
+    feedbackAppsPlatformNew,
     removedAppeals,
   ] = await Promise.all([
     getImageReviewCounts(),
@@ -71,6 +73,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // `countNewFeedback`). Wrapping it in a 3-second race would add a timer and a nullable to buy
     // nothing.
     countNewFeedback(),
+    countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
     countRemovedAppeals(),
   ]);
   return {
@@ -83,6 +86,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     articles,
     ratingReviews: ratingReviews.Pending,
     feedbackNew,
+    feedbackAppsPlatformNew,
     removedAppeals,
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),

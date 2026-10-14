@@ -1,8 +1,8 @@
 type UserMetaScores = { scores?: { total?: number } };
 
 /**
- * The Creator Score, as the account Profile pane displays it — `User.meta.scores.total`, the sum of the six
- * per-category scores the nightly job writes.
+ * The Creator Score, as the account Profile pane displays it — `User.meta.scores.total`, the sum of the
+ * per-category scores in `CREATOR_SCORE_CATEGORIES`.
  *
  * Read it through here rather than reaching for a per-category score. Every gate that says "creator
  * score" to the user has to mean the number the user can see, or the gate refuses people the account
@@ -23,17 +23,29 @@ export function creatorScoreFromSession(user: { meta?: unknown } | null | undefi
     : undefined;
 }
 
-const AGGREGATE_CATEGORIES = [
+/**
+ * Every per-category score `User.meta.scores.total` sums. A new one also goes in Creator Studio's
+ * `SCORE_KEYS` (`apps/creator-studio/src/lib/server/creator-score.ts`); a parity test enforces it.
+ */
+export const CREATOR_SCORE_CATEGORIES = [
   'models',
   'articles',
   'images',
   'users',
   'reportsActioned',
   'reportsAgainst',
+  'staffAwarded',
 ] as const;
 
+/** SQL summing every category under `<meta>->'scores'`; an absent category reads as 0. */
+export function creatorScoreCategorySumSql(meta: string) {
+  return CREATOR_SCORE_CATEGORIES.map(
+    (category) => `COALESCE((${meta}->'scores'->>'${category}')::numeric, 0)`
+  ).join(' + ');
+}
+
 type UserMetaCategoryScores = {
-  scores?: Partial<Record<(typeof AGGREGATE_CATEGORIES)[number] | 'total', unknown>>;
+  scores?: Partial<Record<(typeof CREATOR_SCORE_CATEGORIES)[number] | 'total', unknown>>;
 };
 
 const finiteOr0 = (value: unknown) =>
@@ -46,6 +58,6 @@ const finiteOr0 = (value: unknown) =>
  */
 export function creatorAggregateScoreFromMeta(meta: unknown): number {
   const scores = (meta as UserMetaCategoryScores | null | undefined)?.scores;
-  const sum = AGGREGATE_CATEGORIES.reduce((acc, key) => acc + finiteOr0(scores?.[key]), 0);
+  const sum = CREATOR_SCORE_CATEGORIES.reduce((acc, key) => acc + finiteOr0(scores?.[key]), 0);
   return Math.max(sum, finiteOr0(scores?.total));
 }

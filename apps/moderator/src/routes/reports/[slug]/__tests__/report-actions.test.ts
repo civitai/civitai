@@ -16,15 +16,25 @@ const removePlacement = vi.fn();
 const canAccess = vi.fn(() => true);
 
 const getReportedGame = vi.fn();
+const getReportedModelId = vi.fn();
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
   setReportStatus,
   updateReportNotes,
   getReportedGame,
+  getReportedModelId,
+  getReportedModelStates: vi.fn(async () => []),
   getGameMirrors: vi.fn(async () => []),
 }));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
+const modelActions = {
+  unpublishReportedModel: vi.fn(),
+  takeDownReportedModel: vi.fn(),
+  setReportedModelSfwOnly: vi.fn(),
+  setReportedModelMinor: vi.fn(),
+};
+vi.mock('$lib/server/model-moderation.service', () => modelActions);
 const delistGame = vi.fn();
 vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   ...(await importOriginal<typeof GameFrame>()),
@@ -38,6 +48,8 @@ vi.mock('$lib/server/access', () => ({ canAccess }));
 const { actions } = await import('../+page.server');
 
 const MOD = { id: 7 };
+/** The actor's resolved permissions; reset per test, so a grant cannot leak into the next case. */
+let grants: Record<string, true> = {};
 
 /**
  * A REAL `FormData`, not a Map: `Map.get` gives `undefined` where `FormData.get` gives `null`, and
@@ -48,7 +60,7 @@ const event = (form: Record<string, string> = {}, slug = 'image') => {
   for (const [key, value] of Object.entries(form)) data.append(key, value);
   return {
     request: { formData: async () => data },
-    locals: { user: MOD },
+    locals: { user: MOD, grants },
     params: { slug },
     getClientAddress: () => '203.0.113.9',
   } as never;
@@ -62,6 +74,7 @@ const failure = (result: unknown) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  grants = {};
   canAccess.mockReturnValue(true);
   setReportStatus.mockResolvedValue({ ok: true, changed: true });
   updateReportNotes.mockResolvedValue({ ok: true });
@@ -287,5 +300,97 @@ describe('delistGame action', () => {
     getReportedGame.mockResolvedValue(null);
     expect(failure(await delist()).status).toBe(410);
     expect(delistGame).not.toHaveBeenCalled();
+  });
+});
+
+describe('moderateModel action', () => {
+  const moderate = (form: Record<string, string>, slug = 'model') =>
+    actions.moderateModel(event({ id: '55', ...form }, slug));
+
+  beforeEach(() => {
+    grants = { 'model.takeDown': true };
+    getReportedModelId.mockResolvedValue(4201);
+    for (const fn of Object.values(modelActions)) fn.mockResolvedValue({ ok: true });
+  });
+
+  it('acts on the model the REPORT names, then sets the report Actioned', async () => {
+    // A posted modelId is ignored: a stale tab must not act on one model and close a report about another.
+    const result = await moderate({ modelAction: 'takeDown', modelId: '99' });
+
+    expect(getReportedModelId).toHaveBeenCalledWith(55);
+    expect(modelActions.takeDownReportedModel).toHaveBeenCalledWith(4201);
+    expect(setReportStatus).toHaveBeenCalledWith({
+      id: 55,
+      status: ReportStatus.Actioned,
+      userId: 7,
+      ip: '203.0.113.9',
+    });
+    expect(result).toEqual({
+      success: true,
+      moderated: 'Taken down model #4201; report actioned',
+    });
+  });
+
+  it('takes down only for a holder of model.takeDown', async () => {
+    grants = {};
+    expect(failure(await moderate({ modelAction: 'takeDown' }))).toEqual({
+      status: 403,
+      error: 'This action requires the “Take down a model (ownership / claim)” permission.',
+    });
+    expect(modelActions.takeDownReportedModel).not.toHaveBeenCalled();
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('has no delete: a report is answered by taking a model down, never by destroying it', async () => {
+    expect(failure(await moderate({ modelAction: 'delete' })).status).toBe(400);
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('leaves the report open when the main app refuses', async () => {
+    modelActions.takeDownReportedModel.mockResolvedValue({ ok: false, error: 'Take down returned 500.' });
+
+    expect(failure(await moderate({ modelAction: 'takeDown' }))).toEqual({
+      status: 400,
+      error: 'Take down returned 500.',
+    });
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('says the model changed even when the report vanished meanwhile', async () => {
+    setReportStatus.mockResolvedValue({ ok: false, error: 'That report no longer exists. Reload.' });
+
+    expect(failure(await moderate({ modelAction: 'setSfwOnly' }))).toEqual({
+      status: 410,
+      error: 'Set as SFW-only, but That report no longer exists. Reload.',
+    });
+  });
+
+  it('flags as minor only for a minor reason the moderator left ticked', async () => {
+    await moderate({ modelAction: 'unpublish', reason: 'mature-underage', alsoFlagMinor: 'on' });
+    expect(modelActions.unpublishReportedModel).toHaveBeenLastCalledWith({
+      modelId: 4201,
+      reason: 'mature-underage',
+      customMessage: undefined,
+      alsoFlagMinor: true,
+    });
+
+    // A forged tick on a reason that says nothing about minors is dropped.
+    await moderate({ modelAction: 'unpublish', reason: 'spam', alsoFlagMinor: 'on' });
+    expect(modelActions.unpublishReportedModel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ reason: 'spam', alsoFlagMinor: false })
+    );
+  });
+
+  it('refuses an unpublish without a reason, or "other" without a message', async () => {
+    expect(failure(await moderate({ modelAction: 'unpublish', reason: 'bogus' })).status).toBe(400);
+    expect(failure(await moderate({ modelAction: 'unpublish', reason: 'other' })).status).toBe(400);
+    expect(modelActions.unpublishReportedModel).not.toHaveBeenCalled();
+  });
+
+  it("only runs on the model queue, and refuses a report that is not a model's", async () => {
+    expect(failure(await moderate({ modelAction: 'takeDown' }, 'image')).status).toBe(403);
+    getReportedModelId.mockResolvedValue(null);
+    expect(failure(await moderate({ modelAction: 'takeDown' })).status).toBe(410);
+    expect(modelActions.takeDownReportedModel).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import { Button, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconEye, IconEyeOff, IconSettings, IconShoppingBag } from '@tabler/icons-react';
 import Link from 'next/link';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
 
 export function ShopHeader({
   displayName,
@@ -36,9 +37,15 @@ export function ShopHeader({
             {displayName}&apos;s Shop
           </Title>
           {trimmed ? (
-            <Text size="sm" c="dimmed" lineClamp={2} className="max-w-2xl">
+            <LineClamp
+              variant="block"
+              lineClamp={2}
+              size="sm"
+              c="dimmed"
+              className="max-w-2xl whitespace-pre-line"
+            >
               {trimmed}
-            </Text>
+            </LineClamp>
           ) : isOwner ? (
             <Text size="xs" c="dimmed" fs="italic">
               Add a shop description in Shop settings.

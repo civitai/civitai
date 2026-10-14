@@ -5,6 +5,7 @@ import { jsonField, parseForm } from '$lib/server/query';
 import { userIdByUsername } from '$lib/server/users.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
+import { HARNESS_LIMITS } from '$lib/text-scan-lab/limits';
 import {
   ENTITY_TYPE_NAMES,
   blankPromptKeys,
@@ -96,7 +97,14 @@ export const ruleOverridesField = jsonField(
 const PROFILE_TYPES = ['UserProfile', 'User'] as const satisfies readonly LabEntityType[];
 
 const trySchema = z.object({
-  input: z.string().max(200_000, 'That text is too long to judge.'),
+  input: z
+    .string()
+    .max(
+      HARNESS_LIMITS.charsPerText,
+      `That text is too long to judge: the limit is ${HARNESS_LIMITS.charsPerText.toLocaleString(
+        'en-US'
+      )} characters.`
+    ),
   lookupAs: z.enum(LAB_ENTITY_TYPES).catch('Model'),
   judgeAs: z.enum(LAB_ENTITY_TYPES).catch('CommentV2'),
   profileAs: z.enum(PROFILE_TYPES).catch('UserProfile'),

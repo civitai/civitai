@@ -97,7 +97,7 @@ export type LabPromptVersion = LabPrompt & {
 export type LabPromptLatest = { id: number; createdAt: string; createdById: number | null };
 export type LabPrompts = {
   active: Record<string, LabPrompt>;
-  config: { model: string; maxInputChars: number; thinking: boolean };
+  config: { model: string; maxInputChars: number; maxSegments?: number; thinking: boolean };
   history?: LabPromptVersion[];
   /** Absent from a main app older than the lab workspaces. */
   latest?: Record<string, LabPromptLatest>;
@@ -140,6 +140,7 @@ type HarnessScanResult =
       rawContent?: string;
       literalRuleIds?: number[];
       elapsedMs: number;
+      segments?: number;
     }
   | { key: string; ok: false; error: string; workflowId?: string };
 
@@ -160,6 +161,7 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
     ...(r.parse.ok ? {} : { parseError: r.parse.reason, rawContent: r.rawContent }),
     ...(r.literalRuleIds ? { literalRuleIds: r.literalRuleIds } : {}),
     elapsedMs: r.elapsedMs,
+    ...(r.segments && r.segments > 1 ? { segments: r.segments } : {}),
   };
 }
 

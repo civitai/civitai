@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import type { LabOverrides } from '../text-scan-lab/harness-client';
+import { HARNESS_LIMITS } from '$lib/text-scan-lab/limits';
 import type { LabScanResult, LabText } from '$lib/text-scan-lab/types';
 import {
   MOD,
@@ -129,7 +130,7 @@ describe('runWorker', () => {
   });
 
   it('turns an oversize text into its own error without sinking the chunk', async () => {
-    const [big] = await seedCases(1, { text: 'x'.repeat(250_000) });
+    const [big] = await seedCases(1, { text: 'x'.repeat(HARNESS_LIMITS.charsPerText + 1) });
     await seedCases(2);
     vi.mocked(callModEndpoint).mockImplementation(async (_path, body) => ({
       ok: true,

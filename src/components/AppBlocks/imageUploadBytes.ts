@@ -22,7 +22,8 @@ import {
 export const UPLOAD_BYTES_MAX_BYTES = BLOCK_IMAGE_MAX_BYTES;
 /** Each upload creates a real, scanned Image row, so the window is far longer than a save's. */
 export const UPLOAD_BYTES_WINDOW_MS = 60_000;
-export const UPLOAD_BYTES_MAX_PER_WINDOW = 3;
+/** Sized for one job that needs several images at once; the byte budget below still bounds it. */
+export const UPLOAD_BYTES_MAX_PER_WINDOW = 8;
 /** Two max-size files per window, so a burst cannot hold more than that in the viewer's tab. */
 export const UPLOAD_BYTES_MAX_BYTES_PER_WINDOW = 2 * UPLOAD_BYTES_MAX_BYTES;
 

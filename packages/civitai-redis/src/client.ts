@@ -2280,6 +2280,10 @@ export const REDIS_SYS_KEYS = {
     // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
     // voted on this judging session, and how long idle ends that session. Missing = defaults.
     CRUCIBLE_JUDGING: 'system:crucible-judging',
+    // Prefix for `:<version>`, a JSON snapshot of the image-ingestion gauges computed by one
+    // process per TTL for all of them; `:<version>:lock` elects that process. See
+    // src/server/prom/ingestion-gauge-store.ts.
+    IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2495,6 +2499,12 @@ export const REDIS_SYS_KEYS = {
         (percent of entity ids in each mode; active wins)
      */
     MODES: 'system:text-scan:modes',
+    /*
+      Use: per-entity-type rollout of the web-search pass (text-scan harness `putWebSearchModes`).
+        Model only; a missing field is off, and the effective mode never exceeds the MODES one.
+      Structure: hset, field = entity type ("Model"), value = json { "shadow": 0-100, "active": 0-100 }
+     */
+    WEB_SEARCH: 'system:text-scan:web-search',
     /*
       Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
         Clavata job skips them only while the `text-scan` Flipt kill switch is on.

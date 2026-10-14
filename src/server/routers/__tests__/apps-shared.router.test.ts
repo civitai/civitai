@@ -208,6 +208,7 @@ import {
   appendSharedRow,
   appsModRouter,
   appsSharedRouter,
+  assertValidCounterKey,
   incrementSharedCounter,
   reportSharedRow,
   unvoteSharedRow,
@@ -669,6 +670,30 @@ describe('C1 cross-user overwrite', () => {
     expect(insert).toBeTruthy();
     expect((insert![1] as unknown[])[0]).toBe(out.key); // param[0] is the server ULID
     expect((insert![1] as unknown[])[0]).not.toBe('victim-key');
+  });
+
+  it('a key append generated is refused as a counter key, so a counter cannot share it', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    const { key } = await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(() => assertValidCounterKey(key)).toThrow(
+      expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
+    );
+    mockClient.query.mockClear();
+    await expect(incrementSharedCounter('t', key)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'invalid counter key',
+    });
+    expect(mockClient.query).not.toHaveBeenCalled();
   });
 
   it('withdraw only deletes the author’s OWN row (WHERE author_user_id)', async () => {

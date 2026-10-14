@@ -754,6 +754,7 @@ export type Article = {
   cover: string | null;
   coverId: number | null;
   publishedAt: Timestamp | null;
+  scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;
   ingestion: Generated<ArticleIngestionStatus>;
   scanRequestedAt: Timestamp | null;
@@ -2608,6 +2609,17 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorScoreGrant = {
+  id: Generated<number>;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -3455,6 +3467,32 @@ export type ModelBaseModelMetric = {
   poi: Generated<boolean>;
   minor: Generated<boolean>;
   updatedAt: Generated<Timestamp>;
+  /**
+   * This base model's OWN hot score, so a filtered feed ranks on the slice rather than on
+   * engagement the model earned in another ecosystem. Served by mbmm_feed_hot. Computed by
+   * trigger from the columns below; falls back to mirroring ModelMetric.hotScore while
+   * generationCount is NULL. Same formula as the whole-model score, so a rank does not jump
+   * when a filter is applied.
+   */
+  hotScore: number | null;
+  /**
+   * Generations attributed to this model's versions of THIS base model. A plain SUM over
+   * ModelVersionMetric, so it arrives with the metrics job.
+   */
+  generationCount: number | null;
+  /**
+   * Distinct generators for this slice, merged across its versions; caps generationCount the
+   * same way ModelMetric.uniqueGeneratorCount does. NULL is what gates hotScore onto the
+   * mirrored fallback, because this is the one value that needs ClickHouse and so arrives
+   * last — a row scores on its own slice only once all three are in hand.
+   */
+  uniqueGeneratorCount: number | null;
+  /**
+   * EARLIEST published version for this base model — not the model's first publish, which
+   * would make a new version in a new ecosystem read as old there, and not the newest, which
+   * would let a republish refresh recency inside a filtered feed.
+   */
+  publishedAt: Timestamp | null;
 };
 export type ModelEngagement = {
   userId: number;
@@ -3533,9 +3571,24 @@ export type ModelMetric = {
   nsfwLevel: Generated<number>;
   userId: Generated<number>;
   lastVersionAt: Timestamp | null;
+  publishedAt: Timestamp | null;
   mode: ModelModifier | null;
   status: Generated<ModelStatus>;
   availability: Generated<Availability>;
+  /**
+   * Hot feed sort key, maintained by the trg_model_metric_hot_score trigger. Never write it
+   * from application code: the DB computes it so the migration can ship before the deploy.
+   * Int, not float — the keyset cursor parser runs parseInt on the sort token.
+   */
+  hotScore: number | null;
+  /**
+   * Distinct users who have generated with any version of this model, merged across
+   * versions rather than summed. Caps hotScore's generation term so one person — the
+   * owner included — cannot lift a model on their own generations. Since 20261013120000
+   * the first generator earns nothing, so 0 means "no generation credit" (it was "not
+   * computed yet" and inert before). Kept current by the Model metrics job.
+   */
+  uniqueGeneratorCount: Generated<number>;
 };
 export type ModelMetricDaily = {
   modelId: number;
@@ -4445,6 +4498,55 @@ export type SavedModel = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ScanLabelClaim = {
+  itemId: number;
+  userId: number;
+  expiresAt: Timestamp;
+};
+export type ScanLabelFlag = {
+  id: Generated<number>;
+  itemId: number;
+  source: string;
+  flaggerVersion: string;
+  reason: string | null;
+  workflowId: string;
+  flaggedAt: Timestamp;
+  snapshot: unknown | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelItem = {
+  id: Generated<number>;
+  imageId: number;
+  lane: Generated<string>;
+  firstFlaggedAt: Timestamp;
+  status: Generated<string>;
+  voidReason: string | null;
+  votes: Generated<number>;
+  blockVotes: Generated<number>;
+  outcome: string | null;
+  unanimous: boolean | null;
+  decidedAt: Timestamp | null;
+  actionedAt: Timestamp | null;
+  actionStartedAt: Timestamp | null;
+  actionResult: string | null;
+  actionError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelQuota = {
+  userId: number;
+  dailyVotes: Generated<number>;
+  active: Generated<boolean>;
+  updatedBy: number | null;
+  updatedAt: Generated<Timestamp>;
+};
+export type ScanLabelVote = {
+  itemId: number;
+  userId: number;
+  block: boolean;
+  reason: string | null;
+  msOnItem: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ScannerContentSnapshot = {
   contentHash: string;
   scanner: string;
@@ -5287,6 +5389,7 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5434,6 +5537,11 @@ export type DB = {
   Role: Role;
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
+  ScanLabelClaim: ScanLabelClaim;
+  ScanLabelFlag: ScanLabelFlag;
+  ScanLabelItem: ScanLabelItem;
+  ScanLabelQuota: ScanLabelQuota;
+  ScanLabelVote: ScanLabelVote;
   ScannerContentSnapshot: ScannerContentSnapshot;
   ScannerLabelReview: ScannerLabelReview;
   Session: Session;
