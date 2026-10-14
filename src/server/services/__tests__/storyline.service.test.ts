@@ -500,6 +500,7 @@ describe('authorization', () => {
       w.storylineChapterEdge.findFirst.mockResolvedValue({
         parentChapterId: 20,
         storylineId: 10,
+        chapter: { removedAt: null },
       } as never);
     });
 
@@ -1978,5 +1979,275 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
       browsingLevel: NsfwLevel.PG,
     });
     expect(sqlAt(0).text).toContain(`st.status <> 'Complete'`);
+  });
+});
+
+describe('a chapter whose placement was removed', () => {
+  const REMOVED_AT = new Date('2026-10-14');
+  // The removed chapters below are by STRANGER, so `author` is their author and `reader` is not.
+  const viewers = {
+    reader: { id: 99 },
+    author: { id: STRANGER },
+    moderator: { id: MODERATOR, isModerator: true },
+  };
+  const post = (id: number, userId: number) => ({
+    id,
+    userId,
+    title: `post ${id}`,
+    nsfwLevel: NsfwLevel.PG,
+    publishedAt: new Date('2026-10-01'),
+    tosViolation: false,
+    user: { username: `u${userId}`, ...notBanned },
+  });
+  /** A raw query's text as Postgres gets it. */
+  const rawSql = (call: unknown) => {
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    return Prisma.sql(strings, ...(values as Prisma.Sql[])).sql;
+  };
+
+  beforeEach(() => {
+    r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+    w.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+  });
+
+  it('is a removed tombstone in the reading path, for its author too, but not for moderators', async () => {
+    r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 2 } as never);
+    r.$queryRaw.mockResolvedValue([
+      { id: 1, postId: 101, depth: 0, removedAt: null },
+      { id: 2, postId: 102, depth: 1, removedAt: REMOVED_AT },
+      { id: 3, postId: 103, depth: 2, removedAt: null },
+    ] as never);
+    r.post.findMany.mockResolvedValue([
+      post(101, OWNER),
+      post(102, STRANGER),
+      post(103, OWNER),
+    ] as never);
+    const tombstones = async (viewer: { id: number; isModerator?: boolean }) =>
+      (await getStorylinePath({ chapterId: 3, viewer, browsingLevel: NsfwLevel.PG })).chapters.map(
+        (c) => c.tombstone
+      );
+
+    expect(await tombstones(viewers.reader)).toEqual([null, 'removed', null]);
+    expect(await tombstones(viewers.author)).toEqual([null, 'removed', null]);
+    expect(await tombstones(viewers.moderator)).toEqual([null, null, null]);
+    // Both arms of the walk carry the column, or every chapter above the target reads as kept.
+    const sql = rawSql(r.$queryRaw.mock.calls[0]);
+    expect(sql).toContain('SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops');
+    expect(sql).toContain('SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1');
+    expect(sql).toContain('SELECT id, "postId", depth, "removedAt" FROM path');
+    // Selected only, never filtered on: the walk must reach past a removed chapter.
+    expect(sql.match(/"removedAt"/g)).toHaveLength(3);
+  });
+
+  it('is a removed tombstone on the main route', async () => {
+    r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    r.$queryRaw.mockResolvedValue([
+      { id: 2, postId: 102, depth: 1, removedAt: null },
+      { id: 3, postId: 103, depth: 2, removedAt: REMOVED_AT },
+    ] as never);
+    r.post.findMany.mockResolvedValue([post(102, OWNER), post(103, STRANGER)] as never);
+    r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
+    const ahead = (viewer: { id: number; isModerator?: boolean }) =>
+      getStorylineCanonAhead({ chapterId: 2, viewer, browsingLevel: NsfwLevel.PG });
+    expect((await ahead(viewers.reader)).map((c) => [c.chapterId, c.tombstone, c.post])).toEqual([
+      [3, 'removed', null],
+    ]);
+    expect((await ahead(viewers.author)).map((c) => c.tombstone)).toEqual(['removed']);
+    expect((await ahead(viewers.moderator)).map((c) => [c.tombstone, c.post?.id])).toEqual([
+      [null, 103],
+    ]);
+    const sql = rawSql(r.$queryRaw.mock.calls[0]);
+    expect(sql).toContain('SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops');
+    expect(sql).toContain('SELECT ch.id, ch."postId", ch.depth, ch."removedAt", main.hops + 1');
+    expect(sql).toContain('SELECT id, "postId", depth, "removedAt" FROM main');
+    expect(sql.match(/"removedAt"/g)).toHaveLength(3);
+  });
+
+  it('is a removed tombstone among the ways on, and asks for the column', async () => {
+    r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
+    r.storylineCollaborator.findMany.mockResolvedValue([] as never);
+    r.storylineChapterEdge.findFirst.mockResolvedValue(null as never);
+    const child = (id: number, removedAt: Date | null) => ({
+      canon: false,
+      chapter: {
+        id,
+        depth: 1,
+        userId: STRANGER,
+        createdAt: new Date('2026-10-02'),
+        removedAt,
+        post: post(id + 100, STRANGER),
+      },
+    });
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      child(11, null),
+      child(12, REMOVED_AT),
+    ] as never);
+    const tombstones = async (viewer: { id: number; isModerator?: boolean }) =>
+      (
+        await getStorylineChildren({
+          chapterId: 1,
+          viewer,
+          browsingLevel: NsfwLevel.PG,
+          readersByChapterId: new Map(),
+        })
+      ).map((c) => [c.chapterId, c.tombstone]);
+    expect(await tombstones(viewers.reader)).toEqual([
+      [11, null],
+      [12, 'removed'],
+    ]);
+    expect(await tombstones(viewers.author)).toEqual([
+      [11, null],
+      [12, 'removed'],
+    ]);
+    expect(await tombstones(viewers.moderator)).toEqual([
+      [11, null],
+      [12, null],
+    ]);
+    expect(r.storylineChapterEdge.findMany.mock.calls[0][0]).toMatchObject({
+      select: { chapter: { select: { removedAt: true } } },
+    });
+  });
+
+  it('gives no storyline pill to anyone but moderators', async () => {
+    const chapter = (postId: number, removedAt: Date | null) => ({
+      id: postId + 1000,
+      postId,
+      depth: 1,
+      removedAt,
+      post: { nsfwLevel: NsfwLevel.PG, userId: STRANGER },
+      storyline: {
+        id: 10,
+        title: 'A story',
+        userId: OWNER,
+        maxNsfwLevel: NsfwLevel.R,
+        tosViolation: false,
+        user: notBanned,
+        chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
+      },
+    });
+    r.storylineChapter.findMany.mockResolvedValue([
+      chapter(1, null),
+      chapter(2, REMOVED_AT),
+    ] as never);
+    const pills = async (viewer: { id: number; isModerator?: boolean }) =>
+      Object.keys(
+        await getStorylinesForPosts({ postIds: [1, 2], viewer, browsingLevel: NsfwLevel.PG })
+      );
+    expect(await pills(viewers.reader)).toEqual(['1']);
+    expect(await pills(viewers.author)).toEqual(['1']);
+    expect(await pills(viewers.moderator)).toEqual(['1', '2']);
+    expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
+      select: { removedAt: true },
+    });
+  });
+
+  it('credits nobody and counts no contributor through it', async () => {
+    r.storyline.findUnique.mockResolvedValue({ ...storylineRow(), collaborators: [] } as never);
+    r.$queryRaw.mockResolvedValue([] as never);
+    r.user.findMany.mockResolvedValue([] as never);
+    r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
+    await getStoryline({ id: 10, viewer: viewers.reader, browsingLevel: NsfwLevel.PG });
+    const sqls = r.$queryRaw.mock.calls.map(rawSql);
+    const counts = sqls.find((sql) => sql.includes('COUNT(DISTINCT'));
+    const credits = sqls.find((sql) => sql.includes('GROUP BY c."userId"'));
+    expect(counts).toMatch(/FILTER \(WHERE p\.id IS NOT NULL AND\s+c\."removedAt" IS NULL\s+AND/);
+    expect(credits).toMatch(/AND\s+c\."removedAt" IS NULL\s+AND p\."tosViolation" = false/);
+  });
+
+  it("leaves it out of the owner's ceiling warning", async () => {
+    w.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+    const level = (depth: number, nsfwLevel: number, removedAt: Date | null) => ({
+      depth,
+      userId: STRANGER,
+      nsfwLevel,
+      publishedAt: new Date('2026-10-01'),
+      tosViolation: false,
+      bannedAt: null,
+      deletedAt: null,
+      removedAt,
+    });
+    r.$queryRaw.mockResolvedValue([
+      { ...level(0, NsfwLevel.PG, null), userId: OWNER },
+      level(1, NsfwLevel.R, null),
+      level(1, NsfwLevel.X, REMOVED_AT),
+    ] as never);
+    await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toEqual({
+      rootNsfwLevel: NsfwLevel.PG,
+      chapterLevels: [NsfwLevel.R],
+    });
+    expect(rawSql(r.$queryRaw.mock.calls[0])).toContain(
+      'u."bannedAt", u."deletedAt", c."removedAt"'
+    );
+  });
+
+  it('cannot be continued, and nothing is written', async () => {
+    w.storylineChapter.findUnique.mockImplementation((({ where }: { where: { postId?: number } }) =>
+      Promise.resolve(
+        where.postId === 500
+          ? {
+              id: 20,
+              storylineId: 10,
+              depth: 1,
+              userId: PARENT_AUTHOR,
+              removedAt: REMOVED_AT,
+              storyline: {
+                userId: OWNER,
+                maxNsfwLevel: NsfwLevel.R,
+                tosViolation: false,
+                whoCanContinue: 'Anyone',
+              },
+            }
+          : null
+      )) as never);
+    w.post.findUnique.mockResolvedValue(publishedPost() as never);
+    await expect(
+      writeChapterEdgeForPlacement(
+        { placementId: 77, parentPostId: 500, postId: 600, placerId: STRANGER },
+        tx
+      )
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'storyline: that post is not a chapter of an open storyline',
+    });
+    expect(w.storylineChapter.create).not.toHaveBeenCalled();
+    expect(w.storylineChapterEdge.create).not.toHaveBeenCalled();
+    expect(
+      w.storylineChapter.findUnique.mock.calls.find(
+        (c) => (c[0] as { where: { postId?: number } }).where.postId === 500
+      )?.[0]
+    ).toMatchObject({ select: { removedAt: true } });
+  });
+
+  it('cannot be continued by the owner directly either', async () => {
+    w.storylineChapter.findUnique.mockResolvedValue({
+      id: 20,
+      storylineId: 10,
+      depth: 1,
+      removedAt: REMOVED_AT,
+      storyline: { userId: OWNER, maxNsfwLevel: NsfwLevel.R, tosViolation: false },
+    } as never);
+    w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+    await expect(
+      addOwnerChapter({ parentChapterId: 20, postId: 600, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(w.storylineChapter.create).not.toHaveBeenCalled();
+    expect(w.storylineChapter.findUnique.mock.calls[0][0]).toMatchObject({
+      select: { removedAt: true },
+    });
+  });
+
+  it('cannot be made the main route, and canon is left as it was', async () => {
+    w.storylineChapterEdge.findFirst.mockResolvedValue({
+      parentChapterId: 20,
+      storylineId: 10,
+      chapter: { removedAt: REMOVED_AT },
+    } as never);
+    await expect(setCanonChapter({ chapterId: 31, userId: OWNER })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(w.storylineChapterEdge.updateMany).not.toHaveBeenCalled();
+    expect(w.storylineChapterEdge.findFirst.mock.calls[0][0]).toMatchObject({
+      select: { chapter: { select: { removedAt: true } } },
+    });
   });
 });

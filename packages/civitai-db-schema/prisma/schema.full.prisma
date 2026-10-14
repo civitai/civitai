@@ -9385,6 +9385,9 @@ model StorylineChapter {
   /// approval cannot add the chapter twice.
   placementId Int?      @unique
   createdAt   DateTime  @default(now())
+  /// Set when the placement that added this chapter is removed. The row stays and readers other
+  /// than moderators see a removed tombstone.
+  removedAt   DateTime?
 
   parents  StorylineChapterEdge[] @relation("StorylineChapterEdgeChild")
   children StorylineChapterEdge[] @relation("StorylineChapterEdgeParent")

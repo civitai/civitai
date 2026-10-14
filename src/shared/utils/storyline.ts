@@ -87,7 +87,10 @@ export function compareStorylineChildren(
 export type StorylineTombstoneReason =
   /** The post no longer exists. */
   | 'deleted'
-  /** Taken down by a moderator, or its author's account is banned or deleted. */
+  /**
+   * Taken down by a moderator, its author's account is banned or deleted, or the placement that
+   * added it was removed.
+   */
   | 'removed'
   /**
    * Not published, not rated yet, or by an author the reader blocked, was blocked by, or hid.
@@ -118,6 +121,7 @@ export type StorylineChapterPost = {
  */
 export function getStorylineChapterTombstone({
   post,
+  removed = false,
   viewer,
   maxNsfwLevel,
   browsingLevel,
@@ -125,6 +129,8 @@ export function getStorylineChapterTombstone({
   now = new Date(),
 }: {
   post: StorylineChapterPost | null;
+  /** The chapter's own `removedAt` is set. */
+  removed?: boolean;
   viewer: { id: number; isModerator?: boolean } | undefined;
   maxNsfwLevel: number;
   browsingLevel: number;
@@ -135,7 +141,7 @@ export function getStorylineChapterTombstone({
   const isModerator = !!viewer?.isModerator;
   const isAuthor = viewer?.id === post.userId;
 
-  if (!isModerator && (post.tosViolation || post.user.bannedAt || post.user.deletedAt))
+  if (!isModerator && (removed || post.tosViolation || post.user.bannedAt || post.user.deletedAt))
     return 'removed';
   if (!isAuthor && blockedUserIds.has(post.userId)) return 'unavailable';
 

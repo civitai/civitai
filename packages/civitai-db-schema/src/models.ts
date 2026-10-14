@@ -5968,6 +5968,7 @@ export interface StorylineChapter {
   depth: number;
   placementId: number | null;
   createdAt: Date;
+  removedAt: Date | null;
   parents?: StorylineChapterEdge[];
   children?: StorylineChapterEdge[];
   branchChoicesFrom?: StorylineBranchChoice[];

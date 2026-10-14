@@ -45,6 +45,10 @@ const { createStorylinePlacement, actOnStorylineContinuation, getPendingStorylin
   await import('~/server/services/storyline-placement.service');
 const { expirePlacements } = await import('~/server/services/placement-escrow.service');
 const { getStorylineChildren } = await import('~/server/services/storyline.service');
+const { tombstoneChaptersForPlacements } = await import(
+  '~/server/services/storyline-chapter-removal.service'
+);
+const { dbMock } = await import('~/__tests__/mocks');
 
 const OWNER = 10;
 const STRANGER = 20;
@@ -423,6 +427,36 @@ describe('the storyline continuation loop', () => {
       const chapter = chapterFor(id);
       expect(chapter).toMatchObject({ depth: 2, postId: STRANGER_SECOND_POST });
       expect(edgeFor(chapter!.id as number)).toMatchObject({ parentChapterId: parent!.id });
+    });
+
+    it('once its placement is removed: a tombstone to readers, and closed to continuations', async () => {
+      const removedPlacement = db.row('placement', { placerId: COLLABORATOR })!.id as number;
+      const { id: pending } = await submit(STRANGER, STRANGER_SECOND_POST, 0, COLLABORATOR_POST);
+
+      await expect(
+        tombstoneChaptersForPlacements(
+          { placementIds: [removedPlacement] },
+          dbMock.dbWrite as never
+        )
+      ).resolves.toBe(1);
+      // Marked, not deleted: the row still holds the post.
+      expect(db.row('storylineChapter', { postId: COLLABORATOR_POST })).toMatchObject({
+        placementId: removedPlacement,
+        removedAt: expect.any(Date),
+      });
+
+      expect((await children()).map((c) => [c.post?.id ?? null, c.tombstone])).toEqual([
+        [null, 'removed'],
+      ]);
+      await expect(
+        actOnStorylineContinuation({ placementId: pending, ownerId: OWNER, action: 'approve' })
+      ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      expect(chapterFor(pending)).toBeUndefined();
+
+      publishedPost(501, STRANGER, PG);
+      await expect(submit(STRANGER, 501, 0, COLLABORATOR_POST)).rejects.toThrow(
+        STORYLINE_REFUSALS.notAChapter
+      );
     });
   });
 });

@@ -99,7 +99,12 @@ const DEFAULTS: Record<string, () => Row> = {
     lastError: null,
     createdAt: new Date(),
   }),
-  storylineChapter: () => ({ postId: null, placementId: null, createdAt: new Date() }),
+  storylineChapter: () => ({
+    postId: null,
+    placementId: null,
+    createdAt: new Date(),
+    removedAt: null,
+  }),
   storylineChapterEdge: () => ({ canon: false, createdAt: new Date() }),
 };
 
