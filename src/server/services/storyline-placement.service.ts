@@ -520,13 +520,15 @@ export async function settleStorylineContinuation({
       // continuation, so declining it would pay the owner a fee for something
       // they could not accept. Refused for both answers; it is refunded in full
       // instead, by `settleOrphanedContinuations` or at its deadline.
-      if (!parent || parent.removedAt || parent.storyline.tosViolation)
+      // A malformed row is a bug, not a refusal: said as such before anything else.
+      if (action === 'approve' && (!parentPostId || !postId))
+        throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
+      if (!parentPostId || !parent || parent.removedAt || parent.storyline.tosViolation)
         throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
       // A decline writes no chapter.
       if (action === 'decline') return;
-
-      if (!parentPostId || !postId)
+      if (!postId)
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
 
       // The image-level rules the edge does not check. Hidden from the queue
