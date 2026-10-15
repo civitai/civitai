@@ -2739,7 +2739,12 @@ export const licenses: LicenseRecord[] = [
   {
     id: 49,
     name: 'FLUX Kommunity License',
-    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md',
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/55d9cc2b0d33255ccd4fe1c9724bc3754de0ae96/LICENSE.md',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
   },
 ];
 
