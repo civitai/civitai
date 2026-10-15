@@ -465,6 +465,15 @@ describe('unpacking a zip', () => {
     expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
   });
 
+  it('fails a top-level image the converter cannot read, and does not let it pass as a document', async () => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'cover.png', Buffer.from('this is plainly not a png'));
+    preview.entryCopy.mockRejectedValueOnce(new PreviewRejectedError('broken'));
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await entries(fileId))[0]).toMatchObject({ entryIndex: 0, scanStatus: 'Failed' });
+  });
+
   it('refuses a top-level image over the cap again before reading it', async () => {
     const dealId = await accepted();
     const fileId = await final(dealId, 'huge.png', IMAGE_A);

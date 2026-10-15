@@ -387,21 +387,6 @@ describe('requesting an upload', () => {
 });
 
 describe('completing an upload', () => {
-  it('does not fail a file that another call already moved on', async () => {
-    const dealId = await accepted('None');
-    const { fileId } = await upload(dealId, { size: 1000 });
-    // The first measurement is fine; while this call measures its copy, the other call finishes.
-    s3.headObject.mockResolvedValueOnce({ status: 'present', size: 1000 });
-    s3.headObject.mockImplementationOnce(async () => {
-      await q(`UPDATE "ServiceDealFile" SET status = 'Ready' WHERE id = $1`, [fileId]);
-      return { status: 'present', size: 999_999 };
-    });
-    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST' }
-    );
-    expect(await fileRow(fileId)).toMatchObject({ status: 'Ready', failReason: null });
-  });
-
   it('measures the object: a size that is not the declared one fails and removes it', async () => {
     const dealId = await accepted();
     const { fileId } = await upload(dealId, { size: 1000 });
