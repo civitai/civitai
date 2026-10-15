@@ -160,4 +160,31 @@ export type ServiceDealReasonCode =
 export const SERVICE_DEAL_HOLD_REASONS = {
   sellerUnavailable: 'seller_unavailable',
   finalScanFailed: 'final_scan_failed',
+  finalAboveRating: 'final_above_rating',
 } as const;
+
+/**
+ * The highest rating a service may carry and still be safe for work (PG-13). A service at or below it
+ * is open to everyone everywhere; one above it is mature, and only requested where mature content is
+ * served, by a buyer whose own browsing level includes it.
+ */
+export const SERVICE_SFW_MAX_NSFW_LEVEL = 2;
+export const isMatureServiceLevel = (maxNsfwLevel: number) =>
+  maxNsfwLevel > SERVICE_SFW_MAX_NSFW_LEVEL;
+
+/**
+ * Whether a buyer may request a service rated `maxNsfwLevel`: always for a SFW one; for a mature one
+ * only where the domain serves that level and the buyer has opted into it. `requestServiceDeal`
+ * repeats this rule in its INSERT.
+ */
+export const serviceRequestAllowed = ({
+  maxNsfwLevel,
+  servableLevels,
+  consentLevels,
+}: {
+  maxNsfwLevel: number;
+  servableLevels: number;
+  consentLevels: number;
+}) =>
+  !isMatureServiceLevel(maxNsfwLevel) ||
+  ((maxNsfwLevel & servableLevels) !== 0 && (maxNsfwLevel & consentLevels) !== 0);

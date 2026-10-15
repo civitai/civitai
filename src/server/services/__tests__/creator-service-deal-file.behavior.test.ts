@@ -103,6 +103,7 @@ const MIGRATIONS = [
   '20261025120000_creator_services_foundation',
   '20261028130000_service_deal_event_reason_code',
   '20261028140000_creator_service_deal_file_state',
+  '20261028150000_creator_service_max_nsfw_level',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -152,6 +153,8 @@ async function accepted(previewKind = 'Image') {
     buyerId: BUYER,
     requestText: 'please',
     buzzType: 'yellow',
+    servableLevels: 31,
+    consentLevels: 1,
   });
   await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
   return id;
@@ -271,6 +274,8 @@ describe('requesting an upload', () => {
           buyerId: BUYER,
           requestText: 'please',
           buzzType: 'yellow',
+          servableLevels: 31,
+          consentLevels: 1,
         });
         return id;
       },
