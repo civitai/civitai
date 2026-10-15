@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
@@ -10,6 +10,7 @@ import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
   appealGrantCoversText,
   buildTextScanFlagEntry,
+  MAX_FLAG_RULINGS,
   readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
@@ -50,14 +51,109 @@ type ModelFlagRow = {
   lockedProperties: string[];
 };
 
-function blockedByGrantOrLock(
+// 'skip': nothing to do. 'flag': set it. 'redetect': a human already cleared this label on other
+// text, so the detection waits for a moderator instead of re-flagging over their ruling.
+function classifyDetection(
   label: TextScanFlagLabel,
   model: { meta: Prisma.JsonValue; lockedProperties: string[] },
   textHash: string
-) {
+): 'skip' | 'flag' | 'redetect' {
   if (!readTextScanFlags(model.meta)[label]?.appealGranted)
-    return model.lockedProperties.includes(label);
-  return appealGrantCoversText(model.meta, label, textHash);
+    return model.lockedProperties.includes(label) ? 'skip' : 'flag';
+  return appealGrantCoversText(model.meta, label, textHash) ? 'skip' : 'redetect';
+}
+
+// Labels are the closed TextScanFlagLabel union, so interpolating them as literals is safe.
+export const labelLiteral = (label: TextScanFlagLabel) => Prisma.raw(`'${label}'`);
+const labelColumn = (label: TextScanFlagLabel) => Prisma.raw(`m.${label}`);
+export const flagEntryPath = (label: TextScanFlagLabel) =>
+  Prisma.sql`(m.meta->${TEXT_SCAN_FLAGS_KEY}->${labelLiteral(label)})`;
+
+// promptIds / model of the scan row whose workflow produced the verdict.
+const verdictRowField = (field: 'promptIds' | 'model', workflowId: string) => Prisma.sql`(
+  SELECT em.result->${Prisma.raw(`'${field}'`)} FROM "EntityModeration" em
+  WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+  ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1)`;
+
+// A flag write replaces the label entry, so the decisions on the old one move into a bounded
+// history instead of vanishing. Empty when there is nothing to carry.
+export const carriedRulings = (label: TextScanFlagLabel) => {
+  const prev = flagEntryPath(label);
+  return Prisma.sql`COALESCE((
+    SELECT jsonb_build_object('rulings', jsonb_agg(r.d ORDER BY r.d->>'at'))
+    FROM (
+      SELECT x.d FROM (
+        SELECT jsonb_array_elements(COALESCE(${prev}->'rulings', '[]'::jsonb)) AS d
+        UNION ALL SELECT ${prev}->'appealGranted' || '{"decision":"appealGranted"}'::jsonb
+          WHERE ${prev}->'appealGranted' IS NOT NULL
+        UNION ALL SELECT ${prev}->'appealUpheld' || '{"decision":"appealUpheld"}'::jsonb
+          WHERE ${prev}->'appealUpheld' IS NOT NULL
+      ) x
+      ORDER BY x.d->>'at' DESC LIMIT ${Prisma.raw(String(MAX_FLAG_RULINGS))}
+    ) r
+    HAVING count(*) > 0
+  ), '{}'::jsonb)`;
+};
+
+// The scan flags only past a clean slate. A moderator keeping a re-detection flags over the
+// grant, but only for the text the moderator was shown.
+const flagGuard = (label: TextScanFlagLabel, keptHash: string | null) =>
+  keptHash
+    ? Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NOT NULL
+        AND ${flagEntryPath(label)}->'redetected'->>'textHash' = ${keptHash}`
+    : Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NULL
+        AND NOT (${labelLiteral(label)} = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`;
+
+export type FlagResult = { written: boolean; notified: boolean; redetected?: boolean };
+const NOT_FLAGGED: FlagResult = { written: false, notified: false };
+
+/** Set when a moderator keeps a re-detection: the flag lands over the grant and is theirs. */
+export type KeptRedetection = { userId: number };
+
+async function recordRedetection({
+  modelId,
+  label,
+  workflowId,
+  reason,
+  names,
+  textHash,
+}: {
+  modelId: number;
+  label: TextScanFlagLabel;
+  workflowId: string;
+  reason: string;
+  names?: string[];
+  textHash: string;
+}) {
+  const detection = JSON.stringify(buildTextScanFlagEntry({ workflowId, reason, names, textHash }));
+  const written = await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+      ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
+        ${labelLiteral(label)}, ${flagEntryPath(label)} || jsonb_build_object(
+          'redetected', ${detection}::jsonb || jsonb_build_object(
+            'at', now(),
+            'promptIds', ${verdictRowField('promptIds', workflowId)},
+            'model', ${verdictRowField('model', workflowId)}
+          )
+        )
+      )
+    )
+    WHERE m.id = ${modelId}
+      AND NOT ${labelColumn(label)}
+      AND ${flagEntryPath(label)}->'appealGranted' IS NOT NULL
+      AND ${flagEntryPath(label)}->'appealGranted'->>'textHash' IS DISTINCT FROM ${textHash}
+  `;
+  if (written)
+    logToAxiom({
+      name: 'text-scan',
+      type: 'info',
+      message: `${label} re-detected after a human clear, awaiting moderator`,
+      entityType: 'Model',
+      entityId: modelId,
+      workflowId,
+    }).catch(() => null);
+  return written > 0;
 }
 
 export async function applyModelPoiMinor({
@@ -69,37 +165,43 @@ export async function applyModelPoiMinor({
   let notified = false;
   if (outcome.poi?.newlyDetected)
     notified =
-      (await flagModelPoi({
-        modelId: entityId,
-        workflowId,
-        reason: outcome.poi.reason,
-        names: outcome.poi.names,
-        textHash,
-      })) || notified;
+      (
+        await flagModelPoi({
+          modelId: entityId,
+          workflowId,
+          reason: outcome.poi.reason,
+          names: outcome.poi.names,
+          textHash,
+        })
+      ).notified || notified;
   if (outcome.minor?.newlyDetected)
     notified =
-      (await flagModelMinor({
-        modelId: entityId,
-        workflowId,
-        reason: outcome.minor.reason,
-        textHash,
-      })) || notified;
+      (
+        await flagModelMinor({
+          modelId: entityId,
+          workflowId,
+          reason: outcome.minor.reason,
+          textHash,
+        })
+      ).notified || notified;
   return { notified };
 }
 
-async function flagModelPoi({
+export async function flagModelPoi({
   modelId,
   workflowId,
   reason,
   names,
   textHash,
+  kept,
 }: {
   modelId: number;
   workflowId: string;
   reason: string;
   names: string[];
   textHash: string;
-}): Promise<boolean> {
+  kept?: KeptRedetection;
+}): Promise<FlagResult> {
   const before = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
@@ -114,8 +216,23 @@ async function flagModelPoi({
       meta: true,
     },
   });
-  if (!before || before.poi) return false;
-  if (blockedByGrantOrLock('poi', before, textHash)) return false;
+  if (!before || before.poi) return NOT_FLAGGED;
+  if (!kept) {
+    const action = classifyDetection('poi', before, textHash);
+    if (action === 'skip') return NOT_FLAGGED;
+    if (action === 'redetect')
+      return {
+        ...NOT_FLAGGED,
+        redetected: await recordRedetection({
+          modelId,
+          label: 'poi',
+          workflowId,
+          reason,
+          names,
+          textHash,
+        }),
+      };
+  }
 
   const entry = JSON.stringify(buildTextScanFlagEntry({ workflowId, reason, names, textHash }));
   const [after] = await dbWrite.$queryRaw<ModelFlagRow[]>`
@@ -130,14 +247,10 @@ async function flagModelPoi({
         ),
         meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
           ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
-            'poi', ${entry}::jsonb || jsonb_build_object(
+            'poi', ${entry}::jsonb || ${carriedRulings('poi')} || jsonb_build_object(
               'at', now(),
-              'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
-                            WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                            ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
-              'model', (SELECT em.result->'model' FROM "EntityModeration" em
-                        WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
+              'promptIds', ${verdictRowField('promptIds', workflowId)},
+              'model', ${verdictRowField('model', workflowId)},
               'prev', jsonb_build_object(
                 'nsfw', m.nsfw,
                 'sfwOnly', m."sfwOnly",
@@ -149,16 +262,11 @@ async function flagModelPoi({
         )
     WHERE m.id = ${modelId}
       AND NOT m.poi
-      AND (
-        (m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'appealGranted' IS NULL
-          AND NOT ('poi' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[]))))
-        OR (m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'appealGranted' IS NOT NULL
-          AND m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'appealGranted'->>'textHash' IS DISTINCT FROM ${textHash})
-      )
+      AND ${flagGuard('poi', kept ? textHash : null)}
     RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
               m.status, m."gallerySettings", m."lockedProperties"
   `;
-  if (!after) return false;
+  if (!after) return NOT_FLAGGED;
 
   const { applyModelFlagSideEffects } = await loadModelService();
   await applyModelFlagSideEffects({ before, after });
@@ -183,13 +291,17 @@ async function flagModelPoi({
           sfwOnly: after.sfwOnly,
           lockedProperties: after.lockedProperties,
         },
-        actorRole: 'system',
-        systemFields: {
-          poi: 'text-scan',
-          nsfw: 'text-scan',
-          sfwOnly: 'text-scan',
-          lockedProperties: 'text-scan',
-        },
+        actorRole: kept ? 'moderator' : 'system',
+        ...(kept
+          ? { reason: 'textScanRedetectionKept' }
+          : {
+              systemFields: {
+                poi: 'text-scan',
+                nsfw: 'text-scan',
+                sfwOnly: 'text-scan',
+                lockedProperties: 'text-scan',
+              },
+            }),
       })
     )
     .catch(() => null);
@@ -209,60 +321,68 @@ async function flagModelPoi({
     entityId: modelId,
     workflowId,
   }).catch(() => null);
-  return notified;
+  return { written: true, notified };
 }
 
-async function flagModelMinor({
+export async function flagModelMinor({
   modelId,
   workflowId,
   reason,
   textHash,
+  kept,
 }: {
   modelId: number;
   workflowId: string;
   reason: string;
   textHash: string;
-}): Promise<boolean> {
+  kept?: KeptRedetection;
+}): Promise<FlagResult> {
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: { userId: true, name: true, minor: true, lockedProperties: true, meta: true },
   });
-  if (!model || model.minor) return false;
-  if (blockedByGrantOrLock('minor', model, textHash)) return false;
+  if (!model || model.minor) return NOT_FLAGGED;
+  if (!kept) {
+    const action = classifyDetection('minor', model, textHash);
+    if (action === 'skip') return NOT_FLAGGED;
+    if (action === 'redetect')
+      return {
+        ...NOT_FLAGGED,
+        redetected: await recordRedetection({
+          modelId,
+          label: 'minor',
+          workflowId,
+          reason,
+          textHash,
+        }),
+      };
+  }
 
   const entry = JSON.stringify(buildTextScanFlagEntry({ workflowId, reason, textHash }));
   const written = await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
-        'minor', ${entry}::jsonb || jsonb_build_object(
+        'minor', ${entry}::jsonb || ${carriedRulings('minor')} || jsonb_build_object(
           'at', now(),
-          'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
-                        WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
-          'model', (SELECT em.result->'model' FROM "EntityModeration" em
-                    WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
-                    ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1)
+          'promptIds', ${verdictRowField('promptIds', workflowId)},
+          'model', ${verdictRowField('model', workflowId)}
         )
       )
     )
     WHERE m.id = ${modelId}
       AND NOT m.minor
-      AND (
-        (m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor'->'appealGranted' IS NULL
-          AND NOT ('minor' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[]))))
-        OR (m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor'->'appealGranted' IS NOT NULL
-          AND m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor'->'appealGranted'->>'textHash' IS DISTINCT FROM ${textHash})
-      )
+      AND ${flagGuard('minor', kept ? textHash : null)}
   `;
-  if (!written) return false;
+  if (!written) return NOT_FLAGGED;
 
   const { setModelMinor } = await loadModelService();
   await setModelMinor({
     id: modelId,
     minor: true,
-    userId: SYSTEM_USER_ID,
+    userId: kept?.userId ?? SYSTEM_USER_ID,
     activity: 'setMinorTextScan',
+    ...(kept && { isModerator: true }),
   });
 
   const notified = await notifyModelOwner({
@@ -280,7 +400,7 @@ async function flagModelMinor({
     entityId: modelId,
     workflowId,
   }).catch(() => null);
-  return notified;
+  return { written: true, notified };
 }
 
 async function notifyModelOwner({
@@ -417,12 +537,14 @@ export async function stampModelTextScanAppeal({
   decision,
   labels,
   grantHashes,
+  via = 'appeal',
 }: {
   modelId: number;
   userId: number;
   decision: 'appealGranted' | 'appealUpheld';
   labels: TextScanFlagLabel[];
   grantHashes?: Partial<Record<TextScanFlagLabel, string>>;
+  via?: 'appeal' | 'moderator';
 }) {
   if (!labels.length) return;
   // A grant covers the text the moderator reviewed, per label because the scan that owns a label
@@ -443,7 +565,7 @@ export async function stampModelTextScanAppeal({
               'at', now(),
               'by', ${userId}::int,
               'textHash', COALESCE((${hashes}::jsonb)->>l.label, m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash'),
-              'via', 'appeal'
+              'via', ${via}::text
             )
           )
         )

@@ -47,8 +47,9 @@ db.entityModeration.findUnique.mockImplementation(
     ).rows[0] ?? null) as never
 );
 
-const { mockSetModelMinor, searchMode } = vi.hoisted(() => ({
+const { mockSetModelMinor, mockCreateNotification, searchMode } = vi.hoisted(() => ({
   mockSetModelMinor: vi.fn(),
+  mockCreateNotification: vi.fn(),
   searchMode: { value: 'off' as 'off' | 'shadow' | 'active' },
 }));
 // The rollout lives in redis; the helper that maps a mode to its row stays real.
@@ -64,7 +65,9 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
 }));
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
-vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/notification.service', () => ({
+  createNotification: mockCreateNotification,
+}));
 vi.mock('~/server/clickhouse/tracker', () => ({
   Tracker: class {
     entityChanges = vi.fn().mockResolvedValue(undefined);
@@ -81,6 +84,9 @@ vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 
 const { applyModelPoiMinor, grantModelTextScanPoi, stampModelTextScanAppeal } = await import(
   '~/server/services/text-scan/actions/model-poi-minor'
+);
+const { resolveTextScanRedetection } = await import(
+  '~/server/services/text-scan/actions/redetection'
 );
 const { loadGrantTextHash } = await import('~/server/services/text-scan/actions/appeal-text-hash');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
@@ -145,10 +151,17 @@ async function seed({
 }
 type StoredModel = {
   poi: boolean;
+  minor: boolean;
   meta: {
     textScanFlags: Record<
       string,
-      { textHash: string; appealGranted: { textHash: string; via: string } }
+      {
+        textHash: string;
+        appealGranted: { textHash: string; via: string };
+        appealUpheld?: { by: number; via: string };
+        redetected?: { textHash: string; workflowId: string; reason: string; at: string };
+        rulings?: { decision: string; textHash: string; via: string }[];
+      }
     >;
   };
 };
@@ -211,14 +224,129 @@ describe('minor', () => {
     expect((await stored()).meta.textScanFlags.minor.appealGranted.textHash).toBe(SCANNED);
   });
 
-  it('re-flags when the verdict is for text edited after the scan', async () => {
+  it('records a re-detection, not a flag, when the verdict is for text edited after the scan', async () => {
     await seed({ scanHash: SCANNED });
     await overturn();
 
     await apply('minor', NEWER);
 
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    const entry = (await stored()).meta.textScanFlags.minor;
+    expect(entry.appealGranted.textHash).toBe(SCANNED);
+    expect(entry.redetected).toMatchObject({
+      textHash: NEWER,
+      workflowId: 'wf-new',
+      reason: 'r',
+    });
+  });
+
+  it('keeps the newest detection when the edited text is scanned again', async () => {
+    await seed({ scanHash: SCANNED });
+    await overturn();
+    await apply('minor', NEWER);
+
+    await apply('minor', 'hash-newest');
+
+    expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe('hash-newest');
+  });
+
+  it('still flags a label no human ever cleared', async () => {
+    await seed({});
+    await apply('minor', NEWER);
+
     expect(mockSetModelMinor).toHaveBeenCalledWith(expect.objectContaining({ minor: true }));
     expect((await stored()).meta.textScanFlags.minor.textHash).toBe(NEWER);
+  });
+
+  describe('a moderator rules on the re-detection', () => {
+    const redetect = async () => {
+      await seed({ scanHash: SCANNED });
+      await overturn();
+      await apply('minor', NEWER);
+      vi.clearAllMocks();
+    };
+
+    it('keep applies the flag as the scan would have, upholds, and keeps the grant in the history', async () => {
+      await redetect();
+
+      expect(
+        await resolveTextScanRedetection({
+          modelId: MODEL_ID,
+          label: 'minor',
+          keep: true,
+          userId: 9,
+        })
+      ).toBe('kept');
+
+      expect(mockSetModelMinor).toHaveBeenCalledWith(
+        expect.objectContaining({ minor: true, userId: 9, activity: 'setMinorTextScan' })
+      );
+      expect(mockCreateNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ key: `model-text-scan-flagged:${MODEL_ID}:minor:wf-new` })
+      );
+      const entry = (await stored()).meta.textScanFlags.minor;
+      expect(entry).toMatchObject({ workflowId: 'wf-new', textHash: NEWER });
+      expect(entry.appealGranted).toBeUndefined();
+      expect(entry.redetected).toBeUndefined();
+      expect(entry.appealUpheld).toMatchObject({ by: 9, via: 'moderator' });
+      expect(entry.rulings).toEqual([
+        expect.objectContaining({ decision: 'appealGranted', textHash: SCANNED, via: 'appeal' }),
+      ]);
+    });
+
+    it('dismiss clears the re-detected text, notifies nobody, and keeps the earlier grant', async () => {
+      await redetect();
+
+      expect(
+        await resolveTextScanRedetection({
+          modelId: MODEL_ID,
+          label: 'minor',
+          keep: false,
+          userId: 9,
+        })
+      ).toBe('dismissed');
+
+      expect(mockSetModelMinor).not.toHaveBeenCalled();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      const entry = (await stored()).meta.textScanFlags.minor;
+      expect(entry.redetected).toBeUndefined();
+      expect(entry.appealGranted).toMatchObject({ textHash: NEWER, via: 'moderator' });
+      expect(entry.rulings).toEqual([
+        expect.objectContaining({ decision: 'appealGranted', textHash: SCANNED }),
+      ]);
+
+      // The re-detected text is now covered, so the same text scanned again stays quiet.
+      await apply('minor', NEWER);
+      expect(mockSetModelMinor).not.toHaveBeenCalled();
+      expect((await stored()).meta.textScanFlags.minor.redetected).toBeUndefined();
+    });
+
+    it('refuses a label with nothing pending', async () => {
+      await seed({ scanHash: SCANNED });
+      await expect(
+        resolveTextScanRedetection({ modelId: MODEL_ID, label: 'minor', keep: true, userId: 9 })
+      ).rejects.toThrow();
+    });
+
+    it('caps the history at the newest rulings', async () => {
+      await redetect();
+      for (let i = 0; i < 7; i++) {
+        await holder.db.query(
+          `UPDATE "Model" SET meta = jsonb_set(meta, '{textScanFlags,minor,redetected}', $1::jsonb) WHERE id = $2`,
+          [JSON.stringify({ workflowId: `wf-${i}`, reason: 'r', textHash: `h-${i}` }), MODEL_ID]
+        );
+        await resolveTextScanRedetection({
+          modelId: MODEL_ID,
+          label: 'minor',
+          keep: false,
+          userId: 9,
+        });
+      }
+      const { rulings } = (await stored()).meta.textScanFlags.minor;
+      expect(rulings).toHaveLength(5);
+      expect(rulings?.at(-1)?.textHash).toBe('h-5');
+    });
   });
 });
 
@@ -242,13 +370,38 @@ describe('poi', () => {
     expect(row.meta.textScanFlags.poi.appealGranted.textHash).toBe(SCANNED);
   });
 
-  it('re-flags when the verdict is for text edited after the scan', async () => {
+  it('records a re-detection, not a flag, when the verdict is for text edited after the scan', async () => {
     await seed({ poi: true, scanHash: SCANNED });
     await overturn();
 
     await apply('poi', NEWER);
 
-    expect((await stored()).poi).toBe(true);
+    const row = await stored();
+    expect(row.poi).toBe(false);
+    expect(row.meta.textScanFlags.poi.appealGranted.textHash).toBe(SCANNED);
+    expect(row.meta.textScanFlags.poi.redetected?.textHash).toBe(NEWER);
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it('keep flags and restricts the model; the earlier grant moves into the history', async () => {
+    await seed({ poi: true, scanHash: SCANNED });
+    await overturn();
+    await apply('poi', NEWER);
+
+    expect(
+      await resolveTextScanRedetection({ modelId: MODEL_ID, label: 'poi', keep: true, userId: 9 })
+    ).toBe('kept');
+
+    const row = await stored();
+    expect(row.poi).toBe(true);
+    const entry = row.meta.textScanFlags.poi;
+    expect(entry.redetected).toBeUndefined();
+    expect(entry.appealGranted).toBeUndefined();
+    expect(entry.appealUpheld).toMatchObject({ via: 'moderator' });
+    expect(entry.rulings).toEqual([
+      expect.objectContaining({ decision: 'appealGranted', textHash: SCANNED }),
+    ]);
+    expect(mockCreateNotification).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -272,7 +425,7 @@ describe('web search active', () => {
     expect(await loadGrantTextHash('Model', MODEL_ID, 'minor')).toBe(textScanTextHash(CURRENT));
   });
 
-  it('minor: a verdict for the searched text stays unflagged, the main row text re-flags', async () => {
+  it('minor: a verdict for the searched text stays unflagged, the main row text is re-detected', async () => {
     await seed({ scanHash: MAIN, searchHash: SEARCH });
     await stampModelTextScanAppeal({
       modelId: MODEL_ID,
@@ -286,10 +439,11 @@ describe('web search active', () => {
     expect(mockSetModelMinor).not.toHaveBeenCalled();
 
     await apply('minor', MAIN);
-    expect(mockSetModelMinor).toHaveBeenCalledTimes(1);
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(MAIN);
   });
 
-  it('poi: a verdict for the searched text stays unflagged, the main row text re-flags', async () => {
+  it('poi: a verdict for the searched text stays unflagged, the main row text is re-detected', async () => {
     await seed({ poi: true, scanHash: MAIN, searchHash: SEARCH });
     await grantModelTextScanPoi({
       modelId: MODEL_ID,
@@ -301,6 +455,8 @@ describe('web search active', () => {
     expect((await stored()).poi).toBe(false);
 
     await apply('poi', MAIN);
-    expect((await stored()).poi).toBe(true);
+    const row = await stored();
+    expect(row.poi).toBe(false);
+    expect(row.meta.textScanFlags.poi.redetected?.textHash).toBe(MAIN);
   });
 });
