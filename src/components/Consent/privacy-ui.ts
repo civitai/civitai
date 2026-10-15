@@ -18,17 +18,13 @@ export function privacyLawApplies({ gdprApplies, uspString, gppSections }: Priva
   return !!gppSections?.some((section) => section > 0);
 }
 
-/**
- * Admiral's footer link and floating button go live before Snigel enables Admiral as the CMP, and
- * until then they open nothing. They are only worth showing once Admiral is the active CMP and a
- * privacy law applies to this visitor.
- */
+/** Admiral's footer link and floating button only work while Admiral is the active CMP, and only
+ *  matter where a privacy law applies. */
 export function shouldShowPrivacyUi(signals: PrivacySignals) {
   return signals.cmpId === ADMIRAL_CMP_ID && privacyLawApplies(signals);
 }
 
-/** `null` until the CMP has answered, which reads as hidden. */
-export const usePrivacyUiStore = create<{ visible: boolean | null }>(() => ({ visible: null }));
+export const usePrivacyUiStore = create<{ visible: boolean }>(() => ({ visible: false }));
 
 type CmpWindow = Window & {
   __tcfapi?: (command: string, version: number, callback: (data: any) => void) => void;
@@ -50,7 +46,7 @@ const ask = <T>(call: (callback: (data: T) => void) => void, timeoutMs = 1000) =
     }
   });
 
-/** Polls until the CMP reports itself loaded, then records whether privacy UI should show. */
+/** Gives up after `attempts` polls, leaving the UI hidden. */
 export function detectPrivacyUi({ intervalMs = 500, attempts = 60 } = {}) {
   const win = window as CmpWindow;
   let cancelled = false;
