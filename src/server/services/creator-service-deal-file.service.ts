@@ -218,11 +218,16 @@ async function zipRefusal(bucket: string, key: string) {
   }
 }
 
-const failFile = (fileId: number, reason: string) =>
+/**
+ * Fails a file. `onlyFrom` limits it to a file still in that status: a call that lost a race must
+ * not undo another call that already moved the file on (an upload completed twice at once).
+ */
+const failFile = (fileId: number, reason: string, onlyFrom: ServiceDealFileStatus | null = null) =>
   dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "status" = 'Failed'::"ServiceDealFileStatus", "failReason" = ${reason}::text
-    WHERE "id" = ${fileId}::int`;
+    WHERE "id" = ${fileId}::int
+      AND (${onlyFrom}::text IS NULL OR "status"::text = ${onlyFrom}::text)`;
 
 /**
  * The seller says the bytes are in the bucket. The seller holds a long-lived upload URL for the key
@@ -268,7 +273,7 @@ export async function completeServiceDealUpload({
   if (held.status === 'unknown') throw couldNotCheck();
   if (held.status === 'absent' || held.size !== file.size) {
     const reason = 'The uploaded file did not match its declared size.';
-    await failFile(file.id, reason);
+    await failFile(file.id, reason, 'Uploading');
     await deleteObject(bucket, file.s3Key).catch(() => null);
     await deleteObject(bucket, heldKey).catch(() => null);
     throw throwBadRequestError(reason);
@@ -277,7 +282,7 @@ export async function completeServiceDealUpload({
   if (file.kind === 'Final' && fileExtension(file.fileName) === 'zip') {
     const refusal = await zipRefusal(bucket, heldKey);
     if (refusal) {
-      await failFile(file.id, refusal);
+      await failFile(file.id, refusal, 'Uploading');
       await deleteObject(bucket, file.s3Key).catch(() => null);
       await deleteObject(bucket, heldKey).catch(() => null);
       throw throwBadRequestError(refusal);
