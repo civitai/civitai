@@ -21,7 +21,6 @@ const WORD = String.raw`\p{L}\p{N}_`;
 const SPACE = String.raw`\t\n\v\f\r\x1c-\x1f \x85\xa0\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}`;
 const DIGIT_NO = String.raw`\u{1369}-\u{1371}\u{19da}\u{24f5}-\u{24fd}\u{24ff}\u{2776}-\u{277e}\u{2780}-\u{2788}\u{278a}-\u{2792}\u{10a40}-\u{10a43}\u{10e60}-\u{10e68}\u{11052}-\u{1105a}`;
 
-const ANGLE = /<[^>]*>/gu;
 const EMBED = new RegExp(String.raw`(?<![${WORD}])embedding:[^${SPACE}]+`, 'gu');
 /** `(word:1.2)` weights. */
 const WEIGHT = new RegExp(String.raw`:[${SPACE}]*-?\p{Nd}+(?:\.\p{Nd}+)?`, 'gu');
@@ -62,6 +61,26 @@ function stripQuotesAndHyphens(t: string): string {
 }
 
 /**
+ * `<...>` tags (`<lora:...>`) each replaced by `,`: exactly `s.replace(/<[^>]*>/gu, ',')`, as a linear
+ * scan. That regex retries from every `<` to the end of the string when no `>` follows, which is
+ * quadratic in a run of `<`. Each `<` is paired with the first `>` after it, the scan resumes after
+ * that `>`, and once a `<` has no `>` after it no later `<` can have one either.
+ */
+export function replaceAngleTags(s: string): string {
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const i = s.indexOf('<', pos);
+    if (i < 0) break;
+    const j = s.indexOf('>', i + 1);
+    if (j < 0) break;
+    out += s.slice(pos, i) + ',';
+    pos = j + 1;
+  }
+  return out + s.slice(pos);
+}
+
+/**
  * Singular form of one token: `-ies` → `-y` above 4 code points; else a trailing `s` dropped above
  * 3, except after `s`, `u` or `i`.
  */
@@ -89,10 +108,7 @@ export function canonicalTagKey(tokens: readonly string[]): string {
 
 /** A prompt's segments, each as its tokens: syntax stripped, split at separators and `BREAK`. */
 export function tagSegments(prompt: string): string[][] {
-  const p = prompt
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(ANGLE, ',')
+  const p = replaceAngleTags(prompt.normalize('NFKC').toLowerCase())
     .replace(EMBED, ',')
     .replaceAll('\\(', '(')
     .replaceAll('\\)', ')')

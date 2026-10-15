@@ -219,7 +219,7 @@ const META_COLUMNS = Prisma.raw(
  * class: a corrupt payload also throws RangeError (msgpackr reading past the end of its data).
  * An allocation failure of any other shape is treated as a corrupt payload.
  */
-export function isAllocationFailure(e: unknown): boolean {
+function isAllocationFailure(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   const code = (e as { code?: unknown }).code;
   return (
@@ -358,7 +358,7 @@ export function selectCoocSnapshotsToDelete(rows: readonly RetentionRow[], now: 
   return out;
 }
 
-export const isUndefinedTable = (e: unknown) => {
+const isUndefinedTable = (e: unknown) => {
   const x = e as { code?: string; meta?: { code?: string } } | null;
   return x?.code === '42P01' || x?.meta?.code === '42P01';
 };

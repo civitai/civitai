@@ -1933,49 +1933,18 @@ model ResourceIntentCoocSnapshot {
 }
 
 // A mined resource-intent v1 tag vocabulary. `vocabVersion` = sha256 hex of `payload` (a DB
-// CHECK). Inserted as 'candidate'; a DB trigger allows only candidate -> frozen (stamping
-// `frozenAt`), candidate|frozen -> retired, and no other change. The migration is applied
-// manually per environment (no prisma migrate deploy).
+// CHECK). `status` is candidate | frozen | retired; a DB CHECK requires `frozenAt` and `frozenBy`
+// both null for a candidate and both set for a frozen row. The migration is applied manually per
+// environment (no prisma migrate deploy).
 model ResourceIntentVocabulary {
-  id                String                           @id @default(uuid())
-  vocabVersion      String                           @unique
-  status            String                           @default("candidate")
-  payload           Bytes
-  rulesSummary      Json
-  createdAt         DateTime                         @default(now())
-  frozenAt          DateTime?
-  frozenBy          String?
-  tagIndexSnapshots ResourceIntentTagIndexSnapshot[]
-}
-
-// One build of the resource-intent v1 content-tag index: ResourceIntentCoocSnapshot's columns and
-// lifecycle (same trigger, CHECKs and partial unique index), plus the vocabulary it was built
-// from. Written only through raw SQL in src/server/services/resource-intent-tags/store.ts. The
-// migration is applied manually per environment (no prisma migrate deploy).
-model ResourceIntentTagIndexSnapshot {
-  id                String                   @id @default(uuid())
-  kind              String
-  status            String                   @default("building")
-  contentHash       String?
-  specHash          String
-  trainStart        DateTime
-  trainEnd          DateTime
-  seed              Int
-  pinnedUntil       DateTime?
-  builtAt           DateTime                 @default(now())
-  trainCreatedAtMin DateTime?
-  trainCreatedAtMax DateTime?
-  idsTried          Int?
-  trainRows         Int?
-  vocab             Int?
-  models            Int?
-  keptPairs         Int?
-  payload           Bytes?
-  trainImageIds     Bytes?
-  vocabVersion      String
-  vocabulary        ResourceIntentVocabulary @relation(fields: [vocabVersion], references: [vocabVersion], onDelete: Restrict, onUpdate: Restrict)
-
-  @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
+  id           String    @id @default(uuid())
+  vocabVersion String    @unique
+  status       String    @default("candidate")
+  payload      Bytes
+  rulesSummary Json
+  createdAt    DateTime  @default(now())
+  frozenAt     DateTime?
+  frozenBy     String?
 }
 
 enum ReviewReactions {

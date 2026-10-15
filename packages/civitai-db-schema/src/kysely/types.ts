@@ -4459,28 +4459,6 @@ export type ResourceIntentCoocSnapshot = {
   payload: Buffer | null;
   trainImageIds: Buffer | null;
 };
-export type ResourceIntentTagIndexSnapshot = {
-  id: string;
-  kind: string;
-  status: Generated<string>;
-  contentHash: string | null;
-  specHash: string;
-  trainStart: Timestamp;
-  trainEnd: Timestamp;
-  seed: number;
-  pinnedUntil: Timestamp | null;
-  builtAt: Generated<Timestamp>;
-  trainCreatedAtMin: Timestamp | null;
-  trainCreatedAtMax: Timestamp | null;
-  idsTried: number | null;
-  trainRows: number | null;
-  vocab: number | null;
-  models: number | null;
-  keptPairs: number | null;
-  payload: Buffer | null;
-  trainImageIds: Buffer | null;
-  vocabVersion: string;
-};
 export type ResourceIntentVocabulary = {
   id: string;
   vocabVersion: string;
@@ -5752,7 +5730,6 @@ export type DB = {
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
   ResourceIntentCoocSnapshot: ResourceIntentCoocSnapshot;
-  ResourceIntentTagIndexSnapshot: ResourceIntentTagIndexSnapshot;
   ResourceIntentVocabulary: ResourceIntentVocabulary;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
