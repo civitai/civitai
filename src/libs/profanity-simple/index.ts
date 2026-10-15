@@ -173,10 +173,7 @@ export class SimpleProfanityFilter {
     this.initializeCensor();
   }
 
-  /**
-   * Drop matches whose full surrounding word is whitelisted. Shared by `clean()` and
-   * `analyze()` so rendered output and moderation verdicts agree.
-   */
+  /** Drop matches whose full surrounding word is whitelisted; clean() and analyze() must apply the same exclusion. */
   private excludeWhitelisted(text: string, matches: MatchPayload[]): MatchPayload[] {
     return matches.filter((match) => {
       const { startIndex, endIndex } = this.dataset.getPayloadWithPhraseMetadata(match);

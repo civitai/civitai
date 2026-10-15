@@ -900,9 +900,9 @@ describe('createCrucible — name and description', () => {
     });
   });
 
-  it('does not reject an SFW-only crucible for a profanity-dictionary match; the text scan rates it', async () => {
-    await expect(
-      createCrucible(input({ name: 'Fukushima', nsfwLevel: 1 }))
-    ).resolves.toMatchObject({ id: 1 });
+  it('does not reject an SFW-only crucible for a profanity-dictionary match', async () => {
+    await expect(createCrucible(input({ name: 'Fukushima', nsfwLevel: 1 }))).resolves.toMatchObject(
+      { id: 1 }
+    );
   });
 });
