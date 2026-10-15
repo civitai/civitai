@@ -117,6 +117,9 @@ export async function claimRefund(tx: Db, dealId: number) {
 /** Why a deal went to the moderators instead of being paid out. */
 export const SELLER_UNAVAILABLE = SERVICE_DEAL_HOLD_REASONS.sellerUnavailable;
 export const FINAL_SCAN_FAILED = SERVICE_DEAL_HOLD_REASONS.finalScanFailed;
+/** Only these: the deal view hides exactly this list from the parties. */
+type ServiceDealHoldReason =
+  (typeof SERVICE_DEAL_HOLD_REASONS)[keyof typeof SERVICE_DEAL_HOLD_REASONS];
 
 /**
  * The deal's current round has at least one final, and every final in it passed scanning. The
@@ -150,7 +153,7 @@ const noReleaseLeg = Prisma.sql`NOT EXISTS (
 async function holdForReview(
   tx: Db,
   dealId: number,
-  reason: string,
+  reason: ServiceDealHoldReason,
   where: Prisma.Sql
 ): Promise<boolean> {
   const held = await tx.$executeRaw`
@@ -170,7 +173,7 @@ async function holdForReview(
  * Sends a Delivered or Completed deal to the moderators (e.g. a final that failed scanning), unless
  * its payout is settled or already claimed: a claimed Release leg always completes.
  */
-export const holdServiceDealForReview = (dealId: number, reason: string) =>
+export const holdServiceDealForReview = (dealId: number, reason: ServiceDealHoldReason) =>
   dbWrite.$transaction(async (tx) => {
     await lockDeal(tx, dealId);
     return holdForReview(
