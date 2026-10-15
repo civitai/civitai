@@ -1,3 +1,4 @@
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -12,17 +13,19 @@ import {
   openZip,
   readEntry,
   s3ZipSource,
+  sniffEntry,
   ZipRejectedError,
   type OpenedZip,
   type ZipEntry,
 } from '~/server/utils/service-deal-zip';
 import {
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
-  SERVICE_PREVIEW_MAX_NSFW_LEVEL,
   SERVICE_SCAN_COPY_SWEEP_MS,
+  SERVICE_UNPACK_RETRY_MS,
   SERVICE_UNPACK_STALE_MS,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
   SERVICE_ZIP_MAX_IMAGE_BYTES,
+  SERVICE_ZIP_MODEL_EXTENSIONS,
 } from '~/shared/constants/creator-services.constants';
 import { getBucket, getS3Client, uploadImageBufferToStore } from '~/utils/s3-utils';
 
@@ -43,8 +46,8 @@ import { getBucket, getS3Client, uploadImageBufferToStore } from '~/utils/s3-uti
 const logUnpack = (message: string, fields: Record<string, unknown>, type = 'info') =>
   logToAxiom({ name: 'creator-service-unpack', type, message, ...fields }).catch(() => null);
 
-/** The level a Final's image may carry. Today every service is SFW-only. */
-const MAX_LEVEL = Prisma.sql`${SERVICE_PREVIEW_MAX_NSFW_LEVEL}::int`;
+/** The highest rating an image in a Final may carry: the deal's own, copied from its offering. */
+const MAX_LEVEL = Prisma.sql`d."maxNsfwLevel"`;
 
 type ClaimedFinal = {
   id: number;
@@ -73,6 +76,15 @@ function claimFinal() {
       ORDER BY p."id" LIMIT 1 FOR UPDATE SKIP LOCKED)
     RETURNING f."id", f."s3Key", f."fileName", f."size", d."sellerId"`;
 }
+
+/** Keeps the file out of the next runs for a while, so one file that keeps failing cannot hold up the rest. */
+const retryLater = (fileId: number) =>
+  dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile"
+    SET "processingAt" = now() - ((${
+      SERVICE_UNPACK_STALE_MS - SERVICE_UNPACK_RETRY_MS
+    }::int) * interval '1 millisecond')
+    WHERE "id" = ${fileId}::int`;
 
 const release = (fileId: number) =>
   dbWrite.$executeRaw`UPDATE "ServiceDealFile" SET "processingAt" = NULL WHERE "id" = ${fileId}::int`;
@@ -196,6 +208,29 @@ async function unpackZip(file: ClaimedFinal, shouldStop: () => boolean) {
   }
 }
 
+const isModelName = (name: string) =>
+  (SERVICE_ZIP_MODEL_EXTENSIONS as readonly string[]).includes(fileExtension(name));
+
+/**
+ * A Final that is not an archive, an image or a model file is judged by its first bytes, not its
+ * name: an image or a video called notes.txt is still one. Returns whether it is an image.
+ */
+async function isImageByContent(file: ClaimedFinal) {
+  const response = await getS3Client().send(
+    new GetObjectCommand({ Bucket: await getBucket(), Key: file.s3Key, Range: 'bytes=0-15' })
+  );
+  if (!response.Body) throw new Error('Empty object body');
+  const kind = sniffEntry(Buffer.from(await response.Body.transformToByteArray()));
+  if (kind === 'video') throw new ZipRejectedError('Video cannot be delivered yet.');
+  if (kind === 'archive')
+    throw new ZipRejectedError('Archives must be delivered as a .zip, not renamed.');
+  if (kind === 'unscannable')
+    throw new ZipRejectedError(
+      'This image format cannot be delivered. Use PNG, JPEG, WebP or GIF.'
+    );
+  return kind === 'image';
+}
+
 /** A Final that is itself an image has a single entry: the file. */
 async function unpackImage(file: ClaimedFinal) {
   if (file.size > SERVICE_ZIP_MAX_IMAGE_BYTES)
@@ -234,6 +269,8 @@ export async function unpackFinals({
       }
     } else if (isImageName(file.fileName)) {
       await unpackImage(file);
+    } else if (!isModelName(file.fileName) && (await isImageByContent(file))) {
+      await unpackImage(file);
     }
     await markUnpacked(file.id);
     logUnpack('final unpacked', { fileId: file.id, ms: Date.now() - began });
@@ -249,7 +286,7 @@ export async function unpackFinals({
       { fileId: file.id, error: (error as Error)?.message },
       'error'
     );
-    await release(file.id);
+    await retryLater(file.id);
     return 0;
   }
 }
@@ -264,8 +301,8 @@ export async function settleEntryScans() {
   const passed = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" e
     SET "scanStatus" = 'Passed'::"ServiceDealFileScanStatus", "nsfwLevel" = i."nsfwLevel"
-    FROM "Image" i
-    WHERE i."id" = e."imageId" AND ${waiting}
+    FROM "Image" i, "ServiceDealFile" f, "ServiceDeal" d
+    WHERE i."id" = e."imageId" AND f."id" = e."fileId" AND d."id" = f."dealId" AND ${waiting}
       AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
       AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
       AND i."nsfwLevel" BETWEEN 1 AND ${MAX_LEVEL}`;
@@ -273,8 +310,8 @@ export async function settleEntryScans() {
     UPDATE "ServiceDealFileEntry" e
     SET "scanStatus" = 'Failed'::"ServiceDealFileScanStatus", "nsfwLevel" = i."nsfwLevel",
       "failReason" = 'An image in this file was rejected when it was checked.'
-    FROM "Image" i
-    WHERE i."id" = e."imageId" AND ${waiting}
+    FROM "Image" i, "ServiceDealFile" f, "ServiceDeal" d
+    WHERE i."id" = e."imageId" AND f."id" = e."fileId" AND d."id" = f."dealId" AND ${waiting}
       AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
           AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor"
@@ -305,7 +342,8 @@ export async function settleFinals() {
     SELECT f."id" FROM "ServiceDealFile" f
     WHERE f."kind" = 'Final'::"ServiceDealFileKind"
       AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
-      AND (f."malwareScanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+      AND (f."failReason" IS NOT NULL
+        OR f."malwareScanStatus" = 'Failed'::"ServiceDealFileScanStatus"
         OR EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = f."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"))
     ORDER BY f."id" LIMIT 50`;

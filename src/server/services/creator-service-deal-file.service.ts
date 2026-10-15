@@ -31,6 +31,8 @@ import {
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
+  SERVICE_ZIP_IMAGE_EXTENSIONS,
+  SERVICE_ZIP_MAX_IMAGE_BYTES,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealFileKind,
@@ -126,6 +128,18 @@ export async function requestServiceDealUpload({
     assertFinalFileType(fileName);
     if (size > SERVICE_FINAL_MAX_BYTES)
       throw throwBadRequestError('That file is too large to deliver.');
+    // An image is scanned whole, so it has its own, lower, cap.
+    if (
+      (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(
+        fileExtension(cleanFileName(fileName))
+      ) &&
+      size > SERVICE_ZIP_MAX_IMAGE_BYTES
+    )
+      throw throwBadRequestError(
+        `An image cannot be more than ${Math.floor(
+          SERVICE_ZIP_MAX_IMAGE_BYTES / (1024 * 1024)
+        )} MB.`
+      );
   }
 
   const created = await dbWrite.$transaction(async (tx) => {
@@ -218,11 +232,17 @@ async function zipRefusal(bucket: string, key: string) {
   }
 }
 
-export const failFile = (fileId: number, reason: string) =>
+/** `onlyFrom` limits the failure to a file still in that status, so a late caller cannot undo a move on. */
+export const failFile = (
+  fileId: number,
+  reason: string,
+  onlyFrom: ServiceDealFileStatus | null = null
+) =>
   dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "status" = 'Failed'::"ServiceDealFileStatus", "failReason" = ${reason}::text
-    WHERE "id" = ${fileId}::int`;
+    WHERE "id" = ${fileId}::int
+      AND (${onlyFrom}::text IS NULL OR "status"::text = ${onlyFrom}::text)`;
 
 /**
  * The seller says the bytes are in the bucket. The seller holds a long-lived upload URL for the key
@@ -268,7 +288,7 @@ export async function completeServiceDealUpload({
   if (held.status === 'unknown') throw couldNotCheck();
   if (held.status === 'absent' || held.size !== file.size) {
     const reason = 'The uploaded file did not match its declared size.';
-    await failFile(file.id, reason);
+    await failFile(file.id, reason, 'Uploading');
     await deleteObject(bucket, file.s3Key).catch(() => null);
     await deleteObject(bucket, heldKey).catch(() => null);
     throw throwBadRequestError(reason);
@@ -277,7 +297,7 @@ export async function completeServiceDealUpload({
   if (file.kind === 'Final' && fileExtension(file.fileName) === 'zip') {
     const refusal = await zipRefusal(bucket, heldKey);
     if (refusal) {
-      await failFile(file.id, refusal);
+      await failFile(file.id, refusal, 'Uploading');
       await deleteObject(bucket, file.s3Key).catch(() => null);
       await deleteObject(bucket, heldKey).catch(() => null);
       throw throwBadRequestError(refusal);
@@ -321,7 +341,8 @@ export async function deleteServiceDealFile({
     const copies = await tx.$queryRaw<{ imageId: number }[]>`
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
-        AND e."scanStatus" <> 'Failed'::"ServiceDealFileScanStatus"`;
+        AND e."scanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
+      FOR UPDATE OF e`;
     const [file] = await tx.$queryRaw<
       { id: number; s3Key: string; imageId: number | null; scanKey: string | null }[]
     >`
@@ -370,6 +391,7 @@ export async function recordFinalScanResult({
       AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND (${verdict}::text = 'Failed' OR (
         "unpackedAt" IS NOT NULL
+        AND "failReason" IS NULL
         AND "malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
         AND NOT EXISTS (
           SELECT 1 FROM "ServiceDealFileEntry" e

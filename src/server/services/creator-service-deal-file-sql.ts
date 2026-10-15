@@ -13,7 +13,8 @@ const DEAL = Prisma.sql`"ServiceDeal"`;
 /**
  * The seller may mark the round delivered: its preview is Ready (watermarked and scanned clean),
  * unless the offering takes no preview, and at least one Final has been uploaded. A Final still
- * uploading does not count.
+ * uploading does not count, and neither does one not yet unpacked: a file the unpack step is going
+ * to refuse is found before the round is delivered, while the seller can still replace it.
  */
 export const dealReadyToDeliver = (deal: Prisma.Sql = DEAL) => Prisma.sql`(
   (${deal}."previewKind" = 'None'::"ServicePreviewKind" OR EXISTS (
@@ -34,7 +35,8 @@ export const dealReadyToDeliver = (deal: Prisma.Sql = DEAL) => Prisma.sql`(
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
-      AND f."kind" = 'Final'::"ServiceDealFileKind" AND f."status" <> 'Ready'::"ServiceDealFileStatus"
+      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND (f."status" <> 'Ready'::"ServiceDealFileStatus" OR f."unpackedAt" IS NULL)
   )
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" f

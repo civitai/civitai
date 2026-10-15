@@ -136,7 +136,9 @@ const {
 
 const MIGRATIONS = [
   '20261025120000_creator_services_foundation',
+  '20261028130000_service_deal_event_reason_code',
   '20261028140000_creator_service_deal_file_state',
+  '20261028150000_creator_service_max_nsfw_level',
   '20261028160000_creator_service_deal_file_entries',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
@@ -239,6 +241,13 @@ const verdict = (ingestion: string, extra = '', level = 1) =>
   q(`UPDATE "Image" SET ingestion = $1::"ImageIngestionStatus", "nsfwLevel" = ${level}${extra}`, [
     ingestion,
   ]);
+
+/** Moves a file's claim back in time, as the clock would. */
+const ageClaim = (fileId: number, ms: number) =>
+  q(
+    `UPDATE "ServiceDealFile" SET "processingAt" = now() - ($2::int * interval '1 millisecond') WHERE id = $1`,
+    [fileId, ms]
+  );
 
 const settle = async () => {
   await unpack.settleEntryScans();
@@ -441,9 +450,28 @@ describe('unpacking a zip', () => {
     expect((await fileRow(model)).unpackedAt).not.toBeNull();
   });
 
-  it('refuses a top-level image over the image size cap before reading it', async () => {
+  it('refuses a top-level image over the image size cap at upload', async () => {
     const dealId = await accepted();
-    const fileId = await final(dealId, 'huge.png', PNG_BYTES(SERVICE_ZIP_MAX_IMAGE_BYTES));
+    await expect(
+      files.requestServiceDealUpload({
+        dealId,
+        userId: SELLER,
+        kind: 'Final',
+        fileName: 'huge.PNG',
+        mimeType: 'image/png',
+        size: SERVICE_ZIP_MAX_IMAGE_BYTES + 1,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
+  });
+
+  it('refuses a top-level image over the cap again before reading it', async () => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'huge.png', IMAGE_A);
+    await q(`UPDATE "ServiceDealFile" SET size = $2 WHERE id = $1`, [
+      fileId,
+      SERVICE_ZIP_MAX_IMAGE_BYTES + 1,
+    ]);
     expect(await unpack.unpackFinals()).toBe(1);
     expect(await fileRow(fileId)).toMatchObject({
       scanStatus: 'Failed',
@@ -537,10 +565,12 @@ describe('what stops an archive', () => {
   it('holds a delivered deal for the moderators when its archive is refused', async () => {
     const dealId = await accepted();
     await zipFinal(dealId, [{ name: 'a.txt', data: Buffer.from('fine') }]);
+    expect(await unpack.unpackFinals()).toBe(1);
     await files.deliverServiceDeal({ dealId, userId: SELLER });
     // Swap the contents for a refused archive after delivery, as a late finding would be.
     const [row] = await q<{ s3Key: string }>(`SELECT "s3Key" FROM "ServiceDealFile"`);
     bucket.objects.set(row.s3Key, buildZip([{ name: 'inner.zip', data: Buffer.from('x') }]));
+    await q(`UPDATE "ServiceDealFile" SET "unpackedAt" = NULL`);
     await unpack.unpackFinals();
     expect(await dealStatus(dealId)).toEqual({
       status: 'Disputed',
@@ -561,6 +591,105 @@ describe('what stops an archive', () => {
     expect(rows[0]).toMatchObject({ scanStatus: 'Failed', imageId: null });
     // The second image was never submitted.
     expect(images.createImage).not.toHaveBeenCalled();
+  });
+});
+
+describe('judging a file by what it is', () => {
+  const serveHeads = () =>
+    s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
+      const whole = bucket.objects.get(command.input.Key)!;
+      return body(command.input.Range ? whole.subarray(0, 16) : whole);
+    });
+
+  it.each([
+    ['an image called notes.txt', 'notes.txt', PNG_BYTES()],
+    ['an image called data.json', 'data.json', JPEG_BYTES()],
+  ])('scans %s as an image', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await entries(fileId)).map((r) => r.path)).toEqual([name]);
+    expect(preview.entryCopy.mock.calls[0][0].equals(content)).toBe(true);
+  });
+
+  const PK = Buffer.concat([Buffer.from([0x50, 0x4b, 3, 4]), Buffer.alloc(40)]);
+  const BMP = Buffer.concat([Buffer.from('BM'), Buffer.alloc(40)]);
+  it.each([
+    ['a video called notes.txt', MP4_BYTES(), /Video/],
+    ['an archive called notes.txt', PK, /renamed/],
+    ['a bitmap called notes.txt', BMP, /image format/],
+  ])('refuses %s', async (_n, content, reason) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'notes.txt', content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await fileRow(fileId)).failReason).toMatch(reason);
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it('leaves plain documents without entries, and does not sniff a model file', async () => {
+    const dealId = await accepted();
+    const doc = await final(dealId, 'brief.txt', Buffer.from('just some words in a text file'));
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await entries(doc)).toEqual([]);
+    expect((await fileRow(doc)).unpackedAt).not.toBeNull();
+    // A model file may begin with any bytes, so it is not sniffed.
+    const model = await final(dealId, 'm.pt', PK);
+    s3.send.mockClear();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(s3.send).not.toHaveBeenCalled();
+    expect(await fileRow(model)).toMatchObject({ scanStatus: 'Pending' });
+  });
+});
+
+describe('a file that keeps failing', () => {
+  it('does not hold up the files behind it', async () => {
+    const dealId = await accepted();
+    const bad = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    const good = await zipFinal(dealId, [
+      { name: 'b.txt', data: Buffer.from('plain text here!!') },
+    ]);
+    const badKey = (await fileRow(bad)).s3Key;
+    bucket.objects.delete(badKey); // reading it throws, which is not the file's fault
+    expect(await unpack.unpackFinals()).toBe(0);
+    expect((await fileRow(bad)).unpackedAt).toBeNull();
+    // The next run takes the other file, not the same one again.
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(good)).unpackedAt).not.toBeNull();
+    // And the failing one is tried again once its delay has passed.
+    await ageClaim(bad, SERVICE_UNPACK_STALE_MS + 60_000);
+    bucket.objects.set(badKey, buildZip([{ name: 'a.png', data: IMAGE_A }]));
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(bad)).unpackedAt).not.toBeNull();
+  });
+});
+
+describe('delivery waits for the unpack', () => {
+  it('will not deliver a round whose Final has not been unpacked, and will once it has', async () => {
+    const dealId = await accepted();
+    await zipFinal(dealId, [{ name: 'a.txt', data: Buffer.from('plain text here!!') }]);
+    await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(await unpack.unpackFinals()).toBe(1);
+    await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).resolves.toBeTruthy();
+  });
+
+  it('shows the seller a refusal before delivery and lets them replace the file', async () => {
+    const dealId = await accepted();
+    const bad = await zipFinal(dealId, [{ name: 'c.mp4', data: MP4_BYTES() }]);
+    await unpack.unpackFinals();
+    await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect((await dealStatus(dealId)).status).toBe('Accepted'); // not held: nothing was delivered
+    await files.deleteServiceDealFile({ fileId: bad, userId: SELLER });
+    await zipFinal(dealId, [{ name: 'a.txt', data: Buffer.from('plain text here!!') }]);
+    await unpack.unpackFinals();
+    await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).resolves.toBeTruthy();
   });
 });
 
@@ -588,7 +717,11 @@ describe('resuming', () => {
     // The key was recorded before the row was attempted.
     expect(rows[1]).toMatchObject({ imageId: null, scanKey: 'scan-key-2' });
     const file = await fileRow(fileId);
-    expect(file).toMatchObject({ unpackedAt: null, processingAt: null, scanStatus: 'Pending' });
+    expect(file).toMatchObject({ unpackedAt: null, scanStatus: 'Pending' });
+
+    // It is tried again after the retry delay, not at once.
+    expect(await unpack.unpackFinals()).toBe(0);
+    await ageClaim(fileId, SERVICE_UNPACK_STALE_MS + 60_000);
 
     // The next run finishes: the first image is not ingested again, the second reuses its object.
     expect(await unpack.unpackFinals()).toBe(1);
@@ -703,6 +836,35 @@ describe('the verdict on each image', () => {
     expect((await entries(fileId))[0].scanStatus).toBe('Pending');
     await q(`UPDATE "ServiceDealFileEntry" SET "createdAt" = now() - interval '7 hours'`);
     expect((await unpack.settleEntryScans()).timedOut).toBe(1);
+    expect((await entries(fileId))[0].scanStatus).toBe('Failed');
+  });
+});
+
+describe('the rating limit', () => {
+  it.each([
+    [2, 2, 'Passed'],
+    [2, 4, 'Failed'],
+    [4, 4, 'Passed'],
+    [4, 2, 'Passed'],
+    [4, 8, 'Failed'],
+    [16, 16, 'Passed'],
+  ])('a deal limited to %i: an image rated %i is %s', async (limit, rating, expected) => {
+    const dealId = await accepted();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [limit]);
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await unpack.unpackFinals();
+    await verdict('Scanned', '', rating);
+    await unpack.settleEntryScans();
+    expect((await entries(fileId))[0]).toMatchObject({ scanStatus: expected, nsfwLevel: rating });
+  });
+
+  it('never passes an unrated image, whatever the limit', async () => {
+    const dealId = await accepted();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 16`);
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await unpack.unpackFinals();
+    await verdict('Scanned', '', 0);
+    await unpack.settleEntryScans();
     expect((await entries(fileId))[0].scanStatus).toBe('Failed');
   });
 });
@@ -847,6 +1009,15 @@ describe('the single verdict entry point', () => {
     // With every condition met it is taken.
     expect(await pass(fileId)).toEqual({ recorded: true, held: false });
     expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+  });
+
+  it('refuses a pass for a file that was refused, whatever else is true of it', async () => {
+    const fileId = await ready();
+    await q(`UPDATE "ServiceDealFile" SET "failReason" = 'refused' WHERE id = $1`, [fileId]);
+    expect(await pass(fileId)).toEqual({ recorded: false, held: false });
+    // And the sweep finishes a refusal whose second write was lost.
+    expect(await unpack.settleFinals()).toEqual({ finalsFailed: 1, finalsPassed: 0 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Failed');
   });
 
   it('takes a failure whatever state the parts are in', async () => {

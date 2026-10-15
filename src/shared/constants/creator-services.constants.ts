@@ -207,7 +207,9 @@ export const SERVICE_ZIP_VIDEO_EXTENSIONS = [
   '3gp',
 ] as const;
 /** A file being unpacked that has not finished in this long is taken up again by the next run. */
-export const SERVICE_UNPACK_STALE_MS = 30 * 60_000;
+export const SERVICE_UNPACK_STALE_MS = 60 * 60_000;
+/** After a failure that is not the file's fault, the file is tried again this long later; others go first. */
+export const SERVICE_UNPACK_RETRY_MS = 5 * 60_000;
 /** A scan copy still Pending this long after it was submitted is failed, so a round never hangs. */
 export const SERVICE_FINAL_SCAN_GIVE_UP_MS = 6 * HOUR;
 /** A copy left behind by a run that died is removed once it is this old. */
