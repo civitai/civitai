@@ -141,9 +141,11 @@ describe('what a reason form sends', () => {
     expect(exitInputs.decline(7, undefined, 'not_delivered').reasonCode).toBeUndefined();
   });
 
-  it('marks the one field that can meet a required reason, and nothing when optional', () => {
+  it('stars a field only when it is the one way to meet a required reason', () => {
+    // Either the picker or the text meets it, so neither is starred; the hint says so.
     expect(reasonFormLabels({ required: true, hasCodes: true, muted: false })).toMatchObject({
-      codeRequired: true,
+      codeRequired: false,
+      hint: 'Pick a reason, add details, or both.',
       codeClearable: true,
       textRequired: false,
       textLabel: 'Details (optional if you picked a reason)',

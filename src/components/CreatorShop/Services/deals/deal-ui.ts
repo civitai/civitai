@@ -289,7 +289,11 @@ export function reasonFormValues({
   return { text: trimmed || undefined, code: code ?? undefined };
 }
 
-/** How a reason form marks what it needs: one asterisk on whichever field can meet it. */
+/**
+ * How a reason form marks what it needs. An asterisk goes on a field only when it is the one way
+ * to meet the requirement: the picker for a muted viewer (no text box), the text box when there
+ * is no picker. With both, either meets it, so neither is starred and the hint says so.
+ */
 export function reasonFormLabels({
   required,
   hasCodes,
@@ -300,8 +304,7 @@ export function reasonFormLabels({
   muted: boolean;
 }) {
   return {
-    // With a picker, a required reason is met by the code, so the picker carries the asterisk.
-    codeRequired: required && hasCodes,
+    codeRequired: required && hasCodes && muted,
     codeClearable: !(required && hasCodes && muted),
     textRequired: required && !hasCodes,
     textLabel: !required
