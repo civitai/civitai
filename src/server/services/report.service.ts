@@ -16,7 +16,6 @@ import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.con
 import type {
   CreateEntityAppealInput,
   CreateReportInput,
-  GetRecentAppealsInput,
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
 import { withAdditionalReport } from '~/server/services/report-details';
@@ -711,7 +710,7 @@ function trackModReports({ ids, userId }: { ids: number[]; userId: number }) {
 
 // #endregion
 
-export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
+export function getRecentAppealsByUserId({ userId }: { userId: number }) {
   return dbRead.appeal.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
