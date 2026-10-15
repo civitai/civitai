@@ -82,4 +82,13 @@ describe('creator service deal router inputs', () => {
   it.each(['get', 'listMine'])('tells %s whether the flag is on', (name) => {
     expect(procedures[name]).toContain('servicesEnabled: !!ctx.features?.creatorServices,');
   });
+
+  // The domain's levels and the buyer's consent come from the request, never the input.
+  it.each(['request', 'listMine'])('gives %s the levels the domain may serve', (name) => {
+    expect(procedures[name]).toContain('servableLevels: domainServableLevels(ctx),');
+  });
+
+  it("gives request the buyer's own browsing level as consent", () => {
+    expect(procedures.request).toContain('consentLevels: getRequestBrowsingLevel(ctx),');
+  });
 });

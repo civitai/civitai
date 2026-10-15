@@ -25,6 +25,7 @@ import {
   respondServiceDealCancellation,
   withdrawServiceDeal,
 } from '~/server/services/creator-service-deal.service';
+import { domainServableLevels, getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 
 /**
@@ -52,6 +53,8 @@ export const creatorServiceDealRouter = router({
       buyerId: ctx.user.id,
       // From the request's domain, never the input: yellow, or green on the green site.
       buzzType: domainSpendType(ctx.features),
+      servableLevels: domainServableLevels(ctx),
+      consentLevels: getRequestBrowsingLevel(ctx),
     })
   ),
   accept: gated
@@ -67,6 +70,7 @@ export const creatorServiceDealRouter = router({
       status: ctx.features?.creatorServices ? input.status : 'open',
       userId: ctx.user.id,
       servicesEnabled: !!ctx.features?.creatorServices,
+      servableLevels: domainServableLevels(ctx),
     })
   ),
 
