@@ -896,6 +896,7 @@ type DisputedDealRow = {
   completedAt: Date | null;
   deliveredAt: Date | null;
   finalsClear: boolean;
+  cursor: string;
 };
 
 type DisputedDealEventRow = {
@@ -909,29 +910,48 @@ type DisputedDealEventRow = {
 };
 
 /**
- * The moderators' queue: Disputed deals in id order, with what a decision needs. `finalsClear`
- * false means a Release will be refused.
+ * Opaque to callers: the last row's dispute time, as the database wrote it, and its id, so the
+ * order is stable across ties. The time never passes through a JS Date, whose time zone handling
+ * could shift it against a `timestamp without time zone` column.
+ */
+const DISPUTE_CURSOR = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})_(\d+)$/;
+
+function parseDisputeCursor(cursor: string | undefined) {
+  if (!cursor) return null;
+  const match = DISPUTE_CURSOR.exec(cursor);
+  if (!match) throw throwBadRequestError('Invalid cursor');
+  return { openedAt: match[1], id: Number(match[2]) };
+}
+
+/**
+ * The moderators' queue: Disputed deals, longest-waiting dispute first, with what a decision
+ * needs. `finalsClear` false means a Release will be refused.
  */
 export async function listDisputedServiceDeals({
   cursor,
   limit = 20,
 }: {
-  cursor?: number;
+  cursor?: string;
   limit?: number;
 }) {
+  const after = parseDisputeCursor(cursor);
+  const page_ = after
+    ? Prisma.sql`AND (d."disputeOpenedAt", d."id") > (${after.openedAt}::timestamp, ${after.id}::int)`
+    : Prisma.empty;
   const rows = await dbWrite.$queryRaw<DisputedDealRow[]>`
     SELECT d."id", o."id" AS "offeringId", o."title" AS "offeringTitle",
       d."buyerId", b."username" AS "buyerUsername", d."sellerId", s."username" AS "sellerUsername",
       (s."bannedAt" IS NOT NULL OR s."deletedAt" IS NOT NULL) AS "sellerUnavailable",
       d."price", d."buzzType"::text AS "buzzType", d."revisionsUsed", d."disputeOpenedAt",
       d."disputeReason", d."cancellationReason", d."completedAt", d."deliveredAt",
-      ${dealFinalsClear(Prisma.sql`d`)} AS "finalsClear"
+      ${dealFinalsClear(Prisma.sql`d`)} AS "finalsClear",
+      to_char(d."disputeOpenedAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') || '_' || d."id" AS "cursor"
     FROM "ServiceDeal" d
     JOIN "ServiceOffering" o ON o."id" = d."offeringId"
     JOIN "User" b ON b."id" = d."buyerId"
     JOIN "User" s ON s."id" = d."sellerId"
-    WHERE d."status" = 'Disputed'::"ServiceDealStatus" AND d."id" > ${cursor ?? 0}::int
-    ORDER BY d."id"
+    WHERE d."status" = 'Disputed'::"ServiceDealStatus" ${page_}
+    ORDER BY d."disputeOpenedAt", d."id"
     LIMIT ${limit + 1}::int`;
   const page = rows.slice(0, limit);
   const events = page.length
@@ -965,6 +985,6 @@ export async function listDisputedServiceDeals({
         .filter((event) => event.dealId === row.id)
         .map(({ dealId: _, ...event }) => event),
     })),
-    nextCursor: rows.length > limit ? page[page.length - 1].id : undefined,
+    nextCursor: rows.length > limit ? page[page.length - 1].cursor : undefined,
   };
 }

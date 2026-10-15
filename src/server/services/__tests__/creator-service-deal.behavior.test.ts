@@ -1682,6 +1682,31 @@ describe('the finals gate and dispute resolution', () => {
     expect(await resolve(id, 'Refund')).toEqual({ status: 'resolved', resolution: 'Refund' });
   });
 
+  it('pages the queue by how long each dispute has waited, not by deal age', async () => {
+    const ids: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const id = await delivered();
+      await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+      ids.push(id);
+      // Each new request needs the previous one answered: one open request per buyer per offering.
+    }
+    // The newest deal has waited longest; two share a dispute time, so the id breaks the tie.
+    await q(
+      `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() - interval '3 hours' WHERE id = $1`,
+      [ids[2]]
+    );
+    await q(
+      `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() - interval '1 hour' WHERE id = ANY($1)`,
+      [[ids[0], ids[1]]]
+    );
+    const first = await deals.listDisputedServiceDeals({ limit: 2 });
+    expect(first.items.map((item) => item.id)).toEqual([ids[2], ids[0]]);
+    const second = await deals.listDisputedServiceDeals({ limit: 2, cursor: first.nextCursor });
+    expect(second.items.map((item) => item.id)).toEqual([ids[1]]);
+    expect(second.nextCursor).toBeUndefined();
+    await expect(deals.listDisputedServiceDeals({ cursor: 'nope' })).rejects.toThrow(/cursor/);
+  });
+
   it('lists the queue with what a decision needs', async () => {
     const held = await delivered();
     await finals(held, 'Failed');

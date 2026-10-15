@@ -4,7 +4,7 @@ import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
 export default defineModeratorEndpoint('creatorServices.disputes', {
   method: 'GET',
-  summary: 'The Creator Services dispute queue: Disputed deals, oldest first.',
+  summary: 'The Creator Services dispute queue: Disputed deals, longest-waiting dispute first.',
   returns:
     '{ items: [{ id, offering, buyer, seller: { id, username, unavailable }, price, buzzType, revisionsUsed, disputeOpenedAt, disputeReason, cancellationReason, completedAt, deliveredAt, finalsClear, events }], nextCursor? }',
   notes: [
@@ -12,7 +12,7 @@ export default defineModeratorEndpoint('creatorServices.disputes', {
     "`finalsClear` false means Release will be refused: the round's finals have not all passed scanning.",
   ],
   input: z.object({
-    cursor: z.coerce.number().int().positive().optional(),
+    cursor: z.string().max(64).optional().describe('`nextCursor` from the previous page.'),
     limit: z.coerce.number().int().min(1).max(50).default(20),
   }),
   handler: (input) => listDisputedServiceDeals(input),
