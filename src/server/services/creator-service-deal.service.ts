@@ -126,7 +126,8 @@ async function prepareReason(
   return {
     text: muted ? null : text || null,
     code: code ?? null,
-    defaultOther: coded && (required || !!text),
+    // A required reason with no text came with a code, or was refused above.
+    defaultOther: coded && !!text,
     mutedBefore: muted,
   };
 }

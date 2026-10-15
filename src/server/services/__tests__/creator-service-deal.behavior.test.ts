@@ -1799,6 +1799,18 @@ describe('reasons and reason codes', () => {
     expect((await deal(id)).status).toBe('Accepted');
   });
 
+  it("scans and keeps an unmuted seller's decline text", async () => {
+    const { id } = await request();
+    scan.mockClear();
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER, reason: 'fully booked' });
+    expect(await lastEvent(id)).toEqual({
+      type: 'Declined',
+      comment: 'fully booked',
+      reasonCode: null,
+    });
+    expect(scan).toHaveBeenCalledWith('fully booked', expect.anything());
+  });
+
   it('takes a code without text', async () => {
     const { id } = await request();
     await deals.declineServiceDeal({ dealId: id, userId: SELLER, reasonCode: 'too_busy' });

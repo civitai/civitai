@@ -8,7 +8,7 @@ export default defineModeratorEndpoint('creatorServices.disputes', {
   returns:
     '{ items: [{ id, offering, buyer, seller: { id, username, unavailable }, price, buzzType, revisionsUsed, disputeOpenedAt, disputeReason, cancellationReason, completedAt, deliveredAt, finalsClear, events }], nextCursor? }',
   notes: [
-    "`disputeReason` is the buyer's text, `cancellation_declined`, or a system hold: `seller_unavailable` (banned or deleted at payout) or `final_scan_failed`.",
+    "`disputeReason` is the buyer's text, `cancellation_declined`, or a system hold: `seller_unavailable` (banned or deleted at payout) or `final_scan_failed`. It is null when the buyer gave only a code or was muted; the code is on the `Disputed` event's `reasonCode` (for `cancellation_declined`, on the latest `CancellationRequested` event).",
     "`finalsClear` false means Release will be refused: the round's finals have not all passed scanning.",
   ],
   input: z.object({
