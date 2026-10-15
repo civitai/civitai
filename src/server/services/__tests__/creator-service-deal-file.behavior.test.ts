@@ -519,6 +519,16 @@ describe('the scanner seam', () => {
 });
 
 describe('deleting', () => {
+  it('cannot drop a file once the round is delivered', async () => {
+    const dealId = await accepted('None');
+    const fileId = await uploaded(dealId);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await expect(files.deleteServiceDealFile({ fileId, userId: SELLER })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toHaveLength(1);
+  });
+
   it('takes the hidden scan copy of a preview deleted mid-scan with it', async () => {
     const dealId = await accepted();
     const fileId = await uploaded(dealId, {
