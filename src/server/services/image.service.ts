@@ -2370,11 +2370,13 @@ const getAllImagesUncaptured = async (
 
   if (userId && !!reactions?.length) {
     isPersonalized = true; // per-user reaction filter
-    // Use IN subquery - planner can start from reactions (small set per user) and join to images
-    AND.push(Prisma.sql`i.id IN (
+    // An array, not an IN subquery: the planner badly overestimates one user's rows for a rare
+    // reaction type and then walks an id index backwards to fill LIMIT. ARRAY() runs the subquery
+    // first, so the plan always starts from the user's own reactions.
+    AND.push(Prisma.sql`i.id = ANY(ARRAY(
       SELECT ir."imageId" FROM "ImageReaction" ir
       WHERE ir."userId" = ${userId} AND ir.reaction IN (${Prisma.join(reactions)})
-    )`);
+    ))`);
   }
 
   if (!!tools?.length) {
