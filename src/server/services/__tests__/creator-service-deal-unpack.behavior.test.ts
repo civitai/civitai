@@ -1145,6 +1145,17 @@ describe('copies of scanned images', () => {
       ]);
     });
 
+    it('removes the rows of images that were never submitted', async () => {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size") VALUES ($1, $2, 0, 'a.png', 1)`,
+        [fileId, dealId]
+      );
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      expect(await q(`SELECT 1 FROM "ServiceDealFileEntry"`)).toEqual([]);
+    });
+
     it('still judges the image whose scan finishes later, and drops it once it passes', async () => {
       await threeImages();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = 3`);

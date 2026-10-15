@@ -265,6 +265,21 @@ describe('what an archive says about itself', () => {
     ok.zipfile.close();
   });
 
+  it('can leave the ratio unasked, for an archive the server built itself', async () => {
+    const entries = [
+      {
+        name: 'a.txt',
+        data: Buffer.from('x'),
+        declaredSize: 30 * 1024 * 1024,
+        declaredCompressedSize: 1000,
+      },
+    ];
+    await rejects(openZip(bufferZipSource(buildZip(entries))), /compressed beyond/);
+    const opened = await openZip(bufferZipSource(buildZip(entries)), { checkRatio: false });
+    expect(opened.entries).toHaveLength(1);
+    opened.zipfile.close();
+  });
+
   it('refuses a declared total over the limit', async () => {
     const each = SERVICE_ZIP_MAX_ENTRY_BYTES;
     const count = Math.ceil(SERVICE_ZIP_MAX_TOTAL_BYTES / each) + 1;

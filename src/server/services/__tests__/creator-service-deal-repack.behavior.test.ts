@@ -531,6 +531,105 @@ describe('which files are rebuilt', () => {
   });
 });
 
+describe('what the read-back insists on', () => {
+  const sameBytes = TEXT('alpha ');
+
+  it('does not accept an archive whose files have other names', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: sameBytes }]);
+    uploads.corrupt = () => buildZip([{ name: 'renamed.txt', data: sameBytes }]);
+    expect(await repack.repackFinals()).toBe(0);
+    expect((await fileRow(fileId)).deliveryKey).toBeNull();
+  });
+
+  it('does not accept an archive with a file more than it was built from', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: sameBytes }]);
+    uploads.corrupt = () =>
+      buildZip([
+        { name: 'a.txt', data: sameBytes },
+        { name: 'extra.txt', data: Buffer.alloc(0) },
+      ]);
+    expect(await repack.repackFinals()).toBe(0);
+    expect((await fileRow(fileId)).deliveryKey).toBeNull();
+  });
+
+  it('does not accept an archive it cannot find again', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: sameBytes }]);
+    s3.headObject.mockImplementation(async (_bucket: string, key: string) =>
+      key.startsWith('service-deals/delivered/')
+        ? { status: 'absent' }
+        : { status: 'present', size: 1000 }
+    );
+    expect(await repack.repackFinals()).toBe(0);
+    expect((await fileRow(fileId)).deliveryKey).toBeNull();
+  });
+
+  it('stamps every file with the same fixed time', async () => {
+    const { fileId } = await unpackedZip([
+      { name: 'a.txt', data: sameBytes },
+      { name: 'b.txt', data: TEXT('beta ') },
+    ]);
+    await repack.repackFinals();
+    const built = bucket.objects.get((await fileRow(fileId)).deliveryKey!)!;
+    const stamps = await new Promise<number[]>((resolve, reject) => {
+      yauzl.fromBuffer(built, { lazyEntries: true }, (error, zipfile) => {
+        if (error || !zipfile) return reject(error);
+        const years: number[] = [];
+        zipfile.on('end', () => resolve(years));
+        zipfile.on('entry', (entry: yauzl.Entry) => {
+          years.push(entry.getLastModDate().getFullYear());
+          zipfile.readEntry();
+        });
+        zipfile.readEntry();
+      });
+    });
+    expect(stamps).toEqual([2020, 2020]);
+  });
+});
+
+describe('when the file changes while the archive is built', () => {
+  it('leaves a file that was built by another run alone, and removes its own archive', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    uploads.beforeDone = async () => {
+      await q(
+        `UPDATE "ServiceDealFile" SET "repackedAt" = now(), "deliveryKey" = 'service-deals/delivered/other' WHERE id = $1`,
+        [fileId]
+      );
+    };
+    expect(await repack.repackFinals()).toBe(0);
+    expect((await fileRow(fileId)).deliveryKey).toBe('service-deals/delivered/other');
+    expect(scanSeam.submitFinalScan).not.toHaveBeenCalled();
+    expect([...bucket.objects.keys()].some((k) => k.startsWith('service-deals/delivered/'))).toBe(
+      false
+    );
+  });
+
+  it('does not attach an archive to a file that has failed in the meantime', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    uploads.beforeDone = async () => {
+      await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE id = $1`, [fileId]);
+    };
+    expect(await repack.repackFinals()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ deliveryKey: null, repackedAt: null });
+    expect([...bucket.objects.keys()].some((k) => k.startsWith('service-deals/delivered/'))).toBe(
+      false
+    );
+  });
+
+  it('stops between files when told to, and removes what it had written', async () => {
+    const { fileId } = await unpackedZip([
+      { name: 'a.txt', data: TEXT('alpha ') },
+      { name: 'b.txt', data: TEXT('beta ') },
+    ]);
+    // Two checks while judging, one before each file is copied: the fourth stops the second.
+    let calls = 0;
+    expect(await repack.repackFinals({ shouldStop: () => ++calls === 4 })).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ deliveryKey: null, processingAt: null });
+    expect([...bucket.objects.keys()].some((k) => k.startsWith('service-deals/delivered/'))).toBe(
+      false
+    );
+  });
+});
+
 describe('when the build goes wrong', () => {
   it('tries again later, leaves nothing behind, and lets the other files go first', async () => {
     const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);

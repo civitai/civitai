@@ -32,7 +32,7 @@ import { deleteObject, getBucket, getS3Client, headObject } from '~/utils/s3-uti
 
 const DELIVERY_KEY_ROOT = 'service-deals/delivered';
 /** Fixed, so the built archive is reproducible. */
-const ENTRY_MTIME = new Date(Date.UTC(2020, 0, 1));
+const ENTRY_MTIME = new Date(Date.UTC(2020, 5, 15, 12));
 const ENTRY_MODE = 0o100644;
 
 const logRepack = (message: string, fields: Record<string, unknown>, type = 'info') =>
@@ -172,7 +172,6 @@ export async function repackFinals({
   const key = `${DELIVERY_KEY_ROOT}/${file.dealId}/${file.round}/${randomUUID()}`;
   let opened: OpenedZip | null = null;
   let written = false;
-  let committed = false;
   try {
     opened = await openZip(s3ZipSource(getS3Client(), bucket, file.s3Key, file.size));
     await judge(opened, shouldStop);
@@ -191,7 +190,6 @@ export async function repackFinals({
       await deleteObject(bucket, key).catch(() => null);
       return 0;
     }
-    committed = true;
     // The archive is the file's from here on. A hand-off that fails is logged, not undone.
     await handOffToScan(file.id).catch((error) =>
       logRepack(
@@ -203,7 +201,7 @@ export async function repackFinals({
     logRepack('delivery archive built', { fileId: file.id, bytes: size, ms: Date.now() - began });
     return 1;
   } catch (error) {
-    if (written && !committed) await deleteObject(bucket, key).catch(() => null);
+    if (written) await deleteObject(bucket, key).catch(() => null);
     if (error instanceof Stopped) {
       await release(file.id);
       return 0;
