@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockClickhouse } = vi.hoisted(() => ({ mockClickhouse: { $query: vi.fn() } }));
 
@@ -14,12 +14,32 @@ vi.mock('~/server/services/leaderboard.service', () => ({
   getUnpopulatedLeaderboards: vi.fn(),
   isLeaderboardPopulated: vi.fn(),
 }));
-vi.mock('~/server/services/metric-excluded-users.service', () => ({
+vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/services/metric-excluded-users.service')>()),
   getMetricExcludedUserIdsOrThrow: vi.fn(),
+  getMetricExcludedUserIds: vi.fn(),
+}));
+vi.mock('~/server/jobs/job', () => ({
+  createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
+    name,
+    cron,
+    run: () => fn({ on: vi.fn() }),
+  }),
+  getJobDate: vi.fn(),
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
-import { clickhouseLeaderboardPopulation, populateLeaderboard } from '../prepare-leaderboard';
+import { getJobDate } from '~/server/jobs/job';
+import {
+  getMetricExcludedUserIds,
+  getMetricExcludedUserIdsOrThrow,
+} from '~/server/services/metric-excluded-users.service';
+import {
+  clickhouseLeaderboardPopulation,
+  leaderboardJobs,
+  populateLeaderboard,
+} from '../prepare-leaderboard';
 
 const EXCLUDED = 7;
 const base = {
@@ -68,7 +88,6 @@ describe('leaderboard population drops metric-excluded accounts', () => {
     expect(userIdsInserted()).toEqual([1, 2]);
   });
 
-  // Filtered before the 1000 cut, so an excluded account does not cost the board a slot.
   it('ClickHouse boards: the board still fills to 1000 when an excluded account ranks inside it', async () => {
     mockClickhouse.$query.mockResolvedValue(
       Array.from({ length: 1001 }, (_, i) => ({ userId: i + 1, score: 2000 - i, metrics: '{}' }))
@@ -101,11 +120,10 @@ describe('leaderboard population drops metric-excluded accounts', () => {
     );
 
     expect(populated).toBe(true);
-    expect(userIdsInserted().sort()).toEqual([1, 2]);
+    expect(userIdsInserted().sort((a, b) => a - b)).toEqual([1, 2]);
   });
 
-  // The ranking happens in SQL here, so the predicate has to sit in the ranked query's WHERE, before
-  // row_number and LIMIT, for positions to re-number around the excluded account.
+  // Ranked in SQL here: the predicate must sit in the ranked query's WHERE for positions to re-number.
   it('Postgres boards: the ranked query excludes the account before numbering', async () => {
     vi.mocked(pgDbReadLong.cancellableQuery).mockResolvedValue({ result: async () => [] } as never);
 
@@ -134,5 +152,63 @@ describe('leaderboard population drops metric-excluded accounts', () => {
       )
     ).rejects.toThrow('excluded user ids must be integers');
     expect(pgDbReadLong.cancellableQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('prepare-leaderboard job', () => {
+  const prepareLeaderboard = leaderboardJobs[0];
+  const setLastRun = vi.fn();
+  afterEach(() => vi.useRealTimers());
+
+  beforeEach(() => {
+    vi.mocked(getJobDate).mockResolvedValue([new Date(0), setLastRun] as never);
+    vi.mocked(pgDbReadLong.query).mockResolvedValue({ rows: [] } as never);
+    vi.mocked(pgDbReadLong.cancellableQuery).mockResolvedValue({ result: async () => [] } as never);
+    vi.mocked(pgDbWrite.query).mockResolvedValue({
+      rows: [{ count: 0, date: '2026-10-14' }],
+    } as never);
+    dbMock.dbWrite.leaderboard.findMany.mockResolvedValue([
+      { id: 'generators', query: 'WITH clickhouse_x AS (SELECT 1) SELECT 1' },
+    ] as never);
+    mockClickhouse.$query.mockResolvedValue([
+      { userId: 1, score: 30, metrics: '{}' },
+      { userId: EXCLUDED, score: 20, metrics: '{}' },
+    ]);
+  });
+
+  it('reads the exclusion list, retrying a failed read, and applies it to the boards and legends', async () => {
+    vi.mocked(getMetricExcludedUserIdsOrThrow)
+      .mockRejectedValueOnce(new Error('clickhouse blip'))
+      .mockResolvedValue([EXCLUDED]);
+
+    vi.useFakeTimers();
+    const run = prepareLeaderboard.run();
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
+
+    expect(userIdsInserted()).toEqual([1]);
+    const legendsSql = vi
+      .mocked(pgDbReadLong.cancellableQuery)
+      .mock.calls.map(([sql]) => sql as string)
+      .find((sql) => sql.includes('"LeaderboardResult" lr'));
+    expect(legendsSql).toMatch(/\bu\.id <> ALL\('\{7\}'::int\[\]\)/);
+    expect(setLastRun).toHaveBeenCalled();
+  });
+
+  it('retries the read, then writes nothing when the list stays unreadable', async () => {
+    vi.useFakeTimers();
+    vi.mocked(getMetricExcludedUserIdsOrThrow).mockRejectedValue(new Error('clickhouse down'));
+    vi.mocked(getMetricExcludedUserIds).mockResolvedValue([]);
+
+    const run = expect(prepareLeaderboard.run()).rejects.toThrow('clickhouse down');
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
+
+    expect(getMetricExcludedUserIdsOrThrow).toHaveBeenCalledTimes(4);
+    expect(pgDbWrite.cancellableQuery).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(setLastRun).not.toHaveBeenCalled();
   });
 });

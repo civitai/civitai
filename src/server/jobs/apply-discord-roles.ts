@@ -290,8 +290,8 @@ export const applyDiscordLeaderboardRoles = async () => {
 
   const existingTop100 = await getAccountsInRole(top100Role);
   const existingTop10 = await getAccountsInRole(top10Role);
-  // prepare-leaderboard keeps these accounts off the boards UserRank is built from; this also covers a UserRank
-  // left over from boards populated before an account was excluded. Lenient: the boards are the primary filter.
+  // Covers a UserRank left over from boards populated before an account was excluded. Lenient on purpose: the
+  // boards are the primary filter.
   const excludedUserIds = await getMetricExcludedUserIds();
 
   // Get the top 100 users with a discord account
@@ -380,6 +380,7 @@ export const syncUserDiscordLeaderboardRoles = async (userId: number) => {
   const rank = user?.rank?.leaderboardRank;
   const providerAccountIds = user?.accounts.map((a) => a.providerAccountId) ?? [];
   if (!providerAccountIds.length || !rank || rank > 100) return;
+  if ((await getMetricExcludedUserIds()).includes(userId)) return;
 
   await addRoleToAccounts(top100Role, providerAccountIds);
   if (rank <= 10) await addRoleToAccounts(top10Role, providerAccountIds);

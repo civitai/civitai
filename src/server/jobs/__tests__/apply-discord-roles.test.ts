@@ -35,7 +35,10 @@ import {
 } from '~/server/jobs/apply-discord-roles';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
+import {
+  getMetricExcludedUserIds,
+  getMetricExcludedUserIdsOrThrow,
+} from '~/server/services/metric-excluded-users.service';
 const mockDbWrite = dbMock.dbWrite;
 dbMock.dbWrite.$executeRaw.mockResolvedValue(undefined);
 
@@ -230,6 +233,20 @@ describe('syncUserDiscordLeaderboardRoles', () => {
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
   });
 
+  it('grants nothing to a metric-excluded user, while the same rank grants to anyone else', async () => {
+    vi.mocked(getMetricExcludedUserIds).mockResolvedValue([1]);
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      rank: { leaderboardRank: 3 },
+      accounts: [{ providerAccountId: '111' }],
+    });
+
+    await syncUserDiscordLeaderboardRoles(1);
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
+
+    await syncUserDiscordLeaderboardRoles(2);
+    expect(idsWritten('grant', 'Top 100')).toEqual(['111']);
+  });
+
   it('grants only Top 100 to a user ranked outside the top 10', async () => {
     mockDbWrite.user.findUnique.mockResolvedValue({
       rank: { leaderboardRank: 50 },
@@ -287,6 +304,20 @@ describe('applyDiscordLeaderboardRoles — metric-excluded accounts', () => {
       return users.filter((u) => !notIn.has(u.id)).map((u) => topUser(u.rank, u.providerAccountId));
     }) as never);
   }
+
+  // The boards are the primary filter, so an unreadable list must not stop the whole role sync.
+  it('reads the lenient list, so the sync runs when the strict reader would throw', async () => {
+    vi.mocked(getMetricExcludedUserIdsOrThrow).mockRejectedValue(new Error('clickhouse down'));
+    vi.mocked(getMetricExcludedUserIds).mockResolvedValue([7]);
+    rankedUsers([
+      { id: 7, rank: 3, providerAccountId: '777' },
+      { id: 8, rank: 4, providerAccountId: '888' },
+    ]);
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(idsWritten('grant', 'Top 100')).toEqual(['888']);
+  });
 
   it('revokes both Top roles from an excluded account and keeps a ranked control', async () => {
     vi.mocked(getMetricExcludedUserIds).mockResolvedValue([7]);

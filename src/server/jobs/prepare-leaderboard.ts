@@ -27,32 +27,32 @@ const log = createLogger('leaderboard', 'blue');
 // Accounts that must never appear on any leaderboard, regardless of the board's query.
 // Applied uniformly across every population path so exclusion lives at the system level, not per-query.
 // Mutes only count once confirmed by a moderator (mutedAt set); an unconfirmed `muted` flag does not exclude.
-// Metric-excluded accounts are the same list the creator showcase hides, and unlike `excludeFromLeaderboards`
-// they are kept off non-public boards too.
+// Unlike `excludeFromLeaderboards`, metric exclusion has no non-public-board waiver.
 const eligibleAccountSql = (excludedUserIds: number[], alias = 'u') =>
   `${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL AND ${alias}."mutedAt" IS NULL
     AND ${alias}.id <> ALL(${intArrayLiteral(excludedUserIds)})`;
 
-// These queries are built as strings, so the ids are inlined rather than bound.
 function intArrayLiteral(ids: number[]) {
   if (!ids.every(Number.isSafeInteger)) throw new Error('excluded user ids must be integers');
   return `'{${ids.join(',')}}'::int[]`;
 }
 
-/** Drops excluded users before a JS-ranked board is cut, so positions stay contiguous and the board stays full. */
+/** Must run before the board is sliced, or an excluded account costs the board a slot. */
 function withoutExcluded<T extends { userId: number }>(rows: T[], excludedUserIds: number[]) {
   const excluded = new Set(excludedUserIds);
   return rows.filter((row) => !excluded.has(row.userId));
 }
+
+const EXCLUSION_RETRY_MS = 30_000;
 
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
   log('Leaderboard job start');
 
-  // Fails closed: an unreadable list would rank suppressed accounts, and the previous complete boards keep
-  // serving until the next run.
-  const excludedUserIds = await getMetricExcludedUserIdsOrThrow();
+  // Fails closed: an unreadable list would rank suppressed accounts. The cost is real, since readers serve
+  // today's date only and every board stays empty until the next run, so the read is retried first.
+  const excludedUserIds = await withRetries(getMetricExcludedUserIdsOrThrow, 3, EXCLUSION_RETRY_MS);
 
   await setCoverImageNsfwLevel();
 
