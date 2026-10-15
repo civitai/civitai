@@ -235,7 +235,17 @@ describe('web-search row keys', () => {
 describe('label modes', () => {
   beforeEach(() => {
     redisMock.sysRedis.hGetAll.mockReset();
+    // Also clears the failed-read log throttle, so the tests do not depend on their order.
     resetTextScanRolloutCache();
+    loggingMock.logToAxiom.mockReset().mockResolvedValue(undefined as never);
+  });
+
+  it('stays auto when the failed-read log itself throws', async () => {
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+    loggingMock.logToAxiom.mockImplementation(() => {
+      throw new Error('logger broke');
+    });
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
   });
 
   it('reads its own hash and keeps only known labels with a valid value', async () => {
@@ -257,7 +267,6 @@ describe('label modes', () => {
     try {
       vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
       redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
-      loggingMock.logToAxiom.mockClear();
       await getTextScanLabelMode('minor');
       await getTextScanLabelMode('poi');
       expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);

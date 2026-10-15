@@ -42,6 +42,8 @@ export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollou
 
 export const ROLLOUT_CACHE_MS = 15_000;
 
+let lastLabelModeErrorLogAt = 0;
+
 function percent(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.min(100, Math.max(0, Math.floor(value)))
@@ -77,6 +79,7 @@ export function resetTextScanRolloutCache() {
   getTextScanRollouts.clear();
   getTextScanWebSearchRollouts.clear();
   getTextScanLabelModes.clear();
+  lastLabelModeErrorLogAt = 0;
 }
 
 export function textScanBucket(entityType: TextScanEntityType, entityId: number) {
@@ -183,7 +186,6 @@ const getTextScanLabelModes = createTtlMemo(readTextScanLabelModes, ROLLOUT_CACH
 );
 
 const LABEL_MODE_ERROR_LOG_MS = 5 * 60_000;
-let lastLabelModeErrorLogAt = 0;
 
 /** A failed read is `auto`: the flag lands as it always did rather than a detection going unheld. */
 export async function getTextScanLabelMode(label: TextScanFlagLabel): Promise<TextScanLabelMode> {
@@ -194,13 +196,17 @@ export async function getTextScanLabelMode(label: TextScanFlagLabel): Promise<Te
     const now = Date.now();
     if (now - lastLabelModeErrorLogAt >= LABEL_MODE_ERROR_LOG_MS) {
       lastLabelModeErrorLogAt = now;
-      logToAxiom({
-        name: 'text-scan',
-        type: 'error',
-        message: 'label mode read failed, falling back to auto',
-        label,
-        error: error instanceof Error ? error.message : String(error),
-      }).catch(() => null);
+      try {
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'label mode read failed, falling back to auto',
+          label,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => null);
+      } catch {
+        // Logging must not undo the fail-open.
+      }
     }
     return 'auto';
   }

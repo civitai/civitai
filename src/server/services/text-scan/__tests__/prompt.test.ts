@@ -382,6 +382,25 @@ describe('setTextScanLabelMode', () => {
   });
 });
 
+describe('setTextScanLabelMode cache', () => {
+  it('drops the cached read, so this pod sees the change at once', async () => {
+    const { getTextScanLabelMode, resetTextScanRolloutCache } = await import(
+      '~/server/services/text-scan/mode'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ minor: 'review' } as never);
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+    await setTextScanLabelMode('minor', 'review', { moderatorId: 5 });
+
+    expect(await getTextScanLabelMode('minor')).toBe('review');
+    resetTextScanRolloutCache();
+  });
+});
+
 describe('textScanTextHash', () => {
   it('hashes the uncapped composed text only', () => {
     const long = { fields: [{ heading: 'Body', text: 'x'.repeat(20000) }], declared: {} };

@@ -233,7 +233,6 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('putLabelModes'),
-    moderatorId: moderatorId.optional(),
     label: z.enum(TEXT_SCAN_FLAG_LABELS),
     /** `review` holds the label's detections for a moderator; `auto` removes the field. */
     mode: z.enum(['auto', 'review']),
@@ -898,7 +897,8 @@ export async function runTextScanHarnessAction(
     }
 
     case 'putLabelModes': {
-      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      // Session-attributed only: a moderator id asserted in the body is never accepted here.
+      const id = requireModeratorId(actor.moderatorId);
       const labelModes = await setTextScanLabelMode(input.label, input.mode, { moderatorId: id });
       return { kind: 'json', body: { labelModes } };
     }

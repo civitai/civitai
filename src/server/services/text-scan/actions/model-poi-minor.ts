@@ -208,23 +208,24 @@ async function recordHold({
   kind: HeldDetectionKind;
 }) {
   const detection = JSON.stringify(buildTextScanFlagEntry({ workflowId, reason, names, textHash }));
-  const guard =
-    kind === 'first'
-      ? // The same text held again keeps its place in the queue.
-        Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NULL
+  const write = async (heldKind: HeldDetectionKind) => {
+    const guard =
+      heldKind === 'first'
+        ? // The same text held again keeps its place in the queue.
+          Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NULL
           AND NOT (${labelLiteral(label)} = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
           AND ${flagEntryPath(label)}->'redetected'->>'textHash' IS DISTINCT FROM ${textHash}`
-      : Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NOT NULL
+        : Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NOT NULL
           AND ${flagEntryPath(label)}->'appealGranted'->>'textHash' IS DISTINCT FROM ${textHash}`;
-  const written = await dbWrite.$executeRaw`
+    return dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         ${labelLiteral(label)}, COALESCE(${flagEntryPath(
-    label
-  )}, '{}'::jsonb) || jsonb_build_object(
+      label
+    )}, '{}'::jsonb) || jsonb_build_object(
           'redetected', ${detection}::jsonb || jsonb_build_object(
-            'kind', ${kind}::text,
+            'kind', ${heldKind}::text,
             'at', now(),
             'promptIds', ${verdictRowField('promptIds', workflowId)},
             'model', ${verdictRowField('model', workflowId)}
@@ -236,12 +237,21 @@ async function recordHold({
       AND NOT ${labelColumn(label)}
       AND ${guard}
   `;
+  };
+  let heldKind = kind;
+  let written = await write(heldKind);
+  // A moderator ruling on the old text can land between the scan's read and this write: the label then
+  // has a grant, and the same detection is a re-detection of it.
+  if (!written && kind === 'first') {
+    heldKind = 'redetected';
+    written = await write(heldKind);
+  }
   if (written)
     logToAxiom({
       name: 'text-scan',
       type: 'info',
       message:
-        kind === 'first'
+        heldKind === 'first'
           ? `${label} first detection held, awaiting moderator`
           : `${label} re-detected after a human clear, awaiting moderator`,
       entityType: 'Model',

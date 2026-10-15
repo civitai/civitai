@@ -196,16 +196,33 @@ describe('text-scan harness with segmented text', () => {
 });
 
 describe('putLabelModes', () => {
-  it('sets one label mode as the asserted moderator and returns the stored modes', async () => {
-    vi.mocked(setTextScanLabelMode).mockResolvedValue({ minor: 'review' });
-    const input = textScanHarnessSchema.parse({
+  const parse = (extra: Record<string, unknown> = {}) =>
+    textScanHarnessSchema.parse({
       action: 'putLabelModes',
       label: 'minor',
       mode: 'review',
+      ...extra,
     });
-    const res = await runTextScanHarnessAction(input, { moderatorId: 5 });
+  beforeEach(() => vi.mocked(setTextScanLabelMode).mockReset());
+
+  it('sets one label mode as the authenticated moderator and returns the stored modes', async () => {
+    vi.mocked(setTextScanLabelMode).mockResolvedValue({ minor: 'review' });
+    const res = await runTextScanHarnessAction(parse(), { moderatorId: 5 });
     expect(setTextScanLabelMode).toHaveBeenCalledWith('minor', 'review', { moderatorId: 5 });
     expect(res).toEqual({ kind: 'json', body: { labelModes: { minor: 'review' } } });
+  });
+
+  it('ignores a moderator id asserted in the body', async () => {
+    vi.mocked(setTextScanLabelMode).mockResolvedValue({});
+    await runTextScanHarnessAction(parse({ moderatorId: 99 }), { moderatorId: 5 });
+    expect(setTextScanLabelMode).toHaveBeenCalledWith('minor', 'review', { moderatorId: 5 });
+  });
+
+  it('is refused without an authenticated moderator, even when the body names one', async () => {
+    await expect(runTextScanHarnessAction(parse({ moderatorId: 5 }), {})).rejects.toThrow(
+      'moderator id is required'
+    );
+    expect(setTextScanLabelMode).not.toHaveBeenCalled();
   });
 
   it('rejects a label that has no mode and a mode that does not exist', () => {

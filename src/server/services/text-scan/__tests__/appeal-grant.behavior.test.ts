@@ -64,13 +64,19 @@ const { mockSetModelMinor, mockSideEffects, mockCreateNotification, searchMode, 
     mockSideEffects: vi.fn(),
     mockCreateNotification: vi.fn(),
     searchMode: { value: 'off' as 'off' | 'shadow' | 'active' },
-    labelMode: { value: 'auto' as 'auto' | 'review' },
+    labelMode: {
+      value: 'auto' as 'auto' | 'review',
+      beforeRead: undefined as undefined | (() => Promise<void>),
+    },
   }));
 // The rollout lives in redis; the helper that maps a mode to its row stays real.
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanWebSearchMode: async () => searchMode.value,
-  getTextScanLabelMode: async () => labelMode.value,
+  getTextScanLabelMode: async () => {
+    await labelMode.beforeRead?.();
+    return labelMode.value;
+  },
 }));
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
@@ -234,6 +240,7 @@ beforeEach(() => {
   redisMock.sysRedis.eval.mockResolvedValue(1 as never);
   searchMode.value = 'off';
   labelMode.value = 'auto';
+  labelMode.beforeRead = undefined;
 });
 
 describe('overturn grant reads the latest scan', () => {
@@ -284,6 +291,7 @@ describe('minor', () => {
     const entry = (await stored()).meta.textScanFlags.minor;
     expect(entry.appealGranted.textHash).toBe(SCANNED);
     expect(entry.redetected).toMatchObject({
+      kind: 'redetected',
       textHash: NEWER,
       workflowId: 'wf-new',
       reason: 'r',
@@ -291,6 +299,12 @@ describe('minor', () => {
       model: 'scan-model',
     });
     expect(Date.parse(entry.redetected!.at)).not.toBeNaN();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'minor re-detected after a human clear, awaiting moderator',
+        entityId: MODEL_ID,
+      })
+    );
   });
 
   it('keeps the newest detection when the edited text is scanned again', async () => {
@@ -952,7 +966,12 @@ describe('review mode: a first detection waits for a moderator', () => {
       model: 'scan-model',
     });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'text-scan', entityType: 'Model', entityId: MODEL_ID })
+      expect.objectContaining({
+        name: 'text-scan',
+        message: 'minor first detection held, awaiting moderator',
+        entityType: 'Model',
+        entityId: MODEL_ID,
+      })
     );
   });
 
@@ -1000,7 +1019,7 @@ describe('review mode: a first detection waits for a moderator', () => {
 
     await apply('minor', NEWER);
 
-    expect((await entryOf()).redetected?.kind ?? 'redetected').toBe('redetected');
+    expect((await entryOf()).redetected?.kind).toBe('redetected');
     expect(mockSetModelMinor).not.toHaveBeenCalled();
   });
 
@@ -1068,7 +1087,7 @@ describe('review mode: a first detection waits for a moderator', () => {
 
     const marker = (await entryOf()).redetected!;
     expect(marker.textHash).toBe('hash-later');
-    expect(marker.kind ?? 'redetected').toBe('redetected');
+    expect(marker.kind).toBe('redetected');
     expect(mockSetModelMinor).not.toHaveBeenCalled();
   });
 
@@ -1136,6 +1155,55 @@ describe('review mode: a first detection waits for a moderator', () => {
         label: 'minor',
         kind: 'first',
         decision,
+        promptIds: { p: 1 },
+        moderatorId: 9,
+      })
+    );
+  });
+
+  it('still holds the new text as a re-detection when a dismissal of the old text lands mid-scan', async () => {
+    labelMode.value = 'review';
+    await seed({ scanHash: SCANNED });
+    // Between the scan's read of the model and the hold write, a moderator dismisses the old text.
+    labelMode.beforeRead = async () => {
+      labelMode.beforeRead = undefined;
+      await holder.db.query(
+        `UPDATE "Model" SET meta = jsonb_set(meta, '{textScanFlags,minor,appealGranted}', $1::jsonb) WHERE id = $2`,
+        [JSON.stringify({ at: 'x', by: 9, textHash: 'hash-old', via: 'moderator' }), MODEL_ID]
+      );
+    };
+
+    await apply('minor', NEWER);
+
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect((await entryOf()).redetected).toMatchObject({ kind: 'redetected', textHash: NEWER });
+  });
+
+  it('logs the decision of a marker written before kinds existed as a re-detection', async () => {
+    await hold();
+    await holder.db.query(
+      `UPDATE "Model" SET meta = meta #- '{textScanFlags,minor,redetected,kind}' WHERE id = $1`,
+      [MODEL_ID]
+    );
+
+    await resolve('minor', false);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'held detection resolved', kind: 'redetected' })
+    );
+  });
+
+  it('logs a resolution that closed because the model was flagged another way', async () => {
+    await hold();
+    await holder.db.query(`UPDATE "Model" SET minor = true WHERE id = $1`, [MODEL_ID]);
+
+    expect(await resolve('minor', true)).toBe('closed');
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'held detection resolved',
+        decision: 'closed',
+        kind: 'first',
         promptIds: { p: 1 },
         moderatorId: 9,
       })

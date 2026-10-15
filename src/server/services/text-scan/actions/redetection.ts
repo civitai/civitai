@@ -127,7 +127,7 @@ async function resolve({
 
   // The prompts that produced the verdict ride on the marker, so precision per prompt version can be
   // computed from these logs alone.
-  const logDecision = (decision: 'kept' | 'dismissed') =>
+  const logDecision = (decision: 'kept' | 'dismissed' | 'closed') =>
     logToAxiom({
       name: 'text-scan',
       type: 'info',
@@ -160,6 +160,7 @@ async function resolve({
       throw throwBadRequestError('A keep of this flag is unfinished. Retry Keep to complete it.');
     if (model[label]) {
       if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+      logDecision('closed');
       return 'closed';
     }
     if (!(await dismissRedetection({ modelId, label, textHash, userId }))) throw stale();
@@ -170,6 +171,7 @@ async function resolve({
   // Flagged by another route since: there is nothing left to apply.
   if (model[label] && !ownEntry) {
     if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+    logDecision('closed');
     return 'closed';
   }
 
