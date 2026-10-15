@@ -25,6 +25,8 @@ const buzz = vi.hoisted(() => ({
   createMultiAccountBuzzTransaction: vi.fn(),
   refundMultiAccountTransaction: vi.fn(),
   getMultiAccountTransactionsByPrefix: vi.fn(),
+  getTransactionByExternalId: vi.fn(),
+  refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -574,13 +576,127 @@ describe('closing with a refund', () => {
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
-  it('reads a 409 on a retried refund as already refunded, and settles', async () => {
-    const { id } = await request();
-    buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(409));
-    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
-    expect((await deal(id)).settledAt).not.toBeNull();
-    expect((await legs(id)).find((l) => l.leg === 'Refund')).toMatchObject({
-      transactionId: `creator-service-${id}-hold:already-refunded`,
+  describe('a refund answered 409', () => {
+    // A 409 means at least ONE leg under the prefix already has a refund, and reverses none of the
+    // rest (Buzz owner, 2026-10-15). The ledger decides: each leg's `refund-<transactionId>`.
+    const holdLegs = [
+      {
+        accountId: BUYER,
+        amount: 300,
+        transactionId: 'leg-a',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
+      {
+        accountId: BUYER,
+        amount: 200,
+        transactionId: 'leg-b',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
+    ];
+    const refundRow = { date: '2026-10-15', type: 'Refund', amount: 1 };
+    const refunded = (...ids: string[]) =>
+      buzz.getTransactionByExternalId.mockImplementation(async (externalId: string) =>
+        ids.some((id) => externalId === `refund-${id}`) ? refundRow : null
+      );
+    const refundLeg = async (id: number) => (await legs(id)).find((l) => l.leg === 'Refund');
+
+    beforeEach(() => {
+      buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(409));
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue(holdLegs);
+    });
+
+    it('settles when every hold leg has its refund', async () => {
+      refunded('leg-a', 'leg-b');
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).not.toBeNull();
+      expect(await refundLeg(id)).toMatchObject({
+        transactionId: `creator-service-${id}-hold:already-refunded`,
+      });
+      expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledWith(
+        `creator-service-${id}-hold`
+      );
+      expect(buzz.getTransactionByExternalId.mock.calls.map((c) => c[0])).toEqual([
+        'refund-leg-a',
+        'refund-leg-b',
+      ]);
+    });
+
+    it('stays refund-pending when one leg has no refund, naming that leg', async () => {
+      refunded('leg-a');
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      const leg = await refundLeg(id);
+      expect(leg).toMatchObject({ transactionId: null, attempts: 1 });
+      expect(leg?.lastError).toMatch(/partly refunded \(leg-b\)$/);
+    });
+
+    it('stays refund-pending when a refund lookup fails', async () => {
+      buzz.getTransactionByExternalId.mockRejectedValue(new Error('buzz unreachable'));
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect(await refundLeg(id)).toMatchObject({
+        transactionId: null,
+        lastError: 'buzz unreachable',
+      });
+    });
+
+    it('stays refund-pending when the ledger lists less than was held', async () => {
+      refunded('leg-a', 'leg-b');
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue(holdLegs.slice(0, 1));
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect((await refundLeg(id))?.lastError).toMatch(/ledger lists 300 of 500/);
+    });
+
+    it('stays refund-pending when the ledger lists no legs at all', async () => {
+      const { id } = await request();
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect((await refundLeg(id))?.lastError).toMatch(/ledger lists 0 of 500/);
+    });
+
+    it('settles on a later retry once the ledger shows every leg refunded', async () => {
+      refunded('leg-a');
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+
+      refunded('leg-a', 'leg-b');
+      await q(
+        `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Refund'`
+      );
+      await escrow.sweepServiceDealRefunds();
+      expect((await deal(id)).settledAt).not.toBeNull();
+      expect(await events(id)).toContain('Refunded');
+    });
+
+    // Decision (briony, 2026-10-15): paying a missing leg with the single-transaction refund waits
+    // on the Buzz owners confirming that endpoint is safe to repeat. Delete this only with that
+    // answer in hand, when the missing legs start being paid here.
+    it('never pays a missing leg itself while single-leg refunds are parked', async () => {
+      refunded();
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      for (let attempt = 2; attempt <= MAX_LEG_ATTEMPTS; attempt++) {
+        await q(
+          `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Refund'`
+        );
+        await escrow.sweepServiceDealRefunds();
+      }
+      expect(buzz.refundTransaction).not.toHaveBeenCalled();
+      expect(await refundLeg(id)).toMatchObject({
+        transactionId: null,
+        attempts: MAX_LEG_ATTEMPTS,
+      });
+      expect(await escrow.sweepServiceDealRefunds()).toMatchObject({ exhausted: 1 });
+      expect((await deal(id)).settledAt).toBeNull();
     });
   });
 

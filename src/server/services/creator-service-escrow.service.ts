@@ -9,6 +9,7 @@ import {
 import {
   createMultiAccountBuzzTransaction,
   getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import {
@@ -280,6 +281,27 @@ export async function holdDeal({
 }
 
 /**
+ * The hold's legs the ledger shows no refund for, each as its transaction id. A single refund is
+ * keyed `refund-<transactionId>`. Legs that do not add up to the held amount count as unrefunded
+ * too (a listing that came back short), so an incomplete ledger read cannot settle the deal.
+ */
+async function unrefundedHoldLegs(dealId: number, heldAmount: number) {
+  const legs = await getMultiAccountTransactionsByPrefix(holdPrefix(dealId));
+  const listed = legs.reduce((sum, leg) => sum + leg.amount, 0);
+  if (listed !== heldAmount)
+    return [`${holdPrefix(dealId)}: ledger lists ${listed} of ${heldAmount}`];
+
+  const unrefunded: string[] = [];
+  for (const leg of legs) {
+    const refund = await getTransactionByExternalId(`refund-${leg.transactionId}`, {
+      timeoutMs: BUZZ_CALL_TIMEOUT_MS,
+    });
+    if (!refund) unrefunded.push(leg.transactionId);
+  }
+  return unrefunded;
+}
+
+/**
  * Claims (if needed) and pays the refund. Returns false while the hold is unconfirmed or the leg
  * is backing off; `sweepServiceDealRefunds` drives it again.
  */
@@ -288,7 +310,7 @@ export async function refundDeal(dealId: number) {
   const paid = await runDealLeg(
     dealId,
     'Refund',
-    async () => {
+    async (row) => {
       let result;
       try {
         result = await refundMultiAccountTransaction(
@@ -299,20 +321,25 @@ export async function refundDeal(dealId: number) {
           BUZZ_CALL_OPTIONS
         );
       } catch (error) {
-        // Buzz keys refunds on the prefix and answers a second one with 409: the money is already
-        // back (an earlier attempt landed and its receipt did not). As crucible and challenge
-        // refunds treat it. 404 stays a failure: this hold is confirmed, so "nothing to refund"
-        // is a discrepancy for a human.
+        // A 409 means at least one leg under the prefix already has a refund, not all of them,
+        // and reverses none of the rest. Its body is not a contract, so the ledger decides. 404
+        // stays a failure: this hold is confirmed, so "nothing to refund" is for a human.
         if (getBuzzApiStatus(error) === 409) {
-          // Unconfirmed with the Buzz service owners: that 409 means EVERY leg under the prefix
-          // was reversed. Logged so a partial reversal would at least be visible.
+          const unrefunded = await unrefundedHoldLegs(dealId, row.amount);
+          if (!unrefunded.length) return `${holdPrefix(dealId)}:already-refunded`;
+          // Paying the missing legs one by one waits on the Buzz owners confirming that a
+          // single-leg refund is safe to repeat. Until then the deal stays refund-pending and
+          // exhausts onto the gauge for a human.
           logToAxiom({
             name: 'creator-service-escrow',
-            type: 'warning',
-            message: 'refund answered 409; recorded as already refunded',
+            type: 'error',
+            message: 'refund answered 409 with hold legs still unrefunded',
             dealId,
+            unrefunded,
           }).catch(() => null);
-          return `${holdPrefix(dealId)}:already-refunded`;
+          throw new Error(
+            `creator service escrow: deal ${dealId} is partly refunded (${unrefunded.join(', ')})`
+          );
         }
         throw error;
       }
