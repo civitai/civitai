@@ -11,7 +11,10 @@ vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { SCAN_LABEL_QUEUE_WRITER: 'scan-label-queue-writer' },
   isFlipt: mockIsFlipt,
 }));
-import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
+import {
+  recordScanLabelFlag,
+  SCAN_LABEL_MAX_ITEMS_PER_POST,
+} from '~/server/services/scan-label-flag.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockLog = loggingMock.logToAxiom;
@@ -25,6 +28,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "postId" int,
       ingestion text,
       "needsReview" text,
       "blockedFor" text,
@@ -206,6 +210,105 @@ describe('recordScanLabelFlag', () => {
 
     expect(await items()).toEqual([]);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  describe('per-post cap', () => {
+    const POST = 900;
+    const postImages = async (ids: number[], postId: number | null = POST) =>
+      holder.db.exec(
+        `INSERT INTO "Image" (id, "postId", ingestion) VALUES ${ids
+          .map((id) => `(${id}, ${postId ?? 'NULL'}, 'Scanned')`)
+          .join(', ')}`
+      );
+    const queued = async () => (await items()).map((i) => i.imageId).sort((a, b) => a - b);
+
+    it('is three', () => {
+      expect(SCAN_LABEL_MAX_ITEMS_PER_POST).toBe(3);
+    });
+
+    it("queues a post's first three flagged images and skips the rest", async () => {
+      await postImages([101, 102, 103, 104, 105]);
+
+      for (const imageId of [101, 102, 103, 104, 105])
+        await flag({ imageId, workflowId: `wf-${imageId}` });
+
+      expect(await queued()).toEqual([101, 102, 103]);
+      expect(await flags()).toHaveLength(3);
+    });
+
+    it('still records a new flag on an image the post already has queued', async () => {
+      await postImages([101, 102, 103, 104]);
+      for (const imageId of [101, 102, 103]) await flag({ imageId, workflowId: `wf-${imageId}` });
+
+      await flag({ imageId: 102, workflowId: 'wf-102-rescan', source: 'xguard-prompt' });
+      await flag({ imageId: 104, workflowId: 'wf-104' });
+
+      expect(await queued()).toEqual([101, 102, 103]);
+      expect((await flags()).map((f) => f.workflowId)).toEqual([
+        'wf-101',
+        'wf-102',
+        'wf-103',
+        'wf-102-rescan',
+      ]);
+    });
+
+    it('counts decided items toward the cap', async () => {
+      await postImages([101, 102, 103, 104]);
+      for (const imageId of [101, 102, 103]) await flag({ imageId, workflowId: `wf-${imageId}` });
+      await holder.db.exec(
+        `UPDATE "ScanLabelItem" SET status = 'decided', votes = 3, outcome = 'clear'`
+      );
+
+      await flag({ imageId: 104, workflowId: 'wf-104' });
+
+      expect(await queued()).toEqual([101, 102, 103]);
+    });
+
+    it('caps each post on its own', async () => {
+      await postImages([101, 102, 103, 104]);
+      await postImages([201, 202], 901);
+
+      for (const imageId of [101, 102, 103, 104, 201, 202])
+        await flag({ imageId, workflowId: `wf-${imageId}` });
+
+      expect(await queued()).toEqual([101, 102, 103, 201, 202]);
+    });
+
+    it('does not cap images outside a post', async () => {
+      await postImages([301, 302, 303, 304], null);
+
+      for (const imageId of [301, 302, 303, 304])
+        await flag({ imageId, workflowId: `wf-${imageId}` });
+
+      expect(await queued()).toEqual([301, 302, 303, 304]);
+    });
+
+    // Parallel scan callbacks for one post must not all pass the count: the count runs after the
+    // post's lock, in the same transaction, in a statement of its own.
+    it('locks the post inside the transaction before the capped insert', async () => {
+      await postImages([101]);
+      const ops: { sql: string; values: unknown[]; via: 'tx' | 'dbWrite' }[] = [];
+      const bridged = dbMock.dbWrite.$executeRaw.getMockImplementation()!;
+      const record =
+        (via: 'tx' | 'dbWrite') =>
+        (strings: TemplateStringsArray, ...values: unknown[]) => {
+          ops.push({ sql: strings.join('?'), values, via });
+          return bridged(strings, ...values);
+        };
+      dbMock.dbWrite.$executeRaw.mockImplementation(record('dbWrite') as never);
+      dbMock.dbWrite.$transaction.mockImplementationOnce(
+        async (fn: (tx: unknown) => Promise<unknown>) => fn({ $executeRaw: record('tx') })
+      );
+
+      await flag({ imageId: 101, workflowId: 'wf-101' });
+
+      expect(ops.map((o) => o.via)).toEqual(['tx', 'tx']);
+      expect(ops[0].sql).toContain('pg_advisory_xact_lock(?::int, "postId")');
+      expect(ops[0].values).toEqual([0x5c1a0001, 101]);
+      expect(ops[1].sql).toContain('INSERT INTO "ScanLabelItem"');
+      expect(ops[1].sql).not.toContain('pg_advisory');
+      expect(await queued()).toEqual([101]);
+    });
   });
 
   it('logs and does not throw when the write fails', async () => {
