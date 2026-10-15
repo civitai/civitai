@@ -430,6 +430,14 @@ export const createReport = async ({
       );
   }
 
+  // Anyone may report a storyline, flag or not, so an id that is not one is a 404 here rather than
+  // a failed connect on the join row below.
+  if (
+    type === ReportEntity.Storyline &&
+    !(await dbRead.storyline.findUnique({ where: { id }, select: { id: true } }))
+  )
+    throw throwNotFoundError('That storyline no longer exists.');
+
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   // Nothing automated acts on a crucible's, game's or storyline's mature-content report, unlike an

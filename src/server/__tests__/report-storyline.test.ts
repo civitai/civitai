@@ -16,11 +16,26 @@ const { createReport } = await import('~/server/services/report.service');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dbMock.dbRead.storyline.findUnique.mockResolvedValue({ id: 17 } as never);
   reportFindFirst.mockResolvedValue(null);
   reportCreate.mockResolvedValue({ id: 74, details: {} });
 });
 
 describe('reporting a storyline', () => {
+  it('answers not found for an id that is not a storyline, and files nothing', async () => {
+    dbMock.dbRead.storyline.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      createReport({
+        userId: 41,
+        id: 999,
+        type: ReportEntity.Storyline,
+        reason: ReportReason.TOSViolation,
+        details: { comment: 'gone' },
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
+
   it('stores the report in the storyline report table, named as a storyline for notifications', async () => {
     await createReport({
       userId: 41,
