@@ -1511,12 +1511,15 @@ export const updateModelVersionById = async ({
 
 export const publishModelVersionsWithEarlyAccess = async ({
   modelVersionIds,
+  modelId,
   publishedAt,
   meta,
   tx,
   continueOnError = false,
 }: {
   modelVersionIds: number[];
+  /** Restricts the publish to versions of this model. */
+  modelId?: number;
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
@@ -1526,7 +1529,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
   const dbClient = tx ?? dbWrite;
 
   const versions = await dbClient.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
+    where: { id: { in: modelVersionIds }, ...(modelId !== undefined ? { modelId } : {}) },
     select: {
       id: true,
       name: true,
