@@ -1,8 +1,8 @@
 import { Divider, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   groupEventsByRound,
-  isSystemDispute,
   roundLabel,
+  sheetEventText,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { formatDate } from '~/utils/date-helpers';
@@ -63,7 +63,7 @@ export function DealAccountabilitySheet({ deal }: { deal: ServiceDealView }) {
                   className={groupIndex > 0 ? 'mt-2' : undefined}
                 />
                 {group.events.map((event) => {
-                  const system = isSystemDispute(event);
+                  const text = sheetEventText(event, deal.viewerRole, eventLabel[event.type]);
                   return (
                     <Group
                       key={event.id}
@@ -82,13 +82,11 @@ export function DealAccountabilitySheet({ deal }: { deal: ServiceDealView }) {
                           <Text size="sm" fw={600}>
                             {actorName(deal, event)}
                           </Text>
-                          <Text size="sm">
-                            {system ? 'Held the deal for moderator review' : eventLabel[event.type]}
-                          </Text>
+                          <Text size="sm">{text.label}</Text>
                         </Group>
-                        {event.comment && !system && (
+                        {text.comment && (
                           <Text size="sm" c="dimmed" className="whitespace-pre-line break-words">
-                            {event.comment}
+                            {text.comment}
                           </Text>
                         )}
                         <Text size="xs" c="dimmed">

@@ -182,15 +182,46 @@ export function groupEventsByRound<T extends { round: number }>(events: T[]) {
 
 export const roundLabel = (round: number) => (round === 0 ? 'Original order' : `Revision ${round}`);
 
+type SheetEvent = { type: string; actorRole: string; comment: string | null };
+
 /**
  * A dispute Civitai opened rather than the buyer: a payout held for moderators, or a final file
- * that failed its check. Its comment is an internal reason code, never shown to either party.
+ * that failed its check. Its comment is an internal reason code; the server withholds it from the
+ * parties, and the sheet shows it to moderators only.
  */
 export const isSystemDispute = (event: { type: string; actorRole: string }) =>
   event.type === 'Disputed' && event.actorRole === 'system';
 
-/** Whether the deal's current dispute is a system hold: the latest Disputed event decides. */
+/** Events that move a deal into Disputed. A refused cancellation escalates too. */
+const DISPUTE_OPENERS = ['Disputed', 'CancellationDeclined'];
+
+/** Whether the deal's current dispute is a system hold: the latest event that opened one decides. */
 export const isModeratorHold = (events: { type: string; actorRole: string }[]) => {
-  const latest = events.filter((event) => event.type === 'Disputed').at(-1);
+  const latest = events.filter((event) => DISPUTE_OPENERS.includes(event.type)).at(-1);
   return !!latest && isSystemDispute(latest);
 };
+
+/** What the accountability sheet prints for one event. */
+export function sheetEventText<T extends SheetEvent>(
+  event: T,
+  viewerRole: 'buyer' | 'seller' | 'moderator',
+  label: string
+) {
+  if (!isSystemDispute(event)) return { label, comment: event.comment };
+  return {
+    label: 'Held the deal for moderator review',
+    comment: viewerRole === 'moderator' ? event.comment : null,
+  };
+}
+
+/** The notice on a Disputed deal; none once it has settled, when the Buzz is no longer held. */
+export function disputeNotice(deal: {
+  status: ServiceDealStatus;
+  settled: boolean;
+  events: { type: string; actorRole: string }[];
+}) {
+  if (deal.status !== 'Disputed' || deal.settled) return null;
+  return isModeratorHold(deal.events)
+    ? 'This deal is held for moderator review. The Buzz stays held until they resolve it.'
+    : 'This deal is in dispute and with our moderators. The Buzz stays held until they resolve it.';
+}

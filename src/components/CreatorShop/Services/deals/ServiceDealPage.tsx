@@ -21,7 +21,7 @@ import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEsc
 import {
   dealPageState,
   dealStatusLabel,
-  isModeratorHold,
+  disputeNotice,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
@@ -114,6 +114,7 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
 
   const counterparty = deal.viewerRole === 'seller' ? deal.buyer : deal.seller;
   const lines = deadlineLines(deal);
+  const notice = disputeNotice(deal);
 
   return (
     <Stack gap="lg" py="md">
@@ -169,13 +170,9 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                 </Text>
               </Stack>
             </Paper>
-            {deal.status === 'Disputed' && !deal.settled && (
+            {notice && (
               <Paper withBorder radius="md" p="md">
-                <Text size="sm">
-                  {isModeratorHold(deal.events)
-                    ? 'This deal is held for moderator review. The Buzz stays held until they resolve it.'
-                    : 'This deal is in dispute and with our moderators. The Buzz stays held until they resolve it.'}
-                </Text>
+                <Text size="sm">{notice}</Text>
               </Paper>
             )}
           </Stack>

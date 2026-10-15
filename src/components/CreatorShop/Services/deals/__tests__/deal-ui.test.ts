@@ -4,10 +4,12 @@ import {
   dealEscrowState,
   dealPageState,
   escrowCopy,
+  disputeNotice,
   groupEventsByRound,
   isModeratorHold,
   requestSentMessage,
   roundLabel,
+  sheetEventText,
   visibleDealActions,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -96,8 +98,8 @@ describe('delivery actions', () => {
 
   // Decision (Creator Services P3, briony 2026-10-15): accepting a delivery finishes a deal and a
   // dispute is the buyer's only way to stop the payout on bad files, so both are exits and stay
-  // with the flag off. A revision asks for new work, an entry, so it goes dark. Before you move
-  // either list: the server gates them the same way, and a dark flag must never trap held Buzz.
+  // with the flag off. A revision asks for new work, an entry, so it goes dark. Keep this in step
+  // with the flag gate in creator-service-deal.router.ts: a dark flag must never trap held Buzz.
   it('keeps accept and the dispute with the flag off, but not a revision', () => {
     expect(rendered(delivered, BUYER, false)).toEqual(['acceptDelivery', 'requestCancellation']);
     expect(rendered(inWindow, BUYER, false)).toEqual(['openDispute']);
@@ -239,5 +241,38 @@ describe('moderator holds', () => {
     expect(isModeratorHold([event('Completed', 'buyer'), event('Disputed', 'buyer')])).toBe(false);
     expect(isModeratorHold([event('Disputed', 'system'), event('Disputed', 'buyer')])).toBe(false);
     expect(isModeratorHold([event('Completed', 'system')])).toBe(false);
+  });
+
+  it('reads a refused cancellation after a hold as a party dispute, not the hold', () => {
+    expect(
+      isModeratorHold([event('Disputed', 'system'), event('CancellationDeclined', 'seller')])
+    ).toBe(false);
+  });
+
+  it('labels a system hold neutrally and shows its reason to moderators only', () => {
+    const hold = { type: 'Disputed', actorRole: 'system', comment: 'internal_code' };
+    for (const viewer of ['buyer', 'seller'] as const)
+      expect(sheetEventText(hold, viewer, 'Opened a dispute')).toEqual({
+        label: 'Held the deal for moderator review',
+        comment: null,
+      });
+    expect(sheetEventText(hold, 'moderator', 'Opened a dispute').comment).toBe('internal_code');
+    const buyer = { type: 'Disputed', actorRole: 'buyer', comment: 'files are broken' };
+    expect(sheetEventText(buyer, 'seller', 'Opened a dispute')).toEqual({
+      label: 'Opened a dispute',
+      comment: 'files are broken',
+    });
+  });
+
+  it('shows the dispute notice only while the Buzz is still held', () => {
+    const events = [event('Disputed', 'system')];
+    expect(disputeNotice({ status: 'Disputed', settled: false, events })).toMatch(
+      /held for moderator review/
+    );
+    expect(disputeNotice({ status: 'Disputed', settled: true, events })).toBeNull();
+    expect(
+      disputeNotice({ status: 'Disputed', settled: false, events: [event('Disputed', 'buyer')] })
+    ).toMatch(/in dispute/);
+    expect(disputeNotice({ status: 'Completed', settled: false, events })).toBeNull();
   });
 });
