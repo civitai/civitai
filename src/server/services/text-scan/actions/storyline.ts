@@ -82,7 +82,12 @@ export async function applyStorylineTextScan({
 
   if (outcome.nsfw && (current || outcome.nsfw.detectedLevel > before.nsfwLevel)) {
     const level = outcome.nsfw.detectedLevel;
-    await dbWrite.storyline.updateMany({ where: { id: entityId }, data: { nsfwLevel: level } });
+    // A lower rating is permissive, so it also holds only while the title is still the one read.
+    const pinned = level <= before.nsfwLevel ? { title: before.title } : {};
+    await dbWrite.storyline.updateMany({
+      where: { id: entityId, ...pinned },
+      data: { nsfwLevel: level },
+    });
     // A moderator's ruling stands in for the scan's, so a changed scan level changes nothing.
     if (level >= NsfwLevel.R && level > before.nsfwLevel && before.moderatorNsfwLevel == null)
       await notifyStorylineTitleModerated(before, { storylineId: entityId, level }, workflowId);
@@ -103,7 +108,8 @@ export async function applyStorylineTextScan({
   // any lift below, so a storyline coming back up is never shown uncapped, even if a write fails.
   if (outcome.minor && (current || minor)) {
     const { count } = await dbWrite.storyline.updateMany({
-      where: { id: entityId, minorByScan: !minor },
+      // Clearing is permissive: only while the title is still the one this verdict judged.
+      where: { id: entityId, minorByScan: !minor, ...(!minor && { title: before.title }) },
       data: { minorByScan: minor },
     });
     if (count && minor && !takeDown)
@@ -133,6 +139,7 @@ export async function applyStorylineTextScan({
         workflowId
       );
   } else if (current && outcome.poi && outcome.minor) {
-    await liftScanTakedown(entityId);
+    // Pinned to the title read above: a rename landing mid-apply leaves the lift to its own scan.
+    await liftScanTakedown(entityId, { where: { title: before.title } });
   }
 }

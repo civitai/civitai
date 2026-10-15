@@ -208,4 +208,27 @@ describe('a moderator takedown and the title scan', () => {
       });
     });
   });
+
+  // The title is renamed while a clean verdict on the old one is being applied, and the new
+  // title's verdict lands first. The old verdict's permissive writes must not undo it.
+  it('a clean verdict renamed under mid-apply lifts, clears and lowers nothing', async () => {
+    row.nsfwLevel = NsfwLevel.R;
+    const realFind = w.storyline.findUnique.getMockImplementation()!;
+    w.storyline.findUnique.mockImplementationOnce((async (args: never) => {
+      const read = await realFind(args);
+      // After the verdict has read the title: the rename, and the new title's own verdict.
+      row.title = 'A new title';
+      row.tosViolation = true;
+      row.tosViolationByScan = true;
+      row.minorByScan = true;
+      return read;
+    }) as never);
+    await scan({ poi: false, minor: false, nsfw: NsfwLevel.PG });
+    expect(row).toMatchObject({
+      tosViolation: true,
+      tosViolationByScan: true,
+      minorByScan: true,
+      nsfwLevel: NsfwLevel.R,
+    });
+  });
 });
