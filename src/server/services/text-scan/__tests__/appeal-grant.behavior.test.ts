@@ -1084,6 +1084,41 @@ describe('review mode: a first detection waits for a moderator', () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
+  describe('rolling the switch back to auto while a detection is held', () => {
+    const rollBack = async () => {
+      await hold();
+      labelMode.value = 'auto';
+      await apply('minor', NEWER);
+    };
+
+    it('flags on the next scan of the held text and leaves no marker for the queue', async () => {
+      await rollBack();
+
+      expect(mockSetModelMinor).toHaveBeenCalledWith(expect.objectContaining({ minor: true }));
+      const entry = await entryOf();
+      expect(entry).toMatchObject({ workflowId: 'wf-new', textHash: NEWER });
+      expect(entry.redetected).toBeUndefined();
+    });
+
+    it.each([
+      ['keep', true],
+      ['dismiss', false],
+    ])('%s on the stale queue row is refused: no second flag, no ruling', async (_name, keep) => {
+      await rollBack();
+      await holder.db.query(`UPDATE "Model" SET minor = true WHERE id = $1`, [MODEL_ID]);
+      vi.clearAllMocks();
+      const before = await stored();
+
+      await expect(resolve('minor', keep)).rejects.toThrow(/changed or was already/);
+
+      expect(mockSetModelMinor).not.toHaveBeenCalled();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(await stored()).toEqual(before);
+      expect((await entryOf()).appealUpheld).toBeUndefined();
+      expect((await entryOf()).appealGranted).toBeUndefined();
+    });
+  });
+
   it.each([
     ['keep', true, 'kept'],
     ['dismiss', false, 'dismissed'],

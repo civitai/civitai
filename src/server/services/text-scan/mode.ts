@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import type {
   TextScanEntityType,
@@ -181,11 +182,26 @@ const getTextScanLabelModes = createTtlMemo(readTextScanLabelModes, ROLLOUT_CACH
   Date.now()
 );
 
+const LABEL_MODE_ERROR_LOG_MS = 5 * 60_000;
+let lastLabelModeErrorLogAt = 0;
+
 /** A failed read is `auto`: the flag lands as it always did rather than a detection going unheld. */
 export async function getTextScanLabelMode(label: TextScanFlagLabel): Promise<TextScanLabelMode> {
   try {
     return (await getTextScanLabelModes())[label] ?? 'auto';
-  } catch {
+  } catch (error) {
+    // Every scan retries a failed read, so the log is throttled per process.
+    const now = Date.now();
+    if (now - lastLabelModeErrorLogAt >= LABEL_MODE_ERROR_LOG_MS) {
+      lastLabelModeErrorLogAt = now;
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'label mode read failed, falling back to auto',
+        label,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => null);
+    }
     return 'auto';
   }
 }

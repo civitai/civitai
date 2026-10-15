@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -249,6 +250,30 @@ describe('label modes', () => {
     resetTextScanRolloutCache();
     redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
     expect(await getTextScanLabelMode('minor')).toBe('auto');
+  });
+
+  it('logs a failed read, once per window rather than once per scan', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
+      redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+      loggingMock.logToAxiom.mockClear();
+      await getTextScanLabelMode('minor');
+      await getTextScanLabelMode('poi');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'text-scan',
+          type: 'error',
+          message: 'label mode read failed, falling back to auto',
+        })
+      );
+      vi.setSystemTime(new Date('2030-01-01T00:10:00Z'));
+      await getTextScanLabelMode('minor');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('serves review from the cache until it is reset', async () => {
