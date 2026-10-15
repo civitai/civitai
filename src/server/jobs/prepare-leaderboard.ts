@@ -45,14 +45,29 @@ function withoutExcluded<T extends { userId: number }>(rows: T[], excludedUserId
 
 const EXCLUSION_RETRY_MS = 30_000;
 
+/**
+ * Fails open after retries: readers serve today's date only, so failing closed would leave every board empty
+ * until the next run, a bigger break than listed accounts ranking for one more day.
+ */
+async function getExcludedUserIdsOrUnfiltered() {
+  try {
+    return await withRetries(getMetricExcludedUserIdsOrThrow, 3, EXCLUSION_RETRY_MS);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'leaderboard-metric-exclusion-unavailable',
+      message: (e as Error).message,
+    }).catch();
+    return [];
+  }
+}
+
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
   log('Leaderboard job start');
 
-  // Fails closed: an unreadable list would rank suppressed accounts. The cost is real, since readers serve
-  // today's date only and every board stays empty until the next run, so the read is retried first.
-  const excludedUserIds = await withRetries(getMetricExcludedUserIdsOrThrow, 3, EXCLUSION_RETRY_MS);
+  const excludedUserIds = await getExcludedUserIdsOrUnfiltered();
 
   await setCoverImageNsfwLevel();
 
