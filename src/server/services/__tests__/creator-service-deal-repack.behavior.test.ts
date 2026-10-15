@@ -552,6 +552,16 @@ describe('what the read-back insists on', () => {
     expect((await fileRow(fileId)).deliveryKey).toBeNull();
   });
 
+  it('does not accept an archive that is missing a file with nothing in it', async () => {
+    const { fileId } = await unpackedZip([
+      { name: 'a.txt', data: sameBytes },
+      { name: 'empty.txt', data: Buffer.alloc(0) },
+    ]);
+    uploads.corrupt = () => buildZip([{ name: 'a.txt', data: sameBytes }]);
+    expect(await repack.repackFinals()).toBe(0);
+    expect((await fileRow(fileId)).deliveryKey).toBeNull();
+  });
+
   it('does not accept an archive it cannot find again', async () => {
     const { fileId } = await unpackedZip([{ name: 'a.txt', data: sameBytes }]);
     s3.headObject.mockImplementation(async (_bucket: string, key: string) =>

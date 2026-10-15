@@ -524,6 +524,33 @@ describe('copying an entry out', () => {
     other.zipfile.close();
   });
 
+  it('fails when the source of the archive fails part-way, rather than waiting for ever', async () => {
+    const whole = bufferZipSource(
+      buildZip([{ name: 'a.txt', data: Buffer.from('some bytes '.repeat(2000)), method: 'store' }])
+    );
+    let failing = false;
+    const flaky = {
+      size: whole.size,
+      readRange: (start: number, end: number) => {
+        const stream = whole.readRange(start, end);
+        // Small reads (headers) pass; the read of the entry's bytes breaks.
+        if (!failing || end - start < 1000) return stream;
+        return Readable.from(
+          (async function* () {
+            yield Buffer.from('partial');
+            throw new Error('connection reset');
+          })()
+        );
+      },
+    };
+    const opened = await openZip(flaky);
+    failing = true;
+    await expect(
+      drain(await openEntryStream(opened.zipfile, opened.entries[0], { used: 0 }))
+    ).rejects.toThrow('connection reset');
+    opened.zipfile.close();
+  });
+
   it('counts against the archive-wide budget', async () => {
     const opened = await open([{ name: 'a.txt', data: Buffer.alloc(100, 1), method: 'store' }]);
     await rejects(
