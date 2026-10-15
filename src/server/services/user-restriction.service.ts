@@ -265,7 +265,8 @@ export async function hasOtherPendingRestriction(
 
 /**
  * Swaps the `origin` of the trigger carrying `entryId` in the user's restriction rows. Returns the
- * number of rows changed; zero means no row holds that trigger (yet).
+ * number of rows changed; zero means no pending row holds that trigger (yet). A row a moderator
+ * already resolved is left alone.
  */
 export async function replaceTriggerOrigin({
   userId,
@@ -288,6 +289,7 @@ export async function replaceTriggerOrigin({
         ),
         "updatedAt" = now()
     WHERE ur."userId" = ${userId}
+      AND ur.status = 'Pending'
       AND jsonb_typeof(ur.triggers) = 'array'
       AND ur.triggers @> ${JSON.stringify([{ id: entryId }])}::jsonb
   `;

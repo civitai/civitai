@@ -25,8 +25,10 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import {
+  REPLACE_ENTRY_BY_ID,
   attachPromptOrigin,
   backfilledPromptOrigin,
+  blockedEntryIdNeedle,
   buildPromptOrigin,
   prohibitedRowToTrigger,
 } from '~/server/services/orchestrator/prompt-origin';
@@ -368,6 +370,85 @@ describe('prohibitedRowToTrigger', () => {
   it('writes no origin for a row without remixOfId', () => {
     expect(prohibitedRowToTrigger(row(null)).origin).toBeUndefined();
   });
+
+  it('maps a whole row with a regex match', () => {
+    expect(
+      prohibitedRowToTrigger(
+        {
+          prompt: 'p',
+          negativePrompt: 'n',
+          source: 'Regex',
+          remixOfId: 42,
+          inputImages: ['a', 'b'],
+          inputVideo: 'v',
+          createdDate: '2026-01-01 00:00:00',
+        },
+        { check: 'poi', matchedText: 'word', regex: 'w.rd' }
+      )
+    ).toEqual({
+      prompt: 'p',
+      negativePrompt: 'n',
+      source: 'Regex',
+      category: 'poi',
+      matchedWord: 'word',
+      matchedRegex: 'w.rd',
+      imageId: null,
+      remixOfId: null,
+      inputImages: ['a', 'b'],
+      inputVideo: 'v',
+      origin: { remix: { imageId: 42, verified: false, promptMatch: 'unknown' } },
+      time: '2026-01-01 00:00:00',
+    });
+  });
+
+  it('maps a whole row without a match: empty images and a null negative prompt are normalised', () => {
+    expect(
+      prohibitedRowToTrigger({
+        prompt: 'p',
+        negativePrompt: null,
+        source: 'External',
+        remixOfId: null,
+        inputImages: [],
+        inputVideo: null,
+        createdDate: '2026-01-01 00:00:00',
+      })
+    ).toEqual({
+      prompt: 'p',
+      negativePrompt: '',
+      source: 'External',
+      category: undefined,
+      matchedWord: undefined,
+      matchedRegex: undefined,
+      imageId: null,
+      remixOfId: null,
+      inputImages: undefined,
+      inputVideo: undefined,
+      origin: undefined,
+      time: '2026-01-01 00:00:00',
+    });
+  });
+});
+
+describe('REPLACE_ENTRY_BY_ID', () => {
+  it('is pinned, so any change to the script is deliberate', () => {
+    expect(REPLACE_ENTRY_BY_ID).toMatchInlineSnapshot(`
+      "
+        local items = redis.call('LRANGE', KEYS[1], 0, 49)
+        for i, raw in ipairs(items) do
+          if string.find(raw, ARGV[1], 1, true) then
+            redis.call('LSET', KEYS[1], i - 1, ARGV[2])
+            return 1
+          end
+        end
+        return 0
+      "
+    `);
+  });
+
+  it('builds the needle the stored entry carries', () => {
+    expect(blockedEntryIdNeedle('0b8f')).toBe('"id":"0b8f"');
+    expect(JSON.stringify({ id: '0b8f', prompt: 'x' })).toContain(blockedEntryIdNeedle('0b8f'));
+  });
 });
 
 describe('attachPromptOrigin', () => {
@@ -407,7 +488,7 @@ describe('attachPromptOrigin', () => {
     ];
     expect(script).toContain('LSET');
     expect(options.keys).toEqual([KEY]);
-    expect(options.arguments[0]).toBe('entry-1');
+    expect(options.arguments[0]).toBe(blockedEntryIdNeedle('entry-1'));
     const written = JSON.parse(options.arguments[1]);
     expect(written).toEqual({
       ...entry,
@@ -480,6 +561,42 @@ describe('attachPromptOrigin', () => {
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'prompt-origin-attach-error', type: 'error' })
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('logs once per attempt and gives up without throwing when both stores miss and the row update rejects', async () => {
+    vi.useFakeTimers();
+    try {
+      sysRedis.eval.mockResolvedValue(0);
+      mockReplaceTriggerOrigin.mockRejectedValue(new Error('db down'));
+      const done = attach();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(done).resolves.toBeUndefined();
+      expect(sysRedis.eval).toHaveBeenCalledTimes(2);
+      expect(mockReplaceTriggerOrigin).toHaveBeenCalledTimes(2);
+      const logged = loggingMock.logToAxiom.mock.calls.filter(
+        ([e]) => (e as { name: string }).name === 'prompt-origin-attach-error'
+      );
+      expect(logged).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sysRedis.eval).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries after eval throws on the first attempt and succeeds on the second', async () => {
+    vi.useFakeTimers();
+    try {
+      sysRedis.eval.mockRejectedValueOnce(new Error('blip')).mockResolvedValueOnce(1);
+      const done = attach();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(done).resolves.toBeUndefined();
+      expect(sysRedis.eval).toHaveBeenCalledTimes(2);
+      expect(mockReplaceTriggerOrigin).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

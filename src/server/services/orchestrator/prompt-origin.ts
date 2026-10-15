@@ -209,14 +209,20 @@ export function prohibitedRowToTrigger(
   };
 }
 
+/** How a list element is recognised: the `id` key as `JSON.stringify` writes it into the stored entry. */
+export const blockedEntryIdNeedle = (id: string) => `"id":${JSON.stringify(id)}`;
+
+// The entry was pushed to the head moments before this runs, so only the head is scanned: the list
+// is otherwise unbounded and Redis runs the script single-threaded.
+const ORIGIN_SCAN_HEAD = 50;
+
 // Finds the element by id and swaps it for the new JSON in one step: the list is pushed to
 // concurrently, so an index read in Node would be stale by the time of the LSET. The id is a
 // server-generated UUID, so a plain substring match on the serialized element cannot collide.
-const REPLACE_ENTRY_BY_ID = `
-  local items = redis.call('LRANGE', KEYS[1], 0, -1)
-  local needle = '"id":"' .. ARGV[1] .. '"'
+export const REPLACE_ENTRY_BY_ID = `
+  local items = redis.call('LRANGE', KEYS[1], 0, ${ORIGIN_SCAN_HEAD - 1})
   for i, raw in ipairs(items) do
-    if string.find(raw, needle, 1, true) then
+    if string.find(raw, ARGV[1], 1, true) then
       redis.call('LSET', KEYS[1], i - 1, ARGV[2])
       return 1
     end
@@ -251,7 +257,7 @@ export async function attachPromptOrigin({
       try {
         const replaced = await sysRedis.eval(REPLACE_ENTRY_BY_ID, {
           keys: [redisKey],
-          arguments: [entry.id, JSON.stringify({ ...entry, origin })],
+          arguments: [blockedEntryIdNeedle(entry.id), JSON.stringify({ ...entry, origin })],
         });
         if (Number(replaced) === 1) return true;
 

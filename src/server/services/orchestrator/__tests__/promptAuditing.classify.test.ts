@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AuditModule from '~/utils/metadata/audit';
+import type * as PromptOriginModule from '~/server/services/orchestrator/prompt-origin';
 
 /**
  * `classifyPromptServer` is the DECISION half of `auditPromptServer`, split out so a caller can
@@ -338,6 +339,20 @@ describe('classifyPromptServer — INVARIANT GUARDS: no side effects on any verd
     flagWith(HARD);
     await auditPromptServer({ prompt: PROMPT, userId: 9, isGreen: false }).catch(() => undefined);
     expect(sysRedis.lPush).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('auditPromptServer — stored entry id', () => {
+  it('carries the id key exactly as the origin script’s needle expects', async () => {
+    flagWith(HARD);
+    await auditPromptServer({ prompt: PROMPT, userId: 9, isGreen: false }).catch(() => undefined);
+    const [, entryJson] = sysRedis.lPush.mock.calls[0] as [string, string];
+    const { id } = JSON.parse(entryJson) as { id: string };
+    const { blockedEntryIdNeedle } = await vi.importActual<typeof PromptOriginModule>(
+      '~/server/services/orchestrator/prompt-origin'
+    );
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(entryJson).toContain(blockedEntryIdNeedle(id));
   });
 });
 

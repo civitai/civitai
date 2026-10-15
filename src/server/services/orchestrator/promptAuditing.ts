@@ -617,6 +617,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
 
       if (!isModerator) {
         // Not awaited: the block must not wait on the lookups. attachPromptOrigin logs its own failures.
+        // No in-flight guard: the generation procedures refuse a muted user before the audit runs.
         void Promise.resolve(
           attachPromptOrigin({
             userId,
