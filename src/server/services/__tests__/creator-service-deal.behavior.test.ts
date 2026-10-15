@@ -244,6 +244,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   // clearAllMocks keeps a queued *Once; a test that fails early would leak it into the next.
   for (const fn of Object.values(buzz)) fn.mockReset();
+  shop.assertCreatorShopVisible.mockReset();
   locks.available = true;
   locks.held.clear();
   buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged());
@@ -2163,6 +2164,12 @@ describe('mature services', () => {
       new TRPCError({ code: 'NOT_FOUND', message: 'Shop not found' })
     );
     await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('answers a blocked buyer as blocked, never as mature', async () => {
+    await rate(R);
+    await q(`INSERT INTO "UserEngagement" VALUES ($1, $2, 'Block')`, [SELLER, BUYER]);
+    await expect(request({ consentLevels: PG })).rejects.toThrow(/cannot request this service/);
   });
 
   it('does not find a mature service on the SFW domain, even for a buyer who opted in', async () => {
