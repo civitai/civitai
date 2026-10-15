@@ -31,7 +31,7 @@ const MIGRATION = path.resolve(
 
 beforeAll(async () => {
   holder.db = new PGlite();
-  await holder.db.exec(`CREATE TABLE "Image" (id int PRIMARY KEY);`);
+  await holder.db.exec(`CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);`);
   await holder.db.exec(fs.readFileSync(MIGRATION, 'utf8'));
 });
 
