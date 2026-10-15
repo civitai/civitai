@@ -44,6 +44,20 @@ describe('dealActions', () => {
     });
   });
 
+  // With `creatorServices` off the router refuses these, so offering them is a dead button.
+  it('drops the flag-gated actions, and a primary among them, while the flag is off', () => {
+    const off = { gatedAllowed: false };
+    expect(dealActions(deal(), SELLER, NOW, off)).toEqual({
+      actions: ['decline'],
+      primaryAction: null,
+    });
+    const delivered = deal({ status: 'Delivered', deliveredAt: ago(1) });
+    expect(dealActions(delivered, BUYER, NOW, off)).toEqual({
+      actions: ['acceptDelivery', 'requestCancellation'],
+      primaryAction: 'acceptDelivery',
+    });
+  });
+
   it('lets the buyer withdraw a request, and nothing else', () => {
     expect(dealActions(deal(), BUYER, NOW).actions).toEqual(['withdraw']);
   });

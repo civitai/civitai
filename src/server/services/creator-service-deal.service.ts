@@ -26,6 +26,10 @@ import {
   SERVICE_DEAL_DISPUTE_WINDOW_MS,
   SERVICE_DEAL_LATE_CANCEL_AFTER_MS,
   SERVICE_DEAL_OPEN_STATUSES,
+  type ServiceDealCancellationReasonCode,
+  type ServiceDealDeclineReasonCode,
+  type ServiceDealDisputeReasonCode,
+  type ServiceDealReasonCode,
 } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -75,26 +79,95 @@ type Transition = {
   refund?: boolean;
   /** Take the deal row's lock first, so the preconditions in `where` read what other writers left. */
   lock?: boolean;
+  /** The acting party's own reason, stored as the event's comment and code instead of `comment`. */
+  reason?: PreparedReason;
+  /** The deal column that also keeps the reason's text. */
+  reasonColumn?: 'cancellationReason' | 'disputeReason';
 };
+
+/** A party's reason, after `prepareReason`. */
+type PreparedReason = {
+  text: string | null;
+  code: ServiceDealReasonCode | null;
+  /** A muted party gets `other` when they gave no code. */
+  defaultOther: boolean;
+  /** The party was already muted when the text was looked at, so it was neither scanned nor kept. */
+  mutedBefore: boolean;
+};
+
+/**
+ * A party's reason for leaving a deal, as it may be stored. Text is scanned, unless the party is
+ * muted, in which case it is dropped unscanned: a muted party is never refused, only silenced. The
+ * transition reads the mute again from the User row, so a mute that lands in between still wins.
+ */
+async function prepareReason(
+  userId: number,
+  {
+    text,
+    code,
+    coded = false,
+    required = false,
+  }: {
+    text?: string | null;
+    code?: ServiceDealReasonCode | null;
+    /** The action has a list of codes. */
+    coded?: boolean;
+    required?: boolean;
+  }
+): Promise<PreparedReason> {
+  if (required && !text && !code) throw throwBadRequestError('Give a reason');
+  let muted = false;
+  if (text) {
+    const [actor] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
+      SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+    muted = !!actor?.muted;
+    if (!muted) await assertDealText(text);
+  }
+  return {
+    text: muted ? null : text || null,
+    code: code ?? null,
+    // A required reason with no text came with a code, or was refused above.
+    defaultOther: coded && !!text,
+    mutedBefore: muted,
+  };
+}
+
+/** Read once, inside the transition, so the event and the deal column store the same thing. */
+async function storedReason(tx: Prisma.TransactionClient, actorId: number, reason: PreparedReason) {
+  const [actor] = await tx.$queryRaw<{ muted: boolean }[]>`
+    SELECT "muted" FROM "User" WHERE "id" = ${actorId}::int`;
+  const muted = reason.mutedBefore || !!actor?.muted;
+  return {
+    text: muted ? null : reason.text,
+    code: reason.code ?? (muted && reason.defaultOther ? 'other' : null),
+  };
+}
 
 /** Returns whether this call moved the deal. */
 export async function transitionDeal(t: Transition) {
   const moved = await dbWrite.$transaction(async (tx) => {
     if (t.lock)
       await tx.$queryRaw`SELECT 1 FROM "ServiceDeal" WHERE "id" = ${t.dealId}::int FOR UPDATE`;
+    const reason = t.reason ? await storedReason(tx, t.actorId, t.reason) : null;
     const updated = await tx.$executeRaw`
       UPDATE "ServiceDeal"
       SET "status" = ${t.to}::"ServiceDealStatus", "updatedAt" = now()
         ${t.refund ? Prisma.sql`, "closedAt" = now()` : Prisma.empty}
         ${t.set ?? Prisma.empty}
+        ${
+          reason && t.reasonColumn
+            ? Prisma.sql`, ${Prisma.raw(`"${t.reasonColumn}"`)} = ${reason.text}::text`
+            : Prisma.empty
+        }
       WHERE "id" = ${t.dealId}::int AND "status" IN (${statusList(t.from)})
         ${t.where ? Prisma.sql`AND ${t.where}` : Prisma.empty}`;
     if (updated === 0) return false;
 
     await tx.$executeRaw`
-      INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "round", "comment")
+      INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "round", "comment", "reasonCode")
       SELECT ${t.dealId}::int, ${t.actorId}::int, ${t.event}::"ServiceDealEventType",
-             "revisionsUsed", ${t.comment ?? null}::text
+             "revisionsUsed", ${reason ? reason.text : t.comment ?? null}::text,
+             ${reason?.code ?? null}::text
       FROM "ServiceDeal" WHERE "id" = ${t.dealId}::int`;
 
     // A deal still confirming payment claims nothing here; reconcile claims it if the hold lands.
@@ -295,14 +368,16 @@ export const withdrawServiceDeal = ({ dealId, userId }: { dealId: number; userId
     refund: true,
   });
 
-export const declineServiceDeal = ({
+export const declineServiceDeal = async ({
   dealId,
   userId,
   reason,
+  reasonCode,
 }: {
   dealId: number;
   userId: number;
   reason?: string | null;
+  reasonCode?: ServiceDealDeclineReasonCode | null;
 }) =>
   requireTransition({
     dealId,
@@ -310,7 +385,7 @@ export const declineServiceDeal = ({
     to: 'Declined',
     actorId: userId,
     event: 'Declined',
-    comment: reason,
+    reason: await prepareReason(userId, { text: reason, code: reasonCode, coded: true }),
     where: Prisma.sql`"sellerId" = ${userId}::int`,
     set: Prisma.sql`, "closeReason" = 'declined'`,
     refund: true,
@@ -454,14 +529,16 @@ export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; user
     refund: true,
   });
 
-export const requestServiceDealCancellation = ({
+export const requestServiceDealCancellation = async ({
   dealId,
   userId,
   reason,
+  reasonCode,
 }: {
   dealId: number;
   userId: number;
-  reason: string;
+  reason?: string | null;
+  reasonCode?: ServiceDealCancellationReasonCode | null;
 }) =>
   requireTransition({
     dealId,
@@ -469,14 +546,19 @@ export const requestServiceDealCancellation = ({
     to: 'CancellationRequested',
     actorId: userId,
     event: 'CancellationRequested',
-    comment: reason,
+    reason: await prepareReason(userId, {
+      text: reason,
+      code: reasonCode,
+      coded: true,
+      required: true,
+    }),
+    reasonColumn: 'cancellationReason',
     where: Prisma.sql`(${userId}::int IN ("buyerId", "sellerId"))`,
-    set: Prisma.sql`, "cancellationRequestedAt" = now(), "cancellationRequestedById" = ${userId}::int,
-      "cancellationReason" = ${reason}::text`,
+    set: Prisma.sql`, "cancellationRequestedAt" = now(), "cancellationRequestedById" = ${userId}::int`,
   });
 
 /** Only the OTHER party answers. Agreeing refunds; declining sends the deal to moderators. */
-export const respondServiceDealCancellation = ({
+export const respondServiceDealCancellation = async ({
   dealId,
   userId,
   agree,
@@ -489,6 +571,7 @@ export const respondServiceDealCancellation = ({
 }) => {
   const otherParty = Prisma.sql`(${userId}::int IN ("buyerId", "sellerId"))
     AND "cancellationRequestedById" <> ${userId}::int`;
+  const reason = await prepareReason(userId, { text: comment });
   return agree
     ? requireTransition({
         dealId,
@@ -496,7 +579,7 @@ export const respondServiceDealCancellation = ({
         to: 'Cancelled',
         actorId: userId,
         event: 'CancellationAccepted',
-        comment,
+        reason,
         where: otherParty,
         set: Prisma.sql`, "closeReason" = 'cancellation_agreed'`,
         refund: true,
@@ -507,21 +590,23 @@ export const respondServiceDealCancellation = ({
         to: 'Disputed',
         actorId: userId,
         event: 'CancellationDeclined',
-        comment,
+        reason,
         where: otherParty,
         set: Prisma.sql`, "disputeOpenedAt" = now(), "disputeReason" = 'cancellation_declined'`,
       });
 };
 
 /** The buyer reports final files missing, broken or not as previewed, before the payout. */
-export const openServiceDealDispute = ({
+export const openServiceDealDispute = async ({
   dealId,
   userId,
   reason,
+  reasonCode,
 }: {
   dealId: number;
   userId: number;
-  reason: string;
+  reason?: string | null;
+  reasonCode?: ServiceDealDisputeReasonCode | null;
 }) =>
   requireTransition({
     dealId,
@@ -529,13 +614,19 @@ export const openServiceDealDispute = ({
     to: 'Disputed',
     actorId: userId,
     event: 'Disputed',
-    comment: reason,
+    reason: await prepareReason(userId, {
+      text: reason,
+      code: reasonCode,
+      coded: true,
+      required: true,
+    }),
+    reasonColumn: 'disputeReason',
     // clock_timestamp(), not now(): blocked behind a release claim's row lock, this UPDATE is
     // re-checked against the row once the claim commits, and now() would still be this
     // transaction's start, inside the window. A guard re-checked that way must test the row's own
     // columns; a NOT EXISTS on the legs would read the old snapshot and miss the claim.
     where: Prisma.sql`"buyerId" = ${userId}::int AND "releaseAt" > clock_timestamp() AND "settledAt" IS NULL`,
-    set: Prisma.sql`, "disputeOpenedAt" = now(), "disputeReason" = ${reason}::text`,
+    set: Prisma.sql`, "disputeOpenedAt" = now()`,
   });
 
 /** Reasons are user text shown to the other party and to moderators. */
@@ -662,10 +753,13 @@ export async function getServiceDealView({
   dealId,
   userId,
   isModerator = false,
+  servicesEnabled,
 }: {
   dealId: number;
   userId: number;
   isModerator?: boolean;
+  /** `creatorServices`: with it off, the actions it gates are not offered. */
+  servicesEnabled: boolean;
 }) {
   const deal = await dbWrite.serviceDeal.findUnique({
     where: { id: dealId },
@@ -679,11 +773,18 @@ export async function getServiceDealView({
   if (!deal || (!isModerator && deal.buyerId !== userId && deal.sellerId !== userId))
     throw throwNotFoundError('Deal not found');
 
-  const { actions, primaryAction } = dealActions(deal, userId);
+  // From the row, not the session, so a fresh mute shows before the next sign-in.
+  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
+    SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
+    gatedAllowed: servicesEnabled && !viewer?.muted,
+  });
   return {
     id: deal.id,
     status: deal.status,
     viewerRole: dealViewerRole(deal, userId),
+    /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
+    viewerMuted: !!viewer?.muted,
     offering: deal.offering,
     buyer: deal.buyer,
     seller: deal.seller,
@@ -728,6 +829,7 @@ export async function getServiceDealView({
       actorRole: dealActorRole(deal, event.actorId),
       round: event.round,
       comment: dealVisibleReason(event.comment, isModerator),
+      reasonCode: event.reasonCode,
       createdAt: event.createdAt,
     })),
   };
@@ -739,12 +841,14 @@ export async function listMyServiceDeals({
   status,
   cursor,
   limit,
+  servicesEnabled,
 }: {
   userId: number;
   role: 'buyer' | 'seller';
   status?: 'open' | 'closed';
   cursor?: number;
   limit: number;
+  servicesEnabled: boolean;
 }) {
   const open = [...SERVICE_DEAL_OPEN_STATUSES] as ServiceDealStatus[];
   const deals = await dbWrite.serviceDeal.findMany({
@@ -764,6 +868,9 @@ export async function listMyServiceDeals({
   });
 
   const page = deals.slice(0, limit);
+  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
+    SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const gatedAllowed = servicesEnabled && !viewer?.muted;
   return {
     items: page.map((deal) => ({
       id: deal.id,
@@ -777,7 +884,7 @@ export async function listMyServiceDeals({
       requestedAt: deal.requestedAt,
       dueAt: deal.dueAt,
       nextDeadline: nextDealDeadline(deal),
-      ...dealActions(deal, userId),
+      ...dealActions(deal, userId, new Date(), { gatedAllowed }),
     })),
     nextCursor: deals.length > limit ? page[page.length - 1].id : undefined,
   };
@@ -910,6 +1017,7 @@ type DisputedDealEventRow = {
   actorId: number;
   round: number | null;
   comment: string | null;
+  reasonCode: string | null;
   createdAt: Date;
 };
 
@@ -960,7 +1068,8 @@ export async function listDisputedServiceDeals({
   const page = rows.slice(0, limit);
   const events = page.length
     ? await dbWrite.$queryRaw<DisputedDealEventRow[]>`
-        SELECT "id", "dealId", "type"::text AS "type", "actorId", "round", "comment", "createdAt"
+        SELECT "id", "dealId", "type"::text AS "type", "actorId", "round", "comment", "reasonCode",
+          "createdAt"
         FROM "ServiceDealEvent"
         WHERE "dealId" IN (${Prisma.join(page.map((row) => Prisma.sql`${row.id}::int`))})
         ORDER BY "createdAt", "id"`
