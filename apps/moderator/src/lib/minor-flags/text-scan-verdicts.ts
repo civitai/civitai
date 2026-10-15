@@ -126,7 +126,7 @@ const DETECTION_COPY = {
   first: {
     badge: 'First detection',
     explanation:
-      "The scan held this for review instead of flagging; no moderator has ruled on this model's text before, and the owner wasn't told.",
+      "No moderator has cleared this text. The scan held it for review instead of flagging, and the owner wasn't told.",
     showsPriorClear: false,
   },
   redetected: {
@@ -139,3 +139,13 @@ const DETECTION_COPY = {
 
 /** The wording that depends on whether a human ever cleared this label. */
 export const detectionCopy = (kind: DetectionKind) => DETECTION_COPY[kind];
+
+/** Which history cards apply. A first detection has no clear behind it, but its entry can still carry
+ *  earlier rulings (e.g. an upheld appeal), so those show regardless of kind. */
+export const detectionSections = (
+  kind: DetectionKind,
+  rulings: readonly unknown[] | null | undefined
+) => ({
+  priorClear: DETECTION_COPY[kind].showsPriorClear,
+  rulings: (rulings?.length ?? 0) > 0,
+});

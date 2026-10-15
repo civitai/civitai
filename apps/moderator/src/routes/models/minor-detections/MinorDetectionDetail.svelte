@@ -16,6 +16,7 @@
     clearViaLabel,
     detectionCopy,
     detectionKind,
+    detectionSections,
     rulingText,
   } from '$lib/minor-flags/text-scan-verdicts';
   import { FLAG_APPEALS_PATH } from '$lib/minor-flags/paths';
@@ -45,6 +46,7 @@
   const appealsHref = $derived(`${FLAG_APPEALS_PATH}?q=${row.modelId}`);
   const kind = $derived(detectionKind(row.redetected));
   const copy = $derived(detectionCopy(kind));
+  const sections = $derived(detectionSections(kind, row.rulings));
   const blocked = $derived(row.hasPendingAppeal);
   const flagged = $derived(row.label === 'poi' ? row.poi : row.minor);
 </script>
@@ -113,42 +115,44 @@
         </div>
       </TriageCard>
 
-      {#if copy.showsPriorClear}
-      <TriageCard title="Previously cleared">
-        <div class="space-y-2 text-base text-dark-0">
-          {#if row.granted}
-            <p class="m-0">
-              {clearViaLabel(row.granted.via)}
-              {#if row.grantedByUsername}
-                by <span class="font-medium text-white">{row.grantedByUsername}</span>
-              {:else if row.granted.by}
-                by user #{row.granted.by}
-              {/if}
-              {#if row.granted.at}
-                <span class="text-sm text-dark-2" title={dateTime(row.granted.at)}>
-                  · {ago(row.granted.at)}
-                </span>
-              {/if}
-            </p>
-          {:else}
-            <p class="m-0">No clearing record.</p>
-          {/if}
-          {#if row.rulings?.length}
-            <div class="rounded-md bg-dark-6 p-3 text-sm">
-              <p class="m-0 font-medium text-white">Earlier rulings</p>
-              {#each row.rulings as ruling (`${ruling.decision}:${ruling.at}:${ruling.by}`)}
-                <p class="m-0 mt-1">
-                  {rulingText(ruling.decision, ruling.via)}
-                  {#if ruling.by}by user #{ruling.by}{/if}
-                  {#if ruling.at}
-                    <span class="text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
-                  {/if}
-                </p>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </TriageCard>
+      {#if sections.priorClear}
+        <TriageCard title="Previously cleared">
+          <div class="space-y-2 text-base text-dark-0">
+            {#if row.granted}
+              <p class="m-0">
+                {clearViaLabel(row.granted.via)}
+                {#if row.grantedByUsername}
+                  by <span class="font-medium text-white">{row.grantedByUsername}</span>
+                {:else if row.granted.by}
+                  by user #{row.granted.by}
+                {/if}
+                {#if row.granted.at}
+                  <span class="text-sm text-dark-2" title={dateTime(row.granted.at)}>
+                    · {ago(row.granted.at)}
+                  </span>
+                {/if}
+              </p>
+            {:else}
+              <p class="m-0">No clearing record.</p>
+            {/if}
+          </div>
+        </TriageCard>
+      {/if}
+
+      {#if sections.rulings}
+        <TriageCard title="Earlier rulings">
+          <div class="space-y-1 text-sm text-dark-0">
+            {#each row.rulings ?? [] as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}
+              <p class="m-0">
+                {rulingText(ruling.decision, ruling.via)}
+                {#if ruling.by}by user #{ruling.by}{/if}
+                {#if ruling.at}
+                  <span class="text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
+                {/if}
+              </p>
+            {/each}
+          </div>
+        </TriageCard>
       {/if}
     </div>
 

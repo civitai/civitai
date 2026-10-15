@@ -6,6 +6,7 @@ import {
   poiInForce,
   detectionCopy,
   detectionKind,
+  detectionSections,
   rulingText,
   scanVerdictProvenance,
   scanVerdictText,
@@ -138,7 +139,8 @@ describe('detectionCopy', () => {
   it('does not claim a prior clear for a first detection', () => {
     const copy = detectionCopy('first');
     expect(copy.badge).toBe('First detection');
-    expect(copy.explanation).not.toMatch(/cleared|edited/i);
+    expect(copy.explanation).not.toMatch(/edited|after it was cleared/i);
+    expect(copy.explanation).not.toMatch(/has ruled|never ruled|no ruling/i);
     expect(copy.showsPriorClear).toBe(false);
   });
 
@@ -147,5 +149,26 @@ describe('detectionCopy', () => {
     expect(copy.badge).toBe('Re-detected');
     expect(copy.explanation).toMatch(/after it was cleared/);
     expect(copy.showsPriorClear).toBe(true);
+  });
+});
+
+describe('detectionSections', () => {
+  const ruling = { decision: 'appealUpheld' };
+
+  it('shows earlier rulings on a first detection that carries them, without a prior clear', () => {
+    expect(detectionSections('first', [ruling])).toEqual({ priorClear: false, rulings: true });
+  });
+
+  it('shows nothing prior on a first detection with no rulings', () => {
+    expect(detectionSections('first', null)).toEqual({ priorClear: false, rulings: false });
+    expect(detectionSections('first', [])).toEqual({ priorClear: false, rulings: false });
+  });
+
+  it('shows the prior clear on a re-detection, and its rulings when present', () => {
+    expect(detectionSections('redetected', [ruling])).toEqual({ priorClear: true, rulings: true });
+    expect(detectionSections('redetected', undefined)).toEqual({
+      priorClear: true,
+      rulings: false,
+    });
   });
 });
