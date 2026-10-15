@@ -6088,6 +6088,7 @@ export interface ServiceOffering {
   price: number;
   acceptsBlue: boolean;
   previewKind: ServicePreviewKind;
+  maxNsfwLevel: number;
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;
@@ -6112,6 +6113,7 @@ export interface ServiceDeal {
   revisionsUsed: number;
   deliveryDays: number;
   previewKind: ServicePreviewKind;
+  maxNsfwLevel: number;
   status: ServiceDealStatus;
   heldAt: Date | null;
   settledAt: Date | null;
