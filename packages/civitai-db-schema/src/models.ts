@@ -6146,6 +6146,7 @@ export interface ServiceDealEvent {
   type: ServiceDealEventType;
   round: number;
   comment: string | null;
+  reasonCode: string | null;
   createdAt: Date;
 }
 
