@@ -11,7 +11,7 @@ import type * as CoocHolder from '~/server/services/resource-intent-cooc/holder'
 import type { ResourceIntentShortlistEntry } from '~/server/services/resource-intent-matcher.service';
 
 /**
- * SEAM: the shipped POOL_MERGE path must produce exactly the list the offline co-occurrence
+ * SEAM: with a baseModel, the shipped POOL_MERGE path must produce exactly the list the offline co-occurrence
  * screen produced for the same inputs. The screen's own gate and merge code is copied below
  * VERBATIM as the oracle (its script lives outside this repo); both sides read the same synthetic
  * index, the same synthetic snapshot and the same candidates.
@@ -553,25 +553,28 @@ describe('🔴 seam: shipped POOL_MERGE = the screen, row by row', () => {
  */
 describe('🔴 no baseModel: co-occurrence first, popularity only backfills', () => {
   async function shippedNoBaseModel(limit?: number) {
+    fetchMock.mockClear();
     const result = await getResourceIntent(
       { prompt: PROMPT, limit },
       { browsingLevel: 31, coverage: COVERAGE, poolMerge: true }
     );
     expect(result.degraded).toBe(false);
     expect(result.coocFallback).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // stage 1 only
     return result.suggestions.map((s) => s.modelId - 5000);
   }
 
   it('row B: the 3 co-occurrence models fill positions 1..3, popularity after; with a baseModel it still interleaves', async () => {
     install(rowB());
     const noBm = await shippedNoBaseModel();
-    // The search ran without an ecosystem clause.
-    expect(meiliCalls.every((c) => !c.filter?.includes(BASE_MODEL))).toBe(true);
+    // Both searches (BASE page, co-occurrence page) ran with no ecosystem clause.
+    expect(meiliCalls.map((c) => c.filter?.includes(BASE_MODEL))).toEqual([false, false]);
     expect(noBm).toEqual([0, 120, 250, ...Array.from({ length: 47 }, (_, i) => i + 1)]);
 
     install(rowB());
     fetchMock.mockClear();
     const withBm = (await shipped()).suggestions.map((s) => s.modelId - 5000);
+    expect(meiliCalls.map((c) => c.filter?.includes(BASE_MODEL))).toEqual([true, true]);
     expect(withBm.slice(0, 7)).toEqual([0, 1, 120, 2, 250, 3, 4]);
   });
 

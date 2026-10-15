@@ -256,7 +256,7 @@ describe('the merge spec hash', () => {
   // and the cache key relies on it moving when either does. Update the literal deliberately.
   it('is pinned', () => {
     expect(RESOURCE_INTENT_POOL_MERGE_SPEC_HASH).toBe(
-      '33992131929cbe22f41a5f3b6260e5f7b8cd44b394995361cb4900f81a846de0'
+      '868965948425e8a89432ab1a5df5370b3313304173c630371409c5a990410f65'
     );
   });
 });

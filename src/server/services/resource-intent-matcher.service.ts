@@ -581,8 +581,8 @@ export async function findCheckpointCandidates(opts: {
  * baseModel is given (the screen always had one).
  *
  * Co-occurrence: the candidates (best first) through `gateRankedCandidates`. BASE: `seedBasePool`'s
- * page, one version per model, `POOL_MERGE_BASE_MODELS` wide. With no baseModel the seed filter has
- * no ecosystem clause, so BASE is global popularity and only backfills (see `poolMergeModelIds`).
+ * page, one version per model, `POOL_MERGE_BASE_MODELS` wide. Without a baseModel, see
+ * `poolMergeModelIds`.
  */
 export async function findPoolMergeCandidates(
   criteria: ResourceIntentCriteria,
@@ -607,7 +607,8 @@ export async function findPoolMergeCandidates(
     coocList.map((e) => e.modelId),
     basePool.map((e) => e.modelId),
     cap,
-    { interleaveBase: seed.baseModels !== null }
+    // The same test `buildResourceIntentFilter` uses for its ecosystem clause.
+    { interleaveBase: !!seed.baseModels?.length }
   ).map((id) => byModel.get(id) as ResourceIntentShortlistEntry);
   return { entries, coocGated: gated.length };
 }

@@ -3,9 +3,8 @@ import { createHash } from 'crypto';
 /**
  * The POOL_MERGE list as the offline co-occurrence screen measured it: up to 25 gated
  * co-occurrence models and BASE's popularity models, interleaved co-occurrence first, 50 in all.
- * That screen always had a baseModel. With none, BASE is global popularity, so it only backfills
- * after the co-occurrence list (`backfillAfter`). No stage 3. Imports nothing from the app, so a
- * study script can load it.
+ * That screen always had a baseModel; see `poolMergeModelIds` for the no-baseModel order. No stage
+ * 3. Imports nothing from the app, so a study script can load it.
  */
 
 /** Co-occurrence models reserved in the merged list. */
@@ -92,6 +91,9 @@ export function poolMergeModelIds(
 function poolMergeFingerprint() {
   const cooc = [9, 1, 2, 2, 3, 7];
   const base = [1, 4, 5, 6, 7, 8, 10, 11];
+  // Longer than the 25 reserved slots, so a no-baseModel change past slot 25 moves the hash too.
+  const longCooc = Array.from({ length: 30 }, (_, i) => 1000 + i);
+  const longBase = Array.from({ length: 60 }, (_, i) => 2000 + i);
   return {
     slots: POOL_MERGE_COOC_SLOTS,
     listModels: POOL_MERGE_LIST_MODELS,
@@ -102,6 +104,7 @@ function poolMergeFingerprint() {
     noBaseModel: [1, 4, 50].map((cap) =>
       poolMergeModelIds(cooc, base, cap, { interleaveBase: false })
     ),
+    noBaseModelLong: poolMergeModelIds(longCooc, longBase, 50, { interleaveBase: false }),
   };
 }
 
