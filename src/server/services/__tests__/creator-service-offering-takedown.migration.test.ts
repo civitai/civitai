@@ -97,6 +97,18 @@ describe('offering takedown migration', () => {
     expect(await q(`SELECT count(*)::int AS n FROM "ServiceOfferingReport"`)).toEqual([{ n: 0 }]);
   });
 
+  it('attaches a report to one offering only', async () => {
+    await q(`INSERT INTO "Report" DEFAULT VALUES`);
+    await q(
+      `INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "updatedAt")
+       VALUES (${SELLER}, 'Second', 'desc', 1000, 3, now())`
+    );
+    await q(`INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 1)`);
+    await expect(
+      q(`INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (2, 1)`)
+    ).rejects.toThrow(/ServiceOfferingReport_reportId_key/);
+  });
+
   it('drops the join row with the offering', async () => {
     await q(`INSERT INTO "Report" DEFAULT VALUES`);
     await q(`INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 1)`);
