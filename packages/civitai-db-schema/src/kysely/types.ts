@@ -4630,6 +4630,10 @@ export type ServiceDeal = {
   revisionsUsed: Generated<number>;
   deliveryDays: number;
   previewKind: ServicePreviewKind;
+  /**
+   * The offering's maxNsfwLevel when requested; never re-read from the offering.
+   */
+  maxNsfwLevel: Generated<number>;
   status: Generated<ServiceDealStatus>;
   /**
    * Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
@@ -4738,6 +4742,10 @@ export type ServiceOffering = {
   price: number;
   acceptsBlue: Generated<boolean>;
   previewKind: Generated<ServicePreviewKind>;
+  /**
+   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   */
+  maxNsfwLevel: Generated<number>;
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;

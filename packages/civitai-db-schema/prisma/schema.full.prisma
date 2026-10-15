@@ -9585,6 +9585,8 @@ model ServiceOffering {
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
+  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  maxNsfwLevel      Int                   @default(2)
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -9618,6 +9620,8 @@ model ServiceDeal {
   revisionsUsed             Int                     @default(0)
   deliveryDays              Int
   previewKind               ServicePreviewKind
+  /// The offering's maxNsfwLevel when requested; never re-read from the offering.
+  maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)
   /// Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
   /// deal without it was never paid for: the migration refuses any worked or payable status
