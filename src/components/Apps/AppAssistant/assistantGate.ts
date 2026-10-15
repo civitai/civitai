@@ -10,11 +10,9 @@ export const SANDBOX_SERVER_ID = 'sandbox';
 const sandboxTool = (tool: string) => `${SANDBOX_SERVER_ID}__${tool}`;
 
 /**
- * The most tool calls one reply may make before every further call is refused and the user is asked
- * to continue. A whole app build took 170-219 sandbox calls in testing, so a build pauses about once,
- * while a runaway reply stops near 150 paid model requests instead of the 1,000-step ceiling. Calls
- * stand in for steps because a step's Buzz cost is not visible to the page; every step but the last
- * makes at least one call.
+ * Tool calls one reply may make before every further call is refused. It only refuses calls: the page
+ * cannot end a reply, so a model that ignores the refusal still runs to `APP_ASSISTANT_MAX_STEPS`.
+ * Calls stand in for steps because a step's Buzz cost is not visible to the page.
  */
 export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 150;
 
@@ -32,7 +30,8 @@ const RUN_COMMAND = sandboxTool('run_command');
 // Only a command that is the check alone counts: `npm test | tail`, `; echo` or `|| true` could exit 0
 // over a failing run. Arguments are flags and paths, nothing a shell would act on.
 const CD = String.raw`(?:cd\s+[\w./-]+\s*&&\s*)?`;
-const ARGS = String.raw`(?:\s+[\w./=:@,-]+)*`;
+// `--help`/`--version` exit 0 without checking anything.
+const ARGS = String.raw`(?:\s+(?!-h\b|-v\b|--help\b|--version\b)[\w./=:@,-]+)*`;
 const TEST_COMMAND = new RegExp(
   String.raw`^\s*${CD}(?:npm\s+(?:run\s+)?test|npx\s+(?:-y\s+)?vitest(?:\s+run)?)${ARGS}\s*$`
 );
@@ -59,7 +58,7 @@ export function exitCodeOf(output: unknown): number | null {
 /** `sandbox__preview_check`'s first line is `render: <verdict>`. */
 export function previewVerdictOf(output: unknown): string | null {
   if (typeof output !== 'string') return null;
-  return /^\s*(?:render:\s*)?([a-z_]+)/.exec(output)?.[1] ?? null;
+  return /^render:\s*([a-z_]+)/.exec(output)?.[1] ?? null;
 }
 
 export interface ChecklistItem {
@@ -132,7 +131,7 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
     const out: string[] = [];
     if (verification.preview === null)
       out.push(
-        'Run sandbox__preview_check: it has not run since your last file change (write_file, edit_file or delete_path).'
+        'Run sandbox__preview_check: it has not run since your last file change (write_file, edit_file, delete_path, or a run_command other than the test or typecheck run).'
       );
     else if (verification.preview !== 'ok')
       out.push(
@@ -187,7 +186,9 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
       verification.preview = isError ? 'error' : previewVerdictOf(output) ?? 'unreadable';
     else if (name === RUN_COMMAND) {
       const kind = checkKindOf((input as { command?: unknown } | null)?.command);
+      // Any other command may have changed files (sed, a scaffold, npm install).
       if (kind) verification[kind] = !isError && exitCodeOf(output) === 0;
+      else verification = unverified();
     }
   };
 

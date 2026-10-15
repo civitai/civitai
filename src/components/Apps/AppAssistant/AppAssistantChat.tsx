@@ -57,7 +57,7 @@ export function AppAssistantChat({
         import('@civitai/components-chat/civitai-chat'),
         import('@civitai/components-chat/civitai-chat/define'),
       ]);
-      // Page-wide, so it is set before the chat starts; App Assistant is the only chat on its page.
+      // Page-wide: any other chat on this page would inherit these limits.
       configureChat(APP_ASSISTANT_CHAT_CONFIG);
       await customElements.whenDefined('civitai-chat');
       const app = await initialize({

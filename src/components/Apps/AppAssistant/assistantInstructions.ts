@@ -13,11 +13,7 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
     'It is suspended, so you have no sandbox tools: ask the user to press Resume. Its files are kept.',
 };
 
-/**
- * App Assistant's own rules, after the chat's built-in ones. They change only with a deploy, so they
- * go in the system prompt rather than the per-reply instructions, which the chat cuts at 4,000
- * characters.
- */
+/** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */
 export const APP_ASSISTANT_RULES = [
   'App Assistant rules (these come after the rules above and win where they differ):',
   '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',

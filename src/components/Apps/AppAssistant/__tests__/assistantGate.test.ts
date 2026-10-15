@@ -145,6 +145,16 @@ describe('report_ready', () => {
     expect((readyDecision(gate) as { refuse: string }).refuse).toMatch(/Run the tests/);
   });
 
+  it('forgets every check after any other command, which may have changed files', async () => {
+    const gate = gateInConversation();
+    await allPassing(gate);
+    gate.onToolResult(run("cd my-app && sed -i 's/a/b/' src/block.ts", 0));
+    const refusal = (readyDecision(gate) as { refuse: string }).refuse;
+    expect(refusal).toMatch(/Run sandbox__preview_check/);
+    expect(refusal).toMatch(/Run the tests/);
+    expect(refusal).toMatch(/Run the typecheck/);
+  });
+
   it('forgets every check after a file change', async () => {
     const gate = gateInConversation();
     await allPassing(gate);
@@ -208,6 +218,20 @@ describe('set_checklist', () => {
     });
   });
 
+  it('takes 1-30 items of up to 200 characters, as objects or plain labels', async () => {
+    const gate = gateInConversation();
+    const execute = (items: unknown) => gate.tools[SET_CHECKLIST].execute({ items }, toolCtx);
+    expect(await execute(['a', 'b'])).toMatchObject({ awaitsUser: true });
+    expect(await execute(Array.from({ length: 30 }, (_, i) => `f${i}`))).toMatchObject({
+      awaitsUser: true,
+    });
+    expect(await execute(['x'.repeat(200)])).toMatchObject({ awaitsUser: true });
+    expect(() => execute(Array.from({ length: 31 }, (_, i) => `f${i}`))).toThrow(
+      /items must be an array/
+    );
+    expect(() => execute(['x'.repeat(201)])).toThrow(/items must be an array/);
+  });
+
   it('accepts a JSON string of the items and rejects anything else', async () => {
     const gate = gateInConversation();
     expect(
@@ -234,6 +258,9 @@ describe('reading tool results', () => {
     ['cd my-app && npm test > out.txt', null],
     ['cd my-app && npm install', null],
     ['echo npm test', null],
+    ['cd my-app && npx tsc --version', null],
+    ['cd my-app && npm test -- --help', null],
+    ['cd my-app && npx vitest -h', null],
   ] as const)('%s is a %s run', (command, kind) => {
     expect(checkKindOf(command)).toBe(kind);
   });
@@ -246,5 +273,7 @@ describe('reading tool results', () => {
     expect(previewVerdictOf('render: ok\npage_errors: 0')).toBe('ok');
     expect(previewVerdictOf('render: still_loading\n')).toBe('still_loading');
     expect(previewVerdictOf({ error: 'x' })).toBeNull();
+    expect(previewVerdictOf('page_errors: 0\nrender: ok')).toBeNull();
+    expect(previewVerdictOf('ok')).toBeNull();
   });
 });

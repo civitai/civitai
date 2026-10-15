@@ -32,6 +32,12 @@ const m = vi.hoisted(() => ({
       input: unknown,
       context: { conversationId: string }
     ) => { allow: true } | { refuse: string };
+    onToolResult?: (result: {
+      name: string;
+      input: unknown;
+      output: unknown;
+      isError: boolean;
+    }) => void;
   },
   list: [] as Sandbox[],
   start: vi.fn(),
@@ -392,13 +398,49 @@ describe('AppAssistantWorkspace tool gate', () => {
     expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse');
   });
 
+  /** What the sandbox reports when the app was checked: a passing preview, tests and typecheck. */
+  async function checkEverything() {
+    await m.chat!.tools.set_checklist.execute({ items: [{ label: 'Avatar', done: true }] }, ctx);
+    const run = (command: string) =>
+      m.chat!.onToolResult!({
+        name: 'sandbox__run_command',
+        input: { command },
+        output: 'exit_code: 0\ntimed_out: false\n---\nok',
+        isError: false,
+      });
+    m.chat!.onToolResult!({
+      name: 'sandbox__preview_check',
+      input: {},
+      output: 'render: ok\npage_errors: 0',
+      isError: false,
+    });
+    run('cd my-app && npm test');
+    run('cd my-app && npx tsc --noEmit');
+  }
+
+  test('allows report_ready once the chat reports passing checks, and forgets them in another sandbox', async () => {
+    await mount();
+    await openFirst();
+    m.chat!.beforeToolCall!('sandbox__list_dir', {}, conv);
+    await checkEverything();
+    expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toEqual({ allow: true });
+
+    await page.getByRole('button', { name: 'Sandboxes', exact: true }).click();
+    await page.getByRole('button', { name: 'Open', exact: true }).nth(1).click();
+    await vi.waitFor(() =>
+      expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse')
+    );
+  });
+
   test('pauses a reply at the tool-call limit with a notice, cleared when the next reply starts', async () => {
     await mount();
     m.chat!.instructions();
     for (let i = 0; i < 150; i++)
       expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toHaveProperty('refuse');
-    const notice = page.getByText(/App Assistant paused this reply after 150 tool calls/);
+    const notice = page.getByText(
+      /App Assistant stopped running tools in this reply after 150 tool calls/
+    );
     await expect.element(notice).toBeInTheDocument();
 
     // The chat reads the instructions at the start of every reply.

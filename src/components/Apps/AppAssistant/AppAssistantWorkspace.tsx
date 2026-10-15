@@ -349,8 +349,8 @@ export function AppAssistantWorkspace({
         >
           {turnLimitReached && (
             <Alert color="yellow" variant="light" radius={0} className="shrink-0">
-              App Assistant paused this reply after {APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls.
-              Say “continue” to let it carry on.
+              App Assistant stopped running tools in this reply after{' '}
+              {APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls. Say “continue” to let it carry on.
             </Alert>
           )}
           <AppAssistantChat
