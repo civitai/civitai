@@ -206,7 +206,12 @@ describe('a removal score exemption', () => {
   });
 
   it('does not propose a removal its exemption already covers', async () => {
-    const policy = { cutoff: new Date(0), maxImageId: 100, ratings: ['None' as const] };
+    const policy = {
+      cutoff: new Date(0),
+      maxImageId: 100,
+      ratings: ['None' as const],
+      requireFirstRemovalAfterCutoff: true,
+    };
     const history = (imageId: number, removedAt: number) => ({
       ownerId: EXEMPT_OWNER,
       imageId,
@@ -216,6 +221,7 @@ describe('a removal score exemption', () => {
       firstReason: 'poi',
       lastReason: 'poi',
       resourceIds: [],
+      minorRemovals: 0,
     });
     const ch = {
       $query: vi.fn(async () => [

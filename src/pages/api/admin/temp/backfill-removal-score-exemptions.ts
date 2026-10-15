@@ -15,12 +15,15 @@ import { booleanString } from '~/utils/zod-helpers';
 
 /**
  * One-off: exempt from the Creator Score the removals a rule change made of images posted before it
- * (see `isPolicyChangeRemoval`). The rule's date is an input, so an earlier cutoff is another run.
+ * (see `isPolicyChangeRemoval`). The rule's inputs are params, so another cutoff is another run.
  *
- *   GET /api/admin/temp/backfill-removal-score-exemptions?token=$WEBHOOK_TOKEN
- *       &cutoff=<ISO datetime>&maxImageId=<last image id posted before it>          (dry run)
+ *   GET /api/admin/temp/backfill-removal-score-exemptions?token=$WEBHOOK_TOKEN          (dry run)
  *   ...&dryRun=false   writes the rows
  *
+ *   cutoff    when the rule took effect, default the real-people policy article
+ *   maxImageId the last image uploaded before `cutoff`
+ *   requireFirstRemovalAfterCutoff default true; false also covers images first removed before the
+ *             cutoff with a `poi` reason
  *   ratings   comma-separated ratings the first removal must have recorded, default `None` (PG)
  *   label     recorded in each row's reason with the rule's inputs, default `poi-policy`
  *   createdBy recorded on each row
@@ -31,8 +34,9 @@ import { booleanString } from '~/utils/zod-helpers';
  */
 
 const schema = z.object({
-  cutoff: z.coerce.date(),
-  maxImageId: z.coerce.number().int().positive(),
+  cutoff: z.coerce.date().default(new Date('2025-05-22T22:02:27Z')),
+  maxImageId: z.coerce.number().int().positive().default(77_895_843),
+  requireFirstRemovalAfterCutoff: booleanString().default(true),
   ratings: z
     .string()
     .transform((s) => s.split(','))
@@ -55,8 +59,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (!clickhouse) return res.status(503).json({ error: 'ClickHouse is not available' });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: z.prettifyError(parsed.error) });
-  const { cutoff, maxImageId, ratings, label, createdBy, probe, dryRun } = parsed.data;
-  const rule = { cutoff, maxImageId, ratings };
+  const { label, createdBy, probe, dryRun, ...rule } = parsed.data;
   const reason = exemptionReason(rule, label);
 
   const removals = await findPolicyChangeRemovals(clickhouse, pgDbReadLong, rule);

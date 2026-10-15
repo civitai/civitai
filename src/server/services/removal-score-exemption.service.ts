@@ -8,11 +8,18 @@ import {
 } from '~/shared/constants/creator-journey.constants';
 
 /**
- * A rule that took effect at `cutoff`: an image uploaded before it (`id <= maxImageId`) and first
+ * A rule that took effect at `cutoff`. An image uploaded before it (`id <= maxImageId`) and first
  * removed at or after it was judged by the new rule, not the one it was posted under. Only the first
  * removal counts for that: an image removed, restored and removed again was judged under the first.
+ * With `requireFirstRemovalAfterCutoff` off, an image first removed before the cutoff is covered too,
+ * when that removal was reasoned `poi`.
  */
-export type PolicyChangeRule = { cutoff: Date; maxImageId: number; ratings: NsfwRating[] };
+export type PolicyChangeRule = {
+  cutoff: Date;
+  maxImageId: number;
+  ratings: NsfwRating[];
+  requireFirstRemovalAfterCutoff: boolean;
+};
 
 /** The image ratings a removal records. */
 export const NSFW_RATINGS = ['None', 'Soft', 'Mature', 'X'] as const;
@@ -28,12 +35,15 @@ export type RemovalHistory = {
   firstReason: string;
   lastReason: string;
   resourceIds: number[];
+  minorRemovals: number;
 };
 
 export const exemptionReason = (rule: PolicyChangeRule, label: string) =>
   `${label} cutoff=${rule.cutoff.toISOString()} maxImageId=${
     rule.maxImageId
-  } ratings=${rule.ratings.join(',')}`;
+  } ratings=${rule.ratings.join(',')} requireFirstRemovalAfterCutoff=${
+    rule.requireFirstRemovalAfterCutoff
+  }`;
 
 const toSeconds = (date: Date) => Math.floor(date.getTime() / 1000);
 
@@ -48,20 +58,23 @@ export const policyChangeCandidatesQuery = (rule: PolicyChangeRule) => `
     toString(argMinIf(nsfw, time, type = '${REPORTS_AGAINST_EVENT}')) AS firstNsfw,
     argMinIf(ifNull(tosReason, ''), time, type = '${REPORTS_AGAINST_EVENT}') AS firstReason,
     argMaxIf(ifNull(tosReason, ''), time, type = '${REPORTS_AGAINST_EVENT}') AS lastReason,
-    groupUniqArrayArrayIf(resources, type = '${REPORTS_AGAINST_EVENT}') AS resourceIds
+    groupUniqArrayArrayIf(resources, type = '${REPORTS_AGAINST_EVENT}') AS resourceIds,
+    countIf(type = '${REPORTS_AGAINST_EVENT}' AND tosReason = 'minor') AS minorRemovals
   FROM images
   WHERE type IN ('${REPORTS_AGAINST_EVENT}', '${REMOVAL_RESTORED_EVENT}')
     AND imageId <= ${rule.maxImageId}
   GROUP BY ownerId, imageId
-  HAVING removedAt > toUnixTimestamp(maxIf(time, type = '${REMOVAL_RESTORED_EVENT}'))
-    AND firstRemovedAt >= ${toSeconds(rule.cutoff)}
+  HAVING removedAt > toUnixTimestamp(maxIf(time, type = '${REMOVAL_RESTORED_EVENT}'))${
+  rule.requireFirstRemovalAfterCutoff ? `\n    AND firstRemovedAt >= ${toSeconds(rule.cutoff)}` : ''
+}
     AND firstNsfw IN (${rule.ratings.map((r) => `'${r}'`).join(', ')})
 `;
 
 /**
- * POI-linked (a removal reasoned `poi`, or a resource from a model now flagged POI), uploaded before
- * the rule, first removed after it, and rated one of `ratings` at that first removal: ratings the
- * earlier rules allowed for real people, so the image was within the rules when posted.
+ * Uploaded before the rule, never removed as `minor`, rated one of `ratings` at its first removal
+ * (ratings the earlier rules allowed for real people, so the image was within the rules when
+ * posted), and POI-linked: first removed after the cutoff with a `poi` reason or a resource from a
+ * model now flagged POI, or first removed before it with a `poi` reason.
  */
 export function isPolicyChangeRemoval(
   removal: RemovalHistory,
@@ -69,8 +82,10 @@ export function isPolicyChangeRemoval(
   poiVersionIds: Set<number>
 ) {
   if (Number(removal.imageId) > rule.maxImageId) return false;
-  if (Number(removal.firstRemovedAt) < toSeconds(rule.cutoff)) return false;
+  if (Number(removal.minorRemovals) > 0) return false;
   if (!(rule.ratings as string[]).includes(removal.firstNsfw)) return false;
+  if (Number(removal.firstRemovedAt) < toSeconds(rule.cutoff))
+    return !rule.requireFirstRemovalAfterCutoff && removal.firstReason === 'poi';
   return (
     removal.firstReason === 'poi' ||
     removal.lastReason === 'poi' ||
