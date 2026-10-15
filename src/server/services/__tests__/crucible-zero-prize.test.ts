@@ -45,20 +45,26 @@ beforeEach(() => {
     if (sql.includes('imageVisible'))
       return placed.slice(-3).map(({ entryId }) => ({ id: entryId, imageVisible: true }));
     if (sql.includes('"entryId"')) return placed;
-    return [];
+    if (sql.includes('AS entrants')) return [];
+    if (sql.includes('SELECT ce.id')) return [];
+    throw new Error('unexpected SQL: ' + sql);
   });
 });
 
 describe('a crucible with no prize pool', () => {
-  it('lists no prize winners on the detail page and counts none in the stats', async () => {
+  it('lists no prize winners on the detail page', async () => {
+    const detail = await getCrucibleDetail({ id: 1 });
+
+    expect(detail?.prizeWinners).toEqual([]);
+  });
+
+  it('counts no crucible won in the stats', async () => {
     dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
       { id: 100, crucibleId: 1, position: 1, crucible: crucibleRow },
     ]);
 
-    const detail = await getCrucibleDetail({ id: 1 });
     const stats = await getUserCrucibleStats({ userId: USER_ID });
 
-    expect(detail?.prizeWinners).toEqual([]);
     expect(stats.cruciblesWon).toBe(0);
   });
 
