@@ -39,7 +39,26 @@ export const resolveMinorFlagAppealPerLabel = (
   labels: { minor: 'uphold' | 'overturn'; poi: 'uphold' | 'overturn' }
 ): Promise<AppealResult> =>
   toAppealResult(
-    callModEndpoint('minor-flag/resolve-appeal', { modelId, uphold: false, ...labels }, 'Rule per label')
+    callModEndpoint(
+      'minor-flag/resolve-appeal',
+      { modelId, uphold: false, ...labels },
+      'Rule per label'
+    )
+  );
+
+/** Rules on a label the text scan re-detected after a human had cleared it. The main app owns the
+ *  write: keeping applies the flag with every restriction and the owner notice a scan would have. */
+export const resolveRedetection = (
+  modelId: number,
+  label: 'minor' | 'poi',
+  keep: boolean
+): Promise<ActionResult> =>
+  toResult(
+    callModEndpoint(
+      'minor-flag/resolve-redetection',
+      { modelId, label, keep },
+      keep ? 'Keep re-detected flag' : 'Dismiss re-detection'
+    )
   );
 
 /**

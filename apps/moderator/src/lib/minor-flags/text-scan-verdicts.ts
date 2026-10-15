@@ -8,6 +8,28 @@ export type TextScanFlagView = {
 
 export type FlagLabel = 'minor' | 'poi';
 
+/** What `Model.meta.textScanFlags[label].redetected` holds: a detection on text a human had already
+ *  cleared under another hash. Nothing was flagged. */
+export type RedetectionView = {
+  at?: string;
+  workflowId: string;
+  reason?: string;
+  names?: string[];
+  textHash: string;
+  model?: string | null;
+};
+
+/** The human clear a re-detection sits on top of. */
+export type PriorClearView = { at?: string; by?: number; via?: string; textHash?: string };
+
+export const CLEAR_VIA_LABELS: Record<string, string> = {
+  appeal: 'appeal overturned',
+  moderator: 'moderator unflagged',
+};
+
+export const clearViaLabel = (via: string | undefined) =>
+  (via && CLEAR_VIA_LABELS[via]) || 'cleared';
+
 const FLAG_LABELS: FlagLabel[] = ['minor', 'poi'];
 
 export const flagsOf = (v: unknown) =>
