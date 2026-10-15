@@ -898,7 +898,7 @@ export type ResolveServiceDealDisputeResult =
   | { status: 'refused'; reason: 'finals_not_passed'; message: string };
 
 const FINALS_NOT_PASSED =
-  'The final files have not passed scanning. Refund, or clear the file in moderation first.';
+  'Not every final file has finished uploading and passed scanning. Refund, or clear a failed scan in moderation first.';
 
 /**
  * A moderator settles a Disputed deal, whatever sent it there: the buyer, a declined
