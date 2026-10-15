@@ -5,6 +5,8 @@ import { dealActionLabel, dealButtons } from '~/components/CreatorShop/Services/
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDealMutations } from '~/components/CreatorShop/Services/deals/deal.util';
 import { DealTextActionModal } from '~/components/CreatorShop/Services/deals/DealTextActionModal';
+import { acceptDeliveryBlocked } from '~/components/CreatorShop/Services/deals/deal-files';
+import { useServiceDealFiles } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { DealAction } from '~/shared/utils/creator-service-deal-view';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
@@ -14,6 +16,9 @@ const DISPUTE_WINDOW_HOURS = SERVICE_DEAL_DISPUTE_WINDOW_MS / 3_600_000;
 export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
   const features = useFeatureFlags();
   const mutations = useServiceDealMutations(deal.id);
+  const { data: files } = useServiceDealFiles(deal.id);
+  // Shown but disabled, with the reason, so the buyer knows it is coming rather than missing.
+  const acceptBlocked = acceptDeliveryBlocked(deal, files);
   const buttons = dealButtons(deal, { servicesEnabled: !!features.creatorServices });
   if (buttons.length === 0) return null;
 
@@ -141,12 +146,18 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
               key={action}
               color={primary ? 'yellow' : 'gray'}
               variant={primary ? 'filled' : 'light'}
+              disabled={action === 'acceptDelivery' && !!acceptBlocked}
               onClick={run[action]}
             >
               {dealActionLabel[action]}
             </Button>
           ))}
         </Group>
+        {acceptBlocked && buttons.some(({ action }) => action === 'acceptDelivery') && (
+          <Text size="sm" c="dimmed">
+            {acceptBlocked}
+          </Text>
+        )}
       </Stack>
     </Paper>
   );
