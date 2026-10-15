@@ -616,8 +616,11 @@ describe('closing with a refund', () => {
         transactionId: `creator-service-${id}-hold:already-refunded`,
       });
       expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledWith(
-        `creator-service-${id}-hold`
+        `creator-service-${id}-hold`,
+        { timeoutMs: expect.any(Number) }
       );
+      for (const call of buzz.getTransactionByExternalId.mock.calls)
+        expect(call[1]).toEqual({ timeoutMs: expect.any(Number) });
       expect(buzz.getTransactionByExternalId.mock.calls.map((c) => c[0])).toEqual([
         'refund-leg-a',
         'refund-leg-b',
@@ -652,6 +655,19 @@ describe('closing with a refund', () => {
       await deals.declineServiceDeal({ dealId: id, userId: SELLER });
       expect((await deal(id)).settledAt).toBeNull();
       expect((await refundLeg(id))?.lastError).toMatch(/ledger lists 300 of 500/);
+    });
+
+    // More than was held under one hold's prefix (a second charge) is for a human, not a settle.
+    it('stays refund-pending when the ledger lists more than was held', async () => {
+      refunded('leg-a', 'leg-b', 'leg-c');
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+        ...holdLegs,
+        { ...holdLegs[0], transactionId: 'leg-c', amount: 100 },
+      ]);
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect((await refundLeg(id))?.lastError).toMatch(/ledger lists 600 of 500/);
     });
 
     it('stays refund-pending when the ledger lists no legs at all', async () => {

@@ -45,6 +45,8 @@ const ESCROW_ACCOUNT_ID = 0;
 const ms = (value: number) => Prisma.sql`(${value}::int * interval '1 millisecond')`;
 
 const BUZZ_CALL_OPTIONS = { timeoutMs: BUZZ_CALL_TIMEOUT_MS, shouldRetry: isSafeToRetry };
+/** Reads made while holding a leg's auto-renewing lock must end, or the lock never does. */
+const BUZZ_READ_OPTIONS = { timeoutMs: BUZZ_CALL_TIMEOUT_MS };
 
 /** Marks a hold the Buzz service refused outright, so reconcile never looks it up. */
 const REFUSED_PREFIX = 'refused:';
@@ -289,10 +291,15 @@ type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>
  */
 async function getPrefixRefundState(externalTransactionIdPrefix: string) {
   const state = { reversed: [] as PrefixLeg[], missing: [] as PrefixLeg[] };
-  for (const leg of await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix)) {
-    const refund = await getTransactionByExternalId(`refund-${leg.transactionId}`, {
-      timeoutMs: BUZZ_CALL_TIMEOUT_MS,
-    });
+  const legs = await getMultiAccountTransactionsByPrefix(
+    externalTransactionIdPrefix,
+    BUZZ_READ_OPTIONS
+  );
+  for (const leg of legs) {
+    const refund = await getTransactionByExternalId(
+      `refund-${leg.transactionId}`,
+      BUZZ_READ_OPTIONS
+    );
     (refund ? state.reversed : state.missing).push(leg);
   }
   return state;
