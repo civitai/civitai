@@ -9,6 +9,8 @@ export type TriageKeyEvent = {
   isComposing: boolean;
   typing: boolean;
   canUphold: boolean;
+  /** Defaults to true: an appeal can always be overturned, a re-detection with an open appeal cannot. */
+  canOverturn?: boolean;
 };
 
 export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
@@ -24,7 +26,7 @@ export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
     case '1':
       return e.canUphold ? 'uphold' : null;
     case '2':
-      return 'overturn';
+      return e.canOverturn === false ? null : 'overturn';
     default:
       return null;
   }
@@ -55,7 +57,11 @@ export function failureMessage(result: ActionResultLike): string | null {
 }
 
 /** One step through the queue, clamped at both ends. */
-export function step(ids: readonly number[], current: number | null, direction: 1 | -1) {
+export function step<K extends string | number>(
+  ids: readonly K[],
+  current: K | null,
+  direction: 1 | -1
+) {
   if (!ids.length) return null;
   const at = current === null ? -1 : ids.indexOf(current);
   if (at === -1) return ids[0];
@@ -63,11 +69,11 @@ export function step(ids: readonly number[], current: number | null, direction: 
 }
 
 /** The next appeal still waiting on a decision: forward from `current` first, then back. */
-export function nextUndecided(
-  ids: readonly number[],
-  current: number | null,
-  isDecided: (id: number) => boolean
-): number | null {
+export function nextUndecided<K extends string | number>(
+  ids: readonly K[],
+  current: K | null,
+  isDecided: (id: K) => boolean
+): K | null {
   const at = current === null ? -1 : ids.indexOf(current);
   for (let i = at + 1; i < ids.length; i++) if (!isDecided(ids[i])) return ids[i];
   for (let i = Math.min(at, ids.length) - 1; i >= 0; i--) if (!isDecided(ids[i])) return ids[i];

@@ -19,7 +19,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
 
-const { getRedetectedModels } = await import('../minor-hash.service');
+const { getRedetectedModels, getRedetectedCount } = await import('../minor-hash.service');
 
 const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
@@ -27,6 +27,14 @@ CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "userId" INTEGER NOT NULL,
   "status" TEXT NOT NULL DEFAULT 'Published',
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE, "meta" JSONB
+);
+CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
+CREATE TABLE "Post" (
+  "id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER, "userId" INTEGER NOT NULL, "publishedAt" TIMESTAMP
+);
+CREATE TABLE "Image" (
+  "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
+  "index" INTEGER
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -129,5 +137,108 @@ describe('getRedetectedModels', () => {
   it('searches by username, ignoring case', async () => {
     const { items } = await getRedetectedModels({ limit: 10, search: { username: 'OTHER' } });
     expect(items.map((r) => r.modelId)).toEqual([2, 2]);
+  });
+
+  it('filters by label', async () => {
+    const ids = async (flag: 'all' | 'minor' | 'poi') =>
+      (await getRedetectedModels({ limit: 10, filters: { flag, sort: 'oldest' } })).items.map(
+        (r) => [r.modelId, r.label]
+      );
+    expect(await ids('poi')).toEqual([[2, 'poi']]);
+    expect(await ids('minor')).toEqual([
+      [2, 'minor'],
+      [1, 'minor'],
+      [7, 'minor'],
+    ]);
+    expect((await ids('all')).length).toBe(4);
+  });
+
+  it('sorts newest detection first, and pages in that order', async () => {
+    const newest = { flag: 'all', sort: 'newest' } as const;
+    const { items } = await getRedetectedModels({ limit: 10, filters: newest });
+    expect(items.map((r) => [r.modelId, r.label])).toEqual([
+      [7, 'minor'],
+      [2, 'poi'],
+      [1, 'minor'],
+      [2, 'minor'],
+    ]);
+    const second = await getRedetectedModels({ limit: 2, offset: 2, filters: newest });
+    expect(second.items.map((r) => r.modelId)).toEqual([1, 2]);
+  });
+
+  it('puts a detection with no timestamp last in either order', async () => {
+    await seedModel(9, 1, {
+      minor: { appealGranted: grant, redetected: { workflowId: 'wf', textHash: 'n' } },
+    });
+    for (const sort of ['oldest', 'newest'] as const) {
+      const { items } = await getRedetectedModels({ limit: 10, filters: { flag: 'all', sort } });
+      expect(items.at(-1)?.modelId).toBe(9);
+    }
+  });
+
+  it('carries the earlier rulings kept on the entry', async () => {
+    await seedModel(10, 1, {
+      minor: {
+        appealGranted: grant,
+        redetected: redetected('2026-10-05T00:00:00Z'),
+        rulings: [
+          { decision: 'appealUpheld', at: '2026-08-01T00:00:00Z', by: 5, via: 'moderator' },
+        ],
+      },
+    });
+    const { items } = await getRedetectedModels({ limit: 10, search: { modelOrUserId: 10 } });
+    expect(items[0].rulings).toEqual([
+      expect.objectContaining({ decision: 'appealUpheld', by: 5 }),
+    ]);
+    expect(
+      (await getRedetectedModels({ limit: 10 })).items.find((r) => r.modelId === 1)?.rulings
+    ).toBeNull();
+  });
+
+  it('loads cover images the way the appeals queue does: own posts, published first', async () => {
+    await pg.exec(`
+      INSERT INTO "ModelVersion" VALUES (101, 1, 0), (102, 7, 0);
+      INSERT INTO "Post" VALUES
+        (1, 101, 1, '2026-09-01'), (2, 101, 1, NULL), (3, 101, 99, '2026-09-01'), (4, 102, 1, NULL);
+      INSERT INTO "Image" VALUES
+        (11, 1, 'published.jpg', 'image', 0), (12, 2, 'draft.jpg', 'image', 0),
+        (13, 3, 'someone-elses.jpg', 'image', 0), (14, 1, 'clip.mp4', 'video', 1),
+        (15, 4, 'only-draft.jpg', 'image', 0);
+    `);
+    const { items } = await getRedetectedModels({ limit: 10 });
+    const covers = (id: number) =>
+      items.find((r) => r.modelId === id && r.label === 'minor')?.coverImages.map((c) => c.url);
+    expect(covers(1)).toEqual(['published.jpg', 'draft.jpg']);
+    expect(covers(7)).toEqual(['only-draft.jpg']);
+    expect(covers(2)).toEqual([]);
+  });
+
+  it('keeps the page cut at the limit when images multiply rows', async () => {
+    await pg.exec(`
+      INSERT INTO "ModelVersion" VALUES (101, 2, 0);
+      INSERT INTO "Post" VALUES (1, 101, 2, '2026-09-01');
+      INSERT INTO "Image" VALUES (11, 1, 'a.jpg', 'image', 0), (12, 1, 'b.jpg', 'image', 1);
+    `);
+    const { items } = await getRedetectedModels({ limit: 2 });
+    expect(items.map((r) => [r.modelId, r.label])).toEqual([
+      [2, 'minor'],
+      [1, 'minor'],
+    ]);
+  });
+});
+
+describe('getRedetectedCount', () => {
+  it('counts every label waiting, ignoring search and paging', async () => {
+    expect(await getRedetectedCount()).toBe(0);
+    await seedModel(1, 1, {
+      minor: { appealGranted: grant, redetected: redetected('2026-10-02T00:00:00Z') },
+    });
+    await seedModel(2, 2, {
+      minor: { appealGranted: grant, redetected: redetected('2026-10-01T00:00:00Z') },
+      poi: { appealGranted: grant, redetected: redetected('2026-10-03T00:00:00Z') },
+    });
+    await seedModel(3, 1, { minor: { appealGranted: grant } });
+    await seedModel(5, 1, null);
+    expect(await getRedetectedCount()).toBe(3);
   });
 });

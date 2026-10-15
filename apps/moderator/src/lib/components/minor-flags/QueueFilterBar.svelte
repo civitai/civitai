@@ -1,56 +1,47 @@
+<script module lang="ts">
+  export type FilterGroup = {
+    key: string;
+    label: string;
+    values: readonly string[];
+    labels: Record<string, string>;
+    active: string;
+    defaultValue: string;
+    counts?: Record<string, number>;
+  };
+</script>
+
 <script lang="ts">
   import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import {
-    APPEAL_FLAGS,
-    APPEAL_SORTS,
-    APPEAL_SOURCES,
-    DEFAULT_APPEAL_FILTERS,
-    FLAG_LABELS,
-    SORT_LABELS,
-    SOURCE_LABELS,
-    appealFilterParams,
-    type AppealFacets,
-    type AppealFilters,
-  } from '$lib/minor-flags/appeal-filters';
   import { num } from '$lib/format';
   import { urlWith } from '$lib/url';
 
   let {
-    filters,
-    facets,
+    groups,
     q,
-  }: { filters: AppealFilters; facets: AppealFacets | null; q: string } = $props();
+    searchLabel,
+    searchParams,
+    selectionParam,
+  }: {
+    groups: FilterGroup[];
+    q: string;
+    searchLabel: string;
+    /** What a search keeps: the non-default filters and the view, since the form is a plain GET. */
+    searchParams: Record<string, string>;
+    /** The URL param holding the open item; it indexes the old result set, so a filter drops it. */
+    selectionParam: string;
+  } = $props();
 
-  // Page and selection index into the old result set.
-  const hrefFor = (key: keyof AppealFilters, value: string) =>
+  const hrefFor = (group: FilterGroup, value: string) =>
     urlWith(page.url, {
-      [key]: value === DEFAULT_APPEAL_FILTERS[key] ? null : value,
+      [group.key]: value === group.defaultValue ? null : value,
       page: null,
-      appeal: null,
+      [selectionParam]: null,
     });
 
-  const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, appeal: null }));
-
-  const groups = $derived([
-    {
-      key: 'source',
-      label: 'Source',
-      values: APPEAL_SOURCES,
-      labels: SOURCE_LABELS,
-      counts: facets?.source,
-    },
-    {
-      key: 'flag',
-      label: 'Flag',
-      values: APPEAL_FLAGS,
-      labels: FLAG_LABELS,
-      counts: facets?.flag,
-    },
-    { key: 'sort', label: 'Sort', values: APPEAL_SORTS, labels: SORT_LABELS, counts: undefined },
-  ] as const);
+  const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, [selectionParam]: null }));
 </script>
 
 <div class="flex flex-wrap items-end gap-x-6 gap-y-3">
@@ -62,10 +53,10 @@
         class="inline-flex flex-wrap gap-0.5 rounded-lg border border-dark-4 bg-dark-7 p-0.5"
       >
         {#each group.values as value (value)}
-          {@const active = filters[group.key] === value}
-          {@const count = (group.counts as Record<string, number> | undefined)?.[value]}
+          {@const active = group.active === value}
+          {@const count = group.counts?.[value]}
           <a
-            href={hrefFor(group.key, value)}
+            href={hrefFor(group, value)}
             data-sveltekit-noscroll
             data-sveltekit-keepfocus
             aria-current={active ? 'true' : undefined}
@@ -76,7 +67,7 @@
                 : 'text-dark-0 hover:bg-dark-5 hover:text-white'
             )}
           >
-            {group.labels[value as keyof typeof group.labels]}
+            {group.labels[value]}
             {#if count !== undefined}
               <span class={cn('text-xs tabular-nums', active ? 'text-blue-100' : 'text-dark-2')}>
                 {num(count)}
@@ -91,14 +82,14 @@
   <!-- Keyed on q: the Input's value is bindable, so a one-way prop would latch on what was typed. -->
   {#key q}
     <form method="GET" class="ml-auto flex w-full max-w-[24rem] items-center gap-2">
-      {#each Object.entries(appealFilterParams(filters)) as [name, value] (name)}
+      {#each Object.entries(searchParams) as [name, value] (name)}
         <input type="hidden" {name} {value} />
       {/each}
       <Input
         name="q"
         value={q}
         placeholder="Model ID, user ID or username"
-        aria-label="Search appeals"
+        aria-label={searchLabel}
         class="h-9 flex-1 text-sm"
       />
       <Button type="submit" size="lg">Search</Button>

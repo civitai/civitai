@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { resolveRedetection, getRedetectedModels, getMinorFlagAppealsForReview } = vi.hoisted(
-  () => ({
-    resolveRedetection: vi.fn(),
-    getRedetectedModels: vi.fn(),
-    getMinorFlagAppealsForReview: vi.fn(),
-  })
-);
+const {
+  resolveRedetection,
+  getRedetectedModels,
+  getRedetectedCount,
+  getMinorFlagAppealsForReview,
+} = vi.hoisted(() => ({
+  resolveRedetection: vi.fn(),
+  getRedetectedModels: vi.fn(),
+  getRedetectedCount: vi.fn(),
+  getMinorFlagAppealsForReview: vi.fn(),
+}));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
@@ -16,6 +20,7 @@ vi.mock('$lib/server/minor-hash.service', () => ({
   getMinorHashMatchesForReview: vi.fn(),
   getModelMinorState: vi.fn(),
   getRedetectedModels,
+  getRedetectedCount,
 }));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag: vi.fn(),
@@ -42,6 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resolveRedetection.mockResolvedValue({ ok: true, resolved: 'kept' });
   getRedetectedModels.mockResolvedValue({ items: [], hasMore: false });
+  getRedetectedCount.mockResolvedValue(3);
   getMinorFlagAppealsForReview.mockResolvedValue({ items: [], hasMore: false });
 });
 
@@ -91,12 +97,12 @@ describe('re-detection actions', () => {
 });
 
 describe('queue view', () => {
-  const view = async (query: string) =>
-    (
-      await (load as unknown as (e: { url: URL }) => Promise<{ view: string }>)({
-        url: new URL(`http://x/models/flag-appeals${query}`),
-      })
-    ).view;
+  type Loaded = { view: string; redetectedCount: number | null; redetectedFilters?: unknown };
+  const loadView = async (query: string) =>
+    (await (load as unknown as (e: { url: URL }) => Promise<Loaded>)({
+      url: new URL(`http://x/models/flag-appeals${query}`),
+    })) as Loaded;
+  const view = async (query: string) => (await loadView(query)).view;
 
   it('loads the re-detected list only for ?view=redetected', async () => {
     expect(await view('?view=redetected')).toBe('redetected');
@@ -112,5 +118,28 @@ describe('queue view', () => {
     expect(await view(query)).toBe('appeals');
     expect(getRedetectedModels).not.toHaveBeenCalled();
     expect(getMinorFlagAppealsForReview).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['', '?view=redetected'])('carries the tab count on every view (%s)', async (query) => {
+    expect((await loadView(query)).redetectedCount).toBe(3);
+  });
+
+  it('still serves the list when the count fails', async () => {
+    getRedetectedCount.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const loaded = await loadView('?view=redetected');
+    expect(loaded.view).toBe('redetected');
+    expect(loaded.redetectedCount).toBeNull();
+  });
+
+  it('passes the flag and sort filters through, ignoring unknown values', async () => {
+    await view('?view=redetected&flag=poi&sort=newest');
+    expect(getRedetectedModels).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filters: { flag: 'poi', sort: 'newest' } })
+    );
+    await view('?view=redetected&flag=unflagged&sort=flagged');
+    expect(getRedetectedModels).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filters: { flag: 'all', sort: 'oldest' } })
+    );
   });
 });
