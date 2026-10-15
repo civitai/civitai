@@ -4461,6 +4461,16 @@ export type ResourceIntentCoocSnapshot = {
   payload: Buffer | null;
   trainImageIds: Buffer | null;
 };
+export type ResourceIntentVocabulary = {
+  id: string;
+  vocabVersion: string;
+  status: Generated<string>;
+  payload: Buffer;
+  rulesSummary: unknown;
+  createdAt: Generated<Timestamp>;
+  frozenAt: Timestamp | null;
+  frozenBy: string | null;
+};
 export type ResourceOverride = {
   hash: string;
   modelVersionId: number;
@@ -5890,6 +5900,7 @@ export type DB = {
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
   ResourceIntentCoocSnapshot: ResourceIntentCoocSnapshot;
+  ResourceIntentVocabulary: ResourceIntentVocabulary;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;

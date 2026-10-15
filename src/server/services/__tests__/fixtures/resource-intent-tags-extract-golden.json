@@ -1,0 +1,2163 @@
+{
+ "about": "Synthetic prompts only. Expected values were produced by the offline prototype's own extractor (segments, phrase_key_sets, phrase_keys) and its literal match (phrase_keys & vocabulary); every key list is in Python sorted() order. Regenerate only from the prototype, never from the TypeScript port.",
+ "maxTokens": 4,
+ "stopwords": [
+  "a",
+  "about",
+  "across",
+  "after",
+  "against",
+  "all",
+  "almost",
+  "also",
+  "an",
+  "and",
+  "another",
+  "any",
+  "are",
+  "around",
+  "as",
+  "at",
+  "be",
+  "because",
+  "been",
+  "before",
+  "behind",
+  "being",
+  "between",
+  "both",
+  "but",
+  "by",
+  "can",
+  "could",
+  "did",
+  "do",
+  "does",
+  "doing",
+  "done",
+  "down",
+  "during",
+  "each",
+  "even",
+  "every",
+  "for",
+  "from",
+  "fully",
+  "gently",
+  "get",
+  "gets",
+  "got",
+  "had",
+  "has",
+  "have",
+  "having",
+  "he",
+  "her",
+  "here",
+  "him",
+  "his",
+  "how",
+  "i",
+  "if",
+  "in",
+  "into",
+  "is",
+  "it",
+  "its",
+  "just",
+  "like",
+  "made",
+  "make",
+  "makes",
+  "may",
+  "me",
+  "might",
+  "more",
+  "most",
+  "mostly",
+  "must",
+  "my",
+  "no",
+  "not",
+  "of",
+  "off",
+  "on",
+  "only",
+  "onto",
+  "or",
+  "other",
+  "our",
+  "out",
+  "over",
+  "partially",
+  "quite",
+  "rather",
+  "really",
+  "shall",
+  "she",
+  "should",
+  "slightly",
+  "slowly",
+  "so",
+  "softly",
+  "some",
+  "still",
+  "such",
+  "than",
+  "that",
+  "the",
+  "their",
+  "them",
+  "then",
+  "there",
+  "these",
+  "they",
+  "this",
+  "those",
+  "through",
+  "to",
+  "too",
+  "toward",
+  "towards",
+  "under",
+  "up",
+  "upon",
+  "very",
+  "was",
+  "we",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "who",
+  "whom",
+  "whose",
+  "why",
+  "will",
+  "with",
+  "within",
+  "without",
+  "would",
+  "you",
+  "your"
+ ],
+ "vocabulary": [
+  "blue eye",
+  "caf\u00e9 au lait",
+  "cat",
+  "chair",
+  "cinematic",
+  "city street",
+  "closeup",
+  "dramatic lighting",
+  "dusk",
+  "film grain",
+  "glow lamp",
+  "istanbul skyline",
+  "kitty",
+  "lady",
+  "lighthouse",
+  "long hair",
+  "mountain village",
+  "neon city",
+  "neon rain",
+  "neoncity",
+  "never in any prompt",
+  "photo",
+  "puppy",
+  "quiet",
+  "red scarf",
+  "rock'n'roll",
+  "scifi",
+  "shiny armor",
+  "sky",
+  "snowy roof",
+  "soft light",
+  "sunflower",
+  "tail",
+  "warm evening light",
+  "watercolor painting",
+  "word tail",
+  "x",
+  "\u6771\u4eac \u30bf\u30ef\u30fc",
+  "\ufa0e hall",
+  "\ud840\udc00 gate",
+  "\ud840\udc00ie"
+ ],
+ "cases": [
+  {
+   "prompt": "masterpiece, best quality, 1girl, solo, long hair",
+   "segments": [
+    [
+     "masterpiece"
+    ],
+    [
+     "best",
+     "quality"
+    ],
+    [
+     "1girl"
+    ],
+    [
+     "solo"
+    ],
+    [
+     "long",
+     "hair"
+    ]
+   ],
+   "segmentKeys": [
+    "1girl",
+    "best quality",
+    "long hair",
+    "masterpiece",
+    "solo"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "1girl",
+    "best quality",
+    "long hair",
+    "masterpiece",
+    "solo"
+   ],
+   "matches": [
+    "long hair"
+   ]
+  },
+  {
+   "prompt": "<lora:Foo_Bar:0.8> watercolor painting of a lighthouse at dusk, soft light",
+   "segments": [
+    [
+     "watercolor",
+     "painting",
+     "of",
+     "a",
+     "lighthouse",
+     "at",
+     "dusk"
+    ],
+    [
+     "soft",
+     "light"
+    ]
+   ],
+   "segmentKeys": [
+    "soft light"
+   ],
+   "gramKeys": [
+    "dusk",
+    "lighthouse",
+    "painting",
+    "watercolor",
+    "watercolor painting"
+   ],
+   "keys": [
+    "dusk",
+    "lighthouse",
+    "painting",
+    "soft light",
+    "watercolor",
+    "watercolor painting"
+   ],
+   "matches": [
+    "dusk",
+    "lighthouse",
+    "soft light",
+    "watercolor painting"
+   ]
+  },
+  {
+   "prompt": "<lyco:thing:1> <hypernet:x:0.5>, neon city, <unclosed angle, a > b, <>",
+   "segments": [
+    [
+     "neon",
+     "city"
+    ],
+    [
+     "b"
+    ]
+   ],
+   "segmentKeys": [
+    "b",
+    "neon city"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "b",
+    "neon city"
+   ],
+   "matches": [
+    "neon city"
+   ]
+  },
+  {
+   "prompt": "embedding:EasyNegative, portrait of an elderly fisherman, dramatic lighting, film photo",
+   "segments": [
+    [
+     "portrait",
+     "of",
+     "an",
+     "elderly",
+     "fisherman"
+    ],
+    [
+     "dramatic",
+     "lighting"
+    ],
+    [
+     "film",
+     "photo"
+    ]
+   ],
+   "segmentKeys": [
+    "dramatic lighting",
+    "film photo"
+   ],
+   "gramKeys": [
+    "elderly",
+    "elderly fisherman",
+    "fisherman",
+    "portrait"
+   ],
+   "keys": [
+    "dramatic lighting",
+    "elderly",
+    "elderly fisherman",
+    "film photo",
+    "fisherman",
+    "portrait"
+   ],
+   "matches": [
+    "dramatic lighting"
+   ]
+  },
+  {
+   "prompt": "embedding:foo,bar baz, myembedding:qux, (embedding:inparens)",
+   "segments": [
+    [
+     "baz"
+    ],
+    [
+     "myembedding",
+     "qux"
+    ]
+   ],
+   "segmentKeys": [
+    "baz",
+    "myembedding qux"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "baz",
+    "myembedding qux"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "(red scarf:1.3), [blue sky], {green field}, (((((nested))))), [[[x]]]",
+   "segments": [
+    [
+     "red",
+     "scarf"
+    ],
+    [
+     "blue",
+     "sky"
+    ],
+    [
+     "green",
+     "field"
+    ],
+    [
+     "nested"
+    ],
+    [
+     "x"
+    ]
+   ],
+   "segmentKeys": [
+    "blue sky",
+    "green field",
+    "nested",
+    "red scarf",
+    "x"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "blue sky",
+    "green field",
+    "nested",
+    "red scarf",
+    "x"
+   ],
+   "matches": [
+    "red scarf",
+    "x"
+   ]
+  },
+  {
+   "prompt": "((dramatic lighting:1.2)), (film grain:-0.5), (soft focus: 0.75), (x:+1.2)",
+   "segments": [
+    [
+     "dramatic",
+     "lighting"
+    ],
+    [
+     "film",
+     "grain"
+    ],
+    [
+     "soft",
+     "focus"
+    ],
+    [
+     "x"
+    ]
+   ],
+   "segmentKeys": [
+    "dramatic lighting",
+    "film grain",
+    "soft focus",
+    "x"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "dramatic lighting",
+    "film grain",
+    "soft focus",
+    "x"
+   ],
+   "matches": [
+    "dramatic lighting",
+    "film grain",
+    "x"
+   ]
+  },
+  {
+   "prompt": "\\(artist\\) style, escaped \\(parens\\) here",
+   "segments": [
+    [
+     "artist"
+    ],
+    [
+     "style"
+    ],
+    [
+     "escaped"
+    ],
+    [
+     "parens"
+    ],
+    [
+     "here"
+    ]
+   ],
+   "segmentKeys": [
+    "artist",
+    "escaped",
+    "paren",
+    "style"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "artist",
+    "escaped",
+    "paren",
+    "style"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "city street BREAK neon rain BREAK cinematic",
+   "segments": [
+    [
+     "city",
+     "street"
+    ],
+    [
+     "neon",
+     "rain"
+    ],
+    [
+     "cinematic"
+    ]
+   ],
+   "segmentKeys": [
+    "cinematic",
+    "city street",
+    "neon rain"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "cinematic",
+    "city street",
+    "neon rain"
+   ],
+   "matches": [
+    "cinematic",
+    "city street",
+    "neon rain"
+   ]
+  },
+  {
+   "prompt": "breakfast table, break dance, heartbreak, BREAKING news",
+   "segments": [
+    [
+     "breakfast",
+     "table"
+    ],
+    [
+     "dance"
+    ],
+    [
+     "heartbreak"
+    ],
+    [
+     "breaking",
+     "news"
+    ]
+   ],
+   "segmentKeys": [
+    "breakfast table",
+    "breaking new",
+    "dance",
+    "heartbreak"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "breakfast table",
+    "breaking new",
+    "dance",
+    "heartbreak"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "\u00e9break, \u00e9t\u00e9 break, 1break, x_break_y",
+   "segments": [
+    [
+     "\u00e9break"
+    ],
+    [
+     "\u00e9t\u00e9"
+    ],
+    [
+     "1break"
+    ],
+    [
+     "x"
+    ],
+    [
+     "y"
+    ]
+   ],
+   "segmentKeys": [
+    "1break",
+    "x",
+    "y",
+    "\u00e9break",
+    "\u00e9t\u00e9"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "1break",
+    "x",
+    "y",
+    "\u00e9break",
+    "\u00e9t\u00e9"
+   ],
+   "matches": [
+    "x"
+   ]
+  },
+  {
+   "prompt": "a; b | c. d! e? f",
+   "segments": [
+    [
+     "a"
+    ],
+    [
+     "b"
+    ],
+    [
+     "c"
+    ],
+    [
+     "d"
+    ],
+    [
+     "e"
+    ],
+    [
+     "f"
+    ]
+   ],
+   "segmentKeys": [
+    "b",
+    "c",
+    "d",
+    "e",
+    "f"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "b",
+    "c",
+    "d",
+    "e",
+    "f"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "puppies, kitties, butterflies, glasses, buses, cactus, iris, ladies, series, ties, pies",
+   "segments": [
+    [
+     "puppies"
+    ],
+    [
+     "kitties"
+    ],
+    [
+     "butterflies"
+    ],
+    [
+     "glasses"
+    ],
+    [
+     "buses"
+    ],
+    [
+     "cactus"
+    ],
+    [
+     "iris"
+    ],
+    [
+     "ladies"
+    ],
+    [
+     "series"
+    ],
+    [
+     "ties"
+    ],
+    [
+     "pies"
+    ]
+   ],
+   "segmentKeys": [
+    "buse",
+    "butterfly",
+    "cactus",
+    "glasse",
+    "iris",
+    "kitty",
+    "lady",
+    "pie",
+    "puppy",
+    "sery",
+    "tie"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "buse",
+    "butterfly",
+    "cactus",
+    "glasse",
+    "iris",
+    "kitty",
+    "lady",
+    "pie",
+    "puppy",
+    "sery",
+    "tie"
+   ],
+   "matches": [
+    "kitty",
+    "lady",
+    "puppy"
+   ]
+  },
+  {
+   "prompt": "dogs, boss, gas, bus, plus, analysis, skies, flies, dies, cities, x-ies pattern",
+   "segments": [
+    [
+     "dogs"
+    ],
+    [
+     "boss"
+    ],
+    [
+     "gas"
+    ],
+    [
+     "bus"
+    ],
+    [
+     "plus"
+    ],
+    [
+     "analysis"
+    ],
+    [
+     "skies"
+    ],
+    [
+     "flies"
+    ],
+    [
+     "dies"
+    ],
+    [
+     "cities"
+    ],
+    [
+     "x-ies",
+     "pattern"
+    ]
+   ],
+   "segmentKeys": [
+    "analysis",
+    "boss",
+    "bus",
+    "city",
+    "die",
+    "dog",
+    "fly",
+    "gas",
+    "plus",
+    "sky",
+    "xie pattern"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "analysis",
+    "boss",
+    "bus",
+    "city",
+    "die",
+    "dog",
+    "fly",
+    "gas",
+    "plus",
+    "sky",
+    "xie pattern"
+   ],
+   "matches": [
+    "sky"
+   ]
+  },
+  {
+   "prompt": "the cat's whiskers, rock'n'roll, 'quoted', -dash-, don't, won't, it's, rock 'n' roll",
+   "segments": [
+    [
+     "the",
+     "cat's",
+     "whiskers"
+    ],
+    [
+     "rock'n'roll"
+    ],
+    [
+     "quoted"
+    ],
+    [
+     "dash"
+    ],
+    [
+     "don't"
+    ],
+    [
+     "won't"
+    ],
+    [
+     "it's"
+    ],
+    [
+     "rock",
+     "n",
+     "roll"
+    ]
+   ],
+   "segmentKeys": [
+    "dash",
+    "don't",
+    "it'",
+    "quoted",
+    "rock n roll",
+    "rock'n'roll",
+    "the cat' whisker",
+    "won't"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "dash",
+    "don't",
+    "it'",
+    "quoted",
+    "rock n roll",
+    "rock'n'roll",
+    "the cat' whisker",
+    "won't"
+   ],
+   "matches": [
+    "rock'n'roll"
+   ]
+  },
+  {
+   "prompt": "sci-fi, close-up, x-ray, red-and-black, black-and-white photo, --ar 16:9",
+   "segments": [
+    [
+     "sci-fi"
+    ],
+    [
+     "close-up"
+    ],
+    [
+     "x-ray"
+    ],
+    [
+     "red-and-black"
+    ],
+    [
+     "black-and-white",
+     "photo"
+    ],
+    [
+     "ar"
+    ]
+   ],
+   "segmentKeys": [
+    "ar",
+    "blackandwhite photo",
+    "closeup",
+    "redandblack",
+    "scifi",
+    "xray"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "ar",
+    "blackandwhite photo",
+    "closeup",
+    "redandblack",
+    "scifi",
+    "xray"
+   ],
+   "matches": [
+    "closeup",
+    "scifi"
+   ]
+  },
+  {
+   "prompt": "caf\u00e9 au lait, na\u00efve art, cr\u00e8me br\u00fbl\u00e9e, e\u0301toile",
+   "segments": [
+    [
+     "caf\u00e9",
+     "au",
+     "lait"
+    ],
+    [
+     "na\u00efve",
+     "art"
+    ],
+    [
+     "cr\u00e8me",
+     "br\u00fbl\u00e9e"
+    ],
+    [
+     "\u00e9toile"
+    ]
+   ],
+   "segmentKeys": [
+    "caf\u00e9 au lait",
+    "cr\u00e8me br\u00fbl\u00e9e",
+    "na\u00efve art",
+    "\u00e9toile"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "caf\u00e9 au lait",
+    "cr\u00e8me br\u00fbl\u00e9e",
+    "na\u00efve art",
+    "\u00e9toile"
+   ],
+   "matches": [
+    "caf\u00e9 au lait"
+   ]
+  },
+  {
+   "prompt": "\uff26\uff35\uff2c\uff2c\uff37\uff29\uff24\uff34\uff28 text, \ufb01ne ligature, \u2460 circled, x\u00b2, \u01c4 titlecase \u01c5",
+   "segments": [
+    [
+     "fullwidth",
+     "text"
+    ],
+    [
+     "fine",
+     "ligature"
+    ],
+    [
+     "circled"
+    ],
+    [
+     "x2"
+    ],
+    [
+     "d\u017e",
+     "titlecase",
+     "d\u017e"
+    ]
+   ],
+   "segmentKeys": [
+    "circled",
+    "d\u017e titlecase d\u017e",
+    "fine ligature",
+    "fullwidth text",
+    "x2"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "circled",
+    "d\u017e titlecase d\u017e",
+    "fine ligature",
+    "fullwidth text",
+    "x2"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "\u6771\u4eac \u30bf\u30ef\u30fc, \u591c\u666f, \u8d64\u3044 \u6a4b, \ud55c\uad6d \uac70\ub9ac",
+   "segments": [
+    [
+     "\u6771\u4eac",
+     "\u30bf\u30ef\u30fc"
+    ],
+    [
+     "\u591c\u666f"
+    ],
+    [
+     "\u8d64\u3044",
+     "\u6a4b"
+    ],
+    [
+     "\ud55c\uad6d",
+     "\uac70\ub9ac"
+    ]
+   ],
+   "segmentKeys": [
+    "\u591c\u666f",
+    "\u6771\u4eac \u30bf\u30ef\u30fc",
+    "\u8d64\u3044 \u6a4b",
+    "\ud55c\uad6d \uac70\ub9ac"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "\u591c\u666f",
+    "\u6771\u4eac \u30bf\u30ef\u30fc",
+    "\u8d64\u3044 \u6a4b",
+    "\ud55c\uad6d \uac70\ub9ac"
+   ],
+   "matches": [
+    "\u6771\u4eac \u30bf\u30ef\u30fc"
+   ]
+  },
+  {
+   "prompt": "\u039f\u0394\u039f\u03a3 \u03a3\u039a\u0399\u0391\u03a3, \u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac \u03bd\u03b7\u03c3\u03b9\u03ac",
+   "segments": [
+    [
+     "\u03bf\u03b4\u03bf\u03c2",
+     "\u03c3\u03ba\u03b9\u03b1\u03c2"
+    ],
+    [
+     "\u03b5\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac",
+     "\u03bd\u03b7\u03c3\u03b9\u03ac"
+    ]
+   ],
+   "segmentKeys": [
+    "\u03b5\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac \u03bd\u03b7\u03c3\u03b9\u03ac",
+    "\u03bf\u03b4\u03bf\u03c2 \u03c3\u03ba\u03b9\u03b1\u03c2"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "\u03b5\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac \u03bd\u03b7\u03c3\u03b9\u03ac",
+    "\u03bf\u03b4\u03bf\u03c2 \u03c3\u03ba\u03b9\u03b1\u03c2"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "\u0130stanbul skyline, Stra\u00dfe, STRASSE, \ufb00",
+   "segments": [
+    [
+     "i",
+     "stanbul",
+     "skyline"
+    ],
+    [
+     "stra\u00dfe"
+    ],
+    [
+     "strasse"
+    ],
+    [
+     "ff"
+    ]
+   ],
+   "segmentKeys": [
+    "ff",
+    "i stanbul skyline",
+    "strasse",
+    "stra\u00dfe"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "ff",
+    "i stanbul skyline",
+    "strasse",
+    "stra\u00dfe"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "\ud83d\ude00 emoji, \ud83c\udf38 blossom, star\u2728dust, rain\u2019s edge",
+   "segments": [
+    [
+     "emoji"
+    ],
+    [
+     "blossom"
+    ],
+    [
+     "star",
+     "dust"
+    ],
+    [
+     "rain",
+     "s",
+     "edge"
+    ]
+   ],
+   "segmentKeys": [
+    "blossom",
+    "emoji",
+    "rain s edge",
+    "star dust"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "blossom",
+    "emoji",
+    "rain s edge",
+    "star dust"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "\ud840\udc00ies, \ud840\udc00s, \ud840\udc00\ud840\udc00s, \ufa0e hall, \ud840\udc00 gate",
+   "segments": [
+    [
+     "\ud840\udc00ies"
+    ],
+    [
+     "\ud840\udc00s"
+    ],
+    [
+     "\ud840\udc00\ud840\udc00s"
+    ],
+    [
+     "\ufa0e",
+     "hall"
+    ],
+    [
+     "\ud840\udc00",
+     "gate"
+    ]
+   ],
+   "segmentKeys": [
+    "\ufa0e hall",
+    "\ud840\udc00 gate",
+    "\ud840\udc00ie",
+    "\ud840\udc00s",
+    "\ud840\udc00\ud840\udc00s"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "\ufa0e hall",
+    "\ud840\udc00 gate",
+    "\ud840\udc00ie",
+    "\ud840\udc00s",
+    "\ud840\udc00\ud840\udc00s"
+   ],
+   "matches": [
+    "\ufa0e hall",
+    "\ud840\udc00 gate",
+    "\ud840\udc00ie"
+   ]
+  },
+  {
+   "prompt": "1990s, 4k, 8k uhd, 1024 x 768, 12345, 2.5d, 3d render",
+   "segments": [
+    [
+     "1990s"
+    ],
+    [
+     "4k"
+    ],
+    [
+     "8k",
+     "uhd"
+    ],
+    [
+     "x"
+    ],
+    [
+     "5d"
+    ],
+    [
+     "3d",
+     "render"
+    ]
+   ],
+   "segmentKeys": [
+    "1990",
+    "3d render",
+    "4k",
+    "5d",
+    "8k uhd",
+    "x"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "1990",
+    "3d render",
+    "4k",
+    "5d",
+    "8k uhd",
+    "x"
+   ],
+   "matches": [
+    "x"
+   ]
+  },
+  {
+   "prompt": "\u0661\u0662\u0663 arabic digits, \u2776 dingbat, \u1369 ethiopic, \u24f5 double",
+   "segments": [
+    [
+     "arabic",
+     "digits"
+    ],
+    [
+     "dingbat"
+    ],
+    [
+     "ethiopic"
+    ],
+    [
+     "double"
+    ]
+   ],
+   "segmentKeys": [
+    "arabic digit",
+    "dingbat",
+    "double",
+    "ethiopic"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "arabic digit",
+    "dingbat",
+    "double",
+    "ethiopic"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "a very long sentence describing a quiet mountain village with snowy roofs at night",
+   "segments": [
+    [
+     "a",
+     "very",
+     "long",
+     "sentence",
+     "describing",
+     "a",
+     "quiet",
+     "mountain",
+     "village",
+     "with",
+     "snowy",
+     "roofs",
+     "at",
+     "night"
+    ]
+   ],
+   "segmentKeys": [],
+   "gramKeys": [
+    "describing",
+    "long",
+    "long sentence",
+    "long sentence describing",
+    "mountain",
+    "mountain village",
+    "night",
+    "quiet",
+    "quiet mountain",
+    "quiet mountain village",
+    "roof",
+    "sentence",
+    "sentence describing",
+    "snowy",
+    "snowy roof",
+    "village"
+   ],
+   "keys": [
+    "describing",
+    "long",
+    "long sentence",
+    "long sentence describing",
+    "mountain",
+    "mountain village",
+    "night",
+    "quiet",
+    "quiet mountain",
+    "quiet mountain village",
+    "roof",
+    "sentence",
+    "sentence describing",
+    "snowy",
+    "snowy roof",
+    "village"
+   ],
+   "matches": [
+    "mountain village",
+    "quiet",
+    "snowy roof"
+   ]
+  },
+  {
+   "prompt": "beautiful girl standing in a field of sunflowers under the warm evening light",
+   "segments": [
+    [
+     "beautiful",
+     "girl",
+     "standing",
+     "in",
+     "a",
+     "field",
+     "of",
+     "sunflowers",
+     "under",
+     "the",
+     "warm",
+     "evening",
+     "light"
+    ]
+   ],
+   "segmentKeys": [],
+   "gramKeys": [
+    "beautiful",
+    "beautiful girl",
+    "beautiful girl standing",
+    "evening",
+    "evening light",
+    "field",
+    "girl",
+    "girl standing",
+    "light",
+    "standing",
+    "sunflower",
+    "warm",
+    "warm evening",
+    "warm evening light"
+   ],
+   "keys": [
+    "beautiful",
+    "beautiful girl",
+    "beautiful girl standing",
+    "evening",
+    "evening light",
+    "field",
+    "girl",
+    "girl standing",
+    "light",
+    "standing",
+    "sunflower",
+    "warm",
+    "warm evening",
+    "warm evening light"
+   ],
+   "matches": [
+    "sunflower",
+    "warm evening light"
+   ]
+  },
+  {
+   "prompt": "photo of 3 cats on 2 chairs",
+   "segments": [
+    [
+     "photo",
+     "of",
+     "cats",
+     "on",
+     "chairs"
+    ]
+   ],
+   "segmentKeys": [],
+   "gramKeys": [
+    "cat",
+    "chair",
+    "photo"
+   ],
+   "keys": [
+    "cat",
+    "chair",
+    "photo"
+   ],
+   "matches": [
+    "cat",
+    "chair",
+    "photo"
+   ]
+  },
+  {
+   "prompt": "multi word segment five tokens, four token segment here",
+   "segments": [
+    [
+     "multi",
+     "word",
+     "segment",
+     "five",
+     "tokens"
+    ],
+    [
+     "four",
+     "token",
+     "segment",
+     "here"
+    ]
+   ],
+   "segmentKeys": [
+    "four token segment here"
+   ],
+   "gramKeys": [
+    "five",
+    "five token",
+    "multi",
+    "multi word",
+    "multi word segment",
+    "segment",
+    "segment five",
+    "segment five token",
+    "token",
+    "word",
+    "word segment",
+    "word segment five"
+   ],
+   "keys": [
+    "five",
+    "five token",
+    "four token segment here",
+    "multi",
+    "multi word",
+    "multi word segment",
+    "segment",
+    "segment five",
+    "segment five token",
+    "token",
+    "word",
+    "word segment",
+    "word segment five"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "",
+   "segments": [],
+   "segmentKeys": [],
+   "gramKeys": [],
+   "keys": [],
+   "matches": []
+  },
+  {
+   "prompt": "   \n\t  ",
+   "segments": [],
+   "segmentKeys": [],
+   "gramKeys": [],
+   "keys": [],
+   "matches": []
+  },
+  {
+   "prompt": ",,,;;;...!!!???|||",
+   "segments": [],
+   "segmentKeys": [],
+   "gramKeys": [],
+   "keys": [],
+   "matches": []
+  },
+  {
+   "prompt": "the of and, with, very much so",
+   "segments": [
+    [
+     "the",
+     "of",
+     "and"
+    ],
+    [
+     "with"
+    ],
+    [
+     "very",
+     "much",
+     "so"
+    ]
+   ],
+   "segmentKeys": [
+    "very much so"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "very much so"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "under_score_tags, long_hair, blue_eyes, __init__",
+   "segments": [
+    [
+     "under",
+     "score",
+     "tags"
+    ],
+    [
+     "long",
+     "hair"
+    ],
+    [
+     "blue",
+     "eyes"
+    ],
+    [
+     "init"
+    ]
+   ],
+   "segmentKeys": [
+    "blue eye",
+    "init",
+    "long hair",
+    "under score tag"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "blue eye",
+    "init",
+    "long hair",
+    "under score tag"
+   ],
+   "matches": [
+    "blue eye",
+    "long hair"
+   ]
+  },
+  {
+   "prompt": "MiXeD CaSe, UPPER, lower",
+   "segments": [
+    [
+     "mixed",
+     "case"
+    ],
+    [
+     "upper"
+    ],
+    [
+     "lower"
+    ]
+   ],
+   "segmentKeys": [
+    "lower",
+    "mixed case",
+    "upper"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "lower",
+    "mixed case",
+    "upper"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "neon:1.2 glow, glow: 0.8, ratio 3:2, time 12:30",
+   "segments": [
+    [
+     "neon",
+     "glow"
+    ],
+    [
+     "glow"
+    ],
+    [
+     "ratio"
+    ],
+    [
+     "time"
+    ]
+   ],
+   "segmentKeys": [
+    "glow",
+    "neon glow",
+    "ratio",
+    "time"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "glow",
+    "neon glow",
+    "ratio",
+    "time"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "line one\nline two\r\nline three",
+   "segments": [
+    [
+     "line",
+     "one"
+    ],
+    [
+     "line",
+     "two"
+    ],
+    [
+     "line",
+     "three"
+    ]
+   ],
+   "segmentKeys": [
+    "line one",
+    "line three",
+    "line two"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "line one",
+    "line three",
+    "line two"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "tab\tseparated\twords here",
+   "segments": [
+    [
+     "tab",
+     "separated",
+     "words",
+     "here"
+    ]
+   ],
+   "segmentKeys": [
+    "tab separated word here"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "tab separated word here"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "non\u00a0breaking space, zero\u200bwidth, thin\u2009space",
+   "segments": [
+    [
+     "non",
+     "breaking",
+     "space"
+    ],
+    [
+     "zero",
+     "width"
+    ],
+    [
+     "thin",
+     "space"
+    ]
+   ],
+   "segmentKeys": [
+    "non breaking space",
+    "thin space",
+    "zero width"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "non breaking space",
+    "thin space",
+    "zero width"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "x\u001cy group, a\u0085b next, c\ufeffd bom",
+   "segments": [
+    [
+     "x",
+     "y",
+     "group"
+    ],
+    [
+     "a",
+     "b",
+     "next"
+    ],
+    [
+     "c",
+     "d",
+     "bom"
+    ]
+   ],
+   "segmentKeys": [
+    "a b next",
+    "c d bom",
+    "x y group"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "a b next",
+    "c d bom",
+    "x y group"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "line\u2028sep, para\u2029sep, ideo\u3000space",
+   "segments": [
+    [
+     "line",
+     "sep"
+    ],
+    [
+     "para",
+     "sep"
+    ],
+    [
+     "ideo",
+     "space"
+    ]
+   ],
+   "segmentKeys": [
+    "ideo space",
+    "line sep",
+    "para sep"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "ideo space",
+    "line sep",
+    "para sep"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "\u0939\u093f\u0928\u094d\u0926\u0940 \u0936\u092c\u094d\u0926, \u0e44\u0e17\u0e22 \u0e04\u0e33",
+   "segments": [
+    [
+     "\u0939",
+     "\u0928",
+     "\u0926",
+     "\u0936\u092c",
+     "\u0926"
+    ],
+    [
+     "\u0e44\u0e17\u0e22",
+     "\u0e04",
+     "\u0e32"
+    ]
+   ],
+   "segmentKeys": [
+    "\u0e44\u0e17\u0e22 \u0e04 \u0e32"
+   ],
+   "gramKeys": [
+    "\u0926",
+    "\u0926 \u0936\u092c",
+    "\u0926 \u0936\u092c \u0926",
+    "\u0928",
+    "\u0928 \u0926",
+    "\u0928 \u0926 \u0936\u092c",
+    "\u0936\u092c",
+    "\u0936\u092c \u0926",
+    "\u0939",
+    "\u0939 \u0928",
+    "\u0939 \u0928 \u0926"
+   ],
+   "keys": [
+    "\u0926",
+    "\u0926 \u0936\u092c",
+    "\u0926 \u0936\u092c \u0926",
+    "\u0928",
+    "\u0928 \u0926",
+    "\u0928 \u0926 \u0936\u092c",
+    "\u0936\u092c",
+    "\u0936\u092c \u0926",
+    "\u0939",
+    "\u0939 \u0928",
+    "\u0939 \u0928 \u0926",
+    "\u0e44\u0e17\u0e22 \u0e04 \u0e32"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "shiny armor, shiny armour, shiny armors, the shiny armor",
+   "segments": [
+    [
+     "shiny",
+     "armor"
+    ],
+    [
+     "shiny",
+     "armour"
+    ],
+    [
+     "shiny",
+     "armors"
+    ],
+    [
+     "the",
+     "shiny",
+     "armor"
+    ]
+   ],
+   "segmentKeys": [
+    "shiny armor",
+    "shiny armour",
+    "the shiny armor"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "shiny armor",
+    "shiny armour",
+    "the shiny armor"
+   ],
+   "matches": [
+    "shiny armor"
+   ]
+  },
+  {
+   "prompt": "''---, '-', -'-'- tok",
+   "segments": [
+    [
+     "tok"
+    ]
+   ],
+   "segmentKeys": [
+    "tok"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "tok"
+   ],
+   "matches": []
+  },
+  {
+   "prompt": "___, ...., 0, 00, 0.0",
+   "segments": [],
+   "segmentKeys": [],
+   "gramKeys": [],
+   "keys": [],
+   "matches": []
+  },
+  {
+   "prompt": "Lighthouses at Dusk; WATERCOLOR Paintings | neon-city | Red Scarves",
+   "segments": [
+    [
+     "lighthouses",
+     "at",
+     "dusk"
+    ],
+    [
+     "watercolor",
+     "paintings"
+    ],
+    [
+     "neon-city"
+    ],
+    [
+     "red",
+     "scarves"
+    ]
+   ],
+   "segmentKeys": [
+    "lighthouse at dusk",
+    "neoncity",
+    "red scarve",
+    "watercolor painting"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "lighthouse at dusk",
+    "neoncity",
+    "red scarve",
+    "watercolor painting"
+   ],
+   "matches": [
+    "neoncity",
+    "watercolor painting"
+   ]
+  },
+  {
+   "prompt": "<lora:Foo_Bar:0.8> (Watercolor Paintings:1.2), embedding:EasyNeg lighthouse BREAK dusk, breakfast, \u00e9break, \u00e9t\u00e9 break",
+   "segments": [
+    [
+     "watercolor",
+     "paintings"
+    ],
+    [
+     "lighthouse"
+    ],
+    [
+     "dusk"
+    ],
+    [
+     "breakfast"
+    ],
+    [
+     "\u00e9break"
+    ],
+    [
+     "\u00e9t\u00e9"
+    ]
+   ],
+   "segmentKeys": [
+    "breakfast",
+    "dusk",
+    "lighthouse",
+    "watercolor painting",
+    "\u00e9break",
+    "\u00e9t\u00e9"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "breakfast",
+    "dusk",
+    "lighthouse",
+    "watercolor painting",
+    "\u00e9break",
+    "\u00e9t\u00e9"
+   ],
+   "matches": [
+    "dusk",
+    "lighthouse",
+    "watercolor painting"
+   ]
+  },
+  {
+   "prompt": "\\(escaped\\) [puppies] {kitties}, close-up; sci-fi | x-ies. glasses! iris? 1990s 12345, gas, cactus, boss, -dash-, 'quoted, \ud840\udc00ies",
+   "segments": [
+    [
+     "escaped"
+    ],
+    [
+     "puppies"
+    ],
+    [
+     "kitties"
+    ],
+    [
+     "close-up"
+    ],
+    [
+     "sci-fi"
+    ],
+    [
+     "x-ies"
+    ],
+    [
+     "glasses"
+    ],
+    [
+     "iris"
+    ],
+    [
+     "1990s"
+    ],
+    [
+     "gas"
+    ],
+    [
+     "cactus"
+    ],
+    [
+     "boss"
+    ],
+    [
+     "dash"
+    ],
+    [
+     "quoted"
+    ],
+    [
+     "\ud840\udc00ies"
+    ]
+   ],
+   "segmentKeys": [
+    "1990",
+    "boss",
+    "cactus",
+    "closeup",
+    "dash",
+    "escaped",
+    "gas",
+    "glasse",
+    "iris",
+    "kitty",
+    "puppy",
+    "quoted",
+    "scifi",
+    "xie",
+    "\ud840\udc00ie"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "1990",
+    "boss",
+    "cactus",
+    "closeup",
+    "dash",
+    "escaped",
+    "gas",
+    "glasse",
+    "iris",
+    "kitty",
+    "puppy",
+    "quoted",
+    "scifi",
+    "xie",
+    "\ud840\udc00ie"
+   ],
+   "matches": [
+    "closeup",
+    "kitty",
+    "puppy",
+    "scifi",
+    "\ud840\udc00ie"
+   ]
+  },
+  {
+   "prompt": "a quiet mountain village with snowy roofs under the warm evening light",
+   "segments": [
+    [
+     "a",
+     "quiet",
+     "mountain",
+     "village",
+     "with",
+     "snowy",
+     "roofs",
+     "under",
+     "the",
+     "warm",
+     "evening",
+     "light"
+    ]
+   ],
+   "segmentKeys": [],
+   "gramKeys": [
+    "evening",
+    "evening light",
+    "light",
+    "mountain",
+    "mountain village",
+    "quiet",
+    "quiet mountain",
+    "quiet mountain village",
+    "roof",
+    "snowy",
+    "snowy roof",
+    "village",
+    "warm",
+    "warm evening",
+    "warm evening light"
+   ],
+   "keys": [
+    "evening",
+    "evening light",
+    "light",
+    "mountain",
+    "mountain village",
+    "quiet",
+    "quiet mountain",
+    "quiet mountain village",
+    "roof",
+    "snowy",
+    "snowy roof",
+    "village",
+    "warm",
+    "warm evening",
+    "warm evening light"
+   ],
+   "matches": [
+    "mountain village",
+    "quiet",
+    "snowy roof",
+    "warm evening light"
+   ]
+  },
+  {
+   "prompt": "the of and, Caf\u00e9 au lait, \uff26\uff35\uff2c\uff2c, \u039f\u0394\u039f\u03a3, \u2776, \u1369, rock'n'roll, under_score, \u0939\u093f\u0928\u094d\u0926\u0940",
+   "segments": [
+    [
+     "the",
+     "of",
+     "and"
+    ],
+    [
+     "caf\u00e9",
+     "au",
+     "lait"
+    ],
+    [
+     "full"
+    ],
+    [
+     "\u03bf\u03b4\u03bf\u03c2"
+    ],
+    [
+     "rock'n'roll"
+    ],
+    [
+     "under",
+     "score"
+    ],
+    [
+     "\u0939",
+     "\u0928",
+     "\u0926"
+    ]
+   ],
+   "segmentKeys": [
+    "caf\u00e9 au lait",
+    "full",
+    "rock'n'roll",
+    "under score",
+    "\u03bf\u03b4\u03bf\u03c2",
+    "\u0939 \u0928 \u0926"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "caf\u00e9 au lait",
+    "full",
+    "rock'n'roll",
+    "under score",
+    "\u03bf\u03b4\u03bf\u03c2",
+    "\u0939 \u0928 \u0926"
+   ],
+   "matches": [
+    "caf\u00e9 au lait",
+    "rock'n'roll"
+   ]
+  },
+  {
+   "prompt": "glow:\t2.5 lamp, glow:\ufeff2.5 lamp, glow:\u001c2.5 lamp, glow:\u00852.5 lamp",
+   "segments": [
+    [
+     "glow",
+     "lamp"
+    ],
+    [
+     "glow"
+    ],
+    [
+     "lamp"
+    ],
+    [
+     "glow",
+     "lamp"
+    ],
+    [
+     "glow",
+     "lamp"
+    ]
+   ],
+   "segmentKeys": [
+    "glow",
+    "glow lamp",
+    "lamp"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "glow",
+    "glow lamp",
+    "lamp"
+   ],
+   "matches": [
+    "glow lamp"
+   ]
+  },
+  {
+   "prompt": "embedding:neg\ufeffword tail, embedding:neg\u001cword tail",
+   "segments": [
+    [
+     "tail"
+    ],
+    [
+     "word",
+     "tail"
+    ]
+   ],
+   "segmentKeys": [
+    "tail",
+    "word tail"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "tail",
+    "word tail"
+   ],
+   "matches": [
+    "tail",
+    "word tail"
+   ]
+  },
+  {
+   "prompt": "\ufa0e hall, \ud840\udc00 gate, lighthouse, mountain village",
+   "segments": [
+    [
+     "\ufa0e",
+     "hall"
+    ],
+    [
+     "\ud840\udc00",
+     "gate"
+    ],
+    [
+     "lighthouse"
+    ],
+    [
+     "mountain",
+     "village"
+    ]
+   ],
+   "segmentKeys": [
+    "lighthouse",
+    "mountain village",
+    "\ufa0e hall",
+    "\ud840\udc00 gate"
+   ],
+   "gramKeys": [],
+   "keys": [
+    "lighthouse",
+    "mountain village",
+    "\ufa0e hall",
+    "\ud840\udc00 gate"
+   ],
+   "matches": [
+    "lighthouse",
+    "mountain village",
+    "\ufa0e hall",
+    "\ud840\udc00 gate"
+   ]
+  }
+ ]
+}
