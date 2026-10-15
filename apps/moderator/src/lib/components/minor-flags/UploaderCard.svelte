@@ -2,7 +2,7 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS } from '$lib/format';
   import { pastAppealsText } from '$lib/minor-flags/appeal-row';
-  import TriageCard from './TriageCard.svelte';
+  import TriageCard from '$lib/components/triage/TriageCard.svelte';
 
   let {
     row,

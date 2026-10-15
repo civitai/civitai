@@ -1,10 +1,10 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import TriageRow from '$lib/components/minor-flags/TriageRow.svelte';
-  import TriageShell from '$lib/components/minor-flags/TriageShell.svelte';
+  import TriageRow from '$lib/components/triage/TriageRow.svelte';
+  import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { appealFilterParams } from '$lib/minor-flags/appeal-filters';
-  import { formActionHref } from '$lib/minor-flags/appeal-triage';
+  import { formActionHref } from '$lib/triage/queue';
   import { flagInForce } from '$lib/minor-flags/text-scan-verdicts';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import type { AppealQueueData } from '$lib/server/minor-flag-queue';
@@ -66,7 +66,7 @@
   selectionParam="appeal"
   queueLabel="Appeal queue"
   itemLabel="Appeal"
-  canKeep={flagInForce}
+  decisionEnabled={(row) => [flagInForce(row), true]}
   pageNumber={data.page}
   hasMore={data.hasMore}
   offset={data.offset}

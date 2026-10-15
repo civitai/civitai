@@ -8,13 +8,8 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { LINK_CLASS, num } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
-  import {
-    failureMessage,
-    isTypingTarget,
-    nextUndecided,
-    step,
-    triageKeyAction,
-  } from '$lib/minor-flags/appeal-triage';
+  import { isTypingTarget, triageKeyAction } from '$lib/triage/keys';
+  import { failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
 
   type QueueForm = { error?: string; modelId?: number } | null;
@@ -30,11 +25,11 @@
     verdict: string | undefined;
     error: string | undefined;
     /** The enhancer for one action; `outcome` is what the item shows once it is decided. */
-    submit: (outcome: string) => SubmitFunction;
+    submit: (outcome: Outcome) => SubmitFunction;
   };
 
   /**
-   * The master-detail triage both flag queues share: a list on the left, the open item on the right,
+   * The master-detail triage every queue shares: a list on the left, the open item on the right,
    * J/K to move, 1/2 to rule, and the list dimming decided items in place (offsets shift under
    * paging, so the page is only re-cut on request). The queues supply the rows and what they show.
    */
@@ -45,8 +40,11 @@
     selectionParam,
     queueLabel,
     itemLabel,
-    canKeep,
-    canUnflag = () => true,
+    decisionEnabled,
+    decisionActions = ['uphold', 'overturn'],
+    ondecision,
+    pinned = null,
+    current = $bindable(null),
     outcomeFor = (_result, outcome) => outcome,
     pageNumber,
     hasMore,
@@ -66,21 +64,28 @@
     /** Accessible names for the list and detail regions. */
     queueLabel: string;
     itemLabel: string;
-    /** Gate for the "1" shortcut. */
-    canKeep: (row: R) => boolean;
-    /** Gate for the "2" shortcut. */
-    canUnflag?: (row: R) => boolean;
+    /** One entry per decision, in key order: digit `n + 1` picks index `n`. False makes that key a no-op. */
+    decisionEnabled: (row: R) => readonly boolean[];
+    /** The `data-triage-action` of the form each decision key submits, in key order. */
+    decisionActions?: readonly string[];
+    /** Handles a decision key itself instead of submitting that decision's form. */
+    ondecision?: (row: R, index: number) => void;
+    /** A row that is selectable although it is not on this page (a deep link). */
+    pinned?: R | null;
+    /** The key of the open item, for a queue that keeps state per item. */
+    current?: K | null;
     /** Lets a queue relabel a success, e.g. when the main app reports nothing was left to do. */
     outcomeFor?: (result: ActionResult, outcome: string) => string;
     pageNumber: number;
     hasMore: boolean;
     offset: number;
     total?: number;
-    form: QueueForm | undefined;
+    form?: QueueForm | undefined;
     listRow: Snippet<[R, RowState]>;
     detail: Snippet<[R, DetailState]>;
     empty: Snippet;
-    notice?: Snippet;
+    /** `unpicked` is true until the moderator chooses a row, as opposed to defaulting to the first. */
+    notice?: Snippet<[{ unpicked: boolean }]>;
   } = $props();
 
   const keys = $derived(rows.map(rowKey));
@@ -91,8 +96,16 @@
   };
 
   let selectedKey = $state<K | null>(keyInUrl());
-  const selected = $derived(rows.find((r) => rowKey(r) === selectedKey) ?? rows[0]);
+  const pinnedKey = $derived(pinned ? rowKey(pinned) : null);
+  const selected = $derived(
+    rows.find((r) => rowKey(r) === selectedKey) ??
+      (pinned && pinnedKey === selectedKey ? pinned : undefined) ??
+      rows[0]
+  );
   const selectedRowKey = $derived(selected ? rowKey(selected) : null);
+  $effect(() => {
+    current = selectedRowKey;
+  });
 
   // Optimistic outcomes by key; cleared on reload so a mark can't outlive its item.
   const acted = new SvelteMap<K, string>();
@@ -106,7 +119,8 @@
 
   // After a reload the selection may be an item that is gone; null lets the URL mirror follow.
   $effect(() => {
-    if (selectedKey !== null && !keys.includes(selectedKey)) selectedKey = null;
+    if (selectedKey !== null && !keys.includes(selectedKey) && selectedKey !== pinnedKey)
+      selectedKey = null;
   });
 
   // Navigation (filters, search, paging, back) rebuilds the selection from the URL it landed on.
@@ -146,13 +160,15 @@
     document.querySelector<HTMLElement>(`#${rowId(next)} a`)?.focus({ preventScroll: true });
   };
 
-  const submit = (key: K, outcome: string): SubmitFunction => {
-    const decide = optimisticEnhancer(() => {
-      errors.delete(key);
-      acted.set(key, outcome);
-      return () => acted.delete(key);
-    });
+  const submit = (key: K, outcome: Outcome): SubmitFunction => {
     return async (input) => {
+      // Read at submit time, so the label cannot diverge from the decision actually posted.
+      const verdict = typeof outcome === 'string' ? outcome : outcome(input.formData);
+      const decide = optimisticEnhancer(() => {
+        errors.delete(key);
+        acted.set(key, verdict);
+        return () => acted.delete(key);
+      });
       const finish = await decide(input);
       return async (result) => {
         await finish?.(result);
@@ -167,7 +183,7 @@
           }
         } else {
           // A reload mid-flight clears the mark; the decision is final, so put it back.
-          acted.set(key, outcomeFor(result.result, outcome));
+          acted.set(key, outcomeFor(result.result, verdict));
           advance(key);
         }
       };
@@ -183,20 +199,24 @@
       defaultPrevented: e.defaultPrevented,
       isComposing: e.isComposing,
       typing: isTypingTarget(e.target as Element | null),
-      canUphold: !!selected && canKeep(selected),
-      canOverturn: !!selected && canUnflag(selected),
+      decisionEnabled:
+        selected && selectedRowKey !== null && !acted.has(selectedRowKey)
+          ? decisionEnabled(selected)
+          : [],
     });
     if (!action) return;
     e.preventDefault();
     if (action === 'next' || action === 'previous') {
       const to = step(keys, selectedRowKey, action === 'next' ? 1 : -1);
       if (to !== null) select(to);
-    } else if (!e.repeat) {
-      document
-        .querySelector<HTMLFormElement>(
-          `[data-triage-actions] form[data-triage-action="${action}"]`
-        )
-        ?.requestSubmit();
+    } else if (!e.repeat && selected) {
+      if (ondecision) ondecision(selected, action.decision);
+      else
+        document
+          .querySelector<HTMLFormElement>(
+            `[data-triage-actions] form[data-triage-action="${decisionActions[action.decision]}"]`
+          )
+          ?.requestSubmit();
     }
   }
 
@@ -214,7 +234,7 @@
 {#if form?.error && errors.size === 0}
   <ErrorAlert message={form.modelId ? `Model #${form.modelId}: ${form.error}` : form.error} />
 {/if}
-{@render notice?.()}
+{@render notice?.({ unpicked: selectedKey === null })}
 
 <div class="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
   <aside

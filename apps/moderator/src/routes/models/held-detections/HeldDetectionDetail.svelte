@@ -8,8 +8,8 @@
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
-  import TriageCard from '$lib/components/minor-flags/TriageCard.svelte';
-  import TriageDetailFrame from '$lib/components/minor-flags/TriageDetailFrame.svelte';
+  import TriageCard from '$lib/components/triage/TriageCard.svelte';
+  import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import {
