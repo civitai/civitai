@@ -1533,6 +1533,20 @@ describe('the finals gate and dispute resolution', () => {
     expect(await events(id)).not.toContain('DisputeResolved');
   });
 
+  // A crash between the resolution and the payment must leave the refund claimed for the sweep.
+  it('claims the refund in the same transaction that resolves the dispute', async () => {
+    buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(503));
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+    await resolve(id, 'Refund');
+    const [row] = await q<{ same: boolean }>(
+      `SELECT t."createdAt" = d."closedAt" AS same FROM "ServiceDealTransaction" t
+       JOIN "ServiceDeal" d ON d.id = t."dealId" WHERE t."dealId" = $1 AND t.leg = 'Refund'`,
+      [id]
+    );
+    expect(row).toEqual({ same: true });
+  });
+
   it('answers CONFLICT for a deal that is not in dispute', async () => {
     const id = await delivered();
     await expect(resolve(id, 'Refund')).rejects.toEqual(conflict);
