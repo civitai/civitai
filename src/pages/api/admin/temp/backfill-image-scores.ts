@@ -5,8 +5,13 @@ import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
-import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { applyUserScoreUpdates, getScoreMultipliers } from '~/server/jobs/update-user-score';
+import {
+  countSelfImageEngagement,
+  IMAGE_SELF_EXCLUDED_STAMP,
+  imagesScoreWithoutSelf,
+} from '~/server/services/creator-score-self-activity.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { booleanString } from '~/utils/zod-helpers';
@@ -23,7 +28,8 @@ import { booleanString } from '~/utils/zod-helpers';
  * Image-driven, so it scans the slow v2 view ONCE in entityId ranges (~135 range
  * scans) instead of re-querying it per owner (~23k random IN lookups, ~60h). One
  * pass: range-scan v2 for engaged images, roll reactions/comments up per owner in
- * memory, then write each owner's score + total and stamp `imageScoreRecomputedAt`.
+ * memory, then write each owner's score (less their own reactions and comments, as
+ * the cron leaves them out) + total and stamp `imageScoreRecomputedAt`.
  *
  * Defaults to a DRY RUN (scan + count owners, no writes) — pass &dryRun=false to
  * actually write. Run it (drive from the no-timeout dev server, which talks to
@@ -87,7 +93,11 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       return { start: ctx.start, end: max ?? 0 };
     },
     processor: async ({ start, end, cancelFns }) => {
-      const engaged = await clickhouse!.$query<{ imageId: number; reactions: number; comments: number }>(`
+      const engaged = await clickhouse!.$query<{
+        imageId: number;
+        reactions: number;
+        comments: number;
+      }>(`
         SELECT entityId AS imageId,
           sumIf(total, metricType IN (${REACTION_TYPES})) AS reactions,
           sumIf(total, metricType = 'commentCount') AS comments
@@ -151,11 +161,22 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     }
     if (!todo.length) return;
 
+    const self = await countSelfImageEngagement(
+      pgDbReadLong,
+      todo.map(([userId]) => userId),
+      new Date()
+    );
     const records = todo.map(
       ([userId, { reactions, comments }]) =>
         [
           String(userId),
-          { images: reactions * imageMultipliers.reactions + comments * imageMultipliers.comments },
+          {
+            images: imagesScoreWithoutSelf(
+              reactions * imageMultipliers.reactions + comments * imageMultipliers.comments,
+              self.get(userId),
+              imageMultipliers
+            ),
+          },
         ] as [string, { images: number }]
     );
     await applyUserScoreUpdates(pgDbWrite, records);
@@ -163,7 +184,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     await pgDbWrite
       .cancellableQuery(
         `UPDATE "User"
-         SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores,imageScoreRecomputedAt}', to_jsonb($1::text))
+         SET meta = COALESCE(meta, '{}') || jsonb_build_object('scores',
+           COALESCE(meta->'scores', '{}') || jsonb_build_object(
+             'imageScoreRecomputedAt', $1::text, '${IMAGE_SELF_EXCLUDED_STAMP}', $1::text))
          WHERE id = ANY($2::int[])`,
         [stampedAt, todo.map(([userId]) => userId)]
       )
@@ -178,7 +201,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   // the cron can safely sum deltas from there. A partial or resume run must NOT
   // advance the checkpoint (it would skip un-swept owners). Key mirrors the cron's
   // `${jobKey}:${category}` (see getJobDate in server/jobs/job.ts).
-  const fullSweep = params.force && !params.dryRun && params.start === 0 && params.end === undefined;
+  const fullSweep =
+    params.force && !params.dryRun && params.start === 0 && params.end === undefined;
   if (fullSweep) {
     await dbWrite.keyValue.upsert({
       where: { key: 'update-user-score:images' },

@@ -1,6 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getModelScore } from '~/server/jobs/update-user-score';
+import {
+  scoreModelOwners,
+  selfGenerationsByModel,
+  writeSelfGenerations,
+} from '~/server/jobs/update-user-score';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -92,17 +96,20 @@ async function owner(userId: number, row: ModelRow) {
   return addModel(userId, row, { downloads: 100, reviews: 2, generations: 3 });
 }
 
-async function scores() {
+async function scores(options?: Parameters<typeof scoreModelOwners>[1]) {
   const result = new Map<number, number>();
-  await getModelScore({
-    pg,
-    jobContext: { on: () => undefined } as never,
-    scoreMultipliers: {
-      models: { reviews: 10, downloads: 1, generations: 1 },
-    } as never,
-    lastUpdate: CHECKPOINT,
-    setScore: (id, _category, score) => result.set(id, Number(score)),
-  });
+  await scoreModelOwners(
+    {
+      pg,
+      jobContext: { on: () => undefined } as never,
+      scoreMultipliers: {
+        models: { reviews: 10, downloads: 1, generations: 1 },
+      } as never,
+      lastUpdate: CHECKPOINT,
+      setScore: (id, _category, score) => result.set(id, Number(score)),
+    },
+    options
+  );
   return result;
 }
 
@@ -137,10 +144,17 @@ beforeAll(async () => {
     "generationCount" int NOT NULL DEFAULT 0,
     "updatedAt" timestamp(3) NOT NULL
   )`);
+  await q(`CREATE TABLE "ModelSelfGeneration" (
+    "modelId" int NOT NULL,
+    "userId" int NOT NULL,
+    "generationCount" bigint NOT NULL DEFAULT 0,
+    "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+    PRIMARY KEY ("modelId", "userId")
+  )`);
 });
 
 beforeEach(async () => {
-  await q(`TRUNCATE "Model", "ModelMetric"`);
+  await q(`TRUNCATE "Model", "ModelMetric", "ModelSelfGeneration"`);
 });
 
 describe('which statuses count', () => {
@@ -290,6 +304,89 @@ describe('who is re-scored', () => {
     const all = await scores();
     expect(all.has(1)).toBe(true);
     expect(all.get(1)).toBe(0);
+  });
+});
+
+describe("the owner's own generations", () => {
+  const selfRow = (modelId: number, userId: number, generationCount: number) =>
+    q(
+      `INSERT INTO "ModelSelfGeneration" ("modelId", "userId", "generationCount") VALUES ($1, $2, $3)`,
+      [modelId, userId, generationCount]
+    );
+
+  it('leaves out generations the owner made with their own model', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 1, 2);
+    expect((await scores()).get(1)).toBe(ANCHOR + SUBJECT - 2);
+  });
+
+  it('never takes a model below zero generations', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 1, 50);
+    expect((await scores()).get(1)).toBe(ANCHOR + SUBJECT - 3);
+  });
+
+  it('ignores a row for someone who no longer owns the model', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 2, 2);
+    expect((await scores()).get(1)).toBe(ANCHOR + SUBJECT);
+  });
+
+  it('subtracts nothing from a model that does not count', async () => {
+    const modelId = await owner(1, { status: 'UnpublishedViolation' });
+    await selfRow(modelId, 1, 2);
+    expect((await scores()).get(1)).toBe(ANCHOR);
+  });
+
+  it('scores from rows passed in, instead of the table, for a dry run', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 1, 1);
+    const all = await scores({ selfGenerations: [{ modelId, userId: 1, generationCount: 3 }] });
+    expect(all.get(1)).toBe(ANCHOR + SUBJECT - 3);
+  });
+
+  it('re-scores an owner named in alsoRescore whose models did not change', async () => {
+    await owner(1, { status: 'Published', updatedAt: BEFORE });
+    await owner(2, { status: 'Published', updatedAt: BEFORE });
+    const all = await scores({ alsoRescore: [1] });
+    expect(all.get(1)).toBe(ANCHOR + SUBJECT);
+    expect(all.has(2)).toBe(false);
+  });
+
+  it('writeSelfGenerations replaces only the named owners rows', async () => {
+    await selfRow(10, 1, 5);
+    await selfRow(11, 1, 5);
+    await selfRow(12, 2, 5);
+    await writeSelfGenerations(pg, [1], [{ modelId: 10, userId: 1, generationCount: 7 }]);
+    const { rows } = await q(
+      `SELECT "modelId", "userId", "generationCount"::int AS n FROM "ModelSelfGeneration" ORDER BY 1`
+    );
+    expect(rows).toEqual([
+      { modelId: 10, userId: 1, n: 7 },
+      { modelId: 12, userId: 2, n: 5 },
+    ]);
+  });
+});
+
+describe('selfGenerationsByModel', () => {
+  const owners = new Map([
+    [100, { modelId: 1, userId: 7 }],
+    [101, { modelId: 1, userId: 7 }],
+    [200, { modelId: 2, userId: 8 }],
+  ]);
+
+  it("sums a user's images per model, across its versions, only where they own it", () => {
+    expect(
+      selfGenerationsByModel(
+        [
+          { userId: 7, modelVersionId: 100, images: 4 },
+          { userId: 7, modelVersionId: 101, images: '2' as unknown as number },
+          { userId: 7, modelVersionId: 200, images: 9 }, // someone else's model
+          { userId: 7, modelVersionId: 300, images: 9 }, // unknown or injected version
+        ],
+        owners
+      )
+    ).toEqual([{ modelId: 1, userId: 7, generationCount: 6 }]);
   });
 });
 

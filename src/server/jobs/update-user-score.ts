@@ -36,6 +36,7 @@ import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
   creatorJourneyAudience,
 } from '~/server/services/creator-journey-flag.service';
+import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
 import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
@@ -195,10 +196,35 @@ const DELETED_MODEL_COUNTS = `(m.status = 'Deleted'
   END)`;
 export const MODEL_COUNTS_TOWARD_SCORE = `(${LIVE_MODEL_COUNTS} OR ${DELETED_MODEL_COUNTS})`;
 
-export async function getModelScore(
-  ctx: Pick<Context, 'pg' | 'jobContext' | 'scoreMultipliers' | 'lastUpdate' | 'setScore'>
+async function getModelScore(ctx: Context) {
+  const refreshed = await refreshRecentSelfGenerations(ctx);
+  await scoreModelOwners(ctx, { alsoRescore: refreshed });
+}
+
+type SelfGenerationRow = { modelId: number; userId: number; generationCount: number };
+
+/**
+ * The `models` score of every owner whose models changed since `lastUpdate`, plus `alsoRescore`.
+ * `selfGenerations` replaces the stored self-generation table, so a dry run can score rows it has
+ * not written.
+ */
+export async function scoreModelOwners(
+  ctx: Pick<Context, 'pg' | 'jobContext' | 'scoreMultipliers' | 'lastUpdate' | 'setScore'>,
+  {
+    alsoRescore = [],
+    selfGenerations,
+  }: { alsoRescore?: number[]; selfGenerations?: SelfGenerationRow[] } = {}
 ) {
   const { reviews, downloads, generations } = ctx.scoreMultipliers.models;
+  const selfSource = selfGenerations
+    ? `(SELECT * FROM jsonb_to_recordset('${JSON.stringify(
+        selfGenerations.map(({ modelId, userId, generationCount }) => ({
+          modelId: +modelId,
+          userId: +userId,
+          generationCount: +generationCount,
+        }))
+      )}') AS x("modelId" int, "userId" int, "generationCount" bigint))`
+    : `"ModelSelfGeneration"`;
   // A takedown writes `Model`, not `ModelMetric`, so owners whose models changed are re-scored too.
   // Every model of a re-scored owner is summed, so one who no longer has any counting model gets 0.
   await getScores(ctx, 'models')`
@@ -207,23 +233,155 @@ export async function getModelScore(
       UNION
       SELECT "userId" FROM "Model"
       WHERE "updatedAt" > '${ctx.lastUpdate}' OR "deletedAt" > '${ctx.lastUpdate}'
+      UNION
+      SELECT unnest('{${alsoRescore.map(Number).join(',')}}'::int[])
     )
     SELECT
       s."userId",
       (
           COALESCE(SUM(s."thumbsUpCount") FILTER (WHERE s.counts), 0) * ${reviews}
         + COALESCE(SUM(s."downloadCount") FILTER (WHERE s.counts), 0) * ${downloads}
-        + COALESCE(SUM(s."generationCount") FILTER (WHERE s.counts), 0) * ${generations}
+        + COALESCE(SUM(GREATEST(s."generationCount" - s."selfGenerations", 0)) FILTER (WHERE s.counts), 0) * ${generations}
       ) as score
     FROM (
       SELECT mm."userId", mm."thumbsUpCount", mm."downloadCount", mm."generationCount",
+        COALESCE(sg."generationCount", 0) AS "selfGenerations",
         ${MODEL_COUNTS_TOWARD_SCORE} AS counts
       FROM "ModelMetric" mm
       JOIN "Model" m ON m.id = mm."modelId"
+      LEFT JOIN ${selfSource} sg ON sg."modelId" = mm."modelId" AND sg."userId" = m."userId"
       WHERE mm."userId" IN (SELECT "userId" FROM changed)
     ) s
     GROUP BY 1
   `;
+}
+
+// Job rows can reach ClickHouse well after their `createdAt`; a re-read owner is just recounted.
+const SELF_GENERATION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Recounts the self-generations of every owner who generated with one of their own models since
+ * `lastUpdate`, and returns those owners.
+ */
+async function refreshRecentSelfGenerations(ctx: Context) {
+  const since = new Date(ctx.lastUpdate.getTime() - SELF_GENERATION_LOOKBACK_MS);
+  const pairs = await ctx.ch.$query<{ userId: number; modelVersionId: number }>`
+    SELECT DISTINCT userId, r AS modelVersionId
+    FROM orchestration.jobs
+    ARRAY JOIN resourcesUsed AS r
+    WHERE createdAt > ${since} AND length(resourcesUsed) > 0
+  `;
+  const versionOwners = await getVersionOwners(
+    ctx.pg,
+    pairs.map((p) => Number(p.modelVersionId))
+  );
+  const owners = [
+    ...new Set(
+      pairs
+        .filter((p) => versionOwners.get(Number(p.modelVersionId))?.userId === Number(p.userId))
+        .map((p) => Number(p.userId))
+    ),
+  ];
+  for (const batch of chunk(owners, SELF_GENERATION_OWNER_BATCH)) {
+    const rows = await countSelfGenerations(ctx.ch, ctx.pg, batch);
+    await writeSelfGenerations(ctx.pg, batch, rows);
+  }
+  return owners;
+}
+
+// A lifetime count scans all of `orchestration.jobs` whatever the owner count, so keep batches wide.
+export const SELF_GENERATION_OWNER_BATCH = 5000;
+
+const injectedVersionIds = new Set<number>(allInjectableResourceIds);
+
+/** Each version's model and owner, leaving out injected versions, which no score counts. */
+async function getVersionOwners(pg: AugmentedPool, versionIds: number[]) {
+  const owners = new Map<number, { modelId: number; userId: number }>();
+  const ids = [...new Set(versionIds)].filter((id) => id > 0 && !injectedVersionIds.has(id));
+  for (const batch of chunk(ids, 10000)) {
+    const query = await pg.cancellableQuery<{ id: number; modelId: number; userId: number }>(
+      `SELECT mv.id, mv."modelId", m."userId"
+       FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+       WHERE mv.id = ANY($1::int[])`,
+      [batch]
+    );
+    for (const { id, modelId, userId } of await query.result()) owners.set(id, { modelId, userId });
+  }
+  return owners;
+}
+
+/**
+ * Every image each of `ownerIds` generated with their own models, over all time, per model. Counts
+ * images the way `orchestration.daily_resource_generation_counts` (the source of
+ * `ModelMetric.generationCount`) does.
+ */
+export async function countSelfGenerations(
+  ch: CustomClickHouseClient,
+  pg: AugmentedPool,
+  ownerIds: number[]
+): Promise<SelfGenerationRow[]> {
+  if (!ownerIds.length) return [];
+  const generated = await ch.$query<{ userId: number; modelVersionId: number; images: number }>`
+    SELECT userId, r AS modelVersionId, sum(coalesce(blobsCount, 1)) AS images
+    FROM orchestration.jobs
+    ARRAY JOIN resourcesUsed AS r
+    WHERE userId IN (${ownerIds})
+    GROUP BY userId, r
+  `;
+  const versionOwners = await getVersionOwners(
+    pg,
+    generated.map((g) => Number(g.modelVersionId))
+  );
+  return selfGenerationsByModel(generated, versionOwners);
+}
+
+export function selfGenerationsByModel(
+  generated: { userId: number; modelVersionId: number; images: number }[],
+  versionOwners: Map<number, { modelId: number; userId: number }>
+): SelfGenerationRow[] {
+  const byModel = new Map<number, SelfGenerationRow>();
+  for (const { userId, modelVersionId, images } of generated) {
+    const owner = versionOwners.get(Number(modelVersionId));
+    if (!owner || owner.userId !== Number(userId)) continue;
+    const row = byModel.get(owner.modelId) ?? {
+      modelId: owner.modelId,
+      userId: owner.userId,
+      generationCount: 0,
+    };
+    row.generationCount += Number(images);
+    byModel.set(owner.modelId, row);
+  }
+  return [...byModel.values()];
+}
+
+/** Replaces every stored self-generation row of `ownerIds` with `rows`. */
+export async function writeSelfGenerations(
+  pg: AugmentedPool,
+  ownerIds: number[],
+  rows: SelfGenerationRow[]
+) {
+  if (!ownerIds.length) return;
+  const stampedAt = new Date().toISOString();
+  await pg
+    .cancellableQuery(
+      `INSERT INTO "ModelSelfGeneration" ("modelId", "userId", "generationCount", "updatedAt")
+       SELECT * , $4::timestamp FROM unnest($1::int[], $2::int[], $3::bigint[])
+       ON CONFLICT ("modelId", "userId") DO UPDATE
+         SET "generationCount" = EXCLUDED."generationCount", "updatedAt" = EXCLUDED."updatedAt"`,
+      [
+        rows.map((r) => r.modelId),
+        rows.map((r) => r.userId),
+        rows.map((r) => r.generationCount),
+        stampedAt,
+      ]
+    )
+    .then((q) => q.result());
+  await pg
+    .cancellableQuery(
+      `DELETE FROM "ModelSelfGeneration" WHERE "userId" = ANY($1::int[]) AND "updatedAt" < $2::timestamp`,
+      [ownerIds, stampedAt]
+    )
+    .then((q) => q.result());
 }
 
 async function getArticleScore(ctx: Context) {
@@ -256,18 +414,19 @@ async function getArticleScore(ctx: Context) {
 // incident decision — a full recompute (`admin/temp/backfill-image-scores?force=true`)
 // re-establishes the baseline.
 export async function getImageScore(ctx: Context) {
-  // 1. Net engagement delta per image since the checkpoint. `metricValue` is
-  // signed (un-likes / removed comments are negative), so this is the exact change
-  // in each image's reaction/comment totals — no catalog read needed.
+  // 1. Net engagement delta per image and acting user since the checkpoint.
+  // `metricValue` is signed (un-likes / removed comments are negative), so this is
+  // the exact change in each image's reaction/comment totals — no catalog read
+  // needed. The actor is kept so the owner's own engagement can be left out.
   const deltas = await ctx.ch.$query<ImageEngagementDelta>`
-    SELECT entityId AS imageId,
+    SELECT entityId AS imageId, userId,
       sumIf(metricValue, metricType IN ('Like', 'Heart', 'Laugh', 'Cry')) AS dReactions,
       sumIf(metricValue, metricType = 'commentCount') AS dComments
     FROM entityMetricEvents_month
     WHERE entityType = 'Image'
     AND metricType IN ('Like', 'Heart', 'Laugh', 'Cry', 'commentCount')
     AND createdAt > ${ctx.lastUpdate}
-    GROUP BY entityId
+    GROUP BY entityId, userId
     HAVING dReactions != 0 OR dComments != 0
   `;
   if (!deltas.length) return;
@@ -280,7 +439,7 @@ export async function getImageScore(ctx: Context) {
   // accumulator (bounded by affected owners) survives across batches.
   const scoreDeltaByUser = new Map<number, number>();
   for (const batch of chunk(deltas, 10000)) {
-    const ids = batch.map((d) => d.imageId);
+    const ids = [...new Set(batch.map((d) => d.imageId))];
     const query = await ctx.pg.cancellableQuery<{ id: number; userId: number }>(
       `SELECT id, "userId" FROM "Image" WHERE id = ANY($1::int[]) AND "userId" IS NOT NULL`,
       [ids]
@@ -317,7 +476,13 @@ export async function getImageScore(ctx: Context) {
   }
 }
 
-export type ImageEngagementDelta = { imageId: number; dReactions: number; dComments: number };
+export type ImageEngagementDelta = {
+  imageId: number;
+  /** Who reacted or commented. */
+  userId: number;
+  dReactions: number;
+  dComments: number;
+};
 
 // Roll per-image engagement deltas up per owner. Images missing from
 // `ownerByImage` (deleted, or null userId) are dropped — their owner can't be
@@ -328,9 +493,9 @@ export function rollupImageScoreDeltas(
   multipliers: { reactions: number; comments: number }
 ): Map<number, number> {
   const byUser = new Map<number, number>();
-  for (const { imageId, dReactions, dComments } of deltas) {
-    const userId = ownerByImage.get(imageId);
-    if (!userId) continue;
+  for (const { imageId, userId: actorId, dReactions, dComments } of deltas) {
+    const userId = ownerByImage.get(Number(imageId));
+    if (!userId || userId === Number(actorId)) continue;
     const delta =
       Number(dReactions) * multipliers.reactions + Number(dComments) * multipliers.comments;
     byUser.set(userId, (byUser.get(userId) ?? 0) + delta);
