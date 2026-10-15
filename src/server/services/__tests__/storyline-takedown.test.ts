@@ -2,13 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as ReportService from '~/server/services/report.service';
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: vi.fn(),
 }));
+const { mockResolveEntityAppeal } = vi.hoisted(() => ({ mockResolveEntityAppeal: vi.fn() }));
+vi.mock('~/server/services/report.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReportService>()),
+  resolveEntityAppeal: mockResolveEntityAppeal,
+}));
 
-const { setStorylineTakedown, moderateStorylineTitle } = await import(
+const { setStorylineTakedown, moderateStorylineTitle, resolveStorylineTitleAppeal } = await import(
   '~/server/services/storyline.service'
 );
 const { applyStorylineTextScan } = await import('~/server/services/text-scan/actions/storyline');
@@ -243,5 +249,101 @@ describe('a moderator takedown and the title scan', () => {
     }) as never);
     await scan({ poi: false, minor: false, nsfw: NsfwLevel.R });
     expect(row.nsfwLevel).toBe(NsfwLevel.X);
+  });
+});
+
+/** Closes the one open appeal row, as the real `resolveEntityAppeal` claims only a pending appeal. */
+describe('resolving an appeal of a title-scan takedown', () => {
+  let appealOpen: boolean;
+  beforeEach(() => {
+    appealOpen = true;
+    w.appeal.findFirst
+      .mockReset()
+      .mockImplementation((async () => (appealOpen ? { id: 1 } : null)) as never);
+    mockResolveEntityAppeal.mockImplementation(async () => {
+      const claimed = appealOpen ? [{ id: 1 }] : [];
+      appealOpen = false;
+      return claimed;
+    });
+  });
+  const rule = (grant: boolean, reviewedTitle = TITLE) =>
+    resolveStorylineTitleAppeal({ id: ID, grant, reviewedTitle, userId: 99 });
+  const closedAs = () => mockResolveEntityAppeal.mock.calls.map(([arg]) => arg.status);
+
+  it('a grant lifts the takedown, closes the appeal approved, and a rescan of the title keeps it up', async () => {
+    await flaggingScan();
+    await rule(true);
+    expect(state()).toEqual(UP);
+    expect(closedAs()).toEqual(['Approved']);
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ ids: [ID], entityType: 'Storyline', userId: 99 })
+    );
+    await flaggingScan();
+    expect(state()).toEqual(UP);
+  });
+
+  it('a denial leaves it down and closes the appeal rejected', async () => {
+    await flaggingScan();
+    await rule(false);
+    expect(state()).toEqual({ down: true, byScan: true, byModerator: false });
+    expect(closedAs()).toEqual(['Rejected']);
+  });
+
+  it('a second ruling is refused and changes nothing', async () => {
+    await flaggingScan();
+    await rule(false);
+    await expect(rule(true)).rejects.toThrow(/no open appeal/);
+    expect(state()).toEqual({ down: true, byScan: true, byModerator: false });
+    expect(closedAs()).toEqual(['Rejected']);
+  });
+
+  it('a grant for a title edited since is refused, and the appeal stays open', async () => {
+    await flaggingScan();
+    await expect(rule(true, 'The title before the edit')).rejects.toThrow(/title has changed/);
+    expect(state()).toEqual({ down: true, byScan: true, byModerator: false });
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it("a grant is refused while a moderator's takedown holds, a denial still closes it", async () => {
+    await flaggingScan();
+    await takeDown();
+    await expect(rule(true)).rejects.toThrow(/moderator took this storyline down/);
+    expect(state()).toEqual({ down: true, byScan: true, byModerator: true });
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+    await rule(false);
+    expect(state()).toEqual({ down: true, byScan: true, byModerator: true });
+    expect(closedAs()).toEqual(['Rejected']);
+  });
+
+  // The scan's takedown lifted after the appeal was filed, a moderator's still holding.
+  it("a denial closes it when only a moderator's takedown is left", async () => {
+    await flaggingScan();
+    await takeDown();
+    await cleanScan();
+    await rule(false);
+    expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+    expect(closedAs()).toEqual(['Rejected']);
+  });
+
+  it('a ruling another moderator closed first reports that, not success', async () => {
+    await flaggingScan();
+    mockResolveEntityAppeal.mockResolvedValueOnce([]);
+    await expect(rule(false)).rejects.toThrow(/ruled on this appeal first/);
+  });
+
+  // A grant whose lift landed after a rival ruling closed the appeal says the lift happened.
+  it('a grant that lost the race says the takedown was lifted', async () => {
+    await flaggingScan();
+    mockResolveEntityAppeal.mockResolvedValueOnce([]);
+    await expect(rule(true)).rejects.toThrow(/takedown was lifted, but another moderator/);
+    expect(state()).toEqual(UP);
+  });
+
+  it('with nothing left to lift, a grant closes it and a denial is refused', async () => {
+    await expect(rule(false)).rejects.toThrow(/no longer taken down/);
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+    await rule(true);
+    expect(state()).toEqual(UP);
+    expect(closedAs()).toEqual(['Approved']);
   });
 });

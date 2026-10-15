@@ -6624,6 +6624,7 @@ enum EntityType {
   ResourceReview
   ChatMessage
   Model3D
+  Storyline
 }
 
 enum JobQueueType {

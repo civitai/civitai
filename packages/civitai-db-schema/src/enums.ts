@@ -905,6 +905,7 @@ export const EntityType = {
   ResourceReview: 'ResourceReview',
   ChatMessage: 'ChatMessage',
   Model3D: 'Model3D',
+  Storyline: 'Storyline',
 } as const;
 
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];

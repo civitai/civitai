@@ -3659,3 +3659,46 @@ describe('the title scan’s minor finding, beyond the scan', () => {
     });
   });
 });
+
+describe('getStoryline — title appeal', () => {
+  const page = (
+    takedown: Record<string, boolean>,
+    viewer: { id: number; isModerator?: boolean }
+  ) => {
+    r.storyline.findUnique.mockResolvedValue({
+      ...storylineRow({ tosViolation: true, ...takedown }),
+      collaborators: [],
+    } as never);
+    r.$queryRaw.mockResolvedValue([] as never);
+    r.user.findMany.mockResolvedValue([] as never);
+    r.post.findMany.mockResolvedValue([] as never);
+    return getStoryline({ id: 10, viewer, browsingLevel: NsfwLevel.PG });
+  };
+  const byScan = { tosViolationByScan: true, tosViolationByModerator: false };
+  const lastAppeal = { id: 4, status: 'Rejected', resolvedAt: new Date('2026-10-02') };
+
+  beforeEach(() => {
+    r.appeal.findFirst.mockReset().mockResolvedValue(lastAppeal as never);
+  });
+
+  it("offers the owner an appeal of the scan's takedown, with their last one", async () => {
+    const asOwner = await page(byScan, { id: OWNER });
+    expect(asOwner).toMatchObject({ titleAppealable: true, titleAppeal: lastAppeal });
+    expect(r.appeal.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { entityType: 'Storyline', entityId: 10, userId: OWNER } })
+    );
+    for (const field of ['tosViolationByScan', 'tosViolationByModerator'])
+      expect(asOwner).not.toHaveProperty(field);
+  });
+
+  it("offers none to a moderator viewing it, nor over a moderator's takedown", async () => {
+    await expect(page(byScan, { id: MODERATOR, isModerator: true })).resolves.toMatchObject({
+      titleAppealable: false,
+      titleAppeal: null,
+    });
+    await expect(
+      page({ ...byScan, tosViolationByModerator: true }, { id: OWNER })
+    ).resolves.toMatchObject({ titleAppealable: false, titleAppeal: null });
+    expect(r.appeal.findFirst).not.toHaveBeenCalled();
+  });
+});

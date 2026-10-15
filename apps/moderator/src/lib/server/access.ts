@@ -119,6 +119,11 @@ export const NAVIGATION: NavLink[] = [
     children: [{ path: '/bounties/poi-appeals', label: 'Real-Person Appeals' }],
   },
   {
+    label: 'Storylines',
+    path: '/storylines',
+    children: [{ path: '/storylines/title-appeals', label: 'Title Appeals' }],
+  },
+  {
     label: 'Articles',
     path: '/articles',
     children: [

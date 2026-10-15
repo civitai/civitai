@@ -215,6 +215,7 @@ export type ModEndpoint =
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
+  | 'storyline/resolve-title-appeal'
   | 'strike/create'
   | 'text-scan'
   | 'training-data/resolve'

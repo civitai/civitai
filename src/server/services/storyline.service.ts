@@ -21,6 +21,8 @@ import {
   notifyStorylineTitleModerated,
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
+import { getStorylineAppealRefusal } from '~/shared/utils/appeal';
 import { logToAxiom } from '~/server/logging/client';
 import {
   getAllHiddenForUser,
@@ -53,6 +55,7 @@ import {
   toStorylineForkShares,
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import {
   allBrowsingLevelsFlag,
@@ -724,6 +727,64 @@ export async function setStorylineTakedown({ id, takenDown }: { id: number; take
 }
 
 /**
+ * Rules on the owner's appeal of a title-scan takedown. A grant lifts it for `reviewedTitle`, the
+ * title the moderator saw; a title edited since is refused and the appeal stays open. A grant is
+ * refused while a moderator's takedown holds (it would leave the storyline down), and a denial
+ * while nothing holds one (it would tell the owner a takedown stands that does not).
+ */
+export async function resolveStorylineTitleAppeal({
+  id,
+  grant,
+  reviewedTitle,
+  userId,
+}: {
+  id: number;
+  grant: boolean;
+  reviewedTitle: string;
+  userId: number;
+}) {
+  const appeal = await dbWrite.appeal.findFirst({
+    where: {
+      entityType: EntityType.Storyline,
+      entityId: id,
+      status: AppealStatus.Pending,
+      entityRemovedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!appeal) throw throwBadRequestError('This storyline has no open appeal');
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id },
+    select: { ...storylineTakedownSelect },
+  });
+  if (!storyline) throw throwNotFoundError('Storyline not found');
+  if (grant && storyline.tosViolationByModerator)
+    throw throwBadRequestError(
+      'A moderator took this storyline down too. Restore that first to grant the appeal'
+    );
+  if (!grant && !storyline.tosViolationByScan && !storyline.tosViolationByModerator)
+    throw throwBadRequestError('This storyline is no longer taken down');
+  // With nothing left to lift (an edited title rescanned clean, or a lift elsewhere), a grant only
+  // closes the appeal.
+  const lifted = grant && storyline.tosViolationByScan;
+  if (lifted) await moderateStorylineTitle({ id, liftScanTakedown: { reviewedTitle } });
+
+  const closed = await resolveEntityAppeal({
+    ids: [id],
+    entityType: EntityType.Storyline,
+    status: grant ? AppealStatus.Approved : AppealStatus.Rejected,
+    userId,
+  });
+  if (!closed.length)
+    throw throwBadRequestError(
+      lifted
+        ? 'The takedown was lifted, but another moderator had already ruled on this appeal'
+        : 'Another moderator ruled on this appeal first'
+    );
+  return { granted: grant };
+}
+
+/**
  * The cover and banner may only be images from this storyline's chapters written by its owner or
  * by an endorsed collaborator (the endorsement is their consent), not from removed chapters, and
  * rated within the ceiling. Anything else is refused, whatever the client offered.
@@ -979,6 +1040,8 @@ export async function getStoryline({
     select: {
       ...storylineReadSelect,
       ...storylinePicksSelect,
+      tosViolationByScan: true,
+      tosViolationByModerator: true,
       user: { select: castUserSelect },
       collaborators: {
         select: { user: { select: castUserSelect } },
@@ -1067,8 +1130,15 @@ export async function getStoryline({
     [...authors, ...castCounts].map((row) => [row.userId, row.chapterCount])
   );
   const chaptersBy = (userId: number) => chapterCountById.get(userId) ?? 0;
+  const titleAppealable = viewer?.id === storyline.userId && !getStorylineAppealRefusal(storyline);
+  const titleAppeal =
+    titleAppealable && viewer
+      ? await getLatestAppeal({ entityType: EntityType.Storyline, entityId: id, userId: viewer.id })
+      : null;
 
   const {
+    tosViolationByScan: _tosViolationByScan,
+    tosViolationByModerator: _tosViolationByModerator,
     chapters: _chapters,
     collaborators: _collaborators,
     user,
@@ -1102,6 +1172,8 @@ export async function getStoryline({
     // The raw picks, for the owner's picker only.
     coverImageId: isOwnerView ? coverImageId : null,
     heroImageId: isOwnerView ? heroImageId : null,
+    titleAppealable,
+    titleAppeal,
     rootChapterId: root?.id ?? null,
     // Chapter 1's post id, whatever this reader may see of it: for the discussion thread, not a
     // cover. Take a cover from the reading path, which tombstones chapter 1 where it must.

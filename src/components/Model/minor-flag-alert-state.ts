@@ -27,6 +27,7 @@ export const FLAG_ALERT_MESSAGES = {
   modelPoi:
     'Your model has been marked as depicting a real person and restricted to SFW generation.',
   bountyPoi: 'Your bounty has been hidden because it appears to depict a real person.',
+  storylineTitle: 'Your storyline has been hidden from other people because of its title.',
 } as const;
 
 // Minor is the stricter restriction, so it names the alert when both are set.
