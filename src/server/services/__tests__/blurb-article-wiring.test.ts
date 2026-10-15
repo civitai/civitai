@@ -66,7 +66,11 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
   };
 });
 
-import { applyArticleContentChange, upsertArticle } from '~/server/services/article.service';
+import {
+  applyArticleContentChange,
+  rescanArticle,
+  upsertArticle,
+} from '~/server/services/article.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 
 const ARTICLE_ID = 21;
@@ -396,8 +400,10 @@ describe('article text scan — public content only', () => {
 
     await upsert({ status: saved.status });
 
-    expect(submitTextModerationOrScan).toHaveBeenCalledTimes(1);
-    expect(submitTextModerationOrScan).toHaveBeenCalledWith(
+    expect(submitTextModerationOrScan).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID })
+    );
+    expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID })
     );
   });
@@ -421,6 +427,9 @@ describe('article text scan — public content only', () => {
     await upsert({ id: undefined, status: 'Published' });
 
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'Article', entityId: CREATED_ID })
+    );
+    expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ entityType: 'Article', entityId: CREATED_ID })
     );
   });
@@ -495,5 +504,34 @@ describe('article text scan — public content only', () => {
     await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
 
     expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+  });
+});
+
+describe('rescanArticle — public content only', () => {
+  const storeAs = (state: { status: string; scheduledAt: Date | null }) => {
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+  };
+
+  it('does not rescan a draft, on either path', async () => {
+    storeAs({ status: 'Draft', scheduledAt: null });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  it('force-rescans a published article on both paths', async () => {
+    storeAs({ status: 'Published', scheduledAt: null });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(submitTextModerationOrScan).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID, force: true })
+    );
+    expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID, forceRescan: true })
+    );
   });
 });

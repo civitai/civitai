@@ -55,6 +55,24 @@ describe('articleModerationAdapter — text scan', () => {
       TEXT_SCAN_ENTITY_NOT_PUBLIC
     );
     expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['processing', { status: 'Processing', scheduledAt: null }],
+    ['scheduled', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
+    // A deleted article is left to the route, which reports it gone so the cron drops the row.
+    ['missing', null],
+  ])('submits a %s article on retry', async (_name, row) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(row);
+    vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
+
+    expect(await articleModerationAdapter.submit({ entityId: 4, content: 'T body' })).toEqual({
+      id: 'wf',
+    });
+    expect(submitTextModerationOrScan).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: 4, fromRetry: true })
+    );
   });
 
   it('applies the floor, then advances ingestion', async () => {

@@ -1,12 +1,10 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
-import { isPublicModel } from '~/server/services/text-scan/public-content';
+import { isPublicModel, PUBLIC_MODEL_STATUSES } from '~/server/services/text-scan/public-content';
 import type { TextScanSubject } from '~/server/services/text-scan/types';
-import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { removeTags } from '~/utils/string-helpers';
-
-const PUBLIC_STATUSES = [ModelStatus.Published, ModelStatus.Scheduled];
 
 /**
  * Shared with the `ModelRules` profile, so both scans read the same model text. `publicOnly` loads
@@ -30,14 +28,14 @@ export async function loadModelScanSubjects(
     prePublish?: { versionIds: number[] };
   } = {}
 ): Promise<Map<number, TextScanSubject>> {
-  const publicVersions = { status: { in: PUBLIC_STATUSES } };
+  const publicVersions = { status: { in: PUBLIC_MODEL_STATUSES } };
   const rows = await dbWrite.model.findMany({
     where: {
       id: { in: ids },
       ...(prePublish ? {} : { deletedAt: null }),
       ...(publicOnly && !prePublish
         ? {
-            status: { in: PUBLIC_STATUSES },
+            status: { in: PUBLIC_MODEL_STATUSES },
             availability: { not: Availability.Private },
           }
         : {}),

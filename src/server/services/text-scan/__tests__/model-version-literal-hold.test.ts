@@ -149,12 +149,15 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     expect(unpublishLiveModelForLiteralRules).not.toHaveBeenCalled();
     expect(result).toMatchObject({ held: false });
     expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: true });
   });
 
   it('never checks a moderator', async () => {
     await call({ isModerator: true });
     expect(checkModelRulesLiteralHold).not.toHaveBeenCalled();
     expect(unpublishLiveModelForLiteralRules).not.toHaveBeenCalled();
+    // The content scan still runs; only the rules scan skips a moderator.
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: false });
   });
 
   it('counts a Scheduled model as live', async () => {

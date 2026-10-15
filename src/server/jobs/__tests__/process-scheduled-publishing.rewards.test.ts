@@ -446,7 +446,13 @@ describe('processScheduledPublishing :: scheduled articles', () => {
   it('scans the articles it takes live or into processing', async () => {
     mockPublishDueArticles.mockResolvedValueOnce({ published: [1], processing: [2], failed: [3] });
     await runJob();
-    expect(mockScanEntitiesInBackground).toHaveBeenCalledWith('Article', [1, 2]);
+    expect(mockScanEntitiesInBackground).toHaveBeenCalledExactlyOnceWith('Article', [1, 2]);
+  });
+
+  it('scans nothing when no article went live or into processing', async () => {
+    mockPublishDueArticles.mockResolvedValueOnce({ published: [], processing: [], failed: [3] });
+    await runJob();
+    expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });
 
   it('still records the run when the article go-live throws', async () => {
@@ -456,5 +462,6 @@ describe('processScheduledPublishing :: scheduled articles', () => {
       expect.objectContaining({ type: 'error', message: 'scheduled article go-live failed' })
     );
     expect(mockSetLastRun).toHaveBeenCalled();
+    expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });
 });

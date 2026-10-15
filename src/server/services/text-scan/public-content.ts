@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { ArticleStatus, Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 
 // Scheduled counts as public so the verdict exists by the time the content goes live.
-const PUBLIC_MODEL_STATUSES: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
+export const PUBLIC_MODEL_STATUSES: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
 
 export const PUBLIC_MODEL_WHERE = {
   deletedAt: null,

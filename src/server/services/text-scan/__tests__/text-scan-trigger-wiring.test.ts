@@ -120,12 +120,6 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     1,
   ],
   [
-    'src/server/controllers/model-version.controller.ts',
-    'export const publishModelVersionHandler',
-    'scanModelAndRules(updatedVersion.modelId, { rules: !ctx.user.isModerator })',
-    1,
-  ],
-  [
     'src/server/services/model.service.ts',
     'export const publishPrivateModel',
     'if (publishVersions && enforceModelRules) scanModelRules(modelId)',
@@ -153,7 +147,7 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     'src/server/jobs/process-scheduled-publishing.ts',
     'export const processScheduledPublishing',
     'scanEntitiesInBackground(',
-    1,
+    2,
   ],
   [
     'src/server/services/blocks/block-post.service.ts',

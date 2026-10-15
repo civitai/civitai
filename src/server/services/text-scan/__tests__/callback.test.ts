@@ -832,15 +832,20 @@ describe('handleTextScanCallback with some segments unusable', () => {
     expect(adapter.applyFailure).toHaveBeenCalled();
   });
 
-  it('raises nothing for a subject no longer public', async () => {
-    findUnique.mockResolvedValue(stored() as any);
+  it('raises nothing for a subject no longer public, keeping the stored verdict', async () => {
+    const row = fakeRow(stored());
     load.mockResolvedValue(
       new Map([[7, { fields: [], declared: { nsfwLevel: 1 }, notPublic: true }]])
     );
     vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(updateMany).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
+    expect(row).toMatchObject({
+      status: 'Failed',
+      nsfwLevel: stored().nsfwLevel,
+      triggeredLabels: stored().triggeredLabels,
+      result: stored().result,
+    });
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
   });
 
