@@ -71,6 +71,8 @@ dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw
   pgliteRaw(holder.db).executeRaw(...a)) as never);
 dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
   pgliteRaw(holder.db).queryRaw(...a)) as never);
+dbMock.dbRead.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
+  pgliteRaw(holder.db).queryRaw(...a)) as never);
 dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
   holder.db.transaction((tx) => fn(bridge(tx)))) as never);
 
@@ -179,6 +181,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // clearAllMocks keeps a queued *Once; a test that fails early would leak it into the next.
+  for (const fn of Object.values(buzz)) fn.mockReset();
   locks.available = true;
   locks.held.clear();
   buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged());
@@ -248,6 +252,20 @@ describe('request', () => {
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
+  it('refuses a second unanswered request from the same buyer, so a doubled submit holds once', async () => {
+    await request();
+    await expect(request()).rejects.toEqual(conflict);
+    expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    // Another buyer, or the same buyer once the first is answered, is unaffected.
+    await request({ buyerId: STRANGER });
+    const [{ id }] = await q<{ id: number }>(`SELECT id FROM "ServiceDeal" WHERE "buyerId" = $1`, [
+      BUYER,
+    ]);
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+    await request();
+    expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(3);
+  });
+
   it('holds the price the offering has when requested, not one changed afterwards', async () => {
     const { id } = await request();
     await q(`UPDATE "ServiceOffering" SET price = 9999`);
@@ -315,9 +333,9 @@ describe('request', () => {
 });
 
 describe('a hold whose outcome is unknown', () => {
-  const unknownHold = async () => {
+  const unknownHold = async (buyerId = BUYER) => {
     buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
-    const result = await request();
+    const result = await request({ buyerId });
     expect(result.held).toBe(false);
     return result.id;
   };
@@ -409,14 +427,14 @@ describe('a hold whose outcome is unknown', () => {
 
   it('rotates the batch, so holds that keep finding nothing cannot starve one that landed', async () => {
     const first = await unknownHold();
-    const second = await unknownHold();
+    const second = await unknownHold(STRANGER);
     await ageHoldLeg(first, 12);
     await ageHoldLeg(second, 11);
     await deals.withdrawServiceDeal({ dealId: first, userId: BUYER });
     await escrow.reconcileUnconfirmedHolds({ limit: 1 });
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
       {
-        accountId: BUYER,
+        accountId: STRANGER,
         amount: PRICE,
         transactionId: 't',
         externalTransactionId: 'x',
@@ -497,7 +515,7 @@ describe('closing with a refund', () => {
 
   it('expires a request after 48 hours, and not before', async () => {
     const fresh = (await request()).id;
-    const stale = (await request()).id;
+    const stale = (await request({ buyerId: STRANGER })).id;
     await age(fresh, 'requestedAt', 47);
     await age(stale, 'requestedAt', 49);
     expect(await deals.expireServiceDeals()).toMatchObject({ moved: 1 });
@@ -797,7 +815,7 @@ describe('cancellation requests', () => {
 describe('open deals per offering', () => {
   it('counts only open deals, by the same definition the cap uses', async () => {
     const open = (await request()).id;
-    const closed = (await request()).id;
+    const closed = (await request({ buyerId: STRANGER })).id;
     await deals.declineServiceDeal({ dealId: closed, userId: SELLER });
     expect(open).toBeDefined();
     expect(await deals.countOpenDealsByOffering([1, 2])).toEqual(new Map([[1, 1]]));

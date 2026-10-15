@@ -56,10 +56,15 @@ export const creatorServiceDealRouter = router({
     .mutation(({ input, ctx }) =>
       done(input.id, acceptServiceDeal({ dealId: input.id, userId: ctx.user.id }))
     ),
-  listMine: protectedProcedure
-    .use(isFlagProtected('creatorServices'))
-    .input(listMyServiceDealsSchema)
-    .query(({ input, ctx }) => listMyServiceDeals({ ...input, userId: ctx.user.id })),
+  // An exit too: with the flag off a party must still find their open deals to leave them, so
+  // only the closed history is gated.
+  listMine: protectedProcedure.input(listMyServiceDealsSchema).query(({ input, ctx }) =>
+    listMyServiceDeals({
+      ...input,
+      status: ctx.features?.creatorServices ? input.status : 'open',
+      userId: ctx.user.id,
+    })
+  ),
 
   get: protectedProcedure.input(getServiceDealSchema).query(({ input, ctx }) =>
     getServiceDealView({

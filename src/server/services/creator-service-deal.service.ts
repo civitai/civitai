@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
@@ -217,6 +217,13 @@ export async function requestServiceDeal({
         AND o."status" = 'Active'::"ServiceOfferingStatus"
         AND o."price" = ${expectedPrice}::int
         AND o."sellerId" <> ${buyerId}::int
+        -- One unanswered request per buyer per offering: a retried or doubled submit must not
+        -- become a second deal and a second hold. Race-free under the offering lock above.
+        AND NOT EXISTS (
+          SELECT 1 FROM "ServiceDeal" p
+          WHERE p."offeringId" = o."id" AND p."buyerId" = ${buyerId}::int
+            AND p."status" = 'Requested'::"ServiceDealStatus"
+        )
         AND ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)}
         AND (o."maxOpenDeals" IS NULL OR o."maxOpenDeals" > (
           SELECT count(*) FROM "ServiceDeal" d WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})
@@ -591,7 +598,9 @@ const dealUserSelect = { id: true, username: true, image: true } as const;
 /** Open deals per offering, by the same definition `requestServiceDeal` enforces the cap with. */
 export async function countOpenDealsByOffering(offeringIds: number[]) {
   if (!offeringIds.length) return new Map<number, number>();
-  const rows = await dbWrite.$queryRaw<{ offeringId: number; open: number }[]>`
+  // The replica: this feeds a public storefront count. `requestServiceDeal` enforces the cap on
+  // the primary.
+  const rows = await dbRead.$queryRaw<{ offeringId: number; open: number }[]>`
     SELECT "offeringId", count(*)::int AS "open" FROM "ServiceDeal"
     WHERE "offeringId" IN (${Prisma.join(offeringIds.map((id) => Prisma.sql`${id}::int`))})
       AND "status" IN (${OPEN})
