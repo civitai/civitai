@@ -20,6 +20,10 @@ import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
+import {
+  SANDBOX_SERVER_ID,
+  createAssistantGate,
+} from '~/components/Apps/AppAssistant/assistantGate';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
 import {
   AssistantTokenError,
@@ -40,6 +44,8 @@ import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
 
 const NO_MCP_SERVERS: ChatMcpServer[] = [];
+/** The sandbox's tools are added only once it runs, so a message sent before then would go without them. */
+export const SANDBOX_STARTING_HOLD = 'The sandbox is starting…';
 
 function EnableCard({
   onEnable,
@@ -143,9 +149,13 @@ export function AppAssistantWorkspace({
     stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
 
+  const gate = useMemo(() => createAssistantGate(), []);
+  // What was verified belongs to the sandbox it was verified in.
+  useEffect(() => gate.reset(), [activeName, gate]);
+
   const tools = useMemo(
-    () =>
-      createPreviewTools({
+    () => ({
+      ...createPreviewTools({
         canPreview,
         currentSandbox: () => live.current.active?.name ?? null,
         defaultBlockId: () => {
@@ -161,7 +171,9 @@ export function AppAssistantWorkspace({
           if (next) setTab('preview');
         },
       }),
-    [canPreview]
+      ...gate.tools,
+    }),
+    [canPreview, gate]
   );
 
   const instructions = useCallback(
@@ -184,7 +196,7 @@ export function AppAssistantWorkspace({
       mcpUrl
         ? [
             {
-              id: 'sandbox',
+              id: SANDBOX_SERVER_ID,
               url: mcpUrl,
               label: 'Sandbox',
               token: () => tokens.getToken({ purpose: 'sandbox' }),
@@ -338,6 +350,9 @@ export function AppAssistantWorkspace({
             tools={tools}
             instructions={instructions}
             mcpServers={mcpServers}
+            holdReason={active?.state === 'starting' ? SANDBOX_STARTING_HOLD : undefined}
+            beforeToolCall={gate.beforeToolCall}
+            onToolResult={gate.onToolResult}
           />
         </Paper>
         <Paper

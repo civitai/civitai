@@ -22,12 +22,25 @@ const { getMyRemovedImages, REMOVED_IMAGES_LIMIT } = await import(
   '~/server/services/creator-removed-images.service'
 );
 const { getReportAgainstScore } = await import('~/server/jobs/update-user-score');
-const { removalsQuery } = await import('~/server/services/creator-removals.service');
+const { removalsQuery, withoutReversed } = await import(
+  '~/server/services/creator-removals.service'
+);
+const { findPolicyChangeRemovals, insertRemovalScoreExemptions } = await import(
+  '~/server/services/removal-score-exemption.service'
+);
+
+// The pg pool interface over the same PGlite database.
+const pg = {
+  cancellableQuery: async (sql: string, params?: unknown[]) => ({
+    result: async () => (await holder.db.query(sql, params)).rows,
+  }),
+} as never;
 
 const OWNER = 42;
 const OTHER = 43; // whose only removal was reversed on appeal since the last run
 const RESTORED_OWNER = 44; // whose only removal a restore event reversed since the last run
 const SETTLED = 45; // whose removal was reversed on appeal before the last run, nothing since
+const EXEMPT_OWNER = 46;
 const REMOVED_AT = 1_700_000_000;
 const LAST_RUN = REMOVED_AT + 86_400;
 const at = (seconds: number) =>
@@ -38,6 +51,9 @@ const RESTORED = 1; // removal reversed by an approved appeal
 const STILL_REMOVED = 2; // no appeal
 const REJECTED = 3; // appeal rejected
 const REMOVED_AGAIN = 4; // approved, then removed again later
+const EXEMPT = 7;
+const REMOVED_AFTER_EXEMPTION = 8;
+const POI_VERSION = 500;
 const removals = [
   { ownerId: OWNER, imageId: REMOVED_AGAIN, removedAt: REMOVED_AT + 7200 },
   { ownerId: OWNER, imageId: RESTORED, removedAt: REMOVED_AT },
@@ -45,6 +61,8 @@ const removals = [
   { ownerId: OWNER, imageId: REJECTED, removedAt: REMOVED_AT },
   { ownerId: OTHER, imageId: 5, removedAt: REMOVED_AT },
   { ownerId: SETTLED, imageId: 6, removedAt: REMOVED_AT },
+  { ownerId: EXEMPT_OWNER, imageId: EXEMPT, removedAt: REMOVED_AT },
+  { ownerId: EXEMPT_OWNER, imageId: REMOVED_AFTER_EXEMPTION, removedAt: LAST_RUN + 120 },
 ];
 const ownRemovals = removals.filter((r) => r.ownerId === OWNER);
 
@@ -62,6 +80,14 @@ beforeAll(async () => {
       "entityId" integer NOT NULL, "status" "AppealStatus" NOT NULL DEFAULT 'Pending',
       "resolvedAt" timestamp(3)
     );
+    CREATE TABLE "RemovalScoreExemption" (
+      "imageId" integer PRIMARY KEY, "reason" text NOT NULL,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(), "createdBy" integer
+    );
+    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "poi" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ModelVersion" ("id" integer PRIMARY KEY, "modelId" integer NOT NULL);
+    INSERT INTO "Model" (id, poi) VALUES (1, true), (2, false);
+    INSERT INTO "ModelVersion" (id, "modelId") VALUES (${POI_VERSION}, 1), (501, 2);
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" ("id" serial PRIMARY KEY, "reason" text NOT NULL);
     CREATE TABLE "UserReport" ("userId" integer NOT NULL, "reportId" integer NOT NULL);
@@ -69,7 +95,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "Appeal"`);
+  await holder.db.exec(`TRUNCATE "Image", "Appeal", "RemovalScoreExemption"`);
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (${RESTORED}, ${OWNER}, NULL),
@@ -77,13 +103,18 @@ beforeEach(async () => {
       (${REJECTED}, ${OWNER}, 'moderated'),
       (${REMOVED_AGAIN}, ${OWNER}, 'moderated'),
       (5, ${OTHER}, NULL),
-      (6, ${SETTLED}, NULL);
+      (6, ${SETTLED}, NULL),
+      (${EXEMPT}, ${EXEMPT_OWNER}, NULL),
+      (${REMOVED_AFTER_EXEMPTION}, ${EXEMPT_OWNER}, NULL);
     INSERT INTO "Appeal" ("userId", "entityType", "entityId", status, "resolvedAt") VALUES
       (${OWNER}, 'Image', ${RESTORED}, 'Approved', '${at(REMOVED_AT + 3600)}'),
       (${OWNER}, 'Image', ${REJECTED}, 'Rejected', '${at(REMOVED_AT + 3600)}'),
       (${OWNER}, 'Image', ${REMOVED_AGAIN}, 'Approved', '${at(REMOVED_AT + 3600)}'),
       (${OTHER}, 'Image', 5, 'Approved', '${at(LAST_RUN + 60)}'),
       (${SETTLED}, 'Image', 6, 'Approved', '${at(REMOVED_AT + 3600)}');
+    INSERT INTO "RemovalScoreExemption" ("imageId", reason, "createdAt") VALUES
+      (${EXEMPT}, 'test', '${at(LAST_RUN + 60)}'),
+      (${REMOVED_AFTER_EXEMPTION}, 'test', '${at(REMOVED_AT + 3600)}');
   `);
   holder.chQuery.mockReset();
   holder.chQuery.mockResolvedValue({ json: async () => ownRemovals });
@@ -178,6 +209,75 @@ async function scoreRun() {
   return scores;
 }
 
+describe('a removal score exemption', () => {
+  it('leaves an exempted removal off the list, and keeps one made after the exemption', async () => {
+    const own = removals.filter((r) => r.ownerId === EXEMPT_OWNER);
+    holder.chQuery.mockResolvedValue({ json: async () => own });
+
+    const result = await getMyRemovedImages(EXEMPT_OWNER);
+
+    expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AFTER_EXEMPTION]);
+  });
+
+  it('covers a removal made in the same instant as the exemption, and not one a second later', async () => {
+    await holder.db.exec(
+      `INSERT INTO "RemovalScoreExemption" ("imageId", reason, "createdAt") VALUES (20, 'test', '${at(
+        REMOVED_AT
+      )}')`
+    );
+    const removal = (removedAt: number) => [{ ownerId: EXEMPT_OWNER, imageId: 20, removedAt }];
+
+    expect(await withoutReversed(removal(REMOVED_AT))).toEqual([]);
+    expect(await withoutReversed(removal(REMOVED_AT + 1))).toHaveLength(1);
+  });
+
+  it('inserts each image once, keeping the reason of an earlier run', async () => {
+    const inserted = await insertRemovalScoreExemptions(pg, [EXEMPT, 30], 'second run', 7);
+
+    expect(inserted).toBe(1);
+    const rows = await holder.db.query<{ imageId: number; reason: string; createdBy: number }>(
+      `SELECT "imageId", reason, "createdBy" FROM "RemovalScoreExemption" WHERE "imageId" IN (${EXEMPT}, 30) ORDER BY 1`
+    );
+    expect(rows.rows).toEqual([
+      { imageId: EXEMPT, reason: 'test', createdBy: null },
+      { imageId: 30, reason: 'second run', createdBy: 7 },
+    ]);
+  });
+
+  it('does not propose an image already exempted, even one removed again since', async () => {
+    const policy = {
+      cutoff: new Date(0),
+      maxImageId: 100,
+      ratings: ['None' as const],
+      requireFirstRemovalAfterCutoff: true,
+    };
+    const history = (imageId: number, removedAt: number, resourceIds: number[] = []) => ({
+      ownerId: EXEMPT_OWNER,
+      imageId,
+      removedAt,
+      firstRemovedAt: removedAt,
+      firstNsfw: 'None',
+      firstReason: resourceIds.length ? '' : 'poi',
+      lastReason: resourceIds.length ? '' : 'poi',
+      resourceIds,
+      minorRemovals: 0,
+    });
+    const ch = {
+      $query: vi.fn(async () => [
+        history(EXEMPT, REMOVED_AT),
+        history(REMOVED_AFTER_EXEMPTION, LAST_RUN + 120),
+        history(9, REMOVED_AT),
+        history(10, REMOVED_AT, [POI_VERSION]), // made with a POI model's version
+        history(11, REMOVED_AT, [501]), // made with another model's version
+      ]),
+    };
+
+    const found = await findPolicyChangeRemovals(ch as never, pg, policy);
+
+    expect(found.map((r) => r.imageId)).toEqual([9, 10]);
+  });
+});
+
 describe('the Removed content score', () => {
   it('counts every removal but the one an approved appeal reversed', async () => {
     // Still removed, appeal rejected, and removed again after an approval: three of the four.
@@ -193,7 +293,16 @@ describe('the Removed content score', () => {
   });
 
   it('re-scores only owners with a removal or a reversal since the last run', async () => {
-    expect([...(await scoreRun()).keys()].sort()).toEqual([OWNER, OTHER, RESTORED_OWNER]);
+    expect([...(await scoreRun()).keys()].sort()).toEqual([
+      OWNER,
+      OTHER,
+      RESTORED_OWNER,
+      EXEMPT_OWNER,
+    ]);
+  });
+
+  it('re-scores an owner exempted since the last run, counting only the removal made after its exemption', async () => {
+    expect((await scoreRun()).get(EXEMPT_OWNER)).toBe(-1000);
   });
 
   it('reads approvals from the primary, not a lagging replica, to pick owners and to count', async () => {

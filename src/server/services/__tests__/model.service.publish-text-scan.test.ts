@@ -18,6 +18,8 @@ const { mockTx } = vi.hoisted(() => ({
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntitiesInBackground: vi.fn(),
+  scanEntityInBackground: vi.fn(),
+  scanModelRules: vi.fn(),
 }));
 vi.mock('~/server/services/model-moderation.adapter', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelModerationAdapter>()),
@@ -98,7 +100,17 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import { publishModelById, publishPrivateModel } from '~/server/services/model.service';
-import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
+import {
+  scanEntitiesInBackground,
+  scanEntityInBackground,
+  scanModelRules,
+} from '~/server/services/text-scan/submit';
+
+// Counts ModelRules scans however they are queued.
+const modelRulesScans = () =>
+  vi.mocked(scanModelRules).mock.calls.length +
+  vi.mocked(scanEntityInBackground).mock.calls.filter(([args]) => args.entityType === 'ModelRules')
+    .length;
 
 const MODEL_ID = 42;
 const OWNER_ID = 7;
@@ -142,6 +154,7 @@ describe('publishModelById text scan', () => {
       id: MODEL_ID,
       name: 'LoRA',
       description: 'about',
+      rules: false,
     });
     expect(scanEntitiesInBackground).toHaveBeenCalledWith('Post', [1]);
   });
@@ -187,6 +200,7 @@ describe('publishPrivateModel text scan', () => {
       id: MODEL_ID,
       name: 'LoRA',
       description: 'about',
+      rules: false,
     });
     expect(dbMock.dbWrite.post.findMany).toHaveBeenLastCalledWith({
       where: { modelVersionId: { in: [PUBLISHED] }, userId: OWNER_ID },
@@ -200,5 +214,21 @@ describe('publishPrivateModel text scan', () => {
 
     expect(submitModelTextModeration).not.toHaveBeenCalled();
     expect(scanEntitiesInBackground).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['enforceModelRules off (a moderator publish)', true, 0],
+    ['enforceModelRules on (a non-moderator publish)', false, 1],
+  ])('queues the ModelRules scan for %s publish: %s time(s)', async (_who, isModerator, times) => {
+    dbMock.dbWrite.post.findMany
+      .mockResolvedValueOnce([{ modelVersionId: PUBLISHED }])
+      .mockResolvedValueOnce([{ id: 1 }]);
+
+    await publishPrivateModel(
+      { modelId: MODEL_ID, publishVersions: true, isModerator },
+      { enforceModelRules: !isModerator }
+    );
+
+    expect(modelRulesScans()).toBe(times);
   });
 });

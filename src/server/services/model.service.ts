@@ -20,6 +20,7 @@ import {
   constants,
   FEATURED_MODEL_COLLECTION_ID,
   MODELS_SEARCH_INDEX,
+  normalizeMergePermissions,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -153,10 +154,14 @@ import {
   POI_LOCKED_PROPERTIES,
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
+import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
+import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import {
   scanEntitiesInBackground,
-  scanEntityInBackground,
+  scanModelAndRules,
+  scanModelRules,
 } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
@@ -197,6 +202,11 @@ import {
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
+  buildPermissionSnapshots,
+  permissionsChanged,
+  writesPermissions,
+} from '~/server/utils/model-permission-snapshot';
+import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
   RESTORE_CANNOT_PROMOTE_KEY,
@@ -206,7 +216,6 @@ import {
   stripServerOwnedMeta,
   withPrivateCannotPromote,
 } from '~/server/utils/minor-flag-meta';
-import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
   GET_ALL_IMAGES_PER_MODEL,
@@ -2921,6 +2930,7 @@ export const upsertModel = async (
 
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
+  normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
   // so what is stored is what the blurb actually says — and before the profanity filter below,
@@ -3129,6 +3139,20 @@ export const upsertModel = async (
         // unchanged", skipping the repair below on exactly the save that needed it.
         typeBeforeUpdate = (await tx.model.findUnique({ where: { id }, select: { type: true } }))
           ?.type;
+        // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
+        // transaction replaces. Only for a save that sends permissions at all.
+        const storedPermissions = writesPermissions(data)
+          ? await tx.model.findUnique({
+              where: { id },
+              select: {
+                createdAt: true,
+                allowNoCredit: true,
+                allowCommercialUse: true,
+                allowDerivatives: true,
+                allowDifferentLicense: true,
+              },
+            })
+          : null;
 
         const updated = await tx.model.update({
           select: {
@@ -3181,6 +3205,27 @@ export const upsertModel = async (
               : undefined,
           },
         });
+
+        // In the transaction, so a permission change cannot land without the record mods judge merges by.
+        if (storedPermissions && permissionsChanged(storedPermissions, data)) {
+          const snapshots = buildPermissionSnapshots({
+            modelId: updated.id,
+            modelCreatedAt: storedPermissions.createdAt,
+            before: storedPermissions,
+            data,
+            hasSnapshots: !!(await tx.modelPermissionSnapshot.findFirst({
+              where: { modelId: updated.id },
+              select: { id: true },
+            })),
+            actorUserId: userId,
+            actorRole: resolveActorRole({
+              actorUserId: userId,
+              ownerId: beforeUpdate.userId,
+              isModerator,
+            }),
+          });
+          if (snapshots.length) await tx.modelPermissionSnapshot.createMany({ data: snapshots });
+        }
 
         // The same lineage rule `upsertModelVersionHandler` coerces on a version write, applied to
         // the other write that can break the pairing: the model's type (CU 868kwf2fd).
@@ -3522,18 +3567,74 @@ export async function applyModelContentChange({
   return true;
 }
 
+const publishedModelSelect = {
+  id: true,
+  name: true,
+  description: true,
+  poi: true,
+  nsfw: true,
+  minor: true,
+  sfwOnly: true,
+  type: true,
+  userId: true,
+  modelVersions: { select: { id: true, baseModel: true } },
+  status: true,
+} satisfies Prisma.ModelSelect;
+
+// Fails open like the check: a model that cannot be held is published, and the post-publish
+// ModelRules scan is the backstop.
+async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForLiteralRules>[0]) {
+  try {
+    // Dynamic: the action imports model-version.service, which imports this module.
+    const { holdModelForLiteralRules } = await import(
+      '~/server/services/text-scan/actions/model-rules'
+    );
+    await holdModelForLiteralRules(args);
+    return true;
+  } catch (error) {
+    logToAxiom({
+      name: 'text-scan',
+      type: 'error',
+      message: 'model rules literal hold failed',
+      entityType: 'ModelRules',
+      entityId: args.modelId,
+      error: error instanceof Error ? error.message : error,
+    });
+    // The hold can fail after it has already written the held status; publishing on would then
+    // trip the held-model guard and report "not authorized" for a model that is in review.
+    const current = await dbWrite.model
+      .findUnique({ where: { id: args.modelId }, select: { status: true } })
+      .catch(() => null);
+    return current?.status === ModelStatus.UnpublishedViolation;
+  }
+}
+
 export const publishModelById = async ({
   id,
   versionIds,
   publishedAt,
   meta,
   republishing,
+  enforceModelRules,
 }: PublishModelSchema & {
   meta?: ModelMeta;
   republishing?: boolean;
+  /** Hold the model for review instead of publishing it when its text literally matches a Model rule. */
+  enforceModelRules?: boolean;
 }) => {
   if (meta?.cannotPublish) {
     throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+  }
+  if (enforceModelRules) {
+    const hold = await checkModelRulesLiteralHold({
+      modelId: id,
+      // Publishing without versions makes none public; the loader adds the already-public ones.
+      versionIds: versionIds ?? [],
+      meta,
+    });
+    if (hold && (await tryHoldModelForLiteralRules({ modelId: id, ...hold, meta }))) {
+      return dbWrite.model.findUniqueOrThrow({ where: { id }, select: publishedModelSelect });
+    }
   }
   const includeVersions = versionIds && versionIds.length > 0;
   let status: ModelStatus = ModelStatus.Published;
@@ -3542,27 +3643,26 @@ export const publishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
-      const model = await tx.model.update({
-        where: { id },
-        data: {
-          status,
-          meta: isEmpty(meta) ? Prisma.JsonNull : meta,
-          deletedAt: null,
-        },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          poi: true,
-          nsfw: true,
-          minor: true,
-          sfwOnly: true,
-          type: true,
-          userId: true,
-          modelVersions: { select: { id: true, baseModel: true } },
-          status: true,
-        },
-      });
+      // A held model must not be overwritten by a publish that raced the hold. Moderators and
+      // internal callers don't enforce rules and may republish a held model.
+      const model = await tx.model
+        .update({
+          where: {
+            id,
+            ...(enforceModelRules ? { status: { notIn: constants.modPublishOnlyStatuses } } : {}),
+          },
+          data: {
+            status,
+            meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+            deletedAt: null,
+          },
+          select: publishedModelSelect,
+        })
+        .catch((error) => {
+          if (enforceModelRules && error?.code === 'P2025')
+            throw throwAuthorizationError('You are not authorized to publish this model');
+          throw error;
+        });
 
       // Anti-bump guard: publishedAt is immutable once a model has gone
       // public. Allowed transitions: NULL (Draft) -> set, or future
@@ -3694,6 +3794,7 @@ export const publishModelById = async ({
     id: model.id,
     name: model.name,
     description: model.description,
+    rules: false,
   }).catch(() => null);
   if (includeVersions)
     scanEntitiesInBackground(
@@ -5032,7 +5133,8 @@ export async function setModelShowcaseCollection({
 export async function migrateResourceToCollection({
   id: modelId,
   collectionName,
-}: MigrateResourceToCollectionInput) {
+  isModerator,
+}: MigrateResourceToCollectionInput & { isModerator?: boolean }) {
   const model = await dbRead.model.findUnique({
     where: { id: modelId },
     include: { modelVersions: true, tagsOnModels: true, licenses: true, resourceReviews: true },
@@ -5159,7 +5261,7 @@ export async function migrateResourceToCollection({
   await modelsSearchIndex.queueUpdate(
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
-  modelIds.forEach((entityId) => scanEntityInBackground({ entityType: 'Model', entityId }));
+  modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }));
 
   return { ok: true };
 }
@@ -5342,6 +5444,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const meta = (model.meta ?? {}) as ModelMeta;
+  const modelRules = await loadModelRulesUnpublishDetail(meta);
   return {
     id: model.id,
     name: model.name,
@@ -5370,35 +5473,11 @@ export async function getModelModerationDetail({ id }: { id: number }) {
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
+    modelRules,
     takenDownAt: meta.takenDownAt ?? null,
     takenDownBy: meta.takenDownBy ?? null,
     needsReview: meta.needsReview ?? false,
   };
-}
-
-export async function getModelModRules() {
-  const modRules = await fetchThroughCache(
-    REDIS_KEYS.CACHES.MOD_RULES.MODELS,
-    async () => {
-      const rules = await dbRead.moderationRule.findMany({
-        where: { entityType: EntityType.Model, enabled: true },
-        select: { id: true, definition: true, action: true, reason: true },
-        orderBy: [{ order: 'asc' }],
-      });
-
-      return rules.map(({ definition, ...rule }) => ({
-        ...rule,
-        definition: definition as RuleDefinition,
-      }));
-    },
-    { ttl: CacheTTL.day }
-  );
-
-  return modRules;
-}
-
-export async function bustModelModRulesCache() {
-  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS);
 }
 
 export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
@@ -5604,11 +5683,10 @@ export const privateModelFromTraining = async ({
   }
 };
 
-export const publishPrivateModel = async ({
-  modelId,
-  publishVersions,
-  isModerator,
-}: PublishPrivateModelInput & { isModerator?: boolean }) => {
+export const publishPrivateModel = async (
+  { modelId, publishVersions, isModerator }: PublishPrivateModelInput & { isModerator?: boolean },
+  { enforceModelRules }: { enforceModelRules?: boolean } = {}
+) => {
   // Primary: the stored meta decides the publish gates and the cannotPromote value restored.
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
@@ -5659,6 +5737,24 @@ export const publishPrivateModel = async ({
       throw throwBadRequestError(
         'Add example images before making this model public. Each version must include a showcase post.'
       );
+    }
+  }
+
+  if (publishVersions && enforceModelRules) {
+    const hold = await checkModelRulesLiteralHold({
+      modelId,
+      versionIds,
+      meta: model.meta as ModelMeta | null,
+    });
+    if (
+      hold &&
+      (await tryHoldModelForLiteralRules({
+        modelId,
+        ...hold,
+        meta: (model.meta ?? {}) as ModelMeta,
+      }))
+    ) {
+      return { versionIds, held: true };
     }
   }
 
@@ -5748,6 +5844,7 @@ export const publishPrivateModel = async ({
       `;
     }
   });
+  if (publishVersions && enforceModelRules) scanModelRules(modelId);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {
@@ -5768,6 +5865,7 @@ export const publishPrivateModel = async ({
       id: model.id,
       name: model.name,
       description: model.description,
+      rules: false,
     }).catch(() => null);
     const posts = await dbWrite.post.findMany({
       where: { modelVersionId: { in: versionIds }, userId: model.userId },
@@ -5779,7 +5877,7 @@ export const publishPrivateModel = async ({
     );
   }
 
-  return { versionIds };
+  return { versionIds, held: false };
 };
 
 export const toggleCannotPromote = async ({

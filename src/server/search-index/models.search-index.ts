@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
-import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -494,7 +494,10 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           allowNoCredit,
           allowCommercialUse,
           allowDerivatives,
-          allowDifferentLicense,
+          allowDifferentLicense: allowsDifferentLicenseOnMerges({
+            allowDerivatives,
+            allowDifferentLicense,
+          }),
           minor: modelRecord.minor,
           sfwOnly: modelRecord.sfwOnly,
         },

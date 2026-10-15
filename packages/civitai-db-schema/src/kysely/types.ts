@@ -3608,6 +3608,18 @@ export type ModelMetricDaily = {
   date: Timestamp;
   count: number;
 };
+export type ModelPermissionSnapshot = {
+  id: Generated<number>;
+  modelId: number;
+  effectiveAt: Generated<Timestamp>;
+  source: string;
+  actorUserId: number | null;
+  actorRole: string | null;
+  allowNoCredit: boolean;
+  allowCommercialUse: CommercialUse[];
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+};
 export type ModelReport = {
   modelId: number;
   reportId: number;
@@ -3751,6 +3763,16 @@ export type ModerationRule = {
   order: number | null;
   reason: string | null;
   createdById: number;
+};
+export type ModerationRuleVersion = {
+  id: Generated<number>;
+  ruleId: number;
+  definition: unknown;
+  enabled: boolean;
+  action: ModerationRuleAction;
+  reason: string | null;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
 };
 export type NewOrderPlayer = {
   userId: number;
@@ -4376,6 +4398,15 @@ export type ReferralReward = {
   expiresAt: Timestamp | null;
   revokedAt: Timestamp | null;
   revokedReason: string | null;
+};
+export type RemovalScoreExemption = {
+  imageId: number;
+  /**
+   * The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+   */
+  reason: string;
+  createdAt: Generated<Timestamp>;
+  createdBy: number | null;
 };
 export type Report = {
   id: Generated<number>;
@@ -5734,6 +5765,7 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
   ModelSelfGeneration: ModelSelfGeneration;
@@ -5747,6 +5779,7 @@ export type DB = {
   ModelVersionSaleItem: ModelVersionSaleItem;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
+  ModerationRuleVersion: ModerationRuleVersion;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;
@@ -5789,6 +5822,7 @@ export type DB = {
   ReferralMilestone: ReferralMilestone;
   ReferralRedemption: ReferralRedemption;
   ReferralReward: ReferralReward;
+  RemovalScoreExemption: RemovalScoreExemption;
   Report: Report;
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;

@@ -5,6 +5,7 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -22,9 +23,12 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
 const buzz = vi.hoisted(() => ({
+  createBuzzTransaction: vi.fn(),
   createMultiAccountBuzzTransaction: vi.fn(),
   refundMultiAccountTransaction: vi.fn(),
   getMultiAccountTransactionsByPrefix: vi.fn(),
+  getTransactionByExternalId: vi.fn(),
+  refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -79,6 +83,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
 const deals = await import('~/server/services/creator-service-deal.service');
 const escrow = await import('~/server/services/creator-service-escrow.service');
 const { MAX_LEG_ATTEMPTS } = await import('~/server/services/placement-escrow.service');
+const { TransactionType } = await import('~/shared/constants/buzz.constants');
 
 const MIGRATION = join(
   process.cwd(),
@@ -147,6 +152,8 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
   deals.requestServiceDeal({
     offeringId: 1,
     expectedPrice: PRICE,
+    expectedRevisionsIncluded: 1,
+    expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please draw my cat',
     buzzType: 'yellow',
@@ -186,6 +193,10 @@ beforeEach(async () => {
   locks.available = true;
   locks.held.clear();
   buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged());
+  buzz.createBuzzTransaction.mockResolvedValue({
+    transactionId: 'tx-release',
+    remainingBalance: null,
+  });
   buzz.refundMultiAccountTransaction.mockImplementation(
     async ({ externalTransactionIdPrefix }) => ({
       refundedTransactions: [
@@ -251,6 +262,38 @@ describe('request', () => {
     expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['revisions', `"revisionsIncluded" = 4`],
+    ['delivery days', `"deliveryDays" = 30`],
+  ])('refuses a request whose %s changed since the buyer saw them', async (_, change) => {
+    await q(`UPDATE "ServiceOffering" SET ${change}`);
+    await expect(request()).rejects.toEqual(
+      expect.objectContaining({ code: 'CONFLICT', message: expect.stringMatching(/terms/) })
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The pre-check above answers with a message; the INSERT repeats each term as its own
+  // precondition, so terms changing between the two cannot be copied into the deal.
+  it.each([
+    ['revisions', { expectedRevisionsIncluded: 4 }, `"revisionsIncluded" = 4`],
+    ['delivery days', { expectedDeliveryDays: 30 }, `"deliveryDays" = 30`],
+  ])(
+    'creates no deal when the %s change between the check and the insert',
+    async (_, expected, change) => {
+      // The check passes against the buyer's terms, then the offering moves back before the INSERT.
+      await q(`UPDATE "ServiceOffering" SET ${change}`);
+      shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+        await q(`UPDATE "ServiceOffering" SET "revisionsIncluded" = 1, "deliveryDays" = 3`);
+        return [];
+      });
+      await expect(request(expected)).rejects.toEqual(conflict);
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
 
   it('refuses a second unanswered request from the same buyer, so a doubled submit holds once', async () => {
     await request();
@@ -574,13 +617,143 @@ describe('closing with a refund', () => {
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
-  it('reads a 409 on a retried refund as already refunded, and settles', async () => {
-    const { id } = await request();
-    buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(409));
-    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
-    expect((await deal(id)).settledAt).not.toBeNull();
-    expect((await legs(id)).find((l) => l.leg === 'Refund')).toMatchObject({
-      transactionId: `creator-service-${id}-hold:already-refunded`,
+  describe('a refund answered 409', () => {
+    // A 409 means at least ONE leg under the prefix already has a refund, and reverses none of the
+    // rest (Buzz owner, 2026-10-15). The ledger decides: each leg's `refund-<transactionId>`.
+    const holdLegs = [
+      {
+        accountId: BUYER,
+        amount: 300,
+        transactionId: 'leg-a',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
+      {
+        accountId: BUYER,
+        amount: 200,
+        transactionId: 'leg-b',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
+    ];
+    const refundRow = { date: '2026-10-15', type: 'Refund', amount: 1 };
+    const refunded = (...ids: string[]) =>
+      buzz.getTransactionByExternalId.mockImplementation(async (externalId: string) =>
+        ids.some((id) => externalId === `refund-${id}`) ? refundRow : null
+      );
+    const refundLeg = async (id: number) => (await legs(id)).find((l) => l.leg === 'Refund');
+
+    beforeEach(() => {
+      buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(409));
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue(holdLegs);
+    });
+
+    it('settles when every hold leg has its refund', async () => {
+      refunded('leg-a', 'leg-b');
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).not.toBeNull();
+      expect(await refundLeg(id)).toMatchObject({
+        transactionId: `creator-service-${id}-hold:already-refunded`,
+      });
+      expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledWith(
+        `creator-service-${id}-hold`,
+        { timeoutMs: expect.any(Number) }
+      );
+      for (const call of buzz.getTransactionByExternalId.mock.calls)
+        expect(call[1]).toEqual({ timeoutMs: expect.any(Number) });
+      expect(buzz.getTransactionByExternalId.mock.calls.map((c) => c[0])).toEqual([
+        'refund-leg-a',
+        'refund-leg-b',
+      ]);
+    });
+
+    it('stays refund-pending when one leg has no refund, naming that leg', async () => {
+      refunded('leg-a');
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      const leg = await refundLeg(id);
+      expect(leg).toMatchObject({ transactionId: null, attempts: 1 });
+      expect(leg?.lastError).toMatch(/not fully refunded: unrefunded legs leg-b$/);
+    });
+
+    it('stays refund-pending when a refund lookup fails', async () => {
+      buzz.getTransactionByExternalId.mockRejectedValue(new Error('buzz unreachable'));
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect(await refundLeg(id)).toMatchObject({
+        transactionId: null,
+        lastError: 'buzz unreachable',
+      });
+    });
+
+    it('stays refund-pending when the ledger lists less than was held', async () => {
+      refunded('leg-a', 'leg-b');
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue(holdLegs.slice(0, 1));
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect((await refundLeg(id))?.lastError).toMatch(/ledger lists 300 of 500/);
+    });
+
+    // More than was held under one hold's prefix (a second charge) is for a human, not a settle.
+    it('stays refund-pending when the ledger lists more than was held', async () => {
+      refunded('leg-a', 'leg-b', 'leg-c');
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+        ...holdLegs,
+        { ...holdLegs[0], transactionId: 'leg-c', amount: 100 },
+      ]);
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect((await refundLeg(id))?.lastError).toMatch(/ledger lists 600 of 500/);
+    });
+
+    it('stays refund-pending when the ledger lists no legs at all', async () => {
+      const { id } = await request();
+      buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+      expect((await refundLeg(id))?.lastError).toMatch(/ledger lists 0 of 500/);
+    });
+
+    it('settles on a later retry once the ledger shows every leg refunded', async () => {
+      refunded('leg-a');
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).settledAt).toBeNull();
+
+      refunded('leg-a', 'leg-b');
+      await q(
+        `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Refund'`
+      );
+      await escrow.sweepServiceDealRefunds();
+      expect((await deal(id)).settledAt).not.toBeNull();
+      expect(await events(id)).toContain('Refunded');
+    });
+
+    // Decision (briony, 2026-10-15): paying a missing leg with the single-transaction refund waits
+    // on the Buzz owners confirming that endpoint is safe to repeat. Delete this only with that
+    // answer in hand, when the missing legs start being paid here.
+    it('never pays a missing leg itself while single-leg refunds are parked', async () => {
+      refunded();
+      const { id } = await request();
+      await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+      for (let attempt = 2; attempt <= MAX_LEG_ATTEMPTS; attempt++) {
+        await q(
+          `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Refund'`
+        );
+        await escrow.sweepServiceDealRefunds();
+      }
+      expect(buzz.refundTransaction).not.toHaveBeenCalled();
+      expect(await refundLeg(id)).toMatchObject({
+        transactionId: null,
+        attempts: MAX_LEG_ATTEMPTS,
+      });
+      expect(await escrow.sweepServiceDealRefunds()).toMatchObject({ exhausted: 1 });
+      expect((await deal(id)).settledAt).toBeNull();
     });
   });
 
@@ -819,5 +992,315 @@ describe('open deals per offering', () => {
     await deals.declineServiceDeal({ dealId: closed, userId: SELLER });
     expect(open).toBeDefined();
     expect(await deals.countOpenDealsByOffering([1, 2])).toEqual(new Map([[1, 1]]));
+  });
+});
+
+describe('releasing to the seller', () => {
+  const completed = async (overrides: Parameters<typeof request>[0] = {}) => {
+    const { id } = await request(overrides);
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    return id;
+  };
+  const windowClosed = (id: number) =>
+    q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [id]);
+  const releaseLeg = async (id: number) => (await legs(id)).find((l) => l.leg === 'Release');
+  const ledgerShows = (toAccountId: number, amount: number) =>
+    buzz.getTransactionByExternalId.mockResolvedValue({
+      date: new Date(),
+      type: TransactionType.ServiceEscrow,
+      fromAccountId: 0,
+      toAccountId,
+      amount,
+    });
+
+  it('pays the seller the held amount once the dispute window closes, once, and settles', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
+
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toEqual({
+      amount: PRICE,
+      fromAccountId: 0,
+      fromAccountType: 'yellow',
+      toAccountId: SELLER,
+      toAccountType: 'yellow',
+      type: TransactionType.ServiceEscrow,
+      externalTransactionId: `creator-service-${id}-release`,
+      description: 'Creator service: released to the seller',
+      details: { entityType: 'ServiceDeal', entityId: id },
+    });
+    expect(await releaseLeg(id)).toMatchObject({ amount: PRICE, transactionId: 'tx-release' });
+    const settled = await deal(id);
+    expect(settled.status).toBe('Completed');
+    expect(settled.settledAt).not.toBeNull();
+    expect(await events(id)).toContain('Released');
+
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
+    expect(await escrow.releaseDeal(id)).toBe(true);
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('pays nothing while the dispute window is open', async () => {
+    const id = await completed();
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
+    expect(await escrow.releaseDeal(id)).toBe(false);
+    expect(await releaseLeg(id)).toBeUndefined();
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The reverse order of the dispute/release race: the dispute commits first, so the claim's own
+  // re-check finds the deal no longer Completed and claims nothing.
+  it('claims nothing for a deal disputed before its window closed', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'zip is empty' });
+    await windowClosed(id);
+    expect(await escrow.releaseDeal(id)).toBe(false);
+    expect(await releaseLeg(id)).toBeUndefined();
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // Decision: a dispute's window guard reads clock_timestamp(). A dispute blocked behind a
+  // release claim's row lock is re-checked after that claim commits, and now() would still be the
+  // dispute transaction's start, inside the window, letting it through over a claimed payout.
+  // PGlite runs one connection, so the lock wait cannot be reproduced here: this pins the text.
+  // Keep it unless the claim and the dispute are serialised some other way.
+  it('decision: a dispute re-checks its window against clock_timestamp(), not now()', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/server/services/creator-service-deal.service.ts'),
+      'utf8'
+    );
+    const dispute = source.slice(source.indexOf('export const openServiceDealDispute'));
+    const guard = dispute.slice(0, dispute.indexOf('});'));
+    expect(guard).toContain('"releaseAt" > clock_timestamp()');
+    expect(guard).not.toContain('"releaseAt" > now()');
+  });
+
+  it.each([
+    ['banned', `"bannedAt" = now()`],
+    ['deleted', `"deletedAt" = now()`],
+  ])("holds a %s seller's payout for the moderators: no release, no refund", async (_, column) => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "User" SET ${column} WHERE id = $1`, [SELLER]);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(await releaseLeg(id)).toBeUndefined();
+    const held = await deal(id);
+    expect(held).toMatchObject({ status: 'Disputed', settledAt: null });
+    expect(
+      (
+        await q<{ disputeReason: string }>(
+          `SELECT "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+          [id]
+        )
+      )[0]
+    ).toEqual({ disputeReason: escrow.SELLER_UNAVAILABLE });
+    expect((await events(id)).at(-1)).toBe('Disputed');
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
+    expect(await escrow.releaseDeal(id)).toBe(false);
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // Decision (briony, 2026-10-15): a claimed Release leg retries to completion, even for a seller
+  // banned after the claim. It may already have landed; un-claiming it could pay twice. The hold
+  // applies only before a claim exists. A moderator is told through the log.
+  it('decision: a release claimed before the seller was banned still pays, and is logged', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockRejectedValueOnce(buzzError(503));
+    await expect(escrow.releaseDeal(id)).rejects.toThrow();
+    expect(await releaseLeg(id)).toMatchObject({ transactionId: null, attempts: 1 });
+
+    await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    // Inside the backoff: nothing is paid, and the deal is not moved under its claimed leg.
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+    expect((await deal(id)).status).toBe('Completed');
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+
+    await q(
+      `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Release'`
+    );
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(2);
+    expect(buzz.createBuzzTransaction.mock.calls[1][0]).toMatchObject({ toAccountId: SELLER });
+    const paid = await deal(id);
+    expect(paid.status).toBe('Completed');
+    expect(paid.settledAt).not.toBeNull();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'claimed release paying a seller who is now banned or deleted',
+        dealId: id,
+      })
+    );
+  });
+
+  it('pays a muted seller', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    expect(await escrow.releaseDeal(id)).toBe(true);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ dealId: id, type: 'warning' })
+    );
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({ toAccountId: SELLER });
+    expect((await deal(id)).status).toBe('Completed');
+  });
+
+  it('pays a green deal in green, from and to', async () => {
+    const id = await completed({ buzzType: 'green' });
+    await windowClosed(id);
+    expect(await escrow.releaseDeal(id)).toBe(true);
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({
+      fromAccountType: 'green',
+      toAccountType: 'green',
+    });
+  });
+
+  // Decision, the claim's half of the dispute race: the claim LOCKS the deal row with an UPDATE
+  // gated on the release state before it inserts the leg. An INSERT..SELECT alone reads a snapshot
+  // and locks nothing, so a dispute could commit beside a claimed payout. PGlite cannot reproduce
+  // that interleaving, so this pins the text. Keep it unless the two are serialised another way.
+  it('decision: the release claim locks the deal row before it inserts the leg', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/server/services/creator-service-escrow.service.ts'),
+      'utf8'
+    );
+    const start = source.indexOf('export async function claimRelease');
+    const claim = source.slice(start, source.indexOf('\n}\n', start));
+    const first = claim.indexOf('await lockDeal(tx, dealId);');
+    const gate = claim.indexOf('const releasable = Prisma.sql');
+    expect(first).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(first);
+    const lock = claim.indexOf('UPDATE "ServiceDeal" SET "updatedAt" = now() WHERE ${releasable}');
+    const insert = claim.indexOf('INSERT INTO "ServiceDealTransaction"');
+    expect(gate).toBeGreaterThan(-1);
+    expect(lock).toBeGreaterThan(gate);
+    expect(insert).toBeGreaterThan(lock);
+    expect(claim.slice(gate, lock)).toContain(`"status" = 'Completed'`);
+    expect(claim.slice(gate, lock)).toContain('"releaseAt" <= now()');
+    expect(claim.slice(lock, insert)).toContain('if (locked === 0) return false;');
+  });
+
+  it('pays the receipted hold less the fee', async () => {
+    const id = await completed();
+    await q(`UPDATE "ServiceDeal" SET "feeAmount" = 100 WHERE id = $1`, [id]);
+    await windowClosed(id);
+    await escrow.releaseDeal(id);
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({ amount: PRICE - 100 });
+    expect(await releaseLeg(id)).toMatchObject({ amount: PRICE - 100 });
+  });
+
+  it('claims nothing for a deal already settled', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "ServiceDeal" SET "settledAt" = now() WHERE id = $1`, [id]);
+    expect(await escrow.releaseDeal(id)).toBe(false);
+    expect(await releaseLeg(id)).toBeUndefined();
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The claim's `heldAt IS NOT NULL` cannot be reached on its own: the schema refuses a Completed
+  // deal without it, and the receipted-hold join is the claim's second layer. This pins the first.
+  it('cannot hold a Completed deal that was never marked held', async () => {
+    const id = await completed();
+    await expect(q(`UPDATE "ServiceDeal" SET "heldAt" = NULL WHERE id = $1`, [id])).rejects.toThrow(
+      /ServiceDeal_held_before_work/
+    );
+  });
+
+  it('never releases a hold with no receipt', async () => {
+    const id = await completed();
+    await q(
+      `UPDATE "ServiceDealTransaction" SET "transactionId" = NULL WHERE "dealId" = $1 AND leg = 'Hold'`,
+      [id]
+    );
+    await windowClosed(id);
+    expect(await escrow.releaseDeal(id)).toBe(false);
+    expect(await releaseLeg(id)).toBeUndefined();
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('raises when a Refund already holds the payout slot, rather than treating it as claimed', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(
+      `INSERT INTO "ServiceDealTransaction" ("dealId", leg, "externalTransactionId", amount, "buzzType")
+       VALUES ($1, 'Refund', 'r', $2, 'yellow')`,
+      [id, PRICE]
+    );
+    await expect(escrow.releaseDeal(id)).rejects.toThrow(
+      /ServiceDealTransaction_dealId_payout_key/
+    );
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('receipts a 409 only when the ledger shows the release reached this seller in full', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockRejectedValue(buzzError(409));
+    ledgerShows(SELLER, PRICE);
+    expect(await escrow.releaseDeal(id)).toBe(true);
+    expect(buzz.getTransactionByExternalId).toHaveBeenCalledWith(`creator-service-${id}-release`, {
+      timeoutMs: expect.any(Number),
+    });
+    expect(await releaseLeg(id)).toMatchObject({ transactionId: `creator-service-${id}-release` });
+    expect((await deal(id)).settledAt).not.toBeNull();
+  });
+
+  it.each([
+    ['another account', () => ledgerShows(STRANGER, PRICE)],
+    ['a different amount', () => ledgerShows(SELLER, PRICE - 1)],
+    ['nothing', () => buzz.getTransactionByExternalId.mockResolvedValue(null)],
+  ])('leaves a 409 pending when the ledger shows %s', async (_, ledger) => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockRejectedValue(buzzError(409));
+    ledger();
+    await expect(escrow.releaseDeal(id)).rejects.toThrow(/not confirmed on the ledger/);
+    expect(await releaseLeg(id)).toMatchObject({ transactionId: null, attempts: 1 });
+    expect((await deal(id)).settledAt).toBeNull();
+  });
+
+  it('checks the ledger when Buzz reports success without a transaction id', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockResolvedValue({ transactionId: null, remainingBalance: null });
+    buzz.getTransactionByExternalId.mockResolvedValue(null);
+    await expect(escrow.releaseDeal(id)).rejects.toThrow(/not confirmed on the ledger/);
+    expect((await deal(id)).settledAt).toBeNull();
+
+    ledgerShows(SELLER, PRICE);
+    await q(
+      `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Release'`
+    );
+    expect(await escrow.releaseDeal(id)).toBe(true);
+    expect((await deal(id)).settledAt).not.toBeNull();
+  });
+
+  it('retries a failed release after backoff, stops at the ceiling, and counts it as exhausted', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockRejectedValue(buzzError(503));
+    await escrow.sweepServiceDealReleases();
+    expect(await releaseLeg(id)).toMatchObject({ attempts: 1, transactionId: null });
+
+    await escrow.sweepServiceDealReleases();
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+
+    for (let attempt = 2; attempt <= MAX_LEG_ATTEMPTS + 2; attempt++) {
+      await q(
+        `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Release'`
+      );
+      await escrow.sweepServiceDealReleases();
+    }
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(MAX_LEG_ATTEMPTS);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
+    expect(await escrow.sweepServiceDealRefunds()).toMatchObject({ exhausted: 1 });
+    expect((await deal(id)).settledAt).toBeNull();
   });
 });

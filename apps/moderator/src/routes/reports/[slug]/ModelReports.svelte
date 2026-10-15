@@ -179,6 +179,17 @@
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
   const fmtDate = dateTime;
 
+  const MERGE_VERDICT_LABEL = {
+    allowed: 'Merges were allowed',
+    'not-allowed': 'Merges were not allowed',
+    unknown: 'Not recorded',
+  } as const;
+  const MERGE_VERDICT_TONE = {
+    allowed: STATUS_TONE.live,
+    'not-allowed': STATUS_TONE.down,
+    unknown: STATUS_TONE.neutral,
+  } as const;
+
   function urlWith(params: Record<string, string | number | null>) {
     const url = new URL(page.url);
     for (const [k, v] of Object.entries(params)) {
@@ -521,6 +532,71 @@
               </details>
             {/if}
           </section>
+
+          {#if data.mergePermission[selected.id]}
+            {@const check = data.mergePermission[selected.id]}
+            <!-- A creator can allow merges, let people merge, then forbid it and report the merges. Each
+                 version is judged by the source's permission when that version was published. -->
+            <section aria-labelledby="merge-permission-heading" class="flex flex-col gap-2">
+              <h3 id="merge-permission-heading" class="m-0 text-sm font-semibold">
+                Merge permission when made
+              </h3>
+              {#if !check.source}
+                <p class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                  The source model #{check.sourceModelId} no longer exists, so there is nothing to check
+                  against.
+                </p>
+              {:else}
+                <p class="m-0 text-sm">
+                  Source:
+                  <a
+                    class="underline"
+                    href={`${data.civitaiUrl}/models/${check.source.id}`}
+                    target="_blank"
+                    rel="noreferrer">{check.source.name}</a
+                  >
+                  — merges {check.source.allowDerivatives ? 'allowed' : 'not allowed'} today.
+                </p>
+                {#if check.versions.length}
+                  <ul class="m-0 flex list-none flex-col gap-1 p-0 text-sm">
+                    {#each check.versions as version (version.id)}
+                      <li class="rounded-md border p-2 {MERGE_VERDICT_TONE[version.verdict.status]}">
+                        <span class="font-medium">{MERGE_VERDICT_LABEL[version.verdict.status]}</span>
+                        <span class="text-muted-foreground">
+                          — {version.name}, {fmtDate(version.madeAt)}
+                        </span>
+                        {#if version.verdict.status === 'unknown'}
+                          <p class="m-0 mt-0.5 text-xs text-muted-foreground">
+                            {version.verdict.reason === 'before-source-existed'
+                              ? 'Made before the source model existed.'
+                              : `Permissions are recorded from ${fmtDate(version.verdict.knownSince)}.`}
+                          </p>
+                        {/if}
+                      </li>
+                    {/each}
+                  </ul>
+                {:else}
+                  <p class="m-0 text-sm text-muted-foreground">The reported model has no versions.</p>
+                {/if}
+                <details class="text-xs">
+                  <summary class="cursor-pointer text-muted-foreground">Source permission history</summary>
+                  {#if check.timeline.length}
+                    <ul class="m-0 mt-2 flex list-none flex-col gap-0.5 p-0">
+                      {#each check.timeline as entry, i (i)}
+                        <li>
+                          {fmtDate(entry.effectiveAt)}: merges {entry.allowDerivatives
+                            ? 'allowed'
+                            : 'not allowed'}
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else}
+                    <p class="m-0 mt-2">No recorded change: today's permission has held since records begin.</p>
+                  {/if}
+                </details>
+              {/if}
+            </section>
+          {/if}
 
           {#if selected.entityId != null}
             {@const model = data.models.find((m) => m.id === selected.entityId)}

@@ -150,14 +150,16 @@ type OfferingRow = {
   open: number;
   maxOpenDeals: number | null;
   price: number;
+  revisionsIncluded: number;
+  deliveryDays: number;
   blocked: boolean;
   sellerOk: boolean;
 };
 
-const priceChanged = () =>
+const termsChanged = () =>
   new TRPCError({
     code: 'CONFLICT',
-    message: 'The price of this service has changed. Review it and try again.',
+    message: 'The price or terms of this service have changed. Review them and try again.',
   });
 
 /**
@@ -168,13 +170,17 @@ const priceChanged = () =>
 export async function requestServiceDeal({
   offeringId,
   expectedPrice,
+  expectedRevisionsIncluded,
+  expectedDeliveryDays,
   buyerId,
   requestText,
   buzzType,
 }: {
   offeringId: number;
-  /** The price the buyer was shown. The hold never takes a different one. */
+  /** The terms the buyer was shown. The deal never takes different ones. */
   expectedPrice: number;
+  expectedRevisionsIncluded: number;
+  expectedDeliveryDays: number;
   buyerId: number;
   requestText: string;
   buzzType: string;
@@ -186,6 +192,7 @@ export async function requestServiceDeal({
 
   const [offering] = await dbWrite.$queryRaw<OfferingRow[]>`
     SELECT o."id", o."sellerId", o."status"::text AS "status", o."maxOpenDeals", o."price",
+      o."revisionsIncluded", o."deliveryDays",
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
@@ -199,7 +206,12 @@ export async function requestServiceDeal({
   if (offering.blocked) throw throwBadRequestError('You cannot request this service');
   if (offering.maxOpenDeals !== null && offering.open >= offering.maxOpenDeals)
     throw throwBadRequestError('This service is not taking new requests right now');
-  if (offering.price !== expectedPrice) throw priceChanged();
+  if (
+    offering.price !== expectedPrice ||
+    offering.revisionsIncluded !== expectedRevisionsIncluded ||
+    offering.deliveryDays !== expectedDeliveryDays
+  )
+    throw termsChanged();
 
   // The checks above are for the message; this statement repeats them as its own preconditions.
   const dealId = await dbWrite.$transaction(async (tx) => {
@@ -216,6 +228,8 @@ export async function requestServiceDeal({
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
         AND o."price" = ${expectedPrice}::int
+        AND o."revisionsIncluded" = ${expectedRevisionsIncluded}::int
+        AND o."deliveryDays" = ${expectedDeliveryDays}::int
         AND o."sellerId" <> ${buyerId}::int
         -- One unanswered request per buyer per offering: a retried or doubled submit must not
         -- become a second deal and a second hold. Race-free under the offering lock above.
@@ -485,7 +499,11 @@ export const openServiceDealDispute = ({
     actorId: userId,
     event: 'Disputed',
     comment: reason,
-    where: Prisma.sql`"buyerId" = ${userId}::int AND "releaseAt" > now() AND "settledAt" IS NULL`,
+    // clock_timestamp(), not now(): blocked behind a release claim's row lock, this UPDATE is
+    // re-checked against the row once the claim commits, and now() would still be this
+    // transaction's start, inside the window. A guard re-checked that way must test the row's own
+    // columns; a NOT EXISTS on the legs would read the old snapshot and miss the claim.
+    where: Prisma.sql`"buyerId" = ${userId}::int AND "releaseAt" > clock_timestamp() AND "settledAt" IS NULL`,
     set: Prisma.sql`, "disputeOpenedAt" = now(), "disputeReason" = ${reason}::text`,
   });
 

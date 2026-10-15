@@ -1,5 +1,11 @@
+import {
+  MODEL_RULES_RESULT_KEYS,
+  type StoredModelRules,
+  type StoredModelRuleSnapshot,
+} from '@civitai/moderation/model-rules';
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { MODEL_RULES_LITERAL_LABEL } from '~/server/services/text-scan/model-rules-literal';
 import type { StoredTextScanVerdict } from '~/server/services/text-scan/merge';
 import type { PromptIds, TextScanOutcome, TextScanOutput } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
@@ -12,7 +18,21 @@ export type TextScanResult = {
   /** `textScanTextHash` of the subject as submitted. */
   textHash?: string;
   meta?: Record<string, unknown>;
+  /**
+   * `ModelRules` scans only: the rule set the prompt carried, and the matched rules as they read then.
+   * `literalRuleIds` are the rules the text names literally, whether or not the model matched them;
+   * `snapshot` covers both.
+   */
+  modelRules?: StoredModelRules;
 };
+
+// The moderator app reads these keys back through @civitai/moderation; a rename here must not compile.
+export type ModelRulesReadKeys = Pick<
+  TextScanResult,
+  | typeof MODEL_RULES_RESULT_KEYS.labels
+  | typeof MODEL_RULES_RESULT_KEYS.modelRules
+  | typeof MODEL_RULES_RESULT_KEYS.meta
+>;
 
 type RowKey = { entityType: string; entityId: number };
 
@@ -83,6 +103,7 @@ export async function recordTextScanSuccess({
   model,
   textHash,
   meta,
+  modelRules,
 }: RowKey & {
   workflowId: string;
   marker?: string;
@@ -92,15 +113,27 @@ export async function recordTextScanSuccess({
   model: string;
   textHash?: string;
   meta?: Record<string, unknown>;
+  modelRules?: TextScanResult['modelRules'];
 }) {
-  const result: TextScanResult = { version: 1, labels: output, promptIds, model, textHash, meta };
+  const result: TextScanResult = {
+    version: 1,
+    labels: output,
+    promptIds,
+    model,
+    textHash,
+    meta,
+    ...(modelRules ? { modelRules } : {}),
+  };
   const updated = await dbWrite.entityModeration.updateMany({
     where: { entityType, entityId, workflowId: matchWorkflow(workflowId, marker) },
     data: {
       workflowId,
       status: EntityModerationStatus.Succeeded,
       blocked: false,
-      triggeredLabels: outcome.triggeredLabels,
+      triggeredLabels: [
+        ...outcome.triggeredLabels,
+        ...(modelRules?.literalRuleIds?.length ? [MODEL_RULES_LITERAL_LABEL] : []),
+      ],
       nsfwLevel: outcome.nsfwLevel,
       result: result as unknown as Prisma.InputJsonValue,
     },
@@ -124,6 +157,46 @@ export async function recordTextScanFailure({
     data: { workflowId, status, retryCount: { increment: 1 } },
   });
   return updated.count > 0;
+}
+
+/** Literal Model rules hold, recorded for the Matches list. No content hash, so the post-republish scan is never skipped as unchanged. */
+export async function recordModelRulesLiteralHold({
+  entityId,
+  workflowId,
+  textHash,
+  literalRuleIds,
+  snapshot,
+}: {
+  entityId: number;
+  workflowId: string;
+  textHash: string;
+  literalRuleIds: number[];
+  snapshot: StoredModelRuleSnapshot[];
+}) {
+  const result: TextScanResult = {
+    version: 1,
+    labels: {},
+    promptIds: {},
+    model: 'literal',
+    textHash,
+    meta: { [MODEL_RULES_RESULT_KEYS.heldAtPublish]: true },
+    modelRules: { snapshot, literalRuleIds },
+  };
+  const data = {
+    workflowId,
+    contentHash: null,
+    status: EntityModerationStatus.Succeeded,
+    blocked: false,
+    triggeredLabels: [MODEL_RULES_LITERAL_LABEL],
+    nsfwLevel: null,
+    result: result as unknown as Prisma.InputJsonValue,
+  };
+  // Replacing workflowId is deliberate: an in-flight scan's callback then matches no row and the hold stands.
+  await dbWrite.entityModeration.upsert({
+    where: { entityType_entityId: { entityType: 'ModelRules', entityId } },
+    create: { entityType: 'ModelRules', entityId, ...data },
+    update: data,
+  });
 }
 
 type StoredRow = StoredTextScanVerdict & { result: TextScanResult | null };
@@ -174,6 +247,7 @@ export async function recordTextScanRaise({
   model,
   textHash,
   meta,
+  modelRules,
 }: RowKey & {
   workflowId: string;
   stored: StoredRow;
@@ -183,10 +257,12 @@ export async function recordTextScanRaise({
   model: string;
   textHash?: string;
   meta?: Record<string, unknown>;
+  modelRules?: TextScanResult['modelRules'];
 }) {
   const result: TextScanResult = stored.result
     ? { ...stored.result, labels: { ...stored.result.labels, ...output } }
     : { version: 1, labels: output, promptIds, model, textHash, meta };
+  if (modelRules) result.modelRules = modelRules;
   const updated = await dbWrite.entityModeration.updateMany({
     where: { entityType, entityId, workflowId, status: EntityModerationStatus.Failed },
     data: {

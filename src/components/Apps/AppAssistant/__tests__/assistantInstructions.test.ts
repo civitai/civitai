@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
+import {
+  APP_ASSISTANT_RULES,
+  buildAssistantInstructions,
+  buildAssistantSystemPrompt,
+} from '~/components/Apps/AppAssistant/assistantInstructions';
 
 const running = { name: 'sbx-0123456789ab', app: 'my-app', state: 'running' as const };
 
@@ -81,5 +85,26 @@ describe('buildAssistantInstructions', () => {
       previewHost: null,
     });
     expect(text).toMatch(note);
+  });
+});
+
+describe('buildAssistantSystemPrompt', () => {
+  it('keeps the chat’s built-in rules and adds App Assistant’s after them', () => {
+    expect(buildAssistantSystemPrompt('BUILT-IN RULES')).toBe(
+      `BUILT-IN RULES\n\n${APP_ASSISTANT_RULES}`
+    );
+  });
+
+  it('pins the whole rule text: a reworded rule must be re-read here', () => {
+    expect(APP_ASSISTANT_RULES).toBe(
+      [
+        'App Assistant rules (these come after the rules above and win where they differ):',
+        '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',
+        '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
+        '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
+        '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
+        '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+      ].join('\n')
+    );
   });
 });

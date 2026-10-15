@@ -17,6 +17,7 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
+import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
 import { phase1CapableLabel } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
@@ -308,6 +309,7 @@ function runRecordProcedureDuration<T>(
 
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
+  recordTrpcCall(ctx.req?.headers, !!ctx.user);
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the

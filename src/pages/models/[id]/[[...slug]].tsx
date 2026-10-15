@@ -51,6 +51,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -575,7 +576,8 @@ export default function ModelDetailsV2({
     }
   };
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess() {
+    async onSuccess(result) {
+      notifyIfPublishHeld(result);
       await queryUtils.model.getById.invalidate({ id });
     },
     onError(error) {

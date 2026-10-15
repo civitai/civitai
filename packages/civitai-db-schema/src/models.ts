@@ -1007,6 +1007,21 @@ export interface Model {
   generationCoverage?: GenerationCoverage[];
   flags?: ModelFlag[];
   coveredCheckpoints?: CoveredCheckpoint[];
+  permissionSnapshots?: ModelPermissionSnapshot[];
+}
+
+export interface ModelPermissionSnapshot {
+  id: number;
+  modelId: number;
+  model?: Model;
+  effectiveAt: Date;
+  source: string;
+  actorUserId: number | null;
+  actorRole: string | null;
+  allowNoCredit: boolean;
+  allowCommercialUse: CommercialUse[];
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
 }
 
 export interface ModelFlag {
@@ -4266,6 +4281,13 @@ export interface Appeal {
   entityRemovedAt: Date | null;
 }
 
+export interface RemovalScoreExemption {
+  imageId: number;
+  reason: string;
+  createdAt: Date;
+  createdBy: number | null;
+}
+
 export interface AppealDecisionRecord {
   id: bigint;
   appealId: number;
@@ -4455,6 +4477,19 @@ export interface ModerationRule {
   reason: string | null;
   createdById: number;
   createdBy?: User;
+  versions?: ModerationRuleVersion[];
+}
+
+export interface ModerationRuleVersion {
+  id: number;
+  ruleId: number;
+  definition: JsonValue;
+  enabled: boolean;
+  action: ModerationRuleAction;
+  reason: string | null;
+  createdById: number;
+  createdAt: Date;
+  rule?: ModerationRule;
 }
 
 export interface Changelog {

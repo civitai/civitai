@@ -1121,9 +1121,34 @@ model Model {
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
   coveredCheckpoints CoveredCheckpoint[]
+  permissionSnapshots ModelPermissionSnapshot[]
 
   @@index([name])
   @@index([status, nsfw])
+}
+
+/// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
+/// be judged by the permission in effect when it was made rather than by today's. Before a model's
+/// first row nothing is known; a model with no rows has held its current permissions since
+/// `max(createdAt, MODEL_PERMISSION_LOG_START)`.
+///
+/// `source`: 'live' (written by upsertModel in the same transaction as the change), 'baseline' (the
+/// state just before a model's first recorded change, dated to the start of what is known) or
+/// 'backfill' (rebuilt from the ClickHouse entity-change log, which begins 2026-07-30).
+model ModelPermissionSnapshot {
+  id                    Int             @id @default(autoincrement())
+  modelId               Int
+  model                 Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  effectiveAt           DateTime        @default(now())
+  source                String
+  actorUserId           Int?
+  actorRole             String?
+  allowNoCredit         Boolean
+  allowCommercialUse    CommercialUse[]
+  allowDerivatives      Boolean
+  allowDifferentLicense Boolean
+
+  @@index([modelId, effectiveAt])
 }
 
 enum ModelFlagStatus {
@@ -6855,6 +6880,19 @@ model Appeal {
   @@index([status])
 }
 
+/// An image whose removal no longer counts against its owner's Creator Score, because it was removed
+/// under a rule added after upload. Covers removals up to and including `createdAt`; a later one counts.
+/// No FK: a removed image's row is deleted.
+model RemovalScoreExemption {
+  imageId   Int      @id
+  /// The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+  reason    String
+  createdAt DateTime @default(now())
+  createdBy Int?
+
+  @@index([createdAt])
+}
+
 /// Written only by the `appeal_decision_record` trigger on "Appeal"; never insert from app code.
 /// Enriched and pruned by the `appeal-decision-records` job.
 model AppealDecisionRecord {
@@ -7089,6 +7127,22 @@ model ModerationRule {
 
   createdById Int
   createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  versions    ModerationRuleVersion[]
+}
+
+model ModerationRuleVersion {
+  id          Int                  @id @default(autoincrement())
+  ruleId      Int
+  definition  Json
+  enabled     Boolean
+  action      ModerationRuleAction
+  reason      String?
+  createdById Int
+  createdAt   DateTime             @default(now())
+
+  rule ModerationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, id(sort: Desc)])
 }
 
 enum ChangelogType {

@@ -12,6 +12,7 @@ import {
 import {
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
+  modelRulesTextScanAdapter,
   postTextScanAdapter,
   storylineTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
@@ -31,6 +32,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Challenge: challengeModerationAdapter,
   Crucible: crucibleModerationAdapter,
   Model: modelModerationAdapter,
+  ModelRules: modelRulesTextScanAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
   Bounty: bountyModerationAdapter,
   BountyEntry: bountyEntryTextScanAdapter,

@@ -15,7 +15,10 @@ import {
   toUtcTimestamp,
 } from '~/server/services/creator-milestone-exclusions';
 import { getCreatorJourneyConfig } from '~/server/services/creator-journey-config.service';
-import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
+import {
+  getMetricExcludedUserIds,
+  getMetricExcludedUserIdsOrThrow,
+} from '~/server/services/metric-excluded-users.service';
 import { scoreTierKey } from '~/shared/constants/creator-journey.constants';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createJob } from './job';
@@ -287,11 +290,15 @@ export const applyDiscordLeaderboardRoles = async () => {
 
   const existingTop100 = await getAccountsInRole(top100Role);
   const existingTop10 = await getAccountsInRole(top10Role);
+  // Covers a UserRank left over from boards populated before an account was excluded. Lenient on purpose: the
+  // boards are the primary filter.
+  const excludedUserIds = await getMetricExcludedUserIds();
 
   // Get the top 100 users with a discord account
   const top100 = (
     await dbWrite.user.findMany({
       where: {
+        id: { notIn: excludedUserIds },
         rank: { leaderboardRank: { lte: 100 } },
         accounts: {
           some: { provider: 'discord' },
@@ -373,6 +380,7 @@ export const syncUserDiscordLeaderboardRoles = async (userId: number) => {
   const rank = user?.rank?.leaderboardRank;
   const providerAccountIds = user?.accounts.map((a) => a.providerAccountId) ?? [];
   if (!providerAccountIds.length || !rank || rank > 100) return;
+  if ((await getMetricExcludedUserIds()).includes(userId)) return;
 
   await addRoleToAccounts(top100Role, providerAccountIds);
   if (rank <= 10) await addRoleToAccounts(top10Role, providerAccountIds);

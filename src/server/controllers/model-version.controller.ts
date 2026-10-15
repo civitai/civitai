@@ -104,7 +104,11 @@ import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
+import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
+import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
+import { scanModelRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -838,7 +842,9 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: { select: { userId: true, nsfw: true, status: true, meta: true } },
+        model: {
+          select: { userId: true, nsfw: true, status: true, availability: true, meta: true },
+        },
       },
     });
 
@@ -871,12 +877,52 @@ export const publishModelVersionHandler = async ({
       ownerId: version.model.userId,
       callerId: ctx.user.id,
     });
+    await assertNotCrossOwnerDuplicate({
+      versionId: input.id,
+      ownerId: version.model.userId,
+      isModerator: ctx.user.isModerator,
+    });
 
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
+    // A model that is not public yet is held at its own publish; this is for one already live.
+    const modelIsLive =
+      (version.model.status === ModelStatus.Published ||
+        version.model.status === ModelStatus.Scheduled) &&
+      version.model.availability !== Availability.Private;
+    const literalHold =
+      modelIsLive && !ctx.user.isModerator
+        ? await checkModelRulesLiteralHold({
+            modelId: version.modelId,
+            versionIds: [input.id],
+            meta: version.model.meta as ModelMeta | null,
+          })
+        : null;
     const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
+    let held = false;
+    if (literalHold) {
+      try {
+        held = await unpublishLiveModelForLiteralRules({
+          modelId: version.modelId,
+          ...literalHold,
+        });
+      } catch (error) {
+        // The version is already published; the ModelRules scan below is the backstop.
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'model rules literal takedown failed',
+          entityType: 'ModelRules',
+          entityId: version.modelId,
+          error: error instanceof Error ? error.message : error,
+        });
+      }
+    }
+    if (!ctx.user.isModerator) scanModelRules(updatedVersion.modelId);
+    // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
+    if (held) return { ...updatedVersion, held };
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -904,7 +950,7 @@ export const publishModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return updatedVersion;
+    return { ...updatedVersion, held };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);

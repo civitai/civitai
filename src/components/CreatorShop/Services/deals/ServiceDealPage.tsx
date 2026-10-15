@@ -1,0 +1,153 @@
+import {
+  Anchor,
+  Badge,
+  Button,
+  Center,
+  Grid,
+  Group,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { IconMessage } from '@tabler/icons-react';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { useChatStore } from '~/components/Chat/ChatProvider';
+import { DealAccountabilitySheet } from '~/components/CreatorShop/Services/deals/DealAccountabilitySheet';
+import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealActionsPanel';
+import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
+import { dealPageState, dealStatusLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
+import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
+import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { formatDate } from '~/utils/date-helpers';
+
+const DATE = 'MMM D, YYYY h:mm A';
+
+function deadlineLines(deal: ServiceDealView) {
+  const { deadlines, viewerRole } = deal;
+  const lines: string[] = [];
+  if (deadlines.acceptBy)
+    lines.push(
+      viewerRole === 'seller'
+        ? `Accept or decline by ${formatDate(
+            deadlines.acceptBy,
+            DATE
+          )}, or it expires and the buyer is refunded.`
+        : `If the seller doesn't answer by ${formatDate(
+            deadlines.acceptBy,
+            DATE
+          )}, the request expires and you're refunded.`
+    );
+  if (deadlines.due) lines.push(`Due ${formatDate(deadlines.due, DATE)}.`);
+  if (deadlines.lateCancelFrom && viewerRole === 'buyer')
+    lines.push(
+      `If it's still not delivered, you can cancel from ${formatDate(
+        deadlines.lateCancelFrom,
+        DATE
+      )}.`
+    );
+  if (deadlines.autoCancelAt)
+    lines.push(
+      `Unanswered, the cancellation goes through on ${formatDate(deadlines.autoCancelAt, DATE)}.`
+    );
+  return lines;
+}
+
+export function ServiceDealPage({ dealId }: { dealId: number }) {
+  const { deal, isLoading } = useServiceDeal(dealId);
+  const state = dealPageState({ isLoading, hasDeal: !!deal });
+
+  if (state.kind === 'loading')
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  if (state.kind === 'notFound' || !deal) return <NotFound />;
+
+  const counterparty = deal.viewerRole === 'seller' ? deal.buyer : deal.seller;
+  const lines = deadlineLines(deal);
+
+  return (
+    <Stack gap="lg" py="md">
+      <Stack gap={4}>
+        <Text size="sm" c="dimmed">
+          Deal #{deal.id} ·{' '}
+          <Anchor component={NextLink} href={`/user/${deal.seller.username}/shop`} inherit>
+            {deal.seller.username}&apos;s shop
+          </Anchor>
+        </Text>
+        <Group gap="sm" wrap="wrap">
+          <Title order={1} size="h2">
+            {deal.offering.title}
+          </Title>
+          <Badge variant="light" color="violet">
+            {dealStatusLabel[deal.status]}
+          </Badge>
+        </Group>
+        <Text size="sm" c="dimmed">
+          {deal.viewerRole === 'seller' ? 'Requested by' : 'With'}{' '}
+          <Anchor component={NextLink} href={`/user/${counterparty.username}`} inherit>
+            {counterparty.username}
+          </Anchor>{' '}
+          · requested {formatDate(deal.requestedAt, DATE)} · ~{deal.deliveryDays} days ·{' '}
+          {deal.revisionsUsed}/{deal.revisionsIncluded} revisions used
+        </Text>
+      </Stack>
+
+      <Grid gutter="lg">
+        <Grid.Col span={{ base: 12, md: 7 }}>
+          <Stack gap="lg">
+            <DealEscrowPanel deal={deal} />
+            {lines.length > 0 && (
+              <Paper withBorder radius="md" p="md">
+                <Stack gap={4}>
+                  {lines.map((line) => (
+                    <Text key={line} size="sm">
+                      {line}
+                    </Text>
+                  ))}
+                </Stack>
+              </Paper>
+            )}
+            <DealActionsPanel deal={deal} />
+            <Paper withBorder radius="md" p="md">
+              <Stack gap={6}>
+                <Text fw={600}>The request</Text>
+                <Text size="sm" className="whitespace-pre-line break-words">
+                  {deal.requestText}
+                </Text>
+              </Stack>
+            </Paper>
+            {deal.status === 'Disputed' && (
+              <Paper withBorder radius="md" p="md">
+                <Text size="sm">
+                  This deal is in dispute and with our moderators. The Buzz stays held until they
+                  resolve it.
+                </Text>
+              </Paper>
+            )}
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 5 }}>
+          <Stack gap="lg">
+            {deal.chatId && (
+              <Button
+                onClick={() =>
+                  useChatStore.setState({ open: true, existingChatId: deal.chatId ?? undefined })
+                }
+                variant="light"
+                leftSection={<IconMessage size={16} />}
+              >
+                Open the deal chat
+              </Button>
+            )}
+            <DealAccountabilitySheet deal={deal} />
+          </Stack>
+        </Grid.Col>
+      </Grid>
+    </Stack>
+  );
+}
