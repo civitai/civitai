@@ -33,19 +33,19 @@ import { trpc } from '~/utils/trpc';
 
 type DealFile = RouterOutput['creatorServiceDealFile']['list'][number];
 
-export function useServiceDealFiles(dealId: number) {
+export function useServiceDealFiles(deal: ServiceDealView) {
   return trpc.creatorServiceDealFile.list.useQuery(
-    { dealId },
+    { dealId: deal.id },
     {
-      enabled: dealId > 0,
+      enabled: deal.id > 0,
       retry: false,
-      refetchInterval: (query) => filesPollMs(query.state.data ?? []),
+      refetchInterval: (query) => filesPollMs(query.state.data ?? [], deal),
     }
   );
 }
 
 export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
-  const { data: files = [], isLoading } = useServiceDealFiles(deal.id);
+  const { data: files = [], isLoading } = useServiceDealFiles(deal);
   const features = useFeatureFlags();
   const working = deal.status === 'Accepted' || deal.status === 'InRevision';
   const canUpload = deal.viewerRole === 'seller' && working && !!features.creatorServices;

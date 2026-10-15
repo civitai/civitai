@@ -16,7 +16,7 @@ const DISPUTE_WINDOW_HOURS = SERVICE_DEAL_DISPUTE_WINDOW_MS / 3_600_000;
 export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
   const features = useFeatureFlags();
   const mutations = useServiceDealMutations(deal.id);
-  const { data: files, isError } = useServiceDealFiles(deal.id);
+  const { data: files, isError } = useServiceDealFiles(deal);
   // Shown but disabled, with the reason, so the buyer knows it is coming rather than missing.
   const acceptBlocked = acceptDeliveryBlocked(deal, { files, failed: isError });
   const buttons = dealButtons(deal, { servicesEnabled: !!features.creatorServices });

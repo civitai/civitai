@@ -77,18 +77,19 @@ describe('upload checks before sending', () => {
 });
 
 describe('preview processing', () => {
-  it('polls fast while a preview is prepared, slowly while a final is checked, never for an abandoned upload', () => {
-    expect(filesPollMs([file({ kind: 'Preview', status: 'Processing' })])).toBe(10_000);
-    expect(filesPollMs([file({ kind: 'Final', status: 'Ready', scanStatus: 'Pending' })])).toBe(
-      30_000
-    );
-    expect(filesPollMs([file({ kind: 'Preview', status: 'Uploading' })])).toBe(false);
-    expect(filesPollMs([file({ kind: 'Final', status: 'Uploading', scanStatus: 'Pending' })])).toBe(
-      false
-    );
-    expect(filesPollMs([file({ kind: 'Final', status: 'Ready', scanStatus: 'Passed' })])).toBe(
-      false
-    );
+  it('polls fast while a preview is prepared, slowly only while a delivered final is checked', () => {
+    const delivered = { status: 'Delivered' as const, revisionsUsed: 1 };
+    const pending = file({ kind: 'Final', round: 1, status: 'Ready', scanStatus: 'Pending' });
+    expect(filesPollMs([file({ kind: 'Preview', status: 'Processing' })], delivered)).toBe(10_000);
+    expect(filesPollMs([pending], delivered)).toBe(30_000);
+    // A pending check changes nothing on the page outside the delivered round.
+    expect(filesPollMs([pending], { status: 'Accepted', revisionsUsed: 1 })).toBe(false);
+    expect(filesPollMs([pending], { status: 'Completed', revisionsUsed: 1 })).toBe(false);
+    expect(filesPollMs([{ ...pending, round: 0 }], delivered)).toBe(false);
+    // An abandoned upload never polls.
+    expect(filesPollMs([file({ kind: 'Preview', status: 'Uploading' })], delivered)).toBe(false);
+    expect(filesPollMs([{ ...pending, status: 'Uploading' }], delivered)).toBe(false);
+    expect(filesPollMs([{ ...pending, scanStatus: 'Passed' }], delivered)).toBe(false);
   });
 
   it('tells the seller a preview is being prepared and a final is being checked, never cleared early', () => {
@@ -165,6 +166,10 @@ describe('the buyer and the final files', () => {
     expect(blocked(undefined)).toMatch(/Loading/);
     // Unreadable: left to the server rather than locked with no way forward.
     expect(blocked(undefined, true)).toBeNull();
+    // A failed refresh keeps the files it last read, and they still block.
+    expect(blocked([file({ round: 1, scanStatus: 'Pending' })], true)).toMatch(
+      /still being checked/
+    );
   });
 
   it('promises an unlock only on the delivered round of a deal that can still be accepted or is owned', () => {

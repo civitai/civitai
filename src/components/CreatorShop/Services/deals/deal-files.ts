@@ -95,16 +95,25 @@ const SCAN_POLL_MS = 30_000;
 
 /**
  * How often to re-read the list, or false. While a preview is being prepared, and while a final
- * waits for its check (which decides whether the buyer may accept and download). Not for an
- * Uploading file: an upload the seller abandoned stays Uploading, and the uploader refreshes the
- * list itself when one finishes.
+ * of a delivered round waits for its check, which decides whether the buyer may accept. Only
+ * then: a pending check anywhere else changes nothing on this page, and each read hits the
+ * primary. Not for an Uploading file: an upload the seller abandoned stays Uploading, and the
+ * uploader refreshes the list itself when one finishes.
  */
-export function filesPollMs(files: DealFileFacts[]) {
+export function filesPollMs(
+  files: DealFileFacts[],
+  deal: { status: ServiceDealStatus; revisionsUsed: number }
+) {
   if (files.some((file) => file.kind === 'Preview' && file.status === 'Processing'))
     return PREVIEW_POLL_MS;
   if (
+    deal.status === 'Delivered' &&
     files.some(
-      (file) => file.kind === 'Final' && file.status === 'Ready' && file.scanStatus === 'Pending'
+      (file) =>
+        file.kind === 'Final' &&
+        file.round === deal.revisionsUsed &&
+        file.status === 'Ready' &&
+        file.scanStatus === 'Pending'
     )
   )
     return SCAN_POLL_MS;
@@ -171,15 +180,16 @@ export const finalsCopy: Record<FinalsState, string> = {
 /**
  * Why Accept delivery is shown but disabled, or null. The server refuses completion until every
  * final in the round has passed its check; this says so before the buyer tries. Disabled while
- * the list loads, so an unchecked delivery is never one click away; if the list can't be read the
- * button is left to the server, rather than locked with no way forward.
+ * the list loads, so an unchecked delivery is never one click away. Only if the list was never
+ * read is the button left to the server, rather than locked with no way forward: a failed refresh
+ * keeps the files it last read, and they still decide.
  */
 export function acceptDeliveryBlocked(
   deal: { status: ServiceDealStatus; revisionsUsed: number },
   { files, failed }: { files: DealFileFacts[] | undefined; failed: boolean }
 ) {
-  if (deal.status !== 'Delivered' || failed) return null;
-  if (!files) return 'Loading the delivery…';
+  if (deal.status !== 'Delivered') return null;
+  if (!files) return failed ? null : 'Loading the delivery…';
   const finals = files.filter((file) => file.kind === 'Final' && file.round === deal.revisionsUsed);
   return finals.some((file) => file.scanStatus !== 'Passed')
     ? "Files are still being checked. You can accept once they're cleared."
