@@ -41,14 +41,17 @@ export class BuzzApiError extends Error {
    * when there was none or it could not be read. A 409 on a refund, for one, carries the refunds
    * that already exist, which is the only way a caller can tell which legs are still owed.
    * Never read for a 5xx. Not part of the message, so existing callers see no change.
+   *
+   * NON-ENUMERABLE on purpose: errors are logged and returned with `JSON.stringify`, which
+   * would otherwise copy the service's ledger data into every such log line and response.
    */
-  body: unknown;
+  declare body: unknown;
   constructor(status: number, statusText: string, body?: unknown) {
     super(`[@civitai/buzz] request failed: ${status} ${statusText}`);
     this.name = 'BuzzApiError';
     this.status = status;
     this.statusText = statusText;
-    this.body = body;
+    Object.defineProperty(this, 'body', { value: body, enumerable: false });
   }
 }
 

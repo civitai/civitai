@@ -83,6 +83,14 @@ describe('BuzzApiError body', () => {
     expect(error.statusText).toBe('Nope');
   });
 
+  // Errors are serialised into logs and some responses; the ledger body must not ride along.
+  it('keeps the body out of anything that serialises the error', async () => {
+    const { error } = await errorFor(failing(409, '{"existingRefunds":["refund-1"]}'));
+    expect(error.body).toEqual({ existingRefunds: ['refund-1'] });
+    expect(JSON.stringify(error)).not.toContain('existingRefunds');
+    expect(JSON.stringify({ wrapped: { cause: error } })).not.toContain('existingRefunds');
+  });
+
   it('hands mapError the error with its body', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(failing(409, '{"a":1}')));
     const mapError = vi.fn((error: BuzzApiError) => new Error(`mapped ${error.status}`));
