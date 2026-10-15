@@ -4,6 +4,8 @@ import {
   latestScanDisagrees,
   openVerdicts,
   poiInForce,
+  detectionCopy,
+  detectionKind,
   rulingText,
   scanVerdictProvenance,
   scanVerdictText,
@@ -117,5 +119,33 @@ describe('rulingText', () => {
     ['somethingNew', 'moderator', 'somethingNew'],
   ])('%s via %s reads %s', (decision, via, text) => {
     expect(rulingText(decision, via)).toBe(text);
+  });
+});
+
+describe('detectionKind', () => {
+  it('reads a marker with no kind as a re-detection', () => {
+    expect(detectionKind({})).toBe('redetected');
+    expect(detectionKind({ kind: 'redetected' })).toBe('redetected');
+    expect(detectionKind({ kind: 'first' })).toBe('first');
+  });
+
+  it('treats an unrecognised kind as a re-detection', () => {
+    expect(detectionKind({ kind: 'later' as never })).toBe('redetected');
+  });
+});
+
+describe('detectionCopy', () => {
+  it('does not claim a prior clear for a first detection', () => {
+    const copy = detectionCopy('first');
+    expect(copy.badge).toBe('First detection');
+    expect(copy.explanation).not.toMatch(/cleared|edited/i);
+    expect(copy.showsPriorClear).toBe(false);
+  });
+
+  it('describes a re-detection as text found after a human clear', () => {
+    const copy = detectionCopy('redetected');
+    expect(copy.badge).toBe('Re-detected');
+    expect(copy.explanation).toMatch(/after it was cleared/);
+    expect(copy.showsPriorClear).toBe(true);
   });
 });

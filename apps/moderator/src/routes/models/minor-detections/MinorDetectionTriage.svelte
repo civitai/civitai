@@ -1,15 +1,17 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import TriageRow from '$lib/components/minor-flags/TriageRow.svelte';
   import TriageShell from '$lib/components/minor-flags/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { formActionHref } from '$lib/minor-flags/appeal-triage';
+  import { detectionKind } from '$lib/minor-flags/text-scan-verdicts';
   import { redetectedFilterParams } from '$lib/minor-flags/redetected-filters';
   import type { RedetectedQueueData } from '$lib/server/minor-flag-queue';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
   import { urlWith } from '$lib/url';
-  import RedetectedDetail from './RedetectedDetail.svelte';
+  import MinorDetectionDetail from './MinorDetectionDetail.svelte';
 
   type QueueForm = { error?: string; modelId?: number } | null;
 
@@ -25,7 +27,6 @@
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
     formActionHref(action, {
-      view: 'redetected',
       ...redetectedFilterParams(data.redetectedFilters),
       q: data.q || undefined,
       page: data.page > 1 ? data.page : undefined,
@@ -43,9 +44,9 @@
     {#if data.q}
       <p class="m-0">Nothing matches "{data.q}".</p>
     {:else if filtersActive}
-      <p class="m-0">No re-detections match these filters.</p>
+      <p class="m-0">No detections match these filters.</p>
     {:else}
-      <p class="m-0">No labels are waiting on a re-detection.</p>
+      <p class="m-0">No detections are waiting on a ruling.</p>
     {/if}
     {#if filtersActive || data.q}
       <a href={clearFiltersHref} class="mt-2 inline-block {LINK_CLASS}">Clear filters</a>
@@ -58,8 +59,8 @@
   {rowKey}
   {parseKey}
   selectionParam="item"
-  queueLabel="Re-detected queue"
-  itemLabel="Re-detection"
+  queueLabel="Minor detections queue"
+  itemLabel="Detection"
   canKeep={(row) => !row.hasPendingAppeal}
   canUnflag={(row) => !row.hasPendingAppeal}
   outcomeFor={(result, outcome) =>
@@ -85,11 +86,12 @@
     >
       {#snippet badges()}
         <FlagBadge label={row.label} />
+        <DetectionKindBadge kind={detectionKind(row.redetected)} />
       {/snippet}
     </TriageRow>
   {/snippet}
   {#snippet detail(row, state)}
-    <RedetectedDetail
+    <MinorDetectionDetail
       {row}
       civitaiUrl={data.civitaiUrl}
       verdict={state.verdict}

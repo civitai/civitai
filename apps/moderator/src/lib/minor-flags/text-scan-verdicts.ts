@@ -8,9 +8,13 @@ export type TextScanFlagView = {
 
 export type FlagLabel = 'minor' | 'poi';
 
-/** What `Model.meta.textScanFlags[label].redetected` holds: a detection on text a human had already
- *  cleared under another hash. Nothing was flagged. */
+export type DetectionKind = 'first' | 'redetected';
+
+/** What `Model.meta.textScanFlags[label].redetected` holds: a detection the scan held for a moderator
+ *  instead of flagging. `kind: 'redetected'` is text a human had already cleared under another hash;
+ *  `'first'` has no human ruling behind it. Nothing was flagged either way. */
 export type RedetectionView = {
+  kind?: DetectionKind;
   at?: string;
   workflowId: string;
   reason?: string;
@@ -113,3 +117,25 @@ export const scanVerdictText = (v: Pick<LatestScanLabel, 'detected' | 'reason'>)
   const verdict = v.detected ? 'detected' : v.detected === false ? 'not detected' : 'no verdict';
   return v.reason ? `${verdict} — ${v.reason}` : verdict;
 };
+
+/** A marker with no `kind` predates first-detection review, so it is a re-detection. */
+export const detectionKind = (marker: { kind?: DetectionKind }): DetectionKind =>
+  marker.kind === 'first' ? 'first' : 'redetected';
+
+const DETECTION_COPY = {
+  first: {
+    badge: 'First detection',
+    explanation:
+      "The scan held this for review instead of flagging; no moderator has ruled on this model's text before, and the owner wasn't told.",
+    showsPriorClear: false,
+  },
+  redetected: {
+    badge: 'Re-detected',
+    explanation:
+      "Found on text edited after it was cleared. The scan held this instead of flagging; the owner wasn't told.",
+    showsPriorClear: true,
+  },
+} as const;
+
+/** The wording that depends on whether a human ever cleared this label. */
+export const detectionCopy = (kind: DetectionKind) => DETECTION_COPY[kind];

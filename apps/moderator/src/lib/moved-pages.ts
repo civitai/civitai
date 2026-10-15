@@ -1,5 +1,5 @@
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
-import { FLAG_APPEALS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
+import { FLAG_APPEALS_PATH, MINOR_DETECTIONS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
 import { postReportUrl, userReportUrl } from '$lib/entity-url';
 import { SUSPECT_TABS } from '../routes/reports/user/tabs';
 
@@ -14,6 +14,7 @@ export function redirectWithoutParam(url: URL, key: string, dest: string): strin
 const MOVED_VIEWS = [
   { from: GENERATOR_RESTRICTIONS_PATH, key: 'type', value: 'scam', to: SCAM_RESTRICTIONS_PATH },
   { from: MINOR_HASH_PATH, key: 'tab', value: 'appeals', to: FLAG_APPEALS_PATH },
+  { from: FLAG_APPEALS_PATH, key: 'view', value: 'redetected', to: MINOR_DETECTIONS_PATH },
 ] as const;
 
 /** `?user=&tab=` became the path: `/reports/user/<id>/<tab>`. A tab the route does not have is dropped
