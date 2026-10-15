@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { createMessage, upsertDealChat } from '~/server/services/chat.service';
 import {
   claimHold,
@@ -129,6 +130,12 @@ export async function getDealParties(dealId: number, userId: number, isModerator
   return deal;
 }
 
+/** The storefront's rule for who may sell (P1): a banned, deleted or muted seller sells nothing. */
+const sellerInGoodStanding = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "User" u
+  WHERE u."id" = ${seller} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND u."muted" = false
+)`;
+
 const notBlockedBetween = (buyer: Prisma.Sql, seller: Prisma.Sql) => Prisma.sql`NOT EXISTS (
   SELECT 1 FROM "UserEngagement" ue
   WHERE ue."type" = 'Block'::"UserEngagementType"
@@ -144,6 +151,7 @@ type OfferingRow = {
   maxOpenDeals: number | null;
   price: number;
   blocked: boolean;
+  sellerOk: boolean;
 };
 
 const priceChanged = () =>
@@ -180,9 +188,13 @@ export async function requestServiceDeal({
     SELECT o."id", o."sellerId", o."status"::text AS "status", o."maxOpenDeals", o."price",
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
-      NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked"
+      NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
+      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk"
     FROM "ServiceOffering" o WHERE o."id" = ${offeringId}::int`;
-  if (!offering || offering.status !== 'Active') throw throwNotFoundError('Service not found');
+  if (!offering || offering.status !== 'Active' || !offering.sellerOk)
+    throw throwNotFoundError('Service not found');
+  // The same visibility the storefront applies: an off or private shop takes no requests.
+  await assertCreatorShopVisible({ userId: offering.sellerId, viewerId: buyerId });
   if (offering.sellerId === buyerId) throw throwBadRequestError('You cannot buy your own service');
   if (offering.blocked) throw throwBadRequestError('You cannot request this service');
   if (offering.maxOpenDeals !== null && offering.open >= offering.maxOpenDeals)
@@ -205,6 +217,7 @@ export async function requestServiceDeal({
         AND o."status" = 'Active'::"ServiceOfferingStatus"
         AND o."price" = ${expectedPrice}::int
         AND o."sellerId" <> ${buyerId}::int
+        AND ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)}
         AND (o."maxOpenDeals" IS NULL OR o."maxOpenDeals" > (
           SELECT count(*) FROM "ServiceDeal" d WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})
         ))

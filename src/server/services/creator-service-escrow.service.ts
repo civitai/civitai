@@ -303,7 +303,17 @@ export async function refundDeal(dealId: number) {
         // back (an earlier attempt landed and its receipt did not). As crucible and challenge
         // refunds treat it. 404 stays a failure: this hold is confirmed, so "nothing to refund"
         // is a discrepancy for a human.
-        if (getBuzzApiStatus(error) === 409) return `${holdPrefix(dealId)}:already-refunded`;
+        if (getBuzzApiStatus(error) === 409) {
+          // Unconfirmed with the Buzz service owners: that 409 means EVERY leg under the prefix
+          // was reversed. Logged so a partial reversal would at least be visible.
+          logToAxiom({
+            name: 'creator-service-escrow',
+            type: 'warning',
+            message: 'refund answered 409; recorded as already refunded',
+            dealId,
+          }).catch(() => null);
+          return `${holdPrefix(dealId)}:already-refunded`;
+        }
         throw error;
       }
       // A refund that moved nothing must not be receipted, or both recovery queries skip it and

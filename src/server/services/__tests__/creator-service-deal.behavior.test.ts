@@ -9,6 +9,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
+import type * as CreatorShop from '~/server/services/creator-shop.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -34,6 +35,12 @@ const chat = vi.hoisted(() => ({ upsertDealChat: vi.fn(), createMessage: vi.fn()
 vi.mock('~/server/services/chat.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ChatService>()),
   ...chat,
+}));
+
+const shop = vi.hoisted(() => ({ assertCreatorShopVisible: vi.fn() }));
+vi.mock('~/server/services/creator-shop.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShop>()),
+  ...shop,
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -163,7 +170,7 @@ const conflict = expect.objectContaining({ code: 'CONFLICT' });
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY);
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
   `);
@@ -191,6 +198,7 @@ beforeEach(async () => {
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   chat.upsertDealChat.mockResolvedValue({ id: 77 });
   chat.createMessage.mockResolvedValue({});
+  shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
     DELETE FROM "User";
@@ -271,6 +279,25 @@ describe('request', () => {
     await request();
     await expect(request({ buyerId: STRANGER })).rejects.toThrow(/not taking new requests/);
     expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  // P1's storefront rules: a banned, deleted or muted seller sells nothing, and an off or private
+  // shop takes no requests, even from a buyer who still has the offering's link.
+  it.each([
+    ['banned', `"bannedAt" = now()`],
+    ['deleted', `"deletedAt" = now()`],
+    ['muted', `muted = true`],
+  ])('refuses a request to a %s seller, before any charge', async (_name, set) => {
+    await q(`UPDATE "User" SET ${set} WHERE id = $1`, [SELLER]);
+    await expect(request()).rejects.toThrow(/Service not found/);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses a request when the shop is not visible to the buyer', async () => {
+    shop.assertCreatorShopVisible.mockRejectedValue(new Error('Shop not found'));
+    await expect(request()).rejects.toThrow(/Shop not found/);
+    expect(shop.assertCreatorShopVisible).toHaveBeenCalledWith({ userId: SELLER, viewerId: BUYER });
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
   });
 
   it('cancels a request the Buzz service refused, and refunds nothing', async () => {
