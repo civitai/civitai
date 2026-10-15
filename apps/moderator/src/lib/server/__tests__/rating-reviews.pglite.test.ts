@@ -716,4 +716,18 @@ describe('getRatingReviews', () => {
       Unactioned: 0,
     });
   });
+
+  it('does not show a PG-13 text verdict as a raise', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4 });
+    await seedEm(db, {
+      entityType: 'Post',
+      entityId: postId,
+      nsfwLevel: 2,
+      result: { version: 1, labels: { nsfw: { level: 'pg13', reason: 'fake reason' } } },
+    });
+    await fileReview('Post', postId);
+
+    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    expect(items.find((i) => i.entityType === 'Post')?.scan).toBeNull();
+  });
 });

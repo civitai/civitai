@@ -1,4 +1,4 @@
-import { NsfwLevel } from '~/server/common/enums';
+import { TEXT_SCAN_MIN_RAISE_LEVEL } from '@civitai/shared/rated-entity-sql';
 import { dbWrite } from '~/server/db/client';
 import {
   updateArticleNsfwLevels,
@@ -115,7 +115,7 @@ async function raiseToFloor(
 
   if (
     !outcome.nsfw.raised ||
-    outcome.nsfw.detectedLevel < NsfwLevel.R ||
+    outcome.nsfw.detectedLevel < TEXT_SCAN_MIN_RAISE_LEVEL ||
     before.moderatorNsfwLevel != null ||
     !before.userId
   )

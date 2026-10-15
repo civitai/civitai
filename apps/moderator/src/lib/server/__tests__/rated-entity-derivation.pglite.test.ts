@@ -44,6 +44,16 @@ describe('computeDerivedNsfwLevel', () => {
     expect(await derived('Post', postId)).toBe(8);
   });
 
+  it.each(['Post', 'BountyEntry'] as const)(
+    'ignores a PG-13 text verdict on a %s, so the derived level stays at the image level',
+    async (type) => {
+      const id = await seedEntity(db, type, { nsfwLevel: 1 });
+      await image(1, type === 'Post' ? { postId: id } : { entityType: type, entityId: id });
+      await seedEm(db, { entityType: type, entityId: id, nsfwLevel: 2 });
+      expect(await derived(type, id)).toBe(1);
+    }
+  );
+
   it('ignores a shadow row and an XGuard row', async () => {
     const postId = await seedEntity(db, 'Post', { nsfwLevel: 1 });
     await image(1, { postId });

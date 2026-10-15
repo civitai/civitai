@@ -87,6 +87,35 @@ describe('applyRatingFloor', () => {
     expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['Post', 'post', post],
+    ['Article', 'article', post],
+    [
+      'BountyEntry',
+      'bountyEntry',
+      (nsfwLevel: number) => ({ nsfwLevel, moderatorNsfwLevel: null, userId: 5, bountyId: 3 }),
+    ],
+  ] as const)('does not notify for a PG13 verdict on a %s', async (type, model, row) => {
+    const find = dbMock.dbWrite[model].findUnique;
+    find.mockResolvedValueOnce(row(1) as never).mockResolvedValueOnce(row(2) as never);
+    await applyRatingFloor(type, args(2, true));
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'poi',
+      { poi: { detected: true, declared: false, newlyDetected: true, names: ['A'], reason: 'r' } },
+    ],
+    ['minor', { minor: { detected: true, declared: false, newlyDetected: true, reason: 'r' } }],
+  ])('defers no notice for a PG13 verdict when %s is detected', async (_, extra) => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(1)).mockResolvedValueOnce(post(2));
+    const a = args(2, true);
+    const result = await applyRatingFloor('Post', { ...a, outcome: { ...a.outcome, ...extra } });
+    expect(result).toEqual({ deferredRatingNotice: null });
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+  });
+
   it('names the level the entity now has, not the one the text was read at', async () => {
     dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(1)).mockResolvedValueOnce(post(8));
     await applyRatingFloor('Post', args(4, true));

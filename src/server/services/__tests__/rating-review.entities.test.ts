@@ -225,6 +225,22 @@ describe('getRatingReviewScan', () => {
     });
   });
 
+  it.each(['Post', 'BountyEntry', 'Bounty'] as const)(
+    'does not count a PG13 text verdict on a %s as a raise',
+    async (type) => {
+      dbMock.dbRead.entityModeration.findUnique.mockResolvedValue({
+        status: 'Succeeded',
+        nsfwLevel: 2,
+        result: textScan('pg13', 'h3'),
+      });
+      expect(await getRatingReviewScan(type, 1)).toMatchObject({
+        raised: false,
+        level: null,
+        reason: null,
+      });
+    }
+  );
+
   it('never counts an XGuard row, whatever it triggered', async () => {
     dbMock.dbRead.entityModeration.findUnique.mockResolvedValue({
       status: 'Succeeded',
