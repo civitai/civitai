@@ -2256,3 +2256,27 @@ describe('mature services', () => {
     });
   });
 });
+
+// Decision (briony, 2026-10-15): a moderator takedown sets the offering to Removed and does NOT
+// cancel or refund its open deals. Buyers keep every exit and moderators have the dispute queue.
+// What the takedown must still do is stop NEW requests, which the Active check in the request
+// path already does. Do not add a cascade from takedown into deals without that decision changing.
+describe('an offering taken down mid-deal', () => {
+  const takeDown = () =>
+    q(`UPDATE "ServiceOffering" SET status = 'Removed'::"ServiceOfferingStatus" WHERE id = 1`);
+
+  it('refuses a new request', async () => {
+    await takeDown();
+    await expect(request()).rejects.toThrow(/Service not found/);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('lets an open deal run to completion under its copied terms', async () => {
+    const { id } = await request();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await takeDown();
+    await deliver(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    expect((await deal(id)).status).toBe('Completed');
+  });
+});

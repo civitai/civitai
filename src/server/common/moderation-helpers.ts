@@ -240,6 +240,62 @@ export function getUnpublishReason(reason: string): UnpublishReasonDetail | unde
   return lookupReason(unpublishReasons, reason);
 }
 
+/**
+ * The reasons a moderator may take down a Creator Services OFFERING, worded for its seller. An
+ * offering is a listing of work for hire, so these describe what is being offered, not an upload.
+ */
+export const serviceOfferingTakedownReasons = {
+  'prohibited-content': {
+    optionLabel: 'Offers content our guidelines prohibit',
+    notificationMessage:
+      'Services offering to create content that is prohibited under our content guidelines are not allowed.',
+    type: 'policy',
+  },
+  'real-person-likeness': {
+    optionLabel: 'Offers real-person likeness',
+    notificationMessage:
+      'Services offering to depict real people in a mature context are prohibited under our content guidelines.',
+    type: 'policy',
+  },
+  'hate-speech': {
+    optionLabel: 'Promotion of hate-speech or targeted attack',
+    notificationMessage:
+      'Content that attacks, harasses, or discriminates against an individual or group based on their race, ethnicity, nationality, religion, gender, sexual orientation, disability, or any other characteristic is prohibited under our content guidelines.',
+    type: 'policy',
+  },
+  'off-platform': {
+    optionLabel: 'Moves payment or contact off Civitai',
+    notificationMessage:
+      'Services must be requested, paid for and delivered on Civitai. Directing buyers to pay or deal elsewhere is not allowed.',
+    type: 'policy',
+  },
+  misleading: {
+    optionLabel: 'Misleading or fraudulent listing',
+    notificationMessage:
+      'Services must describe honestly what the buyer will receive. Misleading or fraudulent listings are prohibited under our Terms of Service.',
+    type: 'policy',
+  },
+  spam: {
+    optionLabel: 'Spam or advertorial content',
+    notificationMessage:
+      'Spam and advertisements are strictly prohibited under our Terms of Service.',
+    type: 'policy',
+  },
+  other: {
+    optionLabel: 'Other',
+    notificationMessage: '',
+    type: 'policy',
+  },
+} as const satisfies Record<string, UnpublishReasonDetail>;
+
+export type ServiceOfferingTakedownReason = keyof typeof serviceOfferingTakedownReasons;
+
+export function getServiceOfferingTakedownReason(
+  reason: string
+): UnpublishReasonDetail | undefined {
+  return lookupReason(serviceOfferingTakedownReasons, reason);
+}
+
 /** Never falls back to `unpublishReasons` — everything it returns is safe to show an article's author. */
 export function getArticleUnpublishReason(reason: string): UnpublishReasonDetail | undefined {
   return (

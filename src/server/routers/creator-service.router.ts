@@ -2,6 +2,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getShopServiceOfferingsSchema,
   setServiceOfferingStatusSchema,
+  takedownServiceOfferingSchema,
   upsertServiceOfferingSchema,
 } from '~/server/schema/creator-service.schema';
 import {
@@ -10,11 +11,13 @@ import {
   getShopServiceOfferings,
   removeServiceOffering,
   setServiceOfferingStatus,
+  takedownServiceOffering,
   upsertServiceOffering,
 } from '~/server/services/creator-service.service';
 import {
   guardedProcedure,
   isFlagProtected,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -45,6 +48,11 @@ export const creatorServiceRouter = router({
   remove: servicesProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => removeServiceOffering({ sellerId: ctx.user.id, id: input.id })),
+  takedown: moderatorProcedure
+    .use(isFlagProtected('creatorShop'))
+    .use(isFlagProtected('creatorServices'))
+    .input(takedownServiceOfferingSchema)
+    .mutation(({ input, ctx }) => takedownServiceOffering({ moderatorId: ctx.user.id, input })),
 
   getForShop: publicProcedure
     .use(isFlagProtected('creatorShop'))

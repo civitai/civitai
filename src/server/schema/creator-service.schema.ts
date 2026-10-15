@@ -13,6 +13,26 @@ import {
   SERVICE_TITLE_MIN,
 } from '~/shared/constants/creator-service.constants';
 import { ServicePreviewKind } from '~/shared/utils/prisma/enums';
+import type { ServiceOfferingTakedownReason } from '~/server/common/moderation-helpers';
+import { serviceOfferingTakedownReasons } from '~/server/common/moderation-helpers';
+
+const takedownReasons = Object.keys(serviceOfferingTakedownReasons) as [
+  ServiceOfferingTakedownReason,
+  ...ServiceOfferingTakedownReason[]
+];
+
+export type TakedownServiceOfferingInput = z.infer<typeof takedownServiceOfferingSchema>;
+export const takedownServiceOfferingSchema = z
+  .object({
+    id: z.number().int().positive(),
+    reason: z.enum(takedownReasons),
+    details: z.string().trim().max(1000).optional(),
+  })
+  // `other` has no copy of its own, so the details are what the seller is told.
+  .refine((input) => input.reason !== 'other' || !!input.details, {
+    message: 'Details are required when the reason is Other',
+    path: ['details'],
+  });
 
 export type UpsertServiceOfferingInput = z.infer<typeof upsertServiceOfferingSchema>;
 export const upsertServiceOfferingSchema = z.object({
