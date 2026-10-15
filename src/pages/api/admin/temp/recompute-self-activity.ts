@@ -71,11 +71,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     .then((q) => q.result());
   const exclusionSince = recorded[0] ? new Date(Number(recorded[0].value)) : null;
   if (!dryRun && part !== 'models' && !exclusionSince)
-    return res
-      .status(409)
-      .json({
-        error: 'The nightly score job has not yet run with the exclusion; nothing to cut off',
-      });
+    return res.status(409).json({
+      error: 'The nightly score job has not yet run with the exclusion; nothing to cut off',
+    });
   const before = exclusionSince ?? new Date();
   const multipliers = await getScoreMultipliers();
 
