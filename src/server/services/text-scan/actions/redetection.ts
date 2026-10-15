@@ -79,12 +79,12 @@ export async function resolveTextScanRedetection({
     select: { meta: true, minor: true, poi: true },
   });
   const detection = model ? getTextScanRedetection(model.meta, label) : null;
-  if (!model || !detection) return stale();
+  if (!model || !detection) throw stale();
   const { textHash } = detection;
 
   if (!keep) {
     if (!(await closeRedetection({ modelId, label, textHash, dismissedBy: userId })))
-      return stale();
+      throw stale();
     logToAxiom({
       name: 'text-scan',
       type: 'info',
@@ -98,7 +98,7 @@ export async function resolveTextScanRedetection({
 
   // Flagged by another route since: there is nothing left to apply.
   if (model[label]) {
-    if (!(await closeRedetection({ modelId, label, textHash }))) return stale();
+    if (!(await closeRedetection({ modelId, label, textHash }))) throw stale();
     return 'closed';
   }
 
@@ -113,7 +113,7 @@ export async function resolveTextScanRedetection({
     label === 'poi'
       ? await flagModelPoi({ ...flag, names: detection.names ?? [] })
       : await flagModelMinor(flag);
-  if (!written) return stale();
+  if (!written) throw stale();
 
   // The flag write replaced the entry and the re-detection with it; the upheld ruling lands on the new one.
   await stampModelTextScanAppeal({
