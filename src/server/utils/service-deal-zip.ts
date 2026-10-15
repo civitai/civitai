@@ -413,10 +413,7 @@ class LimitedEntry extends Transform {
   }
 }
 
-/**
- * An entry's bytes as a stream, for copying into an archive the server builds. Nothing but the bytes
- * is taken from the original: not its name, sizes, flags, extra fields or comment.
- */
+/** An entry's bytes as a stream, for copying into an archive the server builds. */
 export async function openEntryStream(
   zipfile: yauzl.ZipFile,
   entry: ZipEntry,

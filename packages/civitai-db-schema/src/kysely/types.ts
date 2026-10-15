@@ -4740,8 +4740,8 @@ export type ServiceDealFile = {
   unpackedAt: Timestamp | null;
   /**
    * What a buyer downloads: for a zip, an archive the server built from the entries it checked
-   * (`deliveryKey`); for any other file the upload itself, with `deliveryKey` null. Set when the
-   * file is ready for its malware scan.
+   * (`deliveryKey`); for any other file the upload itself, with `deliveryKey` null. `repackedAt`
+   * is set when the file is ready for its malware scan.
    */
   deliveryKey: string | null;
   deliverySize: number | null;

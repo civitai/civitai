@@ -18,14 +18,14 @@ export type FixtureEntry = {
   declaredSize?: number;
   /** Written in the headers in place of the real compressed size. */
   declaredCompressedSize?: number;
-  /** Written as the name in the entry's LOCAL header only; the directory keeps `name`. */
+  /** Name written in the local header; differs from the directory name. */
   localName?: string;
 };
 
 export type FixtureOptions = {
-  /** Written as the entry count in the end-of-directory record, in place of the real count. */
+  /** Entry count recorded in the archive's end record. */
   declaredEntryCount?: number;
-  /** Bytes after the end-of-directory record. */
+  /** Bytes appended after the archive's end record. */
   trailing?: Buffer;
 };
 

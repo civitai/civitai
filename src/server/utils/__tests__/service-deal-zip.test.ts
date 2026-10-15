@@ -191,9 +191,9 @@ describe('what an archive says about itself', () => {
     );
   });
 
-  it('refuses bytes after the end of the directory', async () => {
+  it('refuses an archive with extra trailing data', async () => {
     const zip = buildZip([{ name: 'a.txt', data: Buffer.from('x'.repeat(100)) }], {
-      trailing: Buffer.from('more bytes than the archive accounts for'),
+      trailing: Buffer.from('trailing'),
     });
     await rejects(openZip(bufferZipSource(zip)), /not a valid/);
   });
@@ -470,7 +470,7 @@ describe('copying an entry out', () => {
     opened.zipfile.close();
   });
 
-  it('stops an entry that inflates past its ratio though its header says it is small', async () => {
+  it('stops an entry that exceeds its compression ratio as it is read', async () => {
     const opened = await open([
       { name: 'a.txt', data: Buffer.alloc(60 * 1024 * 1024), declaredSize: 500 },
     ]);
@@ -481,7 +481,7 @@ describe('copying an entry out', () => {
     opened.zipfile.close();
   });
 
-  it('stops an entry past the cap for its kind though its header says it is small', async () => {
+  it('stops an entry past the size cap for its kind as it is read', async () => {
     const image = await open([
       {
         name: 'a.png',

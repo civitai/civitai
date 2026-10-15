@@ -767,7 +767,7 @@ describe('who can download what', () => {
 
   const DELIVERY_KEY = 'service-deals/delivered/built-by-the-server';
 
-  it("gives the buyer the archive the server built, never the seller's own upload", async () => {
+  it('gives the buyer the server-built archive', async () => {
     const { dealId, finalId } = await delivered('Passed');
     await complete(dealId);
     const [row] = await q<{ s3Key: string }>(
@@ -776,7 +776,6 @@ describe('who can download what', () => {
     );
     expect(await download(finalId, BUYER)).toMatchObject({ key: DELIVERY_KEY });
     expect(row.s3Key).not.toBe(DELIVERY_KEY);
-    // The seller takes back their own bytes; a moderator reviews the original unless they ask for the buyer's.
     expect(await download(finalId, SELLER)).toMatchObject({ key: row.s3Key });
     expect(await download(finalId, MOD, true)).toMatchObject({ key: row.s3Key });
     expect(
@@ -794,7 +793,6 @@ describe('who can download what', () => {
     await complete(dealId);
     await q(`UPDATE "ServiceDealFile" SET "deliveryKey" = NULL WHERE id = $1`, [finalId]);
     expect(await download(finalId, BUYER)).toBeNull();
-    // A moderator asking for the buyer's version gets nothing either; the original stays available.
     expect(
       await files.resolveServiceDealFileDownload({
         fileId: finalId,

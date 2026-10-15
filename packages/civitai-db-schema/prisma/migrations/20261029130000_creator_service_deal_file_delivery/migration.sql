@@ -19,6 +19,5 @@ ALTER TABLE "ServiceDealFileEntry"
   ADD CONSTRAINT "ServiceDealFileEntry_fileId_fkey"
   FOREIGN KEY ("fileId") REFERENCES "ServiceDealFile"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
--- The repack sweep: unpacked Finals whose delivery file is not built yet.
 CREATE INDEX IF NOT EXISTS "ServiceDealFile_repack_idx"
   ON "ServiceDealFile" ("id") WHERE "kind" = 'Final' AND "unpackedAt" IS NOT NULL AND "repackedAt" IS NULL;

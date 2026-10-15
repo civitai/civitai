@@ -113,10 +113,7 @@ const markUnpacked = (fileId: number, repacked: boolean) =>
       "repackedAt" = CASE WHEN ${repacked} THEN now() ELSE NULL END
     WHERE "id" = ${fileId}::int`;
 
-/**
- * Hands a file to the malware scan once it is ready, naming the object a buyer would download. The
- * scan itself is not wired yet (see `submitFinalScan`).
- */
+/** Hands a file to the malware scan once it is ready, naming the object a buyer would download. */
 export async function handOffToScan(fileId: number) {
   const [target] = await dbWrite.$queryRaw<FinalScanTarget[]>`
     SELECT "id", "dealId", "mimeType",

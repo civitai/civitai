@@ -419,9 +419,9 @@ describe('building the archive a buyer downloads', () => {
 
   it('carries nothing over from the original but the bytes of the files it checked', async () => {
     const items = [
-      { name: 'a.txt', data: TEXT('alpha '), localName: 'LOCAL-NAME-A.txt' },
+      { name: 'a.txt', data: TEXT('alpha '), localName: 'other-name-a.txt' },
       { name: 'b.txt', data: TEXT('beta ') },
-      { name: 'HIDDEN-ENTRY.txt', data: TEXT('hidden ') },
+      { name: 'extra-entry.txt', data: TEXT('hidden ') },
     ];
     const { fileId } = await unpackedZip(items, { declaredEntryCount: 2 });
     await repack.repackFinals();
@@ -430,7 +430,7 @@ describe('building the archive a buyer downloads', () => {
       { name: 'a.txt', data: items[0].data },
       { name: 'b.txt', data: items[1].data },
     ]);
-    for (const leftover of ['LOCAL-NAME-A', 'HIDDEN-ENTRY', 'hidden '])
+    for (const leftover of ['other-name-a', 'extra-entry', 'hidden '])
       expect(built.includes(Buffer.from(leftover))).toBe(false);
   });
 
@@ -545,9 +545,7 @@ describe('when the build goes wrong', () => {
     expect([...bucket.objects.keys()].some((k) => k.startsWith('service-deals/delivered/'))).toBe(
       false
     );
-    // Not at once...
     expect(await repack.repackFinals()).toBe(0);
-    // ...but after the delay.
     await ageClaim(fileId, SERVICE_UNPACK_STALE_MS + 60_000);
     expect(await repack.repackFinals()).toBe(1);
     expect((await fileRow(fileId)).deliveryKey).not.toBeNull();
@@ -603,7 +601,6 @@ describe('after the archive is built', () => {
     const file = await fileRow(fileId);
     expect(file.deliveryKey).not.toBeNull();
     expect(file.repackedAt).not.toBeNull();
-    // What the buyer will download is still there.
     expect(bucket.objects.has(file.deliveryKey!)).toBe(true);
     expect(s3.deleteObject).not.toHaveBeenCalled();
   });

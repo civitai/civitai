@@ -26,19 +26,12 @@ import {
 import { deleteObject, getBucket, getS3Client, headObject } from '~/utils/s3-utils';
 
 /**
- * Builds the archive a buyer downloads.
- *
- * A zip Final that has been unpacked and checked is copied, entry by entry, into a new archive the
- * server writes. Only the bytes of the entries it read and judged are copied; the names are the
- * checked paths. The buyer is never given the seller's own archive. The new archive is read back
- * before it is accepted, and the file is not ready for its malware scan until it has been.
- *
- * Same shape as the unpack step: one archive per run, streamed, nothing on disk, claimed per file
- * and safe to repeat.
+ * Builds the archive a buyer downloads: each checked entry of an unpacked zip Final is copied into
+ * a new archive the server writes, which is read back before the file is ready for its malware scan.
  */
 
 const DELIVERY_KEY_ROOT = 'service-deals/delivered';
-/** A fixed time, so the archive says nothing about when or where it was made. */
+/** Fixed, so the built archive is reproducible. */
 const ENTRY_MTIME = new Date(Date.UTC(2020, 0, 1));
 const ENTRY_MODE = 0o100644;
 
@@ -195,7 +188,6 @@ export async function repackFinals({
       WHERE "id" = ${file.id}::int AND "repackedAt" IS NULL
         AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND "failReason" IS NULL`;
     if (stored === 0) {
-      // The file was deleted or failed while this ran: the archive has no owner.
       await deleteObject(bucket, key).catch(() => null);
       return 0;
     }
