@@ -26,6 +26,12 @@ const m = vi.hoisted(() => ({
     tools: Record<string, ChatTool>;
     instructions: () => string;
     mcpServers: { id: string; url: string }[];
+    holdReason?: string;
+    beforeToolCall?: (
+      name: string,
+      input: unknown,
+      context: { conversationId: string }
+    ) => { allow: true } | { refuse: string };
   },
   list: [] as Sandbox[],
   start: vi.fn(),
@@ -353,5 +359,51 @@ describe('AppAssistantWorkspace without a sandbox service', () => {
       .element(page.getByText(/Sandboxes are not configured on this deployment/))
       .toBeInTheDocument();
     expect(m.getToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppAssistantWorkspace hold while the sandbox starts', () => {
+  test('holds the composer while the open sandbox is starting, and lifts it once it runs', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'starting' })];
+    const screen = await mount();
+    expect(m.chat!.holdReason).toBeUndefined();
+    await openFirst();
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('The sandbox is starting…'));
+    expect(m.chat!.mcpServers).toEqual([]);
+
+    m.list = [sandbox('sbx-aaaaaaaaaaaa')];
+    screen.rerender(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    expect(m.chat!.mcpServers).toHaveLength(1);
+  });
+});
+
+describe('AppAssistantWorkspace tool gate', () => {
+  const conv = { conversationId: 'c' };
+
+  test('offers report_ready and set_checklist beside the preview tools, and refuses an unchecked ready', async () => {
+    await mount();
+    expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'report_ready',
+      'set_checklist',
+      'start_preview',
+      'stop_preview',
+    ]);
+    expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse');
+  });
+
+  test('pauses a reply at the tool-call limit with a notice, cleared when the next reply starts', async () => {
+    await mount();
+    m.chat!.instructions();
+    for (let i = 0; i < 150; i++)
+      expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
+    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toHaveProperty('refuse');
+    const notice = page.getByText(/App Assistant paused this reply after 150 tool calls/);
+    await expect.element(notice).toBeInTheDocument();
+
+    // The chat reads the instructions at the start of every reply.
+    m.chat!.instructions();
+    await expect.element(notice).not.toBeInTheDocument();
+    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
   });
 });

@@ -20,6 +20,11 @@ import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
+import {
+  APP_ASSISTANT_TURN_TOOL_CALL_LIMIT,
+  SANDBOX_SERVER_ID,
+  createAssistantGate,
+} from '~/components/Apps/AppAssistant/assistantGate';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
 import {
   AssistantTokenError,
@@ -40,6 +45,8 @@ import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
 
 const NO_MCP_SERVERS: ChatMcpServer[] = [];
+/** The sandbox's tools are added only once it runs, so a message sent before then would go without them. */
+export const SANDBOX_STARTING_HOLD = 'The sandbox is starting…';
 
 function EnableCard({
   onEnable,
@@ -143,9 +150,14 @@ export function AppAssistantWorkspace({
     stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
 
+  const [turnLimitReached, setTurnLimitReached] = useState(false);
+  const gate = useMemo(() => createAssistantGate({ onTurnLimit: setTurnLimitReached }), []);
+  // What was verified belongs to the sandbox it was verified in.
+  useEffect(() => gate.reset(), [activeName, gate]);
+
   const tools = useMemo(
-    () =>
-      createPreviewTools({
+    () => ({
+      ...createPreviewTools({
         canPreview,
         currentSandbox: () => live.current.active?.name ?? null,
         defaultBlockId: () => {
@@ -161,18 +173,20 @@ export function AppAssistantWorkspace({
           if (next) setTab('preview');
         },
       }),
-    [canPreview]
+      ...gate.tools,
+    }),
+    [canPreview, gate]
   );
 
-  const instructions = useCallback(
-    () =>
-      buildAssistantInstructions({
-        sandbox: live.current.active,
-        canPreview: live.current.canPreview,
-        previewHost: live.current.session?.host ?? null,
-      }),
-    []
-  );
+  // The chat reads these once at the start of every reply, which is where a reply's tool-call count restarts.
+  const instructions = useCallback(() => {
+    gate.startTurn();
+    return buildAssistantInstructions({
+      sandbox: live.current.active,
+      canPreview: live.current.canPreview,
+      previewHost: live.current.session?.host ?? null,
+    });
+  }, [gate]);
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
   const mcpUrl =
@@ -184,7 +198,7 @@ export function AppAssistantWorkspace({
       mcpUrl
         ? [
             {
-              id: 'sandbox',
+              id: SANDBOX_SERVER_ID,
               url: mcpUrl,
               label: 'Sandbox',
               token: () => tokens.getToken({ purpose: 'sandbox' }),
@@ -333,11 +347,20 @@ export function AppAssistantWorkspace({
             tab === 'chat' ? 'flex w-full' : 'hidden'
           )}
         >
+          {turnLimitReached && (
+            <Alert color="yellow" variant="light" radius={0} className="shrink-0">
+              App Assistant paused this reply after {APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls.
+              Say “continue” to let it carry on.
+            </Alert>
+          )}
           <AppAssistantChat
             tokens={tokens}
             tools={tools}
             instructions={instructions}
             mcpServers={mcpServers}
+            holdReason={active?.state === 'starting' ? SANDBOX_STARTING_HOLD : undefined}
+            beforeToolCall={gate.beforeToolCall}
+            onToolResult={gate.onToolResult}
           />
         </Paper>
         <Paper
