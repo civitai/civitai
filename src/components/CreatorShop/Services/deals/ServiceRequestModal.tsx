@@ -52,12 +52,13 @@ export function ServiceRequestModal({
     },
     onError: async (error) => {
       if (isConflict(error)) {
-        // The price moved after the page loaded: nothing was charged. Show the new price.
+        // The price moved, or this buyer already has a request open on it. Either way nothing
+        // was charged; the server's message says which.
         await utils.creatorService.getForShop.invalidate();
         dialog.onClose();
         showErrorNotification({
-          title: 'The price of this service has changed',
-          error: { message: 'Nothing was charged. Check the new price and request again.' },
+          title: 'Request not sent',
+          error: { message: `${error.message} Nothing was charged.` },
         });
         return;
       }
