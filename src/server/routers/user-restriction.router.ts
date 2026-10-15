@@ -10,6 +10,7 @@ import {
   saveSuspiciousMatchSchema,
   submitRestrictionContextSchema,
 } from '~/server/schema/user-restriction.schema';
+import { backfilledPromptOrigin } from '~/server/services/orchestrator/prompt-origin';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
 import { resolveUserRestriction } from '~/server/services/user-restriction-resolve.service';
@@ -302,17 +303,7 @@ export const userRestrictionRouter = router({
             remixOfId: null,
             inputImages: row.inputImages?.length ? row.inputImages : undefined,
             inputVideo: row.inputVideo || undefined,
-            ...(row.remixOfId
-              ? {
-                  origin: {
-                    remix: {
-                      imageId: row.remixOfId,
-                      verified: false,
-                      promptMatch: 'unknown' as const,
-                    },
-                  },
-                }
-              : {}),
+            origin: backfilledPromptOrigin(row.remixOfId),
             time: row.createdDate,
           };
         });

@@ -16,7 +16,10 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   queryWorkflows: mockQueryWorkflows,
 }));
 
-import { buildPromptOrigin } from '~/server/services/orchestrator/prompt-origin';
+import {
+  backfilledPromptOrigin,
+  buildPromptOrigin,
+} from '~/server/services/orchestrator/prompt-origin';
 
 const SOURCE =
   'a watercolor painting of a lighthouse on a rocky coast at sunset, soft pastel clouds, detailed waves';
@@ -119,7 +122,7 @@ describe('buildPromptOrigin — remix', () => {
   });
 
   it('no remix candidates and no enhancer match gives no origin', async () => {
-    expect(await buildPromptOrigin({ prompt: SOURCE, sourceImageIds: [] })).toBeUndefined();
+    expect(await buildPromptOrigin({ prompt: SOURCE, sourceImageIds: [] })).toEqual({});
     expect(mockMetaFetch).not.toHaveBeenCalled();
   });
 });
@@ -151,7 +154,7 @@ describe('buildPromptOrigin — enhancer', () => {
       prompt: 'portrait of a grizzled space marine, gritty cinematic lighting',
       token: 't',
     });
-    expect(origin).toBeUndefined();
+    expect(origin).toEqual({});
   });
 
   it('is skipped without a token', async () => {
@@ -173,9 +176,22 @@ describe('buildPromptOrigin — enhancer', () => {
       mockQueryWorkflows.mockReturnValue(new Promise<never>(() => undefined));
       const pending = buildPromptOrigin({ prompt: SOURCE, token: 't' });
       await vi.advanceTimersByTimeAsync(10_000);
-      expect(await pending).toBeUndefined();
+      expect(await pending).toEqual({});
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('backfilledPromptOrigin', () => {
+  it('records an unverified, unmatched remix for a row with remixOfId', () => {
+    expect(backfilledPromptOrigin(42)).toEqual({
+      remix: { imageId: 42, verified: false, promptMatch: 'unknown' },
+    });
+  });
+
+  it('writes no origin for a row without remixOfId', () => {
+    expect(backfilledPromptOrigin(null)).toBeUndefined();
+    expect(backfilledPromptOrigin(0)).toBeUndefined();
   });
 });

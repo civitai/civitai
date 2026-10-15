@@ -47,7 +47,8 @@ origin?: {
 };
 ```
 
-An absent `origin` means no evidence of either source, shown as "Typed by user".
+An empty `origin` object means no evidence of either source (shown as typed by the user); an absent
+field means the row predates origin tracking (shown as "Origin not recorded").
 
 ### Sources
 

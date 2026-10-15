@@ -130,22 +130,27 @@ async function enhancerOrigin(prompt: string, token: string): Promise<PromptOrig
 
 /**
  * Where a blocked prompt came from, as far as the server can tell. Never throws: a failed or
- * timed-out lookup degrades to `unknown` or omits the field, and the audit verdict is unaffected.
+ * timed-out lookup degrades to `unknown` or to an empty origin, and the audit verdict is unaffected.
  */
 export async function buildPromptOrigin({
   prompt,
   sourceImageIds,
   remixOfId,
   token,
-}: BuildPromptOriginOptions): Promise<PromptOrigin | undefined> {
+}: BuildPromptOriginOptions): Promise<PromptOrigin> {
   try {
     const [remix, enhancer] = await Promise.all([
       remixOrigin(prompt, sourceImageIds, remixOfId).catch(() => undefined),
       token ? enhancerOrigin(prompt, token) : undefined,
     ]);
-    if (!remix && !enhancer) return undefined;
     return { ...(remix ? { remix } : {}), ...(enhancer ? { enhancer } : {}) };
   } catch {
-    return undefined;
+    return {};
   }
+}
+
+/** Origin for a row rebuilt from the audit log, where only `remixOfId` survives. */
+export function backfilledPromptOrigin(remixOfId?: number | null): PromptOrigin | undefined {
+  if (!remixOfId) return undefined;
+  return { remix: { imageId: remixOfId, verified: false, promptMatch: 'unknown' } };
 }

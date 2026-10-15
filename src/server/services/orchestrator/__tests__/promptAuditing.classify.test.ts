@@ -366,6 +366,7 @@ describe('auditPromptServer — still produces today’s side effects', () => {
       remixOfId: 11,
       inputImages: ['img-a'],
       inputVideo: 'vid-a',
+      origin: {},
       time: expect.any(String),
     });
     expect(track.prohibitedRequest).toHaveBeenCalledTimes(1);
@@ -477,7 +478,14 @@ describe('auditPromptServer — prompt origin on a hard block', () => {
     flagWith(HARD);
     await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
     expect(sysRedis.lPush).toHaveBeenCalledTimes(1);
-    expect(storedEntry().origin).toBeUndefined();
+    expect(storedEntry().origin).toEqual({});
+  });
+
+  it('stores an empty origin when nothing was found, so absence means not recorded', async () => {
+    mockBuildPromptOrigin.mockResolvedValue({});
+    flagWith(HARD);
+    await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
+    expect(storedEntry().origin).toEqual({});
   });
 
   it('computes no origin for a prompt that passes', async () => {

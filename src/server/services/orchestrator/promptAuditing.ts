@@ -593,7 +593,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         remixOfId: remixOfId ?? null,
         inputImages,
         inputVideo,
-        ...(origin ? { origin } : {}),
+        origin: origin ?? {},
         time: new Date().toISOString(),
       };
 
