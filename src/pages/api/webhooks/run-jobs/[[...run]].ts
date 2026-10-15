@@ -85,6 +85,7 @@ import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
 import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs';
+import { creatorServiceDealFileJobs } from '~/server/jobs/creator-service-deal-file-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -272,6 +273,7 @@ export const jobs: Job[] = [
   ...entityModerationJobs,
   ...placementJobs,
   ...creatorServiceDealJobs,
+  ...creatorServiceDealFileJobs,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,

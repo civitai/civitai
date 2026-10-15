@@ -1,0 +1,671 @@
+import { Prisma } from '@prisma/client';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
+import { getEdgeUrl } from '~/client-utils/edge-url';
+import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { submitFinalScan } from '~/server/services/creator-service-deal-file-scan';
+import { markServiceDealDelivered } from '~/server/services/creator-service-deal.service';
+import { dealReadyToDeliver } from '~/server/services/creator-service-deal-file-sql';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import {
+  buildScanCopy,
+  buildWatermarkedPreview,
+  PreviewRejectedError,
+} from '~/server/utils/service-deal-preview';
+import {
+  SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
+  SERVICE_FINAL_EXTENSIONS,
+  SERVICE_FINAL_MAX_BYTES,
+  SERVICE_FINAL_MAX_FILES,
+  SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
+  SERVICE_PREVIEW_GIVE_UP_MS,
+  SERVICE_PREVIEW_MAX_BYTES,
+  SERVICE_PREVIEW_MAX_FILES,
+  SERVICE_PREVIEW_MIME_TYPES,
+  SERVICE_PREVIEW_PROCESSING_STALE_MS,
+} from '~/shared/constants/creator-services.constants';
+import type {
+  ServiceDealFileKind,
+  ServiceDealFileScanStatus,
+  ServiceDealFileStatus,
+  ServicePreviewKind,
+} from '~/shared/utils/prisma/enums';
+import {
+  deleteObject,
+  getBucket,
+  getGetUrlByKey,
+  getPutUrl,
+  getS3Client,
+  headObject,
+  uploadImageBufferToStore,
+} from '~/utils/s3-utils';
+
+/**
+ * Delivery files for a Creator Services deal.
+ *
+ * Who may do what is decided in SQL on the deal row, never from an id in the input: uploads need
+ * the deal's seller and a deal still being worked (Accepted or InRevision). A file belongs to the
+ * deal's CURRENT round (`revisionsUsed`), the same round the escrow's gates read.
+ */
+
+/** Statuses a seller may upload in. */
+const WORKING = Prisma.sql`'Accepted'::"ServiceDealStatus", 'InRevision'::"ServiceDealStatus"`;
+
+const UPLOAD_KEY_ROOT = 'service-deals';
+
+/** What a seller types is shown back; strip paths and control characters, and bound it. */
+export function cleanFileName(name: string) {
+  const base = name.split(/[\\/]/).pop() ?? '';
+  // eslint-disable-next-line no-control-regex
+  const cleaned = base.replace(/[\u0000-\u001f\u007f"]/g, '').trim();
+  return (cleaned || 'file').slice(0, 120);
+}
+
+/** The extension of a file name, lower-cased; a name with none has none. */
+export const fileExtension = (name: string) => {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+};
+
+/** Refuses a Final we cannot inspect: an unknown type, or an archive other than a plain .zip. */
+export function assertFinalFileType(fileName: string) {
+  const extension = fileExtension(cleanFileName(fileName));
+  if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
+    throw throwBadRequestError(
+      'This file type cannot be delivered. Use a .zip, a model file, or an image, audio or text file.'
+    );
+}
+
+const isPreviewMime = (mime: string) =>
+  (SERVICE_PREVIEW_MIME_TYPES as readonly string[]).includes(mime);
+
+/** GIF and WebP may be animated, so they get the animated allowance until the bytes say otherwise. */
+const previewByteCap = (mime: string) =>
+  mime === 'image/gif' || mime === 'image/webp'
+    ? SERVICE_PREVIEW_ANIMATED_MAX_BYTES
+    : SERVICE_PREVIEW_MAX_BYTES;
+
+type UploadDealRow = {
+  id: number;
+  round: number;
+  previewKind: ServicePreviewKind;
+  files: number;
+};
+
+export async function requestServiceDealUpload({
+  dealId,
+  userId,
+  kind,
+  fileName,
+  mimeType,
+  size,
+}: {
+  dealId: number;
+  userId: number;
+  kind: ServiceDealFileKind;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}) {
+  if (kind === 'Preview') {
+    if (!isPreviewMime(mimeType))
+      throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');
+    if (size > previewByteCap(mimeType))
+      throw throwBadRequestError(
+        `Preview is too large (max ${Math.floor(previewByteCap(mimeType) / (1024 * 1024))} MB).`
+      );
+  } else {
+    assertFinalFileType(fileName);
+    if (size > SERVICE_FINAL_MAX_BYTES)
+      throw throwBadRequestError('That file is too large to deliver.');
+  }
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    // Lock the deal row so two uploads cannot both pass the count below.
+    const [deal] = await tx.$queryRaw<UploadDealRow[]>`
+      SELECT d."id", d."revisionsUsed" AS "round", d."previewKind",
+        (SELECT count(*)::int FROM "ServiceDealFile" f
+          WHERE f."dealId" = d."id" AND f."round" = d."revisionsUsed"
+            AND f."kind" = ${kind}::"ServiceDealFileKind") AS "files"
+      FROM "ServiceDeal" d
+      WHERE d."id" = ${dealId}::int AND d."sellerId" = ${userId}::int
+        AND d."status" IN (${WORKING})
+      FOR UPDATE`;
+    // 404 for a deal that is not theirs, and the same for one that has moved on.
+    if (!deal) throw throwNotFoundError('Deal not found');
+
+    if (kind === 'Preview') {
+      const max = SERVICE_PREVIEW_MAX_FILES[deal.previewKind];
+      if (max === 0) throw throwBadRequestError('This service does not take a preview.');
+      if (deal.files >= max)
+        throw throwConflictError(`This delivery already has ${max === 1 ? 'a' : max} preview.`);
+    } else if (deal.files >= SERVICE_FINAL_MAX_FILES) {
+      throw throwConflictError(`A delivery can have at most ${SERVICE_FINAL_MAX_FILES} files.`);
+    }
+
+    // The key is minted here from the ids alone, never from the file name.
+    const s3Key = `${UPLOAD_KEY_ROOT}/${dealId}/${
+      deal.round
+    }/${kind.toLowerCase()}/${randomUUID()}`;
+    const [row] = await tx.$queryRaw<{ id: number }[]>`
+      INSERT INTO "ServiceDealFile" ("dealId", "round", "kind", "s3Key", "fileName", "mimeType", "size")
+      VALUES (${dealId}::int, ${deal.round}::int, ${kind}::"ServiceDealFileKind", ${s3Key}::text,
+        ${cleanFileName(fileName)}::text, ${mimeType}::text, ${size}::int)
+      RETURNING "id"`;
+    return { id: row.id, s3Key };
+  });
+
+  const { url } = await getPutUrl(created.s3Key);
+  return { fileId: created.id, uploadUrl: url };
+}
+
+type OwnedFileRow = {
+  id: number;
+  dealId: number;
+  kind: ServiceDealFileKind;
+  s3Key: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  status: ServiceDealFileStatus;
+};
+
+/** The seller's own file in a deal still being worked, or null. */
+async function findSellerFile(fileId: number, userId: number) {
+  const [file] = await dbWrite.$queryRaw<OwnedFileRow[]>`
+    SELECT f."id", f."dealId", f."kind", f."s3Key", f."fileName", f."mimeType", f."size", f."status"
+    FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
+    WHERE f."id" = ${fileId}::int AND d."sellerId" = ${userId}::int
+      AND d."status" IN (${WORKING}) AND f."round" = d."revisionsUsed"`;
+  return file ?? null;
+}
+
+const ZIP_LOCAL_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+/**
+ * The first bytes of a zip: it must be one, and its first entry must not be encrypted. A cheap
+ * check from a ranged read; the whole directory is read when the archive is unpacked.
+ */
+export function zipHeaderRefusal(head: Buffer) {
+  if (head.length < 8 || !head.subarray(0, 4).equals(ZIP_LOCAL_HEADER))
+    return 'This is not a valid .zip file.';
+  // General-purpose flag, bit 0: the entry is encrypted.
+  if (head.readUInt16LE(6) & 1) return 'Password-protected archives cannot be delivered.';
+  return null;
+}
+
+async function zipRefusal(bucket: string, key: string) {
+  try {
+    const response = await getS3Client().send(
+      new GetObjectCommand({ Bucket: bucket, Key: key, Range: 'bytes=0-63' })
+    );
+    if (!response.Body) return 'This is not a valid .zip file.';
+    return zipHeaderRefusal(Buffer.from(await response.Body.transformToByteArray()));
+  } catch {
+    // Not a verdict on the file: the bucket could not be read. Nothing is deleted.
+    throw throwConflictError('The upload could not be checked yet. Try again in a moment.');
+  }
+}
+
+const failFile = (fileId: number, reason: string) =>
+  dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile"
+    SET "status" = 'Failed'::"ServiceDealFileStatus", "failReason" = ${reason}::text
+    WHERE "id" = ${fileId}::int`;
+
+/**
+ * The seller says the bytes are in the bucket. The object is measured, not trusted: a size that is
+ * not the declared one fails the file and removes the object.
+ */
+export async function completeServiceDealUpload({
+  fileId,
+  userId,
+}: {
+  fileId: number;
+  userId: number;
+}) {
+  const file = await findSellerFile(fileId, userId);
+  if (!file) throw throwNotFoundError('File not found');
+  if (file.status !== 'Uploading') return { id: file.id, status: file.status };
+
+  const bucket = await getBucket();
+  const head = await headObject(bucket, file.s3Key);
+  if (head.status === 'unknown')
+    throw throwConflictError('The upload could not be checked yet. Try again in a moment.');
+  if (head.status === 'absent') throw throwBadRequestError('The file has not finished uploading.');
+  if (head.size !== file.size) {
+    await failFile(file.id, 'The uploaded file did not match its declared size.');
+    await deleteObject(bucket, file.s3Key).catch(() => null);
+    throw throwBadRequestError('The uploaded file did not match its declared size.');
+  }
+
+  if (file.kind === 'Final' && fileExtension(file.fileName) === 'zip') {
+    const refusal = await zipRefusal(bucket, file.s3Key);
+    if (refusal) {
+      await failFile(file.id, refusal);
+      await deleteObject(bucket, file.s3Key).catch(() => null);
+      throw throwBadRequestError(refusal);
+    }
+  }
+
+  // A preview is processed by the job; a final is ready now and goes to its scan.
+  const next: ServiceDealFileStatus = file.kind === 'Preview' ? 'Processing' : 'Ready';
+  const moved = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile" SET "status" = ${next}::"ServiceDealFileStatus", "uploadedAt" = now()
+    WHERE "id" = ${file.id}::int AND "status" = 'Uploading'::"ServiceDealFileStatus"`;
+  if (moved === 1 && file.kind === 'Final') await submitFinalScan(file);
+  return { id: file.id, status: next };
+}
+
+/** Removes a file from a delivery that has not been sent yet. */
+export async function deleteServiceDealFile({
+  fileId,
+  userId,
+}: {
+  fileId: number;
+  userId: number;
+}) {
+  const file = await findSellerFile(fileId, userId);
+  if (!file) throw throwNotFoundError('File not found');
+  await dbWrite.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
+  // The row is the source of truth; an object left behind is unreachable and harmless.
+  await deleteObject(await getBucket(), file.s3Key).catch(() => null);
+  return { id: file.id };
+}
+
+/** Marks the round delivered once its files are in place. */
+export async function deliverServiceDeal({ dealId, userId }: { dealId: number; userId: number }) {
+  const [ready] = await dbWrite.$queryRaw<{ ready: boolean }[]>`
+    SELECT ${dealReadyToDeliver()} AS "ready" FROM "ServiceDeal"
+    WHERE "id" = ${dealId}::int AND "sellerId" = ${userId}::int`;
+  if (!ready) throw throwNotFoundError('Deal not found');
+  if (!ready.ready)
+    throw throwConflictError(
+      'Upload a finished preview and at least one file, and wait for them to finish processing.'
+    );
+  await markServiceDealDelivered({ dealId, userId });
+  return { id: dealId };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------------------------
+
+type DealForFiles = {
+  id: number;
+  buyerId: number;
+  sellerId: number;
+  status: string;
+  revisionsUsed: number;
+  completedAt: Date | null;
+};
+
+type FileRow = {
+  id: number;
+  round: number;
+  kind: ServiceDealFileKind;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  status: ServiceDealFileStatus;
+  failReason: string | null;
+  scanStatus: ServiceDealFileScanStatus;
+  watermarkedKey: string | null;
+};
+
+/** The buyer's claim on a deal's final files: it is paid for, and not since reversed. */
+export const buyerOwnsFinals = (deal: Pick<DealForFiles, 'status' | 'completedAt'>) =>
+  deal.status === 'Completed' || (deal.status === 'Disputed' && deal.completedAt !== null);
+
+/** A round the seller is still working on is not shown to the buyer. */
+const buyerSeesRound = (deal: DealForFiles, round: number) =>
+  round < deal.revisionsUsed || !['Accepted', 'InRevision'].includes(deal.status);
+
+export async function listServiceDealFiles({
+  dealId,
+  userId,
+  isModerator,
+}: {
+  dealId: number;
+  userId: number;
+  isModerator: boolean;
+}) {
+  const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
+    SELECT "id", "buyerId", "sellerId", "status"::text AS "status", "revisionsUsed", "completedAt"
+    FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+  const isSeller = deal?.sellerId === userId;
+  const isBuyer = deal?.buyerId === userId;
+  if (!deal || (!isSeller && !isBuyer && !isModerator)) throw throwNotFoundError('Deal not found');
+
+  const rows = await dbWrite.$queryRaw<FileRow[]>`
+    SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."status",
+      f."failReason", f."scanStatus", f."watermarkedKey"
+    FROM "ServiceDealFile" f
+    WHERE f."dealId" = ${dealId}::int
+    ORDER BY f."round", f."id"`;
+
+  const privileged = isSeller || isModerator;
+  return rows.flatMap((row) => {
+    const buyerOnly = !privileged;
+    if (buyerOnly && !buyerSeesRound(deal, row.round)) return [];
+    // A buyer sees a preview only once it is scanned, marked and published: never the original.
+    if (buyerOnly && row.kind === 'Preview' && row.status !== 'Ready') return [];
+
+    const downloadable =
+      row.kind === 'Final' &&
+      row.status === 'Ready' &&
+      (privileged ||
+        (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && row.scanStatus === 'Passed'));
+    const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
+    const key = row.watermarkedKey;
+
+    return [
+      {
+        id: row.id,
+        round: row.round,
+        kind: row.kind,
+        // What the buyer has not paid for does not even get a name.
+        fileName: lockedFinal ? null : row.fileName,
+        mimeType: lockedFinal ? null : row.mimeType,
+        size: row.size,
+        status: row.status,
+        failReason: privileged ? row.failReason : null,
+        scanStatus: row.kind === 'Final' || privileged ? row.scanStatus : null,
+        previewUrl:
+          row.kind === 'Preview' && row.status === 'Ready' && key
+            ? getEdgeUrl(key, { original: true, name: 'preview' })
+            : null,
+        canDownload: downloadable,
+      },
+    ];
+  });
+}
+
+export type ServiceDealFileDownload = { bucket: string; key: string; fileName: string };
+
+/**
+ * The object a user may download, or null (the route answers 404 for null, so a file id reveals
+ * nothing). The seller may take back anything they uploaded; a moderator anything, for dispute
+ * review; the buyer only a Final of the delivered round that has passed its scan, once they own it.
+ */
+export async function resolveServiceDealFileDownload({
+  fileId,
+  userId,
+  isModerator,
+}: {
+  fileId: number;
+  userId: number;
+  isModerator: boolean;
+}): Promise<ServiceDealFileDownload | null> {
+  const [row] = await dbWrite.$queryRaw<
+    {
+      s3Key: string;
+      fileName: string;
+      kind: ServiceDealFileKind;
+      round: number;
+      scanStatus: ServiceDealFileScanStatus;
+      status: ServiceDealFileStatus;
+      buyerId: number;
+      sellerId: number;
+      dealStatus: string;
+      revisionsUsed: number;
+      completedAt: Date | null;
+    }[]
+  >`
+    SELECT f."s3Key", f."fileName", f."kind", f."round", f."scanStatus", f."status",
+      d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
+    FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
+    WHERE f."id" = ${fileId}::int`;
+  if (!row) return null;
+
+  const allowed =
+    row.sellerId === userId ||
+    isModerator ||
+    (row.buyerId === userId &&
+      row.kind === 'Final' &&
+      row.status === 'Ready' &&
+      row.round === row.revisionsUsed &&
+      row.scanStatus === 'Passed' &&
+      buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
+  if (!allowed) return null;
+  return { bucket: await getBucket(), key: row.s3Key, fileName: row.fileName };
+}
+
+export async function getServiceDealFileDownloadUrl(target: ServiceDealFileDownload) {
+  const { url } = await getGetUrlByKey(target.key, {
+    bucket: target.bucket,
+    fileName: target.fileName,
+    expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
+  });
+  return url;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Preview pipeline (the job)
+// ---------------------------------------------------------------------------------------------
+//
+// A preview is scanned BEFORE it is marked, and the scanner never sees the mark:
+//   1. a hidden, downscaled, unwatermarked copy goes to the image store and through the normal
+//      image scan (`startPreviewScans`);
+//   2. the verdict lands on the file (`settlePreviewScans`): clean passes it, anything else fails
+//      it for good;
+//   3. only a passed preview is marked and published (`publishPreviews`), then Ready;
+//   4. the hidden copy and its Image row are deleted once a verdict exists (`deleteScanCopies`).
+// Each step is claimed per file and idempotent, so a pod that rolls mid-way leaves the file where
+// the next run picks it up, with no second ingest and no copy left behind.
+
+type ClaimedPreview = {
+  id: number;
+  s3Key: string;
+  scanKey: string | null;
+  sellerId: number;
+};
+
+/** Takes the previews matching `where` that no run holds, oldest first. */
+function claimPreviews(where: Prisma.Sql, limit: number) {
+  return dbWrite.$queryRaw<ClaimedPreview[]>`
+    UPDATE "ServiceDealFile" f SET "processingAt" = now()
+    FROM "ServiceDeal" d
+    WHERE d."id" = f."dealId" AND f."id" IN (
+      SELECT p."id" FROM "ServiceDealFile" p
+      WHERE p."kind" = 'Preview'::"ServiceDealFileKind"
+        AND p."status" = 'Processing'::"ServiceDealFileStatus"
+        AND ${where}
+        AND (p."processingAt" IS NULL
+          OR p."processingAt" < now() - (${SERVICE_PREVIEW_PROCESSING_STALE_MS}::int * interval '1 millisecond'))
+      ORDER BY p."id" LIMIT ${limit}::int FOR UPDATE SKIP LOCKED)
+    RETURNING f."id", f."s3Key", f."scanKey", d."sellerId"`;
+}
+
+async function readObject(bucket: string, key: string) {
+  const response = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!response.Body) throw new Error('Empty object body');
+  return Buffer.from(await response.Body.transformToByteArray());
+}
+
+const logPreview = (message: string, fields: Record<string, unknown>, type = 'info') =>
+  logToAxiom({ name: 'creator-service-preview', type, message, ...fields }).catch(() => null);
+
+/** A seller-fixable problem fails the file with its reason; anything else is retried when stale. */
+async function failOrRetry(preview: ClaimedPreview, error: unknown) {
+  if (error instanceof PreviewRejectedError) return failFile(preview.id, error.message);
+  logPreview(
+    'preview step failed; it will be retried',
+    { fileId: preview.id, error: (error as Error)?.message },
+    'error'
+  );
+}
+
+/**
+ * A bare Image row, scanned like any upload: no post, no feed, ingestion NOT skipped. The caller
+ * records its id on the file so the copy can be found and deleted.
+ */
+async function createScanImage(
+  url: string,
+  copy: { mimeType: string; width: number; height: number; data: Buffer },
+  userId: number
+) {
+  const { createImage } = await import('~/server/services/image.service');
+  return createImage({
+    url,
+    type: 'image',
+    mimeType: copy.mimeType,
+    width: copy.width,
+    height: copy.height,
+    metadata: { size: copy.data.byteLength },
+    userId,
+  });
+}
+
+/** Step 1: the hidden scan copy, for previews that have none yet. */
+export async function startPreviewScans({ limit = 5 } = {}) {
+  const claimed = await claimPreviews(
+    Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`,
+    limit
+  );
+  let started = 0;
+  for (const preview of claimed) {
+    const began = Date.now();
+    try {
+      let frames = 0;
+      if (!preview.scanKey) {
+        const original = await readObject(await getBucket(), preview.s3Key);
+        const copy = await buildScanCopy(original);
+        frames = copy.frames;
+        const { key: scanKey } = await uploadImageBufferToStore(copy.data, {
+          contentType: copy.mimeType,
+        });
+        // Recorded before the Image row exists, so a retry after a crash reuses this object.
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFile" SET "scanKey" = ${scanKey}::text WHERE "id" = ${preview.id}::int`;
+        const image = await createScanImage(scanKey, copy, preview.sellerId);
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFile" SET "imageId" = ${image.id}::int, "processingAt" = NULL
+          WHERE "id" = ${preview.id}::int`;
+      } else {
+        // A crash left the object but maybe not the row: find it, never ingest twice.
+        const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT "id" FROM "Image" WHERE "url" = ${preview.scanKey}::text LIMIT 1`;
+        if (!existing) throw new Error('scan copy is recorded but has no Image row');
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFile" SET "imageId" = ${existing.id}::int, "processingAt" = NULL
+          WHERE "id" = ${preview.id}::int`;
+      }
+      started++;
+      logPreview('scan copy submitted', { fileId: preview.id, frames, ms: Date.now() - began });
+    } catch (error) {
+      await failOrRetry(preview, error);
+    }
+  }
+  return started;
+}
+
+/**
+ * Step 2: the scan's verdict. Clean passes the preview (to be marked next); a block, or any flag
+ * that sends an image to review, fails it. A scan that could not run fails the file without
+ * calling its content bad, and one that never settles is given up on.
+ */
+export async function settlePreviewScans() {
+  const waiting = Prisma.sql`f."kind" = 'Preview'::"ServiceDealFileKind"
+    AND f."status" = 'Processing'::"ServiceDealFileStatus"
+    AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
+  const passed = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile" f
+    SET "scanStatus" = 'Passed'::"ServiceDealFileScanStatus", "processingAt" = NULL
+    FROM "Image" i
+    WHERE i."id" = f."imageId" AND ${waiting}
+      AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
+      AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"`;
+  const rejected = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile" f
+    SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
+      "failReason" = 'This preview was rejected when it was checked.'
+    FROM "Image" i
+    WHERE i."id" = f."imageId" AND ${waiting}
+      AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
+        OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
+          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor")))`;
+  const unchecked = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile" f
+    SET "status" = 'Failed'::"ServiceDealFileStatus",
+      "failReason" = 'This preview could not be checked. Upload it again.'
+    FROM "Image" i
+    WHERE i."id" = f."imageId" AND ${waiting}
+      AND i."ingestion" = 'NotFound'::"ImageIngestionStatus"`;
+  const timedOut = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile"
+    SET "status" = 'Failed'::"ServiceDealFileStatus",
+      "failReason" = 'This preview could not be prepared. Upload it again.'
+    WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
+      AND "uploadedAt" < now() - (${SERVICE_PREVIEW_GIVE_UP_MS}::int * interval '1 millisecond')`;
+  return { passed, rejected, unchecked, timedOut };
+}
+
+/** Step 3: mark and publish the previews that passed. Ready only when the mark is on. */
+export async function publishPreviews({ limit = 5 } = {}) {
+  const claimed = await claimPreviews(
+    Prisma.sql`p."scanStatus" = 'Passed'::"ServiceDealFileScanStatus" AND p."watermarkedKey" IS NULL`,
+    limit
+  );
+  let published = 0;
+  for (const preview of claimed) {
+    const began = Date.now();
+    try {
+      const original = await readObject(await getBucket(), preview.s3Key);
+      const result = await buildWatermarkedPreview(original);
+      const { key } = await uploadImageBufferToStore(result.data, { contentType: result.mimeType });
+      await dbWrite.$executeRaw`
+        UPDATE "ServiceDealFile"
+        SET "watermarkedKey" = ${key}::text, "status" = 'Ready'::"ServiceDealFileStatus"
+        WHERE "id" = ${preview.id}::int AND "status" = 'Processing'::"ServiceDealFileStatus"
+          AND "scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
+      published++;
+      logPreview('preview published', {
+        fileId: preview.id,
+        frames: result.frames,
+        inputBytes: original.byteLength,
+        outputBytes: result.data.byteLength,
+        ms: Date.now() - began,
+      });
+    } catch (error) {
+      await failOrRetry(preview, error);
+    }
+  }
+  return published;
+}
+
+/**
+ * Step 4: a scan copy has done its job once its file has a verdict (or has failed). Deleting the
+ * Image row removes the object too. A copy whose delete fails stays pointed at and is retried.
+ */
+export async function deleteScanCopies({ limit = 50 } = {}) {
+  const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+    SELECT "id", "imageId" FROM "ServiceDealFile"
+    WHERE "imageId" IS NOT NULL
+      AND ("scanStatus" <> 'Pending'::"ServiceDealFileScanStatus"
+        OR "status" = 'Failed'::"ServiceDealFileStatus")
+    ORDER BY "id" LIMIT ${limit}::int`;
+  if (!rows.length) return 0;
+  const { deleteImageById } = await import('~/server/services/image.service');
+  let deleted = 0;
+  for (const row of rows) {
+    try {
+      await deleteImageById({ id: row.imageId, updatePost: false });
+      await dbWrite.$executeRaw`
+        UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
+      deleted++;
+    } catch (error) {
+      logPreview(
+        'scan copy delete failed; it will be retried',
+        { fileId: row.id, imageId: row.imageId, error: (error as Error)?.message },
+        'error'
+      );
+    }
+  }
+  return deleted;
+}

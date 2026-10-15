@@ -9545,6 +9545,15 @@ enum ServiceDealFileKind {
   Final
 }
 
+/// Where a file is on its way to being usable. A Preview is Ready once its watermarked derivative
+/// exists; a Final is Ready once the upload is confirmed. Scanning is tracked apart, in scanStatus.
+enum ServiceDealFileStatus {
+  Uploading
+  Processing
+  Ready
+  Failed
+}
+
 enum ServiceDealFileScanStatus {
   Pending
   Passed
@@ -9677,12 +9686,21 @@ model ServiceDealFile {
   deal           ServiceDeal               @relation(fields: [dealId], references: [id], onDelete: Restrict)
   round          Int                       @default(0)
   kind           ServiceDealFileKind
-  s3Key          String
+  s3Key          String                    @unique
   watermarkedKey String?
-  /// The Image row a preview was ingested as, for the normal scanning pipeline.
+  /// The hidden, downscaled, unwatermarked copy a preview is scanned as. Deleted once its verdict
+  /// lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
   imageId        Int?
+  scanKey        String?
+  fileName       String                    @default("")
   mimeType       String
   size           Int
+  /// Uploading until the seller confirms the object is in the bucket.
+  status         ServiceDealFileStatus     @default(Uploading)
+  failReason     String?
+  uploadedAt     DateTime?
+  /// Set when preview processing last started, so a crashed worker's file is picked up again.
+  processingAt   DateTime?
   scanStatus     ServiceDealFileScanStatus @default(Pending)
   createdAt      DateTime                  @default(now())
 

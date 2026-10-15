@@ -266,6 +266,8 @@ export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expi
 
 export type ServiceDealFileKind = "Preview" | "Final";
 
+export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
+
 export type ServiceDealFileScanStatus = "Pending" | "Passed" | "Failed" | "NotScanned";
 
 export type ServiceDisputeResolution = "Refund" | "Release";
@@ -6158,8 +6160,14 @@ export interface ServiceDealFile {
   s3Key: string;
   watermarkedKey: string | null;
   imageId: number | null;
+  scanKey: string | null;
+  fileName: string;
   mimeType: string;
   size: number;
+  status: ServiceDealFileStatus;
+  failReason: string | null;
+  uploadedAt: Date | null;
+  processingAt: Date | null;
   scanStatus: ServiceDealFileScanStatus;
   createdAt: Date;
 }

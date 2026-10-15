@@ -48,3 +48,69 @@ export type ServiceDealLegName = 'hold' | 'release' | 'fee' | 'refund';
  */
 export const serviceDealTransactionId = (dealId: number, leg: ServiceDealLegName) =>
   `creator-service-${dealId}-${leg}`;
+
+/**
+ * Delivery files. Previews are deliberately worth less than the product: capped in size, and the
+ * buyer only ever sees a small watermarked derivative, never the seller's original.
+ */
+export const SERVICE_PREVIEW_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+] as const;
+export const SERVICE_PREVIEW_MAX_SIDE = 512;
+/** The hidden copy that is scanned. Bigger than the published preview, unmarked, and deleted after. */
+export const SERVICE_PREVIEW_SCAN_SIDE = 1024;
+export const SERVICE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+/** An animated preview costs a CPU-second per few frames to mark, so it has its own, tighter, caps. */
+export const SERVICE_PREVIEW_ANIMATED_MAX_BYTES = 20 * 1024 * 1024;
+export const SERVICE_PREVIEW_ANIMATED_MAX_FRAMES = 60;
+/** Previews a seller may upload per round, by the deal's preview kind. */
+export const SERVICE_PREVIEW_MAX_FILES = {
+  Image: 1,
+  Video: 1,
+  SampleOutputs: 12,
+  None: 0,
+} as const;
+
+export const SERVICE_FINAL_MAX_FILES = 10;
+/** Single-request upload and a 32-bit `size` column; a larger file needs multipart and a wider column. */
+export const SERVICE_FINAL_MAX_BYTES = 2 * 1024 * 1024 * 1024 - 1;
+/** A presigned download is only valid long enough to start it. */
+export const SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS = 5 * 60;
+/** A preview stuck in Processing longer than this is picked up again. */
+export const SERVICE_PREVIEW_PROCESSING_STALE_MS = 10 * 60_000;
+/** A preview still not Ready this long after its upload is failed, so a delivery never hangs on it. */
+export const SERVICE_PREVIEW_GIVE_UP_MS = 6 * HOUR;
+
+/**
+ * What a seller may deliver as a Final. Everything else is refused up front: a file type we cannot
+ * inspect is not delivered, and video is refused outright until it can be moderated. Archives are limited to .zip, the one format the unpack step reads;
+ * the rest (rar, 7z, tar and its compressions) cannot be enumerated here, so they are refused.
+ */
+export const SERVICE_FINAL_EXTENSIONS = [
+  'zip',
+  'safetensors',
+  'ckpt',
+  'pt',
+  'pth',
+  'gguf',
+  'onnx',
+  'png',
+  'jpg',
+  'jpeg',
+  'webp',
+  'gif',
+  'mp3',
+  'wav',
+  'flac',
+  'ogg',
+  'pdf',
+  'txt',
+  'md',
+  'json',
+  'yaml',
+  'yml',
+  'csv',
+] as const;
