@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
@@ -29,6 +30,12 @@ const subject = (text: string, declared = {}) => ({
 });
 
 beforeEach(() => vi.clearAllMocks());
+
+// Nested fragments arrive as Sql values; flattening shows the statement Postgres receives.
+const flatSql = (call: unknown[]) => {
+  const query = Prisma.sql(call[0] as TemplateStringsArray, ...(call.slice(1) as never[]));
+  return [Array.from(query.strings), ...query.values] as [string[], ...unknown[]];
+};
 
 describe('textScanTextHash', () => {
   it('depends on the text only, not on declared flags', () => {
@@ -91,11 +98,13 @@ describe('stampModeratorTextScanRuling', () => {
       true
     );
 
-    const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(call[0] as TemplateStringsArray).join('?');
+    const [strings, ...flatValues] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    const text = strings.join('?');
     expect(text).toContain(`'appealGranted', jsonb_build_object(`);
     expect(text).toContain(`'via', 'moderator'`);
-    expect(call.slice(1)).toEqual(expect.arrayContaining(['minor', 3, 7]));
+    // The ruling is on the current state, so a pending re-detection goes with it.
+    expect(text).toContain(`- 'redetected'`);
+    expect(flatValues).toEqual(expect.arrayContaining([3, 7]));
   });
 
   // The scan skips a model that is not public; a ruling on one its owner unpublished must not.
@@ -144,7 +153,11 @@ describe('settleFlagAppealsAfterModeratorLift', () => {
     minor: false,
     modelVersions: [],
   };
-  const stampedValues = () => dbMock.dbWrite.$executeRaw.mock.calls.flatMap((c) => c.slice(1));
+  const stampedValues = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls.flatMap((c) => flatSql(c).slice(1));
+
+  const stampedTexts = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls.map((c) => flatSql(c)[0].join('?'));
 
   beforeEach(() => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([modelRow]);
@@ -157,7 +170,8 @@ describe('settleFlagAppealsAfterModeratorLift', () => {
   it('approves the pending appeal and records the ruling once nothing is flagged', async () => {
     await settleFlagAppealsAfterModeratorLift({ modelId: 7, userId: 3, liftedLabels: ['minor'] });
 
-    expect(stampedValues()).toEqual(expect.arrayContaining(['minor', 3, 7]));
+    expect(stampedValues()).toEqual(expect.arrayContaining([3, 7]));
+    expect(stampedTexts()).toEqual([expect.stringContaining(`->'minor'`)]);
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith({
       ids: [7],
       entityType: EntityType.Model,
@@ -174,7 +188,10 @@ describe('settleFlagAppealsAfterModeratorLift', () => {
     });
 
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(2);
-    expect(stampedValues()).toEqual(expect.arrayContaining(['minor', 'poi']));
+    expect(stampedTexts()).toEqual([
+      expect.stringContaining(`->'minor'`),
+      expect.stringContaining(`->'poi'`),
+    ]);
     expect(mockResolveEntityAppeal).toHaveBeenCalledTimes(1);
   });
 

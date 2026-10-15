@@ -1,6 +1,7 @@
 import { textScanResultTextHash } from '@civitai/shared/rating-review';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
 import {
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
@@ -56,15 +57,18 @@ export async function stampModeratorTextScanRuling({
 }) {
   const textHash = await loadGrantTextHash('Model', modelId, label);
   if (!textHash) return false;
+  // The moderator just ruled on the current state, so a pending re-detection is moot.
   await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}::text, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
-        ${label}::text, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->${label}, '{}'::jsonb) || jsonb_build_object(
-          'appealGranted', jsonb_build_object(
-            'at', now(), 'by', ${userId}::int, 'textHash', ${textHash}::text, 'via', 'moderator'
+        ${labelLiteral(label)}, (COALESCE(${flagEntryPath(label)}, '{}'::jsonb) - 'redetected')
+          || ${carriedRulings(label, ['appealGranted'])}
+          || jsonb_build_object(
+            'appealGranted', jsonb_build_object(
+              'at', now(), 'by', ${userId}::int, 'textHash', ${textHash}::text, 'via', 'moderator'
+            )
           )
-        )
       )
     )
     WHERE m.id = ${modelId}
