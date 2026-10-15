@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   getShopServiceOfferings,
+  hasOpenServiceDeal,
   removeServiceOffering,
   setServiceOfferingStatus,
   upsertServiceOffering,
@@ -221,4 +222,19 @@ it('drops a client-sent acceptsBlue before it reaches the write', async () => {
   await upsertServiceOffering({ sellerId: SELLER, input });
   const [args] = dbMock.dbWrite.serviceOffering.create.mock.calls[0] as [{ data: object }];
   expect(args.data).not.toHaveProperty('acceptsBlue');
+});
+
+// A user whose deals are all closed has nothing to get back to, so the dark list 404s for them.
+it('finds only OPEN deals on either side when deciding whether the dark list serves a user', async () => {
+  dbMock.dbRead.serviceDeal.findFirst.mockResolvedValue(null as never);
+  expect(await hasOpenServiceDeal(SELLER)).toBe(false);
+  const [args] = dbMock.dbRead.serviceDeal.findFirst.mock.calls[0] as [
+    { where: { OR: unknown; status: { in: string[] } } }
+  ];
+  expect(args.where.OR).toEqual([{ buyerId: SELLER }, { sellerId: SELLER }]);
+  expect([...args.where.status.in].sort()).toEqual(
+    ['Accepted', 'CancellationRequested', 'Delivered', 'Disputed', 'InRevision', 'Requested'].sort()
+  );
+  dbMock.dbRead.serviceDeal.findFirst.mockResolvedValue({ id: 1 } as never);
+  expect(await hasOpenServiceDeal(SELLER)).toBe(true);
 });

@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
+import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
   GetShopServiceOfferingsInput,
   SetServiceOfferingStatusInput,
@@ -81,6 +82,18 @@ export async function getServiceSellEligibility(userId: number): Promise<Service
     score: { current, min: SERVICES_MIN_CREATOR_SCORE },
     standingIssue,
   };
+}
+
+/** Whether the user is buyer or seller on any open deal: their way back to a deal when the flag is off. */
+export async function hasOpenServiceDeal(userId: number) {
+  const deal = await dbRead.serviceDeal.findFirst({
+    where: {
+      OR: [{ buyerId: userId }, { sellerId: userId }],
+      status: { in: [...SERVICE_DEAL_OPEN_STATUSES] },
+    },
+    select: { id: true },
+  });
+  return !!deal;
 }
 
 export async function assertCanSellServices(userId: number) {

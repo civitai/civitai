@@ -119,11 +119,38 @@ describe('deal page routes with the flag off', () => {
     expect(resolveServiceDealPage({ ...signedIn, features: off })).toEqual({ props: {} });
   });
 
-  it('404s the request list, an entry point', () => {
-    expect(resolveServiceDealsListPage({ ...signedIn, features: off })).toEqual({ notFound: true });
+  // Decision (Creator Services P2): with the flag off the list is still how a party FINDS their
+  // open deals, so it serves anyone with one, and only them.
+  const hasOpen = (open: boolean) => async () => open;
+
+  it('serves the list with the flag off to a user with an open deal, open deals only', async () => {
     expect(
-      resolveServiceDealsListPage({ ...signedIn, features: { creatorServices: true } })
-    ).toEqual({ props: {} });
+      await resolveServiceDealsListPage({ ...signedIn, features: off }, hasOpen(true))
+    ).toEqual({ props: { openOnly: true } });
+  });
+
+  it('404s the list with the flag off for a user with no open deal (none, or only closed)', async () => {
+    expect(
+      await resolveServiceDealsListPage({ ...signedIn, features: off }, hasOpen(false))
+    ).toEqual({ notFound: true });
+  });
+
+  it('404s the list with the flag off when signed out, without revealing it via a login redirect', async () => {
+    expect(
+      await resolveServiceDealsListPage(
+        { session: null, ctx: signedIn.ctx, features: off },
+        hasOpen(true)
+      )
+    ).toEqual({ notFound: true });
+  });
+
+  it('serves the full list with the flag on', async () => {
+    expect(
+      await resolveServiceDealsListPage(
+        { ...signedIn, features: { creatorServices: true } },
+        hasOpen(false)
+      )
+    ).toEqual({ props: { openOnly: false } });
   });
 });
 
