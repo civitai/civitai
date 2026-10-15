@@ -1052,6 +1052,24 @@ describe('releasing to the seller', () => {
     expect(await releaseLeg(id)).toMatchObject({ amount: PRICE - 100 });
   });
 
+  it('claims nothing for a deal already settled', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "ServiceDeal" SET "settledAt" = now() WHERE id = $1`, [id]);
+    expect(await escrow.releaseDeal(id)).toBe(false);
+    expect(await releaseLeg(id)).toBeUndefined();
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The claim's `heldAt IS NOT NULL` cannot be reached on its own: the schema refuses a Completed
+  // deal without it, and the receipted-hold join is the claim's second layer. This pins the first.
+  it('cannot hold a Completed deal that was never marked held', async () => {
+    const id = await completed();
+    await expect(q(`UPDATE "ServiceDeal" SET "heldAt" = NULL WHERE id = $1`, [id])).rejects.toThrow(
+      /ServiceDeal_held_before_work/
+    );
+  });
+
   it('never releases a hold with no receipt', async () => {
     const id = await completed();
     await q(
