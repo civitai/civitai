@@ -240,6 +240,29 @@ describe('upsertModelVersion — H3 attestation', () => {
     );
   });
 
+  it('refuses a moderator creating an H3 version straight into Published', async () => {
+    seedExisting();
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
+    mockTx.modelVersion.create.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+
+    const create = (baseModel: string) =>
+      upsertModelVersion({
+        modelId: MODEL_ID,
+        name: 'v2',
+        baseModel,
+        status: ModelStatus.Published,
+        actorUserId: MOD_ID,
+        isModerator: true,
+      } as never);
+
+    await expect(create(H3)).rejects.toThrowError(/right to train and share/);
+    expect(mockTx.modelVersion.create).not.toHaveBeenCalled();
+
+    // Control: the same create on another base model reaches the insert.
+    await create('SDXL 1.0').catch(() => undefined);
+    expect(mockTx.modelVersion.create).toHaveBeenCalled();
+  });
+
   it('leaves a non-H3 edit alone (control)', async () => {
     seedExisting();
 
