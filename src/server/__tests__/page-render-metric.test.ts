@@ -136,7 +136,9 @@ describe('page_render_total counts HTML documents', () => {
     ]);
   });
 
-  it('a gSSP redirect, an _app redirect or a /_next/data request counts nothing', async () => {
+  // Next never calls _document for these (observed above); what this pins is that _app does not
+  // count them itself.
+  it('_app.getInitialProps counts nothing, so redirects and /_next/data requests count zero', async () => {
     signedIn();
     const res = { writeHead: vi.fn(), end: vi.fn() };
     await runApp({ headers: {}, url: '/images' }, '/images');
@@ -151,8 +153,20 @@ describe('page_render_total counts HTML documents', () => {
         query: {},
       },
     } as unknown as AppContext);
+    expect(res.writeHead).toHaveBeenCalledWith(302, expect.anything());
     await runApp({ headers: {}, url: '/_next/data/build/images.json' }, '/images');
     expect(await rows()).toEqual([]);
+  });
+});
+
+describe('the recorded hook sequences', () => {
+  // They were recorded on this Next version; a different one may run the hooks differently.
+  it('still describe the installed Next', async () => {
+    const { version } = await import('next/package.json');
+    expect(
+      version,
+      'Next changed: re-record the _app/_document hook order for normal, notFound, throw, redirect and data responses, then update this file'
+    ).toBe('16.3.1');
   });
 });
 

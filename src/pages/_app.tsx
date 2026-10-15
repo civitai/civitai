@@ -13,7 +13,7 @@ import { getCookie, getCookies } from 'cookies-next';
 import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
-import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/page-route.constants';
+import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/render-session.constants';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -611,8 +611,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     chatSettings = resolveChatSettings(settings.chat);
   }
 
-  // Read by the page-render metric: a signed-in-looking render whose session lookup degraded is not
-  // known to be anonymous. Assigned on every run, since a notFound runs this twice on one request.
+  // Read by the page-render metric: a render with a session cookie whose settings bootstrap failed
+  // is not known to be anonymous. Assigned on every run, since a notFound runs this twice on one request.
   (appContext.ctx.req as any)[SESSION_UNRESOLVED_REQ_KEY] =
     !session && hasAuthCookie && settingsDegraded;
   if (session) {

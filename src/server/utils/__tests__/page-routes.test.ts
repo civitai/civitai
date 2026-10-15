@@ -8,6 +8,7 @@ import {
   PAGE_ROUTE_NONE,
   PAGE_ROUTE_OTHER,
   pageRouteLabel,
+  pagesManifestPath,
   readPageRoutes,
 } from '~/server/utils/page-routes';
 import { usePagesManifestFixture } from './pages-manifest.fixture';
@@ -19,10 +20,20 @@ afterEach(() => {
 });
 
 describe('readPageRoutes', () => {
-  it('keeps page routes and drops API and internal `/_*` entries', () => {
+  it('keeps page routes and the error page, and drops API and other internal `/_*` entries', () => {
     const distDir = usePagesManifestFixture();
     expect([...readPageRoutes(path.join(distDir, 'server', 'pages-manifest.json'))].sort()).toEqual(
-      ['/', '/404', '/images', '/models/[id]/[[...slug]]', '/user/[username]'].sort()
+      ['/', '/404', '/_error', '/images', '/models/[id]/[[...slug]]', '/user/[username]'].sort()
+    );
+  });
+
+  it('defaults to the build directory Next serves from (dev builds under `dev/`)', () => {
+    vi.stubEnv('NEXT_DIST_DIR', '');
+    expect(pagesManifestPath('production')).toBe(
+      path.resolve(process.cwd(), '.next/server/pages-manifest.json')
+    );
+    expect(pagesManifestPath('development')).toBe(
+      path.resolve(process.cwd(), '.next/dev/server/pages-manifest.json')
     );
   });
 
@@ -33,6 +44,7 @@ describe('readPageRoutes', () => {
     expect(readPageRoutes(path.join(dir, 'absent.json')).size).toBe(0);
     expect(readPageRoutes(path.join(dir, 'bad.json')).size).toBe(0);
     expect(warn).toHaveBeenCalledTimes(2);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 

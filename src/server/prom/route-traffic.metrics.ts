@@ -8,7 +8,7 @@ import {
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { pageRouteLabel } from '~/server/utils/page-routes';
 import { PAGE_ROUTE_HEADER } from '~/shared/constants/page-route.constants';
-import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/page-route.constants';
+import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/render-session.constants';
 
 export const TRPC_CALLS_METRIC = PROM_PREFIX + 'trpc_calls_total';
 export const PAGE_RENDER_METRIC = PROM_PREFIX + 'page_render_total';
@@ -39,15 +39,14 @@ function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class'> {
         help:
           'Server-rendered HTML responses, counted once per document: route is the page actually ' +
           'rendered (/404 for notFound, /_error for a thrown error); redirects and /_next/data ' +
-          'requests render no document and are not counted. authed is unknown when the session ' +
-          'lookup degraded; bot_class is set only where bot verification runs',
+          'requests render no document and are not counted. authed is unknown when the settings ' +
+          'bootstrap failed for a request with a session cookie; bot_class is set only where bot ' +
+          'verification runs',
         labelNames: ['route', 'authed', 'bot_class'] as const,
         registers: [instrumentationRegistry],
       })
   );
 }
-
-const ERROR_ROUTE = '/_error';
 
 export function botClassLabel(raw: string | string[] | null | undefined): string {
   return parseVerifiedBotHeader(raw) ?? NO_BOT;
@@ -83,7 +82,7 @@ export function recordTrpcCall(headers: HeaderBag | undefined, authed: boolean) 
 export function recordPageRender(route: string, req: RenderRequest) {
   try {
     pageRenderCounter().inc({
-      route: route === ERROR_ROUTE ? ERROR_ROUTE : pageRouteLabel(route),
+      route: pageRouteLabel(route),
       authed: renderAuthedLabel(req),
       bot_class: botClassLabel(req.headers[VERIFIED_BOT_HEADER]),
     });

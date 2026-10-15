@@ -6,18 +6,26 @@ export const PAGE_ROUTE_NONE = 'none';
 /** A route was reported but is not a known page pattern. */
 export const PAGE_ROUTE_OTHER = 'other';
 
-/** Next writes this at build time; its keys are every page's route pattern. */
-export function pagesManifestPath() {
+/**
+ * Next writes this at build time; its keys are every page's route pattern. The dist dir mirrors
+ * `distDir` in `next.config.mjs`; `next dev` builds into its `dev/` subdirectory.
+ */
+export function pagesManifestPath(nodeEnv = process.env.NODE_ENV) {
   return path.resolve(
     process.cwd(),
     process.env.NEXT_DIST_DIR || '.next',
+    ...(nodeEnv === 'development' ? ['dev'] : []),
     'server',
     'pages-manifest.json'
   );
 }
 
+/** The error page is internal but is a real rendered document (a thrown getServerSideProps). */
+const ERROR_ROUTE = '/_error';
+
 const isPageRoute = (route: string) =>
-  route !== '/api' && !route.startsWith('/api/') && !route.startsWith('/_');
+  route === ERROR_ROUTE ||
+  (route !== '/api' && !route.startsWith('/api/') && !route.startsWith('/_'));
 
 /** Never throws: an unreadable manifest yields an empty set, so every route labels as `other`. */
 export function readPageRoutes(manifestPath: string): Set<string> {
