@@ -187,7 +187,7 @@ export async function getImageUploadProbeBackend(): Promise<{
  * `NEXT_PUBLIC_IMAGE_LOCATION`) and the image SCANNER actually read from, so a
  * subsequent `createImage({ url: key })` reaches `Scanned`.
  *
- * 🔴 DO NOT reach for Cloudflare Images (`uploadBufferToCF`) to make a SCANNABLE
+ * 🔴 DO NOT reach for Cloudflare Images (the removed `uploadBufferToCF`) to make a SCANNABLE
  * image. CF Images is a DIFFERENT store the edge URL + scanner never resolve — a
  * CF Images id used as `Image.url` yields an edge URL that 404s at scan time, so
  * the row goes terminally `ImageIngestionStatus.NotFound`. (That bug shipped in

@@ -367,8 +367,6 @@ export const serverSchema = z
     S3_IMAGE_FORCE_PATH_STYLE: zc.booleanString.optional().default(false),
     S3_IMAGE_CACHE_BUCKET: z.string().default(''),
     S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
-    CF_ACCOUNT_ID: z.string().optional(),
-    CF_IMAGES_TOKEN: z.string().optional(),
     CF_API_TOKEN: z.string().optional(),
     CF_ZONE_ID: z.string().optional(),
     JOB_TOKEN: z.string(),
