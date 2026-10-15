@@ -98,6 +98,10 @@ const NSFW_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028150000_creator_service_max_nsfw_level/migration.sql'
 );
+const TAKEDOWN_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028170000_creator_service_offering_takedown/migration.sql'
+);
 const REASON_CODE_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
@@ -112,6 +116,9 @@ const PG13 = 2;
 const R = 4;
 const SFW_LEVELS = PG | PG13;
 const ALL_LEVELS = 31;
+
+/** The offering a faked Prisma read includes, as the real `include` always does. */
+const OFFERING_ROW = { id: 1, title: 'Cat portraits', coverImageId: null, removedReason: null };
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
@@ -233,11 +240,13 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TABLE "Report" (id serial PRIMARY KEY);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(FILE_STATE_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(NSFW_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(TAKEDOWN_MIGRATION, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -270,7 +279,7 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -1680,6 +1689,7 @@ describe('the finals gate and dispute resolution', () => {
     const at = new Date();
     const held = {
       id: 9,
+      offering: OFFERING_ROW,
       buyerId: BUYER,
       sellerId: SELLER,
       status: 'Disputed',
@@ -2049,6 +2059,7 @@ describe('reasons and reason codes', () => {
         dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
       ).serviceDeal.findUnique = vi.fn().mockResolvedValue({
         id: 9,
+        offering: OFFERING_ROW,
         buyerId: BUYER,
         sellerId: SELLER,
         status: 'Delivered',
@@ -2106,7 +2117,7 @@ describe('reasons and reason codes', () => {
         const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
         (
           dbMock.dbWrite as unknown as { serviceDeal: { findMany: ReturnType<typeof vi.fn> } }
-        ).serviceDeal.findMany = vi.fn().mockResolvedValue([row]);
+        ).serviceDeal.findMany = vi.fn().mockResolvedValue([{ ...row, offering: OFFERING_ROW }]);
         const { items } = await deals.listMyServiceDeals({
           userId: BUYER,
           role: 'buyer',
@@ -2220,7 +2231,9 @@ describe('mature services', () => {
         serviceDeal: { findMany: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
       };
       model.serviceDeal.findMany = vi.fn(async ({ where }) =>
-        (await rows()).filter((row) => matches(row, where))
+        (await rows())
+          .filter((row) => matches(row, where))
+          .map((row) => ({ ...row, offering: OFFERING_ROW }))
       );
       model.serviceDeal.count = vi.fn(
         async ({ where }) => (await rows()).filter((row) => matches(row, where)).length
@@ -2253,6 +2266,153 @@ describe('mature services', () => {
       expect(red.items.map((item) => item.id)).toEqual([mature, sfw]);
       expect(red.items[0].maxNsfwLevel).toBe(R);
       expect(red.hiddenOffDomain).toBe(0);
+    });
+  });
+});
+
+// Decision (briony, 2026-10-15): a moderator takedown sets the offering to Removed and does NOT
+// cancel or refund its open deals. Buyers keep every exit and moderators have the dispute queue.
+// What the takedown must still do is stop NEW requests, which the Active check in the request
+// path already does. Do not add a cascade from takedown into deals without that decision changing.
+describe('an offering taken down mid-deal', () => {
+  const takeDown = () =>
+    q(`UPDATE "ServiceOffering" SET status = 'Removed'::"ServiceOfferingStatus" WHERE id = 1`);
+
+  it('refuses a new request', async () => {
+    await takeDown();
+    await expect(request()).rejects.toThrow(/Service not found/);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('lets an open deal run to completion under its copied terms', async () => {
+    const { id } = await request();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await takeDown();
+    await deliver(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    expect((await deal(id)).status).toBe('Completed');
+  });
+
+  // Decision (briony, 2026-10-15): after a MODERATOR takedown a pending request cannot be accepted,
+  // so a seller removed for a fraudulent listing never starts work on held Buzz. The buyer's exits
+  // stay open and refund as normal. A seller's own remove leaves accept as it was.
+  describe('by a moderator', () => {
+    const moderatorTakeDown = () =>
+      q(`UPDATE "ServiceOffering" SET status = 'Removed'::"ServiceOfferingStatus",
+           "removedReason" = 'misleading', "removedAt" = now(), "removedById" = 99 WHERE id = 1`);
+
+    it('refuses to accept a request that was pending at the takedown', async () => {
+      const { id } = await request();
+      await moderatorTakeDown();
+      // Says why, rather than "moved on", which would send the seller back to the same button.
+      await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toThrow(
+        'A moderator removed this service, so this request can only be declined.'
+      );
+      expect((await deal(id)).status).toBe('Requested');
+      expect(await events(id)).toEqual(['Requested', 'Held']);
+    });
+
+    it("still refunds the buyer's withdraw of that request", async () => {
+      const { id } = await request();
+      await moderatorTakeDown();
+      await deals.withdrawServiceDeal({ dealId: id, userId: BUYER });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'withdrawn' });
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+      const refund = (await legs(id)).find((l) => l.leg === 'Refund');
+      expect(refund?.transactionId).toBeTruthy();
+    });
+
+    it('stops offering Accept, and tells neither party the reason', async () => {
+      const { id } = await request();
+      const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+      const takenDown = { ...OFFERING_ROW, removedReason: 'misleading' };
+      const model = dbMock.dbWrite as unknown as {
+        serviceDeal: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
+      };
+      model.serviceDeal.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...row, offering: takenDown, events: [] });
+      model.serviceDeal.findMany = vi.fn().mockResolvedValue([{ ...row, offering: takenDown }]);
+
+      const view = await deals.getServiceDealView({
+        dealId: id,
+        userId: SELLER,
+        servicesEnabled: true,
+      });
+      expect(view.actions).toEqual(['decline']);
+      expect(view.offeringTakenDown).toBe(true);
+      expect(JSON.stringify(view)).not.toContain('misleading');
+
+      const { items } = await deals.listMyServiceDeals({
+        userId: SELLER,
+        role: 'seller',
+        limit: 20,
+        servicesEnabled: true,
+        servableLevels: ALL_LEVELS,
+      });
+      expect(items[0].actions).toEqual(['decline']);
+      expect(items[0].offeringTakenDown).toBe(true);
+      expect(JSON.stringify(items)).not.toContain('misleading');
+
+      // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
+      const buyerView = await deals.getServiceDealView({
+        dealId: id,
+        userId: BUYER,
+        servicesEnabled: true,
+      });
+      expect(buyerView.offeringTakenDown).toBe(false);
+      expect(buyerView.actions).toEqual(['withdraw']);
+      const buyerList = await deals.listMyServiceDeals({
+        userId: BUYER,
+        role: 'buyer',
+        limit: 20,
+        servicesEnabled: true,
+        servableLevels: ALL_LEVELS,
+      });
+      expect(buyerList.items[0].offeringTakenDown).toBe(false);
+      const modView = await deals.getServiceDealView({
+        dealId: id,
+        userId: STRANGER,
+        isModerator: true,
+        servicesEnabled: true,
+      });
+      expect(modView.offeringTakenDown).toBe(true);
+    });
+
+    // Only the seller's own pending request learns why: anyone else, or a deal that has moved on,
+    // gets the same "moved on" conflict as any other refused accept.
+    it('says why only to the seller of a request still pending', async () => {
+      const { id: pending } = await request();
+      await moderatorTakeDown();
+      await expect(deals.acceptServiceDeal({ dealId: pending, userId: STRANGER })).rejects.toEqual(
+        conflict
+      );
+      await deals.withdrawServiceDeal({ dealId: pending, userId: BUYER });
+      await expect(deals.acceptServiceDeal({ dealId: pending, userId: SELLER })).rejects.toEqual(
+        conflict
+      );
+    });
+
+    // State set by SQL: this suite has no Prisma model fakes, so it cannot call the takedown itself.
+    // That a seller-removed offering can be taken down is pinned on `takedownServiceOffering`'s
+    // scope in creator-service-takedown.service.test.ts; this pins what accept does in that state.
+    it('refuses accept on an offering the seller removed and a moderator then took down', async () => {
+      const { id } = await request();
+      await takeDown();
+      await moderatorTakeDown();
+      await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toThrow(
+        'A moderator removed this service, so this request can only be declined.'
+      );
+      await deals.withdrawServiceDeal({ dealId: id, userId: BUYER });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'withdrawn' });
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves accept alone after the seller's own remove", async () => {
+      const { id } = await request();
+      await takeDown();
+      await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).status).toBe('Accepted');
     });
   });
 });
