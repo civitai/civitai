@@ -42,7 +42,7 @@ describe('takedown', () => {
     const [args] = dbMock.dbWrite.serviceOffering.updateMany.mock.calls[0] as [
       { where: unknown; data: Record<string, unknown> }
     ];
-    expect(args.where).toEqual({ id: OFFERING, status: { not: ServiceOfferingStatus.Removed } });
+    expect(args.where).toEqual({ id: OFFERING, removedReason: null });
     expect(args.data).toEqual({
       status: ServiceOfferingStatus.Removed,
       removedReason: 'off-platform',
@@ -64,23 +64,26 @@ describe('takedown', () => {
     expect(JSON.stringify(notification)).not.toContain(String(MOD));
   });
 
-  it('refuses an offering that is already removed, writing and notifying nothing', async () => {
+  // Decision (briony, 2026-10-15): a seller's own remove does not shield an offering from a takedown,
+  // or removing first would keep pending requests acceptable. Only a prior takedown does.
+  it('looks up the offering by takedown, not by status, so a seller-removed one still qualifies', async () => {
+    await takedownServiceOffering({ moderatorId: MOD, input: { id: OFFERING, reason: 'spam' } });
+    const [lookup] = dbMock.dbWrite.serviceOffering.findFirst.mock.calls[0] as [{ where: unknown }];
+    expect(lookup.where).toEqual({ id: OFFERING, removedReason: null });
+  });
+
+  it('refuses an offering already taken down, writing and notifying nothing', async () => {
     dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue(null as never);
     expect(
       await rejects(
         takedownServiceOffering({ moderatorId: MOD, input: { id: OFFERING, reason: 'spam' } })
       )
-    ).toMatch(/not found/i);
-    expect(dbMock.dbWrite.serviceOffering.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: OFFERING, status: { not: ServiceOfferingStatus.Removed } },
-      })
-    );
+    ).toMatch(/already taken down/i);
     expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('does not notify when a seller removed it between the read and the write', async () => {
+  it('notifies once when two moderators take it down at the same time', async () => {
     dbMock.dbWrite.serviceOffering.updateMany.mockResolvedValue({ count: 0 } as never);
     expect(
       await rejects(

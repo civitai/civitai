@@ -2355,6 +2355,19 @@ describe('an offering taken down mid-deal', () => {
       expect(JSON.stringify(items)).not.toContain('misleading');
     });
 
+    // Decision (briony, 2026-10-15): removing first does not dodge a takedown.
+    it('refuses accept when the seller removed it first and a moderator took it down after', async () => {
+      const { id } = await request();
+      await takeDown();
+      await moderatorTakeDown();
+      await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toThrow(
+        'A moderator removed this service, so this request can only be declined.'
+      );
+      await deals.withdrawServiceDeal({ dealId: id, userId: BUYER });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'withdrawn' });
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    });
+
     it("leaves accept alone after the seller's own remove", async () => {
       const { id } = await request();
       await takeDown();

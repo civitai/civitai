@@ -278,7 +278,12 @@ export async function removeServiceOffering({ sellerId, id }: { sellerId: number
 /**
  * A moderator takedown: status Removed plus the reason, time and moderator, which is what tells it
  * apart from a seller's own remove. Open deals carry on under the terms they copied at request time;
- * new requests are refused because the offering is no longer Active. There is no restore.
+ * new requests are refused because the offering is no longer Active, and pending ones can no longer
+ * be accepted. There is no restore.
+ *
+ * Decision (briony, 2026-10-15): it also applies to an offering the seller already removed, or a
+ * seller could dodge it by removing first and still accept pending requests. An offering already
+ * taken down is refused, so the seller is never notified twice.
  */
 export async function takedownServiceOffering({
   moderatorId,
@@ -287,15 +292,16 @@ export async function takedownServiceOffering({
   moderatorId: number;
   input: TakedownServiceOfferingInput;
 }) {
+  const notTakenDown = { id, removedReason: null };
   const offering = await dbWrite.serviceOffering.findFirst({
-    where: { id, status: { not: ServiceOfferingStatus.Removed } },
+    where: notTakenDown,
     select: { title: true, sellerId: true, seller: { select: { username: true } } },
   });
-  if (!offering) throw throwNotFoundError('Service not found');
+  if (!offering) throw throwNotFoundError('Service not found, or already taken down');
 
-  // Re-scoped so a seller's remove that lands after the read is never relabelled as a takedown.
+  // Re-scoped so two moderators acting at once record one takedown and send one notification.
   const { count } = await dbWrite.serviceOffering.updateMany({
-    where: { id, status: { not: ServiceOfferingStatus.Removed } },
+    where: notTakenDown,
     data: {
       status: ServiceOfferingStatus.Removed,
       removedReason: reason,
@@ -304,7 +310,7 @@ export async function takedownServiceOffering({
       removedById: moderatorId,
     },
   });
-  if (count === 0) throw throwNotFoundError('Service not found');
+  if (count === 0) throw throwNotFoundError('Service not found, or already taken down');
 
   await createNotification({
     userId: offering.sellerId,
