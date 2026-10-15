@@ -35,6 +35,15 @@ export const SERVICE_OFFERING_RATINGS = [
 export const SERVICE_OFFERING_DEFAULT_RATING = NsfwLevel.PG13;
 
 /**
+ * The ratings this domain may show a seller of their own offerings. Decision (briony, 2026-10-15):
+ * the SFW domain serves no mature content even to its owner, as with a user's own images there.
+ */
+export const servableServiceRatings = (servable: number) =>
+  SERVICE_OFFERING_RATINGS.filter(
+    (rating) => !isMatureServiceLevel(rating) || (rating & servable) !== 0
+  );
+
+/**
  * The mature ratings a viewer may see on a storefront: exactly the ones they may request
  * (`serviceRequestAllowed`, the rule the server enforces). Decision (briony, 2026-10-15): PG and
  * PG-13 offerings show to everyone, everywhere; filtering them by level would hide every default

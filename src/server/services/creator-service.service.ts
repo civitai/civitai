@@ -17,7 +17,9 @@ import { NsfwLevel } from '~/server/common/enums';
 import {
   SERVICE_MAX_ACTIVE_OFFERINGS,
   SERVICE_OFFERING_DEFAULT_RATING,
+  SERVICE_OFFERING_RATINGS,
   SERVICES_MIN_CREATOR_SCORE,
+  servableServiceRatings,
   visibleMatureServiceRatings,
 } from '~/shared/constants/creator-service.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
@@ -119,12 +121,28 @@ async function assertUnderActiveOfferingCap(sellerId: number) {
     );
 }
 
-export function getMyServiceOfferings(sellerId: number) {
-  return dbRead.serviceOffering.findMany({
-    where: { sellerId, status: { not: ServiceOfferingStatus.Removed } },
-    select: serviceOfferingSelect,
-    orderBy: { createdAt: 'desc' },
-  });
+/** A seller's own offerings. Ones this domain may not show are counted, never listed. */
+export async function getMyServiceOfferings({
+  sellerId,
+  servable,
+}: {
+  sellerId: number;
+  /** What this domain may be sent: `domainServableLevels(ctx)`. */
+  servable: number;
+}) {
+  const shown = servableServiceRatings(servable);
+  const where = { sellerId, status: { not: ServiceOfferingStatus.Removed } };
+  const [items, hiddenOffDomain] = await Promise.all([
+    dbRead.serviceOffering.findMany({
+      where: { ...where, maxNsfwLevel: { in: shown } },
+      select: serviceOfferingSelect,
+      orderBy: { createdAt: 'desc' },
+    }),
+    shown.length === SERVICE_OFFERING_RATINGS.length
+      ? 0
+      : dbRead.serviceOffering.count({ where: { ...where, maxNsfwLevel: { notIn: shown } } }),
+  ]);
+  return { items, hiddenOffDomain };
 }
 
 /** Offerings rated PG/PG-13, plus the mature ratings this viewer may see (see `visibleMatureServiceRatings`). */
