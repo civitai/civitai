@@ -1209,4 +1209,70 @@ describe('review mode: a first detection waits for a moderator', () => {
       })
     );
   });
+
+  describe('a first write that matches nothing for a correct reason', () => {
+    const holdLogs = () =>
+      loggingMock.logToAxiom.mock.calls.filter(([entry]) =>
+        /awaiting moderator/.test((entry as { message?: string }).message ?? '')
+      );
+
+    it('does not retry the same text as a re-detection or log a second hold', async () => {
+      await hold();
+      const before = await entryOf();
+
+      await apply('minor', NEWER);
+
+      expect((await entryOf()).redetected).toEqual(before.redetected);
+      expect((await entryOf()).redetected?.kind).toBe('first');
+      expect(holdLogs()).toHaveLength(0);
+    });
+
+    it('writes nothing for a locked label', async () => {
+      labelMode.value = 'review';
+      await seed({ scanHash: SCANNED });
+      await holder.db.query(`UPDATE "Model" SET "lockedProperties" = '{minor}' WHERE id = $1`, [
+        MODEL_ID,
+      ]);
+      const before = await stored();
+
+      await apply('minor', NEWER);
+
+      expect(await stored()).toEqual(before);
+      expect(holdLogs()).toHaveLength(0);
+    });
+
+    it('writes nothing when the label is flagged between the read and the write', async () => {
+      labelMode.value = 'review';
+      await seed({ scanHash: SCANNED });
+      labelMode.beforeRead = async () => {
+        labelMode.beforeRead = undefined;
+        await holder.db.query(`UPDATE "Model" SET minor = true WHERE id = $1`, [MODEL_ID]);
+      };
+
+      await apply('minor', NEWER);
+
+      expect((await entryOf()).redetected).toBeUndefined();
+      expect(holdLogs()).toHaveLength(0);
+    });
+  });
+
+  it('holds poi as a re-detection when a dismissal lands mid-scan', async () => {
+    labelMode.value = 'review';
+    await seed({ scanHash: SCANNED });
+    labelMode.beforeRead = async () => {
+      labelMode.beforeRead = undefined;
+      await holder.db.query(
+        `UPDATE "Model" SET meta = jsonb_set(meta, '{textScanFlags,poi,appealGranted}', $1::jsonb) WHERE id = $2`,
+        [JSON.stringify({ at: 'x', by: 9, textHash: 'hash-old', via: 'moderator' }), MODEL_ID]
+      );
+    };
+
+    await apply('poi', NEWER);
+
+    expect((await stored()).poi).toBe(false);
+    expect((await entryOf('poi')).redetected).toMatchObject({
+      kind: 'redetected',
+      textHash: NEWER,
+    });
+  });
 });
