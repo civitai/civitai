@@ -1133,7 +1133,6 @@ export function instrumentCommands(
 ) {
   const self = client?._self ?? client;
   if (!self) return;
-  const labels = { client: clientLabel } as const;
   // Detect the real chokepoint by capability: a 'cache' client is a CLUSTER (wrap `_execute`)
   // only when REDIS_CLUSTER is on; otherwise it's a plain single client (wrap `sendCommand`).
   const isClusterClient = typeof self._execute === 'function';

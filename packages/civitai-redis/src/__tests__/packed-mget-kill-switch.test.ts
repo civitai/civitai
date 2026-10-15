@@ -90,8 +90,10 @@ describe('packed.mGet kill switch', () => {
 });
 
 describe('a stuck pipelined read, through the factory with the configured deadline', () => {
+  const saved = { ...process.env };
   afterEach(() => {
     h.hang = false;
+    process.env = { ...saved };
   });
 
   it('rejects at REDIS_CLUSTER_COMMAND_TIMEOUT_MS and counts every key as a slow settle', async () => {

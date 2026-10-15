@@ -1,7 +1,7 @@
 import calculateSlot from 'cluster-key-slot';
 import { ErrorReply } from 'redis';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { trackClusterCommands } from '../client';
+import { instrumentCommands, trackClusterCommands } from '../client';
 import { countClusterDeadlineHits, resetClusterDeadlineHits } from '../cluster-deadline-hits';
 import { getClusterInflight, resetClusterInflight } from '../cluster-inflight';
 import {
@@ -220,6 +220,35 @@ describe('wedge accounting: a batch counts as its key count', () => {
       delete (globalThis as any).__civitaiRedisMetrics;
     }
   });
+
+  it.each(['cluster', 'sys'] as const)(
+    'a routed %s command is still one gauge inc/dec and one duration sample (shared accounting)',
+    async (label) => {
+      const seen: string[] = [];
+      (globalThis as any).__civitaiRedisMetrics = {
+        redisCommandsInflight: {
+          inc: (l: { client: string }) => seen.push(`inc:${l.client}`),
+          dec: (l: { client: string }) => seen.push(`dec:${l.client}`),
+        },
+        redisCommandDuration: {
+          observe: (l: { client: string }) => seen.push(`observe:${l.client}`),
+        },
+      };
+      try {
+        const fake: any = { _execute: async () => 'ok', sendCommand: async () => 'ok' };
+        if (label === 'sys') delete fake._execute;
+        instrumentCommands(fake, label, {
+          deadlineMs: 0,
+          slowCommandMs: 0,
+          routingRetryEnabled: false,
+        });
+        await (label === 'cluster' ? fake._execute('GET', 'k') : fake.sendCommand(['GET', 'k']));
+        expect(seen).toEqual([`inc:${label}`, `dec:${label}`, `observe:${label}`]);
+      } finally {
+        delete (globalThis as any).__civitaiRedisMetrics;
+      }
+    }
+  );
 
   it('trackClusterCommands: a synchronous throw still settles the accounting', async () => {
     await expect(
