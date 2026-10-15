@@ -11,10 +11,10 @@ import type * as CoocHolder from '~/server/services/resource-intent-cooc/holder'
 import type { ResourceIntentShortlistEntry } from '~/server/services/resource-intent-matcher.service';
 
 /**
- * SEAM: with a baseModel, the shipped POOL_MERGE path must produce exactly the list the offline co-occurrence
- * screen produced for the same inputs. The screen's own gate and merge code is copied below
- * VERBATIM as the oracle (its script lives outside this repo); both sides read the same synthetic
- * index, the same synthetic snapshot and the same candidates.
+ * SEAM: with a baseModel, the shipped POOL_MERGE path must produce exactly the list the offline
+ * co-occurrence screen produced for the same inputs. The screen's own gate and merge code is copied
+ * below VERBATIM as the oracle (its script lives outside this repo); both sides read the same
+ * synthetic index, the same synthetic snapshot and the same candidates.
  *
  * Faked: the vendor's HTTP (`fetch`, stage 1 only), the search client, hydration, redis and the
  * snapshot holder (it hands over a snapshot scored from synthetic counts). `askJev`, the

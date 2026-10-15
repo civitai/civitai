@@ -91,9 +91,10 @@ export function poolMergeModelIds(
 function poolMergeFingerprint() {
   const cooc = [9, 1, 2, 2, 3, 7];
   const base = [1, 4, 5, 6, 7, 8, 10, 11];
-  // Longer than the 25 reserved slots, so a no-baseModel change past slot 25 moves the hash too.
-  const longCooc = Array.from({ length: 30 }, (_, i) => 1000 + i);
+  // Co-occurrence lists of 30 (BASE backfills past slot 30) and 60 (fills all 50), so changing how
+  // many co-occurrence models a no-baseModel list keeps moves the hash.
   const longBase = Array.from({ length: 60 }, (_, i) => 2000 + i);
+  const longCooc = (n: number) => Array.from({ length: n }, (_, i) => 1000 + i);
   return {
     slots: POOL_MERGE_COOC_SLOTS,
     listModels: POOL_MERGE_LIST_MODELS,
@@ -104,7 +105,9 @@ function poolMergeFingerprint() {
     noBaseModel: [1, 4, 50].map((cap) =>
       poolMergeModelIds(cooc, base, cap, { interleaveBase: false })
     ),
-    noBaseModelLong: poolMergeModelIds(longCooc, longBase, 50, { interleaveBase: false }),
+    noBaseModelLong: [30, 60].map((n) =>
+      poolMergeModelIds(longCooc(n), longBase, 50, { interleaveBase: false })
+    ),
   };
 }
 
