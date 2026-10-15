@@ -32,6 +32,18 @@ export const creatorMilestoneNotifications = createNotificationProcessor({
           }
         : undefined,
   },
+  'creator-mythic-reached-staff': {
+    displayName: 'New Mythic (staff)',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) =>
+      details?.username
+        ? {
+            message: `${details.username} just became a Mythic. Send them a note?`,
+            url: `/user/${details.username}`,
+          }
+        : undefined,
+  },
   'creator-milestone-reached': {
     displayName: 'Creator milestone reached',
     category: NotificationCategory.Milestone,

@@ -650,7 +650,7 @@ export async function grantScoreTierCrossings(
   }
   // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
   await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
-  // Staff hear about every Legend crossing, including one whose user-facing announcement is silenced.
+  // Staff hear about every alerted crossing, including one whose user-facing announcement is silenced.
   await alertNewLegends(audienceCrossings).catch((e) => log('new-legend alert failed', e));
 }
 
