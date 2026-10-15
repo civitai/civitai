@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { DisputeEvent } from '$lib/server/creator-services-disputes.service';
 import { disputeOrigin } from '../origin';
 
-const event = (id: number, reasonCode: string | null): DisputeEvent => ({
+const event = (
+  id: number,
+  reasonCode: string | null,
+  type = 'Disputed',
+  actorId = 7
+): DisputeEvent => ({
   id,
-  type: 'Disputed',
-  actorId: 7,
+  type,
+  actorId,
   round: null,
   comment: null,
   reasonCode,
@@ -73,9 +78,37 @@ describe('disputeOrigin', () => {
       disputeOrigin({
         disputeReason: 'cancellation_declined',
         cancellationReason: null,
-        events: [event(1, 'seller_unresponsive')],
+        events: [
+          event(1, 'seller_unresponsive', 'CancellationRequested'),
+          event(2, null, 'CancellationDeclined'),
+        ],
       })
     ).toMatchObject({ label: 'Cancellation declined', text: null, code: 'seller_unresponsive' });
+  });
+
+  it('takes the code from the event type that belongs to the origin, not any event with a code', () => {
+    const events = [
+      event(1, 'cancel_code', 'CancellationRequested'),
+      event(2, 'decline_code', 'Declined'),
+      event(3, 'dispute_code', 'Disputed'),
+    ];
+    expect(disputeOrigin({ disputeReason: null, cancellationReason: null, events }).code).toBe(
+      'dispute_code'
+    );
+    expect(
+      disputeOrigin({ disputeReason: 'cancellation_declined', cancellationReason: null, events })
+        .code
+    ).toBe('cancel_code');
+  });
+
+  it('ignores a system-written Disputed event as a party code', () => {
+    expect(
+      disputeOrigin({
+        disputeReason: null,
+        cancellationReason: null,
+        events: [event(1, 'system_code', 'Disputed', -1)],
+      }).code
+    ).toBeNull();
   });
 
   it('does not show a code when the text is present', () => {

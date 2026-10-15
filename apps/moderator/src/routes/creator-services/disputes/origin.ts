@@ -23,18 +23,29 @@ export function disputeOrigin(
   if (reason && Object.hasOwn(SYSTEM_LABELS, reason))
     return { label: SYSTEM_LABELS[reason], system: true, text: null, code: null };
 
-  const text = reason === 'cancellation_declined' ? row.cancellationReason : reason;
-  const code = text ? null : latestReasonCode(row.events);
+  const declined = reason === 'cancellation_declined';
+  const text = declined ? row.cancellationReason : reason;
+  const code = text
+    ? null
+    : latestReasonCode(row.events, declined ? 'CancellationRequested' : 'Disputed');
   return {
-    label: reason === 'cancellation_declined' ? 'Cancellation declined' : 'Buyer dispute',
+    label: declined ? 'Cancellation declined' : 'Buyer dispute',
     system: false,
     text,
     code,
   };
 }
 
-function latestReasonCode(events: DisputeEvent[] = []): string | null {
-  for (let i = events.length - 1; i >= 0; i--)
-    if (events[i].reasonCode) return events[i].reasonCode ?? null;
+// Filtered by type, not "latest with a code": which events carry a party's code is a property of the
+// state machine today, not a rule. A party dispute is the `Disputed` event a party (not the system)
+// wrote; a declined cancellation's code is on the request, never on the decline.
+function latestReasonCode(
+  events: DisputeEvent[] = [],
+  type: 'Disputed' | 'CancellationRequested'
+): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === type && e.actorId !== -1 && e.reasonCode) return e.reasonCode;
+  }
   return null;
 }
