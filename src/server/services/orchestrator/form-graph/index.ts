@@ -39,7 +39,6 @@ import { createNanoBananaInput } from './nano-banana.handler';
 import { createWanImageInput } from './wan-image.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 import { createMochiInput } from './mochi.handler';
-import { createSoraInput } from './sora.handler';
 import { createHunyuanInput } from './hunyuan.handler';
 import { createFlux3VideoInput } from './flux3-video.handler';
 import { createMiniMaxInput } from './minimax.handler';
@@ -96,7 +95,6 @@ export { createNanoBananaInput } from './nano-banana.handler';
 export { createWanImageInput } from './wan-image.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 export { createMochiInput } from './mochi.handler';
-export { createSoraInput } from './sora.handler';
 export { createHunyuanInput } from './hunyuan.handler';
 export { createFlux3VideoInput } from './flux3-video.handler';
 export { createMiniMaxInput } from './minimax.handler';
@@ -263,9 +261,6 @@ function createStep(
 
     case 'Mochi':
       return createMochiInput(data, handlerCtx);
-
-    case 'Sora2':
-      return createSoraInput(data, handlerCtx);
 
     case 'HyV1':
       return createHunyuanInput(data, handlerCtx);

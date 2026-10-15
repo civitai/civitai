@@ -138,7 +138,6 @@ const TXT2VID_IDS = [
   ECO.WanVideo27,
   ECO.WanVideo30,
   ECO.Veo3,
-  ECO.Sora2,
   ECO.Vidu,
   ECO.MiniMaxH3,
   ECO.Kling,

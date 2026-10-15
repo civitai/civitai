@@ -1221,9 +1221,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
 
-  // Sora2 - checkpoint only
-  { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
-
   // Mochi - checkpoint only
   // { ecosystemId: ECO.Mochi, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1712,13 +1709,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.PonyV7,
     defaults: {
       model: { id: 2152373 },
-      modelLocked: true,
-    },
-  },
-  {
-    ecosystemId: ECO.Sora2,
-    defaults: {
-      model: { id: 2320065 },
       modelLocked: true,
     },
   },
