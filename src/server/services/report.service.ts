@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -163,6 +164,32 @@ const reportedGameFrameFilter = ({
   return [...filters, { details: { path: ['violation'], equals: violation } }];
 };
 
+// A merge-permission report names the reporter's model the merge uses; folded into an earlier report
+// on the same merge it would lose that, and the moderator would have no model to look up. Narrowed to
+// the source model, so two reports about the same pairing still dedupe.
+const reportedMergeSourceFilter = ({
+  reportType,
+  reason,
+  details,
+}: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}): Prisma.ReportWhereInput[] => {
+  if (reportType !== ReportEntity.Model || reason !== ReportReason.AdminAttention) return [];
+  const { reason: detailReason, sourceModelId } = (details ?? {}) as {
+    reason?: unknown;
+    sourceModelId?: unknown;
+  };
+  if (detailReason !== MERGE_PERMISSION_REPORT_REASON) return [];
+  if (typeof sourceModelId !== 'number')
+    throw throwBadRequestError('report: a merge-permission report must name the source model');
+  return [
+    { details: { path: ['reason'], equals: MERGE_PERMISSION_REPORT_REASON } },
+    { details: { path: ['sourceModelId'], equals: sourceModelId } },
+  ];
+};
+
 /** The existing report a new one on this entity would be folded into, if any. */
 export const findReportToFoldInto = ({
   reportType,
@@ -190,6 +217,7 @@ export const findReportToFoldInto = ({
   const narrowing = [
     ...(('AND' in placement ? placement.AND : undefined) ?? []),
     ...reportedGameFrameFilter({ reportType, reason, details }),
+    ...reportedMergeSourceFilter({ reportType, reason, details }),
   ];
   return db.report.findFirst({
     where: {

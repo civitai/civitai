@@ -998,6 +998,21 @@ export interface Model {
   generationCoverage?: GenerationCoverage[];
   flags?: ModelFlag[];
   coveredCheckpoints?: CoveredCheckpoint[];
+  permissionSnapshots?: ModelPermissionSnapshot[];
+}
+
+export interface ModelPermissionSnapshot {
+  id: number;
+  modelId: number;
+  model?: Model;
+  effectiveAt: Date;
+  source: string;
+  actorUserId: number | null;
+  actorRole: string | null;
+  allowNoCredit: boolean;
+  allowCommercialUse: CommercialUse[];
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
 }
 
 export interface ModelFlag {

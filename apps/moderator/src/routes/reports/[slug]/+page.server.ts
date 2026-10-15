@@ -26,6 +26,10 @@ import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
 import { canAccess } from '$lib/server/access';
 import {
+  getMergePermissionChecks,
+  type MergePermissionCheck,
+} from '$lib/server/merge-permission.service';
+import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
   reportEntityForSlug,
@@ -78,13 +82,14 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
   });
   const entityIds = data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
   const games = type === 'gameFrameGame' ? await getGameMirrors(entityIds) : [];
-  const [ownerFlaggedMinor, models] =
+  const [ownerFlaggedMinor, models, mergePermission] =
     type === 'model'
       ? await Promise.all([
           getOwnerFlaggedMinorModelIds(entityIds),
           getReportedModelStates(entityIds),
+          getMergePermissionChecks(data.items),
         ])
-      : [[], []];
+      : [[], [], {} as Record<number, MergePermissionCheck>];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
@@ -111,6 +116,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     games,
     ownerFlaggedMinor,
     models,
+    mergePermission,
     ...data,
   };
 };
