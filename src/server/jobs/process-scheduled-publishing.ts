@@ -417,7 +417,7 @@ export const processScheduledPublishing = createJob(
     }
 
     // Last and caught: an article fault must not stop the run being recorded.
-    await publishDueScheduledArticles(now).catch((error) =>
+    const goLive = await publishDueScheduledArticles(now).catch((error) =>
       logToAxiom({
         name: 'process-scheduled-publishing',
         type: 'error',
@@ -425,6 +425,9 @@ export const processScheduledPublishing = createJob(
         error: (error as Error)?.message,
       }).catch(() => undefined)
     );
+    // Scanned when scheduled; this re-arms a scan that ran out of retries, and is a no-op otherwise.
+    const liveArticleIds = goLive ? [...goLive.published, ...goLive.processing] : [];
+    if (liveArticleIds.length) scanEntitiesInBackground('Article', liveArticleIds);
 
     await setLastRun();
   }

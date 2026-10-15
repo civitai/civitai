@@ -35,6 +35,14 @@ describe('loadModelScanSubjects', () => {
       status: { in: ['Published', 'Scheduled'] },
     });
   });
+
+  it('with publicVersionsOnly, reads any model but only its public versions', async () => {
+    await loadModelScanSubjects([1], { publicVersionsOnly: true });
+    expect(call().where).toEqual({ id: { in: [1] }, deletedAt: null });
+    expect(call().select.modelVersions.where).toEqual({
+      status: { in: ['Published', 'Scheduled'] },
+    });
+  });
 });
 
 describe('loadModelScanSubjects with prePublish', () => {
@@ -110,5 +118,12 @@ describe('profiles', () => {
     findMany.mockClear();
     await getTextScanProfile('Model')!.load([1]);
     expect(call().where).not.toHaveProperty('availability');
+  });
+
+  it('the Model profile reads only public versions', async () => {
+    await getTextScanProfile('Model')!.load([1]);
+    expect(call().select.modelVersions.where).toEqual({
+      status: { in: ['Published', 'Scheduled'] },
+    });
   });
 });

@@ -451,6 +451,11 @@ type XGuardModerationArgs = {
    * Only meaningful when `entityType` + `entityId` are set.
    */
   forceRescan?: boolean;
+  /**
+   * A fresh submit, not a retry: reset the row's retry budget. Without it a row the retry cron
+   * parked at its cap stays excluded, so a lost callback for this workflow is never retried.
+   */
+  rearmRetries?: boolean;
 } & (
   | { mode: 'text'; content: string }
   | {
@@ -472,6 +477,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
     wait,
     priority = 'normal',
     recordForReview = false,
+    rearmRetries = false,
   } = args;
 
   // Default callback fires the standard text-moderation webhook, which is
@@ -651,8 +657,13 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           contentHash,
           status,
           ...(submitSucceeded
-            ? { blocked: null, triggeredLabels: [], result: Prisma.JsonNull }
-            : { retryCount: { increment: 1 } }),
+            ? {
+                blocked: null,
+                triggeredLabels: [],
+                result: Prisma.JsonNull,
+                ...(rearmRetries ? { retryCount: 0 } : {}),
+              }
+            : { retryCount: rearmRetries ? 1 : { increment: 1 } }),
         },
       })
       .catch((e) =>
