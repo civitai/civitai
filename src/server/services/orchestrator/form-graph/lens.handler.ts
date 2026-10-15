@@ -4,7 +4,7 @@ import type {
   ComfyLensNormalCreateImageGenInput,
   ComfyLensTurboCreateImageGenInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { lensVersionIds } from '~/shared/form-graph/generation/image/lens.graph';
 import { defineHandler } from '../handlers/handler-factory';

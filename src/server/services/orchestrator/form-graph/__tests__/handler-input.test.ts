@@ -104,7 +104,7 @@ describe('flux3.handler', () => {
       operation: 'createImage',
       resolution: '2k',
       aspectRatio: '16:9',
-      enablePromptExpansion: false,
+      enhancePrompt: false,
     });
   });
 
@@ -117,7 +117,7 @@ describe('flux3.handler', () => {
       prompt: 'a cat',
       enablePromptExpansion: true,
     });
-    expect(firstInput(expanded)).toMatchObject({ enablePromptExpansion: true });
+    expect(firstInput(expanded)).toMatchObject({ enhancePrompt: true });
   });
 
   it('edit switches operation, forces aspectRatio auto, and keeps image order', async () => {
@@ -210,7 +210,7 @@ describe('ideogram.handler', () => {
       width: 2560,
       height: 1440,
       quality: 'high',
-      enablePromptExpansion: false,
+      enhancePrompt: false,
     });
   });
 
@@ -246,7 +246,10 @@ describe('hunyuan.handler', () => {
   // decided nothing: every submit failed once that build lost coverage.
   it('names the ecosystem default model', async () => {
     const steps = await dispatch({ workflow: 'txt2vid', ecosystem: 'HyV1', prompt: 'a cat' });
-    expect(firstInput(steps)).toMatchObject({ engine: 'hunyuan', model: 'urn:air:test:1313562' });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'hunyuan',
+      checkpointModel: 'urn:air:test:1313562',
+    });
   });
 
   it('a saved fp8 selection still submits the default', async () => {
@@ -256,7 +259,89 @@ describe('hunyuan.handler', () => {
       prompt: 'a cat',
       model: 1314512,
     });
-    expect(firstInput(steps)).toMatchObject({ model: 'urn:air:test:1313562' });
+    expect(firstInput(steps)).toMatchObject({ checkpointModel: 'urn:air:test:1313562' });
+  });
+});
+
+describe('wan-image.handler', () => {
+  // The input has no aspect ratio field: an unmapped pick lands on its square default.
+  it('sends the picked aspect ratio as a fal size preset', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'WanImage27',
+      prompt: 'a cat',
+      aspectRatio: '16:9',
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'wan',
+      version: 'v2.7',
+      operation: 'createImage',
+      imageSize: 'landscape_16_9',
+    });
+  });
+
+  it('edit sends no size, since the ratio picker is hidden there', async () => {
+    const steps = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'WanImage27',
+      prompt: 'a cat',
+      images: [IMAGE],
+    });
+    const input = firstInput(steps) as Record<string, unknown>;
+    expect(input).toMatchObject({ operation: 'editImage', images: [IMAGE.url] });
+    expect(input.imageSize).toBeUndefined();
+  });
+});
+
+describe('flux3-klein.handler', () => {
+  it('the distilled model sends no steps, cfg or negative prompt', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3Klein',
+      prompt: 'a cat',
+      negativePrompt: 'blurry',
+    });
+    const input = firstInput(steps) as Record<string, unknown>;
+    expect(input).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'flux3Klein',
+      model: 'distilled',
+      operation: 'createImage',
+    });
+    expect(input.steps).toBeUndefined();
+    expect(input.cfgScale).toBeUndefined();
+    expect(input.negativePrompt).toBeUndefined();
+    expect(input.images).toBeUndefined();
+  });
+
+  it('base sends its steps, cfg and negative prompt', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3Klein_base',
+      prompt: 'a cat',
+      negativePrompt: 'blurry',
+      steps: 40,
+      cfgScale: 4,
+    });
+    expect(firstInput(steps)).toMatchObject({
+      model: 'base',
+      steps: 40,
+      cfgScale: 4,
+      negativePrompt: 'blurry',
+    });
+  });
+
+  it('reference images make it an edit', async () => {
+    const steps = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'Flux3Klein',
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      operation: 'editImage',
+      images: [IMAGE.url, IMAGE2.url],
+    });
   });
 });
 
@@ -549,7 +634,7 @@ describe('wan v2.2', () => {
       ]);
       // main's FAL migration pinned these alongside the step shape: the move was ONTO
       // comfy at a reduced frame rate, with interpolation making up the difference.
-      expect(firstInput(steps)).toMatchObject({ provider: 'comfy', frameRate: 12 });
+      expect(firstInput(steps)).toMatchObject({ provider: 'comfy', fps: 12 });
     } finally {
       wan22MultiStep = false;
     }

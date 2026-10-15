@@ -9,7 +9,7 @@ import type {
   KlingV3VideoGenInput,
   KlingModel,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { klingVersionIds } from '~/shared/generation/version-ids';
 import { defineHandler } from '../handlers/handler-factory';
@@ -46,7 +46,7 @@ function createLegacyInput(data: KlingLegacyData): KlingVideoGenInput {
     sourceImage: data.images?.[0]?.url,
     quantity: data.quantity ?? 1,
     seed: data.seed,
-    enablePromptEnhancer: data.enablePromptEnhancer,
+    enhancePrompt: data.enablePromptEnhancer,
   }) as KlingVideoGenInput;
 }
 

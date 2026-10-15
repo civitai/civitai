@@ -6,7 +6,7 @@
  * and orchestration-new.service.ts for upscale/remove-background.
  */
 
-import type { ComfyStepTemplate } from '@civitai/client';
+import type { ComfyStepTemplate } from '@civitai/orchestration-client';
 import { populateWorkflowDefinition, applyResources } from '../comfy/comfy.utils';
 import { samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';

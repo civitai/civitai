@@ -1,6 +1,6 @@
 /** Mochi handler for the form-graph lane — one mochi-engine videoGen step. */
 
-import type { MochiVideoGenInput, VideoGenStepTemplate } from '@civitai/client';
+import type { MochiVideoGenInput, VideoGenStepTemplate } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
@@ -14,7 +14,7 @@ export const createMochiInput = defineHandler<EcosystemData<'Mochi'>, [VideoGenS
         prompt: data.prompt,
         quantity: data.quantity ?? 1,
         seed: data.seed,
-        enablePromptEnhancer: data.enablePromptEnhancer,
+        enhancePrompt: data.enablePromptEnhancer,
       }) as MochiVideoGenInput,
     },
   ]
