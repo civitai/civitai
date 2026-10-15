@@ -775,7 +775,7 @@ describe('resuming', () => {
     expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
   });
 
-  it('removes the copy it just made when the file was deleted underneath it', async () => {
+  it('keeps the copy it just made when the file was deleted underneath it, as an orphan to judge', async () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     images.createImage.mockImplementationOnce(async ({ url }: { url: string }) => {
@@ -786,8 +786,20 @@ describe('resuming', () => {
       return { id: row.id };
     });
     await unpack.unpackFinals();
-    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
-    expect(await q(`SELECT 1 FROM "Image"`)).toEqual([]);
+    // Its scan has not finished, so nothing is deleted.
+    expect(images.deleteImageById).not.toHaveBeenCalled();
+    const rows = await q<{
+      fileId: number | null;
+      dealId: number;
+      imageId: number;
+      scanKey: string;
+    }>(`SELECT "fileId", "dealId", "imageId", "scanKey" FROM "ServiceDealFileEntry"`);
+    expect(rows).toEqual([{ fileId: null, dealId, imageId: 1, scanKey: 'scan-key-1' }]);
+    // And the verdict, when it comes, is taken like any other.
+    await q(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 1`);
+    await unpack.settleEntryScans();
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 1 }]);
   });
 });
 

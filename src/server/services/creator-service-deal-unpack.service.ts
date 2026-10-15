@@ -127,6 +127,9 @@ export async function handOffToScan(fileId: number) {
 
 type EntryRow = {
   id: number;
+  dealId: number;
+  path: string;
+  size: number;
   imageId: number | null;
   scanKey: string | null;
   scanStatus: string;
@@ -143,7 +146,8 @@ async function submitEntryImage(
   sellerId: number
 ) {
   const [row] = await dbWrite.$queryRaw<EntryRow[]>`
-    SELECT "id", "imageId", "scanKey", "scanStatus"::text AS "scanStatus" FROM "ServiceDealFileEntry"
+    SELECT "id", "dealId", "path", "size", "imageId", "scanKey", "scanStatus"::text AS "scanStatus"
+    FROM "ServiceDealFileEntry"
     WHERE "fileId" = ${fileId}::int AND "entryIndex" = ${entryIndex}::int`;
   // An image already submitted, or already judged and its copy deleted, is never ingested again.
   if (!row || row.imageId || row.scanStatus !== 'Pending') return;
@@ -170,9 +174,12 @@ async function submitEntryImage(
   const attached = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" SET "imageId" = ${imageId}::int WHERE "id" = ${row.id}::int`;
   if (attached === 0) {
-    // The file was deleted while this ran: nothing points at the copy any more.
-    const { deleteImageById } = await import('~/server/services/image.service');
-    await deleteImageById({ id: imageId, updatePost: false }).catch(() => null);
+    // The file was deleted while this ran. The copy's scan has not finished, so it is kept, with a
+    // row of its own that no file owns, like any other copy left when its file is deleted.
+    await dbWrite.$executeRaw`
+      INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanKey")
+      VALUES (NULL, ${row.dealId}::int, ${entryIndex}::int, ${row.path}::text, ${row.size}::int,
+        ${imageId}::int, (SELECT "url" FROM "Image" WHERE "id" = ${imageId}::int))`;
   }
 }
 
@@ -362,6 +369,8 @@ export async function settleFinals() {
     WHERE f."kind" = 'Final'::"ServiceDealFileKind"
       AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND (f."failReason" IS NOT NULL
+        OR (f."unpackedAt" < now() - (${SERVICE_FINAL_SCAN_GIVE_UP_MS}::int * interval '1 millisecond')
+          AND f."repackedAt" IS NULL)
         OR f."malwareScanStatus" = 'Failed'::"ServiceDealFileScanStatus"
         OR EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = f."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"))

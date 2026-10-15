@@ -120,14 +120,17 @@ export function pathRefusal(rawPath: string) {
 }
 
 /** Entry-level refusals from the header alone. */
-export function entryRefusal(entry: {
-  fileName: string;
-  compressedSize: number;
-  uncompressedSize: number;
-  compressionMethod: number;
-  externalFileAttributes: number;
-  isEncrypted: () => boolean;
-}) {
+export function entryRefusal(
+  entry: {
+    fileName: string;
+    compressedSize: number;
+    uncompressedSize: number;
+    compressionMethod: number;
+    externalFileAttributes: number;
+    isEncrypted: () => boolean;
+  },
+  { checkRatio = true } = {}
+) {
   const bad = pathRefusal(entry.fileName);
   if (bad) return bad;
   if (entry.isEncrypted()) return 'Password-protected archives cannot be delivered.';
@@ -149,6 +152,7 @@ export function entryRefusal(entry: {
     : SERVICE_ZIP_MAX_ENTRY_BYTES;
   if (entry.uncompressedSize > cap) return TOO_LARGE_REFUSAL;
   if (
+    checkRatio &&
     entry.uncompressedSize > SERVICE_ZIP_RATIO_FLOOR_BYTES &&
     entry.uncompressedSize > entry.compressedSize * SERVICE_ZIP_MAX_RATIO
   )
@@ -246,7 +250,7 @@ const openArchive = (source: ZipSource) =>
  * Opens the archive and reads its directory, refusing it on anything the headers already show.
  * The caller closes `zipfile`.
  */
-export async function openZip(source: ZipSource): Promise<OpenedZip> {
+export async function openZip(source: ZipSource, { checkRatio = true } = {}): Promise<OpenedZip> {
   const zipfile = await openArchive(source);
   try {
     const entries: ZipEntry[] = [];
@@ -262,7 +266,7 @@ export async function openZip(source: ZipSource): Promise<OpenedZip> {
             throw new ZipRejectedError(
               `The archive has too many files (max ${SERVICE_ZIP_MAX_ENTRIES}).`
             );
-          const refusal = entryRefusal(entry);
+          const refusal = entryRefusal(entry, { checkRatio });
           if (refusal) throw new ZipRejectedError(refusal);
           if (!entry.fileName.endsWith('/')) {
             declaredTotal += entry.uncompressedSize;

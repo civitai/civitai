@@ -19,7 +19,10 @@ import {
   ZipRejectedError,
   type OpenedZip,
 } from '~/server/utils/service-deal-zip';
-import { SERVICE_UNPACK_STALE_MS } from '~/shared/constants/creator-services.constants';
+import {
+  SERVICE_FINAL_MAX_BYTES,
+  SERVICE_UNPACK_STALE_MS,
+} from '~/shared/constants/creator-services.constants';
 import { deleteObject, getBucket, getS3Client, headObject } from '~/utils/s3-utils';
 
 /**
@@ -104,7 +107,10 @@ async function build(
     queueSize: 1,
   });
   const uploaded = upload.done();
-  // A failure here is reported by the loop below; this only keeps it from being unhandled.
+  // A failed upload stops reading the archive as it is written, so the copy below would wait for
+  // ever: its failure is raced against every entry. (It never settles on success.)
+  const uploadFailed = uploaded.then(() => new Promise<never>(() => undefined));
+  uploadFailed.catch(() => null);
   uploaded.catch(() => null);
   out.on('error', (error) => written.destroy(error));
 
@@ -119,7 +125,7 @@ async function build(
         mode: ENTRY_MODE,
         compress: true,
       });
-      await consumed;
+      await Promise.race([consumed, uploadFailed]);
     }
     out.end();
     await uploaded;
@@ -139,7 +145,12 @@ async function verify(bucket: string, key: string, names: string[], copiedBytes:
   const head = await headObject(bucket, key);
   if (head.status !== 'present' || head.size === null)
     throw new Error('The delivery archive could not be read back.');
-  const built = await openZip(s3ZipSource(getS3Client(), bucket, key, head.size));
+  if (head.size > SERVICE_FINAL_MAX_BYTES)
+    throw new ZipRejectedError('The archive is too large to deliver.');
+  // Our own compression may be better than the seller's, so the ratio is not asked of it again.
+  const built = await openZip(s3ZipSource(getS3Client(), bucket, key, head.size), {
+    checkRatio: false,
+  });
   try {
     const found = built.entries.map((entry) => entry.path);
     const sizes = built.entries.reduce((sum, entry) => sum + entry.size, 0);
@@ -147,7 +158,6 @@ async function verify(bucket: string, key: string, names: string[], copiedBytes:
       throw new Error('The delivery archive does not hold the files it was built from.');
     if (sizes !== copiedBytes)
       throw new Error('The delivery archive differs in size from its sources.');
-    await judge(built, () => false);
   } finally {
     built.zipfile.close();
   }
@@ -169,6 +179,7 @@ export async function repackFinals({
   const key = `${DELIVERY_KEY_ROOT}/${file.dealId}/${file.round}/${randomUUID()}`;
   let opened: OpenedZip | null = null;
   let written = false;
+  let committed = false;
   try {
     opened = await openZip(s3ZipSource(getS3Client(), bucket, file.s3Key, file.size));
     await judge(opened, shouldStop);
@@ -188,11 +199,19 @@ export async function repackFinals({
       await deleteObject(bucket, key).catch(() => null);
       return 0;
     }
-    await handOffToScan(file.id);
+    committed = true;
+    // The archive is the file's from here on. A hand-off that fails is logged, not undone.
+    await handOffToScan(file.id).catch((error) =>
+      logRepack(
+        'scan hand-off failed',
+        { fileId: file.id, error: (error as Error)?.message },
+        'error'
+      )
+    );
     logRepack('delivery archive built', { fileId: file.id, bytes: size, ms: Date.now() - began });
     return 1;
   } catch (error) {
-    if (written) await deleteObject(bucket, key).catch(() => null);
+    if (written && !committed) await deleteObject(bucket, key).catch(() => null);
     if (error instanceof Stopped) {
       await release(file.id);
       return 0;

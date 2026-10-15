@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import * as yauzl from 'yauzl';
@@ -98,6 +99,7 @@ const uploads = vi.hoisted(() => ({
   started: 0,
   aborted: 0,
   failNext: false,
+  failEarly: false,
   corrupt: null as null | ((built: Buffer) => Buffer),
   beforeDone: null as null | (() => Promise<void>),
 }));
@@ -111,6 +113,11 @@ vi.mock('@aws-sdk/lib-storage', () => ({
       uploads.started++;
     }
     async done() {
+      if (uploads.failEarly) {
+        // Stops reading the archive as it is written, as a failed part upload does.
+        uploads.failEarly = false;
+        throw new Error('upload failed early');
+      }
       const chunks: Buffer[] = [];
       for await (const chunk of this.options.params.Body) chunks.push(chunk);
       if (uploads.failNext) {
@@ -281,6 +288,7 @@ beforeEach(async () => {
   uploads.started = 0;
   uploads.aborted = 0;
   uploads.failNext = false;
+  uploads.failEarly = false;
   uploads.corrupt = null;
   uploads.beforeDone = null;
   bucket.zipReads.length = 0;
@@ -583,6 +591,84 @@ describe('when the build goes wrong', () => {
     const key = (await fileRow(fileId)).deliveryKey!;
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
     expect(s3.deleteObject).toHaveBeenCalledWith('bucket', key);
+  });
+});
+
+describe('after the archive is built', () => {
+  it('keeps the archive when the hand-off to the scan fails', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    scanSeam.submitFinalScan.mockRejectedValueOnce(new Error('scanner down'));
+    s3.deleteObject.mockClear();
+    expect(await repack.repackFinals()).toBe(1);
+    const file = await fileRow(fileId);
+    expect(file.deliveryKey).not.toBeNull();
+    expect(file.repackedAt).not.toBeNull();
+    // What the buyer will download is still there.
+    expect(bucket.objects.has(file.deliveryKey!)).toBe(true);
+    expect(s3.deleteObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('a build that cannot finish', () => {
+  it('does not wait for ever on an upload that has stopped reading', async () => {
+    // Incompressible and bigger than the stream's buffer, so an unread archive would stall the copy.
+    const big = randomBytes(3 * 1024 * 1024);
+    const { fileId } = await unpackedZip([{ name: 'big.dat', data: big }]);
+    uploads.failEarly = true;
+    expect(await repack.repackFinals()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ deliveryKey: null, repackedAt: null });
+  });
+
+  it('gives up on a file that is still not built after a long time, and fails it', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    expect(await unpack.settleFinals()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    await q(
+      `UPDATE "ServiceDealFile" SET "unpackedAt" = now() - interval '7 hours' WHERE id = $1`,
+      [fileId]
+    );
+    expect(await unpack.settleFinals()).toEqual({ finalsFailed: 1, finalsPassed: 0 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Failed');
+  });
+
+  it('does not give up on a file that was built in time', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    await repack.repackFinals();
+    await q(
+      `UPDATE "ServiceDealFile" SET "unpackedAt" = now() - interval '7 hours' WHERE id = $1`,
+      [fileId]
+    );
+    expect(await unpack.settleFinals()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Pending');
+  });
+});
+
+describe('what the built archive may hold', () => {
+  it('accepts a file the seller stored uncompressed that compresses far better than allowed', async () => {
+    const zeros = Buffer.alloc(3 * 1024 * 1024);
+    const { fileId } = await unpackedZip([{ name: 'zeros.dat', data: zeros, method: 'store' }]);
+    expect(await repack.repackFinals()).toBe(1);
+    const file = await fileRow(fileId);
+    expect(file.failReason).toBeNull();
+    const built = bucket.objects.get(file.deliveryKey!)!;
+    expect(built.byteLength).toBeLessThan(zeros.byteLength / 100);
+    expect((await readBack(built))[0].data.equals(zeros)).toBe(true);
+  });
+});
+
+describe('an archive that came out too large to deliver', () => {
+  it('is refused with a reason, not retried for ever', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    s3.headObject.mockImplementation(async (_bucket: string, key: string) => ({
+      status: 'present',
+      size: key.startsWith('service-deals/delivered/') ? 2 ** 31 : 1000,
+    }));
+    expect(await repack.repackFinals()).toBe(1);
+    const file = await fileRow(fileId);
+    expect(file).toMatchObject({ scanStatus: 'Failed', deliveryKey: null });
+    expect(file.failReason).toMatch(/too large/);
+    expect([...bucket.objects.keys()].some((k) => k.startsWith('service-deals/delivered/'))).toBe(
+      false
+    );
   });
 });
 
