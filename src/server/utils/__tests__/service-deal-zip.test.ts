@@ -292,6 +292,32 @@ describe('what an archive actually does', () => {
     );
   });
 
+  it('stops that image too when the bytes arrive in small pieces, as a bucket sends them', async () => {
+    const data = Buffer.concat([PNG_BYTES(0), Buffer.alloc(SERVICE_ZIP_MAX_IMAGE_BYTES, 3)]);
+    const whole = bufferZipSource(
+      buildZip([{ name: 'a.png', data, method: 'store', declaredSize: 1000 }])
+    );
+    const pieces = {
+      size: whole.size,
+      readRange: (start: number, end: number) =>
+        Readable.from(
+          (async function* () {
+            for await (const chunk of whole.readRange(start, end)) {
+              const bytes = chunk as Buffer;
+              for (let at = 0; at < bytes.byteLength; at += 16 * 1024)
+                yield bytes.subarray(at, at + 16 * 1024);
+            }
+          })()
+        ),
+    };
+    const opened = await openZip(pieces);
+    await rejects(
+      readEntry(opened.zipfile, opened.entries[0], { used: 0 }, () => false),
+      /too large/
+    );
+    opened.zipfile.close();
+  });
+
   it('stops a general entry past its cap though its header says it is small', async () => {
     const data = Buffer.alloc(SERVICE_ZIP_MAX_ENTRY_BYTES + 1, 5);
     await rejects(

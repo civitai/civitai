@@ -3,7 +3,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -389,6 +389,10 @@ describe('unpacking a zip', () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     expect(await unpack.unpackFinals({ shouldStop: () => true })).toBe(0);
+    // A stop is not a failure: nothing was logged as an error.
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' })
+    );
     expect(images.createImage).not.toHaveBeenCalled();
     expect(await entries(fileId)).toEqual([]);
     const file = await fileRow(fileId);
