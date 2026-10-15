@@ -302,3 +302,79 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     expect(mockGetResourceIntent).not.toHaveBeenCalled();
   });
 });
+
+describe('needs → hostedModels', () => {
+  it('🔴 a request without needs gets exactly the body it got before: no hostedModels key', async () => {
+    const { res } = await call({});
+    expect(res.body).toEqual({
+      ...SERVICE_RESULT,
+      maturity: { browsingLevel: 31, sfwOnly: false },
+    });
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(VALID_BODY);
+  });
+
+  it('answers needs from the catalog on a SFW ceiling, and never passes needs to the primitive', async () => {
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: ['transparent_background'] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(VALID_BODY);
+    expect(res.body).toMatchObject({
+      ...SERVICE_RESULT,
+      maturity: { browsingLevel: 3, sfwOnly: true },
+      hostedModels: [
+        {
+          key: 'Ming',
+          name: 'Ming Image Design',
+          maker: 'inclusionAI',
+          modelId: 2961930,
+          url: 'https://civitai.com/models/2961930',
+          capabilities: ['design_layout', 'legible_text', 'transparent_background'],
+        },
+      ],
+    });
+  });
+
+  it('ranks, caps at three, and includes an SFW-only entry on a SFW ceiling', async () => {
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
+    });
+    const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
+    expect(hosted.map((h) => h.key)).toEqual(['MAI', 'Reve', 'Ideogram']);
+  });
+
+  it('🔴 a mature ceiling drops entries not known to support mature content', async () => {
+    const { res } = await call({
+      body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
+    });
+    expect(res.body).toMatchObject({ maturity: { sfwOnly: false }, hostedModels: [] });
+  });
+
+  it('empty needs is answered with an empty list, not omitted', async () => {
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: [] },
+    });
+    expect((res.body as Record<string, unknown>).hostedModels).toEqual([]);
+  });
+
+  it('an unknown capability is a 400 before the rate limit', async () => {
+    for (const needs of [['legible_text', 'nsfw'], 'legible_text', [1]]) {
+      const { res } = await call({ body: { ...VALID_BODY, needs } });
+      expect(res.statusCode).toBe(400);
+    }
+    expect(mockCheckBlockLLMRateLimit).not.toHaveBeenCalled();
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
+  it('a degraded primitive response still carries the hosted list', async () => {
+    mockGetResourceIntent.mockResolvedValue({ ...SERVICE_RESULT, degraded: true });
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: ['transparent_background'] },
+    });
+    expect(res.body).toMatchObject({ degraded: true, hostedModels: [{ key: 'Ming' }] });
+  });
+});
