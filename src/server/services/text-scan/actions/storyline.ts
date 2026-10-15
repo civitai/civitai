@@ -3,6 +3,8 @@ import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createNotification } from '~/server/services/notification.service';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
+import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
 export const STORYLINE_TITLE_MODERATED = 'storyline-title-moderated';
 
@@ -71,10 +73,24 @@ export async function applyStorylineTextScan({
     },
   });
   if (!before) return;
+  // A verdict on text the title no longer has (it was edited after the scan was sent) may only
+  // restrict: take down, mark a minor, raise the rating. It never lifts, clears or lowers; the
+  // scan of the current title, which the edit started, settles those.
+  const current =
+    textHash ===
+    textScanTextHash(storylineTextScanSubject({ userId: before.userId, title: before.title }));
 
-  if (outcome.nsfw) {
+  if (outcome.nsfw && (current || outcome.nsfw.detectedLevel > before.nsfwLevel)) {
     const level = outcome.nsfw.detectedLevel;
-    await dbWrite.storyline.updateMany({ where: { id: entityId }, data: { nsfwLevel: level } });
+    // A lower rating is permissive, so it also holds only while the title is still the one read.
+    // A raise lands only while the stored level is still lower: a fresher verdict may have raised
+    // it further meanwhile.
+    const pinned =
+      level <= before.nsfwLevel ? { title: before.title } : { nsfwLevel: { lt: level } };
+    await dbWrite.storyline.updateMany({
+      where: { id: entityId, ...pinned },
+      data: { nsfwLevel: level },
+    });
     // A moderator's ruling stands in for the scan's, so a changed scan level changes nothing.
     if (level >= NsfwLevel.R && level > before.nsfwLevel && before.moderatorNsfwLevel == null)
       await notifyStorylineTitleModerated(before, { storylineId: entityId, level }, workflowId);
@@ -93,9 +109,10 @@ export async function applyStorylineTextScan({
 
   // Only an answered minor label moves the flag: a missing one leaves it as it was. Written before
   // any lift below, so a storyline coming back up is never shown uncapped, even if a write fails.
-  if (outcome.minor) {
+  if (outcome.minor && (current || minor)) {
     const { count } = await dbWrite.storyline.updateMany({
-      where: { id: entityId, minorByScan: !minor },
+      // Clearing is permissive: only while the title is still the one this verdict judged.
+      where: { id: entityId, minorByScan: !minor, ...(!minor && { title: before.title }) },
       data: { minorByScan: minor },
     });
     if (count && minor && !takeDown)
@@ -124,7 +141,8 @@ export async function applyStorylineTextScan({
         { storylineId: entityId, takenDown: true },
         workflowId
       );
-  } else if (outcome.poi && outcome.minor) {
-    await liftScanTakedown(entityId);
+  } else if (current && outcome.poi && outcome.minor) {
+    // Pinned to the title read above: a rename landing mid-apply leaves the lift to its own scan.
+    await liftScanTakedown(entityId, { where: { title: before.title } });
   }
 }
