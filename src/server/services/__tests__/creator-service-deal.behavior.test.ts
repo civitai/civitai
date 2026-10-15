@@ -89,6 +89,10 @@ const MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261025120000_creator_services_foundation/migration.sql'
 );
+const FILE_STATE_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028140000_creator_service_deal_file_state/migration.sql'
+);
 const REASON_CODE_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
@@ -181,12 +185,13 @@ const ageHoldLeg = (id: number, minutes: number) =>
 const conflict = expect.objectContaining({ code: 'CONFLICT' });
 
 /** A final for the deal's current round (or `round`), as the delivery seat's scanner leaves it. */
-const finals = (id: number, scanStatus = 'Passed', round?: number) =>
+const finals = (id: number, scanStatus = 'Passed', round?: number, status = 'Ready') =>
   q(
-    `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, "scanStatus")
-     SELECT $1, COALESCE($3::int, "revisionsUsed"), 'Final', 'k', 'application/zip', 1, $2::"ServiceDealFileScanStatus"
+    `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, "scanStatus", status)
+     SELECT $1, COALESCE($3::int, "revisionsUsed"), 'Final', md5(random()::text), 'application/zip', 1,
+       $2::"ServiceDealFileScanStatus", $4::"ServiceDealFileStatus"
      FROM "ServiceDeal" WHERE id = $1`,
-    [id, scanStatus, round ?? null]
+    [id, scanStatus, round ?? null, status]
   );
 
 /** Delivers with a final that passed scanning, as a completed deal needs. */
@@ -204,6 +209,7 @@ beforeAll(async () => {
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(FILE_STATE_MIGRATION, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -1368,6 +1374,21 @@ describe('the finals gate and dispute resolution', () => {
       async (id: number) => {
         await finals(id);
         await finals(id, 'Pending');
+      },
+    ],
+    // Only a Ready final counts, and one that is not Ready blocks, as delivery treats them.
+    ...(['Uploading', 'Processing', 'Failed'] as const).map(
+      (status) =>
+        [
+          `a passed final that is ${status}`,
+          (id: number) => finals(id, 'Passed', undefined, status),
+        ] as const
+    ),
+    [
+      'a passed Ready final beside a passed one still uploading',
+      async (id: number) => {
+        await finals(id);
+        await finals(id, 'Passed', undefined, 'Uploading');
       },
     ],
     [
