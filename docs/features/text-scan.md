@@ -210,6 +210,13 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   attributed, audited moderator endpoint `/api/mod/text-scan` serves them. Like every moderator
   endpoint it takes a moderator's session or full-access personal API key. That endpoint also
   attributes prompt and config writes to the signed-in moderator.
+- Dry runs reproduce the web-search pass with `pass: "web-search"` on `scanEntity`, `batchEntities`,
+  `scanTexts`, `quoteEntities` and `quoteTexts` (Model only). It asks only for `poi` and `minor`, with the
+  `civitai:web_search` tool, through the same prompt composition and step builder production uses, so
+  `promptOverrides` apply. The default `pass: "main"` is unchanged: every profile label, no tool.
+  The two passes are separate calls; each result names its `pass` and the `labels` it judged, with the
+  per-label verdicts under `parse.output` and `costTotal` when the orchestrator returned one. The
+  search pass is a harness option, not gated by the search rollout, and still writes nothing.
 - The moderator app's text-scan lab drives those actions from two workspaces with the same layout.
   Prompts (`/text-scan/prompts`) lists every prompt key; a key's edits are a draft kept in that
   moderator's browser, Save writes a new version in one step (a note is optional), and a save is
