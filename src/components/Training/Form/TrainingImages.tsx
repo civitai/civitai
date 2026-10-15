@@ -84,7 +84,7 @@ import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   AUDIO_MIME_TYPE,
-  TRAINING_IMAGE_MIME_TYPE,
+  ENGINE_INPUT_IMAGE_MIME_TYPE,
   MIME_TYPES,
   VIDEO_MIME_TYPE,
   ZIP_MIME_TYPE,
@@ -378,7 +378,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const mediaExts = isAudio ? audioExts : isVideo ? { ...imageExts, ...videoExts } : imageExts;
   const allowedDropTypes = isAudio
     ? [...AUDIO_DROPZONE_MIME_TYPE, ...ZIP_MIME_TYPE]
-    : [...TRAINING_IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE, ...(isVideo ? VIDEO_MIME_TYPE : [])];
+    : [...ENGINE_INPUT_IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE, ...(isVideo ? VIDEO_MIME_TYPE : [])];
 
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
 
@@ -396,7 +396,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const imgUrl = URL.createObjectURL(blob);
 
     // Skip validation for non-image types (e.g., videos)
-    if (!TRAINING_IMAGE_MIME_TYPE.includes(type as never)) return imgUrl;
+    if (!ENGINE_INPUT_IMAGE_MIME_TYPE.includes(type as never)) return imgUrl;
 
     let img: HTMLImageElement;
     try {
@@ -791,7 +791,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     i.type === 'video' ? 'mp4' : 'jpg'
                   }`,
                   {
-                    type: [...TRAINING_IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].includes(
+                    type: [...ENGINE_INPUT_IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].includes(
                       blob.type as never
                     )
                       ? blob.type

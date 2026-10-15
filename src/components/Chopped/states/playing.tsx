@@ -15,7 +15,7 @@ import { useChoppedServer } from '~/components/Chopped/chopped.connection';
 import type { Judge, RoundStatus, Theme } from '~/components/Chopped/chopped.shared-types';
 import { useChoppedStore, useChoppedUserId, useIsHost } from '~/components/Chopped/chopped.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { ENGINE_INPUT_IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getRandom } from '~/utils/array-helpers';
 import { fetchBlob, getBase64 } from '~/utils/file-utils';
@@ -264,7 +264,7 @@ function SubmissionDropzone({
 
   return (
     <Dropzone
-      accept={IMAGE_MIME_TYPE}
+      accept={ENGINE_INPUT_IMAGE_MIME_TYPE}
       onDrop={handleDrop}
       onDropCapture={handleDropCapture}
       maxFiles={1}

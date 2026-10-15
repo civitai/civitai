@@ -5,7 +5,7 @@ import {
   getMimeTypesFromMediaTypes,
   IMAGE_MIME_TYPE,
   MEDIA_TYPE,
-  TRAINING_IMAGE_MIME_TYPE,
+  ENGINE_INPUT_IMAGE_MIME_TYPE,
 } from '~/shared/constants/mime-types';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
@@ -24,7 +24,7 @@ describe('AVIF uploads', () => {
     expect(getExtensionsFromMimeTypes(IMAGE_MIME_TYPE)).toBe('PNG, JPG, WEBP, AVIF');
   });
 
-  it('are kept out of training datasets, which reach the trainer as raw bytes', () => {
-    expect(TRAINING_IMAGE_MIME_TYPE).toEqual(['image/png', 'image/jpeg', 'image/webp']);
+  it('are kept out of inputs that reach an engine as raw bytes', () => {
+    expect(ENGINE_INPUT_IMAGE_MIME_TYPE).toEqual(['image/png', 'image/jpeg', 'image/webp']);
   });
 });
