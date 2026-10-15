@@ -14,7 +14,7 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { userLookupUrl, userReportUrl } from '$lib/entity-url';
+  import { postReportUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
   import {
     getReportItemUrl,
     reportDetailEntries,
@@ -175,8 +175,8 @@
     // for exactly this one entity.
     if (row.entity === ReportEntity.User && reachable.has('/reports/user'))
       return userReportUrl(row.entityId);
-    if (row.entity === ReportEntity.Post && reachable.has('/retool/post-reports'))
-      return `/retool/post-reports?post=${row.entityId}`;
+    if (row.entity === ReportEntity.Post && reachable.has('/reports/post'))
+      return postReportUrl(row.entityId);
     return null;
   };
 

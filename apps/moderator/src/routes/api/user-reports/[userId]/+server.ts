@@ -16,7 +16,7 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   const userId = requireUserIdParam(locals, params, [
     '/retool/user-lookup',
     '/reports/user',
-    '/retool/post-reports',
+    '/reports/post',
   ]);
 
   const statuses = (url.searchParams.get('status') ?? '')

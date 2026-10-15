@@ -11,7 +11,6 @@ import type * as GameFrame from '$lib/server/game-frame';
 const setReportStatus = vi.fn();
 const getReports = vi.fn(async () => ({ items: [], totalItems: 0, page: 1, limit: 20 }));
 const updateReportNotes = vi.fn();
-const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
 const removePlacement = vi.fn();
 const canAccess = vi.fn(() => true);
 
@@ -24,7 +23,6 @@ vi.mock('$lib/server/reports.service', () => ({
   getReportedGame,
   getGameMirrors: vi.fn(async () => []),
 }));
-vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
 const delistGame = vi.fn();
 vi.mock('$lib/server/game-frame', async (importOriginal) => ({
@@ -117,47 +115,6 @@ describe('setStatus action', () => {
 
   it('rejects a missing id without reaching the service', async () => {
     const result = await actions.setStatus(event({ status: ReportStatus.Actioned }));
-
-    expect(failure(result).status).toBe(400);
-    expect(setReportStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('actionResolvedPosts action', () => {
-  it('counts what actually changed, not how many ids it looped over', async () => {
-    getResolvedPostReportIds.mockResolvedValue([1, 2, 3]);
-    setReportStatus
-      .mockResolvedValueOnce({ ok: true, changed: true })
-      .mockResolvedValueOnce({ ok: true, changed: false })
-      .mockResolvedValueOnce({ ok: false, error: 'gone' });
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(result).toMatchObject({ success: true, actioned: 1, skipped: 2, found: 3 });
-  });
-
-  it('sweeps as Actioned — the content was removed, so the reports were right', async () => {
-    getResolvedPostReportIds.mockResolvedValue([1]);
-
-    await actions.actionResolvedPosts(event());
-
-    expect(setReportStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ status: ReportStatus.Actioned })
-    );
-  });
-
-  it('flags a full batch as probably having more behind it', async () => {
-    getResolvedPostReportIds.mockResolvedValue(Array.from({ length: 500 }, (_, i) => i + 1));
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(result).toMatchObject({ more: true, found: 500 });
-  });
-
-  it('does not claim a sweep when there was nothing to sweep', async () => {
-    getResolvedPostReportIds.mockResolvedValue([]);
-
-    const result = await actions.actionResolvedPosts(event());
 
     expect(failure(result).status).toBe(400);
     expect(setReportStatus).not.toHaveBeenCalled();

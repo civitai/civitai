@@ -269,7 +269,8 @@ A queue/stat board rather than a lookup tool.
       `UnpublishingReasons`. Counts, so neither the `Models` nav group's queue nor
       `/retool/model-lookup` (one model at a time) is where they go. See section A.
 - [x] **`ActionAllPostReports`** — sweeps pending post-reports where every image is already blocked.
-      `/reports/[slug]` actions one at a time; the batch *selector* is what is missing, not the verb.
+      Built as `actionResolvedPosts`, on `/reports/post`'s queue column (it sat on the `/reports/[slug]`
+      post table until that queue moved, 2026-10-15).
 - [x] **`GetSplitQueue`/`SplitCurrent`/`SplitCatchup`** — built on `/retool/queue-stats`; both tables written in one transaction, and button69`s tooltip rule is on the page. This also recovers the FrontPageTimers column list the Front Page Audit slice recorded as unknown. Original note: forks the front-page sweep into current and
       catch-up streams when it falls behind. Tooltip: "Only do this if it's 4 or more hours behind".
 - [x] **`BlockedImagesTask`** (images blocked for an *unusual* `blockedFor`) and **`CivitModelsData`**

@@ -1,7 +1,7 @@
 # Report queue pages — the pattern
 
 How to build a report queue that is not a table: a queue down the left, the reported item across the
-rest. `/reports/user` and `/reports/model` are built this way; the remaining types under
+rest. `/reports/user`, `/reports/model` and `/reports/post` are built this way; the remaining types under
 `/reports/[slug]` use the shared table (`ReportsTable.svelte`) until each moves over on purpose, when
 someone has looked at how it is worked.
 

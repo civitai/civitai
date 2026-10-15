@@ -40,9 +40,9 @@
   } from '$lib/reports';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
-  import type { ActionData, PageData } from './$types';
+  import type { PageData } from './$types';
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data }: { data: PageData } = $props();
 
   /**
    * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
@@ -73,7 +73,6 @@
   });
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
   const placementForm = new FormState({ onSuccess: null, reload: true });
-  const sweepForm = new FormState({ onSuccess: null, reload: true });
   const delistForm = new FormState({
     onSuccess: (result) => {
       confirmingDelist = null;
@@ -185,26 +184,6 @@
   <p>{data.totalItems} reports</p>
 </header>
 
-<!-- Retool's `ActionAllPostReports`. Only meaningful here: the query keys on every image in the post
-     already being blocked, which is a post-shaped question. -->
-{#if data.type === 'post'}
-  <form method="POST" action="?/actionResolvedPosts" use:enhance={sweepForm.enhance} class="mb-4">
-    <Button type="submit" variant="outline" size="sm">Action reports already resolved by content</Button>
-    <span class="ml-2 text-xs text-muted-foreground">
-      Pending reports whose post is entirely blocked already.
-    </span>
-  </form>
-  <!-- A bulk action that reports nothing is indistinguishable from one that did nothing. -->
-  {#if form && 'actioned' in form && form.actioned != null}
-    <p class="mb-4 text-sm text-green-300" role="status">
-      Actioned {form.actioned} of {form.found}{form.skipped ? `, ${form.skipped} already handled` : ''}{form.more ? ' — more remain, run it again.' : ''}
-    </p>
-  {/if}
-{/if}
-
-{#if sweepForm.error}
-  <p class="mb-4 text-sm text-red-300" role="alert">{sweepForm.error}</p>
-{/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
   <div class="flex flex-col gap-1">
@@ -265,7 +244,7 @@
         <TableBody>
           {#each data.items as report (report.id)}
             {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId, report.contextUrl)}
-            <!-- Striped, and the open row marked with the same blue as post-reports' queue. The stripe is
+            <!-- Striped, and the open row marked with the same blue as the report queues. The stripe is
                  dropped on the open row rather than layered under it, so which one wins never depends
                  on Tailwind's variant order. -->
             <TableRow

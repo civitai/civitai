@@ -28,6 +28,7 @@
     row,
     dates = false,
     onNavigate,
+    toolbar,
   }: {
     title: string;
     /** The bare queue, e.g. `/reports/model`. */
@@ -43,6 +44,8 @@
     /** The queue's load applies the reported-date range (`loadReportQueue`'s `dates`). */
     dates?: boolean;
     onNavigate?: () => void;
+    /** Queue-wide actions under the filters — the post queue's sweep. Not shown in a single-report view. */
+    toolbar?: Snippet;
   } = $props();
 
   const totalPages = $derived(Math.max(1, Math.ceil(queue.totalItems / queue.limit)));
@@ -94,6 +97,7 @@
     dates={dates ? { from: queue.reportedFrom, to: queue.reportedTo } : undefined}
     {navigate}
   />
+  {#if toolbar}{@render toolbar()}{/if}
 {/if}
 
 <!-- Striped, and the open item marked in blue. The stripe is dropped on the open row rather than

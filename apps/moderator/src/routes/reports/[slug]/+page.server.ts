@@ -1,7 +1,6 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { setReportStatus, getGameMirrors, getReportedGame } from '$lib/server/reports.service';
-import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
 import { canAccess } from '$lib/server/access';
@@ -9,9 +8,9 @@ import { loadReportQueue } from '$lib/server/report-queue-load';
 import { reportStatusActions } from '$lib/server/report-queue-actions';
 import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 
-// The table queues. Users and models have their own routes (`/reports/user`, `/reports/model`), each a
-// queue layout with the open item in the path; a static route wins over this one, so neither slug
-// reaches here.
+// The table queues. Users, models and posts have their own routes (`/reports/user`, `/reports/model`,
+// `/reports/post`), each a queue layout with the open item in the path; a static route wins over this
+// one, so none of those slugs reaches here.
 export const load: PageServerLoad = async ({ params, url }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
@@ -26,38 +25,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
 // Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
 export const actions: Actions = {
   ...reportStatusActions(),
-  /**
-   * Retool's `ActionAllPostReports`. Post reports whose post is already entirely blocked are resolved
-   * by the content — the row is open only because nobody clicked it. Retool swept them in one go; the
-   * port had the verb (`setStatus`) and not the SELECT, so the sweep had to be done by hand.
-   *
-   * Actioned, not Unactioned: the content WAS removed, so the report was correct.
-   */
-  actionResolvedPosts: async ({ locals, getClientAddress }) => {
-    const ids = await getResolvedPostReportIds();
-    if (!ids.length)
-      return fail(400, { error: 'No post reports are already resolved by content.' });
-
-    // `setReportStatus` RETURNS its outcome rather than throwing: `ok:false` when the report is gone,
-    // and `ok:true, changed:false` when someone else already put it in this status. Counting the loop
-    // instead of the results reported "actioned N of N" for a run that changed nothing.
-    let actioned = 0;
-    let skipped = 0;
-    for (const id of ids) {
-      const result = await setReportStatus({
-        id,
-        status: ReportStatus.Actioned,
-        userId: locals.user.id,
-        ip: getClientAddress(),
-      });
-      if (result.ok && result.changed) actioned += 1;
-      else skipped += 1;
-    }
-
-    // The SELECT is capped, so a full batch means there are probably more behind it.
-    return { success: true, actioned, skipped, found: ids.length, more: ids.length === 500 };
-  },
-
   /**
    * The removal path main added with the `StickerPlacement` reason (#3766). Delegated, not
    * reimplemented: the service settles escrow, and that must have one implementation.

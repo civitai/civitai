@@ -83,6 +83,11 @@ export const modelVersionLookupUrl = moderatorModelVersionLookupPath;
 export const userReportUrl = (userId: number, tab?: string) =>
   `/reports/user/${userId}${tab && tab !== 'details' ? `/${tab}` : ''}`;
 
+/** The post report queue opened on one post and tab — both the path, as on the user queue; `images` is the
+ *  bare path. */
+export const postReportUrl = (postId: number, tab?: string) =>
+  `/reports/post/${postId}${tab && tab !== 'images' ? `/${tab}` : ''}`;
+
 export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
 
 /**

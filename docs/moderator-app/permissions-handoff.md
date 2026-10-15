@@ -29,6 +29,8 @@ to ordinary moderators until granted:
       civitai.com, which reads as the button being broken. ⚠️ **Not read-only since 2026-09-29**: the
       Moderator notes panel adds and edits `ModelNotes` rows, and those writes have no permission of
       their own — this page grant is the whole gate on them.
+- [x] ~~`/retool/post-reports`~~ — moved to `/reports/post` (2026-10-15), under the Reports section's
+      shared grant. Nothing to grant; ruling and acting still need `/users`.
 - [x] ~~`/retool/user-reports`~~ — moved to `/reports/user` (2026-10-14), under the Reports section's
       shared grant. Nothing to grant; ruling and acting still need `/users`.
 - [ ] `/retool/bulk-image-manager` — **grant narrowly.** Reaching it is gated on the page, but its

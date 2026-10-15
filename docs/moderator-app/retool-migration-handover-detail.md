@@ -63,6 +63,8 @@ A new page has **no `AppPageAccess` rows**, so only `moderator:admin` can reach 
 the boxes. Three pages need granting before mods can review them:
 
 - [ ] `/retool/article-lookup`
+- [x] ~~`/retool/post-reports`~~ — moved to `/reports/post` (2026-10-15), under the Reports section's
+      shared grant. Nothing to grant; ruling and acting still need `/users`.
 - [x] ~~`/retool/user-reports`~~ — moved to `/reports/user` (2026-10-14), under the Reports section's
       shared grant. Nothing to grant; ruling and acting still need `/users`.
 - [ ] `/retool/bulk-image-manager` — **grant this one narrowly.** Reaching it is gated on the page, but
