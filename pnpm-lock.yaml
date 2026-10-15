@@ -1728,6 +1728,9 @@ importers:
 
   packages/civitai-redis:
     dependencies:
+      cluster-key-slot:
+        specifier: ^1.1.2
+        version: 1.1.2
       lodash-es:
         specifier: ^4.17.21
         version: 4.17.21
