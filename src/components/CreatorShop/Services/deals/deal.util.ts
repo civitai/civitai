@@ -43,7 +43,8 @@ export function useMyServiceDeals({
 
 /**
  * Every deal mutation refetches the deal on success. A CONFLICT means the deal moved on under the
- * viewer (the other party acted, or a job ran): refetch and say so rather than show an error.
+ * viewer (the other party acted, or a job ran), or an accept found the final files still being
+ * checked: refetch, and pass on the server's reason.
  */
 export function useServiceDealMutations(dealId: number) {
   const utils = trpc.useUtils();
@@ -59,8 +60,11 @@ export function useServiceDealMutations(dealId: number) {
     if (isConflict(error)) {
       await refresh();
       showErrorNotification({
-        title: 'This deal has changed',
-        error: { message: 'It was updated while you were looking at it. Check the latest state.' },
+        title: 'Not updated',
+        error: {
+          message:
+            error.message || 'It was updated while you were looking at it. Check the latest state.',
+        },
       });
       return;
     }
