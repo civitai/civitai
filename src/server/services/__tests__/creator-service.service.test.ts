@@ -189,7 +189,7 @@ describe('storefront read', () => {
       { id: 2, maxOpenDeals: null },
       { id: 3, maxOpenDeals: 1 },
     ] as never);
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
       { offeringId: 1, open: 2 },
       { offeringId: 3, open: 4 },
     ] as never);
