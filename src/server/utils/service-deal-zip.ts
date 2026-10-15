@@ -354,6 +354,9 @@ export async function readEntry(
       headLength += chunk.byteLength;
       if (headLength < SNIFF_BYTES) continue;
       kind = decide();
+      // The chunk that settled the kind may itself be the whole entry.
+      if (kind === 'image' && bytes > SERVICE_ZIP_MAX_IMAGE_BYTES)
+        throw new ZipRejectedError(TOO_LARGE_REFUSAL);
       if (keep(kind)) chunks.push(Buffer.concat(head));
     }
     if (!kind) {
