@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { SvelteMap } from 'svelte/reactivity';
+  import { cn } from '@civitai/ui/utils.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -24,6 +25,7 @@
     form,
   }: { data: RedetectedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
 
+  const APPEAL_FIRST = "Resolve the owner's open appeal first.";
   const rowKey = (row: RedetectedRow) => `${row.modelId}:${row.label}`;
   const labelName = (label: RedetectedRow['label']) => (label === 'poi' ? 'Real person' : 'Minor');
   const ago = (value: string) => `${shortAge(value)} ago`;
@@ -49,7 +51,10 @@
         await finish?.(result);
         const message = failureMessage(result.result);
         if (message) errors.set(key, message);
-        else acted.set(key, outcome);
+        else {
+          const closed = result.result.type === 'success' && result.result.data?.resolved === 'closed';
+          acted.set(key, closed ? 'Already flagged' : outcome);
+        }
       };
     };
   };
@@ -93,7 +98,7 @@
         {@const outcome = acted.get(key)}
         {@const error = errors.get(key)}
         <li
-          class="rounded-xl border border-dark-4 bg-dark-6 p-5 {outcome ? 'opacity-60' : ''}"
+          class={cn('rounded-xl border border-dark-4 bg-dark-6 p-5', outcome && 'opacity-60')}
           data-redetected={key}
         >
           <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -155,7 +160,7 @@
 
           {#if row.hasPendingAppeal}
             <p class="m-0 mt-3 text-sm text-dark-0">
-              The owner also has an open appeal.
+              The owner has an open appeal; resolve it first.
               <a href={appealsHref(row.modelId)} class={LINK_CLASS}>Open it</a>
             </p>
           {/if}
@@ -174,7 +179,16 @@
               >
                 <input type="hidden" name="modelId" value={row.modelId} />
                 <input type="hidden" name="label" value={row.label} />
-                <Button type="submit" size="lg" class="h-11 px-5 text-base">Keep flagged</Button>
+                <input type="hidden" name="textHash" value={row.redetected.textHash} />
+                <Button
+                  type="submit"
+                  size="lg"
+                  class="h-11 px-5 text-base"
+                  disabled={row.hasPendingAppeal}
+                  title={row.hasPendingAppeal ? APPEAL_FIRST : undefined}
+                >
+                  Keep flagged
+                </Button>
               </form>
               <form
                 method="POST"
@@ -183,7 +197,15 @@
               >
                 <input type="hidden" name="modelId" value={row.modelId} />
                 <input type="hidden" name="label" value={row.label} />
-                <Button type="submit" size="lg" variant="destructive" class="h-11 px-5 text-base">
+                <input type="hidden" name="textHash" value={row.redetected.textHash} />
+                <Button
+                  type="submit"
+                  size="lg"
+                  variant="destructive"
+                  class="h-11 px-5 text-base"
+                  disabled={row.hasPendingAppeal}
+                  title={row.hasPendingAppeal ? APPEAL_FIRST : undefined}
+                >
                   Dismiss
                 </Button>
               </form>

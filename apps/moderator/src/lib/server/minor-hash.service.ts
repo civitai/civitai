@@ -525,8 +525,8 @@ export type RedetectedRow = {
  *  flagged and the owner was not told, so this list is the only place the detection surfaces.
  *  A row per model and label; oldest detection first so nothing starves.
  *
- *  Discovery is a scan of `Model.meta`: no index covers `textScanFlags`, and the population is a
- *  handful of rows, so the cost is the scan itself. */
+ *  The first WHERE predicate must match the partial index `Model_textScanRedetected_idx` (see its
+ *  migration) character for character, or the planner scans every model. */
 export async function getRedetectedModels({ limit, offset = 0, search }: Page) {
   const rows = await sql<RedetectedRow>`
     SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,

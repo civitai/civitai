@@ -160,11 +160,13 @@ const redetectionAction =
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
     const label = z.enum(['minor', 'poi']).safeParse(form.get('label'));
-    if (!(modelId > 0) || !label.success) return fail(400, { error: 'Missing model id or label.' });
+    const textHash = z.string().min(1).max(200).safeParse(form.get('textHash'));
+    if (!(modelId > 0) || !label.success || !textHash.success)
+      return fail(400, { error: 'Missing model id, label or text hash.' });
 
-    const result = await resolveRedetection(modelId, label.data, keep);
+    const result = await resolveRedetection(modelId, label.data, keep, textHash.data);
     if (!result.ok) return fail(400, { error: result.error, modelId });
-    return { success: true, modelId, label: label.data };
+    return { success: true, modelId, label: label.data, resolved: result.resolved };
   };
 
 export const appealActions: Actions = {

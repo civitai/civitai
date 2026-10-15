@@ -65,6 +65,10 @@ describe('getRedetectedModels', () => {
       minor: { appealGranted: grant, redetected: redetected('2026-10-01T00:00:00Z') },
       poi: { appealGranted: grant, redetected: redetected('2026-10-03T00:00:00Z') },
     });
+    // Owned by user 1 but with an id of its own, so a search can tell a model id from a user id.
+    await seedModel(7, 1, {
+      minor: { appealGranted: grant, redetected: redetected('2026-10-04T00:00:00Z') },
+    });
     // Cleared and quiet, a plain open flag, and a model with no scan data: none are waiting.
     await seedModel(3, 1, { minor: { appealGranted: grant } });
     await seedModel(4, 1, { minor: { workflowId: 'wf', reason: 'r' } });
@@ -77,6 +81,7 @@ describe('getRedetectedModels', () => {
       [2, 'minor'],
       [1, 'minor'],
       [2, 'poi'],
+      [7, 'minor'],
     ]);
     expect(hasMore).toBe(false);
   });
@@ -95,6 +100,7 @@ describe('getRedetectedModels', () => {
     expect(Object.fromEntries(items.map((r) => [r.modelId, r.hasPendingAppeal]))).toEqual({
       1: true,
       2: false,
+      7: false,
     });
   });
 
@@ -103,19 +109,25 @@ describe('getRedetectedModels', () => {
     expect(first.items).toHaveLength(2);
     expect(first.hasMore).toBe(true);
     const second = await getRedetectedModels({ limit: 2, offset: 2 });
-    expect(second.items.map((r) => [r.modelId, r.label])).toEqual([[2, 'poi']]);
+    expect(second.items.map((r) => [r.modelId, r.label])).toEqual([
+      [2, 'poi'],
+      [7, 'minor'],
+    ]);
     expect(second.hasMore).toBe(false);
   });
 
-  it('searches by model, user and username', async () => {
-    expect(
-      (await getRedetectedModels({ limit: 10, search: { modelOrUserId: 1 } })).items
-    ).toHaveLength(1);
-    expect(
-      (await getRedetectedModels({ limit: 10, search: { username: 'OTHER' } })).items
-    ).toHaveLength(2);
-    expect((await getRedetectedModels({ limit: 10, search: { modelOrUserId: 3 } })).items).toEqual(
-      []
-    );
+  it('searches a model id and a user id apart', async () => {
+    const ids = async (search: Parameters<typeof getRedetectedModels>[0]['search']) =>
+      (await getRedetectedModels({ limit: 10, search })).items.map((r) => r.modelId);
+
+    // 7 is a model id only; 1 is a user id (owning models 1 and 7) as well as model 1's id.
+    expect(await ids({ modelOrUserId: 7 })).toEqual([7]);
+    expect(await ids({ modelOrUserId: 1 })).toEqual([1, 7]);
+    expect(await ids({ modelOrUserId: 3 })).toEqual([]);
+  });
+
+  it('searches by username, ignoring case', async () => {
+    const { items } = await getRedetectedModels({ limit: 10, search: { username: 'OTHER' } });
+    expect(items.map((r) => r.modelId)).toEqual([2, 2]);
   });
 });
