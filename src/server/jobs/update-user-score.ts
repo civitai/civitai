@@ -196,7 +196,7 @@ const DELETED_MODEL_COUNTS = `(m.status = 'Deleted'
   END)`;
 export const MODEL_COUNTS_TOWARD_SCORE = `(${LIVE_MODEL_COUNTS} OR ${DELETED_MODEL_COUNTS})`;
 
-async function getModelScore(ctx: Context) {
+export async function getModelScore(ctx: Context) {
   const refreshed = await refreshRecentSelfGenerations(ctx);
   await scoreModelOwners(ctx, { alsoRescore: refreshed });
 }
@@ -413,7 +413,19 @@ async function getArticleScore(ctx: Context) {
 // re-applies the same delta window next run (double count). Accepted per the
 // incident decision — a full recompute (`admin/temp/backfill-image-scores?force=true`)
 // re-establishes the baseline.
+/**
+ * When the nightly `images` score started leaving out owners' own engagement: the checkpoint its
+ * first such run read from. The one-off recompute subtracts own engagement from before it only.
+ */
+export const SELF_EXCLUSION_SINCE_KEY = `${jobKey}:selfExclusionSince`;
+
 export async function getImageScore(ctx: Context) {
+  await ctx.pg
+    .cancellableQuery(
+      `INSERT INTO "KeyValue" (key, value) VALUES ($1, to_jsonb($2::bigint)) ON CONFLICT (key) DO NOTHING`,
+      [SELF_EXCLUSION_SINCE_KEY, ctx.lastUpdate.getTime()]
+    )
+    .then((q) => q.result());
   // 1. Net engagement delta per image and acting user since the checkpoint.
   // `metricValue` is signed (un-likes / removed comments are negative), so this is
   // the exact change in each image's reaction/comment totals — no catalog read
@@ -646,11 +658,14 @@ export async function grantScoreTierCrossings(
 export async function applyUserScoreUpdates(
   pg: AugmentedPool,
   records: [string, Partial<Record<ScoreCategory, number>>][],
-  onCancel?: (cancel: () => Promise<void>) => void
+  onCancel?: (cancel: () => Promise<void>) => void,
+  options: { stamp?: ScoreStamp } = {}
 ): Promise<ScoreTotalTransition[]> {
   if (!records.length) return [];
 
-  const updateQuery = await pg.cancellableQuery<UserScoreUpdateRow>(userScoreUpdateSql(records));
+  const updateQuery = await pg.cancellableQuery<UserScoreUpdateRow>(
+    userScoreUpdateSql(records, options)
+  );
   onCancel?.(updateQuery.cancel);
   return toScoreTotalTransitions(await updateQuery.result());
 }
@@ -669,20 +684,38 @@ export function toScoreTotalTransitions(rows: UserScoreUpdateRow[]): ScoreTotalT
   }));
 }
 
-const TOTAL_SQL = CREATOR_SCORE_CATEGORIES.map(
-  (category) =>
-    `COALESCE((s.scores->>'${category}')::numeric, (u.meta->'scores'->>'${category}')::numeric, 0)`
-).join(' + ');
+const totalSql = (scores: string) =>
+  CREATOR_SCORE_CATEGORIES.map(
+    (category) =>
+      `COALESCE((${scores}->>'${category}')::numeric, (u.meta->'scores'->>'${category}')::numeric, 0)`
+  ).join(' + ');
+
+/** `meta.scores` keys set to one timestamp in the same statement as a score write. */
+export type ScoreStamp = { keys: readonly string[]; at: Date };
+
+function stampSql(stamp: ScoreStamp | undefined) {
+  if (!stamp) return '';
+  const at = stamp.at.toISOString();
+  return ` || jsonb_build_object(${stamp.keys
+    .map((key) => {
+      if (!/^[A-Za-z]+$/.test(key)) throw new Error(`invalid score stamp key: ${key}`);
+      return `'${key}', '${at}'`;
+    })
+    .join(', ')})`;
+}
 
 // Interpolated into SQL: records must hold only numeric scores.
-export function userScoreUpdateSql(records: [string, Partial<Record<ScoreCategory, number>>][]) {
+export function userScoreUpdateSql(
+  records: [string, Partial<Record<ScoreCategory, number>>][],
+  { stamp }: { stamp?: ScoreStamp } = {}
+) {
   const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
   return `
     WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
     UPDATE "User" u
       SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || s.scores || jsonb_build_object('total',
-          ${TOTAL_SQL}
-        )
+          ${totalSql('s.scores')}
+        )${stampSql(stamp)}
       )
     FROM scores s
     JOIN "User" prev ON prev.id = s.id
@@ -692,6 +725,39 @@ export function userScoreUpdateSql(records: [string, Partial<Record<ScoreCategor
       (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
       (u.meta->'scores'->>'total')::numeric AS "newTotal";
   `;
+}
+
+/**
+ * Takes `points` off each owner's `images` score (never below zero) and stamps `stampKey`, skipping
+ * owners already stamped. The score is read from the row being updated, so a write that lands
+ * between a caller's read and this one is kept, and two runs cannot both subtract.
+ */
+export async function subtractImagesScores(
+  pg: AugmentedPool,
+  rows: [number, number][],
+  stamp: { key: string; at: Date }
+): Promise<ScoreTotalTransition[]> {
+  if (!rows.length) return [];
+  const dataJson = JSON.stringify(rows.map(([id, points]) => ({ id: +id, points: +points })));
+  const stampKey = stamp.key;
+  if (!/^[A-Za-z]+$/.test(stampKey)) throw new Error(`invalid score stamp key: ${stampKey}`);
+  const scores = `jsonb_build_object('images', GREATEST(COALESCE((u.meta->'scores'->>'images')::numeric, 0) - d.points, 0))`;
+  const query = await pg.cancellableQuery<UserScoreUpdateRow>(`
+    WITH d AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "points" numeric))
+    UPDATE "User" u
+      SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || ${scores} || jsonb_build_object('total',
+          ${totalSql(scores)}
+        )${stampSql({ keys: [stampKey], at: stamp.at })}
+      )
+    FROM d
+    JOIN "User" prev ON prev.id = d.id
+    WHERE d.id = u.id AND (u.meta->'scores'->>'${stampKey}') IS NULL
+    RETURNING
+      u.id AS "userId",
+      (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
+      (u.meta->'scores'->>'total')::numeric AS "newTotal";
+  `);
+  return toScoreTotalTransitions(await query.result());
 }
 
 // #region [helpers]

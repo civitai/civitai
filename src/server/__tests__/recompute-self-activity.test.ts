@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   applyUserScoreUpdates: vi.fn(),
+  subtractImagesScores: vi.fn(),
   writeSelfGenerations: vi.fn(),
   countSelfGenerations: vi.fn(),
   scoreModelOwners: vi.fn(),
   countSelfImageEngagement: vi.fn(),
-  write: vi.fn(),
+  listImageOwnersToExclude: vi.fn(),
+  excluded: vi.fn(),
+  recorded: [] as { value: number }[],
 }));
 
 const reads: Record<string, unknown[]> = {
@@ -16,7 +19,6 @@ const reads: Record<string, unknown[]> = {
     { id: 1, scores: { total: 1_000_100, models: 1_000_000, images: 100 } },
     { id: 3, scores: { total: 2_000_000, images: 2_000_000 } },
   ],
-  imageOwners: [{ id: 1 }, { id: 3 }],
 };
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -34,20 +36,24 @@ vi.mock('~/server/db/pgDb', () => ({
           ? reads.CreatorMilestone
           : sql.includes("meta->'scores' AS scores")
           ? reads.scores
-          : reads.imageOwners,
+          : Promise.reject(new Error(`unexpected read: ${sql}`)),
       cancel: async () => undefined,
     }),
   },
   pgDbWrite: {
-    cancellableQuery: async (...args: unknown[]) => {
-      mocks.write(...args);
-      return { result: async () => [], cancel: async () => undefined };
-    },
+    cancellableQuery: async (sql: string) => ({
+      result: async () =>
+        sql.includes('"KeyValue"')
+          ? mocks.recorded
+          : Promise.reject(new Error(`unexpected write: ${sql}`)),
+      cancel: async () => undefined,
+    }),
   },
 }));
 vi.mock('~/server/jobs/update-user-score', async (importOriginal) => ({
   ...(await importOriginal<typeof UpdateUserScore>()),
   applyUserScoreUpdates: mocks.applyUserScoreUpdates,
+  subtractImagesScores: mocks.subtractImagesScores,
   writeSelfGenerations: mocks.writeSelfGenerations,
   countSelfGenerations: mocks.countSelfGenerations,
   scoreModelOwners: mocks.scoreModelOwners,
@@ -59,6 +65,10 @@ vi.mock('~/server/jobs/update-user-score', async (importOriginal) => ({
 vi.mock('~/server/services/creator-score-self-activity.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SelfActivity>()),
   countSelfImageEngagement: mocks.countSelfImageEngagement,
+  listImageOwnersToExclude: mocks.listImageOwnersToExclude,
+}));
+vi.mock('~/server/services/metric-excluded-users.service', () => ({
+  getMetricExcludedUserIdsOrThrow: mocks.excluded,
 }));
 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -88,10 +98,15 @@ function call(query: Record<string, string>) {
   }));
 }
 
+const CUTOFF = new Date('2026-10-30T23:55:00.000Z');
+
 // Owner 1 has self-generations and a self-reaction and falls below Supernova; owner 3 has only
-// self-reactions and stays; owner 2 has neither.
+// self-reactions and stays; owner 2 has neither; owner 4 is metric-excluded.
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.recorded = [{ value: CUTOFF.getTime() }];
+  mocks.excluded.mockResolvedValue([4]);
+  mocks.listImageOwnersToExclude.mockResolvedValue([1, 3, 4]);
   mocks.countSelfGenerations.mockImplementation(async (_ch, _pg, owners: number[]) =>
     owners.includes(1) ? [{ modelId: 50, userId: 1, generationCount: 1000 }] : []
   );
@@ -104,10 +119,12 @@ beforeEach(() => {
         [
           [1, { reactions: 1, comments: 0 }],
           [3, { reactions: 10, comments: 0 }],
+          [4, { reactions: 99, comments: 0 }],
         ].filter(([id]) => owners.includes(id as number)) as [number, never][]
       )
   );
   mocks.applyUserScoreUpdates.mockImplementation(async (_pg, records: unknown[]) => records);
+  mocks.subtractImagesScores.mockImplementation(async (_pg, rows: unknown[]) => rows);
 });
 
 describe('recompute-self-activity', () => {
@@ -117,13 +134,24 @@ describe('recompute-self-activity', () => {
     expect(body).toMatchObject({
       dryRun: true,
       selfGenerators: 1,
+      imageOwners: 2,
       selfEngagers: 2,
       changed: 2,
       byTier: { 'score:supernova': { up: 0, down: 2, belowTier: 1 } },
     });
     expect(mocks.writeSelfGenerations).not.toHaveBeenCalled();
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
-    expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.subtractImagesScores).not.toHaveBeenCalled();
+  });
+
+  it('cuts own engagement off where the nightly job started leaving it out', async () => {
+    await call({});
+    expect(mocks.countSelfImageEngagement.mock.calls[0][2]).toEqual(CUTOFF);
+  });
+
+  it('leaves metric-excluded owners alone', async () => {
+    await call({ dryRun: 'false' });
+    expect(mocks.countSelfImageEngagement.mock.calls[0][1]).toEqual([1, 3]);
   });
 
   it('scores the models of the owners it found, from the rows it counted', async () => {
@@ -135,30 +163,30 @@ describe('recompute-self-activity', () => {
     });
   });
 
-  it('refuses to write without the cutoff', async () => {
+  it('refuses to write images before the nightly job has recorded its cutoff', async () => {
+    mocks.recorded = [];
     const { status } = await call({ dryRun: 'false' });
-    expect(status).toBe(400);
+    expect(status).toBe(409);
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
+    expect(mocks.subtractImagesScores).not.toHaveBeenCalled();
     expect(mocks.writeSelfGenerations).not.toHaveBeenCalled();
   });
 
-  it('writes the new scores and stamps the owners whose images changed', async () => {
-    const before = '2026-11-01T00:00:00.000Z';
-    const { body } = await call({ dryRun: 'false', before });
-    expect(mocks.countSelfImageEngagement.mock.calls[0][2]).toEqual(new Date(before));
+  it('writes models as absolute scores and images as stamped subtractions', async () => {
+    const { body } = await call({ dryRun: 'false' });
     expect(mocks.writeSelfGenerations).toHaveBeenCalledWith(
       expect.anything(),
       [1, 2],
       [{ modelId: 50, userId: 1, generationCount: 1000 }]
     );
-    expect(mocks.applyUserScoreUpdates.mock.calls[0][1]).toEqual([
-      ['1', { models: 999_000, images: 90 }],
-      ['3', { images: 2_000_000 - 100 }],
+    expect(mocks.applyUserScoreUpdates.mock.calls[0][1]).toEqual([['1', { models: 999_000 }]]);
+    const [, rows, stamp] = mocks.subtractImagesScores.mock.calls[0];
+    expect(rows).toEqual([
+      [1, 10],
+      [3, 100],
     ]);
-    const [stampSql, [, stamped]] = mocks.write.mock.calls[0] as [string, [string, number[]]];
-    expect(stampSql).toContain('imageSelfExcludedAt');
-    expect(stamped).toEqual([1, 3]);
-    expect(body).toMatchObject({ written: 2 });
+    expect(stamp.key).toBe('imageSelfExcludedAt');
+    expect(body).toMatchObject({ modelsWritten: 1, imagesWritten: 2 });
   });
 
   it('touches only images with part=images', async () => {

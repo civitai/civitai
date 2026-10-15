@@ -12,6 +12,7 @@ import {
   IMAGE_SELF_EXCLUDED_STAMP,
   imagesScoreWithoutSelf,
 } from '~/server/services/creator-score-self-activity.service';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { booleanString } from '~/utils/zod-helpers';
@@ -142,7 +143,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   // Phase 2 — write each owner's image score + recomputed total, stamp the marker.
-  const stampedAt = new Date().toISOString();
+  const stampedAt = new Date();
+  // Their reactions never reached the totals above, so none of their own come off either.
+  const metricExcluded = new Set(await getMetricExcludedUserIdsOrThrow());
   let written = 0;
   const writeTasks = chunk([...owners], 500).map((batch) => async () => {
     // Default: skip owners already backfilled, so a re-run resumes (fills in the
@@ -163,8 +166,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     const self = await countSelfImageEngagement(
       pgDbReadLong,
-      todo.map(([userId]) => userId),
-      new Date()
+      todo.map(([userId]) => userId).filter((userId) => !metricExcluded.has(userId)),
+      stampedAt
     );
     const records = todo.map(
       ([userId, { reactions, comments }]) =>
@@ -179,18 +182,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           },
         ] as [string, { images: number }]
     );
-    await applyUserScoreUpdates(pgDbWrite, records);
-
-    await pgDbWrite
-      .cancellableQuery(
-        `UPDATE "User"
-         SET meta = COALESCE(meta, '{}') || jsonb_build_object('scores',
-           COALESCE(meta->'scores', '{}') || jsonb_build_object(
-             'imageScoreRecomputedAt', $1::text, '${IMAGE_SELF_EXCLUDED_STAMP}', $1::text))
-         WHERE id = ANY($2::int[])`,
-        [stampedAt, todo.map(([userId]) => userId)]
-      )
-      .then((q) => q.result());
+    await applyUserScoreUpdates(pgDbWrite, records, undefined, {
+      stamp: { keys: ['imageScoreRecomputedAt', IMAGE_SELF_EXCLUDED_STAMP], at: stampedAt },
+    });
 
     written += todo.length;
   });

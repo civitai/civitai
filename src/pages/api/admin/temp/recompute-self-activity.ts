@@ -8,9 +8,12 @@ import {
   countSelfGenerations,
   getScoreMultipliers,
   scoreModelOwners,
+  SELF_EXCLUSION_SINCE_KEY,
   SELF_GENERATION_OWNER_BATCH,
+  subtractImagesScores,
   writeSelfGenerations,
 } from '~/server/jobs/update-user-score';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import type {
   ScoreTier,
   StoredScores,
@@ -19,6 +22,7 @@ import {
   countSelfImageEngagement,
   IMAGE_SELF_EXCLUDED_STAMP,
   imagesScoreWithoutSelf,
+  listImageOwnersToExclude,
   summariseScoreChanges,
 } from '~/server/services/creator-score-self-activity.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -30,30 +34,26 @@ import { booleanString } from '~/utils/zod-helpers';
  * which the nightly job stopped counting going forward. Reports, per tier held by the stored total,
  * how many owners move up, down, or below that tier. Grants nothing and revokes nothing.
  *
- *   GET /api/admin/temp/recompute-self-activity?token=$WEBHOOK_TOKEN                     (dry run)
- *   GET /api/admin/temp/recompute-self-activity?token=$WEBHOOK_TOKEN&dryRun=false&before=<ISO>
+ *   GET /api/admin/temp/recompute-self-activity?token=$WEBHOOK_TOKEN                (dry run)
+ *   GET /api/admin/temp/recompute-self-activity?token=$WEBHOOK_TOKEN&dryRun=false
  *
- *   before   required to write: when the nightly exclusion went live. Own reactions and comments
- *            from before it come out of `images`; later ones the nightly job never counted.
- *   part     `all` (default), `models` or `images`
+ *   part   `all` (default), `models` or `images`
  *
- * Safe to re-run: `models` is recomputed from scratch, and an owner whose `images` already lost
- * their own engagement is stamped and skipped. Slow (it walks every image of every image owner);
- * drive it from the no-timeout dev server.
+ * Own reactions and comments come out of `images` only from before the nightly job's first run
+ * that left them out (it records that point); later ones it never counted. Writing refuses until
+ * that run has happened. Owners the metrics exclude were never credited, so nothing comes off them.
+ *
+ * Safe to re-run: `models` is recomputed from scratch, and the `images` subtraction stamps each owner
+ * in the same statement and skips stamped ones. Slow (it walks every image of every image owner);
+ * drive it from the no-timeout dev server, and not across the nightly score job.
  */
 
-const schema = z
-  .object({
-    dryRun: booleanString().default(true),
-    before: z.coerce.date().optional(),
-    part: z.enum(['all', 'models', 'images']).default('all'),
-    concurrency: z.coerce.number().min(1).max(10).default(3),
-    batchSize: z.coerce.number().min(1).max(10_000).default(1000),
-  })
-  .refine((p) => p.dryRun || p.before, {
-    message: '`before` is required to write',
-    path: ['before'],
-  });
+const schema = z.object({
+  dryRun: booleanString().default(true),
+  part: z.enum(['all', 'models', 'images']).default('all'),
+  concurrency: z.coerce.number().min(1).max(10).default(3),
+  batchSize: z.coerce.number().min(1).max(10_000).default(1000),
+});
 
 // Past every checkpoint, so the model scorer re-scores only the owners it is handed.
 const NO_CHANGES_SINCE = new Date('2999-01-01T00:00:00Z');
@@ -63,10 +63,24 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues });
   const { dryRun, part, concurrency, batchSize } = parsed.data;
-  const before = parsed.data.before ?? new Date();
+
+  const recorded = await pgDbWrite
+    .cancellableQuery<{ value: number }>(`SELECT value FROM "KeyValue" WHERE key = $1`, [
+      SELF_EXCLUSION_SINCE_KEY,
+    ])
+    .then((q) => q.result());
+  const exclusionSince = recorded[0] ? new Date(Number(recorded[0].value)) : null;
+  if (!dryRun && part !== 'models' && !exclusionSince)
+    return res
+      .status(409)
+      .json({
+        error: 'The nightly score job has not yet run with the exclusion; nothing to cut off',
+      });
+  const before = exclusionSince ?? new Date();
   const multipliers = await getScoreMultipliers();
 
   const changes = new Map<number, { models?: number; images?: number }>();
+  const imageSelfPoints = new Map<number, number>();
   const stats = { modelOwners: 0, selfGenerators: 0, imageOwners: 0, selfEngagers: 0 };
 
   if (part !== 'images') {
@@ -100,26 +114,25 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   const storedByUser = new Map<number, StoredScores>();
   if (part !== 'models') {
-    const owners = await pgDbReadLong
-      .cancellableQuery<{ id: number }>(
-        `SELECT id FROM "User"
-         WHERE (meta->'scores'->>'images')::numeric > 0
-           AND (meta->'scores'->>'${IMAGE_SELF_EXCLUDED_STAMP}') IS NULL`
-      )
-      .then((q) => q.result());
+    const excluded = new Set(await getMetricExcludedUserIdsOrThrow());
+    const owners = (await listImageOwnersToExclude(pgDbReadLong)).filter((id) => !excluded.has(id));
     stats.imageOwners = owners.length;
-    const tasks = chunk(
-      owners.map((o) => o.id),
-      batchSize
-    ).map((batch) => async () => {
+    const tasks = chunk(owners, batchSize).map((batch) => async () => {
       const self = await countSelfImageEngagement(pgDbReadLong, batch, before);
       const engagers = [...self.keys()];
       stats.selfEngagers += engagers.length;
       for (const [userId, stored] of await readStoredScores(engagers)) {
+        const engagement = self.get(userId);
+        if (!engagement) continue;
         storedByUser.set(userId, stored);
+        imageSelfPoints.set(
+          userId,
+          engagement.reactions * multipliers.images.reactions +
+            engagement.comments * multipliers.images.comments
+        );
         changes.set(userId, {
           ...changes.get(userId),
-          images: imagesScoreWithoutSelf(stored.images ?? 0, self.get(userId), multipliers.images),
+          images: imagesScoreWithoutSelf(stored.images ?? 0, engagement, multipliers.images),
         });
       }
     });
@@ -136,30 +149,25 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     )
     .then((q) => q.result());
   const { changed, byTier } = summariseScoreChanges(changes, storedByUser, tiers);
+  const report = { dryRun, part, before, ...stats, changed: changed.length, byTier };
 
-  if (dryRun)
-    return res
-      .status(200)
-      .json({ dryRun, part, before, ...stats, changed: changed.length, byTier });
+  if (dryRun) return res.status(200).json(report);
 
-  let written = 0;
-  const stampedAt = new Date().toISOString();
-  for (const records of chunk(changed, 500)) {
-    written += (await applyUserScoreUpdates(pgDbWrite, records)).length;
-    const imageIds = records.filter(([, c]) => c.images !== undefined).map(([id]) => +id);
-    if (!imageIds.length) continue;
-    await pgDbWrite
-      .cancellableQuery(
-        `UPDATE "User"
-         SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores,${IMAGE_SELF_EXCLUDED_STAMP}}', to_jsonb($1::text))
-         WHERE id = ANY($2::int[])`,
-        [stampedAt, imageIds]
-      )
-      .then((q) => q.result());
-  }
-  return res
-    .status(200)
-    .json({ dryRun, part, before, ...stats, changed: changed.length, byTier, written });
+  let modelsWritten = 0;
+  const models = changed.flatMap(([id, change]) =>
+    change.models === undefined
+      ? []
+      : [[id, { models: change.models }] as [string, { models: number }]]
+  );
+  for (const records of chunk(models, 500))
+    modelsWritten += (await applyUserScoreUpdates(pgDbWrite, records)).length;
+
+  let imagesWritten = 0;
+  const stamp = { key: IMAGE_SELF_EXCLUDED_STAMP, at: new Date() };
+  for (const rows of chunk([...imageSelfPoints], 500))
+    imagesWritten += (await subtractImagesScores(pgDbWrite, rows, stamp)).length;
+
+  return res.status(200).json({ ...report, modelsWritten, imagesWritten });
 });
 
 async function readStoredScores(ids: number[]) {

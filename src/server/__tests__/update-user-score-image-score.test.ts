@@ -4,6 +4,7 @@ import {
   rollupImageScoreDeltas,
   foldImageDeltasOntoStored,
   getImageScore,
+  SELF_EXCLUSION_SINCE_KEY,
 } from '~/server/jobs/update-user-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -48,6 +49,11 @@ describe('rollupImageScoreDeltas', () => {
       [2, 100],
     ]);
     expect(rollupImageScoreDeltas(deltas, owners, mult)).toEqual(new Map([[100, 20]]));
+  });
+
+  it('looks the owner up by a numeric image id, as ClickHouse may send strings', () => {
+    const deltas = [{ imageId: '1' as unknown as number, userId: 9, dReactions: 1, dComments: 0 }];
+    expect(rollupImageScoreDeltas(deltas, new Map([[1, 100]]), mult)).toEqual(new Map([[100, 10]]));
   });
 
   it('compares the actor to the owner as numbers, as ClickHouse may send strings', () => {
@@ -106,6 +112,7 @@ describe('getImageScore (incremental wiring)', () => {
     const setCalls: Array<[number, string, number]> = [];
     const chSql: string[] = [];
     let pgCall = 0;
+    const keyValueWrites: [string, unknown[] | undefined][] = [];
     const ctx = {
       ch: {
         $query: async (strings: TemplateStringsArray) => {
@@ -119,7 +126,11 @@ describe('getImageScore (incremental wiring)', () => {
         },
       },
       pg: {
-        cancellableQuery: async () => {
+        cancellableQuery: async (sql: string, params?: unknown[]) => {
+          if (sql.includes('"KeyValue"')) {
+            keyValueWrites.push([sql, params]);
+            return fakeQuery([]);
+          }
           pgCall += 1;
           if (pgCall === 1)
             return fakeQuery([
@@ -149,6 +160,10 @@ describe('getImageScore (incremental wiring)', () => {
     expect(setCalls.every(([, cat]) => cat === 'images')).toBe(true);
     expect(map.get(100)).toBe(1050);
     expect(map.get(200)).toBe(50);
+    // Records, once, the checkpoint the first excluding run read from.
+    expect(keyValueWrites).toHaveLength(1);
+    expect(keyValueWrites[0][0]).toMatch(/ON CONFLICT \(key\) DO NOTHING/);
+    expect(keyValueWrites[0][1]).toEqual([SELF_EXCLUSION_SINCE_KEY, 0]);
   });
 
   it('no-ops when there are no engagement deltas', async () => {

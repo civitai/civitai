@@ -54,6 +54,18 @@ export async function countSelfImageEngagement(
   return result;
 }
 
+/** Owners with an `images` score whose own engagement has not been taken out of it yet. */
+export async function listImageOwnersToExclude(pg: AugmentedPool) {
+  const rows = await pg
+    .cancellableQuery<{ id: number }>(
+      `SELECT id FROM "User"
+       WHERE (meta->'scores'->>'images')::numeric > 0
+         AND (meta->'scores'->>'${IMAGE_SELF_EXCLUDED_STAMP}') IS NULL`
+    )
+    .then((q) => q.result());
+  return rows.map((r) => r.id);
+}
+
 /** Floors at zero. */
 export function imagesScoreWithoutSelf(
   stored: number,
