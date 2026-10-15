@@ -1706,6 +1706,7 @@ model Report {
   announcement   AnnouncementReport?
   crucible       CrucibleReport?
   gameFrameGame  GameFrameGameReport?
+  serviceOffering ServiceOfferingReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -9591,14 +9592,31 @@ model ServiceOffering {
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
   status            ServiceOfferingStatus @default(Draft)
+  /// Set only when a moderator removes the offering: a key of the moderator reason list in code.
+  /// Null on a seller's own remove, which is how the two are told apart.
+  removedReason     String?
+  removedDetails    String?
+  removedAt         DateTime?
+  removedById       Int?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   deals             ServiceDeal[]
+  reports           ServiceOfferingReport[]
 
   /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
   @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
+}
+
+model ServiceOfferingReport {
+  serviceOfferingId Int
+  serviceOffering   ServiceOffering @relation(fields: [serviceOfferingId], references: [id], onDelete: Cascade)
+  reportId          Int             @unique
+  report            Report          @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, serviceOfferingId])
+  @@index([serviceOfferingId], type: Hash)
 }
 
 /// A purchase of an offering. Price, Buzz type, fee, revisions, delivery days and

@@ -1367,6 +1367,7 @@ export interface Report {
   announcement?: AnnouncementReport | null;
   crucible?: CrucibleReport | null;
   gameFrameGame?: GameFrameGameReport | null;
+  serviceOffering?: ServiceOfferingReport | null;
   gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
@@ -6093,9 +6094,21 @@ export interface ServiceOffering {
   revisionsIncluded: number;
   maxOpenDeals: number | null;
   status: ServiceOfferingStatus;
+  removedReason: string | null;
+  removedDetails: string | null;
+  removedAt: Date | null;
+  removedById: number | null;
   createdAt: Date;
   updatedAt: Date;
   deals?: ServiceDeal[];
+  reports?: ServiceOfferingReport[];
+}
+
+export interface ServiceOfferingReport {
+  serviceOfferingId: number;
+  serviceOffering?: ServiceOffering;
+  reportId: number;
+  report?: Report;
 }
 
 export interface ServiceDeal {
