@@ -775,6 +775,33 @@ describe('what the listing shows', () => {
     expect((await list(dealId, SELLER)).map((f) => f.kind).sort()).toEqual(['Final', 'Preview']);
   });
 
+  it('keeps an undelivered round hidden when the deal is cancelled, not only while it is being worked', async () => {
+    const { dealId } = await delivered();
+    await deals.requestServiceDealCancellation({
+      dealId,
+      userId: BUYER,
+      reason: 'changed my mind',
+    });
+    const [row] = await q<{ status: string }>(
+      `SELECT status::text FROM "ServiceDeal" WHERE id = $1`,
+      [dealId]
+    );
+    expect(row.status).toBe('CancellationRequested');
+    expect(await list(dealId, BUYER)).toEqual([]);
+    expect(await list(dealId, SELLER)).toHaveLength(2);
+  });
+
+  it('shows the buyer a delivered round but not the revision being worked', async () => {
+    const { dealId, finalId } = await delivered();
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await deals.requestServiceDealRevision({ dealId, userId: BUYER, comment: 'again' });
+    const second = await uploaded(dealId, { fileName: 'second.zip' });
+    expect((await fileRow(second)).round).toBe(1);
+    const seen = (await list(dealId, BUYER)).map((f) => f.id);
+    expect(seen).toContain(finalId);
+    expect(seen).not.toContain(second);
+  });
+
   it('shows the buyer the cleared preview and a locked final with no name', async () => {
     const { dealId, finalId, previewId } = await delivered();
     await files.deliverServiceDeal({ dealId, userId: SELLER });

@@ -374,6 +374,8 @@ type DealForFiles = {
   status: string;
   revisionsUsed: number;
   completedAt: Date | null;
+  /** The seller has delivered the round now being worked (a Delivered event for it exists). */
+  currentRoundDelivered: boolean;
 };
 
 type FileRow = {
@@ -393,9 +395,13 @@ type FileRow = {
 export const buyerOwnsFinals = (deal: Pick<DealForFiles, 'status' | 'completedAt'>) =>
   deal.status === 'Completed' || (deal.status === 'Disputed' && deal.completedAt !== null);
 
-/** A round the seller is still working on is not shown to the buyer. */
+/**
+ * Only a round the seller delivered is shown to the buyer: every earlier round (a revision was
+ * asked for, so it was delivered), and the current one once a Delivered event exists for it. A
+ * round still being worked stays hidden whatever state the deal is in, a cancellation included.
+ */
 const buyerSeesRound = (deal: DealForFiles, round: number) =>
-  round < deal.revisionsUsed || !['Accepted', 'InRevision'].includes(deal.status);
+  round < deal.revisionsUsed || (round === deal.revisionsUsed && deal.currentRoundDelivered);
 
 export async function listServiceDealFiles({
   dealId,
@@ -407,8 +413,14 @@ export async function listServiceDealFiles({
   isModerator: boolean;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
-    SELECT "id", "buyerId", "sellerId", "status"::text AS "status", "revisionsUsed", "completedAt"
-    FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+    SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
+      d."completedAt",
+      EXISTS (
+        SELECT 1 FROM "ServiceDealEvent" e
+        WHERE e."dealId" = d."id" AND e."type" = 'Delivered'::"ServiceDealEventType"
+          AND e."round" = d."revisionsUsed"
+      ) AS "currentRoundDelivered"
+    FROM "ServiceDeal" d WHERE d."id" = ${dealId}::int`;
   const isSeller = deal?.sellerId === userId;
   const isBuyer = deal?.buyerId === userId;
   if (!deal || (!isSeller && !isBuyer && !isModerator)) throw throwNotFoundError('Deal not found');
