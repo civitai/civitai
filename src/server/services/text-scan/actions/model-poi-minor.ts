@@ -13,10 +13,15 @@ import {
   buildTextScanFlagEntry,
   readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
+  type HeldDetectionKind,
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
-import { textScanEmEntityType } from '~/server/services/text-scan/mode';
+import {
+  getTextScanLabelMode,
+  textScanEmEntityType,
+  type TextScanLabelMode,
+} from '~/server/services/text-scan/mode';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -51,15 +56,19 @@ type ModelFlagRow = {
   lockedProperties: string[];
 };
 
-// 'skip': nothing to do. 'flag': set it. 'redetect': a human already cleared this label on other
-// text, so the detection waits for a moderator instead of re-flagging over their ruling.
+// 'skip': nothing to do. 'redetect': a human already cleared this label on other text, so the
+// detection waits for a moderator instead of re-flagging over their ruling. 'review': no ruling
+// exists, but the label is in review mode, so the first detection waits for a moderator too.
 function classifyDetection(
   label: TextScanFlagLabel,
   model: { meta: Prisma.JsonValue; lockedProperties: string[] },
-  textHash: string
-): 'skip' | 'flag' | 'redetect' {
-  if (!readTextScanFlags(model.meta)[label]?.appealGranted)
-    return model.lockedProperties.includes(label) ? 'skip' : 'flag';
+  textHash: string,
+  labelMode: TextScanLabelMode
+): 'skip' | 'flag' | 'redetect' | 'review' {
+  if (!readTextScanFlags(model.meta)[label]?.appealGranted) {
+    if (model.lockedProperties.includes(label)) return 'skip';
+    return labelMode === 'review' ? 'review' : 'flag';
+  }
   return appealGrantCoversText(model.meta, label, textHash) ? 'skip' : 'redetect';
 }
 
@@ -179,13 +188,16 @@ export type KeptRedetection = {
   resume?: boolean;
 };
 
-async function recordRedetection({
+// The same `redetected` key for both kinds: the moderator queue's partial index is keyed on it.
+// `first` waits on a label nobody has ruled on; `redetected` on one a human cleared on other text.
+async function recordHold({
   modelId,
   label,
   workflowId,
   reason,
   names,
   textHash,
+  kind,
 }: {
   modelId: number;
   label: TextScanFlagLabel;
@@ -193,14 +205,26 @@ async function recordRedetection({
   reason: string;
   names?: string[];
   textHash: string;
+  kind: HeldDetectionKind;
 }) {
   const detection = JSON.stringify(buildTextScanFlagEntry({ workflowId, reason, names, textHash }));
+  const guard =
+    kind === 'first'
+      ? // The same text held again keeps its place in the queue.
+        Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NULL
+          AND NOT (${labelLiteral(label)} = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+          AND ${flagEntryPath(label)}->'redetected'->>'textHash' IS DISTINCT FROM ${textHash}`
+      : Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NOT NULL
+          AND ${flagEntryPath(label)}->'appealGranted'->>'textHash' IS DISTINCT FROM ${textHash}`;
   const written = await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
-        ${labelLiteral(label)}, ${flagEntryPath(label)} || jsonb_build_object(
+        ${labelLiteral(label)}, COALESCE(${flagEntryPath(
+    label
+  )}, '{}'::jsonb) || jsonb_build_object(
           'redetected', ${detection}::jsonb || jsonb_build_object(
+            'kind', ${kind}::text,
             'at', now(),
             'promptIds', ${verdictRowField('promptIds', workflowId)},
             'model', ${verdictRowField('model', workflowId)}
@@ -210,14 +234,16 @@ async function recordRedetection({
     )
     WHERE m.id = ${modelId}
       AND NOT ${labelColumn(label)}
-      AND ${flagEntryPath(label)}->'appealGranted' IS NOT NULL
-      AND ${flagEntryPath(label)}->'appealGranted'->>'textHash' IS DISTINCT FROM ${textHash}
+      AND ${guard}
   `;
   if (written)
     logToAxiom({
       name: 'text-scan',
       type: 'info',
-      message: `${label} re-detected after a human clear, awaiting moderator`,
+      message:
+        kind === 'first'
+          ? `${label} first detection held, awaiting moderator`
+          : `${label} re-detected after a human clear, awaiting moderator`,
       entityType: 'Model',
       entityId: modelId,
       workflowId,
@@ -330,21 +356,22 @@ export async function flagModelPoi({
   });
   if (!before || (before.poi && !kept?.resume)) return NOT_FLAGGED;
   if (!kept) {
-    const action = classifyDetection('poi', before, textHash);
+    const action = classifyDetection('poi', before, textHash, await getTextScanLabelMode('poi'));
     if (action === 'skip') {
       await dropStaleMarker({ modelId, label: 'poi', meta: before.meta, textHash });
       return NOT_FLAGGED;
     }
-    if (action === 'redetect')
+    if (action === 'redetect' || action === 'review')
       return {
         ...NOT_FLAGGED,
-        redetected: await recordRedetection({
+        redetected: await recordHold({
           modelId,
           label: 'poi',
           workflowId,
           reason,
           names,
           textHash,
+          kind: action === 'review' ? 'first' : 'redetected',
         }),
       };
   }
@@ -465,20 +492,21 @@ export async function flagModelMinor({
   });
   if (!model || (model.minor && !kept?.resume)) return NOT_FLAGGED;
   if (!kept) {
-    const action = classifyDetection('minor', model, textHash);
+    const action = classifyDetection('minor', model, textHash, await getTextScanLabelMode('minor'));
     if (action === 'skip') {
       await dropStaleMarker({ modelId, label: 'minor', meta: model.meta, textHash });
       return NOT_FLAGGED;
     }
-    if (action === 'redetect')
+    if (action === 'redetect' || action === 'review')
       return {
         ...NOT_FLAGGED,
-        redetected: await recordRedetection({
+        redetected: await recordHold({
           modelId,
           label: 'minor',
           workflowId,
           reason,
           textHash,
+          kind: action === 'review' ? 'first' : 'redetected',
         }),
       };
   }

@@ -9,6 +9,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
   getActiveTextScanPrompts: vi.fn(),
   getTextScanConfig: vi.fn(),
+  setTextScanLabelMode: vi.fn(),
 }));
 
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
@@ -20,7 +21,7 @@ const { getTextScanProfile, registerTextScanProfile } = await import(
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { submitWorkflow } = await import('@civitai/client');
-const { getActiveTextScanPrompts, getTextScanConfig } = await import(
+const { getActiveTextScanPrompts, getTextScanConfig, setTextScanLabelMode } = await import(
   '~/server/services/text-scan/prompt'
 );
 
@@ -191,5 +192,30 @@ describe('text-scan harness with segmented text', () => {
     it('is stale when the rule set the row was hashed with differs from the stored one', async () => {
       expect(await changed('fp-b', 'fp-a')).toEqual([true]);
     });
+  });
+});
+
+describe('putLabelModes', () => {
+  it('sets one label mode as the asserted moderator and returns the stored modes', async () => {
+    vi.mocked(setTextScanLabelMode).mockResolvedValue({ minor: 'review' });
+    const input = textScanHarnessSchema.parse({
+      action: 'putLabelModes',
+      label: 'minor',
+      mode: 'review',
+    });
+    const res = await runTextScanHarnessAction(input, { moderatorId: 5 });
+    expect(setTextScanLabelMode).toHaveBeenCalledWith('minor', 'review', { moderatorId: 5 });
+    expect(res).toEqual({ kind: 'json', body: { labelModes: { minor: 'review' } } });
+  });
+
+  it('rejects a label that has no mode and a mode that does not exist', () => {
+    expect(
+      textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'nsfw', mode: 'review' })
+        .success
+    ).toBe(false);
+    expect(
+      textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'minor', mode: 'hold' })
+        .success
+    ).toBe(false);
   });
 });

@@ -20,6 +20,8 @@ const {
   parseTextScanEmEntityType,
   getTextScanWebSearchMode,
   readTextScanWebSearchRollouts,
+  getTextScanLabelMode,
+  readTextScanLabelModes,
 } = await import('~/server/services/text-scan/mode');
 const { isTextScanEntityType } = await import('~/server/services/text-scan/profiles');
 
@@ -226,5 +228,37 @@ describe('web-search row keys', () => {
       shadow: true,
       variant: 'web-search',
     });
+  });
+});
+
+describe('label modes', () => {
+  beforeEach(() => {
+    redisMock.sysRedis.hGetAll.mockReset();
+    resetTextScanRolloutCache();
+  });
+
+  it('reads its own hash and keeps only known labels with a valid value', async () => {
+    hash({ minor: 'review', poi: 'bogus', nsfw: 'review' });
+    expect(await readTextScanLabelModes()).toEqual({ minor: 'review' });
+    expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledWith('system:text-scan:label-modes');
+  });
+
+  it('is auto for a missing field, an empty hash and an unreadable hash', async () => {
+    hash({});
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+  });
+
+  it('serves review from the cache until it is reset', async () => {
+    hash({ minor: 'review' });
+    expect(await getTextScanLabelMode('minor')).toBe('review');
+    expect(await getTextScanLabelMode('poi')).toBe('auto');
+    expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledTimes(1);
+    hash({});
+    expect(await getTextScanLabelMode('minor')).toBe('review');
+    resetTextScanRolloutCache();
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
   });
 });

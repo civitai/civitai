@@ -6,6 +6,10 @@ import type {
   TextScanLabel,
   TextScanMode,
 } from '~/server/services/text-scan/types';
+import {
+  TEXT_SCAN_FLAG_LABELS,
+  type TextScanFlagLabel,
+} from '~/server/services/text-scan/flag-snapshot';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
 export const TEXT_SCAN_ENTITY_TYPES = [
@@ -71,6 +75,7 @@ const getTextScanRollouts = createTtlMemo(readTextScanRollouts, ROLLOUT_CACHE_MS
 export function resetTextScanRolloutCache() {
   getTextScanRollouts.clear();
   getTextScanWebSearchRollouts.clear();
+  getTextScanLabelModes.clear();
 }
 
 export function textScanBucket(entityType: TextScanEntityType, entityId: number) {
@@ -157,6 +162,31 @@ export async function getTextScanWebSearchMode(
     return MODE_ORDER[search] < MODE_ORDER[main] ? search : main;
   } catch {
     return 'off';
+  }
+}
+
+/** What a poi/minor detection does once the scan can act: `review` holds it for a moderator. */
+export type TextScanLabelMode = 'auto' | 'review';
+export type TextScanLabelModes = Partial<Record<TextScanFlagLabel, 'review'>>;
+
+/** Uncached read, for writers and the harness. Only `review` is stored; anything else is `auto`. */
+export async function readTextScanLabelModes(): Promise<TextScanLabelModes> {
+  const raw = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES));
+  const modes: TextScanLabelModes = {};
+  for (const label of TEXT_SCAN_FLAG_LABELS) if (raw?.[label] === 'review') modes[label] = 'review';
+  return modes;
+}
+
+const getTextScanLabelModes = createTtlMemo(readTextScanLabelModes, ROLLOUT_CACHE_MS, () =>
+  Date.now()
+);
+
+/** A failed read is `auto`: the flag lands as it always did rather than a detection going unheld. */
+export async function getTextScanLabelMode(label: TextScanFlagLabel): Promise<TextScanLabelMode> {
+  try {
+    return (await getTextScanLabelModes())[label] ?? 'auto';
+  } catch {
+    return 'auto';
   }
 }
 

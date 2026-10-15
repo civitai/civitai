@@ -24,9 +24,14 @@ export type TextScanFlagRuling = TextScanFlagDecision & {
 // history is bounded.
 export const MAX_FLAG_RULINGS = 5;
 
-// A detection on text a human already cleared under a different hash. It sets nothing and tells
-// nobody: a moderator decides whether it stands.
+// `first`: a detection no human has ruled on, held because the label is in review mode.
+// `redetected`: a detection on text a human already cleared under a different hash. A marker
+// written before `kind` existed has none and is a re-detection.
+export type HeldDetectionKind = 'first' | 'redetected';
+
+// A held detection. It sets nothing and tells nobody: a moderator decides whether it stands.
 export type TextScanRedetection = {
+  kind?: HeldDetectionKind;
   at?: string;
   workflowId: string;
   reason?: string;

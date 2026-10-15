@@ -171,6 +171,11 @@ Any entity type other than Model is refused, any `active` share needs `allowActi
 change is attributed to the signed-in moderator. `getPrompts` returns the current value as
 `webSearchModes`.
 
+A `poi` or `minor` detection can be held for a moderator instead of flagging immediately. The switch
+is a per-label field, set with `putLabelModes` (`{ "action": "putLabelModes", "label": "minor", "mode": "review" }`;
+`"auto"` removes it) and returned by `getPrompts` as `labelModes`. See
+[minor-detection-review.md](minor-detection-review.md).
+
 ## Comparing with the existing systems
 
 Every finished verdict is logged to Axiom as `name: 'scan-verdict'`, with `system` = `text-scan`

@@ -5,11 +5,12 @@ import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/modera
 import { minorFlagRateLimit, modelId } from '~/server/schema/moderator/minor-flag';
 
 export default defineModeratorEndpoint('minorFlag.resolveRedetection', {
-  summary: 'Rule on a label the text scan re-detected after a human had cleared it.',
+  summary:
+    'Rule on a detection the text scan held: a re-detection after a human clear, or a first detection while the label is in review mode.',
   returns: '{ resolved: "kept" | "dismissed" | "closed" }',
   notes: [
     '`keep` applies the flag exactly as the scan would have, including the owner notice.',
-    'Dismissing clears the re-detected text and tells nobody.',
+    'Dismissing clears the held text and tells nobody; the same text is never held again.',
     'Refuses when the re-detection changed or was already resolved, or when `textHash` is not the pending one.',
     'Refuses while the owner has an open appeal: resolve it through `resolveAppeal` first.',
   ],
