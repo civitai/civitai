@@ -3,7 +3,9 @@ import {
   createStorylineSchema,
   getStorylinesInfiniteSchema,
   joinStorylineEarlyAccessSchema,
+  leaveStorylineSchema,
   moderateStorylineTitleSchema,
+  setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
   getStorylineSchema,
   getStorylinesForPostsSchema,
@@ -33,6 +35,7 @@ import {
   recordStorylineCreateClick,
   removeStorylineCollaborator,
   setCanonChapter,
+  setStorylineTakedown,
   updateStoryline,
 } from '~/server/services/storyline.service';
 import {
@@ -156,6 +159,10 @@ export const storylineRouter = router({
     .input(moderateStorylineTitleSchema)
     .mutation(({ input }) => moderateStorylineTitle(input)),
 
+  setTakedown: moderatorProcedure
+    .input(setStorylineTakedownSchema)
+    .mutation(({ input }) => setStorylineTakedown(input)),
+
   create: storylineWriteProcedure
     .input(createStorylineSchema)
     .mutation(({ input, ctx }) =>
@@ -172,7 +179,7 @@ export const storylineRouter = router({
     .input(addOwnerChapterSchema)
     .mutation(({ input, ctx }) => addOwnerChapter({ ...input, userId: ctx.user.id })),
 
-  setCanon: storylineMemberProcedure.input(storylineChapterSchema).mutation(({ input, ctx }) =>
+  setCanon: storylineWriteProcedure.input(storylineChapterSchema).mutation(({ input, ctx }) =>
     setCanonChapter({
       chapterId: input.chapterId,
       userId: ctx.user.id,
@@ -180,7 +187,7 @@ export const storylineRouter = router({
     })
   ),
 
-  addCollaborator: storylineMemberProcedure
+  addCollaborator: storylineWriteProcedure
     .input(storylineCollaboratorSchema)
     .mutation(({ input, ctx }) =>
       addStorylineCollaborator({
@@ -191,7 +198,10 @@ export const storylineRouter = router({
       })
     ),
 
-  removeCollaborator: storylineMemberProcedure
+  // A collaborator steps down through `leave`, not here: removal is guarded because it is someone
+  // else's access being changed, and a muted collaborator must still be able to leave a storyline
+  // they were added to without being asked.
+  removeCollaborator: storylineWriteProcedure
     .input(storylineCollaboratorSchema)
     .mutation(({ input, ctx }) =>
       removeStorylineCollaborator({
@@ -201,4 +211,12 @@ export const storylineRouter = router({
         isModerator: ctx.user.isModerator,
       })
     ),
+
+  leave: storylineMemberProcedure.input(leaveStorylineSchema).mutation(({ input, ctx }) =>
+    removeStorylineCollaborator({
+      storylineId: input.storylineId,
+      targetUserId: ctx.user.id,
+      userId: ctx.user.id,
+    })
+  ),
 });

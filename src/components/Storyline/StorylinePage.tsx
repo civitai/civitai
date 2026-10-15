@@ -25,6 +25,7 @@ import {
   StorylineStatusChip,
   storylineCardClass,
 } from '~/components/Storyline/StorylineChips';
+import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
 import {
   getForkShare,
@@ -204,6 +205,10 @@ function StorylineHeader({
               <IconSettings size={20} />
             </ActionIcon>
           )}
+          <StorylineContextMenu
+            storylineId={storyline.id}
+            isOwner={storyline.viewerRole === 'owner'}
+          />
         </div>
       </div>
     </header>

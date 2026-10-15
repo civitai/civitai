@@ -8,6 +8,7 @@ import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { dbMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
+import type * as NotificationService from '~/server/services/notification.service';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
@@ -31,6 +32,11 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   setFetchThroughCache,
 }));
 const setFetchThroughCache = vi.hoisted(() => vi.fn());
+const createNotification = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getAllHiddenForUser,
@@ -765,6 +771,34 @@ describe('reading', () => {
       expect(r.post.findMany.mock.calls[0][0]).toMatchObject({
         select: { tosViolation: true, user: { select: { bannedAt: true, deletedAt: true } } },
       });
+    });
+
+    // A ban is the one removal no row on the chapter or post records: the post stays published and
+    // untaken-down, only its author's account changed. The chapter must still read as removed to
+    // everyone but moderators — the story's owner included — and must not cut the path short.
+    it("tombstones a banned non-owner author's chapter, with the chapters after it reachable", async () => {
+      r.post.findMany.mockResolvedValue([
+        post(101, OWNER),
+        post(103, STRANGER, { user: { username: 'gone', bannedAt: new Date(), deletedAt: null } }),
+        post(104, COLLABORATOR),
+      ] as never);
+      const path = (viewer: { id: number; isModerator?: boolean }) =>
+        getStorylinePath({ chapterId: 4, viewer, browsingLevel: NsfwLevel.PG });
+
+      for (const viewer of [{ id: 99 }, { id: OWNER }]) {
+        const { chapters } = await path(viewer);
+        expect(chapters.map((c) => [c.chapterId, c.tombstone])).toEqual([
+          [1, null],
+          [2, 'deleted'],
+          [3, 'removed'],
+          [4, null],
+        ]);
+        expect(chapters[2].post).toBeNull();
+        expect(chapters[3].post).toMatchObject({ id: 104 });
+      }
+
+      const { chapters: asModerator } = await path({ id: MODERATOR, isModerator: true });
+      expect(asModerator[2]).toMatchObject({ tombstone: null, post: { id: 103 } });
     });
 
     it("applies the story's ceiling and the reader's blocks to each chapter", async () => {
@@ -1743,14 +1777,25 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     );
     expect(sql).toContain('AND i.minor = false AND i.poi = false');
     expect(sql).toContain('AND (i."nsfwLevel" & ?::int) <> 0');
-    expect(sql).toContain('AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0');
+    expect(sql).toContain(
+      'AND (i."nsfwLevel" & ~((CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ?) ELSE st."maxNsfwLevel" END) * 2 - 1)) = 0'
+    );
     expect(sql).toContain('AND i.id <> ALL(?::int[])');
     // Whitespace-insensitive, anchored on the NOT EXISTS so a negation dropped in front is caught.
     expect(sql).toContain(
       'AND (NOT EXISTS ( SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" = ANY(?::int[]) AND toi.disabled = false ) OR i."userId" = ?)'
     );
     expect(sql).toContain('ORDER BY i."postId", i.index NULLS LAST, i.id');
-    expect(values).toEqual([[501], STRANGER, NsfwLevel.PG, [77, 78], [5, 6], STRANGER]);
+    // The PG-13 after the reader's level is the minor ceiling in the ceiling's CASE.
+    expect(values).toEqual([
+      [501],
+      STRANGER,
+      NsfwLevel.PG,
+      NsfwLevel.PG13,
+      [77, 78],
+      [5, 6],
+      STRANGER,
+    ]);
     expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: STRANGER });
   });
 
@@ -2685,8 +2730,10 @@ describe('covers and cast', () => {
       );
       expect(read.text).toContain('AND i.minor = false AND i.poi = false');
       expect(read.text).toContain('AND i."nsfwLevel" <> 0');
-      expect(read.text).toContain('AND (i."nsfwLevel" & ~(st."maxNsfwLevel" * 2 - 1)) = 0');
-      expect(read.values).toEqual([[101], 99, PG, [77], [5], 99]);
+      expect(read.text).toContain(
+        'AND (i."nsfwLevel" & ~((CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ?) ELSE st."maxNsfwLevel" END) * 2 - 1)) = 0'
+      );
+      expect(read.values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
       expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: 99 });
     });
   });
@@ -2794,7 +2841,7 @@ describe('covers and cast', () => {
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
       expect(read.text).toContain(
-        'c."storylineId", i."postId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel" FROM "Image" i'
+        'c."storylineId", i."postId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan" FROM "Image" i'
       );
     });
 
@@ -2822,7 +2869,7 @@ describe('covers and cast', () => {
         `WHERE i.id = ANY(?::int[]) AND i.ingestion = 'Scanned' AND i."tosViolation" = false`
       );
       expect(read.text).toContain('c."removedAt", pu."bannedAt", pu."deletedAt"');
-      expect(read.values).toEqual([[7, 8], 99, PG, [77], [5], 99]);
+      expect(read.values).toEqual([[7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
       // The hidden lists are read once for the picks and the main route together.
       expect(getAllHiddenForUser).toHaveBeenCalledTimes(1);
     });
@@ -3262,16 +3309,30 @@ describe('title moderation', () => {
       w.storyline.findMany.mockResolvedValue([{ id: 10, userId: OWNER, title: 'Worse' }] as never);
       await moderateStorylineTitle({ id: 10, liftScanTakedown: lift });
       const reviewed = textScanTextHash(storylineTextScanSubject({ userId: OWNER, title: 'Bad' }));
+      // Two writes, one per state of the moderator's flag: the storyline comes back up only when
+      // no moderator holds a takedown of their own (see storyline-takedown.test.ts).
+      const data = { moderatorNsfwLevel: undefined, scanFlagLiftedTextHash: reviewed };
       expect(w.storyline.updateMany.mock.calls).toEqual([
         [
           {
-            where: { id: 10, tosViolationByScan: true, title: 'Bad' },
-            data: {
-              moderatorNsfwLevel: undefined,
-              tosViolation: false,
-              tosViolationByScan: false,
-              scanFlagLiftedTextHash: reviewed,
+            where: {
+              title: 'Bad',
+              id: 10,
+              tosViolationByScan: true,
+              tosViolationByModerator: false,
             },
+            data: { ...data, tosViolation: false, tosViolationByScan: false },
+          },
+        ],
+        [
+          {
+            where: {
+              title: 'Bad',
+              id: 10,
+              tosViolationByScan: true,
+              tosViolationByModerator: true,
+            },
+            data: { ...data, tosViolationByScan: false },
           },
         ],
       ]);
@@ -3309,7 +3370,8 @@ describe('title moderation', () => {
 
     // Set beside a scan takedown, so leaving it in place is something the call could get wrong.
     it.each([
-      ['sets', R],
+      // Below R: an R rating can also take down a minor-flagged title, a case of its own below.
+      ['sets', NsfwLevel.PG13],
       ['hands back to the scan', null],
     ])('%s the rating without touching a takedown', async (_name, level) => {
       await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: level });
@@ -3330,6 +3392,270 @@ describe('title moderation', () => {
       await expect(moderateStorylineTitle({ id: 10, moderatorNsfwLevel: R })).rejects.toMatchObject(
         { code: 'NOT_FOUND' }
       );
+    });
+  });
+});
+
+// Justin's ruling: while the title scan holds a storyline as about a minor, nothing in it may be
+// NSFW. Every read and write below holds chapters to `storylineCeiling` (PG-13 here, under an
+// owner ceiling of X). Each case runs once with the flag and once without, the control: an R
+// chapter that is fine under the owner's ceiling alone.
+describe('a storyline the title scan holds as about a minor', () => {
+  const R = NsfwLevel.R;
+  const ALL = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X;
+
+  describe.each([
+    ['held as about a minor', true],
+    ['not held (control)', false],
+  ])('%s', (_name, minorByScan) => {
+    it('the owner adding an R chapter directly', async () => {
+      w.storylineChapter.findUnique.mockResolvedValue({
+        id: 20,
+        storylineId: 10,
+        depth: 0,
+        removedAt: null,
+        storyline: { userId: OWNER, maxNsfwLevel: NsfwLevel.X, minorByScan, tosViolation: false },
+      } as never);
+      w.storylineChapter.create.mockResolvedValue({ id: 30 } as never);
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER, nsfwLevel: R }) as never);
+      const added = addOwnerChapter({ parentChapterId: 20, postId: 600, userId: OWNER });
+      if (minorByScan) await expect(added).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      else await expect(added).resolves.toEqual({ chapterId: 30 });
+    });
+
+    it('the owner choosing an R image as the cover', async () => {
+      w.storyline.findUnique.mockResolvedValue(
+        storylineRow({
+          maxNsfwLevel: NsfwLevel.X,
+          minorByScan,
+          coverImageId: null,
+          heroImageId: null,
+        }) as never
+      );
+      w.storylineCollaborator.findMany.mockResolvedValue([] as never);
+      w.storyline.update.mockResolvedValue({} as never);
+      w.image.findMany.mockResolvedValue([
+        {
+          id: 70,
+          nsfwLevel: R,
+          minor: false,
+          poi: false,
+          post: { storylineChapter: { storylineId: 10, userId: OWNER, removedAt: null } },
+        },
+      ] as never);
+      const picked = updateStoryline({ id: 10, userId: OWNER, coverImageId: 70 });
+      if (minorByScan) await expect(picked).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      else await expect(picked).resolves.toBeDefined();
+    });
+
+    it("an R chapter's image pill, for a reader who browses at R", async () => {
+      getBlockedPairIds.mockResolvedValue([]);
+      r.storylineChapter.findMany.mockResolvedValue([
+        {
+          id: 1001,
+          postId: 1,
+          depth: 1,
+          post: { nsfwLevel: R, userId: AUTHOR_OF_POSTS },
+          storyline: {
+            id: 10,
+            title: 'A story',
+            userId: OWNER,
+            maxNsfwLevel: NsfwLevel.X,
+            minorByScan,
+            tosViolation: false,
+            nsfwLevel: 0,
+            moderatorNsfwLevel: null,
+            user: notBanned,
+            chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
+          },
+        },
+      ] as never);
+      const pills = await getStorylinesForPosts({
+        postIds: [1],
+        viewer: { id: STRANGER },
+        browsingLevel: ALL,
+      });
+      expect(Object.keys(pills)).toEqual(minorByScan ? [] : ['1']);
+    });
+
+    it('the ceiling the page and a feed card report', async () => {
+      r.storyline.findUnique.mockResolvedValue({
+        ...storylineRow({ maxNsfwLevel: NsfwLevel.X, minorByScan }),
+        collaborators: [],
+      } as never);
+      r.$queryRaw.mockResolvedValue([] as never);
+      r.user.findMany.mockResolvedValue([] as never);
+      r.post.findMany.mockResolvedValue([] as never);
+      const ceiling = minorByScan ? NsfwLevel.PG13 : NsfwLevel.X;
+
+      const asOwner = await getStoryline({ id: 10, viewer: { id: OWNER }, browsingLevel: ALL });
+      expect(asOwner).toMatchObject({ maxNsfwLevel: ceiling, ownerMaxNsfwLevel: NsfwLevel.X });
+      for (const field of ['minorByScan', 'nsfwLevel', 'moderatorNsfwLevel'])
+        expect(asOwner).not.toHaveProperty(field);
+      const asReader = await getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: ALL });
+      expect(asReader).toMatchObject({ maxNsfwLevel: ceiling, ownerMaxNsfwLevel: null });
+
+      // The cast counts only chapters under the ceiling: its mask is a bound value.
+      const castMask = ceiling * 2 - 1;
+      const counted = r.$queryRaw.mock.calls.find(([s]) =>
+        (s as unknown as string[]).join('?').includes('COUNT(DISTINCT')
+      );
+      const [strings, ...values] = counted as unknown as [TemplateStringsArray, ...unknown[]];
+      expect(Prisma.sql(strings, ...(values as Prisma.Sql[])).values).toContain(castMask);
+
+      r.$queryRaw.mockReset().mockResolvedValue([
+        {
+          id: 10,
+          title: 'A story',
+          status: 'Ongoing',
+          userId: OWNER,
+          username: 'owner',
+          maxNsfwLevel: NsfwLevel.X,
+          minorByScan,
+          whoCanContinue: 'Anyone',
+          rootPostId: 101,
+          chapterCount: 1,
+          contributorCount: 1,
+          createdAt: new Date('2026-10-01'),
+        },
+      ] as never);
+      const page = await getStorylinesInfinite({
+        filter: 'all',
+        sort: 'newest',
+        limit: 2,
+        viewer: undefined,
+        browsingLevel: ALL,
+      });
+      expect(page.items[0]).toMatchObject({ maxNsfwLevel: ceiling });
+      expect(page.items[0]).not.toHaveProperty('minorByScan');
+    });
+
+    it("an R chapter on the page's reading route", async () => {
+      r.storyline.findUnique.mockResolvedValue({
+        ...storylineRow({ maxNsfwLevel: NsfwLevel.X, minorByScan }),
+        collaborators: [],
+      } as never);
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+        Promise.resolve(
+          strings.join('?').includes('WITH RECURSIVE main')
+            ? [
+                { id: 1, postId: 101, depth: 0 },
+                { id: 2, postId: 102, depth: 1 },
+              ]
+            : []
+        )) as never);
+      r.user.findMany.mockResolvedValue([] as never);
+      r.post.findMany.mockResolvedValue(
+        [101, 102].map((id) => ({
+          id,
+          userId: OWNER,
+          title: `post ${id}`,
+          nsfwLevel: id === 102 ? R : NsfwLevel.PG,
+          publishedAt: new Date('2026-10-01'),
+          tosViolation: false,
+          user: { id: OWNER, username: 'owner', image: null, profilePicture: null, ...notBanned },
+        })) as never
+      );
+      const page = await getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: ALL });
+      expect(page.mainPath.map((c) => c.tombstone)).toEqual([
+        null,
+        minorByScan ? 'aboveStoryRating' : null,
+      ]);
+    });
+  });
+});
+
+describe('the title scan’s minor finding, beyond the scan', () => {
+  // getPath is public: readers get the ceiling chapters are held to, never the finding itself.
+  it.each([
+    [true, NsfwLevel.PG13],
+    [false, NsfwLevel.X],
+  ])(
+    'a reading path serves no minor flag (held: %s), only the ceiling',
+    async (minorByScan, ceiling) => {
+      r.storyline.findUnique.mockResolvedValue(
+        storylineRow({ maxNsfwLevel: NsfwLevel.X, minorByScan }) as never
+      );
+      r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 0 } as never);
+      r.$queryRaw.mockResolvedValue([] as never);
+      r.post.findMany.mockResolvedValue([] as never);
+      getBlockedPairIds.mockResolvedValue([]);
+      const { storyline } = await getStorylinePath({
+        chapterId: 1,
+        viewer: undefined,
+        browsingLevel: NsfwLevel.PG,
+      });
+      for (const field of ['minorByScan', 'nsfwLevel', 'moderatorNsfwLevel'])
+        expect(storyline).not.toHaveProperty(field);
+      expect(storyline.maxNsfwLevel).toBe(ceiling);
+    }
+  );
+
+  // The rule the scan applies, when the NSFW rating arrives from a moderator instead.
+  describe('a moderator rating a minor-flagged title NSFW', () => {
+    const text = textScanTextHash(storylineTextScanSubject({ userId: OWNER, title: 'T' }));
+    const takedown = {
+      where: {
+        id: 10,
+        title: 'T',
+        minorByScan: true,
+        tosViolationByScan: false,
+        OR: [{ scanFlagLiftedTextHash: null }, { scanFlagLiftedTextHash: { not: text } }],
+      },
+      data: { tosViolation: true, tosViolationByScan: true },
+    };
+    beforeEach(() => {
+      createNotification.mockClear();
+      w.storyline.findUnique.mockResolvedValue({
+        tosViolationByScan: false,
+        title: 'T',
+        userId: OWNER,
+      } as never);
+      w.storyline.updateMany.mockResolvedValue({ count: 1 } as never);
+      w.storyline.findUniqueOrThrow.mockResolvedValue({ id: 10 } as never);
+    });
+
+    it('takes it down as the scan would, not for text a moderator cleared, and tells the owner', async () => {
+      await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.R });
+      expect(w.storyline.updateMany.mock.calls.map(([call]) => call)).toEqual([
+        { where: { id: 10 }, data: { moderatorNsfwLevel: NsfwLevel.R } },
+        takedown,
+      ]);
+      expect(createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: OWNER,
+          details: { storylineId: 10, takenDown: true, title: 'T' },
+        })
+      );
+    });
+
+    it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
+      await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.PG13 });
+      expect(w.storyline.updateMany).toHaveBeenCalledTimes(1);
+      w.storyline.updateMany.mockClear();
+      w.storyline.updateMany
+        .mockResolvedValueOnce({ count: 1 } as never)
+        .mockResolvedValueOnce({ count: 0 } as never);
+      await moderateStorylineTitle({ id: 10, moderatorNsfwLevel: NsfwLevel.R });
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    // A lift records the reviewed text, so the takedown that follows in the same call skips it:
+    // a moderator can clear a false positive and still rate the title R.
+    it('in the same call as a lift, writes the lift with the hash the takedown then skips', async () => {
+      w.storyline.findUnique.mockResolvedValue({
+        tosViolationByScan: true,
+        title: 'T',
+        userId: OWNER,
+      } as never);
+      await moderateStorylineTitle({
+        id: 10,
+        moderatorNsfwLevel: NsfwLevel.R,
+        liftScanTakedown: { reviewedTitle: 'T' },
+      });
+      const calls = w.storyline.updateMany.mock.calls.map(([call]) => call);
+      expect(calls[0]).toMatchObject({ data: { scanFlagLiftedTextHash: text } });
+      expect(calls.at(-1)).toEqual(takedown);
     });
   });
 });

@@ -34,7 +34,7 @@ import {
   PLACEMENT_SURFACES,
   resolvePlacementSpace,
 } from '~/shared/utils/placement';
-import { storylineLevelAllowed } from '~/shared/utils/storyline';
+import { storylineCeiling, storylineLevelAllowed } from '~/shared/utils/storyline';
 import type {
   MyStorylineContinuation,
   StorylineContinuationPage,
@@ -246,7 +246,7 @@ export async function createStorylinePlacement({
     readiness === 'ready' &&
     !storylineLevelAllowed({
       postLevel: continuation.nsfwLevel,
-      maxNsfwLevel: parent.storyline.maxNsfwLevel,
+      maxNsfwLevel: storylineCeiling(parent.storyline),
     })
   )
     throw throwBadRequestError(STORYLINE_REFUSALS.aboveRating);
@@ -727,7 +727,7 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
       if (
         !storylineLevelAllowed({
           postLevel: post.nsfwLevel,
-          maxNsfwLevel: parent.storyline.maxNsfwLevel,
+          maxNsfwLevel: storylineCeiling(parent.storyline),
         })
       ) {
         await refund(row.id);
@@ -1017,12 +1017,18 @@ export async function getPendingStorylineContinuations({
       where: { postId: { in: parentIds } },
       select: {
         postId: true,
-        storyline: { select: { id: true, title: true, maxNsfwLevel: true } },
+        storyline: { select: { id: true, title: true, maxNsfwLevel: true, minorByScan: true } },
       },
     }),
   ]);
   const postById = new Map(posts.map((post) => [post.id, post]));
-  const storylineByParent = new Map(chapters.map((chapter) => [chapter.postId, chapter.storyline]));
+  // The ceiling the queue marks a row against is the one approval holds it to.
+  const storylineByParent = new Map(
+    chapters.map(({ postId, storyline: { minorByScan, ...storyline } }) => [
+      postId,
+      { ...storyline, maxNsfwLevel: storylineCeiling({ ...storyline, minorByScan }) },
+    ])
+  );
 
   const items: StorylineContinuationQueueItem[] = [];
   for (const row of rows) {

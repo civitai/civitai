@@ -43,6 +43,9 @@ export const storylineCollaboratorSchema = z.object({
   userId: z.number().int().positive(),
 });
 
+/** A collaborator stepping down from a storyline: always themselves, so no user id is taken. */
+export const leaveStorylineSchema = z.object({ storylineId: z.number().int().positive() });
+
 export const addOwnerChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   postId: z.number().int().positive(),
@@ -98,3 +101,8 @@ export const moderateStorylineTitleSchema = z
     message: 'Nothing to change',
   });
 export type ModerateStorylineTitleInput = z.infer<typeof moderateStorylineTitleSchema>;
+
+export const setStorylineTakedownSchema = z.object({
+  id: z.number().int().positive(),
+  takenDown: z.boolean(),
+});

@@ -26,8 +26,14 @@ version as designed rather than what is live today.
   ships, this joins an early-access list.
 - **Content level.** Every storyline has a maximum content level set by its creator. A chapter above
   it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
-  The same goes for a chapter whose post was removed. Each reader's own browsing level still applies
-  chapter by chapter.
+  The same goes for a chapter whose post was removed or whose author was banned. Each reader's own
+  browsing level still applies chapter by chapter.
+- **Titles.** A storyline's title is checked automatically. A title about a real person takes the
+  storyline down, and so does one about a minor that is not safe for work. A safe-for-work title about
+  a minor leaves it up, but every chapter in it, forks included, is then held to PG-13: anything above
+  is a placeholder, and new chapters above it are refused. Editing the title has it checked again.
+- **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
+  moderators. A chapter is reported as its post or image.
 
 ## For creators
 
@@ -45,7 +51,8 @@ version as designed rather than what is live today.
 
 ## Not in the first version
 
-Branches rejoining, and an in-app tool for making the next section.
+Branches rejoining, an in-app tool for making the next section, and deleting a storyline: its creator
+marks it complete instead, and moderators take down one that breaks the rules.
 
 ## Trying it locally
 

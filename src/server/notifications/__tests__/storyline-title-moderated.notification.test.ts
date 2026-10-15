@@ -24,4 +24,12 @@ describe('storyline-title-moderated', () => {
       url: storylineUrl(10),
     });
   });
+
+  it('says chapters are held to safe for work when the title is about a minor', () => {
+    expect(render({ storylineId: 10, title: 'Dark Road', minor: true })).toEqual({
+      message:
+        'Your storyline "Dark Road" can only hold safe-for-work chapters because of its title: chapters rated above PG-13 are hidden and new ones are refused. Edit the title to have it checked again.',
+      url: storylineUrl(10),
+    });
+  });
 });

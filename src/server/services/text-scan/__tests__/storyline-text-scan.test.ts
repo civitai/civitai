@@ -79,18 +79,28 @@ const args = (v: Verdict) => ({
 });
 const clean = { nsfw: NsfwLevel.PG, poi: false, minor: false };
 
+// Conditional on the SCAN's flag, not on the storyline being up: a verdict arriving while a
+// moderator holds a takedown is still recorded, or that moderator's restore would publish it.
 const takedownWrite = {
   where: {
     id: ID,
-    tosViolation: false,
+    tosViolationByScan: false,
     OR: [{ scanFlagLiftedTextHash: null }, { scanFlagLiftedTextHash: { not: HASH } }],
   },
   data: { tosViolation: true, tosViolationByScan: true },
 };
-const liftWrite = {
-  where: { id: ID, tosViolationByScan: true },
-  data: { tosViolation: false, tosViolationByScan: false },
-};
+// One write per state of the moderator's flag: the storyline comes back up only when no
+// moderator holds a takedown of their own.
+const liftWrites = [
+  {
+    where: { id: ID, tosViolationByScan: true, tosViolationByModerator: false },
+    data: { tosViolation: false, tosViolationByScan: false },
+  },
+  {
+    where: { id: ID, tosViolationByScan: true, tosViolationByModerator: true },
+    data: { tosViolationByScan: false },
+  },
+];
 const updates = () => w.storyline.updateMany.mock.calls.map((c) => c[0]);
 
 beforeEach(() => {
@@ -232,59 +242,107 @@ describe('applyStorylineTextScan', () => {
   });
 
   describe('poi and minor', () => {
-    it.each([
-      ['poi', { ...clean, poi: true }],
-      ['minor', { ...clean, minor: true }],
-    ])('%s takes the storyline down as the scan, and tells the owner', async (_name, verdict) => {
-      await applyStorylineTextScan(args(verdict) as never);
-      expect(updates()).toEqual([
-        { where: { id: ID }, data: { nsfwLevel: NsfwLevel.PG } },
-        takedownWrite,
-      ]);
-      expect(createNotification).toHaveBeenCalledTimes(1);
+    const rated = (nsfw: number) => ({ where: { id: ID }, data: { nsfwLevel: nsfw } });
+    const setMinor = { where: { id: ID, minorByScan: false }, data: { minorByScan: true } };
+    const clearMinor = { where: { id: ID, minorByScan: true }, data: { minorByScan: false } };
+    const notices = () =>
+      vi.mocked(createNotification).mock.calls.map(([n]) => (n as { key: string }).key);
+
+    it('a person of interest takes the storyline down as the scan, and tells the owner', async () => {
+      await applyStorylineTextScan(args({ ...clean, poi: true }) as never);
+      expect(updates()).toEqual([rated(NsfwLevel.PG), clearMinor, takedownWrite]);
+      expect(notices()).toEqual([`storyline-title-moderated-${ID}-tos-wf-1`]);
       expect(createNotification).toHaveBeenCalledWith(
         expect.objectContaining({
-          key: `storyline-title-moderated-${ID}-tos-wf-1`,
           details: { storylineId: ID, takenDown: true, title: 'A story' },
         })
       );
     });
 
-    it('stays silent when nothing was taken down (already down, or text a moderator cleared)', async () => {
+    it('a minor with an NSFW title takes it down, and marks the minor', async () => {
+      await applyStorylineTextScan(args({ nsfw: NsfwLevel.R, poi: false, minor: true }) as never);
+      expect(updates()).toEqual([rated(NsfwLevel.R), setMinor, takedownWrite]);
+      // The rating notice and the takedown notice; no third one for the minor on its own.
+      expect(notices()).toEqual([
+        `storyline-title-moderated-${ID}-${NsfwLevel.R}-wf-1`,
+        `storyline-title-moderated-${ID}-tos-wf-1`,
+      ]);
+    });
+
+    // Justin's ruling: a minor in a safe-for-work title is fine. The storyline stays up, and its
+    // chapters are held to safe for work (storylineCeiling).
+    it.each([
+      ['PG', NsfwLevel.PG],
+      ['PG-13', NsfwLevel.PG13],
+    ])('a minor with a %s title does not take it down: it marks the minor', async (_n, level) => {
+      await applyStorylineTextScan(args({ nsfw: level, poi: false, minor: true }) as never);
+      // The cap is written before the lift, so the storyline never comes back up uncapped.
+      expect(updates()).toEqual([rated(level), setMinor, ...liftWrites]);
+      expect(updates()).not.toContainEqual(takedownWrite);
+      expect(notices()).toEqual([`storyline-title-moderated-${ID}-minor-wf-1`]);
+      expect(createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ details: { storylineId: ID, minor: true, title: 'A story' } })
+      );
+    });
+
+    // Fail closed: with no rating to judge the title by, a minor finding is treated as NSFW.
+    it('a minor with no nsfw verdict takes it down', async () => {
+      await applyStorylineTextScan(args({ poi: false, minor: true }) as never);
+      expect(updates()).toEqual([setMinor, takedownWrite]);
+    });
+
+    it.each([
+      // A rating is not tied to the text it was given for: after an edit, an NSFW verdict on the
+      // new title must not be outvoted by a safe rating of the old one.
+      ['rated it safe, under an NSFW verdict', NsfwLevel.PG13, NsfwLevel.R, true],
+      ['rated it safe, with no nsfw verdict', NsfwLevel.PG, undefined, false],
+      ['rated it NSFW, over a safe verdict', NsfwLevel.R, NsfwLevel.PG, true],
+      ['rated it safe, and the verdict agrees', NsfwLevel.PG, NsfwLevel.PG13, false],
+    ])(
+      "the higher of a moderator's rating and the verdict judges the title when they %s",
+      async (_n, moderatorNsfwLevel, nsfw, down) => {
+        w.storyline.findUnique.mockResolvedValue(before({ moderatorNsfwLevel }) as never);
+        await applyStorylineTextScan(args({ nsfw, poi: false, minor: true }) as never);
+        if (down) expect(updates()).toContainEqual(takedownWrite);
+        else expect(updates()).not.toContainEqual(takedownWrite);
+      }
+    );
+
+    it('a clean verdict lifts only the scan’s own takedown and clears the minor', async () => {
+      await applyStorylineTextScan(args(clean) as never);
+      expect(updates()).toEqual([rated(NsfwLevel.PG), clearMinor, ...liftWrites]);
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    it('does not lift when poi is missing, though minor answered clean', async () => {
+      await applyStorylineTextScan(args({ nsfw: NsfwLevel.PG, minor: false }) as never);
+      expect(updates()).toEqual([rated(NsfwLevel.PG), clearMinor]);
+    });
+
+    // A missing minor label moves nothing it decides: neither the lift nor the flag.
+    it('does not lift or touch the minor flag when minor is missing', async () => {
+      await applyStorylineTextScan(args({ nsfw: NsfwLevel.PG, poi: false }) as never);
+      expect(updates()).toEqual([rated(NsfwLevel.PG)]);
+    });
+
+    it('takes it down when poi found, minor missing: one finding is enough', async () => {
+      await applyStorylineTextScan(args({ nsfw: NsfwLevel.PG, poi: true }) as never);
+      expect(updates()).toEqual([rated(NsfwLevel.PG), takedownWrite]);
+    });
+
+    it('stays silent when nothing changed (already down or marked by the scan)', async () => {
       w.storyline.updateMany
         .mockResolvedValueOnce({ count: 1 } as never)
+        .mockResolvedValueOnce({ count: 0 } as never)
         .mockResolvedValueOnce({ count: 0 } as never);
       await applyStorylineTextScan(args({ ...clean, poi: true }) as never);
-      expect(updates()[1]).toEqual(takedownWrite);
+      expect(updates()[2]).toEqual(takedownWrite);
       expect(createNotification).not.toHaveBeenCalled();
-    });
 
-    it("lifts only the scan's own takedown on a clean verdict", async () => {
-      await applyStorylineTextScan(args(clean) as never);
-      expect(updates()).toEqual([
-        { where: { id: ID }, data: { nsfwLevel: NsfwLevel.PG } },
-        liftWrite,
-      ]);
+      vi.clearAllMocks();
+      w.storyline.updateMany.mockResolvedValue({ count: 0 } as never);
+      await applyStorylineTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: true }) as never);
       expect(createNotification).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ['poi is missing', { nsfw: NsfwLevel.PG, minor: false }],
-      ['minor is missing', { nsfw: NsfwLevel.PG, poi: false }],
-    ])('does not lift when %s, though the other answered clean', async (_name, verdict) => {
-      await applyStorylineTextScan(args(verdict) as never);
-      expect(updates()).toEqual([{ where: { id: ID }, data: { nsfwLevel: NsfwLevel.PG } }]);
-    });
-
-    it.each([
-      ['poi found, minor missing', { nsfw: NsfwLevel.PG, poi: true }],
-      ['minor found, poi missing', { nsfw: NsfwLevel.PG, minor: true }],
-    ])('takes it down when %s: one finding is enough', async (_name, verdict) => {
-      await applyStorylineTextScan(args(verdict) as never);
-      expect(updates()).toEqual([
-        { where: { id: ID }, data: { nsfwLevel: NsfwLevel.PG } },
-        takedownWrite,
-      ]);
     });
   });
 

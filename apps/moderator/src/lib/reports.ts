@@ -23,6 +23,7 @@ export const ReportEntity = {
   Crucible: 'crucible',
   Challenge: 'challenge',
   GameFrameGame: 'gameFrameGame',
+  Storyline: 'storyline',
 } as const;
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
@@ -97,6 +98,7 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   crucible: 'Crucible',
   challenge: 'Challenge',
   gameFrameGame: 'Game',
+  storyline: 'Storyline',
 };
 
 // URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
@@ -121,6 +123,7 @@ export const reportEntitySlugs: Record<ReportEntity, string> = {
   crucible: 'crucible',
   challenge: 'challenge',
   gameFrameGame: 'game',
+  storyline: 'storyline',
 };
 
 const entityBySlug = new Map(

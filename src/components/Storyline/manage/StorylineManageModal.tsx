@@ -96,7 +96,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             <StorylineSettingsForm
               coverRow={<StorylineCoversRow storylineId={storylineId} />}
               status={storyline.status}
-              maxNsfwLevel={storyline.maxNsfwLevel}
+              maxNsfwLevel={storyline.ownerMaxNsfwLevel ?? storyline.maxNsfwLevel}
               whoCanContinue={storyline.whoCanContinue}
               space={space.data}
               chapterLevels={chapterLevels}

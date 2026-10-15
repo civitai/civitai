@@ -101,6 +101,8 @@ const DEFAULTS: Record<string, () => Row> = {
   }),
   storyline: () => ({
     tosViolationByScan: false,
+    tosViolationByModerator: false,
+    minorByScan: false,
     scanFlagLiftedTextHash: null,
     nsfwLevel: 0,
     moderatorNsfwLevel: null,
