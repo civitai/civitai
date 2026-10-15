@@ -478,6 +478,24 @@ describe('the scanner seam', () => {
 });
 
 describe('deleting', () => {
+  it('leaves a delivered round alone: after a revision its files can be neither completed nor removed', async () => {
+    const dealId = await accepted('None');
+    const old = await uploaded(dealId);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await deals.requestServiceDealRevision({ dealId, userId: BUYER, comment: 'again' });
+    await expect(
+      files.deleteServiceDealFile({ fileId: old, userId: SELLER })
+    ).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    await expect(
+      files.completeServiceDealUpload({ fileId: old, userId: SELLER })
+    ).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(await fileRow(old)).toMatchObject({ round: 0 });
+  });
+
   it('lets the seller drop a file from the round being worked, and nobody else', async () => {
     const dealId = await accepted();
     const fileId = await uploaded(dealId);
@@ -532,6 +550,26 @@ describe('delivering', () => {
     await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).rejects.toMatchObject({
       code: 'CONFLICT',
     });
+  });
+
+  it('waits for EVERY sample preview, not just one', async () => {
+    const dealId = await accepted('SampleOutputs');
+    await uploaded(dealId);
+    await readyPreview(dealId);
+    const second = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'q.png',
+      mimeType: 'image/png',
+      size: 500,
+    });
+    await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    await q(
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed' WHERE id = $1`,
+      [second]
+    );
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
   });
 
   it('needs no preview when the service takes none', async () => {
@@ -697,6 +735,14 @@ describe('what the listing shows', () => {
     await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
     const unlocked = (await list(dealId, BUYER)).find((f) => f.id === finalId)!;
     expect(unlocked).toMatchObject({ canDownload: true, fileName: 'secret-name.zip' });
+  });
+
+  it('keeps canDownload false for a completed deal whose final has not passed its scan', async () => {
+    const { dealId, finalId } = await delivered();
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    const locked = (await list(dealId, BUYER)).find((f) => f.id === finalId)!;
+    expect(locked).toMatchObject({ canDownload: false, scanStatus: 'Pending', fileName: null });
   });
 
   it('answers a stranger with not-found and lets a moderator see everything', async () => {
