@@ -155,4 +155,9 @@ describe('the other static-list consumers', () => {
     const filter = createProfanityFilter();
     expect(filter.clean('fukushima fuck')).toBe('fukushima ****');
   });
+
+  it('clean() still censors a match inside a larger non-whitelisted token', () => {
+    const filter = createProfanityFilter();
+    expect(filter.clean('fukushima fukushimafuck')).toBe('fukushima ***ushima****');
+  });
 });
