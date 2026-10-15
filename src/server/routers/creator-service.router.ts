@@ -33,7 +33,9 @@ const servicesGuardedProcedure = guardedProcedure
 
 export const creatorServiceRouter = router({
   getSellEligibility: servicesProcedure.query(({ ctx }) => getServiceSellEligibility(ctx.user.id)),
-  getMine: servicesProcedure.query(({ ctx }) => getMyServiceOfferings(ctx.user.id)),
+  getMine: servicesProcedure.query(({ ctx }) =>
+    getMyServiceOfferings({ sellerId: ctx.user.id, servable: domainServableLevels(ctx) })
+  ),
   upsert: servicesGuardedProcedure
     .input(upsertServiceOfferingSchema)
     .mutation(({ input, ctx }) => upsertServiceOffering({ sellerId: ctx.user.id, input })),
