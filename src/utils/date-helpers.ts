@@ -148,3 +148,14 @@ export function roundMinutes(d: Date | string) {
 
   return date;
 }
+
+/**
+ * "2 hours ago" while it is still news, the date once it is history: how long something has sat
+ * in a review queue reads worst as an absolute date in exactly the first day.
+ */
+export function recentOrDate(at: Date | string) {
+  const value = new Date(at);
+  return Date.now() - value.getTime() < 24 * 60 * 60 * 1000
+    ? daysFromNow(value)
+    : formatDate(value);
+}

@@ -23,6 +23,7 @@ import {
   PLACEMENT_PRICE_STEP,
   placementPriceUsable,
   placementPriceTrack,
+  placementSurfaceAllowsZeroPrice,
   placementSurfaces,
   placementTransactionId,
   resolveHostDeclineFeePercent,
@@ -259,7 +260,7 @@ describe('declineFeeAmount', () => {
 });
 
 describe('the host decline fee', () => {
-  it('is fixed at 30% for stickers and remixes, and adjustable for promotions', () => {
+  it('is fixed at 30% for stickers, remixes and storylines, and adjustable for promotions', () => {
     expect(
       Object.fromEntries(
         placementSurfaces.map((surface) => [
@@ -272,6 +273,7 @@ describe('the host decline fee', () => {
       remixGallery: [false, 0.3],
       galleryPromotion: [true, 0],
       modelPromotion: [true, 0],
+      storyline: [false, 0.3],
     });
   });
 
@@ -402,6 +404,17 @@ describe('space resolution', () => {
       // `effectivePlacementPrice(0, cap)` is 0 rather than null, so the space
       // reads open, `canPlace` is true, and the escrow short-circuits: free
       // placements on every creator's work, platform-wide, by default.
+      //
+      // The one exception is a surface whose price may be zero, which is free to
+      // continue by default on purpose. What stops that being "every creator's
+      // work" is that its target is opt-in by existing: a continuation needs a
+      // storyline chapter to continue, and a creator has a storyline only by
+      // starting one. That refusal belongs to the storyline creation path.
+      if (placementSurfaceAllowsZeroPrice(surface)) {
+        expect(defaultPrice, `${surface} defaults to charging`).toBe(0);
+        expect(defaultMode, `${surface} defaults to accepting without review`).toBe('review');
+        continue;
+      }
       expect(defaultPrice, `${surface} defaults to free placements`).toBeGreaterThan(0);
 
       // A default of `auto` removes the review step for every creator who never
@@ -529,7 +542,41 @@ describe('the surface table', () => {
       'modelPromotion',
       'remixGallery',
       'sticker',
+      'storyline',
     ]);
+  });
+
+  /**
+   * 🔴 The storyline surface may be priced at zero; no other surface may.
+   *
+   * On every other surface the floor is the spam gate (nothing verifies a remix
+   * submission is a remix, nothing bounds a sticker's purpose), and their free
+   * tier is a deliberately scarce exception to it. A zero floor anywhere else
+   * would open that surface to unlimited free submissions with no allowance and
+   * no slot cap. Pinned by value per surface, so moving any one floor — up or
+   * down — is a deliberate edit here.
+   */
+  it('keeps the price floor on every surface that has one', () => {
+    expect(
+      Object.fromEntries(
+        placementSurfaces.map((surface) => [surface, PLACEMENT_SURFACES[surface].serverMinPrice])
+      )
+    ).toEqual({
+      sticker: 50,
+      remixGallery: 50,
+      galleryPromotion: 50,
+      modelPromotion: 50,
+      storyline: 0,
+    });
+    expect(placementSurfaces.filter(placementSurfaceAllowsZeroPrice)).toEqual(['storyline']);
+  });
+
+  // A zero-priced surface has no free tier at all, so its default slot count is
+  // zero: the space resolver would otherwise advertise a free slot that the free
+  // path refuses to fill.
+  it('gives a zero-priced surface no free slots by default', () => {
+    for (const surface of placementSurfaces.filter(placementSurfaceAllowsZeroPrice))
+      expect(PLACEMENT_SURFACES[surface].defaultFreeSlots).toBe(0);
   });
 
   it('gives every surface a usable decline rate and expiry', () => {

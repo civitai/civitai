@@ -14,6 +14,7 @@ import {
   collectionTextScanAdapter,
   modelRulesTextScanAdapter,
   postTextScanAdapter,
+  storylineTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
@@ -37,6 +38,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   BountyEntry: bountyEntryTextScanAdapter,
   Collection: collectionTextScanAdapter,
   Post: postTextScanAdapter,
+  Storyline: storylineTextScanAdapter,
   ...textScanShadowAdapters(),
   ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,

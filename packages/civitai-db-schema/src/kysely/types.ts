@@ -132,6 +132,8 @@ import type {
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
   OutboxEntity,
+  StorylineStatus,
+  StorylineWhoCanContinue,
   ServiceOfferingStatus,
   ServicePreviewKind,
   ServiceBuzzType,
@@ -4821,6 +4823,141 @@ export type ShopifyMerchOrder = {
   grantedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
+export type Storyline = {
+  id: Generated<number>;
+  userId: number;
+  title: string;
+  status: Generated<StorylineStatus>;
+  whoCanContinue: Generated<StorylineWhoCanContinue>;
+  /**
+   * The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
+   * (CHECK in the migration). Continuations above it cannot be added, and chapters above
+   * it are never shown in this storyline.
+   */
+  maxNsfwLevel: number;
+  /**
+   * Whether the storyline as a whole is taken down: true while the title scan or a moderator
+   * holds a takedown (the two flags below). Every read gates on this. Individual chapters are
+   * taken down through their posts.
+   */
+  tosViolation: Generated<boolean>;
+  /**
+   * The title scan holds a takedown. Cleared on a clean rescan or by a moderator lifting it
+   * for the title they reviewed; neither clears `tosViolation` while a moderator's takedown is
+   * in place.
+   */
+  tosViolationByScan: Generated<boolean>;
+  /**
+   * A moderator holds a takedown. Only a moderator's restore clears it, and that leaves
+   * `tosViolation` set while the scan holds one too.
+   */
+  tosViolationByModerator: Generated<boolean>;
+  /**
+   * The title scan's restricting finding. Not a takedown: every chapter is held to
+   * `storylineCeiling` while it is set, whatever `maxNsfwLevel` says. Set and cleared only
+   * by the scan.
+   */
+  minorByScan: Generated<boolean>;
+  /**
+   * The title text a moderator lifted a scan takedown for, as `textScanTextHash`. A scan of
+   * the same text does not take it down again; an edited title is scanned afresh.
+   */
+  scanFlagLiftedTextHash: string | null;
+  /**
+   * The title's rating from the text scan, a single `NsfwLevel` flag (0 until scanned). A
+   * reader is shown the story only if their browsing level admits the higher of this and
+   * chapter 1's level.
+   */
+  nsfwLevel: Generated<number>;
+  /**
+   * A moderator's ruling on the title's rating; used in place of `nsfwLevel` when set.
+   */
+  moderatorNsfwLevel: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  /**
+   * The feed card's picture and the page banner, chosen by the owner from images in their own
+   * chapters or endorsed collaborators' (checked when chosen). Readers who may not see the
+   * chosen image get chapter 1's first image they may see instead.
+   */
+  coverImageId: number | null;
+  heroImageId: number | null;
+  /**
+   * The banner's vertical focus, as a percentage (0 top to 100 bottom).
+   */
+  heroImagePosition: Generated<number>;
+};
+export type StorylineBranchChoice = {
+  userId: number;
+  parentChapterId: number;
+  chapterId: number;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type StorylineChapter = {
+  id: Generated<number>;
+  storylineId: number;
+  /**
+   * One storyline per post. NULL once the post is deleted.
+   */
+  postId: number | null;
+  /**
+   * The chapter's author when it was added. Not a relation on purpose: a deleted
+   * account must not cascade away a chapter other people's chapters hang from.
+   */
+  userId: number;
+  /**
+   * Distance from the first chapter, which is 0. A storyline has exactly one chapter
+   * at depth 0 (enforced by a partial unique index in the migration).
+   */
+  depth: number;
+  /**
+   * The placement that added this chapter, when one did. Unique so replaying an
+   * approval cannot add the chapter twice.
+   */
+  placementId: number | null;
+  createdAt: Generated<Timestamp>;
+  /**
+   * Set when the placement that added this chapter is removed. The row stays and readers other
+   * than moderators see a removed tombstone.
+   */
+  removedAt: Timestamp | null;
+};
+export type StorylineChapterEdge = {
+  storylineId: number;
+  chapterId: number;
+  parentChapterId: number;
+  /**
+   * The storyline owner's main route out of the parent. At most one per parent (partial
+   * unique index in the migration). Whether a non-canon child is "endorsed" or
+   * "community" is not stored: it follows the current collaborator list, so endorsing
+   * someone reorders their existing chapters too.
+   */
+  canon: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineCollaborator = {
+  storylineId: number;
+  userId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineCreateClick = {
+  userId: number;
+  parentChapterId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineEarlyAccessSignup = {
+  userId: number;
+  /**
+   * Where they signed up from, for context only.
+   */
+  storylineId: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineReport = {
+  storylineId: number;
+  reportId: number;
+};
 export type Tag = {
   id: Generated<number>;
   name: string;
@@ -5783,6 +5920,14 @@ export type DB = {
   ShadowTagsOnImage: ShadowTagsOnImage;
   ShopifyCustomerLink: ShopifyCustomerLink;
   ShopifyMerchOrder: ShopifyMerchOrder;
+  Storyline: Storyline;
+  StorylineBranchChoice: StorylineBranchChoice;
+  StorylineChapter: StorylineChapter;
+  StorylineChapterEdge: StorylineChapterEdge;
+  StorylineCollaborator: StorylineCollaborator;
+  StorylineCreateClick: StorylineCreateClick;
+  StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylineReport: StorylineReport;
   Tag: Tag;
   TagEngagement: TagEngagement;
   TagMetric: TagMetric;

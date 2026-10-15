@@ -27,6 +27,13 @@ import {
   setStickerCommentHiddenSchema,
   submitToRemixGallerySchema,
   suspendPlacerSchema,
+  actOnStorylineContinuationSchema,
+  setStorylineSpaceSchema,
+  storylineContinuationCursorSchema,
+  storylineContinuePriceSchema,
+  storylineIdSchema,
+  storylinePlacementIdSchema,
+  submitStorylineContinuationSchema,
 } from '~/server/schema/placement.schema';
 import {
   getFreePlacementAllowance,
@@ -84,6 +91,18 @@ import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/browsing-level';
 import type { PlacementSurface } from '~/shared/utils/placement';
+import {
+  actOnStorylineContinuation,
+  createStorylinePlacement,
+  getMyStorylineContinuations,
+  getPendingStorylineContinuations,
+  getStorylineContinuePrice,
+  getStorylineSpace,
+  retractStorylineContinuation,
+  setStorylineSpace,
+} from '~/server/services/storyline-placement.service';
+import { rateLimit } from '~/server/middleware.trpc';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { isPromotionSurface } from '~/shared/utils/promotion';
 import { assertPromotionsEnabled } from '~/server/utils/promotion-gate';
 import type { Context } from '~/server/createContext';
@@ -129,6 +148,7 @@ function assertRemixGalleryEnabled(ctx: Context) {
  * everywhere except the one endpoint that turns it on.
  */
 function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
+  assertSurfaceRouted(surface);
   if (surface === 'remixGallery') return assertRemixGalleryEnabled(ctx);
   if (isPromotionSurface(surface)) return assertPromotionsEnabled(ctx);
   return assertPlacementEnabled(ctx);
@@ -136,8 +156,31 @@ function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
 
 /** Reads of a space are open for stickers and remixes; a promotion space is not. */
 function assertPromotionSurfaceReadable(ctx: Context, surface: PlacementSurface) {
+  assertSurfaceRouted(surface);
   if (isPromotionSurface(surface)) assertPromotionsEnabled(ctx);
 }
+
+/**
+ * Storyline spaces are reached only through the storyline procedures below, which
+ * run the feature flag and the chapter check. Left unrouted here, the surface
+ * would fall through to the sticker flags above, and a storyline space opens at
+ * price 0 by default.
+ */
+function assertSurfaceRouted(surface: PlacementSurface) {
+  if (surface === 'storyline') throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
+}
+
+/**
+ * The storyline procedures' gate. Applied to everything but the owner's answer
+ * and the contributor's retraction, which stay open so turning the flag off
+ * traps nobody.
+ */
+function assertStorylinesEnabled(ctx: Context) {
+  if (!ctx.features.storylines) throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
+}
+
+/** Per placer. Well above an honest pace, well below a script's. */
+export const STORYLINE_SUBMIT_RATE_LIMIT = { limit: 30, period: 3600 } as const;
 
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
@@ -540,5 +583,100 @@ export const placementRouter = router({
         domainLevels: domainServableLevels(ctx),
         viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
       })
+    ),
+
+  // -------------------------------------------------------------------------
+  // Storyline continuations
+  //
+  // Their own procedures rather than the shared space endpoints, which still
+  // refuse the surface (`assertSurfaceRouted`): a storyline space is keyed on a
+  // storyline and opens at price 0 by default, and every route that reaches it
+  // runs the chapter check first.
+  // -------------------------------------------------------------------------
+
+  getStorylineSpace: protectedProcedure.input(storylineIdSchema).query(({ input, ctx }) => {
+    assertStorylinesEnabled(ctx);
+    return getStorylineSpace({ storylineId: input.storylineId, userId: ctx.user.id });
+  }),
+
+  setStorylineSpace: protectedProcedure
+    .input(setStorylineSpaceSchema)
+    .mutation(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return setStorylineSpace({ ...input, userId: ctx.user.id });
+    }),
+
+  getStorylineContinuePrice: publicProcedure
+    .input(storylineContinuePriceSchema)
+    .query(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return getStorylineContinuePrice({
+        parentPostId: input.parentPostId,
+        viewerId: ctx.user?.id,
+      });
+    }),
+
+  getPendingStorylineContinuations: protectedProcedure
+    .input(storylineContinuationCursorSchema)
+    .query(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return getPendingStorylineContinuations({
+        ownerId: ctx.user.id,
+        cursor: input.cursor,
+        domainLevels: domainServableLevels(ctx),
+      });
+    }),
+
+  /**
+   * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag
+   * off must not leave a creator holding continuations with no way to answer
+   * them. Ownership is enforced in the service.
+   */
+  actOnStorylineContinuation: protectedProcedure
+    .input(actOnStorylineContinuationSchema)
+    .mutation(({ input, ctx }) =>
+      actOnStorylineContinuation({
+        placementId: input.placementId,
+        ownerId: ctx.user.id,
+        action: input.action,
+      })
+    ),
+
+  /**
+   * `guardedProcedure` for the same reason `createSticker` is, and rate-limited
+   * because a zero-priced continuation costs the placer nothing: the pending
+   * cap bounds one placer per creator, not one placer across many.
+   */
+  submitStorylineContinuation: guardedProcedure
+    .use(
+      rateLimit({
+        limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
+        period: STORYLINE_SUBMIT_RATE_LIMIT.period,
+        errorMessage: 'storyline: too many continuations, try again later',
+      })
+    )
+    .input(submitStorylineContinuationSchema)
+    .mutation(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return createStorylinePlacement({
+        ...input,
+        // From the session, never the input, as on every other create.
+        placerId: ctx.user.id,
+        spendType: domainSpendType(ctx.features),
+      });
+    }),
+
+  getMyStorylineContinuations: protectedProcedure
+    .input(storylineContinuationCursorSchema)
+    .query(({ input, ctx }) => {
+      assertStorylinesEnabled(ctx);
+      return getMyStorylineContinuations({ placerId: ctx.user.id, cursor: input.cursor });
+    }),
+
+  // Ungated: a contributor must be able to get their Buzz back whatever the flag says.
+  retractStorylineContinuation: protectedProcedure
+    .input(storylinePlacementIdSchema)
+    .mutation(({ input, ctx }) =>
+      retractStorylineContinuation({ placementId: input.placementId, placerId: ctx.user.id })
     ),
 });

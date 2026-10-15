@@ -24,6 +24,11 @@ import { denied } from '$lib/permissions';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
+import {
+  getReportedStorylines,
+  getReportStorylineId,
+  setStorylineTakedown,
+} from '$lib/server/storyline-takedown.service';
 import { canAccess } from '$lib/server/access';
 import {
   getMergePermissionChecks,
@@ -90,6 +95,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
           getMergePermissionChecks(data.items),
         ])
       : [[], [], {} as Record<number, MergePermissionCheck>];
+  const storylines = type === 'storyline' ? await getReportedStorylines(entityIds) : [];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
@@ -117,6 +123,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     ownerFlaggedMinor,
     models,
     mergePermission,
+    storylines,
     ...data,
   };
 };
@@ -229,6 +236,73 @@ export const actions: Actions = {
     if (!result.ok)
       return fail(410, { error: `Delisted${forks}, but ${result.error}`, gone: true });
     return { success: true, delisted: `Delisted${forks}` };
+  },
+
+  /**
+   * Takes the reported storyline down, then sets the report Actioned (which pays the reporters).
+   * Held as a moderator's takedown, so a clean rescan of its title cannot lift it. Already down by
+   * a moderator still actions the report: the content it is about is down.
+   */
+  takeDownStoryline: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const storyline = await setStorylineTakedown({
+      storylineId,
+      takenDown: true,
+      moderatorId: locals.user.id,
+    });
+    if (!storyline) return fail(410, { error: 'That storyline no longer exists.', gone: true });
+
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Actioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(410, { error: `Taken down, but ${result.error}`, gone: true });
+    return {
+      success: true,
+      storylineTakedown: storyline.changed ? 'Taken down' : 'Already taken down',
+    };
+  },
+
+  /**
+   * Lifts a moderator's takedown. The report's status is left as it is. A takedown the title scan
+   * holds is not lifted here, so the storyline can stay down, and the moderator is told so.
+   */
+  restoreStoryline: async ({ request, locals, params }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const storyline = await setStorylineTakedown({
+      storylineId,
+      takenDown: false,
+      moderatorId: locals.user.id,
+    });
+    if (!storyline) return fail(410, { error: 'That storyline no longer exists.', gone: true });
+    return {
+      success: true,
+      storylineTakedown: !storyline.changed
+        ? 'Nothing to restore'
+        : storyline.tosViolation
+        ? 'Restored, but its title scan still keeps it down'
+        : 'Restored',
+    };
   },
 
   /**

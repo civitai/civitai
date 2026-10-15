@@ -96,6 +96,12 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     table: 'Crucible',
     ownerColumn: 'userId',
   },
+  storyline: {
+    reportTable: 'StorylineReport',
+    fk: 'storylineId',
+    table: 'Storyline',
+    ownerColumn: 'userId',
+  },
   challenge: {
     reportTable: 'ChallengeReport',
     fk: 'challengeId',

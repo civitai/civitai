@@ -2,6 +2,7 @@ import type { IconProps } from '@tabler/icons-react';
 import {
   IconBook,
   IconBookmark,
+  IconBooks,
   IconCalendar,
   IconCategory,
   IconCloudLock,
@@ -37,6 +38,7 @@ export const navIcons: Record<NavKey, (props: IconProps) => JSX.Element> = {
   posts: (props) => <IconLayoutList {...props} />,
   articles: (props) => <IconFileText {...props} />,
   comics: (props) => <IconBook {...props} />,
+  storylines: (props) => <IconBooks {...props} />,
   bounties: (props) => <IconMoneybag {...props} />,
   challenges: (props) => <IconTrophy {...props} />,
   crucibles: (props) => <IconSwords {...props} />,

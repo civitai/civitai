@@ -254,6 +254,10 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
+export type StorylineStatus = "Ongoing" | "Complete";
+
+export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
+
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
@@ -691,6 +695,11 @@ export interface User {
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];
   comicChapterReads?: ComicChapterRead[];
+  storylines?: Storyline[];
+  storylineCollaborations?: StorylineCollaborator[];
+  storylineEarlyAccess?: StorylineEarlyAccessSignup | null;
+  storylineBranchChoices?: StorylineBranchChoice[];
+  storylineCreateClicks?: StorylineCreateClick[];
   blockUserSettings?: BlockUserSettings[];
   promotedPlatformBlocks?: PlatformDefaultBlock[];
   blockUserSubscriptions?: BlockUserSubscription[];
@@ -1361,6 +1370,7 @@ export interface Report {
   bountyEntry?: BountyEntryReport | null;
   chat?: ChatReport | null;
   comicProject?: ComicProjectReport | null;
+  storyline?: StorylineReport | null;
   automated?: ReportAutomated | null;
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
@@ -1570,6 +1580,7 @@ export interface Post {
   tagVotes?: TagsOnPostVote[];
   reports?: PostReport[];
   collectionItems?: CollectionItem[];
+  storylineChapter?: StorylineChapter | null;
 }
 
 export interface PostMetric {
@@ -1674,6 +1685,8 @@ export interface Image {
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
+  storylineCovers?: Storyline[];
+  storylineHeroes?: Storyline[];
 }
 
 export interface ImageTagForReview {
@@ -6077,6 +6090,102 @@ export interface PlacementSuspension {
   reason: string | null;
   createdAt: Date;
   createdById: number | null;
+}
+
+export interface Storyline {
+  id: number;
+  userId: number;
+  user?: User;
+  title: string;
+  status: StorylineStatus;
+  whoCanContinue: StorylineWhoCanContinue;
+  maxNsfwLevel: number;
+  tosViolation: boolean;
+  tosViolationByScan: boolean;
+  tosViolationByModerator: boolean;
+  minorByScan: boolean;
+  scanFlagLiftedTextHash: string | null;
+  nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  coverImageId: number | null;
+  coverImage?: Image | null;
+  heroImageId: number | null;
+  heroImage?: Image | null;
+  heroImagePosition: number;
+  chapters?: StorylineChapter[];
+  collaborators?: StorylineCollaborator[];
+  reports?: StorylineReport[];
+}
+
+export interface StorylineChapter {
+  id: number;
+  storylineId: number;
+  storyline?: Storyline;
+  postId: number | null;
+  post?: Post | null;
+  userId: number;
+  depth: number;
+  placementId: number | null;
+  createdAt: Date;
+  removedAt: Date | null;
+  parents?: StorylineChapterEdge[];
+  children?: StorylineChapterEdge[];
+  branchChoicesFrom?: StorylineBranchChoice[];
+  branchChoicesTo?: StorylineBranchChoice[];
+  createClicks?: StorylineCreateClick[];
+}
+
+export interface StorylineChapterEdge {
+  storylineId: number;
+  chapterId: number;
+  chapter?: StorylineChapter;
+  parentChapterId: number;
+  parentChapter?: StorylineChapter;
+  canon: boolean;
+  createdAt: Date;
+}
+
+export interface StorylineCollaborator {
+  storylineId: number;
+  storyline?: Storyline;
+  userId: number;
+  user?: User;
+  createdAt: Date;
+}
+
+export interface StorylineBranchChoice {
+  userId: number;
+  user?: User;
+  parentChapterId: number;
+  parentChapter?: StorylineChapter;
+  chapterId: number;
+  chapter?: StorylineChapter;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StorylineCreateClick {
+  userId: number;
+  user?: User;
+  parentChapterId: number;
+  parentChapter?: StorylineChapter;
+  createdAt: Date;
+}
+
+export interface StorylineEarlyAccessSignup {
+  userId: number;
+  user?: User;
+  storylineId: number | null;
+  createdAt: Date;
+}
+
+export interface StorylineReport {
+  storylineId: number;
+  storyline?: Storyline;
+  reportId: number;
+  report?: Report;
 }
 
 export interface ServiceOffering {

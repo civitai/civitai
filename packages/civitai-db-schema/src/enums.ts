@@ -1254,6 +1254,21 @@ export const OutboxEntity = {
 
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
 
+export const StorylineStatus = {
+  Ongoing: 'Ongoing',
+  Complete: 'Complete',
+} as const;
+
+export type StorylineStatus = (typeof StorylineStatus)[keyof typeof StorylineStatus];
+
+export const StorylineWhoCanContinue = {
+  Anyone: 'Anyone',
+  Collaborators: 'Collaborators',
+} as const;
+
+export type StorylineWhoCanContinue =
+  (typeof StorylineWhoCanContinue)[keyof typeof StorylineWhoCanContinue];
+
 export const ServiceOfferingStatus = {
   Draft: 'Draft',
   Active: 'Active',

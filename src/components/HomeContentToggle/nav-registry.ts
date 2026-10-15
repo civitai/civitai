@@ -92,6 +92,12 @@ export const navRegistry: NavRegistryEntry[] = [
     new: new Date('2026-03-01'),
   },
   {
+    key: 'storylines',
+    url: '/storylines',
+    defaultGroup: 'more',
+    visible: (ctx) => ctx.features.storylines,
+  },
+  {
     key: 'bounties',
     url: '/bounties',
     defaultGroup: 'more',

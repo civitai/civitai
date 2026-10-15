@@ -642,6 +642,16 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId: id', 'imageId: id'],
     decision: 'subject',
   },
+  // The owner's cover and banner picks: from this storyline's own chapters by the owner or an
+  // endorsed collaborator, refused otherwise. A pick sent back unchanged is not judged again.
+  'src/server/services/storyline.service.ts#updateStoryline': {
+    writes: ['coverImageId', 'heroImageId'],
+    decision: 'owner-checked',
+    guards: {
+      coverImageId: 'await assertStorylinePicks(dbWrite, {',
+      heroImageId: 'await assertStorylinePicks(dbWrite, {',
+    },
+  },
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],
     decision: 'subject',
