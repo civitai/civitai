@@ -129,11 +129,21 @@ async function redetectionUpdate({
   const compare = match === 'equal' ? Prisma.sql`=` : Prisma.sql`IS DISTINCT FROM`;
   const changed = await dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
-      ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
-        ${labelLiteral(label)}, ${entry} - 'redetected'
+    SET meta = CASE
+      -- Nothing else on the entry: remove it (and the flags object with it) rather than leave {}.
+      WHEN ${entry} - 'redetected' = '{}'::jsonb THEN
+        CASE WHEN (m.meta->${TEXT_SCAN_FLAGS_KEY}) - ${labelLiteral(label)} = '{}'::jsonb
+          THEN m.meta - ${TEXT_SCAN_FLAGS_KEY}
+          ELSE m.meta || jsonb_build_object(
+            ${TEXT_SCAN_FLAGS_KEY}, (m.meta->${TEXT_SCAN_FLAGS_KEY}) - ${labelLiteral(label)}
+          )
+        END
+      ELSE m.meta || jsonb_build_object(
+        ${TEXT_SCAN_FLAGS_KEY}, m.meta->${TEXT_SCAN_FLAGS_KEY} || jsonb_build_object(
+          ${labelLiteral(label)}, ${entry} - 'redetected'
+        )
       )
-    )
+    END
     WHERE m.id = ${modelId}
       AND ${entry} ? 'redetected'
       AND ${entry}->'redetected'->>'textHash' ${compare} ${textHash}

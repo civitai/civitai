@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { randomUUID } from 'node:crypto';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -57,6 +58,8 @@ const stale = () =>
   throwBadRequestError('This re-detection changed or was already resolved. Reload the queue.');
 
 const LOCK_SECONDS = 120;
+const RELEASE_IF_HELD =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 const lockKey = (modelId: number, label: TextScanFlagLabel) =>
   `${REDIS_SYS_KEYS.TEXT_SCAN.REDETECTION_LOCK}:${modelId}:${label}` as const;
 
@@ -69,8 +72,10 @@ async function withResolutionLock<T>(
   run: () => Promise<T>
 ): Promise<T> {
   const key = lockKey(modelId, label);
+  // Per request, so a slow request whose lock expired cannot free the one a newer request now holds.
+  const token = randomUUID();
   const acquired = await sysRedis
-    .set(key, '1', { NX: true, EX: LOCK_SECONDS })
+    .set(key, token, { NX: true, EX: LOCK_SECONDS })
     .then((reply) => !!reply)
     .catch(() => true);
   if (!acquired)
@@ -78,7 +83,7 @@ async function withResolutionLock<T>(
   try {
     return await run();
   } finally {
-    await sysRedis.del(key).catch(() => null);
+    await sysRedis.eval(RELEASE_IF_HELD, { keys: [key], arguments: [token] }).catch(() => null);
   }
 }
 

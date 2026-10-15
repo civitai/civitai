@@ -2475,6 +2475,29 @@ function minorFlagSource(activity: ModelMinorActivity | undefined): MinorFlagSna
   return 'manual';
 }
 
+// An earlier attempt set the flag but died before propagating it, so the row already reads as flagged
+// and diffing against it would skip the gallery, search and image work. The flag snapshot holds the
+// state from before the flag, which is what that work has to be diffed against.
+async function priorStateForReapply<
+  T extends { minor: boolean; sfwOnly: boolean; nsfw: boolean; gallerySettings: Prisma.JsonValue }
+>(id: number, minor: boolean, before: T): Promise<T> {
+  const row = await dbWrite.model.findUnique({ where: { id }, select: { meta: true } });
+  const snapshot = (row?.meta as ModelMeta | null)?.minorFlagSnapshot;
+  const gallery = (before.gallerySettings ?? {}) as Record<string, unknown>;
+  return {
+    ...before,
+    minor: !minor,
+    ...(snapshot && {
+      sfwOnly: snapshot.prevSfwOnly ?? before.sfwOnly,
+      nsfw: snapshot.prevNsfw ?? before.nsfw,
+      gallerySettings: {
+        ...gallery,
+        level: snapshot.prevGalleryLevel ?? undefined,
+      } as Prisma.JsonValue,
+    }),
+  };
+}
+
 export async function setModelMinor({
   id,
   minor,
@@ -2602,7 +2625,7 @@ export async function setModelMinor({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({
-    before: reapplySideEffects ? { ...before, minor: !minor } : before,
+    before: reapplySideEffects ? await priorStateForReapply(id, minor, before) : before,
     after: result,
   });
   if (!minor && result.poi) await reassertModelPoiRestrictions(id);

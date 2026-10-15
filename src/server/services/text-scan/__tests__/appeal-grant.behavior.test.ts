@@ -228,6 +228,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockSetModelMinor.mockReset();
   mockSideEffects.mockReset();
+  redisMock.sysRedis.eval.mockResolvedValue(1 as never);
   searchMode.value = 'off';
 });
 
@@ -773,21 +774,64 @@ describe('resolution safety', () => {
     expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(NEWER);
   });
 
-  it('takes a per-model, per-label lock and releases it, even when the ruling fails', async () => {
+  it('takes a per-request token lock per model and label and releases only its own token', async () => {
     await setup();
     await resolve('minor', false);
-    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
-      `system:text-scan:redetection-lock:${MODEL_ID}:minor`,
-      '1',
-      { NX: true, EX: 120 }
-    );
-    expect(redisMock.sysRedis.del).toHaveBeenCalledWith(
-      `system:text-scan:redetection-lock:${MODEL_ID}:minor`
-    );
 
-    redisMock.sysRedis.del.mockClear();
+    const key = `system:text-scan:redetection-lock:${MODEL_ID}:minor`;
+    const [setKey, token, options] = redisMock.sysRedis.set.mock.calls[0] as unknown as [
+      string,
+      string,
+      unknown
+    ];
+    expect(setKey).toBe(key);
+    expect(options).toEqual({ NX: true, EX: 120 });
+    expect(token).not.toBe('1');
+    // Compare-and-delete: the script frees the key only while it still holds this request's token.
+    const [script, args] = redisMock.sysRedis.eval.mock.calls[0] as unknown as [
+      string,
+      { keys: string[]; arguments: string[] }
+    ];
+    expect(script).toContain("GET', KEYS[1]) == ARGV[1]");
+    expect(args).toEqual({ keys: [key], arguments: [token] });
+    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+
+    // A second request holds a different token, so it never releases the first's.
+    redisMock.sysRedis.set.mockClear();
+    redisMock.sysRedis.eval.mockClear();
     await expect(resolve('minor', false)).rejects.toThrow();
-    expect(redisMock.sysRedis.del).toHaveBeenCalledTimes(1);
+    const secondToken = (redisMock.sysRedis.set.mock.calls[0] as unknown as string[])[1];
+    expect(secondToken).not.toBe(token);
+    expect(redisMock.sysRedis.eval).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes an emptied label entry and the flags object when dismissing on a flagged model', async () => {
+    await seed({ minor: true });
+    const marker = { workflowId: 'w', reason: 'r', textHash: NEWER };
+    const setMeta = (meta: unknown) =>
+      holder.db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = $2`, [
+        JSON.stringify(meta),
+        MODEL_ID,
+      ]);
+
+    await setMeta({ textScanFlags: { minor: { redetected: marker } } });
+    expect(await resolve('minor', false)).toBe('closed');
+    expect(
+      (await holder.db.query(`SELECT meta FROM "Model" WHERE id = $1`, [MODEL_ID])).rows[0]
+    ).toEqual({
+      meta: {},
+    });
+
+    await setMeta({
+      textScanFlags: {
+        minor: { redetected: marker },
+        poi: { workflowId: 'p', textHash: 'x' },
+      },
+    });
+    await resolve('minor', false);
+    expect((await stored()).meta.textScanFlags).toEqual({
+      poi: { workflowId: 'p', textHash: 'x' },
+    });
   });
 
   it.each([
