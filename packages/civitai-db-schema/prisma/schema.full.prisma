@@ -1114,9 +1114,34 @@ model Model {
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
   coveredCheckpoints CoveredCheckpoint[]
+  permissionSnapshots ModelPermissionSnapshot[]
 
   @@index([name])
   @@index([status, nsfw])
+}
+
+/// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
+/// be judged by the permission in effect when it was made rather than by today's. Before a model's
+/// first row nothing is known; a model with no rows has held its current permissions since
+/// `max(createdAt, MODEL_PERMISSION_LOG_START)`.
+///
+/// `source`: 'live' (written by upsertModel in the same transaction as the change), 'baseline' (the
+/// state just before a model's first recorded change, dated to the start of what is known) or
+/// 'backfill' (rebuilt from the ClickHouse entity-change log, which begins 2026-07-30).
+model ModelPermissionSnapshot {
+  id                    Int             @id @default(autoincrement())
+  modelId               Int
+  model                 Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  effectiveAt           DateTime        @default(now())
+  source                String
+  actorUserId           Int?
+  actorRole             String?
+  allowNoCredit         Boolean
+  allowCommercialUse    CommercialUse[]
+  allowDerivatives      Boolean
+  allowDifferentLicense Boolean
+
+  @@index([modelId, effectiveAt])
 }
 
 enum ModelFlagStatus {

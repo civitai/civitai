@@ -202,6 +202,11 @@ import {
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
+  buildPermissionSnapshots,
+  permissionsChanged,
+  writesPermissions,
+} from '~/server/utils/model-permission-snapshot';
+import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
   RESTORE_CANNOT_PROMOTE_KEY,
@@ -3134,6 +3139,20 @@ export const upsertModel = async (
         // unchanged", skipping the repair below on exactly the save that needed it.
         typeBeforeUpdate = (await tx.model.findUnique({ where: { id }, select: { type: true } }))
           ?.type;
+        // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
+        // transaction replaces. Only for a save that sends permissions at all.
+        const storedPermissions = writesPermissions(data)
+          ? await tx.model.findUnique({
+              where: { id },
+              select: {
+                createdAt: true,
+                allowNoCredit: true,
+                allowCommercialUse: true,
+                allowDerivatives: true,
+                allowDifferentLicense: true,
+              },
+            })
+          : null;
 
         const updated = await tx.model.update({
           select: {
@@ -3186,6 +3205,27 @@ export const upsertModel = async (
               : undefined,
           },
         });
+
+        // In the transaction, so a permission change cannot land without the record mods judge merges by.
+        if (storedPermissions && permissionsChanged(storedPermissions, data)) {
+          const snapshots = buildPermissionSnapshots({
+            modelId: updated.id,
+            modelCreatedAt: storedPermissions.createdAt,
+            before: storedPermissions,
+            data,
+            hasSnapshots: !!(await tx.modelPermissionSnapshot.findFirst({
+              where: { modelId: updated.id },
+              select: { id: true },
+            })),
+            actorUserId: userId,
+            actorRole: resolveActorRole({
+              actorUserId: userId,
+              ownerId: beforeUpdate.userId,
+              isModerator,
+            }),
+          });
+          if (snapshots.length) await tx.modelPermissionSnapshot.createMany({ data: snapshots });
+        }
 
         // The same lineage rule `upsertModelVersionHandler` coerces on a version write, applied to
         // the other write that can break the pairing: the model's type (CU 868kwf2fd).
