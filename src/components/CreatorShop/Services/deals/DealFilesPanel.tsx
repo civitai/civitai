@@ -11,16 +11,16 @@ import {
   Text,
 } from '@mantine/core';
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
-  buyerFinalsState,
+  buyerRoundFinalsState,
   filesByRound,
+  filesPollMs,
   finalsCopy,
-  isPreparingPreviews,
   sellerFileStatus,
   serviceDealDownloadHref,
-  uploadRefusal,
+  sortPicked,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
@@ -33,16 +33,13 @@ import { trpc } from '~/utils/trpc';
 
 type DealFile = RouterOutput['creatorServiceDealFile']['list'][number];
 
-const PREPARING_POLL_MS = 10_000;
-
 export function useServiceDealFiles(dealId: number) {
   return trpc.creatorServiceDealFile.list.useQuery(
     { dealId },
     {
       enabled: dealId > 0,
       retry: false,
-      refetchInterval: (query) =>
-        isPreparingPreviews(query.state.data ?? []) ? PREPARING_POLL_MS : false,
+      refetchInterval: (query) => filesPollMs(query.state.data ?? []),
     }
   );
 }
@@ -64,7 +61,12 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
         {deal.viewerRole === 'buyer' ? (
           <BuyerFiles deal={deal} files={files} />
         ) : (
-          <PartyFiles files={files} canDelete={canUpload} currentRound={deal.revisionsUsed} />
+          <PartyFiles
+            dealId={deal.id}
+            files={files}
+            canEdit={canUpload}
+            currentRound={deal.revisionsUsed}
+          />
         )}
       </Stack>
     </Paper>
@@ -73,7 +75,11 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
 
 function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFile[] }) {
   const utils = trpc.useUtils();
-  const [busy, setBusy] = useState<string[]>([]);
+  // Keyed per upload, not by name: two picks of the same name must not clear each other.
+  const [busy, setBusy] = useState<{ key: number; name: string }[]>([]);
+  const nextKey = useRef(0);
+  const resetPreview = useRef<() => void>(null);
+  const resetFinal = useRef<() => void>(null);
   const requestUpload = trpc.creatorServiceDealFile.requestUpload.useMutation();
   const completeUpload = trpc.creatorServiceDealFile.completeUpload.useMutation();
   const refreshFiles = () => utils.creatorServiceDealFile.list.invalidate({ dealId: deal.id });
@@ -91,14 +97,26 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
 
   const round = deal.revisionsUsed;
   const upload = async (kind: ServiceDealFileKind, picked: File[]) => {
+    // So the same file can be picked again after a failed attempt.
+    (kind === 'Preview' ? resetPreview : resetFinal).current?.();
     const slots = uploadSlotsLeft(kind, deal.previewKind, files, round);
-    for (const file of picked.slice(0, slots)) {
-      const refusal = uploadRefusal(kind, file);
-      if (refusal) {
-        showErrorNotification({ title: `Can't upload ${file.name}`, error: { message: refusal } });
-        continue;
-      }
-      setBusy((names) => [...names, file.name]);
+    const { send, refused, overflow } = sortPicked(kind, picked, slots);
+    for (const { name, reason } of refused)
+      showErrorNotification({ title: `Can't upload ${name}`, error: { message: reason } });
+    if (overflow > 0)
+      showErrorNotification({
+        title: 'Too many files',
+        error: {
+          message: `${overflow} ${
+            overflow === 1 ? 'file was' : 'files were'
+          } left out: only ${slots} more ${kind === 'Preview' ? 'preview' : 'file'}${
+            slots === 1 ? '' : 's'
+          } fit.`,
+        },
+      });
+    for (const file of send) {
+      const key = nextKey.current++;
+      setBusy((items) => [...items, { key, name: file.name }]);
       try {
         const mimeType = file.type || 'application/octet-stream';
         const { fileId, uploadUrl } = await requestUpload.mutateAsync({
@@ -121,15 +139,10 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
           error: error instanceof Error ? error : { message: String(error) },
         });
       } finally {
-        setBusy((names) => names.filter((name) => name !== file.name));
+        setBusy((items) => items.filter((item) => item.key !== key));
         await refreshFiles();
       }
     }
-    if (picked.length > slots)
-      showErrorNotification({
-        title: 'Too many files',
-        error: { message: `Only ${slots} more ${kind === 'Preview' ? 'preview' : 'file'} fit.` },
-      });
   };
 
   const previewSlots = uploadSlotsLeft('Preview', deal.previewKind, files, round);
@@ -147,6 +160,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
         {takesPreview && (
           <FileButton
             onChange={(picked) => upload('Preview', picked)}
+            resetRef={resetPreview}
             accept="image/jpeg,image/png,image/webp,image/gif"
             multiple
           >
@@ -162,7 +176,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
             )}
           </FileButton>
         )}
-        <FileButton onChange={(picked) => upload('Final', picked)} multiple>
+        <FileButton onChange={(picked) => upload('Final', picked)} resetRef={resetFinal} multiple>
           {(props) => (
             <Button
               {...props}
@@ -185,7 +199,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
       </Group>
       {busy.length > 0 && (
         <Text size="sm" c="dimmed">
-          Uploading {busy.join(', ')}…
+          Uploading {busy.map((item) => item.name).join(', ')}…
         </Text>
       )}
     </Stack>
@@ -194,18 +208,27 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
 
 /** The seller's and a moderator's view: every file, its state, and its download. */
 function PartyFiles({
+  dealId,
   files,
-  canDelete,
+  canEdit,
   currentRound,
 }: {
+  dealId: number;
   files: DealFile[];
-  canDelete: boolean;
+  canEdit: boolean;
   currentRound: number;
 }) {
   const utils = trpc.useUtils();
+  const refresh = () => utils.creatorServiceDealFile.list.invalidate({ dealId });
   const deleteFile = trpc.creatorServiceDealFile.deleteFile.useMutation({
-    onSuccess: () => utils.creatorServiceDealFile.list.invalidate(),
+    onSuccess: refresh,
     onError: (error) => showErrorNotification({ title: 'Could not remove the file', error }),
+  });
+  // An upload whose check failed ("try again in a moment") stays Uploading; this re-runs the check
+  // instead of making the seller send the file again.
+  const completeUpload = trpc.creatorServiceDealFile.completeUpload.useMutation({
+    onSuccess: refresh,
+    onError: (error) => showErrorNotification({ title: 'Upload not finished', error }),
   });
 
   return (
@@ -240,7 +263,19 @@ function PartyFiles({
                         <IconDownload size={16} />
                       </Anchor>
                     )}
-                    {canDelete && round === currentRound && (
+                    {canEdit && round === currentRound && file.status === 'Uploading' && (
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        loading={
+                          completeUpload.isPending && completeUpload.variables?.fileId === file.id
+                        }
+                        onClick={() => completeUpload.mutate({ fileId: file.id })}
+                      >
+                        Check upload
+                      </Button>
+                    )}
+                    {canEdit && round === currentRound && (
                       <Button
                         size="compact-xs"
                         variant="subtle"
@@ -272,7 +307,6 @@ function PartyFiles({
 
 /** The buyer sees ready, watermarked previews, and final files only as the server unlocks them. */
 function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] }) {
-  const owned = deal.status === 'Completed' || (deal.status === 'Disputed' && !!deal.completedAt);
   if (files.length === 0)
     return (
       <Text size="sm" c="dimmed">
@@ -285,8 +319,7 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
       {filesByRound(files).map(({ round, files: roundFiles }) => {
         const previews = roundFiles.filter((file) => file.kind === 'Preview' && file.previewUrl);
         const finals = roundFiles.filter((file) => file.kind === 'Final');
-        // Only the latest delivery's files can ever unlock; earlier rounds were sent back.
-        const state = round === deal.revisionsUsed ? buyerFinalsState(finals, { owned }) : null;
+        const state = buyerRoundFinalsState(deal, round, finals);
         return (
           <Stack key={round} gap="xs">
             <Text size="sm" fw={600}>

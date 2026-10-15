@@ -68,11 +68,48 @@ export function uploadSlotsLeft(
 }
 
 /**
- * Re-read the list while a preview is being prepared. Not while one is Uploading: an upload the
- * seller abandoned stays Uploading, and the uploader refreshes the list itself when it finishes.
+ * The files the seller picked, split into what to send, what is refused and why, and how many
+ * did not fit. Refused files are set aside first, so a bad pick never takes a good one's slot.
  */
-export const isPreparingPreviews = (files: DealFileFacts[]) =>
-  files.some((file) => file.kind === 'Preview' && file.status === 'Processing');
+export function sortPicked<T extends { name: string; type: string; size: number }>(
+  kind: ServiceDealFileKind,
+  picked: T[],
+  slots: number
+) {
+  const refused: { name: string; reason: string }[] = [];
+  const valid: T[] = [];
+  for (const file of picked) {
+    const reason = uploadRefusal(kind, file);
+    if (reason) refused.push({ name: file.name, reason });
+    else valid.push(file);
+  }
+  return {
+    send: valid.slice(0, slots),
+    refused,
+    overflow: Math.max(0, valid.length - slots),
+  };
+}
+
+const PREVIEW_POLL_MS = 10_000;
+const SCAN_POLL_MS = 30_000;
+
+/**
+ * How often to re-read the list, or false. While a preview is being prepared, and while a final
+ * waits for its check (which decides whether the buyer may accept and download). Not for an
+ * Uploading file: an upload the seller abandoned stays Uploading, and the uploader refreshes the
+ * list itself when one finishes.
+ */
+export function filesPollMs(files: DealFileFacts[]) {
+  if (files.some((file) => file.kind === 'Preview' && file.status === 'Processing'))
+    return PREVIEW_POLL_MS;
+  if (
+    files.some(
+      (file) => file.kind === 'Final' && file.status === 'Ready' && file.scanStatus === 'Pending'
+    )
+  )
+    return SCAN_POLL_MS;
+  return false;
+}
 
 export function filesByRound<T extends { round: number }>(files: T[]) {
   const rounds = new Map<number, T[]>();
@@ -102,6 +139,26 @@ export function buyerFinalsState(
   return owned ? 'checkingOwned' : 'sealed';
 }
 
+/** The buyer owns a deal's final files once it completed, and still does while disputed after. */
+export const buyerOwnsFinals = (deal: { status: ServiceDealStatus; completedAt: Date | null }) =>
+  deal.status === 'Completed' || (deal.status === 'Disputed' && deal.completedAt !== null);
+
+/**
+ * The state line under a round's files on the buyer's page, or null. Only the delivered round of
+ * a deal the buyer can accept, or one they own, has one: earlier rounds were sent back, and in any
+ * other status (a cancellation, a refund) nothing will unlock, so nothing promises it.
+ */
+export function buyerRoundFinalsState(
+  deal: { status: ServiceDealStatus; revisionsUsed: number; completedAt: Date | null },
+  round: number,
+  finals: DealFileFacts[]
+) {
+  if (round !== deal.revisionsUsed) return null;
+  if (deal.status === 'Delivered') return buyerFinalsState(finals, { owned: false });
+  if (buyerOwnsFinals(deal)) return buyerFinalsState(finals, { owned: true });
+  return null;
+}
+
 export const finalsCopy: Record<FinalsState, string> = {
   sealed: 'The final files unlock when you accept the delivery.',
   checking:
@@ -113,13 +170,16 @@ export const finalsCopy: Record<FinalsState, string> = {
 
 /**
  * Why Accept delivery is shown but disabled, or null. The server refuses completion until every
- * final in the round has passed its check; this says so before the buyer tries.
+ * final in the round has passed its check; this says so before the buyer tries. Disabled while
+ * the list loads, so an unchecked delivery is never one click away; if the list can't be read the
+ * button is left to the server, rather than locked with no way forward.
  */
 export function acceptDeliveryBlocked(
   deal: { status: ServiceDealStatus; revisionsUsed: number },
-  files: DealFileFacts[] | undefined
+  { files, failed }: { files: DealFileFacts[] | undefined; failed: boolean }
 ) {
-  if (deal.status !== 'Delivered' || !files) return null;
+  if (deal.status !== 'Delivered' || failed) return null;
+  if (!files) return 'Loading the delivery…';
   const finals = files.filter((file) => file.kind === 'Final' && file.round === deal.revisionsUsed);
   return finals.some((file) => file.scanStatus !== 'Passed')
     ? "Files are still being checked. You can accept once they're cleared."

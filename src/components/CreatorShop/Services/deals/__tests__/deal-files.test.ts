@@ -5,8 +5,10 @@ import {
   type DealFileFacts,
   filesByRound,
   finalsCopy,
-  isPreparingPreviews,
+  buyerRoundFinalsState,
+  filesPollMs,
   sellerFileStatus,
+  sortPicked,
   uploadRefusal,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
@@ -53,6 +55,18 @@ describe('upload checks before sending', () => {
     ).toMatch(/too large/);
   });
 
+  it('sets refused picks aside before counting slots, so a bad pick never takes a good one', () => {
+    const picked = [
+      { name: 'a.mp4', type: 'video/mp4', size: 1 },
+      { name: 'b.zip', type: 'application/zip', size: 1 },
+      { name: 'c.zip', type: 'application/zip', size: 1 },
+    ];
+    const sorted = sortPicked('Final', picked, 1);
+    expect(sorted.send.map((f) => f.name)).toEqual(['b.zip']);
+    expect(sorted.refused.map((f) => f.name)).toEqual(['a.mp4']);
+    expect(sorted.overflow).toBe(1);
+  });
+
   it('counts slots per kind in the round in progress only', () => {
     const files = [file({ kind: 'Preview', round: 0 }), file({ kind: 'Preview', round: 1 })];
     expect(uploadSlotsLeft('Preview', 'Image', files, 1)).toBe(0);
@@ -63,10 +77,18 @@ describe('upload checks before sending', () => {
 });
 
 describe('preview processing', () => {
-  it('polls while a preview is being prepared, not for an abandoned upload', () => {
-    expect(isPreparingPreviews([file({ kind: 'Preview', status: 'Processing' })])).toBe(true);
-    expect(isPreparingPreviews([file({ kind: 'Preview', status: 'Uploading' })])).toBe(false);
-    expect(isPreparingPreviews([file({ kind: 'Preview', status: 'Ready' })])).toBe(false);
+  it('polls fast while a preview is prepared, slowly while a final is checked, never for an abandoned upload', () => {
+    expect(filesPollMs([file({ kind: 'Preview', status: 'Processing' })])).toBe(10_000);
+    expect(filesPollMs([file({ kind: 'Final', status: 'Ready', scanStatus: 'Pending' })])).toBe(
+      30_000
+    );
+    expect(filesPollMs([file({ kind: 'Preview', status: 'Uploading' })])).toBe(false);
+    expect(filesPollMs([file({ kind: 'Final', status: 'Uploading', scanStatus: 'Pending' })])).toBe(
+      false
+    );
+    expect(filesPollMs([file({ kind: 'Final', status: 'Ready', scanStatus: 'Passed' })])).toBe(
+      false
+    );
   });
 
   it('tells the seller a preview is being prepared and a final is being checked, never cleared early', () => {
@@ -93,7 +115,9 @@ describe('preview processing', () => {
 
 // Decision (Creator Services P3, briony 2026-10-15): while a final's check is still pending, never
 // say the files are ready to download, and show Accept delivery disabled with the reason rather
-// than hide it. The server refuses completion until every final in the round has passed.
+// than hide it. The server refuses completion until every final in the round has passed (the
+// finals gate on acceptServiceDealDelivery and auto-complete); this is the explanation, not the
+// guard.
 describe('the buyer and the final files', () => {
   it('says "ready to download" only when the server lets every file download', () => {
     expect(
@@ -121,22 +145,39 @@ describe('the buyer and the final files', () => {
 
   it('disables Accept delivery while a final in the delivered round is unchecked', () => {
     const delivered = { status: 'Delivered' as const, revisionsUsed: 1 };
-    expect(acceptDeliveryBlocked(delivered, [file({ round: 1, scanStatus: 'Pending' })])).toMatch(
-      /still being checked/
-    );
+    const blocked = (files?: DealFileFacts[], failed = false) =>
+      acceptDeliveryBlocked(delivered, { files, failed });
+    expect(blocked([file({ round: 1, scanStatus: 'Pending' })])).toMatch(/still being checked/);
     expect(
-      acceptDeliveryBlocked(delivered, [
+      blocked([
         file({ round: 1, scanStatus: 'Passed' }),
         // A sent-back round's file does not hold up this one.
         file({ round: 0, scanStatus: 'Pending' }),
       ])
     ).toBeNull();
     expect(
-      acceptDeliveryBlocked({ status: 'Completed', revisionsUsed: 1 }, [
-        file({ round: 1, scanStatus: 'Pending' }),
-      ])
+      acceptDeliveryBlocked(
+        { status: 'Completed', revisionsUsed: 1 },
+        { files: [file({ round: 1, scanStatus: 'Pending' })], failed: false }
+      )
     ).toBeNull();
-    // Unknown is not blocked here; the server still refuses completion.
-    expect(acceptDeliveryBlocked(delivered, undefined)).toBeNull();
+    // Still loading: not one click from an unchecked delivery.
+    expect(blocked(undefined)).toMatch(/Loading/);
+    // Unreadable: left to the server rather than locked with no way forward.
+    expect(blocked(undefined, true)).toBeNull();
+  });
+
+  it('promises an unlock only on the delivered round of a deal that can still be accepted or is owned', () => {
+    const pending = [file({ round: 1, scanStatus: 'Passed' })];
+    const at = (
+      status: 'Delivered' | 'Completed' | 'Disputed' | 'CancellationRequested' | 'Cancelled',
+      completedAt: Date | null = null
+    ) => ({ status, revisionsUsed: 1, completedAt });
+    expect(buyerRoundFinalsState(at('Delivered'), 1, pending)).toBe('sealed');
+    expect(buyerRoundFinalsState(at('Delivered'), 0, pending)).toBeNull();
+    for (const status of ['CancellationRequested', 'Cancelled', 'Disputed'] as const)
+      expect(buyerRoundFinalsState(at(status), 1, pending)).toBeNull();
+    expect(buyerRoundFinalsState(at('Disputed', new Date()), 1, pending)).toBe('checkingOwned');
+    expect(buyerRoundFinalsState(at('Completed', new Date()), 1, pending)).toBe('checkingOwned');
   });
 });

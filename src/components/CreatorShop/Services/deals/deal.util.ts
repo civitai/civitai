@@ -51,6 +51,8 @@ export function useServiceDealMutations(dealId: number) {
     await Promise.all([
       utils.creatorServiceDeal.get.invalidate({ id: dealId }),
       utils.creatorServiceDeal.listMine.invalidate(),
+      // Accepting unlocks the final files, and a cancellation can hide them.
+      utils.creatorServiceDealFile.list.invalidate({ dealId }),
     ]);
   };
   const onError = async (error: TrpcishError) => {
