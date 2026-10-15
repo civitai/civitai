@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { requestServiceDealSchema } from '~/server/schema/creator-service-deal.schema';
+import {
+  declineServiceDealSchema,
+  openServiceDealDisputeSchema,
+  requestServiceDealCancellationSchema,
+  requestServiceDealSchema,
+} from '~/server/schema/creator-service-deal.schema';
 
 describe('requestServiceDealSchema', () => {
   // The price, the Buzz type and the seller come from the offering and the request's domain. A
@@ -41,5 +46,33 @@ describe('requestServiceDealSchema', () => {
         expectedDeliveryDays: 1,
       }).success
     ).toBe(true);
+  });
+});
+
+describe('exit reasons', () => {
+  const ok = (schema: { safeParse: (v: unknown) => { success: boolean } }, value: object) =>
+    schema.safeParse({ id: 1, ...value }).success;
+
+  it.each([
+    ['requestCancellation', requestServiceDealCancellationSchema, 'not_delivered'],
+    ['openDispute', openServiceDealDisputeSchema, 'not_as_previewed'],
+  ] as const)('%s takes text, a code, or both, but not neither', (_, schema, code) => {
+    expect(ok(schema, {})).toBe(false);
+    expect(ok(schema, { reason: '   ' })).toBe(false);
+    expect(ok(schema, { reason: 'why' })).toBe(true);
+    expect(ok(schema, { reasonCode: code })).toBe(true);
+    expect(ok(schema, { reason: 'why', reasonCode: code })).toBe(true);
+  });
+
+  it('keeps decline reasons optional', () => {
+    expect(ok(declineServiceDealSchema, {})).toBe(true);
+    expect(ok(declineServiceDealSchema, { reasonCode: 'too_busy' })).toBe(true);
+  });
+
+  // One list per action: a code from another action's list is refused.
+  it("refuses a code from another action's list", () => {
+    expect(ok(declineServiceDealSchema, { reasonCode: 'not_delivered' })).toBe(false);
+    expect(ok(requestServiceDealCancellationSchema, { reasonCode: 'too_busy' })).toBe(false);
+    expect(ok(openServiceDealDisputeSchema, { reasonCode: 'quality' })).toBe(false);
   });
 });

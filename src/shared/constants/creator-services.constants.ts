@@ -121,6 +121,39 @@ export const SERVICE_FINAL_EXTENSIONS = [
 export const SERVICE_PREVIEW_MAX_NSFW_LEVEL = 2;
 
 /**
+ * The structured reasons a party may give when leaving a deal, one list per action. A muted party
+ * gives only these: their free text is dropped, and a missing code becomes `other`.
+ */
+export const SERVICE_DEAL_DECLINE_REASON_CODES = [
+  'too_busy',
+  'out_of_scope',
+  'price_or_terms',
+  'other',
+] as const;
+export const SERVICE_DEAL_CANCELLATION_REASON_CODES = [
+  'not_delivered',
+  'quality',
+  'changed_mind',
+  'buyer_unresponsive',
+  'cannot_complete',
+  'other',
+] as const;
+export const SERVICE_DEAL_DISPUTE_REASON_CODES = [
+  'files_missing_or_broken',
+  'not_as_previewed',
+  'other',
+] as const;
+
+export type ServiceDealDeclineReasonCode = (typeof SERVICE_DEAL_DECLINE_REASON_CODES)[number];
+export type ServiceDealCancellationReasonCode =
+  (typeof SERVICE_DEAL_CANCELLATION_REASON_CODES)[number];
+export type ServiceDealDisputeReasonCode = (typeof SERVICE_DEAL_DISPUTE_REASON_CODES)[number];
+export type ServiceDealReasonCode =
+  | ServiceDealDeclineReasonCode
+  | ServiceDealCancellationReasonCode
+  | ServiceDealDisputeReasonCode;
+
+/**
  * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about
  * the other party or the files, so the parties never see it (see `dealVisibleReason`).
  */

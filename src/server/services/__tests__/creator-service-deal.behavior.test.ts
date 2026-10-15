@@ -89,6 +89,10 @@ const MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261025120000_creator_services_foundation/migration.sql'
 );
+const REASON_CODE_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028120000_service_deal_event_reason_code/migration.sql'
+);
 
 const SELLER = 1;
 const BUYER = 2;
@@ -199,6 +203,7 @@ beforeAll(async () => {
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -1641,7 +1646,11 @@ describe('the finals gate and dispute resolution', () => {
       dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
     ).serviceDeal.findUnique = vi.fn().mockResolvedValue(held);
 
-    const buyer = await deals.getServiceDealView({ dealId: 9, userId: BUYER });
+    const buyer = await deals.getServiceDealView({
+      dealId: 9,
+      userId: BUYER,
+      servicesEnabled: true,
+    });
     expect(buyer.dispute?.reason).toBeNull();
     expect(buyer.events.map((e) => [e.actorId, e.comment])).toEqual([
       [null, null],
@@ -1652,6 +1661,7 @@ describe('the finals gate and dispute resolution', () => {
       dealId: 9,
       userId: STRANGER,
       isModerator: true,
+      servicesEnabled: true,
     });
     expect(moderator.dispute?.reason).toBe(escrow.SELLER_UNAVAILABLE);
     expect(moderator.events[0].comment).toBe(escrow.SELLER_UNAVAILABLE);
@@ -1722,5 +1732,249 @@ describe('the finals gate and dispute resolution', () => {
       seller: { id: SELLER, unavailable: false },
     });
     expect(items[0].events.at(-1)).toMatchObject({ type: 'Disputed' });
+  });
+});
+
+// Decisions (briony, 2026-10-15): a muted party is never refused for being muted, only silenced.
+// Their free text is dropped (never scanned, never stored), any code is kept, and an action that
+// needs a reason gets `other`. The mute is read from the User row inside the transition.
+const { throwOnBlockedUserContent } = await import('~/server/services/blocklist.service');
+
+describe('reasons and reason codes', () => {
+  const scan = vi.mocked(throwOnBlockedUserContent);
+
+  const mute = (id: number, muted = true) =>
+    q(`UPDATE "User" SET muted = $2 WHERE id = $1`, [id, muted]);
+  /** The latest event a party made, past the system's own (a refund follows a decline). */
+  const lastEvent = async (id: number) =>
+    (
+      await q<{ type: string; comment: string | null; reasonCode: string | null }>(
+        `SELECT type::text, comment, "reasonCode" FROM "ServiceDealEvent"
+         WHERE "dealId" = $1 AND "actorId" <> -1 ORDER BY id DESC LIMIT 1`,
+        [id]
+      )
+    )[0];
+  const reasons = async (id: number) =>
+    (
+      await q<{ cancellationReason: string | null; disputeReason: string | null }>(
+        `SELECT "cancellationReason", "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+        [id]
+      )
+    )[0];
+  const accepted = async () => {
+    const { id } = await request();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    return id;
+  };
+  const completed = async () => {
+    const id = await accepted();
+    await deliver(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    return id;
+  };
+
+  it("stores an unmuted party's text and code, scanning the text", async () => {
+    const id = await accepted();
+    await deals.requestServiceDealCancellation({
+      dealId: id,
+      userId: BUYER,
+      reason: 'it is late',
+      reasonCode: 'not_delivered',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationRequested',
+      comment: 'it is late',
+      reasonCode: 'not_delivered',
+    });
+    expect((await reasons(id)).cancellationReason).toBe('it is late');
+    expect(scan).toHaveBeenCalledWith('it is late', expect.anything());
+  });
+
+  it("refuses an unmuted party's text the scan refuses, and moves nothing", async () => {
+    const id = await accepted();
+    scan.mockRejectedValueOnce(new Error('blocked'));
+    await expect(
+      deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'bad words' })
+    ).rejects.toThrow('blocked');
+    expect((await deal(id)).status).toBe('Accepted');
+  });
+
+  it('takes a code without text', async () => {
+    const { id } = await request();
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER, reasonCode: 'too_busy' });
+    expect(await lastEvent(id)).toEqual({
+      type: 'Declined',
+      comment: null,
+      reasonCode: 'too_busy',
+    });
+  });
+
+  it.each([
+    ['requestCancellation', () => accepted(), 'Accepted'],
+    ['openDispute', () => completed(), 'Completed'],
+  ] as const)('%s refuses no text and no code, and moves nothing', async (action, make, status) => {
+    const id = await make();
+    const leave =
+      action === 'openDispute'
+        ? deals.openServiceDealDispute({ dealId: id, userId: BUYER })
+        : deals.requestServiceDealCancellation({ dealId: id, userId: BUYER });
+    await expect(leave).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect((await deal(id)).status).toBe(status);
+  });
+
+  it("drops a muted party's cancellation text unscanned and records `other`", async () => {
+    const id = await accepted();
+    await mute(BUYER);
+    scan.mockClear();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'bad words' });
+    expect((await deal(id)).status).toBe('CancellationRequested');
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationRequested',
+      comment: null,
+      reasonCode: 'other',
+    });
+    expect((await reasons(id)).cancellationReason).toBeNull();
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it("keeps a muted party's own code", async () => {
+    const id = await accepted();
+    await mute(SELLER);
+    await deals.requestServiceDealCancellation({
+      dealId: id,
+      userId: SELLER,
+      reason: 'x',
+      reasonCode: 'buyer_unresponsive',
+    });
+    expect(await lastEvent(id)).toMatchObject({ comment: null, reasonCode: 'buyer_unresponsive' });
+  });
+
+  it("drops a muted buyer's dispute text from the event and the deal", async () => {
+    const id = await completed();
+    await mute(BUYER);
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'broken' });
+    expect((await deal(id)).status).toBe('Disputed');
+    expect(await lastEvent(id)).toEqual({ type: 'Disputed', comment: null, reasonCode: 'other' });
+    expect((await reasons(id)).disputeReason).toBeNull();
+  });
+
+  it('gives a muted decline `other` only when it said something', async () => {
+    // Requested before the mute: a muted seller takes no new requests.
+    const { id: silent } = await request();
+    const { id: spoke } = await request({ buyerId: STRANGER });
+    await mute(SELLER);
+    await deals.declineServiceDeal({ dealId: silent, userId: SELLER });
+    expect(await lastEvent(silent)).toMatchObject({ comment: null, reasonCode: null });
+
+    await deals.declineServiceDeal({ dealId: spoke, userId: SELLER, reason: 'nope' });
+    expect(await lastEvent(spoke)).toMatchObject({ comment: null, reasonCode: 'other' });
+  });
+
+  it("drops a muted party's answer to a cancellation, with no code", async () => {
+    const id = await accepted();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    await mute(SELLER);
+    await deals.respondServiceDealCancellation({
+      dealId: id,
+      userId: SELLER,
+      agree: false,
+      comment: 'no way',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationDeclined',
+      comment: null,
+      reasonCode: null,
+    });
+    // The system's own reason for the dispute is not the party's text, and stays.
+    expect((await reasons(id)).disputeReason).toBe('cancellation_declined');
+  });
+
+  // The mute is read again inside the transition, so one landing after the text was scanned wins.
+  it('drops text scanned before a mute that lands before the transition', async () => {
+    const id = await accepted();
+    scan.mockImplementationOnce(async () => {
+      await mute(BUYER);
+    });
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    expect(await lastEvent(id)).toMatchObject({ comment: null, reasonCode: 'other' });
+    expect((await reasons(id)).cancellationReason).toBeNull();
+  });
+
+  // The other way round, the text was never scanned, so it must not be stored either.
+  it('never stores the unscanned text of a party unmuted before the transition', async () => {
+    const id = await accepted();
+    await mute(BUYER);
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (
+      fn: (tx: unknown) => Promise<unknown>
+    ) => {
+      await mute(BUYER, false);
+      return holder.db.transaction((tx) => fn(bridge(tx)));
+    }) as never);
+    scan.mockClear();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'unscanned' });
+    expect(scan).not.toHaveBeenCalled();
+    expect(await lastEvent(id)).toMatchObject({ comment: null, reasonCode: 'other' });
+    expect((await reasons(id)).cancellationReason).toBeNull();
+  });
+
+  it('lists event codes in the dispute queue', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({
+      dealId: id,
+      userId: BUYER,
+      reasonCode: 'not_as_previewed',
+    });
+    const { items } = await deals.listDisputedServiceDeals({});
+    expect(items[0].events.at(-1)).toMatchObject({
+      type: 'Disputed',
+      comment: null,
+      reasonCode: 'not_as_previewed',
+    });
+  });
+
+  describe('the deal view', () => {
+    const view = (servicesEnabled: boolean, userId = BUYER) => {
+      const at = new Date();
+      (
+        dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+      ).serviceDeal.findUnique = vi.fn().mockResolvedValue({
+        id: 9,
+        buyerId: BUYER,
+        sellerId: SELLER,
+        status: 'Delivered',
+        revisionsUsed: 0,
+        revisionsIncluded: 1,
+        requestedAt: at,
+        deliveredAt: at,
+        heldAt: at,
+        events: [
+          {
+            id: 1,
+            type: 'Declined',
+            actorId: SELLER,
+            round: 0,
+            comment: null,
+            reasonCode: 'too_busy',
+            createdAt: at,
+          },
+        ],
+      });
+      return deals.getServiceDealView({ dealId: 9, userId, servicesEnabled });
+    };
+
+    it("reports the viewer's mute from their User row", async () => {
+      expect((await view(true)).viewerMuted).toBe(false);
+      await mute(BUYER);
+      expect((await view(true)).viewerMuted).toBe(true);
+    });
+
+    it("returns each event's code", async () => {
+      expect((await view(true)).events[0].reasonCode).toBe('too_busy');
+    });
+
+    it('offers the flag-gated actions only while the flag is on', async () => {
+      expect((await view(true)).actions).toContain('requestRevision');
+      expect((await view(false)).actions).toEqual(['acceptDelivery', 'requestCancellation']);
+    });
   });
 });
