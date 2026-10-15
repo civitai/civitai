@@ -104,6 +104,7 @@ const MIGRATIONS = [
   '20261028130000_service_deal_event_reason_code',
   '20261028140000_creator_service_deal_file_state',
   '20261028150000_creator_service_max_nsfw_level',
+  '20261028160000_creator_service_deal_file_entries',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -223,7 +224,7 @@ beforeEach(async () => {
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER}), (${MOD});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -301,7 +302,7 @@ describe('requesting an upload', () => {
     };
     for (const [status, reach] of Object.entries(states)) {
       await q(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
       );
       const dealId = await reach();
       const [row] = await q<{ status: string }>(
@@ -341,7 +342,7 @@ describe('requesting an upload', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     await q(
-      `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
+      `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
     );
     const dealId = await accepted('Image');
     const p = { kind: 'Preview', fileName: 'p.mp4' };
@@ -1022,7 +1023,7 @@ describe('preview pipeline', () => {
   it('passes a PG or PG-13 preview and records the rating the scan gave it', async () => {
     for (const level of [1, 2]) {
       await q(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "Image" RESTART IDENTITY`
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "Image" RESTART IDENTITY`
       );
       const { fileId } = await waiting();
       await files.startPreviewScans();
@@ -1184,6 +1185,13 @@ describe('a scanner verdict on a final', () => {
       )
     )[0];
 
+  /** What a passing Final has: unpacked, and its malware scan passed (the stub never does this). */
+  const clearForPass = (fileId: number) =>
+    q(
+      `UPDATE "ServiceDealFile" SET "unpackedAt" = now(), "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [fileId]
+    );
+
   async function deliveredWithFinal() {
     const dealId = await accepted('None');
     const finalId = await uploaded(dealId);
@@ -1193,6 +1201,7 @@ describe('a scanner verdict on a final', () => {
 
   it('records a pass, and nothing else changes', async () => {
     const { dealId, finalId } = await deliveredWithFinal();
+    await clearForPass(finalId);
     expect(await files.recordFinalScanResult({ fileId: finalId, verdict: 'Passed' })).toEqual({
       recorded: true,
       held: false,

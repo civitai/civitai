@@ -1,5 +1,11 @@
 import { createJob } from './job';
 import {
+  deleteEntryScanCopies,
+  settleEntryScans,
+  settleFinals,
+  unpackFinals,
+} from '~/server/services/creator-service-deal-unpack.service';
+import {
   deleteScanCopies,
   publishPreviews,
   settlePreviewScans,
@@ -30,4 +36,27 @@ export const creatorServiceDealFilesJob = createJob(
   { lockExpiration: 10 * 60 }
 );
 
-export const creatorServiceDealFileJobs = [creatorServiceDealFilesJob];
+/**
+ * Unpacks delivered Finals and settles their scans (see the notes in the unpack service). One
+ * archive at a time: it is streamed through memory, and web pods and these share a memory budget
+ * that is close to its ceiling, so concurrency here is raised only deliberately.
+ *
+ * Not behind the `creatorServices` flag, for the same reason as the preview job.
+ */
+export const creatorServiceUnpackJob = createJob(
+  'creator-service-unpack',
+  '* * * * *',
+  async (jobContext) => {
+    const unpacked = await unpackFinals({ shouldStop: () => jobContext.status !== 'running' });
+    jobContext.checkIfCanceled();
+    const entries = await settleEntryScans();
+    jobContext.checkIfCanceled();
+    const finals = await settleFinals();
+    jobContext.checkIfCanceled();
+    const copiesDeleted = await deleteEntryScanCopies();
+    return { unpacked, ...entries, ...finals, copiesDeleted };
+  },
+  { lockExpiration: 40 * 60 }
+);
+
+export const creatorServiceDealFileJobs = [creatorServiceDealFilesJob, creatorServiceUnpackJob];

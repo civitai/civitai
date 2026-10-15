@@ -1,0 +1,923 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { PGlite } from '@electric-sql/pglite';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import '~/__tests__/mocks/logging.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as BuzzService from '~/server/services/buzz.service';
+import type * as ChatService from '~/server/services/chat.service';
+import type * as Blocklist from '~/server/services/blocklist.service';
+import type * as CreatorShop from '~/server/services/creator-shop.service';
+import type * as ZipModule from '~/server/utils/service-deal-zip';
+import {
+  buildZip,
+  JPEG_BYTES,
+  MP4_BYTES,
+  PNG_BYTES,
+  symlinkAttributes,
+  type FixtureEntry,
+} from '~/server/utils/__tests__/zip-fixture';
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+/**
+ * Unpacking delivered Finals and settling their image scans, run against the real migrations on an
+ * in-process Postgres. Faked: storage, the image service, the scan-copy builder, Buzz and chat.
+ * The zip reader is the real one, reading real archives built in the test. Every state change and
+ * verdict rule is the production SQL.
+ *
+ * One connection: nothing here can say anything about two runs racing each other.
+ */
+
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+
+const buzz = vi.hoisted(() => ({
+  createBuzzTransaction: vi.fn(),
+  createMultiAccountBuzzTransaction: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
+  getMultiAccountTransactionsByPrefix: vi.fn(),
+  getTransactionByExternalId: vi.fn(),
+  refundTransaction: vi.fn(),
+}));
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  ...buzz,
+}));
+const chat = vi.hoisted(() => ({ upsertDealChat: vi.fn(), createMessage: vi.fn() }));
+vi.mock('~/server/services/chat.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChatService>()),
+  ...chat,
+}));
+const shop = vi.hoisted(() => ({ assertCreatorShopVisible: vi.fn() }));
+vi.mock('~/server/services/creator-shop.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShop>()),
+  ...shop,
+}));
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof Blocklist>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
+const s3 = vi.hoisted(() => ({
+  getPutUrl: vi.fn(),
+  headObject: vi.fn(),
+  deleteObject: vi.fn(),
+  getGetUrlByKey: vi.fn(),
+  uploadImageBufferToStore: vi.fn(),
+  send: vi.fn(),
+}));
+vi.mock('~/utils/s3-utils', () => ({
+  getBucket: async () => 'bucket',
+  getS3Client: () => ({ send: s3.send }),
+  getPutUrl: s3.getPutUrl,
+  headObject: s3.headObject,
+  deleteObject: s3.deleteObject,
+  getGetUrlByKey: s3.getGetUrlByKey,
+  uploadImageBufferToStore: s3.uploadImageBufferToStore,
+}));
+
+/** The bucket's contents, by key; the zip reader is pointed at it. */
+const bucket = vi.hoisted(() => ({
+  objects: new Map<string, Buffer>(),
+  zipReads: [] as string[],
+}));
+vi.mock('~/server/utils/service-deal-zip', async (importOriginal) => {
+  const original = await importOriginal<typeof ZipModule>();
+  return {
+    ...original,
+    s3ZipSource: (_client: unknown, _bucket: string, key: string) => {
+      bucket.zipReads.push(key);
+      return original.bufferZipSource(bucket.objects.get(key)!);
+    },
+  };
+});
+
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+vi.mock('~/server/services/image.service', () => ({
+  createImage: images.createImage,
+  deleteImageById: images.deleteImageById,
+}));
+
+const preview = vi.hoisted(() => ({ entryCopy: vi.fn() }));
+vi.mock('~/server/utils/service-deal-preview', () => ({
+  buildWatermarkedPreview: vi.fn(),
+  buildScanCopy: vi.fn(),
+  buildEntryScanCopy: preview.entryCopy,
+  PreviewRejectedError: class PreviewRejectedError extends Error {},
+}));
+
+type Raw = ReturnType<typeof pgliteRaw>;
+const bridge = (db: { query: PGlite['query'] }) => {
+  const raw = pgliteRaw(db as PGlite);
+  return { $executeRaw: raw.executeRaw, $queryRaw: raw.queryRaw };
+};
+dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
+  pgliteRaw(holder.db).executeRaw(...a)) as never);
+dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
+  pgliteRaw(holder.db).queryRaw(...a)) as never);
+dbMock.dbRead.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
+  pgliteRaw(holder.db).queryRaw(...a)) as never);
+dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
+  holder.db.transaction((tx) => fn(bridge(tx)))) as never);
+
+const files = await import('~/server/services/creator-service-deal-file.service');
+const deals = await import('~/server/services/creator-service-deal.service');
+const unpack = await import('~/server/services/creator-service-deal-unpack.service');
+const scan = await import('~/server/services/creator-service-deal-file-scan');
+const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
+const {
+  SERVICE_SCAN_COPY_SWEEP_MS,
+  SERVICE_UNPACK_STALE_MS,
+  SERVICE_ZIP_MAX_ENTRIES,
+  SERVICE_ZIP_MAX_ENTRY_BYTES,
+  SERVICE_ZIP_MAX_IMAGE_BYTES,
+} = await import('~/shared/constants/creator-services.constants');
+
+const MIGRATIONS = [
+  '20261025120000_creator_services_foundation',
+  '20261028140000_creator_service_deal_file_state',
+  '20261028160000_creator_service_deal_file_entries',
+].map((name) =>
+  join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
+);
+
+const SELLER = 1;
+const BUYER = 2;
+
+const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
+  (await holder.db.query<T>(sql, params)).rows;
+
+type FileRecord = {
+  id: number;
+  status: string;
+  scanStatus: string;
+  failReason: string | null;
+  s3Key: string;
+  unpackedAt: Date | null;
+  processingAt: Date | null;
+  malwareScanStatus: string;
+};
+type EntryRecord = {
+  id: number;
+  fileId: number;
+  entryIndex: number;
+  path: string;
+  size: number;
+  imageId: number | null;
+  scanKey: string | null;
+  nsfwLevel: number | null;
+  scanStatus: string;
+  failReason: string | null;
+};
+
+const fileRow = async (id: number) =>
+  (await q<FileRecord>(`SELECT * FROM "ServiceDealFile" WHERE id = $1`, [id]))[0];
+const entries = (fileId: number) =>
+  q<EntryRecord>(`SELECT * FROM "ServiceDealFileEntry" WHERE "fileId" = $1 ORDER BY "entryIndex"`, [
+    fileId,
+  ]);
+const dealStatus = async (id: number) =>
+  (
+    await q<{ status: string; disputeReason: string | null }>(
+      `SELECT status::text, "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+      [id]
+    )
+  )[0];
+
+const charged = { transactionIds: [], totalAmount: 500, transactionCount: 1 };
+const body = (bytes: Buffer) => ({ Body: { transformToByteArray: async () => bytes } });
+
+async function accepted() {
+  await q(`UPDATE "ServiceOffering" SET "previewKind" = 'None'::"ServicePreviewKind"`);
+  buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged);
+  const { id } = await deals.requestServiceDeal({
+    offeringId: 1,
+    expectedPrice: 500,
+    expectedRevisionsIncluded: 1,
+    expectedDeliveryDays: 3,
+    buyerId: BUYER,
+    requestText: 'please',
+    buzzType: 'yellow',
+  });
+  await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+  return id;
+}
+
+/**
+ * Uploads a Final the way a seller does, so it is Ready at the server-held key, and puts `content`
+ * in the bucket at THAT key (and nowhere else: the seller's own upload key holds nothing).
+ */
+async function final(dealId: number, fileName: string, content: Buffer) {
+  const { fileId } = await files.requestServiceDealUpload({
+    dealId,
+    userId: SELLER,
+    kind: 'Final',
+    fileName,
+    mimeType: 'application/octet-stream',
+    size: content.byteLength,
+  });
+  s3.headObject.mockResolvedValue({ status: 'present', size: content.byteLength });
+  s3.send.mockResolvedValue(body(content.subarray(0, 64)));
+  await files.completeServiceDealUpload({ fileId, userId: SELLER });
+  const row = await fileRow(fileId);
+  expect(row.status).toBe('Ready');
+  expect(row.s3Key).toMatch(/^service-deals\/files\//);
+  bucket.objects.set(row.s3Key, content);
+  return fileId;
+}
+
+const zipFinal = (dealId: number, items: FixtureEntry[]) =>
+  final(dealId, 'result.zip', buildZip(items));
+
+const IMAGE_A = PNG_BYTES(100);
+const IMAGE_B = JPEG_BYTES(200);
+const SCAN_COPY = (n: number) => Buffer.from(`scan-copy-${n}`);
+
+/** Marks every Image as scanned with a verdict. */
+const verdict = (ingestion: string, extra = '', level = 1) =>
+  q(`UPDATE "Image" SET ingestion = $1::"ImageIngestionStatus", "nsfwLevel" = ${level}${extra}`, [
+    ingestion,
+  ]);
+
+const settle = async () => {
+  await unpack.settleEntryScans();
+  return unpack.settleFinals();
+};
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(`
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
+    CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+      "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
+  `);
+  for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+});
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  for (const fn of [...Object.values(buzz), ...Object.values(s3), preview.entryCopy])
+    fn.mockReset();
+  bucket.objects.clear();
+  bucket.zipReads.length = 0;
+  s3.getPutUrl.mockImplementation(async (key: string) => ({ url: `https://put/${key}` }));
+  s3.deleteObject.mockResolvedValue(undefined);
+  chat.upsertDealChat.mockResolvedValue({ id: 77 });
+  chat.createMessage.mockResolvedValue({});
+  shop.assertCreatorShopVisible.mockResolvedValue([]);
+  buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
+  let copies = 0;
+  preview.entryCopy.mockImplementation(async () => ({
+    data: SCAN_COPY(++copies),
+    mimeType: 'image/webp',
+    width: 800,
+    height: 600,
+    frames: 1,
+  }));
+  let keys = 0;
+  s3.uploadImageBufferToStore.mockImplementation(async () => ({ key: `scan-key-${++keys}` }));
+  images.createImage.mockImplementation(async ({ url }: { url: string }) => {
+    const [row] = await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ($1) RETURNING id`, [
+      url,
+    ]);
+    return { id: row.id };
+  });
+  images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
+    await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+  });
+  await holder.db.exec(`
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    DELETE FROM "User";
+    INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
+    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
+      VALUES (${SELLER}, 'Cat portraits', 'desc', 500, 3, 1, 'None', 'Active', now());
+  `);
+});
+
+describe('unpacking a zip', () => {
+  it('reads the server-held copy, submits a downscaled copy of every image, and judges nothing yet', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'one.png', data: IMAGE_A },
+      { name: 'docs/readme.txt', data: Buffer.from('hello there, this is a note') },
+      { name: 'two.JPG', data: IMAGE_B },
+    ]);
+    const held = (await fileRow(fileId)).s3Key;
+
+    expect(await unpack.unpackFinals()).toBe(1);
+
+    // The archive was read from the server's copy, never from the seller's upload key.
+    expect(new Set(bucket.zipReads)).toEqual(new Set([held]));
+    expect(held).toMatch(/^service-deals\/files\//);
+
+    // Only the images were turned into scan copies, from their exact bytes.
+    expect(preview.entryCopy).toHaveBeenCalledTimes(2);
+    expect(preview.entryCopy.mock.calls[0][0].equals(IMAGE_A)).toBe(true);
+    expect(preview.entryCopy.mock.calls[1][0].equals(IMAGE_B)).toBe(true);
+    expect(images.createImage).toHaveBeenCalledTimes(2);
+    // Ingestion is NOT skipped: this is a real scan, owned by the seller.
+    for (const [created] of images.createImage.mock.calls) {
+      expect(created).toMatchObject({ userId: SELLER, type: 'image' });
+      expect(created).not.toHaveProperty('skipIngestion');
+    }
+
+    const rows = await entries(fileId);
+    expect(rows.map((r) => [r.entryIndex, r.path, r.scanStatus, r.scanKey])).toEqual([
+      [0, 'one.png', 'Pending', 'scan-key-1'],
+      [2, 'two.JPG', 'Pending', 'scan-key-2'],
+    ]);
+    expect(rows.every((r) => r.imageId !== null)).toBe(true);
+
+    const file = await fileRow(fileId);
+    expect(file.unpackedAt).not.toBeNull();
+    expect(file.processingAt).toBeNull();
+    expect(file.scanStatus).toBe('Pending');
+  });
+
+  it('takes one archive per run, oldest first', async () => {
+    const dealId = await accepted();
+    const first = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    const second = await zipFinal(dealId, [{ name: 'b.png', data: IMAGE_A }]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(first)).unpackedAt).not.toBeNull();
+    expect((await fileRow(second)).unpackedAt).toBeNull();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(second)).unpackedAt).not.toBeNull();
+    expect(await unpack.unpackFinals()).toBe(0);
+  });
+
+  it('does not claim what it must not: a held, an unpacked, a failed or a preview file', async () => {
+    const dealId = await accepted();
+    const held = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await q(`UPDATE "ServiceDealFile" SET "processingAt" = now() WHERE id = $1`, [held]);
+    expect(await unpack.unpackFinals()).toBe(0);
+
+    // A claim gone stale is taken up again; the same claim a moment younger is not.
+    await q(
+      `UPDATE "ServiceDealFile" SET "processingAt" = now() - ($2::int * interval '1 millisecond') WHERE id = $1`,
+      [held, SERVICE_UNPACK_STALE_MS - 60_000]
+    );
+    expect(await unpack.unpackFinals()).toBe(0);
+    await q(
+      `UPDATE "ServiceDealFile" SET "processingAt" = now() - ($2::int * interval '1 millisecond') WHERE id = $1`,
+      [held, SERVICE_UNPACK_STALE_MS + 60_000]
+    );
+    expect(await unpack.unpackFinals()).toBe(1);
+
+    expect(await unpack.unpackFinals()).toBe(0); // already unpacked
+    await q(`UPDATE "ServiceDealFile" SET "unpackedAt" = NULL, status = 'Failed' WHERE id = $1`, [
+      held,
+    ]);
+    expect(await unpack.unpackFinals()).toBe(0);
+    await q(
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Failed' WHERE id = $1`,
+      [held]
+    );
+    expect(await unpack.unpackFinals()).toBe(0);
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Pending', kind = 'Preview' WHERE id = $1`,
+      [held]
+    );
+    expect(await unpack.unpackFinals()).toBe(0);
+  });
+
+  it('gives the claim back and does nothing when the job is told to stop', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    expect(await unpack.unpackFinals({ shouldStop: () => true })).toBe(0);
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect(await entries(fileId)).toEqual([]);
+    const file = await fileRow(fileId);
+    expect(file).toMatchObject({ unpackedAt: null, processingAt: null });
+    // Released, so the next run takes it.
+    expect(await unpack.unpackFinals()).toBe(1);
+  });
+
+  it('stops between the check and the scan too, leaving the rows and the claim released', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    let calls = 0;
+    expect(await unpack.unpackFinals({ shouldStop: () => ++calls > 1 })).toBe(0);
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect((await entries(fileId)).map((r) => r.imageId)).toEqual([null]);
+    expect(await fileRow(fileId)).toMatchObject({ unpackedAt: null, processingAt: null });
+    // The next run carries on from the rows already there.
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(images.createImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a file with no images unpacked, with no entries', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.txt', data: Buffer.from('plain text here!!') },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await entries(fileId)).toEqual([]);
+    expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
+    expect(images.createImage).not.toHaveBeenCalled();
+  });
+
+  it('judges a Final that is itself an image as one entry, and a model file as none', async () => {
+    const dealId = await accepted();
+    const image = await final(dealId, 'cover.png', IMAGE_A);
+    const model = await final(dealId, 'm.safetensors', Buffer.from('weights weights weights'));
+    s3.send.mockImplementation(async (command: { input: { Key: string } }) =>
+      body(bucket.objects.get(command.input.Key)!)
+    );
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await entries(image)).map((r) => [r.entryIndex, r.path])).toEqual([[0, 'cover.png']]);
+    expect(preview.entryCopy.mock.calls[0][0].equals(IMAGE_A)).toBe(true);
+    expect(await entries(model)).toEqual([]);
+    expect(bucket.zipReads).toEqual([]); // neither is read as an archive
+    expect((await fileRow(model)).unpackedAt).not.toBeNull();
+  });
+
+  it('refuses a top-level image over the image size cap before reading it', async () => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'huge.png', PNG_BYTES(SERVICE_ZIP_MAX_IMAGE_BYTES));
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: 'That image is too large to deliver.',
+    });
+    expect(images.createImage).not.toHaveBeenCalled();
+  });
+});
+
+describe('what stops an archive', () => {
+  const bigEntries = (n: number): FixtureEntry[] =>
+    Array.from({ length: n }, (_, i) => ({
+      name: `f${i}.txt`,
+      data: Buffer.from('x'),
+      method: 'store' as const,
+    }));
+
+  const cases: [string, () => FixtureEntry[], RegExp][] = [
+    ['an encrypted entry', () => [{ name: 'a.txt', data: Buffer.from('x'), flags: 1 }], /Password/],
+    [
+      'a nested archive',
+      () => [{ name: 'inner.zip', data: Buffer.from('not really a zip') }],
+      /nested/,
+    ],
+    [
+      'a path out of the archive',
+      () => [{ name: '../evil.png', data: IMAGE_A }],
+      /outside the archive/,
+    ],
+    [
+      'a symbolic link',
+      () => [{ name: 'l', data: Buffer.from('/etc'), externalAttributes: symlinkAttributes() }],
+      /symbolic links/,
+    ],
+    [
+      'a model file inside',
+      () => [{ name: 'weights.safetensors', data: Buffer.from('w') }],
+      /Model files/,
+    ],
+    ['a video', () => [{ name: 'clip.mp4', data: MP4_BYTES() }], /Video/],
+    ['a video called something else', () => [{ name: 'a.dat', data: MP4_BYTES() }], /Video/],
+    [
+      `${SERVICE_ZIP_MAX_ENTRIES + 1} entries`,
+      () => bigEntries(SERVICE_ZIP_MAX_ENTRIES + 1),
+      /too many/,
+    ],
+    [
+      'an entry bigger than it says',
+      () => [
+        {
+          name: 'a.txt',
+          data: Buffer.alloc(SERVICE_ZIP_MAX_ENTRY_BYTES + 1, 5),
+          method: 'store',
+          declaredSize: 100,
+        },
+      ],
+      /too large/,
+    ],
+    [
+      'a bomb whose header lies',
+      () => [{ name: 'a.txt', data: Buffer.alloc(60 * 1024 * 1024), declaredSize: 500 }],
+      /compressed beyond/,
+    ],
+    [
+      'an image that is not an image',
+      () => [{ name: 'a.png', data: Buffer.from('this is plainly not a png') }],
+      /not the image/,
+    ],
+  ];
+
+  it.each(cases)(
+    'fails the file for %s, with the reason, and scans nothing',
+    async (_n, make, reason) => {
+      const dealId = await accepted();
+      // A good image BEFORE the bad entry: nothing may be submitted for a refused archive.
+      const fileId = await zipFinal(dealId, [{ name: 'good.png', data: IMAGE_A }, ...make()]);
+      expect(await unpack.unpackFinals()).toBe(1);
+      const file = await fileRow(fileId);
+      expect(file.scanStatus).toBe('Failed');
+      expect(file.failReason).toMatch(reason);
+      expect(file.unpackedAt).not.toBeNull();
+      expect(file.processingAt).toBeNull();
+      expect(await entries(fileId)).toEqual([]);
+      expect(images.createImage).not.toHaveBeenCalled();
+      expect(preview.entryCopy).not.toHaveBeenCalled();
+      // And it is not claimed again.
+      expect(await unpack.unpackFinals()).toBe(0);
+    }
+  );
+
+  it('holds a delivered deal for the moderators when its archive is refused', async () => {
+    const dealId = await accepted();
+    await zipFinal(dealId, [{ name: 'a.txt', data: Buffer.from('fine') }]);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    // Swap the contents for a refused archive after delivery, as a late finding would be.
+    const [row] = await q<{ s3Key: string }>(`SELECT "s3Key" FROM "ServiceDealFile"`);
+    bucket.objects.set(row.s3Key, buildZip([{ name: 'inner.zip', data: Buffer.from('x') }]));
+    await unpack.unpackFinals();
+    expect(await dealStatus(dealId)).toEqual({
+      status: 'Disputed',
+      disputeReason: 'final_scan_failed',
+    });
+  });
+
+  it('fails the file and keeps the rest of the archive unscanned when an image cannot be read', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'b.png', data: IMAGE_B },
+    ]);
+    preview.entryCopy.mockRejectedValueOnce(new PreviewRejectedError('broken'));
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    const rows = await entries(fileId);
+    expect(rows[0]).toMatchObject({ scanStatus: 'Failed', imageId: null });
+    // The second image was never submitted.
+    expect(images.createImage).not.toHaveBeenCalled();
+  });
+});
+
+describe('resuming', () => {
+  it('does not ingest an image twice after a run dies part-way', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'b.png', data: IMAGE_B },
+    ]);
+    // The second image's Image row cannot be created: the run dies after uploading its copy.
+    images.createImage
+      .mockImplementationOnce(async ({ url }: { url: string }) => {
+        const [row] = await q<{ id: number }>(
+          `INSERT INTO "Image" (url) VALUES ($1) RETURNING id`,
+          [url]
+        );
+        return { id: row.id };
+      })
+      .mockRejectedValueOnce(new Error('connection reset'));
+    expect(await unpack.unpackFinals()).toBe(0);
+
+    let rows = await entries(fileId);
+    expect(rows[0].imageId).not.toBeNull();
+    // The key was recorded before the row was attempted.
+    expect(rows[1]).toMatchObject({ imageId: null, scanKey: 'scan-key-2' });
+    const file = await fileRow(fileId);
+    expect(file).toMatchObject({ unpackedAt: null, processingAt: null, scanStatus: 'Pending' });
+
+    // The next run finishes: the first image is not ingested again, the second reuses its object.
+    expect(await unpack.unpackFinals()).toBe(1);
+    rows = await entries(fileId);
+    expect(rows.every((r) => r.imageId !== null)).toBe(true);
+    expect(s3.uploadImageBufferToStore).toHaveBeenCalledTimes(2);
+    expect(images.createImage).toHaveBeenCalledTimes(3);
+    expect((await q(`SELECT 1 FROM "Image"`)).length).toBe(2);
+  });
+
+  it('finds the Image row a crash left behind instead of creating a second', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    // A previous run created the row and died before recording it.
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "entryIndex", "path", "size", "scanKey") VALUES ($1, 0, 'a.png', 1, 'left-key')`,
+      [fileId]
+    );
+    await q(`INSERT INTO "Image" (url) VALUES ('left-key')`);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect(s3.uploadImageBufferToStore).not.toHaveBeenCalled();
+    expect((await entries(fileId))[0].imageId).toBe(1);
+  });
+
+  it('does not submit an image that was already judged and whose copy is gone', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "entryIndex", "path", "size", "scanStatus") VALUES ($1, 0, 'a.png', 1, 'Passed')`,
+      [fileId]
+    );
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
+  });
+
+  it('removes the copy it just made when the file was deleted underneath it', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    images.createImage.mockImplementationOnce(async ({ url }: { url: string }) => {
+      const [row] = await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ($1) RETURNING id`, [
+        url,
+      ]);
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      return { id: row.id };
+    });
+    await unpack.unpackFinals();
+    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
+    expect(await q(`SELECT 1 FROM "Image"`)).toEqual([]);
+  });
+});
+
+describe('the verdict on each image', () => {
+  async function submitted(count = 1) {
+    const dealId = await accepted();
+    const fileId = await zipFinal(
+      dealId,
+      Array.from({ length: count }, (_, i) => ({ name: `i${i}.png`, data: IMAGE_A }))
+    );
+    await unpack.unpackFinals();
+    return { dealId, fileId };
+  }
+
+  it.each([
+    ['clean, PG', 'Scanned', '', 1],
+    ['clean, PG-13', 'Scanned', '', 2],
+  ])('passes an image that is %s, and records its rating', async (_n, ingestion, flags, level) => {
+    const { fileId } = await submitted();
+    await verdict(ingestion, flags, level);
+    expect(await unpack.settleEntryScans()).toMatchObject({ passed: 1, rejected: 0 });
+    expect((await entries(fileId))[0]).toMatchObject({ scanStatus: 'Passed', nsfwLevel: level });
+  });
+
+  it.each([
+    ['rated above the limit', 'Scanned', '', 3],
+    ['rated far above the limit', 'Scanned', '', 16],
+    ['unrated', 'Scanned', '', 0],
+    ['sent to review', 'Scanned', `, "needsReview" = 'minor'`, 1],
+    ['flagged as a real person', 'Scanned', ', poi = true', 1],
+    ['flagged as a minor', 'Scanned', ', minor = true', 1],
+    ['blocked', 'Blocked', '', 1],
+  ])('fails an image that is %s, keeping its rating', async (_n, ingestion, flags, level) => {
+    const { fileId } = await submitted();
+    await verdict(ingestion, flags, level);
+    expect(await unpack.settleEntryScans()).toMatchObject({ passed: 0, rejected: 1 });
+    expect((await entries(fileId))[0]).toMatchObject({
+      scanStatus: 'Failed',
+      nsfwLevel: level,
+      failReason: expect.stringContaining('rejected'),
+    });
+  });
+
+  it('fails an image the scan could not run on, without calling it rejected', async () => {
+    const { fileId } = await submitted();
+    await verdict('NotFound');
+    expect(await unpack.settleEntryScans()).toMatchObject({ passed: 0, rejected: 0, unchecked: 1 });
+    expect((await entries(fileId))[0]).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: expect.stringContaining('could not be checked'),
+    });
+  });
+
+  it('leaves an image still being scanned alone, and gives up on one that never settles', async () => {
+    const { fileId } = await submitted();
+    expect(await unpack.settleEntryScans()).toEqual({
+      passed: 0,
+      rejected: 0,
+      unchecked: 0,
+      timedOut: 0,
+    });
+    expect((await entries(fileId))[0].scanStatus).toBe('Pending');
+    await q(`UPDATE "ServiceDealFileEntry" SET "createdAt" = now() - interval '7 hours'`);
+    expect((await unpack.settleEntryScans()).timedOut).toBe(1);
+    expect((await entries(fileId))[0].scanStatus).toBe('Failed');
+  });
+});
+
+describe('the verdict on the whole Final', () => {
+  async function unpacked(count: number, extras: FixtureEntry[] = []) {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      ...Array.from({ length: count }, (_, i) => ({ name: `i${i}.png`, data: IMAGE_A })),
+      ...extras,
+    ]);
+    await unpack.unpackFinals();
+    return { dealId, fileId };
+  }
+  const malwarePasses = (fileId: number) =>
+    q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed' WHERE id = $1`, [fileId]);
+
+  it('does NOT pass on its images alone: with no malware verdict it stays Pending', async () => {
+    const { fileId } = await unpacked(2);
+    await verdict('Scanned');
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    expect((await entries(fileId)).map((r) => r.scanStatus)).toEqual(['Passed', 'Passed']);
+    expect((await fileRow(fileId)).scanStatus).toBe('Pending');
+    // And the stub that stands in for the malware scan cannot supply one.
+    expect(
+      await scan.submitFinalScan({ id: fileId, dealId: 1, s3Key: 'k', mimeType: 'x', size: 1 })
+    ).toBe('Pending');
+    expect((await fileRow(fileId)).malwareScanStatus).toBe('Pending');
+  });
+
+  it('passes when every image passed AND the malware scan passed', async () => {
+    const { fileId } = await unpacked(2);
+    await verdict('Scanned');
+    await malwarePasses(fileId);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 1 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+  });
+
+  it('does not pass while any one image is still being scanned', async () => {
+    const { fileId } = await unpacked(2);
+    await malwarePasses(fileId);
+    await q(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 1`);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Pending');
+    await q(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 2`);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 1 });
+  });
+
+  it('fails the whole Final when one image fails, and holds a delivered deal', async () => {
+    const { dealId, fileId } = await unpacked(3);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await malwarePasses(fileId);
+    await q(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id <> 2`);
+    await q(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 2`);
+    expect(await settle()).toEqual({ finalsFailed: 1, finalsPassed: 0 });
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: expect.stringContaining('rejected'),
+    });
+    expect(await dealStatus(dealId)).toEqual({
+      status: 'Disputed',
+      disputeReason: 'final_scan_failed',
+    });
+  });
+
+  it('fails a Final whose malware scan failed, whatever its images did', async () => {
+    const { fileId } = await unpacked(1);
+    await verdict('Scanned');
+    await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Failed' WHERE id = $1`, [fileId]);
+    expect(await settle()).toEqual({ finalsFailed: 1, finalsPassed: 0 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Failed');
+  });
+
+  it('judges a Final with no images by the malware scan alone', async () => {
+    const { fileId } = await unpacked(0, [
+      { name: 'a.txt', data: Buffer.from('plain text here!!') },
+    ]);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    await malwarePasses(fileId);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 1 });
+  });
+
+  it('does not pass a Final that has not been unpacked, even with a clean malware verdict', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await malwarePasses(fileId);
+    expect(await settle()).toEqual({ finalsFailed: 0, finalsPassed: 0 });
+    expect((await fileRow(fileId)).scanStatus).toBe('Pending');
+  });
+});
+
+describe('the single verdict entry point', () => {
+  async function ready() {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await unpack.unpackFinals();
+    await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed' WHERE id = $1`, [fileId]);
+    await q(`UPDATE "ServiceDealFileEntry" SET "scanStatus" = 'Passed' WHERE "fileId" = $1`, [
+      fileId,
+    ]);
+    return fileId;
+  }
+  const pass = (fileId: number) => files.recordFinalScanResult({ fileId, verdict: 'Passed' });
+
+  it('takes a pass only when each part has passed: break one condition at a time', async () => {
+    const fileId = await ready();
+    const breaks: [string, string][] = [
+      ['not unpacked', `UPDATE "ServiceDealFile" SET "unpackedAt" = NULL WHERE id = ${fileId}`],
+      [
+        'malware pending',
+        `UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Pending' WHERE id = ${fileId}`,
+      ],
+      [
+        'malware failed',
+        `UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Failed' WHERE id = ${fileId}`,
+      ],
+      [
+        'an image pending',
+        `UPDATE "ServiceDealFileEntry" SET "scanStatus" = 'Pending' WHERE "fileId" = ${fileId}`,
+      ],
+      [
+        'an image failed',
+        `UPDATE "ServiceDealFileEntry" SET "scanStatus" = 'Failed' WHERE "fileId" = ${fileId}`,
+      ],
+    ];
+    for (const [label, breakIt] of breaks) {
+      const snapshot = await fileRow(fileId);
+      const entrySnapshot = await entries(fileId);
+      await q(breakIt);
+      expect(await pass(fileId), label).toEqual({ recorded: false, held: false });
+      expect((await fileRow(fileId)).scanStatus, label).toBe('Pending');
+      // Restore for the next condition.
+      await q(
+        `UPDATE "ServiceDealFile" SET "unpackedAt" = $2, "malwareScanStatus" = $3::"ServiceDealFileScanStatus" WHERE id = $1`,
+        [fileId, snapshot.unpackedAt, snapshot.malwareScanStatus]
+      );
+      await q(
+        `UPDATE "ServiceDealFileEntry" SET "scanStatus" = $2::"ServiceDealFileScanStatus" WHERE "fileId" = $1`,
+        [fileId, entrySnapshot[0].scanStatus]
+      );
+    }
+    // With every condition met it is taken.
+    expect(await pass(fileId)).toEqual({ recorded: true, held: false });
+    expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+  });
+
+  it('takes a failure whatever state the parts are in', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    expect(await files.recordFinalScanResult({ fileId, verdict: 'Failed' })).toMatchObject({
+      recorded: true,
+    });
+  });
+});
+
+describe('copies of scanned images', () => {
+  async function settled() {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'ok.png', data: IMAGE_A },
+      { name: 'bad.png', data: IMAGE_B },
+    ]);
+    await unpack.unpackFinals();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 1`);
+    await q(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 2`);
+    await unpack.settleEntryScans();
+    return { dealId, fileId };
+  }
+
+  it('deletes the copy of a passed image and keeps the copy of a rejected one', async () => {
+    const { fileId } = await settled();
+    expect(await unpack.deleteEntryScanCopies()).toBe(1);
+    const rows = await entries(fileId);
+    expect(rows[0]).toMatchObject({ scanStatus: 'Passed', imageId: null, scanKey: null });
+    expect(rows[1]).toMatchObject({ scanStatus: 'Failed', imageId: 2, scanKey: 'scan-key-2' });
+    // The rejected image's row is still there for the moderators.
+    expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 2 }]);
+    // And running it again deletes nothing more.
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+  });
+
+  it('keeps a copy whose delete failed pointed at, and retries it', async () => {
+    const { fileId } = await settled();
+    images.deleteImageById.mockRejectedValueOnce(new Error('store down'));
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    expect((await entries(fileId))[0].imageId).toBe(1);
+    expect(await unpack.deleteEntryScanCopies()).toBe(1);
+  });
+
+  it('sweeps the copy of an image still pending once its file is settled and the copy is old', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await unpack.unpackFinals();
+    await files.recordFinalScanResult({ fileId, verdict: 'Failed' });
+    // Fresh: its scan may still be running, so it is left.
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    await q(
+      `UPDATE "ServiceDealFileEntry" SET "createdAt" = now() - ($1::int * interval '1 millisecond')`,
+      [SERVICE_SCAN_COPY_SWEEP_MS + 60_000]
+    );
+    expect(await unpack.deleteEntryScanCopies()).toBe(1);
+    expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
+  });
+
+  it('leaves the copy of a pending image alone while its file is still pending, however old', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await unpack.unpackFinals();
+    await q(`UPDATE "ServiceDealFileEntry" SET "createdAt" = now() - interval '3 hours'`);
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    expect((await entries(fileId))[0].imageId).not.toBeNull();
+  });
+
+  it("removes the copies of a deleted file, except a rejected image's", async () => {
+    const { fileId } = await settled();
+    await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    expect(await q(`SELECT 1 FROM "ServiceDealFileEntry"`)).toEqual([]);
+    expect(images.deleteImageById).toHaveBeenCalledTimes(1);
+    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
+    expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 2 }]);
+  });
+});

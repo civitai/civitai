@@ -154,6 +154,66 @@ export type ServiceDealReasonCode =
   | ServiceDealDisputeReasonCode;
 
 /**
+ * What a zip Final may hold. Every limit is checked against the bytes actually read, never only
+ * against the sizes the archive declares about itself.
+ */
+export const SERVICE_ZIP_MAX_ENTRIES = 500;
+export const SERVICE_ZIP_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+export const SERVICE_ZIP_MAX_ENTRY_BYTES = 100 * 1024 * 1024;
+export const SERVICE_ZIP_MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+export const SERVICE_ZIP_MAX_RATIO = 100;
+/** Entries are inflated one at a time; a ratio is only meaningful above this many bytes. */
+export const SERVICE_ZIP_RATIO_FLOOR_BYTES = 1024 * 1024;
+/** Image extensions inside a final. Anything else is judged by content, not by its name. */
+export const SERVICE_ZIP_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'] as const;
+/** Refused inside a zip: they must be delivered as top-level finals so they are scanned as themselves. */
+export const SERVICE_ZIP_MODEL_EXTENSIONS = [
+  'safetensors',
+  'ckpt',
+  'pt',
+  'pth',
+  'gguf',
+  'bin',
+  'onnx',
+] as const;
+export const SERVICE_ZIP_ARCHIVE_EXTENSIONS = [
+  'zip',
+  'rar',
+  '7z',
+  'tar',
+  'gz',
+  'tgz',
+  'bz2',
+  'xz',
+  'zst',
+  'lz',
+  'lzma',
+  'cab',
+  'iso',
+  'jar',
+] as const;
+export const SERVICE_ZIP_VIDEO_EXTENSIONS = [
+  'mp4',
+  'mov',
+  'webm',
+  'mkv',
+  'avi',
+  'm4v',
+  'wmv',
+  'flv',
+  'mpg',
+  'mpeg',
+  'ogv',
+  '3gp',
+] as const;
+/** A file being unpacked that has not finished in this long is taken up again by the next run. */
+export const SERVICE_UNPACK_STALE_MS = 30 * 60_000;
+/** A scan copy still Pending this long after it was submitted is failed, so a round never hangs. */
+export const SERVICE_FINAL_SCAN_GIVE_UP_MS = 6 * HOUR;
+/** A copy left behind by a run that died is removed once it is this old. */
+export const SERVICE_SCAN_COPY_SWEEP_MS = 60 * 60_000;
+
+/**
  * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about
  * the other party or the files, so the parties never see it (see `dealVisibleReason`).
  */

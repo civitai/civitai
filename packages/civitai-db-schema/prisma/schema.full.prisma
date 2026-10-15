@@ -9712,9 +9712,35 @@ model ServiceDealFile {
   /// Set when preview processing last started, so a crashed worker's file is picked up again.
   processingAt   DateTime?
   scanStatus     ServiceDealFileScanStatus @default(Pending)
+  /// The malware scanner's own verdict. `scanStatus` becomes Passed only when this and every media
+  /// entry have passed. Nothing sets it yet: with no scanner wired a Final never passes.
+  malwareScanStatus ServiceDealFileScanStatus @default(Pending)
+  /// Set once the file's contents have been listed and checked (a zip unpacked, an image read).
+  unpackedAt     DateTime?
   createdAt      DateTime                  @default(now())
+  entries        ServiceDealFileEntry[]
 
   @@index([dealId, round, kind])
+}
+
+/// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip
+/// are judged by the malware scan alone. `scanKey` is recorded before the hidden copy's Image row
+/// exists, so a retry after a crash reuses the object.
+model ServiceDealFileEntry {
+  id         Int                       @id @default(autoincrement())
+  fileId     Int
+  file       ServiceDealFile           @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  entryIndex Int
+  path       String
+  size       Int
+  imageId    Int?
+  scanKey    String?
+  nsfwLevel  Int?
+  scanStatus ServiceDealFileScanStatus @default(Pending)
+  failReason String?
+  createdAt  DateTime                  @default(now())
+
+  @@unique([fileId, entryIndex])
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

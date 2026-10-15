@@ -97,7 +97,7 @@ export function assertPreviewBytes(size: number, animatedPossible: boolean) {
  * animation over the frame cap is rejected rather than truncated: a shortened preview misrepresents
  * the work.
  */
-async function prepare(input: Buffer, maxSide: number) {
+async function prepare(input: Buffer, maxSide: number, { previewCaps = true } = {}) {
   const sharp = (await import('sharp')).default;
   const open = () => sharp(input, { animated: true, limitInputPixels: MAX_INPUT_PIXELS });
 
@@ -116,7 +116,7 @@ async function prepare(input: Buffer, maxSide: number) {
     throw new PreviewRejectedError(
       `Animated previews can have at most ${SERVICE_PREVIEW_ANIMATED_MAX_FRAMES} frames (this one has ${frames}).`
     );
-  assertPreviewBytes(input.byteLength, animated);
+  if (previewCaps) assertPreviewBytes(input.byteLength, animated);
 
   const pageW = meta.width;
   const pageH = meta.pageHeight ?? meta.height;
@@ -142,16 +142,25 @@ async function prepare(input: Buffer, maxSide: number) {
  * to the image store only to be scanned and is deleted once the verdict lands. Same checks and
  * caps as the published preview.
  */
-export async function buildScanCopy(input: Buffer): Promise<PreviewResult> {
+export const buildScanCopy = (input: Buffer) => scanCopy(input, true);
+
+async function scanCopy(input: Buffer, previewCaps: boolean): Promise<PreviewResult> {
   const { sharp, resized, animated, frames, width, height } = await prepare(
     input,
-    SERVICE_PREVIEW_SCAN_SIDE
+    SERVICE_PREVIEW_SCAN_SIDE,
+    { previewCaps }
   );
   const data = await sharp(resized, { animated })
     .webp({ quality: 80, effort: 3, loop: 0 })
     .toBuffer();
   return { data, mimeType: 'image/webp', width, height, frames };
 }
+
+/**
+ * The scan copy of an image inside a delivered file. Same downscale, format sniff and frame cap as
+ * a preview's, but the byte cap is the caller's (the archive reader has already enforced its own).
+ */
+export const buildEntryScanCopy = (input: Buffer) => scanCopy(input, false);
 
 /**
  * The only thing a buyer ever sees of a preview: downscaled so the long side is at most

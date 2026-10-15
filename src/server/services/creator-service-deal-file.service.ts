@@ -218,7 +218,7 @@ async function zipRefusal(bucket: string, key: string) {
   }
 }
 
-const failFile = (fileId: number, reason: string) =>
+export const failFile = (fileId: number, reason: string) =>
   dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "status" = 'Failed'::"ServiceDealFileStatus", "failReason" = ${reason}::text
@@ -318,6 +318,10 @@ export async function deleteServiceDealFile({
       FOR UPDATE OF d`;
     if (!deal) throw throwNotFoundError('File not found');
     // Re-read under the lock: the state above is the one that is true now.
+    const copies = await tx.$queryRaw<{ imageId: number }[]>`
+      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+      WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
+        AND e."scanStatus" <> 'Failed'::"ServiceDealFileScanStatus"`;
     const [file] = await tx.$queryRaw<
       { id: number; s3Key: string; imageId: number | null; scanKey: string | null }[]
     >`
@@ -326,7 +330,7 @@ export async function deleteServiceDealFile({
         AND d."status" IN (${WORKING})
       RETURNING f."id", f."s3Key", f."imageId", f."scanKey"`;
     if (!file) throw throwNotFoundError('File not found');
-    return file;
+    return { ...file, copies };
   });
 
   // The row is the source of truth; an object left behind is unreachable and harmless.
@@ -336,12 +340,20 @@ export async function deleteServiceDealFile({
     const { deleteImageById } = await import('~/server/services/image.service');
     await deleteImageById({ id: removed.imageId, updatePost: false }).catch(() => null);
   }
+  // The rows went with the file; their hidden copies would otherwise be left behind. A rejected
+  // image's copy stays: it is what the moderators review.
+  if (removed.copies.length) {
+    const { deleteImageById } = await import('~/server/services/image.service');
+    for (const { imageId } of removed.copies)
+      await deleteImageById({ id: imageId, updatePost: false }).catch(() => null);
+  }
   return { id: removed.id };
 }
 
 /**
  * A scanner's verdict on a Final. Only a Pending Final takes it, so a repeat or late result cannot
- * overturn an earlier one. A Failed Final sends a delivered deal to the moderators; one not yet
+ * overturn an earlier one. Passed is taken only from a file that has been unpacked, whose malware
+ * scan passed and whose every image passed: a Final with a part still unjudged cannot pass. A Failed Final sends a delivered deal to the moderators; one not yet
  * delivered cannot be delivered while it stands (see `dealReadyToDeliver`). The real scanner
  * reports through this; nothing else sets a Final's scanStatus.
  */
@@ -356,6 +368,13 @@ export async function recordFinalScanResult({
     UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
     WHERE "id" = ${fileId}::int AND "kind" = 'Final'::"ServiceDealFileKind"
       AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+      AND (${verdict}::text = 'Failed' OR (
+        "unpackedAt" IS NOT NULL
+        AND "malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+        AND NOT EXISTS (
+          SELECT 1 FROM "ServiceDealFileEntry" e
+          WHERE e."fileId" = "ServiceDealFile"."id"
+            AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")))
     RETURNING "dealId"`;
   if (!file) return { recorded: false, held: false };
   const held =
@@ -594,7 +613,7 @@ function claimPreviews(where: Prisma.Sql, limit: number) {
     RETURNING f."id", f."s3Key", f."scanKey", d."sellerId"`;
 }
 
-async function readObject(bucket: string, key: string) {
+export async function readObject(bucket: string, key: string) {
   const response = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!response.Body) throw new Error('Empty object body');
   return Buffer.from(await response.Body.transformToByteArray());
@@ -617,7 +636,7 @@ async function failOrRetry(preview: ClaimedPreview, error: unknown) {
  * A bare Image row, scanned like any upload: no post, no feed, ingestion NOT skipped. The caller
  * records its id on the file so the copy can be found and deleted.
  */
-async function createScanImage(
+export async function createScanImage(
   url: string,
   copy: { mimeType: string; width: number; height: number; data: Buffer },
   userId: number
