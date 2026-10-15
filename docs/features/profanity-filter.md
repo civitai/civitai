@@ -16,9 +16,6 @@ const filter = createProfanityFilter({
   replacementStyle: 'grawlix', // 'asterisk', 'grawlix', or 'remove'
 });
 
-// Check for profanity
-filter.isProfane('some text');
-
 // Clean text
 filter.clean('bad words');
 

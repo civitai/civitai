@@ -174,13 +174,6 @@ export class SimpleProfanityFilter {
   }
 
   /**
-   * Check if text contains profanity
-   */
-  isProfane(text: string): boolean {
-    return this.matcher.hasMatch(text);
-  }
-
-  /**
    * Drop matches whose full surrounding word is whitelisted. Shared by `clean()` and
    * `analyze()` so rendered output and moderation verdicts agree.
    */
