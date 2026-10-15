@@ -9,7 +9,6 @@ import {
   SERVICE_PRICE_MIN,
   SERVICE_REVISIONS_MAX,
   SERVICE_TITLE_MAX,
-  SERVICE_OFFERING_DEFAULT_RATING,
   SERVICE_OFFERING_RATINGS,
   SERVICE_TITLE_MIN,
 } from '~/shared/constants/creator-service.constants';
@@ -31,7 +30,9 @@ export const upsertServiceOfferingSchema = z.object({
     .refine((value) => (SERVICE_OFFERING_RATINGS as readonly number[]).includes(value), {
       message: 'Pick one rating',
     })
-    .default(SERVICE_OFFERING_DEFAULT_RATING),
+    // No schema default: an update that omits it must leave the rating alone, never reset a
+    // mature offering to PG-13 (which shows everywhere). A new offering gets the default on create.
+    .optional(),
   // Saves as a draft unless set; publishing goes through the same sell gate as activating.
   publish: z.boolean().default(false),
 });

@@ -16,6 +16,7 @@ import {
 import { NsfwLevel } from '~/server/common/enums';
 import {
   SERVICE_MAX_ACTIVE_OFFERINGS,
+  SERVICE_OFFERING_DEFAULT_RATING,
   SERVICES_MIN_CREATOR_SCORE,
   visibleMatureServiceRatings,
 } from '~/shared/constants/creator-service.constants';
@@ -186,6 +187,7 @@ export async function upsertServiceOffering({
     return dbWrite.serviceOffering.create({
       data: {
         ...fields,
+        maxNsfwLevel: fields.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
         sellerId,
         status: publish ? ServiceOfferingStatus.Active : ServiceOfferingStatus.Draft,
       },

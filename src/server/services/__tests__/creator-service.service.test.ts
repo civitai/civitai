@@ -315,9 +315,26 @@ describe('storefront ratings', () => {
     expect(isMatureServiceRating(NsfwLevel.R)).toBe(true);
   });
 
+  it('rates a new offering PG-13 by default, and leaves the rating alone on an update without one', async () => {
+    seller();
+    const input = upsertServiceOfferingSchema.parse({ ...fields });
+    await upsertServiceOffering({ sellerId: SELLER, input });
+    expect(dbMock.dbWrite.serviceOffering.create.mock.calls.at(-1)?.[0]?.data).toMatchObject({
+      maxNsfwLevel: NsfwLevel.PG13,
+    });
+
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Active,
+    } as never);
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...input, id: 3 } });
+    const data = dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0]?.data;
+    expect(data?.maxNsfwLevel).toBeUndefined();
+  });
+
   it('accepts one rating bit and refuses Blocked or a mask with a 400', () => {
     const base = { ...fields };
-    expect(upsertServiceOfferingSchema.parse(base).maxNsfwLevel).toBe(NsfwLevel.PG13);
+    // Omitted stays omitted: an update must not reset a mature offering to PG-13.
+    expect(upsertServiceOfferingSchema.parse(base).maxNsfwLevel).toBeUndefined();
     expect(
       upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: NsfwLevel.X }).success
     ).toBe(true);
