@@ -31,6 +31,8 @@ type Where = Record<string, unknown>;
 const matches = (row: Row, where: Where): boolean =>
   Object.entries(where).every(([key, value]) => {
     if (key === 'OR') return (value as Where[]).some((w) => matches(row, w));
+    if (value && typeof value === 'object' && 'lt' in value)
+      return (row[key] as number) < (value as { lt: number }).lt;
     if (value && typeof value === 'object' && 'not' in value)
       return row[key] !== (value as { not: unknown }).not;
     return row[key] === value;
@@ -230,5 +232,16 @@ describe('a moderator takedown and the title scan', () => {
       minorByScan: true,
       nsfwLevel: NsfwLevel.R,
     });
+  });
+
+  it('a raise never lowers a higher rating written after the verdict read', async () => {
+    const realFind = w.storyline.findUnique.getMockImplementation()!;
+    w.storyline.findUnique.mockImplementationOnce((async (args: never) => {
+      const read = await realFind(args);
+      row.nsfwLevel = NsfwLevel.X; // a fresher verdict's raise, landing mid-apply
+      return read;
+    }) as never);
+    await scan({ poi: false, minor: false, nsfw: NsfwLevel.R });
+    expect(row.nsfwLevel).toBe(NsfwLevel.X);
   });
 });

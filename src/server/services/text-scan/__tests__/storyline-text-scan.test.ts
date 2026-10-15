@@ -202,7 +202,10 @@ describe('applyStorylineTextScan', () => {
   describe('nsfw', () => {
     it("sets the title's rating and tells the owner when it is R or above", async () => {
       await applyStorylineTextScan(args({ nsfw: NsfwLevel.R }) as never);
-      expect(updates()).toEqual([{ where: { id: ID }, data: { nsfwLevel: NsfwLevel.R } }]);
+      // A raise, conditional on the stored level still being lower.
+      expect(updates()).toEqual([
+        { where: { id: ID, nsfwLevel: { lt: NsfwLevel.R } }, data: { nsfwLevel: NsfwLevel.R } },
+      ]);
       expect(createNotification).toHaveBeenCalledTimes(1);
       expect(createNotification).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -239,15 +242,22 @@ describe('applyStorylineTextScan', () => {
     ])('records the rating without a notice when %s', async (_name, row, level) => {
       w.storyline.findUnique.mockResolvedValue(row as never);
       await applyStorylineTextScan(args({ nsfw: level }) as never);
-      // Not a raise, so pinned to the title the verdict judged.
-      const pinned = level <= (row as { nsfwLevel: number }).nsfwLevel ? { title: 'A story' } : {};
+      // Not a raise: pinned to the title the verdict judged. A raise: only over a lower level.
+      const pinned =
+        level <= (row as { nsfwLevel: number }).nsfwLevel
+          ? { title: 'A story' }
+          : { nsfwLevel: { lt: level } };
       expect(updates()).toEqual([{ where: { id: ID, ...pinned }, data: { nsfwLevel: level } }]);
       expect(createNotification).not.toHaveBeenCalled();
     });
   });
 
   describe('poi and minor', () => {
-    const rated = (nsfw: number) => ({ where: { id: ID }, data: { nsfwLevel: nsfw } });
+    // The fixture's stored level is 0, so every verdict here is a raise.
+    const rated = (nsfw: number) => ({
+      where: { id: ID, nsfwLevel: { lt: nsfw } },
+      data: { nsfwLevel: nsfw },
+    });
     const setMinor = { where: { id: ID, minorByScan: false }, data: { minorByScan: true } };
     // Permissive writes hold only while the title is still the one the verdict judged.
     const clearMinor = {

@@ -83,7 +83,10 @@ export async function applyStorylineTextScan({
   if (outcome.nsfw && (current || outcome.nsfw.detectedLevel > before.nsfwLevel)) {
     const level = outcome.nsfw.detectedLevel;
     // A lower rating is permissive, so it also holds only while the title is still the one read.
-    const pinned = level <= before.nsfwLevel ? { title: before.title } : {};
+    // A raise lands only while the stored level is still lower: a fresher verdict may have raised
+    // it further meanwhile.
+    const pinned =
+      level <= before.nsfwLevel ? { title: before.title } : { nsfwLevel: { lt: level } };
     await dbWrite.storyline.updateMany({
       where: { id: entityId, ...pinned },
       data: { nsfwLevel: level },
