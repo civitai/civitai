@@ -156,7 +156,9 @@ describe('recompute-self-activity', () => {
 
   it('scores the models of the owners it found, from the rows it counted', async () => {
     await call({});
-    const [, options] = mocks.scoreModelOwners.mock.calls[0];
+    const [ctx, options] = mocks.scoreModelOwners.mock.calls[0];
+    // Past every checkpoint, so the scorer re-scores only the owners it is handed.
+    expect(ctx.lastUpdate.getTime()).toBeGreaterThan(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
     expect(options).toEqual({
       alsoRescore: [1],
       selfGenerations: [{ modelId: 50, userId: 1, generationCount: 1000 }],
@@ -172,6 +174,15 @@ describe('recompute-self-activity', () => {
     expect(mocks.writeSelfGenerations).not.toHaveBeenCalled();
   });
 
+  it('still dry-runs, and writes models only, before the cutoff is recorded', async () => {
+    mocks.recorded = [];
+    expect((await call({})).status).toBe(200);
+    const { status } = await call({ dryRun: 'false', part: 'models' });
+    expect(status).toBe(200);
+    expect(mocks.applyUserScoreUpdates).toHaveBeenCalledTimes(1);
+    expect(mocks.subtractImagesScores).not.toHaveBeenCalled();
+  });
+
   it('writes models as absolute scores and images as stamped subtractions', async () => {
     const { body } = await call({ dryRun: 'false' });
     expect(mocks.writeSelfGenerations).toHaveBeenCalledWith(
@@ -179,6 +190,8 @@ describe('recompute-self-activity', () => {
       [1, 2],
       [{ modelId: 50, userId: 1, generationCount: 1000 }]
     );
+    expect(mocks.applyUserScoreUpdates).toHaveBeenCalledTimes(1);
+    expect(mocks.subtractImagesScores).toHaveBeenCalledTimes(1);
     expect(mocks.applyUserScoreUpdates.mock.calls[0][1]).toEqual([['1', { models: 999_000 }]]);
     const [, rows, stamp] = mocks.subtractImagesScores.mock.calls[0];
     expect(rows).toEqual([
