@@ -207,10 +207,14 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     `getTrainingAnnouncement`/`setTrainingAnnouncement`) — all Kysely; the announcement is the same
     `KeyValue` row `training.getAnnouncement` still reads, and `cannotPublish` is a jsonb `||` merge on
     `Model.meta` plus the Meilisearch enqueue. Ban reuses `setBanned`.
-  - Training-data zip: the spoke's `/api/training-data/[versionId]` PROXIES the main app's
-    `/api/download/models/{id}?type=Training%20Data` with the moderator's own cookie, and JSZip unpacks it
-    client-side. Deliberately not a presign — resolving `ModelFile.url` goes through the storage resolver
-    with a delivery-worker fallback, which the spoke would have to re-derive.
+  - Training-data zip: the spoke's `/api/training-data/[versionId]` asks the main app's
+    `trainingData.resolve` moderator endpoint for a signed URL as the moderator, streams the bytes itself,
+    and JSZip unpacks them client-side. The resolve stays in the main app because `ModelFile.url` goes
+    through the storage resolver with a delivery-worker fallback, which the spoke would have to re-derive.
+  - Training Studio versions have no zip: their `Training Data` row points at the trained model. The
+    version page reads their dataset from the training workflow and renders it with
+    `$lib/components/WorkflowDataset.svelte`, shared with `/audit/training-data/workflow/[workflowId]`,
+    and `trainingData.resolve` refuses that row.
   - Filters: username is an EXACT match (as in the main app), plus workflow id, created-date range and
     publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
   - **Main-app trim:** deleted the page + its SCSS; removed `moderator.models.queryTraining`,
@@ -290,7 +294,7 @@ Deliberately deferred; none blocks the three pages above.
   their own blocks there — they have no fields and a different confirmation shape, and folding them in
   would mean a `mode` prop switching off two-thirds of the body.
 - **Shared shapes extracted:** `TrainingAssetViewer` (fetch + progress + abort + revoke, used by both
-  training pages), `Pager` (offset) and `CursorPager` (keyset) — plus `NumberedPager` (shadcn
+  training pages for zip datasets), `Pager` (offset) and `CursorPager` (keyset) — plus `NumberedPager` (shadcn
   `Pagination`, for the image grids), added later,
   `HighlightedText`, and a single `ActionResult`. `TrainingDataSheet` moved page-local.
 - **Both feature flags are retired.** `trainingModelsModeration` and `reviewTrainingData` had no reader
