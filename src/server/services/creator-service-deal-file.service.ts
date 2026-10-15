@@ -232,7 +232,7 @@ async function zipRefusal(bucket: string, key: string) {
   }
 }
 
-export const failFile = (fileId: number, reason: string) =>
+const failFile = (fileId: number, reason: string) =>
   dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "status" = 'Failed'::"ServiceDealFileStatus", "failReason" = ${reason}::text
