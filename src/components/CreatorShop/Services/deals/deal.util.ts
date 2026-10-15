@@ -73,5 +73,8 @@ export function useServiceDealMutations(dealId: number) {
     cancelLate: trpc.creatorServiceDeal.cancelLate.useMutation(options),
     requestCancellation: trpc.creatorServiceDeal.requestCancellation.useMutation(options),
     respondCancellation: trpc.creatorServiceDeal.respondCancellation.useMutation(options),
+    acceptDelivery: trpc.creatorServiceDeal.acceptDelivery.useMutation(options),
+    requestRevision: trpc.creatorServiceDeal.requestRevision.useMutation(options),
+    openDispute: trpc.creatorServiceDeal.openDispute.useMutation(options),
   };
 }
