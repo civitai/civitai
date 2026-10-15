@@ -3,7 +3,9 @@ import { createHash } from 'crypto';
 /**
  * The POOL_MERGE list as the offline co-occurrence screen measured it: up to 25 gated
  * co-occurrence models and BASE's popularity models, interleaved co-occurrence first, 50 in all.
- * No stage 3. Imports nothing from the app, so a study script can load it.
+ * That screen always had a baseModel. With none, BASE is global popularity, so it only backfills
+ * after the co-occurrence list (`backfillAfter`). No stage 3. Imports nothing from the app, so a
+ * study script can load it.
  */
 
 /** Co-occurrence models reserved in the merged list. */
@@ -48,19 +50,39 @@ export function mergeReservedK(
 }
 
 /**
+ * POOL_MERGE with no baseModel gate: all of `a` (its order, distinct) up to `cap`, then `base` (its
+ * order, minus models already listed) in whatever slots `a` left. No reserved slots, no interleave.
+ */
+export function backfillAfter(
+  a: readonly number[],
+  base: readonly number[],
+  cap: number
+): number[] {
+  const A = distinct(a).slice(0, cap);
+  const inA = new Set(A);
+  return [...A, ...distinct(base).filter((id) => !inA.has(id))].slice(0, cap);
+}
+
+/**
  * The merged model ids for a request cap: always merged at 50, then cut to `min(cap, 50)`, so a
  * narrower cap gets the 50-wide list's prefix. Merging at the cap itself would not: BASE would get
  * only `cap - 25` slots, and below 25 `mergeReservedK` slices BASE with a negative bound.
+ *
+ * `interleaveBase` is whether the request had a baseModel gate. With one, BASE is popularity within
+ * that ecosystem and interleaves, as screened (`mergeReservedK`). Without one, BASE is global
+ * popularity: interleaved, the same popular add-ons would fill every other slot of every such
+ * response whatever the prompt, so it only backfills (`backfillAfter`).
  */
 export function poolMergeModelIds(
   cooc: readonly number[],
   base: readonly number[],
-  cap: number
+  cap: number,
+  { interleaveBase }: { interleaveBase: boolean }
 ): number[] {
-  return mergeReservedK(cooc, base, POOL_MERGE_COOC_SLOTS, POOL_MERGE_LIST_MODELS).slice(
-    0,
-    Math.min(cap, POOL_MERGE_LIST_MODELS)
-  );
+  const merged = interleaveBase
+    ? mergeReservedK(cooc, base, POOL_MERGE_COOC_SLOTS, POOL_MERGE_LIST_MODELS)
+    : backfillAfter(cooc, base, POOL_MERGE_LIST_MODELS);
+  return merged.slice(0, Math.min(cap, POOL_MERGE_LIST_MODELS));
 }
 
 /**
@@ -75,8 +97,11 @@ function poolMergeFingerprint() {
     listModels: POOL_MERGE_LIST_MODELS,
     coocListModels: POOL_MERGE_COOC_LIST_MODELS,
     baseModels: POOL_MERGE_BASE_MODELS,
-    merged: [1, 4, 50].map((cap) => poolMergeModelIds(cooc, base, cap)),
+    merged: [1, 4, 50].map((cap) => poolMergeModelIds(cooc, base, cap, { interleaveBase: true })),
     small: mergeReservedK(cooc, base, 2, 5),
+    noBaseModel: [1, 4, 50].map((cap) =>
+      poolMergeModelIds(cooc, base, cap, { interleaveBase: false })
+    ),
   };
 }
 
