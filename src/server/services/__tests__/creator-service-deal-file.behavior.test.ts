@@ -101,6 +101,7 @@ const { SERVICE_PREVIEW_MAX_FILES, SERVICE_FINAL_MAX_FILES } = await import(
 
 const MIGRATIONS = [
   '20261025120000_creator_services_foundation',
+  '20261028130000_service_deal_event_reason_code',
   '20261028140000_creator_service_deal_file_state',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
