@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ManageConsentFooterLink } from '~/components/Consent/ManageConsentFooterLink';
+import { PrivacyPreferencesFooterLink } from '~/components/Consent/PrivacyPreferencesFooterLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
@@ -239,6 +240,7 @@ export function AppFooter() {
               return button;
             })}
           <ManageConsentFooterLink />
+          <PrivacyPreferencesFooterLink />
           <SocialLinks />
         </div>
         <div className="ml-auto flex items-center gap-1">
