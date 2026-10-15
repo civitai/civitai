@@ -3629,6 +3629,12 @@ export type ModelReportStat = {
   claimActioned: number;
   claimUnactioned: number;
 };
+export type ModelSelfGeneration = {
+  modelId: number;
+  userId: number;
+  generationCount: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+};
 export type ModelTag = {
   modelId: number;
   tagId: number;
@@ -5593,6 +5599,7 @@ export type DB = {
   ModelMetricDaily: ModelMetricDaily;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
+  ModelSelfGeneration: ModelSelfGeneration;
   ModelTag: ModelTag;
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;

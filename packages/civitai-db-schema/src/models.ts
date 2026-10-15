@@ -1248,6 +1248,13 @@ export interface ModelVersionMetric {
   updatedAt: Date;
 }
 
+export interface ModelSelfGeneration {
+  modelId: number;
+  userId: number;
+  generationCount: bigint;
+  updatedAt: Date;
+}
+
 export interface ModelBaseModelMetric {
   model?: Model;
   modelId: number;
