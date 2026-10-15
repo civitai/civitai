@@ -1,3 +1,4 @@
+import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import {
   updateArticleNsfwLevels,
@@ -112,7 +113,12 @@ async function raiseToFloor(
   if (!before) return NOTHING_DEFERRED;
   await entity.recompute([entityId]);
 
-  if (!outcome.nsfw.raised || before.moderatorNsfwLevel != null || !before.userId)
+  if (
+    !outcome.nsfw.raised ||
+    outcome.nsfw.detectedLevel < NsfwLevel.R ||
+    before.moderatorNsfwLevel != null ||
+    !before.userId
+  )
     return NOTHING_DEFERRED;
   const after = await entity.read(entityId);
   if (!after || !ratingRose(before.nsfwLevel, after.nsfwLevel)) return NOTHING_DEFERRED;

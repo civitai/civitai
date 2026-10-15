@@ -76,8 +76,15 @@ describe('applyRatingFloor', () => {
 
   it('notifies when the raise drops any SFW bit', async () => {
     dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(11)).mockResolvedValueOnce(post(10));
-    await applyRatingFloor('Post', args(2, true));
+    await applyRatingFloor('Post', args(4, true));
     expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(expect.objectContaining({ level: 8 }));
+  });
+
+  it('does not notify for a PG13 verdict, which the floor ignores', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(1)).mockResolvedValueOnce(post(2));
+    await applyRatingFloor('Post', args(2, true));
+    expect(updatePostNsfwLevels).toHaveBeenCalledWith([7]);
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
   });
 
   it('names the level the entity now has, not the one the text was read at', async () => {

@@ -24,10 +24,12 @@ function floorEntityType(value: string) {
   return value;
 }
 
-export function textScanVerdictPredicateText(alias: string, minLevel: number = NsfwLevel.PG13) {
-  if (!Number.isInteger(minLevel)) throw new Error(`Not an integer level: ${minLevel}`);
+// Text alone is weaker evidence than images, so a verdict below R is recorded but inert.
+export const TEXT_SCAN_MIN_RAISE_LEVEL = NsfwLevel.R;
+
+export function textScanVerdictPredicateText(alias: string) {
   const a = identifier(alias);
-  return `${a}.result->>'version' IS NOT NULL AND ${a}."nsfwLevel" >= ${minLevel}`;
+  return `${a}.result->>'version' IS NOT NULL AND ${a}."nsfwLevel" >= ${TEXT_SCAN_MIN_RAISE_LEVEL}`;
 }
 
 export function scanFloorText(entityType: ScanFloorEntityType, idColumn: string) {
@@ -85,24 +87,9 @@ export function ratedEntityDerivedNsfwLevelText(entityType: DerivedNsfwEntityTyp
     : content;
 }
 
-// A model's flag, a collection's bucket and a crucible's or challenge's escalation only move at R,
-// so a PG-13 verdict raises none of them.
-const RAISED_AT_R: readonly string[] = ['Model', 'Collection', 'Crucible', 'Challenge'];
-export function textScanRaisedMinLevel(entityType: string) {
-  return RAISED_AT_R.includes(entityType) ? NsfwLevel.R : NsfwLevel.PG13;
-}
-
-export function isTextScanRaised(row: {
-  entityType: string;
-  nsfwLevel: number | null;
-  result: unknown;
-}) {
+export function isTextScanRaised(row: { nsfwLevel: number | null; result: unknown }) {
   const version = (row.result as { version?: unknown } | null)?.version;
-  return (
-    version != null &&
-    row.nsfwLevel != null &&
-    row.nsfwLevel >= textScanRaisedMinLevel(row.entityType)
-  );
+  return version != null && row.nsfwLevel != null && row.nsfwLevel >= TEXT_SCAN_MIN_RAISE_LEVEL;
 }
 
 export function challengeDerivedNsfwLevel(allowedNsfwLevel: number) {

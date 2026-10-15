@@ -227,7 +227,7 @@ export async function getRatingReviewScan(
     select: { status: true, nsfwLevel: true, result: true },
   });
   if (!em) return null;
-  const raised = isTextScanRaised({ entityType, nsfwLevel: em.nsfwLevel, result: em.result });
+  const raised = isTextScanRaised({ nsfwLevel: em.nsfwLevel, result: em.result });
   return {
     raised,
     level: raised ? em.nsfwLevel : null,

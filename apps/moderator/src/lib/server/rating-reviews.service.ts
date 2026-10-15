@@ -231,7 +231,7 @@ async function loadScans(entityType: RatingReviewEntityType, ids: number[]) {
     .where('entityId', 'in', ids)
     .execute();
   for (const r of found)
-    if (isTextScanRaised({ entityType, nsfwLevel: r.nsfwLevel, result: r.result }))
+    if (isTextScanRaised({ nsfwLevel: r.nsfwLevel, result: r.result }))
       out.set(r.entityId, { level: r.nsfwLevel, reason: textScanNsfwReason(r.result) });
   return out;
 }

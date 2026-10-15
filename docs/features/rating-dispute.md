@@ -43,7 +43,7 @@ A partial unique index `RatingReview_pending_per_entity` on `(entityType, entity
 - **Owner only**, checked in the service.
 - **One Pending per entity** (the partial unique index).
 - **3 per 24h per user, shared across types**; moderators bypass. Redis key `rating-review:rate:<userId>`.
-- **Eligibility.** Article is always disputable, including unrated. The others need the live `EntityModeration` row to be a text-scan raise (`result.version` set and a level above PG; Model R or above — `isTextScanRaised` from `@civitai/shared/rated-entity-sql`) or a prior resolved review. Non-Article unrated is refused.
+- **Eligibility.** Article is always disputable, including unrated. The others need the live `EntityModeration` row to be a text-scan raise (`result.version` set and a level of R or above; text alone raises only to R and above — `isTextScanRaised` from `@civitai/shared/rated-entity-sql`) or a prior resolved review. Non-Article unrated is refused.
 - **Re-filing** after a resolution needs the scanned text to have changed: the live `result.textHash` differs from the last review's `resolvedTextHash`. An edit with no new completed scan cannot re-file until it is scanned. A copied row with no hash falls back to "the entity was edited after the resolution".
 
 ## Overrides and auto-approve

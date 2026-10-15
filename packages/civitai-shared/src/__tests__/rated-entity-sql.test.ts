@@ -10,7 +10,7 @@ import {
   ratedEntityContentNsfwLevelText,
   ratedEntityDerivedNsfwLevelText,
   scanFloorText,
-  textScanRaisedMinLevel,
+  TEXT_SCAN_MIN_RAISE_LEVEL,
   textScanVerdictPredicateText,
 } from '../rated-entity-sql';
 
@@ -22,8 +22,8 @@ describe('scanFloorText', () => {
     expect(text).not.toMatch(/LIKE/i);
   });
 
-  it('reads only a text-scan verdict at PG13 or above', () => {
-    expect(text).toContain(`em.result->>'version' IS NOT NULL AND em."nsfwLevel" >= 2`);
+  it('reads only a text-scan verdict at R or above', () => {
+    expect(text).toContain(`em.result->>'version' IS NOT NULL AND em."nsfwLevel" >= 4`);
   });
 
   it('does not require Succeeded, so a rescan in flight keeps the floor', () => {
@@ -54,11 +54,11 @@ describe('collectionTextFloorBucketText', () => {
 });
 
 describe('textScanVerdictPredicateText', () => {
-  it('takes a higher minimum for Model disputes', () => {
-    expect(textScanVerdictPredicateText('em', 4)).toBe(
+  it('reads a verdict at R or above', () => {
+    expect(textScanVerdictPredicateText('em')).toBe(
       `em.result->>'version' IS NOT NULL AND em."nsfwLevel" >= 4`
     );
-    expect(() => textScanVerdictPredicateText('em', 1.5)).toThrow();
+    expect(() => textScanVerdictPredicateText('em; x')).toThrow();
   });
 });
 
@@ -130,39 +130,20 @@ describe('ratedEntityContentNsfwLevelText', () => {
 });
 
 describe('isTextScanRaised', () => {
-  const ts = (nsfwLevel: number | null, entityType = 'Post') => ({
-    entityType,
-    nsfwLevel,
-    result: { version: 1 },
-  });
+  const ts = (nsfwLevel: number | null) => ({ nsfwLevel, result: { version: 1 } });
 
   it('uses the same minimum as the SQL predicate', () => {
-    expect(textScanVerdictPredicateText('em', textScanRaisedMinLevel('Post'))).toBe(
-      textScanVerdictPredicateText('em')
-    );
-    expect(textScanRaisedMinLevel('Model')).toBe(4);
+    expect(textScanVerdictPredicateText('em')).toContain(`>= ${TEXT_SCAN_MIN_RAISE_LEVEL}`);
+    expect(TEXT_SCAN_MIN_RAISE_LEVEL).toBe(4);
   });
 
-  it('needs a text-scan result at or above the minimum', () => {
-    expect(isTextScanRaised(ts(2))).toBe(true);
+  it('needs a text-scan result at R or above, so a PG13 verdict is inert', () => {
     expect(isTextScanRaised(ts(1))).toBe(false);
-    expect(isTextScanRaised(ts(2, 'Model'))).toBe(false);
-    expect(isTextScanRaised(ts(4, 'Model'))).toBe(true);
-    expect(textScanRaisedMinLevel('Collection')).toBe(4);
-    expect(isTextScanRaised(ts(2, 'Collection'))).toBe(false);
-    expect(isTextScanRaised(ts(4, 'Collection'))).toBe(true);
-    expect(textScanRaisedMinLevel('Crucible')).toBe(4);
-    expect(isTextScanRaised(ts(2, 'Crucible'))).toBe(false);
-    expect(isTextScanRaised(ts(4, 'Crucible'))).toBe(true);
-    expect(textScanRaisedMinLevel('Challenge')).toBe(4);
-    expect(isTextScanRaised(ts(2, 'Challenge'))).toBe(false);
-    expect(isTextScanRaised(ts(4, 'Challenge'))).toBe(true);
-    expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: 8, result: { labels: [] } })).toBe(
-      false
-    );
-    expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: null, result: { version: 1 } })).toBe(
-      false
-    );
+    expect(isTextScanRaised(ts(2))).toBe(false);
+    expect(isTextScanRaised(ts(4))).toBe(true);
+    expect(isTextScanRaised(ts(8))).toBe(true);
+    expect(isTextScanRaised({ nsfwLevel: 8, result: { labels: [] } })).toBe(false);
+    expect(isTextScanRaised({ nsfwLevel: null, result: { version: 1 } })).toBe(false);
   });
 });
 
