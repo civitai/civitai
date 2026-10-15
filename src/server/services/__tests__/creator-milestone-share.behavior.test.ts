@@ -43,9 +43,12 @@ import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const MIGRATION = join(
-  process.cwd(),
-  'packages/civitai-db-schema/prisma/migrations/20261005120000_creator_milestone/migration.sql'
+const MIGRATIONS = [
+  '20261005120000_creator_milestone',
+  '20261007120000_creator_milestone_cosmetic',
+  '20261027150000_creator_milestone_mythic',
+].map((name) =>
+  join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql')
 );
 
 const TIMESTAMP_OID = 1114;
@@ -162,16 +165,17 @@ beforeAll(async () => {
       "isModerator" boolean NOT NULL DEFAULT false, muted boolean NOT NULL DEFAULT false,
       "deletedAt" timestamp(3), "bannedAt" timestamp(3),
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}');
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, type text, data jsonb);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, type text, data jsonb, name text,
+      description text, source text, "permanentUnlock" boolean);
     CREATE TABLE "UserCosmetic" ("userId" int NOT NULL, "cosmeticId" int NOT NULL,
       "equippedAt" timestamp(3), "equippedToId" int);
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, type text, "nsfwLevel" int,
       ingestion text, "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
-      "expiresAt" timestamp(3) NOT NULL);
+      "expiresAt" timestamp(3) NOT NULL, points int NOT NULL DEFAULT 1);
     CREATE TABLE "UserProfile" ("userId" int PRIMARY KEY, "privacySettings" jsonb);
   `);
-  await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -310,17 +314,24 @@ describe('milestone share card', () => {
   });
 
   it('falls back for muted, actively struck and metric-suppressed owners', async () => {
-    const [MUTED, STRUCK, SUPPRESSED, GOOD] = [11, 12, 13, 14];
+    const [MUTED, STRUCK, SUPPRESSED, GOOD, WARNED] = [11, 12, 13, 14, 15];
     await addUser(MUTED, { muted: true });
-    for (const id of [STRUCK, SUPPRESSED, GOOD]) await addUser(id);
-    for (const id of [MUTED, STRUCK, SUPPRESSED, GOOD]) await grant(id, 'supernova');
-    await q(`INSERT INTO "UserStrike" VALUES ($1, 'Active', '2026-12-01')`, [STRUCK]);
+    for (const id of [STRUCK, SUPPRESSED, GOOD, WARNED]) await addUser(id);
+    for (const id of [MUTED, STRUCK, SUPPRESSED, GOOD, WARNED]) await grant(id, 'supernova');
+    await q(
+      `INSERT INTO "UserStrike" ("userId", status, "expiresAt", points) VALUES
+        ($1, 'Active', '2026-12-01', 1), ($1, 'Active', '2026-12-01', 1),
+        ($2, 'Active', '2026-12-01', 1),
+        ($3, 'Voided', '2026-12-01', 5),
+        ($3, 'Active', '2026-01-01', 5)`,
+      [STRUCK, WARNED, GOOD]
+    );
     mocks.excluded.mockResolvedValue([SUPPRESSED]);
 
     const rendered = [];
-    for (const id of [MUTED, STRUCK, SUPPRESSED, GOOD])
+    for (const id of [MUTED, STRUCK, SUPPRESSED, GOOD, WARNED])
       if (await card('supernova', id)) rendered.push(id);
-    expect(rendered).toEqual([GOOD]);
+    expect(rendered).toEqual([GOOD, WARNED]);
   });
 
   // Decided with the lead: hiding from the showcase is not hiding the badge. The creator posts this
@@ -653,9 +664,12 @@ describe('achievement share cards', () => {
 
   it.each([
     [
-      'actively struck',
+      'at 2 active strike points',
       async (id: number) => {
-        await q(`INSERT INTO "UserStrike" VALUES ($1, 'Active', '2026-12-01')`, [id]);
+        await q(
+          `INSERT INTO "UserStrike" ("userId", status, "expiresAt", points) VALUES ($1, 'Active', '2026-12-01', 2)`,
+          [id]
+        );
       },
     ],
     [

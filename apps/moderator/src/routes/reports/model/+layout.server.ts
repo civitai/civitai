@@ -3,6 +3,7 @@ import { getOwnerFlaggedMinorModelIds, getReportedModelStates } from '$lib/serve
 import { loadReportQueue } from '$lib/server/report-queue-load';
 import { canAccess } from '$lib/server/access';
 import { ReportEntity } from '$lib/reports';
+import { getMergePermissionChecks } from '$lib/server/merge-permission.service';
 
 // The QUEUE, as a layout, so it keeps its data while the moderator moves between models — the model is
 // the child route's path (`[modelId]`), which this never reads. As one page with `?model=`, every model
@@ -17,15 +18,20 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
     canonicalize: false,
   });
   const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
-  const [ownerFlaggedMinor, models] = await Promise.all([
+  const [ownerFlaggedMinor, models, mergePermission] = await Promise.all([
     getOwnerFlaggedMinorModelIds(entityIds),
     getReportedModelStates(entityIds),
+    // For the queue's rows too: the open model lists any of its reports the queue is showing, a
+    // resolved one included, and the item's own load covers only the open ones. Nothing is read unless
+    // a row is a merge-permission report.
+    getMergePermissionChecks(queue.items),
   ]);
 
   return {
     ...queue,
     ownerFlaggedMinor,
     models,
+    mergePermission,
     // The preview's training-data viewer: shown to whoever `/api/training-data` would serve, so a
     // moderator never gets a button that only answers 403.
     canViewTrainingData:

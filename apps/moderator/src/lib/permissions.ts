@@ -87,6 +87,8 @@ export const PERMISSIONS = [
   { id: 'feedback.status.set', label: 'Set feedback status' },
   { id: 'feedback.bug.promote', label: 'Promote feedback to a Known Issue' },
   { id: 'textScan.prompt.publish', label: 'Publish text-scan prompt versions (production)' },
+  { id: 'textScan.modelRules.edit', label: 'Edit Model rules (production)' },
+  { id: 'textScan.testSets.edit', label: 'Create and edit text-scan test sets and their cases' },
   // `/decisions`: reading the inbox is the page grant; recording a ruling is this. A ruling is
   // labelled data other systems will train and calibrate on, so who may produce it is its own call.
   { id: 'decisions.rule', label: 'Record a ruling on a decision item' },
@@ -97,6 +99,13 @@ export const PERMISSIONS = [
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
+  // Moves held Buzz: a Refund returns it to the buyer, a Release pays the seller. Checked again by the
+  // main app's `/api/mod/creator-services/resolve-dispute` by this literal (`ModeratorGrantId`), so
+  // rename the two together. Reading the queue is the page grant.
+  {
+    id: 'creatorServices.resolveDispute',
+    label: 'Resolve a Creator Services dispute (refund or release Buzz)',
+  },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

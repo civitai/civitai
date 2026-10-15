@@ -305,14 +305,16 @@ describe('constants.comments thread settings', () => {
 
   it('gives full-width surfaces room for deeper threads than the narrow ones', () => {
     for (const entityType of wide) expect(constants.comments.getMaxDepth({ entityType })).toBe(10);
-    for (const entityType of narrow) expect(constants.comments.getMaxDepth({ entityType })).toBe(3);
+    for (const entityType of narrow) expect(constants.comments.getMaxDepth({ entityType })).toBe(5);
     expect(constants.comments.getMaxDepth({ entityType: 'post' })).toBe(5);
   });
 
-  it('only opens reply trees up front on surfaces wide enough for it', () => {
+  it('opens reply trees up front on wide surfaces and the narrow detail columns', () => {
     for (const entityType of wide)
       expect(constants.comments.getAutoExpandDepth({ entityType })).toBeGreaterThan(0);
-    for (const entityType of [...narrow, 'comment', 'post'])
+    for (const entityType of narrow)
+      expect(constants.comments.getAutoExpandDepth({ entityType })).toBe(3);
+    for (const entityType of ['comment', 'post'])
       expect(constants.comments.getAutoExpandDepth({ entityType })).toBe(0);
   });
 

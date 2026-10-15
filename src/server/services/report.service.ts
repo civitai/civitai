@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -163,6 +164,32 @@ const reportedGameFrameFilter = ({
   return [...filters, { details: { path: ['violation'], equals: violation } }];
 };
 
+// A merge-permission report names the reporter's model the merge uses; folded into an earlier report
+// on the same merge it would lose that, and the moderator would have no model to look up. Narrowed to
+// the source model, so two reports about the same pairing still dedupe.
+const reportedMergeSourceFilter = ({
+  reportType,
+  reason,
+  details,
+}: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}): Prisma.ReportWhereInput[] => {
+  if (reportType !== ReportEntity.Model || reason !== ReportReason.AdminAttention) return [];
+  const { reason: detailReason, sourceModelId } = (details ?? {}) as {
+    reason?: unknown;
+    sourceModelId?: unknown;
+  };
+  if (detailReason !== MERGE_PERMISSION_REPORT_REASON) return [];
+  if (typeof sourceModelId !== 'number')
+    throw throwBadRequestError('report: a merge-permission report must name the source model');
+  return [
+    { details: { path: ['reason'], equals: MERGE_PERMISSION_REPORT_REASON } },
+    { details: { path: ['sourceModelId'], equals: sourceModelId } },
+  ];
+};
+
 /** The existing report a new one on this entity would be folded into, if any. */
 export const findReportToFoldInto = ({
   reportType,
@@ -190,6 +217,7 @@ export const findReportToFoldInto = ({
   const narrowing = [
     ...(('AND' in placement ? placement.AND : undefined) ?? []),
     ...reportedGameFrameFilter({ reportType, reason, details }),
+    ...reportedMergeSourceFilter({ reportType, reason, details }),
   ];
   return db.report.findFirst({
     where: {
@@ -280,6 +308,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Announcement]: 'announcement',
   [ReportEntity.Crucible]: 'crucible',
   [ReportEntity.GameFrameGame]: 'gameFrameGame',
+  [ReportEntity.Storyline]: 'storyline',
 };
 
 const reportTypeConnectionMap = {
@@ -302,6 +331,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Announcement]: 'announcementId',
   [ReportEntity.Crucible]: 'crucibleId',
   [ReportEntity.GameFrameGame]: 'gameFrameGameId',
+  [ReportEntity.Storyline]: 'storylineId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -400,11 +430,23 @@ export const createReport = async ({
       );
   }
 
+  // Anyone may report a storyline, flag or not, so an id that is not one is a 404 here rather than
+  // a failed connect on the join row below.
+  if (
+    type === ReportEntity.Storyline &&
+    !(await dbRead.storyline.findUnique({ where: { id }, select: { id: true } }))
+  )
+    throw throwNotFoundError('That storyline no longer exists.');
+
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
-  // Nothing automated acts on a crucible's mature-content report, unlike an image's or a model's
-  // tag votes, so it goes to a moderator like any other reason: deduped, and left Pending.
-  const awaitsModerator = type === ReportEntity.Crucible || type === ReportEntity.GameFrameGame;
+  // Nothing automated acts on a crucible's, game's or storyline's mature-content report, unlike an
+  // image's or a model's tag votes, so it goes to a moderator like any other reason: deduped, and
+  // left Pending.
+  const awaitsModerator =
+    type === ReportEntity.Crucible ||
+    type === ReportEntity.GameFrameGame ||
+    type === ReportEntity.Storyline;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({

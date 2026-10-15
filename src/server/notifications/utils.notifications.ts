@@ -19,6 +19,7 @@ import { commentNotifications } from '~/server/notifications/comment.notificatio
 import { crucibleNotifications } from '~/server/notifications/crucible.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
+import { storylineNotifications } from '~/server/notifications/storyline.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
 import { creatorMilestoneNotifications } from '~/server/notifications/creator-milestone.notifications';
@@ -67,6 +68,7 @@ export const notificationProcessors = {
   ...featuredNotifications,
   ...bountyNotifications,
   ...placementNotifications,
+  ...storylineNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,

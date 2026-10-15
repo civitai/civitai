@@ -46,7 +46,12 @@ describe('sub-nav default layout', () => {
       'updates',
       'shop',
     ]);
-    expect(more.map((e) => e.key)).toEqual(['bounties', 'challenges']);
+    expect(more.map((e) => e.key)).toEqual([
+      // Gated on `features.storylines`, so it is absent from the all-flags-off vector below.
+      'storylines',
+      'bounties',
+      'challenges',
+    ]);
   });
 
   /**
@@ -148,5 +153,24 @@ describe('the apps pill gate', () => {
     // The durable point: a registry REORDER changes the surviving ORDER here, not just which
     // key vanishes — which is exactly what this vector exists to pin.
     expect(bar.map((e) => e.key)).toEqual(['home', 'updates', 'models', 'images', 'videos']);
+  });
+});
+
+// The all-on and all-off vectors cannot tell `features.storylines` from any other flag.
+describe('the storylines entry', () => {
+  const flagsExcept = (...off: string[]): FeatureAccess =>
+    new Proxy({} as FeatureAccess, {
+      get: (_target, key) => !(off as readonly string[]).includes(key as string),
+    }) as FeatureAccess;
+  const onlyFlag = (on: string): FeatureAccess =>
+    new Proxy({} as FeatureAccess, { get: (_target, key) => key === on }) as FeatureAccess;
+
+  it('shows with its own flag alone, in More', () => {
+    expect(resolve(onlyFlag('storylines')).more.map((e) => e.key)).toEqual(['storylines']);
+  });
+
+  it('hides with every flag but its own', () => {
+    const { bar, more } = resolve(flagsExcept('storylines'));
+    expect([...bar, ...more].map((e) => e.key)).not.toContain('storylines');
   });
 });

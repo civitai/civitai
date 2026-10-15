@@ -1,6 +1,11 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
 import { sfwBrowsingLevelsFlag } from '@civitai/shared';
+import {
+  HIDE_FROM_REACTION_LISTS_KEY,
+  IMAGE_REACTOR_LISTS_LAUNCHED_AT,
+  SHOW_PRE_LAUNCH_REACTIONS_KEY,
+} from '@civitai/shared/reaction-privacy';
 import { dbRead } from '$lib/server/db';
 import { followersAmong } from '$lib/server/followers';
 import {
@@ -49,6 +54,28 @@ export function keysetClause(column: string, cursor: ReactorCursor) {
       : sql`AND ${col} > ${cursor.userId}`;
   return { bound, order: cursor?.dir === 'before' ? sql`ASC` : sql`DESC` };
 }
+
+/**
+ * The user in `userIdColumn` may be named to `viewerId`: false only for someone else who opted out of reaction and
+ * collector lists. Goes in the page query only, never the counts, so totals still include them.
+ */
+export const listedToViewer = (userIdColumn: string, viewerId: number) => sql`
+  (${sql.ref(userIdColumn)} = ${viewerId} OR NOT EXISTS (
+    SELECT 1 FROM "User" hidden WHERE hidden.id = ${sql.ref(userIdColumn)}
+      AND hidden.settings -> ${HIDE_FROM_REACTION_LISTS_KEY}::text = 'true'::jsonb
+  ))`;
+
+/**
+ * An image reaction made before "who reacted" lists launched is listed only when its reactor opted in; the viewer's
+ * own always is. Same rule and same `User_showPreLaunchReactions_idx` InitPlan as the main app's
+ * `imageReactionListedToViewer`. Page query only, like `listedToViewer`.
+ */
+export const preLaunchImageReactionListed = (viewerId: number) => sql`
+  ("ImageReaction"."userId" = ${viewerId}
+    OR "ImageReaction"."createdAt" >= ${IMAGE_REACTOR_LISTS_LAUNCHED_AT}::timestamp
+    OR "ImageReaction"."userId" = ANY(ARRAY(
+      SELECT id FROM "User" WHERE settings -> ${sql.lit(SHOW_PRE_LAUNCH_REACTIONS_KEY)}::text = 'true'::jsonb
+    )))`;
 
 /** Only a scanned, safe-level profile picture; the legacy User.image is unmoderated. Reads alias `p` (Image). */
 export const safeProfilePictureUrl = () => sql`
@@ -106,7 +133,9 @@ export async function getReactors(
       ${safeProfilePictureUrl()} AS image
     FROM (
       SELECT "userId", "createdAt" FROM ${sql.table(t.reactions)}
-      WHERE ${sql.ref(t.fk)} = ${entityId} AND reaction = ${reaction} ${bound}
+      WHERE ${sql.ref(t.fk)} = ${entityId} AND reaction = ${reaction}
+        AND ${listedToViewer(`${t.reactions}.userId`, ownerId)}
+        ${entity === 'image' ? sql`AND ${preLaunchImageReactionListed(ownerId)}` : sql``} ${bound}
       ORDER BY "userId" ${order}
       LIMIT ${REACTORS_PAGE_SIZE + 1}
     ) r

@@ -74,6 +74,8 @@ export type JsonResult =
       ok: false;
       error: string;
       requestNeverSent?: boolean;
+      /** No session to forward — no cookie, or no request in scope; the request was never sent. */
+      noSession?: true;
       status?: number;
       /** The recovered text alone, without the action label, so a caller that overrides the message
        *  can still carry what the far side said. */
@@ -94,10 +96,14 @@ async function readError(res: Response): Promise<string | null> {
  *  callers do — everything else about them was identical and drifted independently. */
 async function postJson(opts: {
   path: string;
+  /** Sent as the JSON body, or as the query string when `method` is `GET`. */
   body: Record<string, unknown>;
+  method?: 'GET' | 'POST';
   label: string;
   auth: 'webhook' | 'session';
   timeoutMs: number;
+  /** `'session'` only: forward this cookie instead of the current request's. */
+  cookie?: string;
 }): Promise<JsonResult> {
   const base = civitaiAppUrl();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -107,20 +113,24 @@ async function postJson(opts: {
     // Throws when there is no request in scope (a job, a script). That is a programming error rather
     // than a runtime condition, but it must not surface to the operator as a bare 500.
     let cookie: string | null;
-    try {
-      cookie = getRequestEvent().request.headers.get('cookie');
-    } catch {
-      return {
-        ok: false,
-        error: `${opts.label} must be called while handling a request.`,
-        requestNeverSent: true,
-      };
-    }
+    if (opts.cookie !== undefined) cookie = opts.cookie;
+    else
+      try {
+        cookie = getRequestEvent().request.headers.get('cookie');
+      } catch {
+        return {
+          ok: false,
+          error: `${opts.label} must be called while handling a request.`,
+          requestNeverSent: true,
+          noSession: true,
+        };
+      }
     if (!cookie)
       return {
         ok: false,
         error: `${opts.label} failed: no session to forward.`,
         requestNeverSent: true,
+        noSession: true,
       };
     headers.cookie = cookie;
   } else {
@@ -130,11 +140,21 @@ async function postJson(opts: {
     url += `?token=${encodeURIComponent(token)}`;
   }
 
+  const isGet = opts.method === 'GET';
+  if (isGet) {
+    const query = new URLSearchParams(
+      Object.entries(opts.body)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, String(v)])
+    ).toString();
+    if (query) url += `${url.includes('?') ? '&' : '?'}${query}`;
+  }
+
   try {
     const res = await fetch(url, {
-      method: 'POST',
+      method: isGet ? 'GET' : 'POST',
       headers,
-      body: JSON.stringify(opts.body),
+      ...(isGet ? {} : { body: JSON.stringify(opts.body) }),
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
     if (!res.ok) {
@@ -178,6 +198,7 @@ export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
+  | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
@@ -219,6 +240,50 @@ export const callModEndpoint = (
   timeoutMs = 30_000
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
+
+/** The read-only `/api/mod/*` routes; kept apart from `ModEndpoint` so a read cannot be sent as a write. */
+export type ModReadEndpoint =
+  | 'creator-services/deal-file-url'
+  | 'creator-services/deal-files'
+  | 'creator-services/disputes';
+
+/** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
+export const readModEndpoint = (
+  path: ModReadEndpoint,
+  params: Record<string, string | number | undefined>,
+  label: string,
+  timeoutMs = 15_000
+): Promise<JsonResult> =>
+  postJson({
+    path: `/api/mod/${path}`,
+    body: params,
+    method: 'GET',
+    label,
+    auth: 'session',
+    timeoutMs,
+  });
+
+/** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
+export const callModEndpointAs = (
+  cookie: string,
+  path: ModEndpoint,
+  body: Record<string, unknown>,
+  label: string,
+  timeoutMs = 30_000
+): Promise<JsonResult> =>
+  postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs, cookie });
+
+/**
+ * The session cookie of the request being handled; null outside a request or without one.
+ * It is the moderator's session: keep it in memory only, never log or store it.
+ */
+export function requestCookie(): string | null {
+  try {
+    return getRequestEvent().request.headers.get('cookie') || null;
+  } catch {
+    return null;
+  }
+}
 
 // Best-effort: the resolve already committed, and a missed bust is a stale read that expires with the cache.
 export const bustModelVersionCache = (versionIds: number[]): Promise<JsonResult> =>

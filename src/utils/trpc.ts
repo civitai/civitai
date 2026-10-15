@@ -22,6 +22,7 @@ import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
+import { pageRouteHeaders } from '~/utils/page-route-header';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -510,7 +511,7 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
  */
 function getHeaders(ctx?: NextPageContext) {
   return function () {
-    return { ...ctx?.req?.headers, ...headers };
+    return { ...ctx?.req?.headers, ...headers, ...pageRouteHeaders() };
   };
 }
 

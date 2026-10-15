@@ -37,6 +37,9 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/users.service', () => ({ MAX_INT4: 2_147_483_647 }));
 const canAccess = vi.fn(() => true);
 vi.mock('$lib/server/access', () => ({ canAccess }));
+const MERGE_CHECKS = { 501: { sourceModelId: 115 } };
+const getMergePermissionChecks = vi.fn(async (_reports: unknown[]) => MERGE_CHECKS);
+vi.mock('$lib/server/merge-permission.service', () => ({ getMergePermissionChecks }));
 
 const { modelQueueActions } = await import('../actions.server');
 const { load: layoutLoad } = await import('../+layout.server');
@@ -156,6 +159,24 @@ describe('the pages', () => {
       'saveNotes',
       'setStatus',
     ]);
+  });
+
+  // "Was this merge allowed when it was made?" — for the model's own reports, and for the queue's rows,
+  // since the open model also lists any of its reports the queue is showing.
+  it('checks merge permission for the open model and for the queue', async () => {
+    const reports = [{ id: 501, entityId: 42, details: {} }];
+    getReports.mockResolvedValueOnce({ items: reports, totalItems: 1, page: 1, limit: 100 });
+    const data = (await modelLoad({ params: { modelId: '42' } } as never)) as {
+      item: { mergePermission: unknown };
+    };
+    expect(getMergePermissionChecks).toHaveBeenCalledWith(reports);
+    expect(data.item.mergePermission).toEqual(MERGE_CHECKS);
+
+    getMergePermissionChecks.mockClear();
+    getReports.mockResolvedValueOnce({ items: reports, totalItems: 1, page: 1, limit: 20 });
+    const layout = await layoutLoad({ url: url('/reports/model'), locals } as never);
+    expect(getMergePermissionChecks).toHaveBeenCalledWith(reports);
+    expect(layout).toMatchObject({ mergePermission: MERGE_CHECKS });
   });
 
   it('a path that is not a model id is a 404', async () => {

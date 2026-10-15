@@ -5,7 +5,7 @@ import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
   type CreatorRemoval,
   removalsQuery,
-  withoutAppealReversed,
+  withoutReversed,
 } from '~/server/services/creator-removals.service';
 import { getAppealExcludedIds } from '~/server/services/report.service';
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
@@ -89,7 +89,7 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
  */
 export async function getMyRemovedImages(userId: number) {
   const fetched = await getRemovalEvents(userId);
-  const events = await withoutAppealReversed(fetched);
+  const events = await withoutReversed(fetched);
   const none = { total: 0, truncated: false, items: [] as RemovedImage[] };
   if (!events.length) return none;
 

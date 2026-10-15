@@ -1,4 +1,8 @@
 import * as z from 'zod';
+import {
+  MERGE_PERMISSION_REPORT_REASON,
+  parseSourceModelId,
+} from '@civitai/shared/merge-permission';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
@@ -59,9 +63,22 @@ export const reportClaimDetailsSchema = baseDetailSchema.extend({
   email: z.string().email(),
 });
 
-export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
-  reason: z.string(),
-});
+export const reportAdminAttentionDetailsSchema = baseDetailSchema
+  .extend({
+    reason: z.string(),
+    // Which of the reporter's models the reported merge uses. A link or a bare id; stored as the id.
+    sourceModelId: z.preprocess(parseSourceModelId, z.number().int().positive().optional()),
+  })
+  // Moderators judge the merge by this model's permission when the merge was made; without it there
+  // is nothing to look up. Enforced here because the form is not the only way a report arrives.
+  .superRefine((details, ctx) => {
+    if (details.reason === MERGE_PERMISSION_REPORT_REASON && !details.sourceModelId)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceModelId'],
+        message: 'Link the model of yours that this merge uses.',
+      });
+  });
 
 export const reportSpamDetailsSchema = baseDetailSchema;
 

@@ -51,6 +51,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -107,7 +108,10 @@ import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert'
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
-import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  modelVersionAccessInput,
+  useModelVersionPermission,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -314,10 +318,9 @@ export const getServerSideProps = createServerSideProps({
         [
           ssg.hiddenPreferences.getHidden.prefetch(),
           modelVersionIdParsed
-            ? ssg.common.getEntityAccess.prefetch({
-                entityId: modelVersionIdParsed as number,
-                entityType: 'ModelVersion',
-              })
+            ? ssg.common.getEntityAccess.prefetch(
+                modelVersionAccessInput(modelVersionIdParsed as number)
+              )
             : null,
           ssg.model.getCollectionShowcase.prefetch({ id }),
           // Creator-card CLS fix: SSR-prefetch user.getCreator (the SmartCreatorCard
@@ -573,7 +576,8 @@ export default function ModelDetailsV2({
     }
   };
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess() {
+    async onSuccess(result) {
+      notifyIfPublishHeld(result);
       await queryUtils.model.getById.invalidate({ id });
     },
     onError(error) {

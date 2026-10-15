@@ -173,6 +173,7 @@ const sharpExecutingTestFiles = [
   'src/server/services/blocks/__tests__/offsite-listing.service.test.ts',
   'src/server/utils/__tests__/listing-asset-exif-fixture.test.ts',
   'src/server/utils/__tests__/stored-image-probe.test.ts',
+  'src/server/utils/__tests__/service-deal-preview.test.ts',
   'src/server/utils/__tests__/og-image-helpers.test.ts',
   'src/tests/api/og.milestone.test.ts',
 ];

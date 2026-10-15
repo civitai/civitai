@@ -9,6 +9,7 @@ export function RefreshSessionCard({ flat }: { flat?: boolean }) {
   if (flat)
     return (
       <PointerCard
+        id="refresh-session"
         icon={<IconRefresh size={18} />}
         title="Refresh my session"
         description="Reloads your account data. Safe to run any time."

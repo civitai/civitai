@@ -20,6 +20,9 @@ patchedDependencies:
   '@mantine/hooks':
     hash: b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64
     path: patches/@mantine__hooks.patch
+  '@prisma/client@6.13.0':
+    hash: 572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d
+    path: patches/@prisma__client@6.13.0.patch
 
 importers:
 
@@ -50,8 +53,8 @@ importers:
         specifier: 0.2.0-beta.98
         version: 0.2.0-beta.98
       '@civitai/components-chat':
-        specifier: ^0.5.0
-        version: 0.5.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
+        specifier: ^0.7.0
+        version: 0.7.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -237,7 +240,7 @@ importers:
         version: 8.8.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@prisma/client':
         specifier: ^6.3.0
-        version: 6.13.0(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)
+        version: 6.13.0(patch_hash=572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d)(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)
       '@prisma/instrumentation':
         specifier: ^7.4.2
         version: 7.4.2(@opentelemetry/api@1.9.0)
@@ -682,6 +685,9 @@ importers:
       yaml:
         specifier: ^2.8.1
         version: 2.8.1
+      yauzl:
+        specifier: 3.4.0
+        version: 3.4.0
       zod:
         specifier: ^4.0.17
         version: 4.0.17
@@ -794,6 +800,9 @@ importers:
       '@types/xml2js':
         specifier: ^0.4.14
         version: 0.4.14
+      '@types/yauzl':
+        specifier: 3.4.0
+        version: 3.4.0
       '@typescript-eslint/eslint-plugin':
         specifier: ^5.33.0
         version: 5.62.0(@typescript-eslint/parser@5.62.0(eslint@8.57.1)(typescript@5.9.2))(eslint@8.57.1)(typescript@5.9.2)
@@ -1725,6 +1734,9 @@ importers:
 
   packages/civitai-redis:
     dependencies:
+      cluster-key-slot:
+        specifier: ^1.1.2
+        version: 1.1.2
       lodash-es:
         specifier: ^4.17.21
         version: 4.17.21
@@ -2311,15 +2323,15 @@ packages:
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/components-chat@0.5.0':
-    resolution: {integrity: sha512-UlJaUlKesf6uzMrEVCUh9Ye/V3lfHx65Z/vz1uHwtGHyXPZSxptH0bloNi0yxHiY3WVcB0UVhCGmY+7/zaatGA==}
+  '@civitai/components-chat@0.7.0':
+    resolution: {integrity: sha512-lEVvVKQkoB0fDhXUOKHQP9TDY/ntteTliHw+Dksfbpn43+5FfKtyhAfUCBkB8jtme5kQ/0dHuTUvPtbG8BqRRg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
       lit: ^3.3.0
 
-  '@civitai/components@0.9.2':
-    resolution: {integrity: sha512-ApZStmYs9mBRymAdYzl2Jc8vjb0egFQsv2cecDzAA2E6IPMBXLrO5AtE1a8JolxSI9B2eKLiqUl0uTqFZ8S//Q==}
+  '@civitai/components@0.10.0':
+    resolution: {integrity: sha512-2M/OEwdcHz63ctjrUAb3iIl5eizgfGBRfRZHGFC2jayebUDHl+ruX51C4TpQVGID4Pghk/i94vNFffho5NeTGA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.1.0 <1.0.0'
@@ -2327,8 +2339,8 @@ packages:
       '@civitai/sdk':
         optional: true
 
-  '@civitai/components@0.9.3':
-    resolution: {integrity: sha512-F+yRS3mLZAsYQ8cy4QUvHSqhjuGwdfnFr6vMN+1J9+1pQdLyZCvZxEaH1eKvPbnVmjGFa1gT6LzeMVgCsWOcRA==}
+  '@civitai/components@0.9.2':
+    resolution: {integrity: sha512-ApZStmYs9mBRymAdYzl2Jc8vjb0egFQsv2cecDzAA2E6IPMBXLrO5AtE1a8JolxSI9B2eKLiqUl0uTqFZ8S//Q==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.1.0 <1.0.0'
@@ -5852,6 +5864,9 @@ packages:
 
   '@types/xml2js@0.4.14':
     resolution: {integrity: sha512-4YnrRemBShWRO2QjvUin8ESA41rH+9nQGLUGZV/1IDhi3SL9OhdpNC/MrulTWuptXKwhx/aDxE7toV0f/ypIXQ==}
+
+  '@types/yauzl@3.4.0':
+    resolution: {integrity: sha512-NRPn5w6h8dhcnmx3YIRQcqMywY/+nND/uOkJessedcrowO3C0AssHp3tMJpxKAwOhFOo0OV1y9VtsC5hbKKBAw==}
 
   '@types/youtube-player@5.5.11':
     resolution: {integrity: sha512-pM41CDBqJqBmTeJWnF7NOGz82IQoYOhqzMYXv5vKCXBqGiYSLldxMtpCk6KAEtADTy49S45AriYaCaZyeUX38Q==}
@@ -10100,6 +10115,9 @@ packages:
   peberminta@0.9.0:
     resolution: {integrity: sha512-XIxfHpEuSJbITd1H3EeQwpcZbTLHc+VVr8ANI9t5sit565tsI4/xK3KWTUFE2e6QiangUkh3B0jihzmGnNrRsQ==}
 
+  pend@1.2.0:
+    resolution: {integrity: sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==}
+
   perfect-debounce@1.0.0:
     resolution: {integrity: sha512-xCy9V055GLEqoFaHoC1SoLIaLmWctgCUaBaWxDZ7/Zx4CTyX7cJQLJOok/orfjZAh9kEYpjJa4d0KcJmCbctZA==}
 
@@ -12892,6 +12910,10 @@ packages:
     resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
     engines: {node: '>=12'}
 
+  yauzl@3.4.0:
+    resolution: {integrity: sha512-jIH9yLR9wqr0wOS0TpBvo/g/2UgZH5qePVbjgRliiF0BYvOZyaBknKsF+x9Iht0O6sqgnB93rCICdOZFecJuDw==}
+    engines: {node: '>=12'}
+
   ylru@1.4.0:
     resolution: {integrity: sha512-2OQsPNEmBCvXuFlIni/a+Rn+R2pHW9INm0BxXJ4hVDA8TirqMj+J/Rp9ItLatT/5pZqWwefVrTQcHpixsxnVlA==}
     engines: {node: '>= 4.0.0'}
@@ -13851,10 +13873,10 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/components-chat@0.5.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
+  '@civitai/components-chat@0.7.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
-      '@civitai/components': 0.9.3(@civitai/sdk@0.11.0)
+      '@civitai/components': 0.10.0(@civitai/sdk@0.11.0)
       '@civitai/sdk': 0.11.0
       '@modelcontextprotocol/sdk': 1.32.1(zod@4.0.17)
       ai: 6.0.289(zod@4.0.17)
@@ -13867,14 +13889,14 @@ snapshots:
       - supports-color
       - zod
 
-  '@civitai/components@0.9.2(@civitai/sdk@0.11.0)':
+  '@civitai/components@0.10.0(@civitai/sdk@0.11.0)':
     dependencies:
       '@civitai/theme': 0.5.2
       lit: 3.3.3
     optionalDependencies:
       '@civitai/sdk': 0.11.0
 
-  '@civitai/components@0.9.3(@civitai/sdk@0.11.0)':
+  '@civitai/components@0.9.2(@civitai/sdk@0.11.0)':
     dependencies:
       '@civitai/theme': 0.5.2
       lit: 3.3.3
@@ -15712,7 +15734,7 @@ snapshots:
 
   '@polka/url@1.0.0-next.29': {}
 
-  '@prisma/client@6.13.0(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)':
+  '@prisma/client@6.13.0(patch_hash=572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d)(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)':
     optionalDependencies:
       prisma: 6.13.0(typescript@5.9.2)
       typescript: 5.9.2
@@ -17655,6 +17677,10 @@ snapshots:
       '@types/node': 20.19.9
 
   '@types/xml2js@0.4.14':
+    dependencies:
+      '@types/node': 20.19.9
+
+  '@types/yauzl@3.4.0':
     dependencies:
       '@types/node': 20.19.9
 
@@ -23113,6 +23139,8 @@ snapshots:
 
   peberminta@0.9.0: {}
 
+  pend@1.2.0: {}
+
   perfect-debounce@1.0.0: {}
 
   pg-cloudflare@1.2.7:
@@ -26496,6 +26524,10 @@ snapshots:
       string-width: 4.2.3
       y18n: 5.0.8
       yargs-parser: 21.1.1
+
+  yauzl@3.4.0:
+    dependencies:
+      pend: 1.2.0
 
   ylru@1.4.0: {}
 

@@ -2088,8 +2088,11 @@ export const grantBuzzPurchase = async ({
   return transactionId;
 };
 
-export async function getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix: string) {
-  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix });
+export async function getMultiAccountTransactionsByPrefix(
+  externalTransactionIdPrefix: string,
+  opts?: BuzzReadOptions
+) {
+  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix }, opts);
 
   return data.map((item) => ({
     ...item,

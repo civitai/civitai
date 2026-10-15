@@ -23,6 +23,8 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'UserProfile',
   'Crucible',
   'Collection',
+  'Storyline',
+  'ModelRules',
 ] as const satisfies readonly TextScanEntityType[];
 
 /**

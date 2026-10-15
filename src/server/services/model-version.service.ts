@@ -14,6 +14,7 @@ import type { LicensingSourceRejection } from '~/server/schema/model-version.sch
 import { clickhouse } from '~/server/clickhouse/client';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
+  allowsDifferentLicenseOnMerges,
   CacheTTL,
   constants,
   isNonCommercialBaseModel,
@@ -116,10 +117,7 @@ import {
 } from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import {
-  scanEntitiesInBackground,
-  scanEntityInBackground,
-} from '~/server/services/text-scan/submit';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -810,7 +808,7 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    if (!isModerator) scanEntityInBackground({ entityType: 'Model', entityId: version.modelId });
+    if (!isModerator) scanModelAndRules(version.modelId);
     return version;
   } else {
     const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
@@ -1063,7 +1061,7 @@ export const upsertModelVersion = async ({
       !isModerator &&
       (data.name !== undefined || data.description !== undefined || data.trainedWords !== undefined)
     )
-      scanEntityInBackground({ entityType: 'Model', entityId: version.modelId });
+      scanModelAndRules(version.modelId);
     return version;
   }
 };
@@ -1133,7 +1131,7 @@ export async function applyModelVersionContentChange({
   // pre-rewrite text until they are dropped.
   await bustModelLevelVersionCaches(modelId);
   // With a context, the caller is upsertModelVersion, which starts its own scan.
-  if (!context) scanEntityInBackground({ entityType: 'Model', entityId: modelId });
+  if (!context) scanModelAndRules(modelId);
 
   return true;
 }
@@ -1513,12 +1511,15 @@ export const updateModelVersionById = async ({
 
 export const publishModelVersionsWithEarlyAccess = async ({
   modelVersionIds,
+  modelId,
   publishedAt,
   meta,
   tx,
   continueOnError = false,
 }: {
   modelVersionIds: number[];
+  /** Restricts the publish to versions of this model. */
+  modelId?: number;
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
@@ -1528,7 +1529,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
   const dbClient = tx ?? dbWrite;
 
   const versions = await dbClient.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
+    where: { id: { in: modelVersionIds }, ...(modelId !== undefined ? { modelId } : {}) },
     select: {
       id: true,
       name: true,
@@ -2336,9 +2337,9 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (options.allowDifferentLicense) {
+  if (allowsDifferentLicenseOnMerges(options)) {
     license += `
-<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.</b>
+<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.</b>
 `;
   }
 
@@ -3573,7 +3574,7 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
-  scanEntityInBackground({ entityType: 'Model', entityId: modelId });
+  scanModelAndRules(modelId);
 
   // Post-commit S3 cleanup for any stragglers the move missed.
   if (sourceFileUrls.length > 0) {

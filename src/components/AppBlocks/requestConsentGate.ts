@@ -26,6 +26,7 @@
  */
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import type { HostStatus } from './openBuzzPurchaseGate';
+import { resolveRequestSignIn } from './requestSignInGate';
 
 export function resolveRequestConsent(
   status: HostStatus,
@@ -34,6 +35,38 @@ export function resolveRequestConsent(
   if (status !== 'ready') return null;
   if (!Array.isArray(missingScopes) || missingScopes.length === 0) return null;
   return missingScopes;
+}
+
+/**
+ * The scopes a host advertises to the block in BLOCK_INIT / TOKEN_REFRESH /
+ * TOKEN_REFRESH_RESPONSE, and the "already granted" set the consent gates read.
+ * Shared by both host surfaces so they cannot disagree.
+ *
+ * `signedScopes` is the set the mint reports it SIGNED into this token, and wins
+ * whenever present. Re-deriving it as `declared − missingScopes` is wrong for an
+ * anonymous viewer: the mint strips every consent-gated scope but reports
+ * `missingScopes: []` (anon cannot consent), so the derivation advertised gated
+ * scopes the token lacks — and a REQUEST_CONSENT for one was then read as
+ * "already granted" and dropped. On the main mint path it also differs for a
+ * signed-in viewer whose manifest still lists a deprecated scope the mint no
+ * longer signs, and the private-run and owned dev-tunnel mints sign a clamped
+ * set derived from the approved scopes rather than the client's manifest — which
+ * can ADD `user:read:self` the manifest never declared (the dev clamp forces it).
+ *
+ * The derivation stays only as the fallback for a caller that passes no signed
+ * set: a mint response without `scopes` (the ephemeral dev-tunnel mint), or
+ * ReviewBlockPreviewHost, which passes its review mint's signed set as
+ * `declaredScopes` with no `missingScopes`.
+ */
+export function resolveAdvertisedScopes(
+  declaredScopes: string[],
+  missingScopes: string[] | undefined,
+  signedScopes: string[] | undefined
+): string[] {
+  if (Array.isArray(signedScopes)) return signedScopes;
+  if (!missingScopes || missingScopes.length === 0) return declaredScopes;
+  const withheld = new Set(missingScopes);
+  return declaredScopes.filter((s) => !withheld.has(s));
 }
 
 /** Everything a host needs to decide whether to offer the consent notice itself. */
@@ -179,6 +212,29 @@ export function resolveUngrantableConsentNotice(
   // Decision on the UNFILTERED set — see above.
   if (ungrantable.length === 0) return { notify: false, scopes: [] };
   return { notify: true, scopes: ungrantable.filter((s) => isKnownBlockScope(s)) };
+}
+
+/**
+ * What the HOST shows the viewer for an un-grantable REQUEST_CONSENT (the block
+ * always gets CONSENT_UNAVAILABLE regardless — this is only the host-frame half).
+ *
+ * A signed-out viewer's scopes are un-grantable only because they are signed out:
+ * the anon mint strips every consent-gated scope, and signing in makes them
+ * grantable. "This permission isn't available here" is false for them, and the
+ * SDK's `withConsentRetry` sends REQUEST_CONSENT automatically on the first failed
+ * gated call per missing scope set (it then remembers the refusal until the token
+ * rotates), so a viewer who never asked for a permission would see it. Offer sign-in instead, through the same
+ * `resolveRequestSignIn` gate REQUEST_SIGN_IN uses (it refuses before BLOCK_READY,
+ * so nothing pops pre-handshake). Signed-in viewers keep the toast.
+ */
+export type UngrantableConsentPrompt = 'sign-in' | 'toast' | 'none';
+
+export function resolveUngrantableConsentPrompt(
+  status: HostStatus,
+  signedIn: boolean
+): UngrantableConsentPrompt {
+  if (signedIn) return 'toast';
+  return resolveRequestSignIn(status, undefined) != null ? 'sign-in' : 'none';
 }
 
 /**

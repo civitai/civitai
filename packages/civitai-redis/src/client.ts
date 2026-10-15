@@ -13,6 +13,7 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
+import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
 import {
@@ -1030,6 +1031,91 @@ export interface InstrumentCommandsOptions {
 }
 
 /**
+ * The per-command bookkeeping every instrumented command shares — the ONE place it lives, so a
+ * routed command (instrumentCommands) and a pipelined batch (trackClusterCommands) cannot drift.
+ * Counts `count` commands as started now, and returns `done`, which settles all of them.
+ */
+function startCommandAccounting(
+  clientLabel: 'cluster' | 'sys',
+  count: number,
+  slowCommandMs: number
+): () => void {
+  const labels = { client: clientLabel } as const;
+  // Capture the metric handles ONCE so inc/dec stay balanced even if the app's prom module loads
+  // mid-flight (a dec without its inc would drive the gauge negative).
+  const metrics = getRedisMetrics();
+  for (let i = 0; i < count; i++) {
+    metrics?.redisCommandsInflight.inc(labels);
+    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
+    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
+    if (clientLabel === 'cluster') incClusterInflight();
+    else incSysInflight();
+  }
+  const start = Date.now();
+  let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
+  return () => {
+    const durationMs = Date.now() - start;
+    if (!dec) {
+      // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
+      // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
+      // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
+      // is what keeps the counter accurate post-heal so the watchdog can re-arm.
+      for (let i = 0; i < count; i++) {
+        if (clientLabel === 'cluster') decClusterInflight();
+        else decSysInflight();
+      }
+      dec = true;
+    }
+    for (let i = 0; i < count; i++) {
+      metrics?.redisCommandsInflight.dec(labels);
+      // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
+      // brotli-decompress on the compress-aware paths), which runs afterwards in
+      // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
+      // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
+      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
+      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
+      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
+      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
+      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
+      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
+      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
+      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
+      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
+      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
+      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
+      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
+    }
+  };
+}
+
+/**
+ * Account a batch of `count` CLUSTER commands that is sent outside `_execute` (the pipelined
+ * multi-key GET talks to a node client directly, so instrumentCommands never sees it) exactly as
+ * `count` separate commands would be: `count` on the inflight gauge and on the self-heal inflight
+ * counter while it runs, one deadline over the batch, and on settle `count` duration samples and
+ * `count` slow-settle observations. So a stuck 200-key read still looks like 200 stuck commands
+ * to the wedge signals.
+ *
+ * Exported (with injectable `opts`) for tests.
+ */
+export function trackClusterCommands<T>(
+  count: number,
+  run: () => Promise<T>,
+  opts: { deadlineMs?: number; slowCommandMs?: number } = {}
+): Promise<T> {
+  const deadlineMs = opts.deadlineMs ?? config?.clusterCommandTimeoutMs ?? 0;
+  const slowCommandMs = opts.slowCommandMs ?? config?.clusterSelfHealSlowCommandMs ?? 0;
+  const done = startCommandAccounting('cluster', count, slowCommandMs);
+  let executed: Promise<T>;
+  try {
+    executed = run();
+  } catch (err) {
+    executed = Promise.reject(err);
+  }
+  return withCommandDeadline(executed, deadlineMs).finally(done);
+}
+
+/**
  * Wrap the per-client command chokepoint so EVERY command is counted in the inflight gauge
  * and timed. The chokepoint differs by kind: SINGLE client -> `sendCommand`; CLUSTER client
  * -> `_execute` (typed methods route through it, not the top-level sendCommand). The cluster
@@ -1047,7 +1133,6 @@ export function instrumentCommands(
 ) {
   const self = client?._self ?? client;
   if (!self) return;
-  const labels = { client: clientLabel } as const;
   // Detect the real chokepoint by capability: a 'cache' client is a CLUSTER (wrap `_execute`)
   // only when REDIS_CLUSTER is on; otherwise it's a plain single client (wrap `sendCommand`).
   const isClusterClient = typeof self._execute === 'function';
@@ -1087,45 +1172,7 @@ export function instrumentCommands(
         new Error(`sysRedis in-flight cap reached (${sysInflightCap}); command rejected`)
       );
     }
-    // Capture the metric handles ONCE per command so inc/dec stay balanced even if the app's
-    // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
-    const metrics = getRedisMetrics();
-    metrics?.redisCommandsInflight.inc(labels);
-    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
-    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
-    if (clientLabel === 'cluster') incClusterInflight();
-    else incSysInflight();
-    const start = Date.now();
-    let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
-    const done = () => {
-      const durationMs = Date.now() - start;
-      if (!dec) {
-        // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
-        // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
-        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
-        // is what keeps the counter accurate post-heal so the watchdog can re-arm.
-        if (clientLabel === 'cluster') decClusterInflight();
-        else decSysInflight();
-        dec = true;
-      }
-      metrics?.redisCommandsInflight.dec(labels);
-      // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
-      // brotli-decompress on the compress-aware paths), which runs afterwards in
-      // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
-      // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
-      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
-      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
-      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
-      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
-      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
-      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
-      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
-      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
-      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
-      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
-      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
-      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
-    };
+    const done = startCommandAccounting(clientLabel, 1, slowCommandMs);
 
     // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
     // TypeError fires synchronously during node selection BEFORE dispatch) as a rejection so the
@@ -1626,6 +1673,25 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
+  // Raw multi-key read behind packed.mGet. On the cache CLUSTER the GETs are grouped by owning
+  // master and written to that node's connection together (./cluster-pipelined-get) instead of
+  // one routed GET per key; anywhere else, and with REDIS_CLUSTER_BATCHED_GET_ENABLED=false, it is
+  // the original per-key GETs. The pipelined GETs bypass `_execute`, so trackClusterCommands
+  // accounts each batch as its key count in the inflight, deadline and duration signals; any key
+  // re-read on its own goes through bufferClient as before.
+  const batchedGet =
+    type === 'cache' && config.cluster && config.clusterBatchedGetEnabled !== false
+      ? createClusterPipelinedGet({
+          get: (key) => bufferClient.get<Buffer>(key as K),
+          cluster: (client as any)._self ?? client,
+          typeMapping: { [RESP_TYPES.BLOB_STRING]: Buffer },
+          track: (count, run) => trackClusterCommands(count, run),
+          log,
+        })
+      : undefined;
+  const getBuffers = (keys: K[]): Promise<(Buffer | null)[]> =>
+    batchedGet ? batchedGet(keys) : Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+
   client.packed = {
     async get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null> {
       const result = await bufferClient.get<Buffer>(key);
@@ -1639,9 +1705,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       return safeUnpack<T>(result, () => client.unlink(key));
     },
 
-    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
+    // Not a native MGET (CROSSSLOT on a cluster): see getBuffers above.
     async mGet<T>(keys: K[], packedOptions?: PackedOptions): Promise<(T | null)[]> {
-      const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+      const results = await getBuffers(keys);
       // SYMMETRIC with `set(..., { compress: true })`, same as the single-key `get` above.
       // The batched read is the one a per-id cache (createCachedArray) actually uses, so a
       // compressed writer that could not opt its mGet in would corrupt every read.
@@ -1806,7 +1872,8 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
-  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually
+  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually. (packed.mGet pipelines per master
+  // via ./cluster-pipelined-get; this string-mode wrapper has no hot caller and stays per-key.)
   const originalMGet = baseClient.mGet?.bind(baseClient);
   client.mGet = async function (...args: any[]): Promise<any> {
     const keys = args[0] as K[];
@@ -2709,7 +2776,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
-      MODELS: 'packed:caches:mod-rules:models',
+      MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',
     },
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
@@ -2749,6 +2816,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only (bid submission re-validates the true minimum server-side). See
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
+    // Readers' latest choice per way on from one storyline chapter: `<prefix>:<chapterId>`.
+    // Cleared when a reader chooses at that chapter. See storyline.service.
+    STORYLINE_FORK_COUNTS: 'packed:caches:storyline-fork-counts',
     // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
     // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
     // `Image WHERE url = $1` single-row read is the highest-volume DB query in the

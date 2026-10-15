@@ -14,6 +14,8 @@ import {
   textScanEmEntityType,
   type TextScanVariant,
 } from '~/server/services/text-scan/mode';
+import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
+import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -143,6 +145,7 @@ export function textScanContentHash({
   promptIds,
   model,
   thinking,
+  rulesFingerprint,
   variant,
   segmentBudget,
 }: {
@@ -150,6 +153,7 @@ export function textScanContentHash({
   promptIds: PromptIds;
   model: string;
   thinking: boolean;
+  rulesFingerprint?: string;
   variant?: TextScanVariant;
   segmentBudget?: { maxInputChars: number; maxSegments: number };
 }) {
@@ -157,6 +161,8 @@ export function textScanContentHash({
     .sort()
     .map((key) => `${key}=${promptIds[key]}`)
     .join(',');
+  // Appended only when present, so every existing row's hash is unchanged.
+  const rules = rulesFingerprint ? `\u0000rules=${rulesFingerprint}` : '';
   const tail = variant ? `\u0000${variant}` : '';
   // Only text over the budget is split, so only its hash may change with the budget: a shorter
   // text keeps its hash and is not rescanned when the budget changes.
@@ -165,7 +171,7 @@ export function textScanContentHash({
       ? `\u0000segments=${segmentBudget.maxInputChars}x${segmentBudget.maxSegments}`
       : '';
   return hashContent(
-    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${tail}${segmenting}`
+    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}${tail}${segmenting}`
   );
 }
 
@@ -240,6 +246,7 @@ async function clearStaleVerdict({
   for (const label of labels) {
     if (label === 'nsfw') output.nsfw = { level: 'none', reason: NO_TEXT_REASON };
     else if (label === 'poi') output.poi = { detected: false, names: [], reason: NO_TEXT_REASON };
+    else if (label === 'modelRules') output.modelRules = { matched: [] };
     else output[label] = { detected: false, reason: NO_TEXT_REASON };
   }
   const outcome = evaluateTextScan(output, subject.declared, labels);
@@ -330,8 +337,12 @@ export async function scanEntity({
     return { status: 'skipped', reason: 'too-short' };
   }
 
-  const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
-  const ctx = { entityType, entityId, subject, config, prompts, force };
+  const [config, prompts, modelRules] = await Promise.all([
+    getTextScanConfig(),
+    getActiveTextScanPrompts(),
+    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+  ]);
+  const ctx = { entityType, entityId, subject, config, prompts, modelRules, force };
 
   const [first, ...rest] = passes;
   const result = await submitTextScanPass({ ...ctx, fromRetry, pass: first });
@@ -358,6 +369,7 @@ async function submitTextScanPass({
   subject,
   config,
   prompts,
+  modelRules,
   force,
   fromRetry,
   pass: { mode, labels, variant },
@@ -367,6 +379,7 @@ async function submitTextScanPass({
   subject: TextScanSubject;
   config: Awaited<ReturnType<typeof getTextScanConfig>>;
   prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>;
+  modelRules: Awaited<ReturnType<typeof getModelRulesForPrompt>> | undefined;
   force: boolean;
   fromRetry: boolean;
   pass: TextScanPass;
@@ -378,6 +391,7 @@ async function submitTextScanPass({
       labels,
       subject,
       maxInputChars: config.maxInputChars,
+      modelRules,
       maxSegments: config.maxSegments,
     });
   } catch (e) {
@@ -396,6 +410,7 @@ async function submitTextScanPass({
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
+    rulesFingerprint: composed.rulesFingerprint,
     variant,
     segmentBudget: config,
   });
@@ -458,6 +473,12 @@ async function submitTextScanPass({
     segments: composed.segments.length,
     scannedChars: composed.scannedChars,
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
+    ...(composed.ruleIds
+      ? { ruleIds: composed.ruleIds, rulesFingerprint: composed.rulesFingerprint }
+      : {}),
+    ...(composed.ruleIds && modelRules
+      ? { literalRuleIds: findLiteralHitsInSubject(subject, modelRules) }
+      : {}),
   };
 
   // Before submit: a content-cache hit can call back before submitWorkflow returns.
@@ -565,4 +586,18 @@ export function scanEntitiesInBackground(entityType: TextScanEntityType, entityI
     entityIds.map((entityId) => () => scanEntityOrLog({ entityType, entityId })),
     BACKGROUND_SCAN_CONCURRENCY
   ).catch(() => null);
+}
+
+/**
+ * The one place a model's rules scan is queued. Callers decide who is scanned (moderator edits
+ * are not); the profile skips a model that is not public.
+ */
+export function scanModelRules(modelId: number) {
+  scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
+}
+
+/** Every Model scan trigger also checks the rules; both profiles skip a model that is not public. */
+export function scanModelAndRules(modelId: number, { rules = true }: { rules?: boolean } = {}) {
+  scanEntityInBackground({ entityType: 'Model', entityId: modelId });
+  if (rules) scanModelRules(modelId);
 }

@@ -90,6 +90,15 @@
   // destructive button pointed at the previous one.
   let confirmingPlacement = $state<number | null>(null);
   let confirmingDelist = $state<number | null>(null);
+  const storylineForm = new FormState({
+    onSuccess: (result) => {
+      confirmingTakedown = null;
+      toast.success(String(result?.storylineTakedown ?? 'Done'));
+    },
+    reload: true,
+    onSettled: reloadIfGone,
+  });
+  let confirmingTakedown = $state<number | null>(null);
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
   const reportComment = (r: { details: unknown }) =>
@@ -161,6 +170,8 @@
     placementForm.error = null;
     delistForm.error = null;
     confirmingDelist = null;
+    storylineForm.error = null;
+    confirmingTakedown = null;
   }
 
   // The row is the target, but it also holds links (the item, the reporter) that must keep doing
@@ -476,6 +487,64 @@
             {/if}
             {#if delistForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{delistForm.error}</p>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'storyline'}
+          {@const storyline = data.storylines.find((st) => st.id === selected.entityId)}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            {#if storyline}
+              <p class="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-medium">{storyline.title}</span>
+                {#if storyline.tosViolationByModerator}
+                  <Badge variant="outline">taken down by a moderator</Badge>
+                {/if}
+                {#if storyline.tosViolationByScan}
+                  <Badge variant="outline">taken down by title scan</Badge>
+                {/if}
+              </p>
+            {:else}
+              <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+            {/if}
+            {#if storyline && !storyline.tosViolationByModerator}
+              <p class="mb-2 text-sm">
+                Taking it down hides the storyline from everyone but its owner and moderators, then sets this report
+                Actioned. A later clean scan of its title does not bring it back.
+                {#if storyline.tosViolationByScan}
+                  Its title scan already keeps it down; this holds it down after the scan lifts.
+                {/if}
+              </p>
+              {#if confirmingTakedown === selected.id}
+                <form method="POST" action="?/takeDownStoryline" use:enhance={storylineForm.enhance} class="flex flex-wrap gap-2">
+                  <input type="hidden" name="id" value={selected.id} />
+                  <Button type="submit" size="sm" variant="destructive" disabled={storylineForm.submitting}>
+                    Yes, take it down
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onclick={() => (confirmingTakedown = null)}>
+                    Cancel
+                  </Button>
+                </form>
+              {:else}
+                <Button size="sm" variant="destructive" onclick={() => (confirmingTakedown = selected.id)}>
+                  Take down storyline
+                </Button>
+              {/if}
+            {:else if storyline}
+              {#if storyline.tosViolationByScan}
+                <p class="mb-2 text-sm">
+                  Restoring lifts the moderator takedown only. Its title scan still keeps it down.
+                </p>
+              {/if}
+              <form method="POST" action="?/restoreStoryline" use:enhance={storylineForm.enhance}>
+                <input type="hidden" name="id" value={selected.id} />
+                <Button type="submit" size="sm" variant="outline" disabled={storylineForm.submitting}>
+                  Restore storyline
+                </Button>
+              </form>
+            {/if}
+            {#if storylineForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{storylineForm.error}</p>
             {/if}
           </div>
         {/if}

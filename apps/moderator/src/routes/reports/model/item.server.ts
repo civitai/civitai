@@ -1,6 +1,7 @@
 import { getOwnerFlaggedMinorModelIds, getReportedModelStates } from '$lib/server/reports.service';
 import { loadItemReports } from '$lib/server/report-queue-load';
 import { ReportEntity } from '$lib/reports';
+import { getMergePermissionChecks } from '$lib/server/merge-permission.service';
 
 /**
  * The open model's half of the page: its open reports, its state and its owner's minor flag. The
@@ -19,6 +20,8 @@ export async function loadModelItem(modelId: number) {
   return {
     modelId,
     reports,
+    // "Was this merge allowed when it was made?", for the merge-permission reports among them.
+    mergePermission: await getMergePermissionChecks(reports),
     model: model ?? null,
     ownerFlaggedMinor: ownerFlagged.includes(modelId),
   };

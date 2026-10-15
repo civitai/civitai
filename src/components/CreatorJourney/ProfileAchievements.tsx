@@ -5,6 +5,7 @@ import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/Crea
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
 import { MilestoneShareButton } from '~/components/CreatorJourney/MilestoneShareButton';
+import { ScoreSplitBar } from '~/components/CreatorJourney/ScoreSplitBar';
 import {
   accentVar,
   DEFAULT_ACCENT,
@@ -400,7 +401,10 @@ export function ProfileAchievementsList({
         </Anchor>
       )}
       {data.tiers.length > 0 ? (
-        <TierLadderBand tiers={data.tiers} userId={userId} spotlight={spotlight} />
+        <Stack gap="md">
+          <TierLadderBand tiers={data.tiers} userId={userId} spotlight={spotlight} />
+          {data.scoreSplit && <ScoreSplitBar split={data.scoreSplit} />}
+        </Stack>
       ) : (
         isOwner && <NoTierYet />
       )}

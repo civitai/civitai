@@ -14,10 +14,17 @@ vi.mock('~/server/services/text-scan/actions/collection', () => ({
   applyCollectionTextScan: vi.fn(async () => undefined),
 }));
 
+// Hand-listed: the real action reaches model.service, whose graph builds clients at load.
+vi.mock('~/server/services/text-scan/actions/model-rules', () => ({
+  applyModelRulesTextScan: vi.fn(async () => undefined),
+}));
+
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 const { applyRatingFloor } = await import('~/server/services/text-scan/rated-entities');
 const { applyBountyNsfwTextScan } = await import('~/server/services/text-scan/actions/bounty-nsfw');
 const { applyCollectionTextScan } = await import('~/server/services/text-scan/actions/collection');
+
+const { applyModelRulesTextScan } = await import('~/server/services/text-scan/actions/model-rules');
 
 const args = {
   entityId: 1,
@@ -43,5 +50,12 @@ describe('rated-entity text-scan adapters', () => {
   it('Collection is registered and runs the collection action', async () => {
     await getModerationAdapter('Collection')!.applyTextScan!(args as never);
     expect(applyCollectionTextScan).toHaveBeenCalledWith(args);
+  });
+});
+
+describe('model-rules text-scan adapter', () => {
+  it('ModelRules is registered and runs the model-rules action', async () => {
+    await getModerationAdapter('ModelRules')!.applyTextScan!(args as never);
+    expect(applyModelRulesTextScan).toHaveBeenCalledWith(args);
   });
 });

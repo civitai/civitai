@@ -22,11 +22,13 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const queryUtils = trpc.useUtils();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
-      // The app image picker's posted list is filtered on the server by these two, read from the
-      // session, which this mutation has refreshed by the time it returns. A list fetched before
-      // that was filtered at the old level. A no-op when the picker has not been opened.
+      // These lists are filtered on the server by these two, read from the session, which this
+      // mutation has refreshed by the time it returns: the app image picker's posted list, and a
+      // shop's services (mature ones show only at the viewer's level). A list fetched before that
+      // was filtered at the old level. A no-op for a list that has not been opened.
       if (variables.showNsfw !== undefined || variables.browsingLevel !== undefined) {
         void queryUtils.blockImagePicker.getPosted.reset();
+        void queryUtils.creatorService.getForShop.reset();
       }
 
       // Patch every confirmed field into the getSettings React Query cache so

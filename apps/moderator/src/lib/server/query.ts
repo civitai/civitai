@@ -7,11 +7,14 @@ import { MAX_INT4 } from './users.service';
 // semantics differ per page in ways that matter, so there is no `createLookupLoad` behind this.
 export const lookupQuerySchema = z.object({ q: z.string().trim().catch('') });
 
+/** A Postgres `integer` id from the client; see `userIdSchema` for why the bound matters. */
+export const int4Id = z.coerce.number().int().positive().max(MAX_INT4);
+
 /** `User.id` and friends are Postgres `integer`: a larger value ERRORS the comparison rather than
  *  missing, so an unbounded id 500s the action. The two hand-written copies of this had already
  *  drifted — one bounded, one not. */
 export const userIdSchema = z.object({
-  userId: z.coerce.number().int().positive().max(MAX_INT4),
+  userId: int4Id,
 });
 
 /** A comma-separated id list from a hidden input. Same int4 bound as `userIdSchema`, and for the same

@@ -599,6 +599,7 @@ export const updateUserHandler = async ({
     nameplateId,
     profileDecorationId,
     profileBackgroundId,
+    cardDecorationId,
     username,
     source,
     landingPage,
@@ -658,6 +659,12 @@ export const updateUserHandler = async ({
     else if (profileBackgroundId === null)
       unequipPromises.push(
         unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileBackground })
+      );
+
+    if (cardDecorationId) payloadCosmeticIds.push(cardDecorationId);
+    else if (cardDecorationId === null)
+      unequipPromises.push(
+        unequipCosmeticByType({ userId: id, type: CosmeticType.CardDecoration })
       );
 
     await Promise.all(unequipPromises);

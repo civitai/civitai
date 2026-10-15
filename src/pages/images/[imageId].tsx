@@ -4,6 +4,7 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { parseImageQueryParams } from '~/components/Image/image.utils';
+import { StorylineModeProvider } from '~/components/Storyline/StorylineModeProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 
@@ -47,9 +48,18 @@ export default Page(
     if (!imageId) return <NotFound />;
 
     return (
-      <ImageDetailProvider key={imageId} imageId={imageId} filters={filters}>
-        <ImageDetail2 />
-      </ImageDetailProvider>
+      <StorylineModeProvider>
+        {(storylineImages, modeKey) => (
+          <ImageDetailProvider
+            key={`${imageId}-${modeKey}`}
+            imageId={imageId}
+            filters={filters}
+            images={storylineImages}
+          >
+            <ImageDetail2 />
+          </ImageDetailProvider>
+        )}
+      </StorylineModeProvider>
     );
   },
   {

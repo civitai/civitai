@@ -1221,9 +1221,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
 
-  // Sora2 - checkpoint only
-  { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
-
   // Mochi - checkpoint only
   // { ecosystemId: ECO.Mochi, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1712,13 +1709,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.PonyV7,
     defaults: {
       model: { id: 2152373 },
-      modelLocked: true,
-    },
-  },
-  {
-    ecosystemId: ECO.Sora2,
-    defaults: {
-      model: { id: 2320065 },
       modelLocked: true,
     },
   },
@@ -2693,6 +2683,14 @@ export const licenses: LicenseRecord[] = [
     url: 'https://ideogram.ai/legal/tos',
     disableMature: true,
   },
+  {
+    id: 48,
+    // Separate from id 28: that is Krea's hosted-service ToS, this is the 22 Jun 2026
+    // open-weights licence the Krea 2 Raw and Turbo checkpoints ship under.
+    name: 'Krea 2 Community License Agreement',
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -3117,7 +3115,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Krea AI's in-house image generation model",
     type: 'image',
     ecosystemId: ECO.Krea2,
-    licenseId: 28,
+    licenseId: 48,
   },
   {
     id: BM.Krea2Turbo,
@@ -3125,7 +3123,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Krea 2 with Turbo distillation for reduced steps',
     type: 'image',
     ecosystemId: ECO.Krea2,
-    licenseId: 28,
+    licenseId: 48,
   },
   {
     id: BM.Krea3,

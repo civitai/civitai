@@ -219,6 +219,8 @@ vi.mock('~/server/prom/client', () => ({
   blockAuthorFeeChargedCounter: promMetricStub(),
   placementExhaustedLegsGauge: promMetricStub(),
   placementUnfundedSettlementsGauge: promMetricStub(),
+  serviceDealExhaustedLegsGauge: promMetricStub(),
+  serviceDealUnconfirmedHoldsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),
   restrictedImageReconcileLastSuccessGauge: promMetricStub(),
   restrictedBaseModelDivergenceGauge: promMetricStub(),
