@@ -364,7 +364,7 @@ export function getCruciblePrizeWinners({
     }));
 }
 
-/** A 0-Buzz place is not a prize: finalize pays it nothing, so no surface may show or count it. */
+/** A place with a 0-Buzz amount is not a prize; every surface that lists or counts winners must filter through this. */
 export const isPaidPrize = ({ prizeAmount }: { prizeAmount: number }) => prizeAmount > 0;
 
 /** Smaller fields are too coarse to place a creator in: 2nd of 3 says little about skill. */
@@ -438,9 +438,7 @@ function getTimeAdjustedBar({
   const oldBar = getCrucibleMinVotes({ totalVotes, entryCount });
   if (totalLiveMs <= 0) return oldBar;
   // Integer arithmetic so an exact 75% stays exact, as in getCrucibleMinVotes.
-  const share = Math.ceil(
-    (totalVotes * CRUCIBLE_MIN_VOTES_PERCENT * liveMs) / (100 * totalLiveMs)
-  );
+  const share = Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT * liveMs) / (100 * totalLiveMs));
   return Math.min(Math.max(share, CRUCIBLE_MIN_VOTES_FLOOR), oldBar);
 }
 
