@@ -179,6 +179,9 @@ export function createClusterPipelinedGet(opts: {
       return address;
     },
     pipelineGet: async (node, keys) => {
+      // Read in the same synchronous run as the grouping (`track` calls this without awaiting
+      // first), so the node object is the one the slot map named for these keys. Do not add an
+      // await before this line.
       const master = masters.get(node);
       const client = (await cluster.nodeClient(master)) as NodeClientLike;
       // Issued in one tick: node-redis writes them to the socket together.

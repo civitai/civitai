@@ -161,6 +161,18 @@ describe('createPipelinedGet', () => {
     await expect(createPipelinedGet(c.deps)(keys)).rejects.toThrow(/replies for/);
   });
 
+  it('a master with only one key of the batch gets a routed GET; the others are pipelined', async () => {
+    const c = fakeCluster();
+    const on = (n: string) =>
+      ids(500)
+        .map(keyOf)
+        .filter((k) => ownerOf(calculateSlot(k)) === n);
+    const keys = [...on('n1').slice(0, 2), on('n2')[0]];
+    keys.forEach((k) => c.put(k));
+    expect(await c.get(keys)).toEqual(truth(c, keys));
+    expect(c.counts).toEqual({ routed: 1, batches: 1, pipelined: 2 });
+  });
+
   it('keys whose slot owner is unknown, and single-key groups, use a routed GET', async () => {
     const c = fakeCluster({ mapOverride: () => undefined });
     const keys = ids(10).map(keyOf);
@@ -209,6 +221,19 @@ describe('wedge accounting: a batch counts as its key count', () => {
     }
   });
 
+  it('trackClusterCommands: a synchronous throw still settles the accounting', async () => {
+    await expect(
+      trackClusterCommands(
+        5,
+        () => {
+          throw new Error('no node');
+        },
+        { deadlineMs: 0, slowCommandMs: 0 }
+      )
+    ).rejects.toThrow('no node');
+    expect(getClusterInflight()).toBe(0);
+  });
+
   it('a stuck 200-key read moves inflight by 200 and, at the deadline, the slow-settle count by 200', async () => {
     const c = fakeCluster();
     const keys = ids(200).map(keyOf);
@@ -219,8 +244,7 @@ describe('wedge accounting: a batch counts as its key count', () => {
     expect(getClusterInflight()).toBe(200);
     await expect(p).rejects.toThrow(/timed out/);
     // Each master's batch reaches its own deadline; the call rejects at the first of them.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(getClusterInflight()).toBe(0);
+    await vi.waitFor(() => expect(getClusterInflight()).toBe(0));
     expect(countClusterDeadlineHits(60_000)).toBe(200);
     expect(c.counts.routed).toBe(0); // a stuck node is not re-asked key by key
   });

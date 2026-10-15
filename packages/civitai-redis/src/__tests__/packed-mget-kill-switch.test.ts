@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * `redis` is mocked so no socket is opened: the fake cluster counts routed GETs (`get`) and
  * pipelined ones (`sendCommand` on a node connection) separately.
  */
-const h = vi.hoisted(() => ({ clusters: [] as any[] }));
+const h = vi.hoisted(() => ({ clusters: [] as any[], hang: false }));
 
 vi.mock('redis', async (importOriginal) => {
   const actual = await importOriginal<typeof import('redis')>();
@@ -20,9 +20,9 @@ vi.mock('redis', async (importOriginal) => {
       const node = {
         address: 'n1:6379',
         client: {
-          sendCommand: async () => {
+          sendCommand: () => {
             counts.pipelined++;
-            return null;
+            return h.hang ? new Promise(() => undefined) : Promise.resolve(null);
           },
         },
       };
@@ -77,6 +77,7 @@ describe('packed.mGet kill switch', () => {
   const saved = { ...process.env };
   afterEach(() => {
     process.env = { ...saved };
+    h.hang = false;
   });
 
   it('REDIS_CLUSTER_BATCHED_GET_ENABLED=false: only routed per-key GETs', async () => {
@@ -85,5 +86,38 @@ describe('packed.mGet kill switch', () => {
 
   it('unset (default on): pipelined, no routed GETs', async () => {
     expect(await mGetWithEnv(undefined)).toEqual({ routed: 0, pipelined: KEYS.length });
+  });
+});
+
+describe('a stuck pipelined read, through the factory with the configured deadline', () => {
+  afterEach(() => {
+    h.hang = false;
+  });
+
+  it('rejects at REDIS_CLUSTER_COMMAND_TIMEOUT_MS and counts every key as a slow settle', async () => {
+    vi.resetModules();
+    process.env.REDIS_URL = 'redis://seed-a:6379';
+    process.env.REDIS_SYS_URL = 'redis://seed-b:6379';
+    delete process.env.REDIS_CLUSTER_BATCHED_GET_ENABLED;
+    const { createCacheRedis } = await import('../client');
+    const hits = await import('../cluster-deadline-hits');
+    const inflight = await import('../cluster-inflight');
+    hits.resetClusterDeadlineHits();
+    h.hang = true;
+    // The production path: no injected options, the config values decide.
+    const client: any = createCacheRedis({
+      url: 'redis://seed-a:6379',
+      cluster: true,
+      clusterNodes: 'redis://seed-a:6379',
+      clusterSelfHealEnabled: false,
+      clusterCommandTimeoutMs: 40,
+      clusterSelfHealSlowCommandMs: 20,
+      log: () => undefined,
+    });
+    const p = client.packed.mGet(KEYS);
+    expect(inflight.getClusterInflight()).toBe(KEYS.length);
+    await expect(p).rejects.toThrow(/timed out after 40ms/);
+    expect(inflight.getClusterInflight()).toBe(0);
+    expect(hits.countClusterDeadlineHits(60_000)).toBe(KEYS.length);
   });
 });

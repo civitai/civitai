@@ -1031,6 +1031,64 @@ export interface InstrumentCommandsOptions {
 }
 
 /**
+ * The per-command bookkeeping every instrumented command shares — the ONE place it lives, so a
+ * routed command (instrumentCommands) and a pipelined batch (trackClusterCommands) cannot drift.
+ * Counts `count` commands as started now, and returns `done`, which settles all of them.
+ */
+function startCommandAccounting(
+  clientLabel: 'cluster' | 'sys',
+  count: number,
+  slowCommandMs: number
+): () => void {
+  const labels = { client: clientLabel } as const;
+  // Capture the metric handles ONCE so inc/dec stay balanced even if the app's prom module loads
+  // mid-flight (a dec without its inc would drive the gauge negative).
+  const metrics = getRedisMetrics();
+  for (let i = 0; i < count; i++) {
+    metrics?.redisCommandsInflight.inc(labels);
+    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
+    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
+    if (clientLabel === 'cluster') incClusterInflight();
+    else incSysInflight();
+  }
+  const start = Date.now();
+  let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
+  return () => {
+    const durationMs = Date.now() - start;
+    if (!dec) {
+      // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
+      // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
+      // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
+      // is what keeps the counter accurate post-heal so the watchdog can re-arm.
+      for (let i = 0; i < count; i++) {
+        if (clientLabel === 'cluster') decClusterInflight();
+        else decSysInflight();
+      }
+      dec = true;
+    }
+    for (let i = 0; i < count; i++) {
+      metrics?.redisCommandsInflight.dec(labels);
+      // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
+      // brotli-decompress on the compress-aware paths), which runs afterwards in
+      // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
+      // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
+      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
+      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
+      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
+      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
+      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
+      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
+      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
+      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
+      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
+      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
+      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
+      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
+    }
+  };
+}
+
+/**
  * Account a batch of `count` CLUSTER commands that is sent outside `_execute` (the pipelined
  * multi-key GET talks to a node client directly, so instrumentCommands never sees it) exactly as
  * `count` separate commands would be: `count` on the inflight gauge and on the self-heal inflight
@@ -1047,26 +1105,7 @@ export function trackClusterCommands<T>(
 ): Promise<T> {
   const deadlineMs = opts.deadlineMs ?? config?.clusterCommandTimeoutMs ?? 0;
   const slowCommandMs = opts.slowCommandMs ?? config?.clusterSelfHealSlowCommandMs ?? 0;
-  const labels = { client: 'cluster' } as const;
-  // Captured once so inc/dec stay balanced (see instrumentCommands).
-  const metrics = getRedisMetrics();
-  for (let i = 0; i < count; i++) {
-    metrics?.redisCommandsInflight.inc(labels);
-    incClusterInflight();
-  }
-  const start = Date.now();
-  let settled = false;
-  const done = () => {
-    if (settled) return;
-    settled = true;
-    const durationMs = Date.now() - start;
-    for (let i = 0; i < count; i++) {
-      decClusterInflight();
-      metrics?.redisCommandsInflight.dec(labels);
-      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
-      recordClusterCommandSettle(durationMs, slowCommandMs);
-    }
-  };
+  const done = startCommandAccounting('cluster', count, slowCommandMs);
   let executed: Promise<T>;
   try {
     executed = run();
@@ -1134,45 +1173,7 @@ export function instrumentCommands(
         new Error(`sysRedis in-flight cap reached (${sysInflightCap}); command rejected`)
       );
     }
-    // Capture the metric handles ONCE per command so inc/dec stay balanced even if the app's
-    // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
-    const metrics = getRedisMetrics();
-    metrics?.redisCommandsInflight.inc(labels);
-    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
-    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
-    if (clientLabel === 'cluster') incClusterInflight();
-    else incSysInflight();
-    const start = Date.now();
-    let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
-    const done = () => {
-      const durationMs = Date.now() - start;
-      if (!dec) {
-        // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
-        // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
-        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
-        // is what keeps the counter accurate post-heal so the watchdog can re-arm.
-        if (clientLabel === 'cluster') decClusterInflight();
-        else decSysInflight();
-        dec = true;
-      }
-      metrics?.redisCommandsInflight.dec(labels);
-      // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
-      // brotli-decompress on the compress-aware paths), which runs afterwards in
-      // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
-      // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
-      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
-      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
-      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
-      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
-      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
-      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
-      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
-      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
-      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
-      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
-      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
-      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
-    };
+    const done = startCommandAccounting(clientLabel, 1, slowCommandMs);
 
     // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
     // TypeError fires synchronously during node selection BEFORE dispatch) as a rejection so the
