@@ -84,6 +84,14 @@ describe('the Models section', () => {
     expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
   });
 
+  it('badges both queues', () => {
+    const models = NAVIGATION.find((n) => n.path === '/models');
+    expect(models?.children?.map((c) => [c.path, c.countKey])).toEqual([
+      ['/models/minor-hash-matches', 'minorHashMatches'],
+      ['/models/flag-appeals', 'modelFlagAppeals'],
+    ]);
+  });
+
   it('is hidden from whoever holds neither page', () => {
     applyGrants({ '/bounties/poi-appeals': ['moderator:reviewer'] });
     expect(labelsUnder('Models')).toBeUndefined();
