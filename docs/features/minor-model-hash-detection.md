@@ -228,8 +228,9 @@ hash-origin rows.
 human `appealGranted` and a later scan detects it on text with a *different* hash, the scan flags
 nothing, notifies nobody and changes no restrictions: it writes `meta.textScanFlags[label].redetected`
 (workflow, reason, names, hash) and leaves the grant in place. The same hash stays blocked as before.
-The moderator app lists these under the Re-detected view of `/models/flag-appeals`
-(`?view=redetected`), with the prior clear (who, when, via). Keep flagged calls
+The moderator app lists these on `/models/minor-detections` (badged Re-detected, beside first
+detections held by review mode — see `minor-detection-review.md`), with the prior clear (who, when,
+via). Keep flagged calls
 `/api/mod/minor-flag/resolve-redetection` and applies the flag exactly as the scan would have (owner
 notice included) and records `appealUpheld`; Dismiss stamps a new moderator `appealGranted` on the
 re-detected text and clears the marker. Flagging replaces the label entry, so the decisions it replaces
