@@ -281,8 +281,9 @@ describe('requesting an upload', () => {
       },
       Completed: async () => {
         const id = await accepted('None');
-        await uploaded(id);
+        const final = await uploaded(id);
         await files.deliverServiceDeal({ dealId: id, userId: SELLER });
+        await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [final]);
         await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
         return id;
       },
@@ -845,7 +846,10 @@ describe('what the listing shows', () => {
   it('keeps canDownload false for a completed deal whose final has not passed its scan', async () => {
     const { dealId, finalId } = await delivered();
     await files.deliverServiceDeal({ dealId, userId: SELLER });
+    // The completion gate keeps this from happening; it is reached by clearing the scan afterwards.
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [finalId]);
     await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Pending' WHERE id = $1`, [finalId]);
     const locked = (await list(dealId, BUYER)).find((f) => f.id === finalId)!;
     expect(locked).toMatchObject({ canDownload: false, scanStatus: 'Pending', fileName: null });
   });
@@ -1162,5 +1166,99 @@ describe('preview pipeline', () => {
     await files.settlePreviewScans();
     expect(await fileRow(fileId)).toMatchObject({ status: 'Failed' });
     expect(await files.deleteScanCopies()).toBe(1);
+  });
+});
+
+describe('a scanner verdict on a final', () => {
+  const dealStatus = async (id: number) =>
+    (
+      await q<{ status: string; disputeReason: string | null }>(
+        `SELECT status::text, "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+        [id]
+      )
+    )[0];
+
+  async function deliveredWithFinal() {
+    const dealId = await accepted('None');
+    const finalId = await uploaded(dealId);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    return { dealId, finalId };
+  }
+
+  it('records a pass, and nothing else changes', async () => {
+    const { dealId, finalId } = await deliveredWithFinal();
+    expect(await files.recordFinalScanResult({ fileId: finalId, verdict: 'Passed' })).toEqual({
+      recorded: true,
+      held: false,
+    });
+    expect(await fileRow(finalId)).toMatchObject({ scanStatus: 'Passed' });
+    expect((await dealStatus(dealId)).status).toBe('Delivered');
+  });
+
+  it('sends a delivered deal to the moderators when a final fails', async () => {
+    const { dealId, finalId } = await deliveredWithFinal();
+    expect(await files.recordFinalScanResult({ fileId: finalId, verdict: 'Failed' })).toEqual({
+      recorded: true,
+      held: true,
+    });
+    expect(await fileRow(finalId)).toMatchObject({ scanStatus: 'Failed' });
+    expect(await dealStatus(dealId)).toEqual({
+      status: 'Disputed',
+      disputeReason: 'final_scan_failed',
+    });
+  });
+
+  it('also holds a completed deal whose payout has not been claimed', async () => {
+    const { dealId, finalId } = await deliveredWithFinal();
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [finalId]);
+    await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Pending' WHERE id = $1`, [finalId]);
+    await files.recordFinalScanResult({ fileId: finalId, verdict: 'Failed' });
+    expect((await dealStatus(dealId)).status).toBe('Disputed');
+  });
+
+  it('takes only the first verdict: a late or repeated one cannot overturn it', async () => {
+    const { dealId, finalId } = await deliveredWithFinal();
+    await files.recordFinalScanResult({ fileId: finalId, verdict: 'Failed' });
+    expect(await files.recordFinalScanResult({ fileId: finalId, verdict: 'Passed' })).toEqual({
+      recorded: false,
+      held: false,
+    });
+    expect(await fileRow(finalId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await dealStatus(dealId)).status).toBe('Disputed');
+  });
+
+  it('ignores a preview and an unknown file', async () => {
+    const dealId = await accepted();
+    const previewId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.png',
+      mimeType: 'image/png',
+      size: 500,
+    });
+    expect(
+      await files.recordFinalScanResult({ fileId: previewId, verdict: 'Passed' })
+    ).toMatchObject({ recorded: false });
+    expect(await files.recordFinalScanResult({ fileId: 99999, verdict: 'Failed' })).toMatchObject({
+      recorded: false,
+    });
+    expect(await fileRow(previewId)).toMatchObject({ scanStatus: 'Pending' });
+  });
+
+  it('does not hold a deal that is not delivered yet, but stops it being delivered', async () => {
+    const dealId = await accepted('None');
+    const finalId = await uploaded(dealId);
+    expect(await files.recordFinalScanResult({ fileId: finalId, verdict: 'Failed' })).toEqual({
+      recorded: true,
+      held: false,
+    });
+    expect((await dealStatus(dealId)).status).toBe('Accepted');
+    await expect(files.deliverServiceDeal({ dealId, userId: SELLER })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    // Replacing the failed file clears the way.
+    await files.deleteServiceDealFile({ fileId: finalId, userId: SELLER });
+    await uploaded(dealId, { fileName: 'fixed.zip' });
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
   });
 });

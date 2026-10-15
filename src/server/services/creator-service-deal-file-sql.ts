@@ -36,4 +36,9 @@ export const dealReadyToDeliver = (deal: Prisma.Sql = DEAL) => Prisma.sql`(
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
       AND f."kind" = 'Final'::"ServiceDealFileKind" AND f."status" <> 'Ready'::"ServiceDealFileStatus"
   )
+  AND NOT EXISTS (
+    SELECT 1 FROM "ServiceDealFile" f
+    WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
+      AND f."kind" = 'Final'::"ServiceDealFileKind" AND f."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+  )
 )`;

@@ -5,6 +5,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { submitFinalScan } from '~/server/services/creator-service-deal-file-scan';
+import { holdServiceDealForReview } from '~/server/services/creator-service-escrow.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import { dealReadyToDeliver } from '~/server/services/creator-service-deal-file-sql';
 import {
@@ -28,6 +29,7 @@ import {
   SERVICE_PREVIEW_MAX_FILES,
   SERVICE_PREVIEW_MAX_NSFW_LEVEL,
   SERVICE_PREVIEW_MIME_TYPES,
+  SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
 } from '~/shared/constants/creator-services.constants';
 import type {
@@ -335,6 +337,32 @@ export async function deleteServiceDealFile({
     await deleteImageById({ id: removed.imageId, updatePost: false }).catch(() => null);
   }
   return { id: removed.id };
+}
+
+/**
+ * A scanner's verdict on a Final. Only a Pending Final takes it, so a repeat or late result cannot
+ * overturn an earlier one. A Failed Final sends a delivered deal to the moderators; one not yet
+ * delivered cannot be delivered while it stands (see `dealReadyToDeliver`). The real scanner
+ * reports through this; nothing else sets a Final's scanStatus.
+ */
+export async function recordFinalScanResult({
+  fileId,
+  verdict,
+}: {
+  fileId: number;
+  verdict: 'Passed' | 'Failed';
+}) {
+  const [file] = await dbWrite.$queryRaw<{ dealId: number }[]>`
+    UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
+    WHERE "id" = ${fileId}::int AND "kind" = 'Final'::"ServiceDealFileKind"
+      AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+    RETURNING "dealId"`;
+  if (!file) return { recorded: false, held: false };
+  const held =
+    verdict === 'Failed'
+      ? await holdServiceDealForReview(file.dealId, SERVICE_DEAL_HOLD_REASONS.finalScanFailed)
+      : false;
+  return { recorded: true, held };
 }
 
 /**
