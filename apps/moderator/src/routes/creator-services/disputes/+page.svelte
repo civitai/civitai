@@ -26,14 +26,16 @@
 
 {#if form && 'success' in form && form.success}
   <p class="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
-    Deal #{form.dealId}: {form.alreadyResolved
-      ? `already resolved as ${form.resolution} (no Buzz moved by this ruling)`
-      : `resolved as ${form.resolution}`}.
+    Deal #{form.dealId}: {form.heldForReview
+      ? `sent back to review: ${form.heldForReview}`
+      : form.alreadyResolved
+        ? `already resolved as ${form.resolution} (no Buzz moved by this ruling)`
+        : `resolved as ${form.resolution}`}.
   </p>
 {/if}
 
 {#if !data.error}
-  <p class="mb-2 text-xs text-dark-2">Oldest deal first.</p>
+  <p class="mb-2 text-xs text-dark-2">Oldest dispute first.</p>
 {/if}
 
 {#if data.items.length === 0 && !data.error}
@@ -43,7 +45,6 @@
     {#each data.items as row (row.id)}
       <DisputeCard
         {row}
-        appUrl={data.appUrl}
         canResolve={!!data.grants['creatorServices.resolveDispute']}
         outcome={outcomeFor(row.id)}
       />

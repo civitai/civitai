@@ -11,7 +11,7 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { listDisputes, listDealFiles, resolveDispute } = await import(
+const { listDisputes, listDealFiles, getDealFileUrl, resolveDispute } = await import(
   '../creator-services-disputes.service'
 );
 
@@ -79,6 +79,15 @@ describe('resolveDispute', () => {
     });
   });
 
+  it('reads held-for-review as ok and carries its reason', async () => {
+    respond = () => json({ status: 'held-for-review', reason: 'seller_unavailable' });
+    expect(await resolveDispute({ dealId: 41, resolution: 'Release' })).toEqual({
+      ok: true,
+      status: 'held-for-review',
+      reason: 'seller_unavailable',
+    });
+  });
+
   it('does not read an unrecognised body as a resolution', async () => {
     respond = () => json({ status: 'resolved' });
     const result = await resolveDispute({ dealId: 41, resolution: 'Refund' });
@@ -129,15 +138,15 @@ describe('resolveDispute, lost responses', () => {
 
 describe('listDisputes', () => {
   it('GETs with the cursor and limit in the query string and no body', async () => {
-    respond = () => json({ items: [], nextCursor: 90 });
-    const result = await listDisputes(77, 25);
+    respond = () => json({ items: [], nextCursor: 'opaque-2' });
+    const result = await listDisputes('opaque-1', 25);
 
     expect(calls[0].url).toBe(
-      'https://civitai.com/api/mod/creator-services/disputes?cursor=77&limit=25'
+      'https://civitai.com/api/mod/creator-services/disputes?cursor=opaque-1&limit=25'
     );
     expect(calls[0].init.method).toBe('GET');
     expect(calls[0].init.body).toBeUndefined();
-    expect(result).toEqual({ ok: true, page: { items: [], nextCursor: 90 } });
+    expect(result).toEqual({ ok: true, page: { items: [], nextCursor: 'opaque-2' } });
   });
 
   it('drops an undefined cursor rather than sending the string "undefined"', async () => {
@@ -153,10 +162,51 @@ describe('listDisputes', () => {
 });
 
 describe('listDealFiles', () => {
-  it('GETs the deal id', async () => {
-    respond = () => json({ items: [{ id: 5 }] });
-    const result = await listDealFiles(41);
-    expect(calls[0].url).toBe('https://civitai.com/api/mod/creator-services/deal-files?dealId=41');
+  it('asks for all the deals in one comma-separated call', async () => {
+    respond = () => json({ items: [{ dealId: 41, id: 5 }] });
+    const result = await listDealFiles([41, 43, 47]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(
+      'https://civitai.com/api/mod/creator-services/deal-files?dealIds=41%2C43%2C47'
+    );
     expect(result.ok && result.files).toHaveLength(1);
+  });
+
+  it('makes no call for an empty page', async () => {
+    expect(await listDealFiles([])).toEqual({ ok: true, files: [] });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('getDealFileUrl', () => {
+  it('GETs the file id as the moderator and returns the signed url', async () => {
+    respond = () =>
+      json({ url: 'https://files.example/s?sig=1', expiresAt: '2026-10-15T09:00:00Z' });
+    expect(await getDealFileUrl(5)).toEqual({ ok: true, url: 'https://files.example/s?sig=1' });
+    expect(calls[0].url).toBe(
+      'https://civitai.com/api/mod/creator-services/deal-file-url?fileId=5'
+    );
+    expect((calls[0].init.headers as Record<string, string>).cookie).toBe(
+      'civ-token=the-moderators-session'
+    );
+  });
+
+  it('refuses a url that is not absolute https, since it becomes a redirect target', async () => {
+    for (const url of [
+      'javascript:alert(1)',
+      '//evil.example/x',
+      'http://files.example/x',
+      '/relative',
+    ]) {
+      respond = () => json({ url });
+      expect((await getDealFileUrl(5)).ok).toBe(false);
+    }
+  });
+
+  it('maps an unknown file to 404 and anything else to 502', async () => {
+    respond = () => json({ message: 'No such file' }, 404);
+    expect(await getDealFileUrl(5)).toMatchObject({ ok: false, status: 404 });
+    respond = () => json({}, 500);
+    expect(await getDealFileUrl(5)).toMatchObject({ ok: false, status: 502 });
   });
 });

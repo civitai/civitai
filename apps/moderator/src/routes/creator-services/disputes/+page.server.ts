@@ -2,7 +2,6 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
-import { civitaiAppUrl } from '$lib/server/civitai-url';
 import {
   type DealFile,
   type DisputeResolution,
@@ -17,14 +16,11 @@ const LIMIT = 25;
 
 export type DisputeCardRow = DisputeRow & { files: DealFile[] | null; filesError: string | null };
 
-const querySchema = z.object({ cursor: int4Id.optional().catch(undefined) });
+const querySchema = z.object({ cursor: z.string().min(1).max(200).optional().catch(undefined) });
 
 export const load: PageServerLoad = async ({ url }) => {
   const { cursor } = querySchema.parse(Object.fromEntries(url.searchParams));
   const result = await listDisputes(cursor, LIMIT);
-  // The download route is the main app's and answers to a `.civitai.com` session, so it is the API
-  // base, not the `.red` link base the rest of the app links to.
-  const appUrl = civitaiAppUrl();
   // Rendered, not thrown: a refused read is shown inline instead of replacing the page.
   if (!result.ok)
     return {
@@ -32,25 +28,20 @@ export const load: PageServerLoad = async ({ url }) => {
       nextCursor: undefined,
       cursor: cursor ?? null,
       error: result.error,
-      appUrl,
     };
 
-  const withFiles = await Promise.all(
-    result.page.items.map(async (row) => {
-      const files = await listDealFiles(row.id);
-      return {
-        ...row,
-        files: files.ok ? files.files : null,
-        filesError: files.ok ? null : files.error,
-      };
-    })
-  );
+  // One call per page; a failure marks every card rather than hiding the queue.
+  const files = await listDealFiles(result.page.items.map((row) => row.id));
+  const withFiles = result.page.items.map((row) => ({
+    ...row,
+    files: files.ok ? files.files.filter((file) => file.dealId === row.id) : null,
+    filesError: files.ok ? null : files.error,
+  }));
   return {
     items: withFiles,
     nextCursor: result.page.nextCursor,
     cursor: cursor ?? null,
     error: null,
-    appUrl,
   };
 };
 
@@ -70,6 +61,7 @@ export type ResolveOutcome = {
   dealId: number;
   alreadyResolved?: boolean;
   resolution?: DisputeResolution;
+  heldForReview?: string;
   error?: string;
   releaseRefused?: boolean;
 };
@@ -81,6 +73,8 @@ export const actions: Actions = {
     const { dealId } = parsed.data;
 
     const result = await resolveDispute(parsed.data);
+    if (result.ok && result.status === 'held-for-review')
+      return { success: true as const, dealId, heldForReview: result.reason };
     if (result.ok)
       return {
         success: true as const,

@@ -242,7 +242,10 @@ export const callModEndpoint = (
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
 
 /** The read-only `/api/mod/*` routes; kept apart from `ModEndpoint` so a read cannot be sent as a write. */
-export type ModReadEndpoint = 'creator-services/deal-files' | 'creator-services/disputes';
+export type ModReadEndpoint =
+  | 'creator-services/deal-file-url'
+  | 'creator-services/deal-files'
+  | 'creator-services/disputes';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
 export const readModEndpoint = (

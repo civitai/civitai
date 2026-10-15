@@ -111,6 +111,20 @@ describe('resolve action', () => {
     });
   });
 
+  it('reports a Release the payout claim sent back to review as held, not resolved', async () => {
+    resolveDispute.mockResolvedValue({
+      ok: true,
+      status: 'held-for-review',
+      reason: 'final_scan_failed',
+    });
+
+    const result = await actions.resolve(
+      formEvent(GRANTED, { dealId: '41', resolution: 'Release' })
+    );
+
+    expect(result).toEqual({ success: true, dealId: 41, heldForReview: 'final_scan_failed' });
+  });
+
   it('fails a transport error without claiming success', async () => {
     resolveDispute.mockResolvedValue({ ok: false, error: 'Dispute resolution failed.' });
 

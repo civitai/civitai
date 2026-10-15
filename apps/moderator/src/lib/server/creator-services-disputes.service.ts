@@ -29,11 +29,13 @@ export type DisputeRow = {
   events: DisputeEvent[];
 };
 
-export type DisputePage = { items: DisputeRow[]; nextCursor?: number };
+/** `nextCursor` is opaque: it goes back as `?cursor=` untouched. */
+export type DisputePage = { items: DisputeRow[]; nextCursor?: string };
 
 export type DisputeResolution = 'Refund' | 'Release';
 
 export type DealFile = {
+  dealId: number;
   id: number;
   round: number;
   kind: 'Preview' | 'Final';
@@ -47,19 +49,42 @@ export type DealFile = {
   canDownload: boolean;
 };
 
-/** Every file of the deal, failed and unscanned included: a moderator reviews what the buyer cannot see. */
+/**
+ * Every file of the given deals (the endpoint takes at most 25), failed and unscanned included: a
+ * moderator reviews what the buyer cannot see. A deal with no files, or no such deal, contributes no rows.
+ */
 export async function listDealFiles(
-  dealId: number
+  dealIds: number[]
 ): Promise<{ ok: true; files: DealFile[] } | { ok: false; error: string }> {
-  const result = await readModEndpoint('creator-services/deal-files', { dealId }, 'Deal files');
+  if (dealIds.length === 0) return { ok: true, files: [] };
+  const result = await readModEndpoint(
+    'creator-services/deal-files',
+    { dealIds: dealIds.join(',') },
+    'Deal files'
+  );
   if (!result.ok) return result;
   if (!Array.isArray(result.body.items))
     return { ok: false, error: 'Deal files returned an unexpected body.' };
   return { ok: true, files: result.body.items as DealFile[] };
 }
 
+/** A short-lived signed URL for the ORIGINAL file, in any status. Fetched here so the browser needs no
+ *  main-app session of its own. */
+export async function getDealFileUrl(
+  fileId: number
+): Promise<{ ok: true; url: string } | { ok: false; status: number; error: string }> {
+  const result = await readModEndpoint('creator-services/deal-file-url', { fileId }, 'File link');
+  if (!result.ok)
+    return { ok: false, status: result.status === 404 ? 404 : 502, error: result.error };
+  const { url } = result.body;
+  // Only ever sent on as a redirect target, so anything but an absolute https URL is refused.
+  if (typeof url !== 'string' || !/^https:\/\//i.test(url))
+    return { ok: false, status: 502, error: 'File link returned an unexpected body.' };
+  return { ok: true, url };
+}
+
 export async function listDisputes(
-  cursor?: number,
+  cursor?: string,
   limit = 25
 ): Promise<{ ok: true; page: DisputePage } | { ok: false; error: string }> {
   const result = await readModEndpoint(
@@ -75,13 +100,14 @@ export async function listDisputes(
     ok: true,
     page: {
       items: items as DisputeRow[],
-      nextCursor: typeof nextCursor === 'number' ? nextCursor : undefined,
+      nextCursor: typeof nextCursor === 'string' && nextCursor ? nextCursor : undefined,
     },
   };
 }
 
 export type ResolveOutcome =
   | { ok: true; status: 'resolved' | 'already-resolved'; resolution: DisputeResolution }
+  | { ok: true; status: 'held-for-review'; reason: string }
   | { ok: false; refused: true; message: string }
   | { ok: false; refused?: false; error: string };
 
@@ -119,7 +145,10 @@ export async function resolveDispute(input: {
     };
   }
 
-  const { status, resolution, message } = result.body;
+  const { status, resolution, message, reason } = result.body;
+  // A Release was recorded but the payout claim held the deal again; it is back in the queue.
+  if (status === 'held-for-review' && typeof reason === 'string')
+    return { ok: true, status, reason };
   if (status === 'refused')
     return {
       ok: false,

@@ -15,12 +15,10 @@
 
   let {
     row,
-    appUrl,
     canResolve,
     outcome,
   }: {
     row: DisputeCardRow;
-    appUrl: string;
     canResolve: boolean;
     outcome: ResolveOutcome | null;
   } = $props();
@@ -119,7 +117,7 @@
             <Badge variant="outline">{file.kind} r{file.round}</Badge>
             {#if file.canDownload}
               <a
-                href="{appUrl}/api/service-deals/files/{file.id}/download"
+                href="/creator-services/disputes/files/{file.id}"
                 target="_blank"
                 rel="noreferrer"
                 class={LINK_CLASS}>{file.fileName}</a
