@@ -2157,6 +2157,14 @@ describe('mature services', () => {
     expect(await dealLevel(id)).toBe(R);
   });
 
+  it('answers a hidden mature service as not found, never as mature', async () => {
+    await rate(R);
+    shop.assertCreatorShopVisible.mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Shop not found' })
+    );
+    await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('does not find a mature service on the SFW domain, even for a buyer who opted in', async () => {
     await rate(R);
     await expect(
@@ -2226,6 +2234,8 @@ describe('mature services', () => {
       await deals.declineServiceDeal({ dealId: sfw, userId: SELLER });
       await rate(R);
       const { id: mature } = await request({ consentLevels: PG | R });
+      // Another buyer's mature deal: never in this buyer's list, nor in their count.
+      await request({ buyerId: STRANGER, consentLevels: PG | R });
       fakePrisma();
 
       const green = await list(SFW_LEVELS);

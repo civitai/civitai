@@ -299,15 +299,17 @@ export async function requestServiceDeal({
     !(offering.maxNsfwLevel & servableLevels)
   )
     throw throwNotFoundError('Service not found');
+  // The same visibility the storefront applies: an off or private shop takes no requests.
+  await assertCreatorShopVisible({ userId: offering.sellerId, viewerId: buyerId });
+  if (offering.sellerId === buyerId) throw throwBadRequestError('You cannot buy your own service');
+  if (offering.blocked) throw throwBadRequestError('You cannot request this service');
+  // After the visibility and block checks, which answer as if the service did not exist: a hidden
+  // service must not be revealed as mature.
   if (!serviceRequestAllowed({ ...offering, servableLevels, consentLevels }))
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This service delivers mature content. Turn it on in your browsing settings first.',
     });
-  // The same visibility the storefront applies: an off or private shop takes no requests.
-  await assertCreatorShopVisible({ userId: offering.sellerId, viewerId: buyerId });
-  if (offering.sellerId === buyerId) throw throwBadRequestError('You cannot buy your own service');
-  if (offering.blocked) throw throwBadRequestError('You cannot request this service');
   if (offering.maxOpenDeals !== null && offering.open >= offering.maxOpenDeals)
     throw throwBadRequestError('This service is not taking new requests right now');
   if (
