@@ -61,7 +61,7 @@ export function tagIndexContentHash(
 /**
  * Record a build as started. `now` only validates the pin up front; the row's `builtAt` is the
  * database's clock, and the CHECK re-validates the pin against it. A production build must name a
- * frozen vocabulary; a study may evaluate a candidate.
+ * frozen vocabulary, checked when the build starts; a study may use one of any status.
  */
 export async function beginTagIndexBuild(
   sql: CoocSql,

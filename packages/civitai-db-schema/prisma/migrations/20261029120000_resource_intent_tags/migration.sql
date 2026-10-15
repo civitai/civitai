@@ -19,9 +19,8 @@
 -- ('building') with a random id, then set 'ready', 'failed' or 'duplicate' once; only a
 -- 'building' row can change. `builtAt` is the database's clock. `contentHash` =
 -- sha256(kind || NUL || vocabVersion || NUL || payload) is the snapshot's identity, unique
--- among ready rows. A
--- study row is always pinned, ending after its build and at most 58 days from it; a
--- production row is never pinned.
+-- among ready rows. A study row is always pinned, ending after its build and at most 58
+-- days from it; a production row is never pinned.
 
 SET lock_timeout = '3s';
 
