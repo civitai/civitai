@@ -766,8 +766,8 @@ export async function resolveStorylineTitleAppeal({
     throw throwBadRequestError('This storyline is no longer taken down');
   // With nothing left to lift (an edited title rescanned clean, or a lift elsewhere), a grant only
   // closes the appeal.
-  if (grant && storyline.tosViolationByScan)
-    await moderateStorylineTitle({ id, liftScanTakedown: { reviewedTitle } });
+  const lifted = grant && storyline.tosViolationByScan;
+  if (lifted) await moderateStorylineTitle({ id, liftScanTakedown: { reviewedTitle } });
 
   const closed = await resolveEntityAppeal({
     ids: [id],
@@ -775,7 +775,12 @@ export async function resolveStorylineTitleAppeal({
     status: grant ? AppealStatus.Approved : AppealStatus.Rejected,
     userId,
   });
-  if (!closed.length) throw throwBadRequestError('Another moderator ruled on this appeal first');
+  if (!closed.length)
+    throw throwBadRequestError(
+      lifted
+        ? 'The takedown was lifted, but another moderator had already ruled on this appeal'
+        : 'Another moderator ruled on this appeal first'
+    );
   return { granted: grant };
 }
 

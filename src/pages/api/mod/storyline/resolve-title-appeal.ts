@@ -8,7 +8,8 @@ export default defineModeratorEndpoint('storyline.resolveTitleAppeal', {
   notes: [
     'Granting lifts the scan takedown for `reviewedTitle`, so a rescan of that title does not take it down again.',
     'Granting refuses, leaving the appeal open, when the title has changed since it was reviewed.',
-    "Refuses while a moderator's own takedown holds, and when there is no open appeal.",
+    "Granting refuses while a moderator's own takedown holds; denying refuses when no takedown holds.",
+    'Refuses when there is no open appeal, or another moderator ruled on it first.',
   ],
   input: z.object({
     storylineId: z.coerce.number().int().positive().describe('The storyline to act on.'),

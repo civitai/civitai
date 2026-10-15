@@ -331,6 +331,14 @@ describe('resolving an appeal of a title-scan takedown', () => {
     await expect(rule(false)).rejects.toThrow(/ruled on this appeal first/);
   });
 
+  // A grant whose lift landed after a rival ruling closed the appeal says the lift happened.
+  it('a grant that lost the race says the takedown was lifted', async () => {
+    await flaggingScan();
+    mockResolveEntityAppeal.mockResolvedValueOnce([]);
+    await expect(rule(true)).rejects.toThrow(/takedown was lifted, but another moderator/);
+    expect(state()).toEqual(UP);
+  });
+
   it('with nothing left to lift, a grant closes it and a denial is refused', async () => {
     await expect(rule(false)).rejects.toThrow(/no longer taken down/);
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
