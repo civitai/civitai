@@ -16,7 +16,7 @@ import type {
   GrokV2EditImageGenInput,
   ImageGenStepTemplate,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import {

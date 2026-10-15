@@ -34,7 +34,6 @@
     reportReasonLabels,
     reportStatusBadgeClass,
     getReportItemUrl,
-    reportedPlacementId,
     reportDetail,
     gameFrameReportImage,
   } from '$lib/reports';
@@ -72,7 +71,6 @@
     onSettled: reloadIfGone,
   });
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
-  const placementForm = new FormState({ onSuccess: null, reload: true });
   const delistForm = new FormState({
     onSuccess: (result) => {
       confirmingDelist = null;
@@ -86,9 +84,6 @@
   // Where the chosen row sat when it was chosen. Not derived from `selectedId`: it is needed exactly
   // when that row is no longer in the list to look up.
   let selectedIndex = $state(0);
-  // Armed per placement id, so closing the panel and opening another report cannot leave a live
-  // destructive button pointed at the previous one.
-  let confirmingPlacement = $state<number | null>(null);
   let confirmingDelist = $state<number | null>(null);
   const storylineForm = new FormState({
     onSuccess: (result) => {
@@ -167,7 +162,6 @@
   function clearPanelState() {
     statusForm.error = null;
     notesForm.error = null;
-    placementForm.error = null;
     delistForm.error = null;
     confirmingDelist = null;
     storylineForm.error = null;
@@ -367,7 +361,6 @@
     </h2>
     {#if selected}
       {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, selected.entityId, selected.contextUrl)}
-      {@const placementId = reportedPlacementId(selected.details, selected.reason)}
       <div class="flex flex-col gap-5 px-4 pb-6">
         {#if itemUrl}
           <a href={itemUrl} target="_blank" rel="noreferrer" class="link inline-flex items-center gap-1">
@@ -398,41 +391,6 @@
             )}</pre>
         {/if}
 
-        <!-- A sticker report has always carried which placement it is about; until main added this
-             (#3766) nothing consumed it, so a moderator read the id out of the details dump above and
-             had no way to act on it. Removal is not reversible and settles escrow, so it confirms. -->
-        {#if placementId !== null}
-          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-            <p class="mb-2 text-sm">
-              This report is about sticker placement <code>#{placementId}</code>. Removing it takes the
-              sticker off the image for everyone.
-            </p>
-            {#if confirmingPlacement === placementId}
-              <form method="POST" action="?/removePlacement" use:enhance={placementForm.enhance} class="flex flex-wrap gap-2">
-                <input type="hidden" name="placementId" value={placementId} />
-                <Button type="submit" size="sm" variant="destructive" disabled={placementForm.submitting}>
-                  Yes, remove it
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onclick={() => (confirmingPlacement = null)}
-                >
-                  Cancel
-                </Button>
-              </form>
-            {/if}
-            {#if placementForm.error}
-              <p class="mt-2 text-sm text-red-300" role="alert">{placementForm.error}</p>
-            {/if}
-            {#if confirmingPlacement !== placementId}
-              <Button size="sm" variant="destructive" onclick={() => (confirmingPlacement = placementId)}>
-                Remove placement
-              </Button>
-            {/if}
-          </div>
-        {/if}
 
         {#if data.type === 'gameFrameGame'}
           {@const game = data.games.find((g) => g.id === selected.entityId)}

@@ -169,13 +169,13 @@ describe('the pages', () => {
     const data = (await modelLoad({ params: { modelId: '42' } } as never)) as {
       item: { mergePermission: unknown };
     };
-    expect(getMergePermissionChecks).toHaveBeenCalledWith(reports);
+    expect(getMergePermissionChecks).toHaveBeenCalledWith([expect.objectContaining({ id: 501 })]);
     expect(data.item.mergePermission).toEqual(MERGE_CHECKS);
 
     getMergePermissionChecks.mockClear();
     getReports.mockResolvedValueOnce({ items: reports, totalItems: 1, page: 1, limit: 20 });
     const layout = await layoutLoad({ url: url('/reports/model'), locals } as never);
-    expect(getMergePermissionChecks).toHaveBeenCalledWith(reports);
+    expect(getMergePermissionChecks).toHaveBeenCalledWith([expect.objectContaining({ id: 501 })]);
     expect(layout).toMatchObject({ mergePermission: MERGE_CHECKS });
   });
 

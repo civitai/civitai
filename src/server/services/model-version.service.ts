@@ -42,6 +42,11 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import {
+  assertBaseModelAttestations,
+  assertNoUnattestedScopeEntry,
+  resolveBaseModelAttestation,
+} from '~/server/services/base-model-attestation.service';
+import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -530,6 +535,7 @@ export const upsertModelVersion = async ({
   paidAccess,
   donationGoal,
   rightsAffirmed,
+  baseModelAttested,
   meta: metaInput,
   tracker,
   actorUserId,
@@ -586,7 +592,7 @@ export const upsertModelVersion = async ({
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true },
+    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
@@ -720,6 +726,23 @@ export const upsertModelVersion = async ({
   });
 
   if (createsNewVersion) {
+    const baseModelAttestation = resolveBaseModelAttestation({
+      actorId,
+      ownerId: model.userId,
+      attested: baseModelAttested,
+      baseModel: data.baseModel,
+      modelType: model.type,
+    });
+    assertNoUnattestedScopeEntry({
+      after: {
+        baseModel: data.baseModel,
+        modelType: model.type,
+        status: data.status,
+        meta: { baseModelAttestation },
+      },
+      ownerId: model.userId,
+    });
+
     const existingVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: {
@@ -745,8 +768,12 @@ export const upsertModelVersion = async ({
           data: {
             ...data,
             meta:
-              ((rightsAffirmation
-                ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
+              ((rightsAffirmation || baseModelAttestation
+                ? {
+                    ...((metaInput as Record<string, unknown> | null) ?? {}),
+                    ...(rightsAffirmation ? { rightsAffirmation } : {}),
+                    ...(baseModelAttestation ? { baseModelAttestation } : {}),
+                  }
                 : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
             availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
               (s) => s === data?.status
@@ -834,6 +861,7 @@ export const upsertModelVersion = async ({
             id: true,
             availability: true,
             meta: true,
+            type: true,
           },
         },
         monetization: {
@@ -899,12 +927,37 @@ export const upsertModelVersion = async ({
       assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
     }
 
+    const baseModel = data.baseModel ?? existingVersion.baseModel;
+    const baseModelAttestation = resolveBaseModelAttestation({
+      actorId,
+      ownerId: model.userId,
+      attested: baseModelAttested,
+      baseModel,
+      modelType: model.type,
+      existingMeta: existingVersion.meta,
+    });
+    assertNoUnattestedScopeEntry({
+      before: {
+        baseModel: existingVersion.baseModel,
+        modelType: existingVersion.model.type,
+        publishedAt: existingVersion.publishedAt,
+      },
+      after: {
+        baseModel,
+        modelType: model.type,
+        status: data.status ?? existingVersion.status,
+        meta: baseModelAttestation ? { baseModelAttestation } : existingVersion.meta,
+      },
+      ownerId: model.userId,
+    });
+
     const mergedMeta =
-      metaInput || rightsAffirmation
+      metaInput || rightsAffirmation || baseModelAttestation
         ? {
             ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
             ...((metaInput as Record<string, unknown> | null) ?? {}),
             ...(rightsAffirmation ? { rightsAffirmation } : {}),
+            ...(baseModelAttestation ? { baseModelAttestation } : {}),
           }
         : undefined;
 
@@ -1062,6 +1115,9 @@ export const upsertModelVersion = async ({
       (data.name !== undefined || data.description !== undefined || data.trainedWords !== undefined)
     )
       scanModelAndRules(version.modelId);
+    // The publish handler reads this meta back and rewrites it; a replica read missing the new
+    // attestation would refuse the publish, or erase the record.
+    if (baseModelAttestation) await preventReplicationLag('modelVersion', version.id);
     return version;
   }
 };
@@ -1678,9 +1734,12 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       baseModel: true,
+      publishedAt: true,
+      meta: true,
       model: {
         select: {
           userId: true,
+          type: true,
           name: true,
           availability: true,
           publishedAt: true,
@@ -1717,6 +1776,11 @@ export const publishModelVersionById = async ({
       'This model version cannot be published due to moderation restrictions.'
     );
   }
+
+  // `meta` is what the write below stores, so it is the record that has to carry the attestation.
+  assertBaseModelAttestations({
+    versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
+  });
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.

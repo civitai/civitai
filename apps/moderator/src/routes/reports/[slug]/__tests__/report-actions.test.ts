@@ -11,7 +11,6 @@ import type * as GameFrame from '$lib/server/game-frame';
 const setReportStatus = vi.fn();
 const getReports = vi.fn(async () => ({ items: [], totalItems: 0, page: 1, limit: 20 }));
 const updateReportNotes = vi.fn();
-const removePlacement = vi.fn();
 const canAccess = vi.fn(() => true);
 
 const getReportedGame = vi.fn();
@@ -23,7 +22,6 @@ vi.mock('$lib/server/reports.service', () => ({
   getReportedGame,
   getGameMirrors: vi.fn(async () => []),
 }));
-vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
 const delistGame = vi.fn();
 vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   ...(await importOriginal<typeof GameFrame>()),
@@ -42,7 +40,7 @@ let grants: Record<string, true> = {};
 
 /**
  * A REAL `FormData`, not a Map: `Map.get` gives `undefined` where `FormData.get` gives `null`, and
- * `Number()` maps those to NaN and 0 — opposite sides of `removePlacement`'s `Number.isInteger`.
+ * `Number()` maps those to NaN and 0 — opposite sides of an action's `Number.isInteger` check.
  */
 const event = (form: Record<string, string> = {}, slug = 'image') => {
   const data = new FormData();
@@ -118,50 +116,6 @@ describe('setStatus action', () => {
 
     expect(failure(result).status).toBe(400);
     expect(setReportStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('removePlacement action', () => {
-  it('is gated on /reports even though the page load is not', async () => {
-    canAccess.mockReturnValue(false);
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(canAccess).toHaveBeenCalledWith(MOD, '/reports');
-    expect(failure(result).status).toBe(403);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('delegates to the service so escrow settles in one place', async () => {
-    removePlacement.mockResolvedValue({ ok: true });
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(removePlacement).toHaveBeenCalledWith({ placementId: 5, moderatorId: 7 });
-    expect(result).toMatchObject({ success: true, placementRemoved: 5 });
-  });
-
-  it('rejects a non-positive placement id without reaching the service', async () => {
-    const result = await actions.removePlacement(event({ placementId: '0' }));
-
-    expect(failure(result).status).toBe(400);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('rejects a missing placement id — absent reads as 0, not as NaN', async () => {
-    const result = await actions.removePlacement(event());
-
-    expect(failure(result).status).toBe(400);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('surfaces an escrow failure rather than reporting the placement removed', async () => {
-    // A refusal here is money that did not move.
-    removePlacement.mockResolvedValue({ ok: false, error: 'Escrow already settled.' });
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(failure(result)).toEqual({ status: 400, error: 'Escrow already settled.' });
   });
 });
 

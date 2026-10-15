@@ -493,6 +493,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const data = {
     air,
+    defaultFileId: getGenerationFile(files)?.id ?? null,
     versionName: modelVersion.versionName,
     modelName: modelVersion.modelName,
     userId: modelVersion.modelUserId,

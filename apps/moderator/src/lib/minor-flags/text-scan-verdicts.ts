@@ -22,6 +22,34 @@ export type RedetectionView = {
 /** The human clear a re-detection sits on top of. */
 export type PriorClearView = { at?: string; by?: number; via?: string; textHash?: string };
 
+/** An earlier ruling kept on the flag entry (`rulings`), newest few only. */
+export type FlagRulingView = {
+  decision: string;
+  at?: string;
+  by?: number;
+  textHash?: string | null;
+  via?: string;
+};
+
+const RULING_TEXT: Record<string, { lead: string; via: Record<string, string> }> = {
+  appealGranted: {
+    lead: 'Cleared',
+    via: { appeal: 'appeal overturned', moderator: 'moderator unflagged' },
+  },
+  appealUpheld: {
+    lead: 'Kept flagged',
+    via: { appeal: 'upheld on appeal', moderator: 'kept by moderator' },
+  },
+};
+
+/** One earlier ruling in words, with the route worded for what that decision was. */
+export const rulingText = (decision: string, via?: string) => {
+  const text = RULING_TEXT[decision];
+  if (!text) return decision;
+  const route = via ? text.via[via] : undefined;
+  return route ? `${text.lead} (${route})` : text.lead;
+};
+
 export const CLEAR_VIA_LABELS: Record<string, string> = {
   appeal: 'appeal overturned',
   moderator: 'moderator unflagged',

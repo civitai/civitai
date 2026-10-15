@@ -422,7 +422,8 @@ export const declineServiceDeal = async ({
 
 /**
  * Only a CONFIRMED hold can be accepted (the migration's `ServiceDeal_held_before_work` refuses
- * the rest too), and not across a block made since the request.
+ * the rest too), and not across a block made since the request, and not once a moderator has taken
+ * the offering down: a pending request then leaves only by decline, withdraw or expiry, each refunded.
  */
 export async function acceptServiceDeal({ dealId, userId }: { dealId: number; userId: number }) {
   await requireTransition({
@@ -432,8 +433,23 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
     actorId: userId,
     event: 'Accepted',
     where: Prisma.sql`"sellerId" = ${userId}::int AND "heldAt" IS NOT NULL
-      AND ${notBlockedBetween(Prisma.sql`"buyerId"`, Prisma.sql`"sellerId"`)}`,
+      AND ${notBlockedBetween(Prisma.sql`"buyerId"`, Prisma.sql`"sellerId"`)}
+      AND NOT EXISTS (SELECT 1 FROM "ServiceOffering" o
+        WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NOT NULL)`,
     set: Prisma.sql`, "acceptedAt" = now(), "dueAt" = now() + make_interval(days => "deliveryDays")`,
+  }).catch(async (error) => {
+    // The claim above is what refuses it; this only says why, instead of "moved on", which would
+    // send the seller back to the same Accept button. Scoped to the seller's own pending request,
+    // so it reveals nothing to anyone else and a deal that has moved on still gets "moved on".
+    const [takenDown] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT o."id" FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+      WHERE d."id" = ${dealId}::int AND d."sellerId" = ${userId}::int
+        AND d."status" = 'Requested'::"ServiceDealStatus" AND o."removedReason" IS NOT NULL`;
+    if (takenDown)
+      throw throwBadRequestError(
+        'A moderator removed this service, so this request can only be declined.'
+      );
+    throw error;
   });
 
   await openDealChat(dealId).catch((error) =>
@@ -781,7 +797,7 @@ export async function getServiceDealView({
   const deal = await dbWrite.serviceDeal.findUnique({
     where: { id: dealId },
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true } },
+      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
       events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
@@ -793,9 +809,14 @@ export async function getServiceDealView({
   // From the row, not the session, so a fresh mute shows before the next sign-in.
   const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
     SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const { removedReason, ...offering } = deal.offering;
+  const offeringTakenDown = removedReason != null;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
+    offeringTakenDown,
   });
+  // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
+  const seesTakedown = isModerator || deal.sellerId === userId;
   return {
     id: deal.id,
     status: deal.status,
@@ -805,7 +826,9 @@ export async function getServiceDealView({
     mature: isMatureServiceLevel(deal.maxNsfwLevel),
     /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
     viewerMuted: !!viewer?.muted,
-    offering: deal.offering,
+    offering,
+    /** Seller and moderators only, and never the reason, which reaches the seller by notification. */
+    offeringTakenDown: seesTakedown && offeringTakenDown,
     buyer: deal.buyer,
     seller: deal.seller,
     price: deal.price,
@@ -889,7 +912,7 @@ export async function listMyServiceDeals({
     orderBy: { id: 'desc' },
     take: limit + 1,
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true } },
+      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
     },
@@ -905,11 +928,12 @@ export async function listMyServiceDeals({
   });
   return {
     hiddenOffDomain,
-    items: page.map((deal) => ({
+    items: page.map(({ offering: { removedReason, ...offering }, ...deal }) => ({
       id: deal.id,
       status: deal.status,
       maxNsfwLevel: deal.maxNsfwLevel,
-      offering: deal.offering,
+      offering,
+      offeringTakenDown: role === 'seller' && removedReason != null,
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
@@ -918,7 +942,10 @@ export async function listMyServiceDeals({
       requestedAt: deal.requestedAt,
       dueAt: deal.dueAt,
       nextDeadline: nextDealDeadline(deal),
-      ...dealActions(deal, userId, new Date(), { gatedAllowed }),
+      ...dealActions(deal, userId, new Date(), {
+        gatedAllowed,
+        offeringTakenDown: removedReason != null,
+      }),
     })),
     nextCursor: deals.length > limit ? page[page.length - 1].id : undefined,
   };

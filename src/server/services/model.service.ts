@@ -130,6 +130,10 @@ import {
   getImagesForModelVersionCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import {
+  assertBaseModelAttestations,
+  assertNoUnattestedScopeEntry,
+} from '~/server/services/base-model-attestation.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
 import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
@@ -3145,6 +3149,19 @@ export const upsertModel = async (
       );
     }
 
+    if (data.type && data.type !== beforeUpdate.type) {
+      const versions = await dbWrite.modelVersion.findMany({
+        where: { modelId: id },
+        select: { baseModel: true, publishedAt: true, status: true, meta: true },
+      });
+      for (const version of versions)
+        assertNoUnattestedScopeEntry({
+          before: { ...version, modelType: beforeUpdate.type },
+          after: { ...version, modelType: data.type },
+          ownerId: beforeUpdate.userId,
+        });
+    }
+
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
     let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
@@ -3655,14 +3672,20 @@ export const publishModelById = async ({
     throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
   }
   // Publish only touches this model's own versions; ids of versions on any other model are ignored.
-  const versionIds = requestedVersionIds?.length
-    ? (
-        await dbWrite.modelVersion.findMany({
-          where: { id: { in: requestedVersionIds }, modelId: id },
-          select: { id: true },
-        })
-      ).map((v) => v.id)
-    : requestedVersionIds;
+  const ownVersions = requestedVersionIds?.length
+    ? await dbWrite.modelVersion.findMany({
+        where: { id: { in: requestedVersionIds }, modelId: id },
+        select: {
+          id: true,
+          baseModel: true,
+          publishedAt: true,
+          meta: true,
+          model: { select: { type: true, userId: true } },
+        },
+      })
+    : undefined;
+  const versionIds = ownVersions ? ownVersions.map((v) => v.id) : requestedVersionIds;
+  if (ownVersions) assertBaseModelAttestations({ versions: ownVersions });
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -5739,6 +5762,7 @@ export const publishPrivateModel = async (
       availability: true,
       status: true,
       meta: true,
+      type: true,
     },
   });
 
@@ -5748,12 +5772,18 @@ export const publishPrivateModel = async (
 
   const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
-    select: { id: true },
+    select: { id: true, baseModel: true, publishedAt: true, meta: true },
   });
 
   if (!versions.length) {
     throw throwBadRequestError('Model has no published versions');
   }
+
+  if (publishVersions)
+    assertBaseModelAttestations({
+      versions: versions.map((version) => ({ ...version, model })),
+      grandfatherPublished: false,
+    });
 
   const versionIds = versions.map((v) => v.id);
   const now = new Date();

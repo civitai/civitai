@@ -1,7 +1,8 @@
 import { redirect } from '@sveltejs/kit';
 import { getReports, getReportStatusCounts } from './reports.service';
 import { parseQueryKeys } from './query';
-import { MAX_INT4 } from './users.service';
+import { MAX_INT4, usersByIds } from './users.service';
+import type { AdditionalReporter } from '$lib/components/report-queue/report-list';
 import { parseReportQueueFilters, reportQueueFilterSchema } from './report-queue-filters';
 import {
   DEFAULT_REPORT_REASONS,
@@ -111,10 +112,56 @@ export async function loadReportQueue(
     reportedTo: filters.echo.reportedTo,
     singleReport: reportId ?? null,
     ...data,
+    items: await withAdditionalReporters(data.items),
   };
 }
 
 export type ReportQueueData = Awaited<ReturnType<typeof loadReportQueue>>;
+
+type AdditionalReport = {
+  userId?: unknown;
+  createdAt?: unknown;
+  details?: Record<string, unknown>;
+};
+
+const additionalReports = (details: unknown): AdditionalReport[] => {
+  const list = (details as { additionalReports?: unknown } | null)?.additionalReports;
+  return Array.isArray(list) ? (list as AdditionalReport[]) : [];
+};
+const words = (d: Record<string, unknown> | undefined) => {
+  for (const key of ['comment', 'violation', 'reason']) {
+    const v = d?.[key];
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  return null;
+};
+
+/**
+ * Each report's other reporters, with their names. A report filed by several people keeps one row and
+ * folds the rest into `details.additionalReports` — each with its own comment, which a moderator could
+ * only read by opening the raw details, and with a user id where they need a name.
+ */
+export async function withAdditionalReporters<R extends { details: unknown }>(items: R[]) {
+  const ids = items.flatMap((r) =>
+    additionalReports(r.details).flatMap((a) => (typeof a.userId === 'number' ? [a.userId] : []))
+  );
+  const users = ids.length ? await usersByIds(ids) : new Map();
+  return items.map((r) => ({
+    ...r,
+    additionalReporters: additionalReports(r.details).flatMap((a): AdditionalReporter[] =>
+      typeof a.userId === 'number'
+        ? [
+            {
+              userId: a.userId,
+              username: users.get(a.userId)?.username ?? null,
+              createdAt: typeof a.createdAt === 'string' ? a.createdAt : null,
+              comment: words(a.details),
+            },
+          ]
+        : []
+    ),
+  }));
+}
 
 /**
  * Every open, human-filed report about one item, for the open item's report list. The item's own
@@ -129,5 +176,5 @@ export async function loadItemReports(type: ReportEntity, entityId: number) {
     reasons: DEFAULT_REPORT_REASONS,
     limit: 100,
   });
-  return items;
+  return withAdditionalReporters(items);
 }

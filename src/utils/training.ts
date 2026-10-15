@@ -22,6 +22,7 @@ export const studioModelFlagFeatures = {
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',
+  'flux3-klein-training': 'flux3KleinTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
 } as const satisfies Record<string, FeatureFlagKey>;
 

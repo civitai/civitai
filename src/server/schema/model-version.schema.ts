@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
+import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
@@ -530,6 +531,8 @@ export const modelVersionUpsertSchema2 = z.object({
   paidAccess: modelVersionPaidAccessInputSchema.nullish(),
   donationGoal: donationGoalInputSchema.nullish(),
   rightsAffirmed: rightsAffirmedSchema,
+  /** The creator's attestation for base models that require one; see base-model-attestation.constants. */
+  baseModelAttested: z.boolean().optional(),
   earlyAccessGoalConfig: z
     .object({
       unitAmount: z.number(),
@@ -612,6 +615,7 @@ export type ModelVersionMeta = ModelMeta & {
   generationAlias?: GenerationAlias;
   /** Recorded the first time this version was monetized. See resolveRightsAffirmation. */
   rightsAffirmation?: RightsAffirmation;
+  baseModelAttestation?: BaseModelAttestation;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

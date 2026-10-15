@@ -137,7 +137,14 @@ export function dealActions(
   deal: DealTimingFields,
   viewerId: number,
   now = new Date(),
-  { gatedAllowed = true }: { gatedAllowed?: boolean } = {}
+  {
+    gatedAllowed = true,
+    offeringTakenDown = false,
+  }: {
+    gatedAllowed?: boolean;
+    /** A moderator took the offering down: a pending request can be declined, never accepted. */
+    offeringTakenDown?: boolean;
+  } = {}
 ) {
   const role = dealViewerRole(deal, viewerId);
   const actions: DealAction[] = [];
@@ -171,7 +178,7 @@ export function dealActions(
   } else if (role === 'seller') {
     switch (deal.status) {
       case 'Requested':
-        if (deal.heldAt) actions.push('accept');
+        if (deal.heldAt && !offeringTakenDown) actions.push('accept');
         actions.push('decline');
         break;
       case 'Accepted':

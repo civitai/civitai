@@ -3,6 +3,7 @@ import { comicNotifications } from '~/server/notifications/comics.notifications'
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
 import { ratingReviewNotifications } from '~/server/notifications/rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
+import { creatorServiceNotifications } from '~/server/notifications/creator-service.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
 import { appFeedbackNotifications } from '~/server/notifications/app-feedback.notifications';
@@ -57,6 +58,7 @@ export const notificationProcessors = {
   ...textScanFlagNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
+  ...creatorServiceNotifications,
   ...appListingNotifications,
   ...appBlockNotifications,
   ...appCollaboratorNotifications,

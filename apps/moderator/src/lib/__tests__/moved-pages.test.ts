@@ -37,4 +37,30 @@ describe('movedViewTarget', () => {
   ])('leaves %s alone', (path) => {
     expect(movedViewTarget(at(path))).toBeNull();
   });
+
+  // Answered in the request hook, before the grant check: the old path's group (Retool, Images) no
+  // longer holds these pages, and a moderator with nothing in it was bounced to the dashboard.
+  it('moves ?user= and ?tab= into the User Reports path, keeping the rest', () => {
+    expect(movedViewTarget(at('/retool/user-reports?user=5&tab=images&page=2&tos=1'))).toBe(
+      '/reports/user/5/images?page=2&tos=1'
+    );
+    expect(movedViewTarget(at('/retool/user-reports?user=5&tab=history'))).toBe('/reports/user/5');
+    expect(movedViewTarget(at('/retool/user-reports?status=Pending'))).toBe(
+      '/reports/user?status=Pending'
+    );
+  });
+
+  it('moves ?post= into the Post Reports path, keeping the rest', () => {
+    expect(movedViewTarget(at('/retool/post-reports?post=12&page=2&status=Pending'))).toBe(
+      '/reports/post/12?page=2&status=Pending'
+    );
+    expect(movedViewTarget(at('/retool/post-reports'))).toBe('/reports/post');
+  });
+
+  it('sends the reported-image grid to /reports/image with its query', () => {
+    expect(movedViewTarget(at('/images/reported?level=3&cursor=9'))).toBe(
+      '/reports/image?level=3&cursor=9'
+    );
+    expect(movedViewTarget(at('/images/minor'))).toBeNull();
+  });
 });
