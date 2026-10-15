@@ -2,14 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CachesModule from '~/server/redis/caches';
 import type * as WorkflowsModule from '~/server/services/orchestrator/workflows';
 
-const { mockMetaFetch, mockQueryWorkflows } = vi.hoisted(() => ({
+const { mockMetaFetch, mockQueryWorkflows, mockReplaceTriggerOrigin } = vi.hoisted(() => ({
   mockMetaFetch: vi.fn(),
   mockQueryWorkflows: vi.fn(),
+  mockReplaceTriggerOrigin: vi.fn(),
 }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof CachesModule>()),
   imageMetaCache: { fetch: mockMetaFetch },
+}));
+vi.mock('~/server/services/user-restriction.service', () => ({
+  replaceTriggerOrigin: mockReplaceTriggerOrigin,
 }));
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof WorkflowsModule>()),
@@ -17,7 +21,11 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
 }));
 
 import { MAX_SOURCE_IMAGES } from '~/server/utils/source-image-ids';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import {
+  attachPromptOrigin,
   backfilledPromptOrigin,
   buildPromptOrigin,
   prohibitedRowToTrigger,
@@ -39,6 +47,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockMetaFetch.mockResolvedValue({});
   mockQueryWorkflows.mockResolvedValue({ items: [] });
+  mockReplaceTriggerOrigin.mockResolvedValue(0);
+  redisMock.sysRedis.eval.mockResolvedValue(0);
 });
 
 describe('buildPromptOrigin — remix', () => {
@@ -196,14 +206,14 @@ describe('buildPromptOrigin — lookup timeout boundary', () => {
   it.each([
     ['remix', () => mockMetaFetch.mockReturnValue(PENDING()), { sourceImageIds: [5] }],
     ['enhancer', () => mockQueryWorkflows.mockReturnValue(PENDING()), { token: 't' }],
-  ])('%s lookup is pending at 799ms and incomplete at 800ms', async (_, arrange, extra) => {
+  ])('%s lookup is pending at 9999ms and incomplete at 10000ms', async (_, arrange, extra) => {
     vi.useFakeTimers();
     try {
       arrange();
       const pending = buildPromptOrigin({ prompt: SOURCE, ...extra });
       const isDone = await settled(pending);
-      await vi.advanceTimersByTimeAsync(799);
-      expect(isDone(), 'settled before 800ms').toBe(false);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(isDone(), 'settled before 10s').toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       const origin = await pending;
       expect(origin.incomplete).toBe(true);
@@ -217,7 +227,7 @@ describe('buildPromptOrigin — lookup timeout boundary', () => {
     try {
       mockMetaFetch.mockReturnValue(PENDING());
       const pending = buildPromptOrigin({ prompt: SOURCE, sourceImageIds: [5] });
-      await vi.advanceTimersByTimeAsync(800);
+      await vi.advanceTimersByTimeAsync(10_000);
       expect((await pending).remix).toMatchObject({ imageId: 5, promptMatch: 'unknown' });
     } finally {
       vi.useRealTimers();
@@ -230,7 +240,7 @@ describe('buildPromptOrigin — lookup timeout boundary', () => {
       let reject!: (e: Error) => void;
       mockMetaFetch.mockReturnValue(new Promise((_, r) => (reject = r)));
       const pending = buildPromptOrigin({ prompt: SOURCE, sourceImageIds: [5] });
-      await vi.advanceTimersByTimeAsync(800);
+      await vi.advanceTimersByTimeAsync(10_000);
       await pending;
       reject(new Error('late'));
       await vi.advanceTimersByTimeAsync(10);
@@ -357,5 +367,121 @@ describe('prohibitedRowToTrigger', () => {
 
   it('writes no origin for a row without remixOfId', () => {
     expect(prohibitedRowToTrigger(row(null)).origin).toBeUndefined();
+  });
+});
+
+describe('attachPromptOrigin', () => {
+  const { sysRedis } = redisMock;
+  const KEY = 'generation:blocked-prompts:9';
+  const entry: BlockedPromptEntry = {
+    id: 'entry-1',
+    prompt: SOURCE,
+    negativePrompt: '',
+    source: 'Regex',
+    imageId: null,
+    remixOfId: null,
+    origin: { incomplete: true },
+    time: '2026-01-01T00:00:00.000Z',
+  };
+  const attach = (extra: object = {}) =>
+    attachPromptOrigin({
+      userId: 9,
+      entry,
+      redisKey: KEY,
+      prompt: SOURCE,
+      sourceImageIds: [5],
+      ...extra,
+    });
+
+  beforeEach(() => {
+    mockMetaFetch.mockResolvedValue(metaFor(5, SOURCE));
+  });
+
+  it('replaces the list element by id with the entry carrying the built origin', async () => {
+    sysRedis.eval.mockResolvedValue(1);
+    await attach();
+    expect(sysRedis.eval).toHaveBeenCalledTimes(1);
+    const [script, options] = sysRedis.eval.mock.calls[0] as [
+      string,
+      { keys: string[]; arguments: string[] }
+    ];
+    expect(script).toContain('LSET');
+    expect(options.keys).toEqual([KEY]);
+    expect(options.arguments[0]).toBe('entry-1');
+    const written = JSON.parse(options.arguments[1]);
+    expect(written).toEqual({
+      ...entry,
+      origin: { remix: { imageId: 5, verified: true, promptMatch: 'identical', score: 1 } },
+    });
+    expect(mockReplaceTriggerOrigin).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the restriction row when the element is no longer in the list', async () => {
+    sysRedis.eval.mockResolvedValue(0);
+    mockReplaceTriggerOrigin.mockResolvedValue(1);
+    await attach();
+    expect(mockReplaceTriggerOrigin).toHaveBeenCalledTimes(1);
+    expect(mockReplaceTriggerOrigin).toHaveBeenCalledWith({
+      userId: 9,
+      entryId: 'entry-1',
+      origin: { remix: { imageId: 5, verified: true, promptMatch: 'identical', score: 1 } },
+    });
+    expect(sysRedis.eval).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries once after a delay when found in neither place, then gives up quietly', async () => {
+    vi.useFakeTimers();
+    try {
+      const done = attach();
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(sysRedis.eval).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(done).resolves.toBeUndefined();
+      expect(sysRedis.eval).toHaveBeenCalledTimes(2);
+      expect(mockReplaceTriggerOrigin).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sysRedis.eval).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('succeeds on the retry when a mute wrote its row in between', async () => {
+    vi.useFakeTimers();
+    try {
+      mockReplaceTriggerOrigin.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      const done = attach();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await done;
+      expect(mockReplaceTriggerOrigin).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockReplaceTriggerOrigin).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('writes a failed lookup as incomplete rather than dropping the attach', async () => {
+    sysRedis.eval.mockResolvedValue(1);
+    mockMetaFetch.mockRejectedValue(new Error('down'));
+    await attach();
+    const options = sysRedis.eval.mock.calls[0][1] as { arguments: string[] };
+    expect(JSON.parse(options.arguments[1]).origin).toMatchObject({ incomplete: true });
+  });
+
+  it('never throws, and logs, when redis and the database both fail', async () => {
+    vi.useFakeTimers();
+    try {
+      sysRedis.eval.mockRejectedValue(new Error('redis down'));
+      mockReplaceTriggerOrigin.mockRejectedValue(new Error('db down'));
+      const done = attach();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(done).resolves.toBeUndefined();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'prompt-origin-attach-error', type: 'error' })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

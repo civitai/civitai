@@ -70,9 +70,19 @@ field means the row predates origin tracking (shown as "Origin not recorded").
 ### Constraints
 
 - The origin is computed only on the block path. A generation that is not blocked pays nothing.
-- Every lookup is bounded at 800ms and wrapped. A failed or timed-out lookup keeps whatever evidence
-  was found, sets `incomplete`, and never fails or delays the audit decision. A present `null` is
-  never written for `remix` or `enhancer`.
+- Write first, attach later. On a hard block the entry is stored at once with a unique `id` and
+  `origin: { incomplete: true }`; the count, report, response and mute decision never wait on a lookup.
+  Once those are done (and not for moderators), a fire-and-forget `attachPromptOrigin` builds the
+  origin and replaces it on the entry. The lookups are slow (the workflow query alone can take
+  seconds), so each is bounded at about 10s, under the orchestrator read's own backstop.
+- Attach target. A small Lua script finds the Redis list element by `id` and replaces it in one step,
+  since the list is pushed to concurrently. If the element is gone because a mute already moved the
+  list into a `UserRestriction` row, the matching trigger in that row's `triggers` is updated instead.
+  If neither holds it, the attach retries once after about 2s (a mute may have read the list before
+  the attach and not yet written its row), then gives up.
+- A failed or timed-out lookup keeps whatever evidence was found and sets `incomplete`; a dropped
+  attach leaves the stored `incomplete: true`, which the moderator UI already shows. An attach failure
+  is logged and never fails the request. A present `null` is never written for `remix` or `enhancer`.
 - `origin` is moderator-only evidence. It must never be rendered on any user-facing surface.
 - The ClickHouse backfill (`backfillTriggers` in `user-restriction.router.ts`) copies the
   `remixOfId` it currently discards, as `origin.remix` with `verified: false` and

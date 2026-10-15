@@ -1,3 +1,5 @@
+import { logToAxiom } from '~/server/logging/client';
+import { sysRedis } from '~/server/redis/client';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { MAX_SOURCE_IMAGES } from '~/server/utils/source-image-ids';
 import {
@@ -36,8 +38,9 @@ export type BuildPromptOriginOptions = {
 // The cache and workflow clients are imported lazily: they pull in the whole redis/orchestrator
 // graph, which only a blocked request needs.
 
-// This runs on the block path of a request, so each lookup is cut off well inside the request's budget.
-const LOOKUP_TIMEOUT_MS = 800;
+// The lookups run after the response, so this only has to stay under the orchestrator read's own
+// backstop, which is longer than the typical workflow query.
+const LOOKUP_TIMEOUT_MS = 10_000;
 const ENHANCER_HISTORY_SIZE = 5;
 
 const MATCH_RANK: Record<PromptMatch, number> = {
@@ -204,4 +207,75 @@ export function prohibitedRowToTrigger(
     origin: backfilledPromptOrigin(row.remixOfId),
     time: row.createdDate,
   };
+}
+
+// Finds the element by id and swaps it for the new JSON in one step: the list is pushed to
+// concurrently, so an index read in Node would be stale by the time of the LSET. The id is a
+// server-generated UUID, so a plain substring match on the serialized element cannot collide.
+const REPLACE_ENTRY_BY_ID = `
+  local items = redis.call('LRANGE', KEYS[1], 0, -1)
+  local needle = '"id":"' .. ARGV[1] .. '"'
+  for i, raw in ipairs(items) do
+    if string.find(raw, needle, 1, true) then
+      redis.call('LSET', KEYS[1], i - 1, ARGV[2])
+      return 1
+    end
+  end
+  return 0
+`;
+
+// A mute can read the list before the entry's origin is written and file its row a moment later.
+const ATTACH_RETRY_DELAY_MS = 2_000;
+
+export type AttachPromptOriginOptions = BuildPromptOriginOptions & {
+  userId: number;
+  entry: BlockedPromptEntry & { id: string };
+  redisKey: string;
+};
+
+/**
+ * Looks up where a stored blocked prompt came from and writes it onto that entry, in the Redis list
+ * or, once a mute has moved the list into a restriction row, in the row. Meant to be fire-and-forget:
+ * it never throws, and an attach that is dropped leaves the entry as `incomplete`.
+ */
+export async function attachPromptOrigin({
+  userId,
+  entry,
+  redisKey,
+  ...lookup
+}: AttachPromptOriginOptions): Promise<void> {
+  try {
+    const origin = await buildPromptOrigin(lookup);
+
+    const attempt = async (): Promise<boolean> => {
+      try {
+        const replaced = await sysRedis.eval(REPLACE_ENTRY_BY_ID, {
+          keys: [redisKey],
+          arguments: [entry.id, JSON.stringify({ ...entry, origin })],
+        });
+        if (Number(replaced) === 1) return true;
+
+        const { replaceTriggerOrigin } = await import('~/server/services/user-restriction.service');
+        return (await replaceTriggerOrigin({ userId, entryId: entry.id, origin })) > 0;
+      } catch (e) {
+        logAttachError(e, userId);
+        return false;
+      }
+    };
+
+    if (await attempt()) return;
+    await new Promise((resolve) => setTimeout(resolve, ATTACH_RETRY_DELAY_MS));
+    await attempt();
+  } catch (e) {
+    logAttachError(e, userId);
+  }
+}
+
+function logAttachError(e: unknown, userId: number) {
+  logToAxiom({
+    name: 'prompt-origin-attach-error',
+    type: 'error',
+    message: (e as Error)?.message,
+    details: { userId },
+  });
 }

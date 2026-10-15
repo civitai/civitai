@@ -26,12 +26,14 @@ const {
   mockModeratePrompt,
   mockApplyPendingReviewMute,
   mockBuildPromptOrigin,
+  mockAttachPromptOrigin,
 } = vi.hoisted(() => ({
   mockStripBenignPhrases: vi.fn(async (text?: string) => text),
   mockAuditPromptEnriched: vi.fn(),
   mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
   mockApplyPendingReviewMute: vi.fn(async () => undefined),
   mockBuildPromptOrigin: vi.fn(),
+  mockAttachPromptOrigin: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -53,6 +55,7 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
 vi.mock('~/server/services/orchestrator/prompt-origin', () => ({
   buildPromptOrigin: mockBuildPromptOrigin,
+  attachPromptOrigin: mockAttachPromptOrigin,
 }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
@@ -109,6 +112,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockBuildPromptOrigin.mockReset();
   mockBuildPromptOrigin.mockResolvedValue(undefined);
+  mockAttachPromptOrigin.mockReset();
+  mockAttachPromptOrigin.mockResolvedValue(undefined);
   mockAuditPromptEnriched.mockReturnValue({ blockedFor: [], triggers: [], success: true });
   // `mockReset`, not just the clear above: a `mockResolvedValueOnce` a failing test never consumed
   // would otherwise leak into the next test and fail it for the wrong reason.
@@ -349,7 +354,6 @@ describe('auditPromptServer — still produces today’s side effects', () => {
   };
 
   it('non-green hard regex: counter write, prohibited-request report, plain message', async () => {
-    mockBuildPromptOrigin.mockResolvedValue({});
     flagWith(HARD);
     await expect(auditPromptServer({ ...base, isGreen: false })).rejects.toThrow(
       /^Your prompt was flagged: Prompt cannot include celebrity names$/
@@ -367,7 +371,8 @@ describe('auditPromptServer — still produces today’s side effects', () => {
       remixOfId: 11,
       inputImages: ['img-a'],
       inputVideo: 'vid-a',
-      origin: {},
+      id: expect.any(String),
+      origin: { incomplete: true },
       time: expect.any(String),
     });
     expect(track.prohibitedRequest).toHaveBeenCalledTimes(1);
@@ -454,54 +459,67 @@ describe('auditPromptServer — still produces today’s side effects', () => {
   });
 });
 
-describe('auditPromptServer — prompt origin on a hard block', () => {
+describe('auditPromptServer — prompt origin is attached after the block', () => {
   const base = { prompt: PROMPT, userId: 9, isGreen: false };
   const storedEntry = () => {
     const [, entryJson] = sysRedis.lPush.mock.calls[0] as [string, string];
     return JSON.parse(entryJson);
   };
 
-  it('stores the origin on the blocked entry', async () => {
-    const origin = { remix: { imageId: 7, verified: true, promptMatch: 'identical' } };
-    mockBuildPromptOrigin.mockResolvedValue(origin);
+  it('stores the entry at once as incomplete with a unique id, without building the origin', async () => {
+    mockBuildPromptOrigin.mockReturnValue(new Promise(() => undefined));
+    flagWith(HARD);
+    await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
+    expect(mockBuildPromptOrigin).not.toHaveBeenCalled();
+    expect(storedEntry().origin).toEqual({ incomplete: true });
+    expect(storedEntry().id).toEqual(expect.any(String));
+  });
+
+  it('gives each blocked entry its own id', async () => {
+    flagWith(HARD);
+    await auditPromptServer(base).catch(() => undefined);
+    await auditPromptServer(base).catch(() => undefined);
+    const ids = sysRedis.lPush.mock.calls.map((c) => JSON.parse(c[1] as string).id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('schedules the attach once, after the entry is stored, with the stored entry', async () => {
     flagWith(HARD);
     await expect(
-      auditPromptServer({
-        ...base,
-        sourceImageIds: [7],
-        remixOfId: 11,
-        orchestratorToken: 'tok',
-      })
+      auditPromptServer({ ...base, sourceImageIds: [7], remixOfId: 11, orchestratorToken: 'tok' })
     ).rejects.toThrow(/flagged/);
-    expect(mockBuildPromptOrigin).toHaveBeenCalledTimes(1);
-    expect(mockBuildPromptOrigin).toHaveBeenCalledWith(
+    expect(mockAttachPromptOrigin).toHaveBeenCalledTimes(1);
+    expect(mockAttachPromptOrigin).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: PROMPT,
+        userId: 9,
+        entry: storedEntry(),
+        redisKey: expect.stringContaining(':9'),
         sourceImageIds: [7],
         remixOfId: 11,
         token: 'tok',
       })
     );
-    expect(storedEntry().origin).toEqual(origin);
+    expect(sysRedis.lPush.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAttachPromptOrigin.mock.invocationCallOrder[0]
+    );
   });
 
-  it('still blocks and stores the entry when the origin lookup throws', async () => {
-    mockBuildPromptOrigin.mockRejectedValue(new Error('lookup failed'));
+  it('does not wait for the attach, and a rejected attach does not fail the block', async () => {
+    mockAttachPromptOrigin.mockReturnValue(new Promise(() => undefined));
     flagWith(HARD);
     await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
-    expect(sysRedis.lPush).toHaveBeenCalledTimes(1);
-    expect(storedEntry().origin).toEqual({ incomplete: true });
-  });
-
-  it('stores an empty origin when nothing was found, so absence means not recorded', async () => {
-    mockBuildPromptOrigin.mockResolvedValue({});
-    flagWith(HARD);
+    mockAttachPromptOrigin.mockRejectedValue(new Error('boom'));
     await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
-    expect(storedEntry().origin).toEqual({});
   });
 
-  it('computes no origin for a prompt that passes', async () => {
-    await auditPromptServer(base);
-    expect(mockBuildPromptOrigin).not.toHaveBeenCalled();
+  it.each([
+    ['a moderator', () => flagWith(HARD), { isModerator: true }],
+    ['a soft block', () => flagWith(SOFT), {}],
+    ['a green request', () => flagWith(HARD), { isGreen: true }],
+    ['a pass', () => undefined, {}],
+  ])('schedules no attach for %s', async (_, arrange, extra) => {
+    arrange();
+    await auditPromptServer({ ...base, ...extra }).catch(() => undefined);
+    expect(mockAttachPromptOrigin).not.toHaveBeenCalled();
   });
 });
