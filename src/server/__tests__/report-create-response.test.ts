@@ -57,4 +57,12 @@ describe('report.create response', () => {
       status: ReportStatus.Pending,
     });
   });
+
+  it('is the output schema the procedure validates against', async () => {
+    const { reportRouter } = await import('~/server/routers/report.router');
+    const procedure = reportRouter._def.procedures.create as unknown as {
+      _def: { output?: unknown };
+    };
+    expect(procedure._def.output).toBe(createReportOutputSchema);
+  });
 });
