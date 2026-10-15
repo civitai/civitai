@@ -82,7 +82,6 @@
           {#if verdict}
             <span class="text-sm text-dark-2">{verdict}</span>
           {:else}
-            <!-- The title shown is the one ruled on: if the owner edits it meanwhile, the grant is refused. -->
             <form
               method="POST"
               action="?/deny"
@@ -93,7 +92,7 @@
               <Button
                 type="submit"
                 size="xs"
-                disabled={!row.tosViolationByScan || row.tosViolationByModerator}
+                disabled={!row.tosViolationByScan && !row.tosViolationByModerator}
               >
                 Keep it down
               </Button>
@@ -104,6 +103,7 @@
               use:enhance={submit(row.storylineId, 'Appeal granted')}
             >
               <input type="hidden" name="storylineId" value={row.storylineId} />
+              <!-- reviewedTitle pins the grant to the title shown. -->
               <input type="hidden" name="reviewedTitle" value={row.title} />
               <Button type="submit" size="xs" variant="destructive" disabled={row.tosViolationByModerator}>
                 Grant and lift

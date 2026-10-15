@@ -59,8 +59,9 @@ section).
 - **Appeals.** When the title check takes a storyline down, its creator sees a notice on the
   storyline's page and can ask for a review. Moderators rule on it under Storylines > Title Appeals
   in the moderator app: granting brings the storyline back and stops a recheck of the same title from
-  taking it down again; denying leaves it down, and the creator can ask again. A storyline a moderator
-  took down cannot be appealed this way.
+  taking it down again; denying leaves it down, and the creator can ask again. A grant is refused if
+  the title was edited after the moderator saw it. A storyline a moderator took down cannot be
+  appealed this way.
 - **Credit.** A continuation can fork from the end of any chapter. Earlier chapters are referenced and
   credited to their authors, never copied.
 

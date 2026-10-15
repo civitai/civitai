@@ -108,8 +108,8 @@ only, so a Model rule can only be managed on `/text-scan/model-rules`.
 
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
 (the owner can appeal), mute the account pending moderator review, or, for `modelRules`, unpublish
-the model for review. Disputes, appeals and mute reviews go through the existing moderator queues;
-text scan adds no queue of its own.
+the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
+(a storyline title appeal is on Storylines > Title Appeals); text scan adds no queue of its own.
 
 ## Modes
 

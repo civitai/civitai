@@ -48,7 +48,6 @@ INSERT INTO "Appeal" ("entityType", "entityId", "status", "appealMessage", "crea
   ('Storyline', 10, 'Pending', 'older', '2026-10-01', NULL),
   ('Storyline', 11, 'Rejected', 'ruled', '2026-10-01', NULL),
   ('Storyline', 12, 'Pending', 'gone', '2026-10-01', '2026-10-03'),
-  -- A bounty with the same id: only a storyline's appeal is listed.
   ('Bounty', 10, 'Pending', 'bounty', '2026-09-01', NULL);
 `;
 

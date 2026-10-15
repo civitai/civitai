@@ -727,12 +727,10 @@ export async function setStorylineTakedown({ id, takenDown }: { id: number; take
 }
 
 /**
- * A moderator's ruling on the owner's appeal of a title-scan takedown. Granting lifts it through
- * `moderateStorylineTitle`, for `reviewedTitle`, the title the moderator saw: a title edited since
- * is refused and the appeal stays open. Denying leaves the storyline down. Either way the appeal
- * is closed and the owner notified by `resolveEntityAppeal`. Refused while a moderator's takedown
- * holds (a grant would leave the storyline down), and once there is no open appeal, so a second
- * ruling changes nothing.
+ * Rules on the owner's appeal of a title-scan takedown. A grant lifts it for `reviewedTitle`, the
+ * title the moderator saw; a title edited since is refused and the appeal stays open. A grant is
+ * refused while a moderator's takedown holds (it would leave the storyline down), and a denial
+ * while nothing holds one (it would tell the owner a takedown stands that does not).
  */
 export async function resolveStorylineTitleAppeal({
   id,
@@ -760,23 +758,24 @@ export async function resolveStorylineTitleAppeal({
     select: { ...storylineTakedownSelect },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  if (storyline.tosViolationByModerator)
+  if (grant && storyline.tosViolationByModerator)
     throw throwBadRequestError(
-      'A moderator took this storyline down too. Restore that first to rule on the appeal'
+      'A moderator took this storyline down too. Restore that first to grant the appeal'
     );
-  // Nothing left to lift (an edited title was rescanned clean, or it was lifted elsewhere) still
-  // grants; denying it would tell the owner a takedown stands that does not.
-  if (storyline.tosViolationByScan) {
-    if (grant) await moderateStorylineTitle({ id, liftScanTakedown: { reviewedTitle } });
-  } else if (!grant)
-    throw throwBadRequestError('This storyline is no longer taken down by its title scan');
+  if (!grant && !storyline.tosViolationByScan && !storyline.tosViolationByModerator)
+    throw throwBadRequestError('This storyline is no longer taken down');
+  // With nothing left to lift (an edited title rescanned clean, or a lift elsewhere), a grant only
+  // closes the appeal.
+  if (grant && storyline.tosViolationByScan)
+    await moderateStorylineTitle({ id, liftScanTakedown: { reviewedTitle } });
 
-  await resolveEntityAppeal({
+  const closed = await resolveEntityAppeal({
     ids: [id],
     entityType: EntityType.Storyline,
     status: grant ? AppealStatus.Approved : AppealStatus.Rejected,
     userId,
   });
+  if (!closed.length) throw throwBadRequestError('Another moderator ruled on this appeal first');
   return { granted: grant };
 }
 
@@ -1126,7 +1125,6 @@ export async function getStoryline({
     [...authors, ...castCounts].map((row) => [row.userId, row.chapterCount])
   );
   const chaptersBy = (userId: number) => chapterCountById.get(userId) ?? 0;
-  // For the owner's takedown notice: whether they can appeal, and how their last appeal went.
   const titleAppealable = viewer?.id === storyline.userId && !getStorylineAppealRefusal(storyline);
   const titleAppeal =
     titleAppealable && viewer

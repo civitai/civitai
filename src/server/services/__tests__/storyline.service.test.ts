@@ -3660,7 +3660,6 @@ describe('the title scan’s minor finding, beyond the scan', () => {
   });
 });
 
-/** The owner's takedown notice: whether they can appeal, and their last appeal. */
 describe('getStoryline — title appeal', () => {
   const page = (
     takedown: Record<string, boolean>,

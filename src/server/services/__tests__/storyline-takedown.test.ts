@@ -252,10 +252,7 @@ describe('a moderator takedown and the title scan', () => {
   });
 });
 
-/**
- * The owner's appeal of a title-scan takedown, on the same row. The appeal is one open row that
- * `resolveEntityAppeal` closes, as the real one claims only a pending appeal.
- */
+/** Closes the one open appeal row, as the real `resolveEntityAppeal` claims only a pending appeal. */
 describe('resolving an appeal of a title-scan takedown', () => {
   let appealOpen: boolean;
   beforeEach(() => {
@@ -264,8 +261,9 @@ describe('resolving an appeal of a title-scan takedown', () => {
       .mockReset()
       .mockImplementation((async () => (appealOpen ? { id: 1 } : null)) as never);
     mockResolveEntityAppeal.mockImplementation(async () => {
+      const claimed = appealOpen ? [{ id: 1 }] : [];
       appealOpen = false;
-      return [];
+      return claimed;
     });
   });
   const rule = (grant: boolean, reviewedTitle = TITLE) =>
@@ -306,12 +304,31 @@ describe('resolving an appeal of a title-scan takedown', () => {
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 
-  it("is refused while a moderator's takedown holds too", async () => {
+  it("a grant is refused while a moderator's takedown holds, a denial still closes it", async () => {
     await flaggingScan();
     await takeDown();
     await expect(rule(true)).rejects.toThrow(/moderator took this storyline down/);
     expect(state()).toEqual({ down: true, byScan: true, byModerator: true });
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+    await rule(false);
+    expect(state()).toEqual({ down: true, byScan: true, byModerator: true });
+    expect(closedAs()).toEqual(['Rejected']);
+  });
+
+  // The scan's takedown lifted after the appeal was filed, a moderator's still holding.
+  it("a denial closes it when only a moderator's takedown is left", async () => {
+    await flaggingScan();
+    await takeDown();
+    await cleanScan();
+    await rule(false);
+    expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+    expect(closedAs()).toEqual(['Rejected']);
+  });
+
+  it('a ruling another moderator closed first reports that, not success', async () => {
+    await flaggingScan();
+    mockResolveEntityAppeal.mockResolvedValueOnce([]);
+    await expect(rule(false)).rejects.toThrow(/ruled on this appeal first/);
   });
 
   it('with nothing left to lift, a grant closes it and a denial is refused', async () => {
