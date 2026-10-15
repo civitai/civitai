@@ -929,6 +929,52 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'MiniMax Music 3': baseLicenses['minimax music 3'],
 };
 
+type CivitaiLicenseAgreement = {
+  partner: string;
+  url?: string;
+};
+
+// Base models Civitai uses under its own agreement with the rights holder. Display only:
+// commercial-use, mature and same-license enforcement still come from baseModelLicenses.
+export const civitaiLicenseAgreements: Partial<Record<BaseModel, CivitaiLicenseAgreement>> = {
+  'MiniMax H3': { partner: 'MiniMax' },
+};
+
+type LicenseLink = { name: string; url?: string };
+export type DisplayedBaseModelLicense = {
+  primary: LicenseLink;
+  // The public licence, still linked when an agreement replaces it as the headline: it is
+  // what governs anyone who downloads and runs the weights themselves.
+  selfHosted?: LicenseLink;
+  notice?: string;
+  poweredBy?: string;
+};
+
+export function getDisplayedBaseModelLicense(
+  baseModel: string
+): DisplayedBaseModelLicense | undefined {
+  const license = baseModelLicenses[baseModel as BaseModel];
+  const agreement = civitaiLicenseAgreements[baseModel as BaseModel];
+  if (!agreement) {
+    if (!license) return undefined;
+    return {
+      primary: { name: license.name, url: license.url },
+      notice: license.notice,
+      poweredBy: license.poweredBy,
+    };
+  }
+
+  return {
+    primary: {
+      name: `Licensed to Civitai under agreement with ${agreement.partner}`,
+      url: agreement.url,
+    },
+    selfHosted: license && { name: license.name, url: license.url },
+    notice: license?.notice,
+    poweredBy: license?.poweredBy,
+  };
+}
+
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
 
