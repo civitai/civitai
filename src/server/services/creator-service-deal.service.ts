@@ -437,6 +437,17 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
       AND NOT EXISTS (SELECT 1 FROM "ServiceOffering" o
         WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NOT NULL)`,
     set: Prisma.sql`, "acceptedAt" = now(), "dueAt" = now() + make_interval(days => "deliveryDays")`,
+  }).catch(async (error) => {
+    // The claim above is what refuses it; this only says why, instead of "moved on", which would
+    // send the seller back to the same Accept button.
+    const [takenDown] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT o."id" FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+      WHERE d."id" = ${dealId}::int AND o."removedReason" IS NOT NULL`;
+    if (takenDown)
+      throw throwBadRequestError(
+        'A moderator removed this service, so this request can only be declined.'
+      );
+    throw error;
   });
 
   await openDealChat(dealId).catch((error) =>
@@ -784,7 +795,7 @@ export async function getServiceDealView({
   const deal = await dbWrite.serviceDeal.findUnique({
     where: { id: dealId },
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true } },
+      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
       events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
@@ -796,8 +807,11 @@ export async function getServiceDealView({
   // From the row, not the session, so a fresh mute shows before the next sign-in.
   const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
     SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const { removedReason, ...offering } = deal.offering;
+  const offeringTakenDown = removedReason != null;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
+    offeringTakenDown,
   });
   return {
     id: deal.id,
@@ -808,7 +822,9 @@ export async function getServiceDealView({
     mature: isMatureServiceLevel(deal.maxNsfwLevel),
     /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
     viewerMuted: !!viewer?.muted,
-    offering: deal.offering,
+    offering,
+    /** Never the reason: that is the seller's, and reaches them by notification. */
+    offeringTakenDown,
     buyer: deal.buyer,
     seller: deal.seller,
     price: deal.price,
@@ -892,7 +908,7 @@ export async function listMyServiceDeals({
     orderBy: { id: 'desc' },
     take: limit + 1,
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true } },
+      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
     },
@@ -908,11 +924,12 @@ export async function listMyServiceDeals({
   });
   return {
     hiddenOffDomain,
-    items: page.map((deal) => ({
+    items: page.map(({ offering: { removedReason, ...offering }, ...deal }) => ({
       id: deal.id,
       status: deal.status,
       maxNsfwLevel: deal.maxNsfwLevel,
-      offering: deal.offering,
+      offering,
+      offeringTakenDown: removedReason != null,
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
@@ -921,7 +938,10 @@ export async function listMyServiceDeals({
       requestedAt: deal.requestedAt,
       dueAt: deal.dueAt,
       nextDeadline: nextDealDeadline(deal),
-      ...dealActions(deal, userId, new Date(), { gatedAllowed }),
+      ...dealActions(deal, userId, new Date(), {
+        gatedAllowed,
+        offeringTakenDown: removedReason != null,
+      }),
     })),
     nextCursor: deals.length > limit ? page[page.length - 1].id : undefined,
   };

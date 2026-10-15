@@ -117,6 +117,9 @@ const R = 4;
 const SFW_LEVELS = PG | PG13;
 const ALL_LEVELS = 31;
 
+/** The offering a faked Prisma read includes, as the real `include` always does. */
+const OFFERING_ROW = { id: 1, title: 'Cat portraits', coverImageId: null, removedReason: null };
+
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
 
@@ -1686,6 +1689,7 @@ describe('the finals gate and dispute resolution', () => {
     const at = new Date();
     const held = {
       id: 9,
+      offering: OFFERING_ROW,
       buyerId: BUYER,
       sellerId: SELLER,
       status: 'Disputed',
@@ -2055,6 +2059,7 @@ describe('reasons and reason codes', () => {
         dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
       ).serviceDeal.findUnique = vi.fn().mockResolvedValue({
         id: 9,
+        offering: OFFERING_ROW,
         buyerId: BUYER,
         sellerId: SELLER,
         status: 'Delivered',
@@ -2112,7 +2117,7 @@ describe('reasons and reason codes', () => {
         const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
         (
           dbMock.dbWrite as unknown as { serviceDeal: { findMany: ReturnType<typeof vi.fn> } }
-        ).serviceDeal.findMany = vi.fn().mockResolvedValue([row]);
+        ).serviceDeal.findMany = vi.fn().mockResolvedValue([{ ...row, offering: OFFERING_ROW }]);
         const { items } = await deals.listMyServiceDeals({
           userId: BUYER,
           role: 'buyer',
@@ -2226,7 +2231,9 @@ describe('mature services', () => {
         serviceDeal: { findMany: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
       };
       model.serviceDeal.findMany = vi.fn(async ({ where }) =>
-        (await rows()).filter((row) => matches(row, where))
+        (await rows())
+          .filter((row) => matches(row, where))
+          .map((row) => ({ ...row, offering: OFFERING_ROW }))
       );
       model.serviceDeal.count = vi.fn(
         async ({ where }) => (await rows()).filter((row) => matches(row, where)).length
@@ -2297,10 +2304,12 @@ describe('an offering taken down mid-deal', () => {
     it('refuses to accept a request that was pending at the takedown', async () => {
       const { id } = await request();
       await moderatorTakeDown();
-      await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(
-        conflict
+      // Says why, rather than "moved on", which would send the seller back to the same button.
+      await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toThrow(
+        'A moderator removed this service, so this request can only be declined.'
       );
       expect((await deal(id)).status).toBe('Requested');
+      expect(await events(id)).toEqual(['Requested', 'Held']);
     });
 
     it("still refunds the buyer's withdraw of that request", async () => {
@@ -2311,6 +2320,39 @@ describe('an offering taken down mid-deal', () => {
       expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
       const refund = (await legs(id)).find((l) => l.leg === 'Refund');
       expect(refund?.transactionId).toBeTruthy();
+    });
+
+    it('stops offering Accept, and tells neither party the reason', async () => {
+      const { id } = await request();
+      const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+      const takenDown = { ...OFFERING_ROW, removedReason: 'misleading' };
+      const model = dbMock.dbWrite as unknown as {
+        serviceDeal: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
+      };
+      model.serviceDeal.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...row, offering: takenDown, events: [] });
+      model.serviceDeal.findMany = vi.fn().mockResolvedValue([{ ...row, offering: takenDown }]);
+
+      const view = await deals.getServiceDealView({
+        dealId: id,
+        userId: SELLER,
+        servicesEnabled: true,
+      });
+      expect(view.actions).toEqual(['decline']);
+      expect(view.offeringTakenDown).toBe(true);
+      expect(JSON.stringify(view)).not.toContain('misleading');
+
+      const { items } = await deals.listMyServiceDeals({
+        userId: SELLER,
+        role: 'seller',
+        limit: 20,
+        servicesEnabled: true,
+        servableLevels: ALL_LEVELS,
+      });
+      expect(items[0].actions).toEqual(['decline']);
+      expect(items[0].offeringTakenDown).toBe(true);
+      expect(JSON.stringify(items)).not.toContain('misleading');
     });
 
     it("leaves accept alone after the seller's own remove", async () => {

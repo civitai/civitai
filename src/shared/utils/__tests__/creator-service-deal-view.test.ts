@@ -44,6 +44,17 @@ describe('dealActions', () => {
     });
   });
 
+  // Decision (briony, 2026-10-15): after a moderator takedown the server refuses accept, so the
+  // button must not be offered either. Decline stays, and so does everything the buyer can do.
+  it('offers the seller only decline once a moderator has taken the offering down', () => {
+    const takenDown = { offeringTakenDown: true };
+    expect(dealActions(deal(), SELLER, NOW, takenDown)).toEqual({
+      actions: ['decline'],
+      primaryAction: null,
+    });
+    expect(dealActions(deal(), BUYER, NOW, takenDown).actions).toEqual(['withdraw']);
+  });
+
   // With `creatorServices` off the router refuses these, so offering them is a dead button.
   it('drops the flag-gated actions, and a primary among them, while the flag is off', () => {
     const off = { gatedAllowed: false };
