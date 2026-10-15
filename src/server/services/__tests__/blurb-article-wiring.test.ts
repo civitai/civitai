@@ -480,6 +480,9 @@ describe('article text scan — public content only', () => {
       await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
 
       expect(events).toEqual(['recompute']);
+      expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ entityId: ARTICLE_ID, rearmRetries: true })
+      );
     });
 
     it('records the submit before recomputing on the save that submits for processing', async () => {
