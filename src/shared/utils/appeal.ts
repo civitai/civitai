@@ -35,6 +35,21 @@ export function isAppealableModel3D(model: { status: Model3DStatus }) {
   return model.status === Model3DStatus.Unpublished || model.status === Model3DStatus.Deleted;
 }
 
+/**
+ * Why an owner cannot appeal a storyline's takedown, or null when they can. Only the title scan's
+ * takedown is appealable: a moderator's is not a scan error, and while one holds, granting the
+ * appeal would lift the scan's and leave the storyline down.
+ */
+export function getStorylineAppealRefusal(storyline: {
+  tosViolationByScan: boolean;
+  tosViolationByModerator: boolean;
+}) {
+  if (storyline.tosViolationByModerator)
+    return 'A moderator took this storyline down, so it cannot be appealed here';
+  if (!storyline.tosViolationByScan) return 'This storyline was not taken down by its title scan';
+  return null;
+}
+
 // apps/moderator also sends closed-owner-deleted and reviewed-*; it mirrors these strings.
 export type OrphanedAppealOutcome =
   | 'under-review'

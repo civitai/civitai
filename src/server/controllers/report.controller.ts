@@ -30,6 +30,7 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   getAppealRefusal,
+  getStorylineAppealRefusal,
   IMAGE_NOT_APPEALABLE,
   isAppealableImage,
   isAppealableModel3D,
@@ -154,6 +155,24 @@ export async function createEntityAppealHandler({
         const existing = await getLatestAppeal({ ...input, userId });
         if (existing?.status === AppealStatus.Pending)
           throw throwBadRequestError('Your review request for this bounty is already under review');
+        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
+
+        skipFee = true;
+        break;
+      }
+      case EntityType.Storyline: {
+        const storyline = await dbRead.storyline.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, tosViolationByScan: true, tosViolationByModerator: true },
+        });
+        if (!storyline) throw throwNotFoundError('Storyline not found');
+        if (storyline.userId !== userId) throw throwAuthorizationError();
+        const refusal = getStorylineAppealRefusal(storyline);
+        if (refusal) throw throwBadRequestError(refusal);
+
+        const existing = await getLatestAppeal({ ...input, userId });
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your appeal for this storyline is already under review');
         if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
 
         skipFee = true;

@@ -10,6 +10,8 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
+import { FLAG_ALERT_MESSAGES } from '~/components/Model/minor-flag-alert-state';
+import { FlagAppealAlert } from '~/components/Moderation/FlagAppealAlert';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
@@ -40,6 +42,7 @@ import {
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { RouterOutput } from '~/types/router';
+import { EntityType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 type Storyline = RouterOutput['storyline']['getById'];
@@ -48,6 +51,7 @@ type ContinueTerms = ReturnType<typeof useStorylineContinueTerms>;
 
 export function StorylinePage({ id }: { id: number }) {
   const storylineQuery = trpc.storyline.getById.useQuery({ id });
+  const queryUtils = trpc.useUtils();
   const storyline = storylineQuery.data;
   const mainPath = storyline?.mainPath ?? [];
   // Cover, thread and Start reading come from the reading path, which tombstones chapter 1 where
@@ -86,6 +90,15 @@ export function StorylinePage({ id }: { id: number }) {
           lastPostId={lastPost?.id ?? null}
           terms={shownTerms}
         />
+        {storyline.titleAppealable && (
+          <FlagAppealAlert
+            entityType={EntityType.Storyline}
+            entityId={storyline.id}
+            message={FLAG_ALERT_MESSAGES.storylineTitle}
+            appeal={storyline.titleAppeal}
+            onRequested={() => queryUtils.storyline.getById.invalidate({ id })}
+          />
+        )}
 
         <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-[minmax(0,1fr)_320px]">
           <StorylineChapters storyline={storyline} />

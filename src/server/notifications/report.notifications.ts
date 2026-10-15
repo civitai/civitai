@@ -7,6 +7,7 @@ const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
   [EntityType.Image]: '/images',
   [EntityType.Model]: '/models',
   [EntityType.Bounty]: '/bounties',
+  [EntityType.Storyline]: '/storylines',
 } as const;
 
 export const reportNotifications = createNotificationProcessor({

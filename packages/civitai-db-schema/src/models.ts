@@ -178,7 +178,7 @@ export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed"
 
 export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
-export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D";
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
 export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
 

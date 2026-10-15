@@ -949,6 +949,8 @@ export function appealEntityLink(
       return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
     case EntityType.Bounty:
       return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
+    case EntityType.Storyline:
+      return { url: `${getBaseUrl()}/storylines/${entityId}`, label: `Storyline #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
