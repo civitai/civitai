@@ -533,6 +533,8 @@ export async function getRedetectedModels({ limit, offset = 0, search }: Page) {
            m.status::text AS status, m.minor, m.poi, l.label,
            l.entry->'redetected' AS redetected, l.entry->'appealGranted' AS granted,
            gu.username AS "grantedByUsername",
+           -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
+           -- a ruling while the model has a Pending appeal.
            EXISTS (
              SELECT 1 FROM "Appeal" a
              WHERE a."entityType" = 'Model' AND a."entityId" = m.id AND a.status::text = 'Pending'

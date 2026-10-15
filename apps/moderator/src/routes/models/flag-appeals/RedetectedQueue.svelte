@@ -25,6 +25,8 @@
     form,
   }: { data: RedetectedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
 
+  // Mirrors the main app's refusal in resolveTextScanRedetection: any Pending appeal on the model, for
+  // either label, blocks a ruling. Change both together.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
   const rowKey = (row: RedetectedRow) => `${row.modelId}:${row.label}`;
   const labelName = (label: RedetectedRow['label']) => (label === 'poi' ? 'Real person' : 'Minor');

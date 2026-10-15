@@ -53,6 +53,13 @@ describe('re-detection actions', () => {
     expect(resolveRedetection).toHaveBeenCalledWith(42, 'poi', true, 'h-1');
   });
 
+  it('hands the main app\'s "already flagged" answer to the page', async () => {
+    resolveRedetection.mockResolvedValue({ ok: true, resolved: 'closed' });
+    expect(
+      await run('keepRedetected', { modelId: '42', label: 'minor', textHash: 'h-1' })
+    ).toMatchObject({ success: true, resolved: 'closed' });
+  });
+
   it('dismiss forwards the label and dismisses', async () => {
     await run('dismissRedetected', { modelId: '42', label: 'minor', textHash: 'h-1' });
     expect(resolveRedetection).toHaveBeenCalledWith(42, 'minor', false, 'h-1');
