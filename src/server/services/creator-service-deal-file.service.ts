@@ -31,6 +31,8 @@ import {
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
+  SERVICE_ZIP_IMAGE_EXTENSIONS,
+  SERVICE_ZIP_MAX_IMAGE_BYTES,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealFileKind,
@@ -126,6 +128,18 @@ export async function requestServiceDealUpload({
     assertFinalFileType(fileName);
     if (size > SERVICE_FINAL_MAX_BYTES)
       throw throwBadRequestError('That file is too large to deliver.');
+    // An image is scanned whole, so it has its own, lower, cap.
+    if (
+      (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(
+        fileExtension(cleanFileName(fileName))
+      ) &&
+      size > SERVICE_ZIP_MAX_IMAGE_BYTES
+    )
+      throw throwBadRequestError(
+        `An image cannot be more than ${Math.floor(
+          SERVICE_ZIP_MAX_IMAGE_BYTES / (1024 * 1024)
+        )} MB.`
+      );
   }
 
   const created = await dbWrite.$transaction(async (tx) => {
@@ -335,6 +349,11 @@ export async function deleteServiceDealFile({
       FOR UPDATE OF d`;
     if (!deal) throw throwNotFoundError('File not found');
     // Re-read under the lock: the state above is the one that is true now.
+    const copies = await tx.$queryRaw<{ imageId: number }[]>`
+      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+      WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
+        AND e."scanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
+      FOR UPDATE OF e`;
     const [file] = await tx.$queryRaw<
       { id: number; s3Key: string; imageId: number | null; scanKey: string | null }[]
     >`
@@ -343,7 +362,7 @@ export async function deleteServiceDealFile({
         AND d."status" IN (${WORKING})
       RETURNING f."id", f."s3Key", f."imageId", f."scanKey"`;
     if (!file) throw throwNotFoundError('File not found');
-    return file;
+    return { ...file, copies };
   });
 
   // The row is the source of truth; an object left behind is unreachable and harmless.
@@ -353,14 +372,21 @@ export async function deleteServiceDealFile({
     const { deleteImageById } = await import('~/server/services/image.service');
     await deleteImageById({ id: removed.imageId, updatePost: false }).catch(() => null);
   }
+  // The rows went with the file; their hidden copies would otherwise be left behind. A rejected
+  // image's copy stays: it is what the moderators review.
+  if (removed.copies.length) {
+    const { deleteImageById } = await import('~/server/services/image.service');
+    for (const { imageId } of removed.copies)
+      await deleteImageById({ id: imageId, updatePost: false }).catch(() => null);
+  }
   return { id: removed.id };
 }
 
 /**
- * A scanner's verdict on a Final. Only a Pending Final takes it, so a repeat or late result cannot
- * overturn an earlier one. A Failed Final sends a delivered deal to the moderators; one not yet
- * delivered cannot be delivered while it stands (see `dealReadyToDeliver`). The real scanner
- * reports through this; nothing else sets a Final's scanStatus.
+ * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
+ * overturn an earlier one. Passed also needs the file unpacked, never refused, its malware scan
+ * passed and every image passed. A Failed Final sends a delivered deal to the moderators; one not
+ * yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
  */
 export async function recordFinalScanResult({
   fileId,
@@ -373,6 +399,14 @@ export async function recordFinalScanResult({
     UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
     WHERE "id" = ${fileId}::int AND "kind" = 'Final'::"ServiceDealFileKind"
       AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+      AND (${verdict}::text = 'Failed' OR (
+        "unpackedAt" IS NOT NULL
+        AND "failReason" IS NULL
+        AND "malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+        AND NOT EXISTS (
+          SELECT 1 FROM "ServiceDealFileEntry" e
+          WHERE e."fileId" = "ServiceDealFile"."id"
+            AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")))
     RETURNING "dealId"`;
   if (!file) return { recorded: false, held: false };
   const held =
@@ -611,7 +645,7 @@ function claimPreviews(where: Prisma.Sql, limit: number) {
     RETURNING f."id", f."s3Key", f."scanKey", d."sellerId"`;
 }
 
-async function readObject(bucket: string, key: string) {
+export async function readObject(bucket: string, key: string) {
   const response = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!response.Body) throw new Error('Empty object body');
   return Buffer.from(await response.Body.transformToByteArray());
@@ -634,7 +668,7 @@ async function failOrRetry(preview: ClaimedPreview, error: unknown) {
  * A bare Image row, scanned like any upload: no post, no feed, ingestion NOT skipped. The caller
  * records its id on the file so the copy can be found and deleted.
  */
-async function createScanImage(
+export async function createScanImage(
   url: string,
   copy: { mimeType: string; width: number; height: number; data: Buffer },
   userId: number

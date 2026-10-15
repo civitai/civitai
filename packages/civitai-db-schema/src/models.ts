@@ -6173,6 +6173,24 @@ export interface ServiceDealFile {
   uploadedAt: Date | null;
   processingAt: Date | null;
   scanStatus: ServiceDealFileScanStatus;
+  malwareScanStatus: ServiceDealFileScanStatus;
+  unpackedAt: Date | null;
+  createdAt: Date;
+  entries?: ServiceDealFileEntry[];
+}
+
+export interface ServiceDealFileEntry {
+  id: number;
+  fileId: number;
+  file?: ServiceDealFile;
+  entryIndex: number;
+  path: string;
+  size: number;
+  imageId: number | null;
+  scanKey: string | null;
+  nsfwLevel: number | null;
+  scanStatus: ServiceDealFileScanStatus;
+  failReason: string | null;
   createdAt: Date;
 }
 

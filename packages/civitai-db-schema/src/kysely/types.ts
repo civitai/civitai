@@ -4718,6 +4718,27 @@ export type ServiceDealFile = {
    */
   processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+   */
+  malwareScanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * Set once the file's contents have been listed and checked (a zip unpacked, an image read).
+   */
+  unpackedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealFileEntry = {
+  id: Generated<number>;
+  fileId: number;
+  entryIndex: number;
+  path: string;
+  size: number;
+  imageId: number | null;
+  scanKey: string | null;
+  nsfwLevel: number | null;
+  scanStatus: Generated<ServiceDealFileScanStatus>;
+  failReason: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealTransaction = {
@@ -5741,6 +5762,7 @@ export type DB = {
   ServiceDeal: ServiceDeal;
   ServiceDealEvent: ServiceDealEvent;
   ServiceDealFile: ServiceDealFile;
+  ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceOffering: ServiceOffering;
   Session: Session;
