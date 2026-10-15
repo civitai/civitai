@@ -114,6 +114,8 @@ export function ServiceRequestModal({
               request.mutate({
                 offeringId: offering.id,
                 expectedPrice: offering.price,
+                expectedRevisionsIncluded: offering.revisionsIncluded,
+                expectedDeliveryDays: offering.deliveryDays,
                 requestText: trimmed,
               });
             }}

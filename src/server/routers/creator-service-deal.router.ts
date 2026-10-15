@@ -45,6 +45,8 @@ export const creatorServiceDealRouter = router({
     requestServiceDeal({
       offeringId: input.offeringId,
       expectedPrice: input.expectedPrice,
+      expectedRevisionsIncluded: input.expectedRevisionsIncluded,
+      expectedDeliveryDays: input.expectedDeliveryDays,
       requestText: input.requestText,
       buyerId: ctx.user.id,
       // From the request's domain, never the input: yellow, or green on the green site.

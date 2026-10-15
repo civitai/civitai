@@ -152,6 +152,8 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
   deals.requestServiceDeal({
     offeringId: 1,
     expectedPrice: PRICE,
+    expectedRevisionsIncluded: 1,
+    expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please draw my cat',
     buzzType: 'yellow',
@@ -260,6 +262,38 @@ describe('request', () => {
     expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['revisions', `"revisionsIncluded" = 4`],
+    ['delivery days', `"deliveryDays" = 30`],
+  ])('refuses a request whose %s changed since the buyer saw them', async (_, change) => {
+    await q(`UPDATE "ServiceOffering" SET ${change}`);
+    await expect(request()).rejects.toEqual(
+      expect.objectContaining({ code: 'CONFLICT', message: expect.stringMatching(/terms/) })
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The pre-check above answers with a message; the INSERT repeats each term as its own
+  // precondition, so terms changing between the two cannot be copied into the deal.
+  it.each([
+    ['revisions', { expectedRevisionsIncluded: 4 }, `"revisionsIncluded" = 4`],
+    ['delivery days', { expectedDeliveryDays: 30 }, `"deliveryDays" = 30`],
+  ])(
+    'creates no deal when the %s change between the check and the insert',
+    async (_, expected, change) => {
+      // The check passes against the buyer's terms, then the offering moves back before the INSERT.
+      await q(`UPDATE "ServiceOffering" SET ${change}`);
+      shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+        await q(`UPDATE "ServiceOffering" SET "revisionsIncluded" = 1, "deliveryDays" = 3`);
+        return [];
+      });
+      await expect(request(expected)).rejects.toEqual(conflict);
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
 
   it('refuses a second unanswered request from the same buyer, so a doubled submit holds once', async () => {
     await request();
