@@ -10,6 +10,7 @@ import {
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
+  trackImageRestore,
 } from './image-moderation-effects';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
@@ -74,7 +75,7 @@ export async function acceptImage({
 }): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
     .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'postId'])
+    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return;
@@ -138,6 +139,11 @@ export async function acceptImage({
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
 
+  // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
+  // (`AiNotVerified` in the POI queue) has no removal event to pair with.
+  if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
+    await trackImageRestore({ imageId, actorUserId: userId });
+
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
 
   await applyAcceptSideEffects(img, imageId);
@@ -151,6 +157,22 @@ export async function acceptImage({
     if (appeal) await runAppealCascade(appeal, imageId, true, undefined, !deferAppealEmail);
     return appeal;
   }
+}
+
+/**
+ * True when the image already carries this app's moderation block. A block from anywhere else (an
+ * account-deletion grace block, an automated reason) is weaker and reversible, so it does not count.
+ */
+export async function isModerationBlocked(imageId: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', imageId)
+    .where('ingestion', '=', 'Blocked')
+    .where('blockedFor', '=', BLOCKED_REASON_MODERATED)
+    .where(sql<boolean>`("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL`)
+    .executeTakeFirst();
+  return !!row;
 }
 
 export async function blockImage({
@@ -452,6 +474,7 @@ export async function resolveImageAppeal({
     if (restored) await resetBlockedNsfwLevel(imageId);
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
+    if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {
     await dbWrite
       .updateTable('Image')

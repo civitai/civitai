@@ -33,22 +33,8 @@ export function toHostGateStatus(status: PageHostStatus): HostStatus {
   return status === 'error' ? 'no_token' : status;
 }
 
-/**
- * #3/#6: the scopes the minted page JWT ACTUALLY carries — the page manifest's
- * declared scopes minus the consent-gated ones the viewer hasn't granted
- * (`missingScopes`, reported by the mint). The server signs exactly this set,
- * so this is what BLOCK_INIT / TOKEN_REFRESH must advertise to the block.
- * Posting `[]` (the old hardcode) lied to the block about its capabilities
- * (a page token carries `apps:storage:*`). Mirrors IframeHost.grantedScopes.
- */
-export function grantedPageScopes(
-  declaredScopes: string[],
-  missingScopes: string[] | undefined
-): string[] {
-  if (!missingScopes || missingScopes.length === 0) return declaredScopes;
-  const withheld = new Set(missingScopes);
-  return declaredScopes.filter((s) => !withheld.has(s));
-}
+// `grantedPageScopes` MOVED to `requestConsentGate.resolveAdvertisedScopes`, shared
+// with IframeHost, which had its own copy of the same derivation.
 
 // 🔴 `resolveUngrantableConsentNotice` + `UngrantableConsentNotice` MOVED OUT of
 // this module, to `requestConsentGate.ts`. They were never page-specific: they are

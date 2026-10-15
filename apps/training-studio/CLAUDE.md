@@ -86,7 +86,7 @@ Duplicated in every SvelteKit app's `CLAUDE.md` because this file always loads a
 link away. Full reasoning: [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md).
 
 - **Derive the promise; never fetch in `$effect` and assign to `$state`.** It gives a stuck spinner, a
-  re-run loop, or a stale response landing on a newer lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : null)`, then `{#await x}`.
+  re-run loop, or a stale response landing on a newer lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : new Promise(() => {}))`, then `{#await x}`. The server half is a promise that never settles, **never `null`**: null renders `{:then}` on the server while the browser hydrates `pending`, and the browser's content then sits outside its block — when a parent `{#key}`/`{#if}` swaps the panel, it stays on the page and the new one renders under it (the model reports "stuck preview" bug, 2026-10-14). `{#if x}{#await x}` with `: null` is also safe.
 - **Every `{#await}` needs a `{:catch}`.** Without one a rejection is silent and the panel never fills in.
 - **Key every `{#each}` on something unique.** An unkeyed or duplicate-keyed loop reuses the wrong DOM
   node, so a row's action button ends up wired to a different row. Correctness, not lint.

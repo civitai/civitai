@@ -31,6 +31,7 @@ export const articleModerationAdapter: ModerationAdapter = {
     submitTextModerationOrScan({
       entityType: 'Article',
       entityId,
+      fromRetry: true,
       xguard: () =>
         submitTextModeration({
           entityType: 'Article',

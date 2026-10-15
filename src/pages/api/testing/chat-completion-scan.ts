@@ -51,7 +51,7 @@
  *     "note": "...", "createdById": <moderator id> }
  *     Appends a new prompt version. `createdById` must be an active moderator.
  *
- *   { "action": "putConfig", "moderatorId": <id>, "config": { "model"?, "maxInputChars"?, "thinking"? } }
+ *   { "action": "putConfig", "moderatorId": <id>, "config": { "model"?, "maxInputChars"?, "maxSegments"?, "thinking"? } }
  *     Merges the patch over the stored config and returns the result. The
  *     moderator id must be an active moderator; the write is logged with it.
  *

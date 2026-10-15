@@ -28,6 +28,7 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -84,7 +85,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
-import { postgresSlugify, removeTags } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
@@ -206,9 +207,7 @@ export const getArticles = async ({
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
-    const isOwnerRequest =
-      !!sessionUser?.username &&
-      postgresSlugify(sessionUser.username) === postgresSlugify(username);
+    let isOwnerRequest = false;
     const hidePrivateArticles =
       forceHidePrivate ||
       (!ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds);
@@ -268,6 +267,7 @@ export const getArticles = async ({
 
       if (!targetUser) throw throwNotFoundError('User not found');
 
+      isOwnerRequest = !!userId && targetUser.id === userId;
       AND.push(Prisma.sql`u.id = ${targetUser.id}`);
     }
 
@@ -766,7 +766,12 @@ export const getArticleById = async ({
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the
       // field doesn't flow into external webhook / search-index payloads.
-      select: { ...articleDetailSelect, moderatorNsfwLevel: true, scheduledAt: true },
+      select: {
+        ...articleDetailSelect,
+        moderatorNsfwLevel: true,
+        scheduledAt: true,
+        reactions: viewerReactionsSelect(userId),
+      },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);

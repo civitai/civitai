@@ -25,6 +25,10 @@ import {
   fliptGatedToggleableKeys,
   toggleableFeatures,
 } from '~/server/services/feature-flags.service';
+import {
+  HIDE_FROM_REACTION_LISTS_DESCRIPTION,
+  HIDE_FROM_REACTION_LISTS_LABEL,
+} from '~/shared/constants/reaction-privacy.constants';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -76,6 +80,9 @@ export function SettingsCard() {
         <AutoplayGifsToggle />
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
+
+        <Divider label="Privacy" mb={-12} />
+        <HideFromReactionListsToggle />
 
         <Divider label="Model File Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
@@ -250,6 +257,23 @@ export function StickerMotionToggle() {
       checked={!(disableStickerMotion ?? false)}
       disabled={isPending}
       onChange={(e) => mutate({ disableStickerMotion: !e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+export function HideFromReactionListsToggle() {
+  const { hideFromReactionLists } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="hideFromReactionLists"
+      label={HIDE_FROM_REACTION_LISTS_LABEL}
+      description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
+      checked={hideFromReactionLists ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );

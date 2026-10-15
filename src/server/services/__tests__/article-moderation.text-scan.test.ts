@@ -31,7 +31,7 @@ describe('articleModerationAdapter — text scan', () => {
       id: 'xg',
     });
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: 'Article', entityId: 4 })
+      expect.objectContaining({ entityType: 'Article', entityId: 4, fromRetry: true })
     );
     expect(submitTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({

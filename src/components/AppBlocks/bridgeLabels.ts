@@ -2,7 +2,7 @@
  * App Blocks BRIDGE telemetry — the label sets and wire bounds, and NOTHING ELSE.
  *
  * 🔴 IT IS A SEPARATE MODULE FROM `bridgeTelemetry.ts` FOR ONE MEASURED REASON:
- * `bridgeTelemetry` imports `hostHandlerParity`'s 47-key `INVENTORY` (several KB
+ * `bridgeTelemetry` imports `hostHandlerParity`'s `INVENTORY` (several KB
  * minified) to bound the `type` label. `src/server/schema/track.schema.ts` needs
  * the label ENUMS so the beacon's zod schema and the emitter cannot drift — and
  * `track.schema` is imported by `TrackView` on pages that mount no block at all,

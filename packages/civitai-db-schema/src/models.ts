@@ -258,6 +258,24 @@ export type StorylineStatus = "Ongoing" | "Complete";
 
 export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
 
+export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
+
+export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
+
+export type ServiceBuzzType = "yellow" | "blue" | "green";
+
+export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevision" | "Completed" | "Declined" | "Expired" | "CancellationRequested" | "Cancelled" | "Disputed";
+
+export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
+
+export type ServiceDealFileKind = "Preview" | "Final";
+
+export type ServiceDealFileScanStatus = "Pending" | "Passed" | "Failed" | "NotScanned";
+
+export type ServiceDisputeResolution = "Refund" | "Release";
+
+export type ServiceDealLeg = "Hold" | "Release" | "Fee" | "Refund";
+
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
 export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
@@ -731,6 +749,9 @@ export interface User {
   crucibleEntries?: CrucibleEntry[];
   crucibleEngagements?: CrucibleEngagement[];
   prizes?: Prize[];
+  serviceOfferings?: ServiceOffering[];
+  serviceDealsBought?: ServiceDeal[];
+  serviceDealsSold?: ServiceDeal[];
   gameFrameGames?: GameFrameGame[];
 }
 
@@ -1233,6 +1254,13 @@ export interface ModelVersionMetric {
   thumbsUpCount: number;
   thumbsDownCount: number;
   earnedAmount: number;
+  updatedAt: Date;
+}
+
+export interface ModelSelfGeneration {
+  modelId: number;
+  userId: number;
+  generationCount: bigint;
   updatedAt: Date;
 }
 
@@ -3199,6 +3227,18 @@ export interface CreatorMilestoneCosmetic {
   cosmetic?: Cosmetic;
 }
 
+export interface CreatorScoreGrant {
+  id: number;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+}
+
 export interface UserCreatorMilestone {
   userId: number;
   user?: User;
@@ -4254,6 +4294,76 @@ export interface AppealDecisionRecord {
 export interface AppealTrainingObjectDeletion {
   key: string;
   createdAt: Date;
+}
+
+export interface ScanLabelItem {
+  id: number;
+  imageId: number;
+  lane: string;
+  firstFlaggedAt: Date;
+  status: string;
+  voidReason: string | null;
+  votes: number;
+  blockVotes: number;
+  outcome: string | null;
+  unanimous: boolean | null;
+  decidedAt: Date | null;
+  actionedAt: Date | null;
+  actionStartedAt: Date | null;
+  actionResult: string | null;
+  actionError: string | null;
+  copyState: string | null;
+  copyKey: string | null;
+  copiedAt: Date | null;
+  copyError: string | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelFlag {
+  id: number;
+  itemId: number;
+  source: string;
+  flaggerVersion: string;
+  reason: string | null;
+  workflowId: string;
+  flaggedAt: Date;
+  snapshot: JsonValue | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelVote {
+  itemId: number;
+  userId: number;
+  block: boolean;
+  reason: string | null;
+  reasonComment: string | null;
+  msOnItem: number | null;
+  createdAt: Date;
+}
+
+export interface ScanLabelClaim {
+  itemId: number;
+  userId: number;
+  expiresAt: Date;
+}
+
+export interface ScanLabelCopyObject {
+  key: string;
+  itemId: number;
+  imageId: number;
+  createdAt: Date;
+  withdrawnAt: Date | null;
+  removedAt: Date | null;
+  withdrawReason: string | null;
+  withdrawError: string | null;
+}
+
+export interface ScanLabelQuota {
+  userId: number;
+  dailyVotes: number;
+  active: boolean;
+  updatedBy: number | null;
+  updatedAt: Date;
 }
 
 export interface AuctionBase {
@@ -6038,6 +6148,109 @@ export interface StorylineReport {
   storyline?: Storyline;
   reportId: number;
   report?: Report;
+}
+
+export interface ServiceOffering {
+  id: number;
+  sellerId: number;
+  seller?: User;
+  title: string;
+  description: string;
+  coverImageId: number | null;
+  price: number;
+  acceptsBlue: boolean;
+  previewKind: ServicePreviewKind;
+  deliveryDays: number;
+  revisionsIncluded: number;
+  maxOpenDeals: number | null;
+  status: ServiceOfferingStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  deals?: ServiceDeal[];
+}
+
+export interface ServiceDeal {
+  id: number;
+  offeringId: number;
+  offering?: ServiceOffering;
+  buyerId: number;
+  buyer?: User;
+  sellerId: number;
+  seller?: User;
+  price: number;
+  buzzType: ServiceBuzzType;
+  feeAmount: number;
+  revisionsIncluded: number;
+  revisionsUsed: number;
+  deliveryDays: number;
+  previewKind: ServicePreviewKind;
+  status: ServiceDealStatus;
+  heldAt: Date | null;
+  settledAt: Date | null;
+  chatId: number | null;
+  requestText: string;
+  requestedAt: Date;
+  acceptedAt: Date | null;
+  dueAt: Date | null;
+  deliveredAt: Date | null;
+  completedAt: Date | null;
+  releaseAt: Date | null;
+  cancellationRequestedAt: Date | null;
+  cancellationRequestedById: number | null;
+  cancellationReason: string | null;
+  disputeOpenedAt: Date | null;
+  disputeReason: string | null;
+  disputeResolvedAt: Date | null;
+  disputeResolution: ServiceDisputeResolution | null;
+  disputeResolvedById: number | null;
+  closedAt: Date | null;
+  closeReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  events?: ServiceDealEvent[];
+  files?: ServiceDealFile[];
+  transactions?: ServiceDealTransaction[];
+}
+
+export interface ServiceDealEvent {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  actorId: number;
+  type: ServiceDealEventType;
+  round: number;
+  comment: string | null;
+  createdAt: Date;
+}
+
+export interface ServiceDealFile {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  round: number;
+  kind: ServiceDealFileKind;
+  s3Key: string;
+  watermarkedKey: string | null;
+  imageId: number | null;
+  mimeType: string;
+  size: number;
+  scanStatus: ServiceDealFileScanStatus;
+  createdAt: Date;
+}
+
+export interface ServiceDealTransaction {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  leg: ServiceDealLeg;
+  externalTransactionId: string;
+  transactionId: string | null;
+  amount: number;
+  buzzType: ServiceBuzzType;
+  attempts: number;
+  lastAttemptAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
 }
 
 export interface UserHub {

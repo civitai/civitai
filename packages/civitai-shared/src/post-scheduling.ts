@@ -21,7 +21,7 @@ export const POST_SCHEDULE_JITTER_MAX_MINUTES = 9;
  * can move toward each other by at most `POST_SCHEDULE_JITTER_MAX_MINUTES`, and the on-the-hour
  * nudge adds one more.
  */
-export const POST_BATCH_MIN_EVERY_MINUTES = 60;
+export const POST_BATCH_MIN_EVERY_MINUTES = 40;
 export const POST_BATCH_MIN_SPREAD_SLOT_MINUTES = 40;
 
 const MINUTE_MS = 60_000;
@@ -151,7 +151,7 @@ export function generateEverySchedule(input: {
   if (!Number.isFinite(everyMinutes) || everyMinutes < POST_BATCH_MIN_EVERY_MINUTES)
     return {
       ok: false,
-      issue: `Posts need at least ${POST_BATCH_MIN_EVERY_MINUTES / 60} hour between them.`,
+      issue: `Posts need at least ${POST_BATCH_MIN_EVERY_MINUTES} minutes between them.`,
     };
   const dates: Date[] = [];
   for (let i = 0; i < count; i++) dates.push(applyJitter(addMinutes(start, i * everyMinutes), rng));

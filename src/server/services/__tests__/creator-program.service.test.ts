@@ -122,6 +122,7 @@ import {
   withdrawCash,
 } from '~/server/services/creator-program.service';
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
+import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
@@ -290,6 +291,32 @@ describe('getCreatorRequirements', () => {
 
     expect(result.membership).toBe('founder');
     expect(result.validMembership).toBe(false);
+  });
+
+  // The sum's arithmetic runs against Postgres in creator-score-grant.behavior.test.ts; this pins
+  // that the statement sent is GREATEST(that sum, the stored total).
+  it('scores the larger of every category summed and the stored total', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ score: 1, membership: 'silver' }]);
+
+    await getCreatorRequirements(userId);
+
+    const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls.at(-1) as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sent = strings
+      .reduce((sql, part, i) => {
+        const value = values[i - 1] as { sql?: string } | undefined;
+        return sql + (typeof value?.sql === 'string' ? value.sql : '?') + part;
+      })
+      .replace(/--[^\n]*/g, '')
+      .replace(/\s+/g, ' ');
+    expect(sent).toContain(
+      `GREATEST( ${creatorScoreCategorySumSql(
+        'u.meta'
+      )}, COALESCE((meta->'scores'->'total')::numeric, 0) ) as score`
+    );
+    expect(sent).toContain(`COALESCE((u.meta->'scores'->>'staffAwarded')::numeric, 0)`);
   });
 });
 

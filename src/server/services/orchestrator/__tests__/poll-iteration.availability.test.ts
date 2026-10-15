@@ -41,9 +41,7 @@ import { formatGenerationResponse2 } from '~/server/services/orchestrator/orches
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 
-// The global `@civitai/client` mock defines `NsfwLevel.X` as 'X' and leaves R/XXX undefined, so 'X'
-// is the one level `isMature` recognises under test.
-const MATURE = 'X';
+const MATURE = 'x';
 const SAFE = 'pg';
 
 const output = (over: Record<string, unknown> = {}) => ({

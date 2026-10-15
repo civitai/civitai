@@ -78,11 +78,14 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
       'goods:purchase:self',
       'apps:storage:shared:read',
       'apps:storage:shared:write',
-      // REVIEW \ PRIVATE_RUN — the three subtractions. Storage functions only under the
-      // review sandbox's disposable schema, and `buzz:read:self` is consent-gated and
-      // withheld by the DEFAULT review allowlist for a reason that names this surface.
+      // REVIEW \ PRIVATE_RUN — the subtractions. Storage functions only under the
+      // review sandbox's disposable schema / review namespace, and `buzz:read:self` is
+      // consent-gated and withheld by the DEFAULT review allowlist for a reason that names
+      // this surface.
       'apps:storage:read',
       'apps:storage:write',
+      'apps:storage',
+      'apps:storage:publish',
       'buzz:read:self',
       // The survivor, i.e. the positive control.
       'models:read:self',
@@ -129,14 +132,26 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
     // from its source — which makes them the whole value of the derivation.
     for (const audience of ['owner', 'editor', 'moderator'] as const) {
       const granted = clampPrivateRunScopes(
-        ['apps:storage:read', 'apps:storage:write', 'buzz:read:self'],
+        [
+          'apps:storage:read',
+          'apps:storage:write',
+          'apps:storage',
+          'apps:storage:publish',
+          'buzz:read:self',
+        ],
         audience
       );
       expect(granted, `audience=${audience}`).toEqual(['user:read:self']);
     }
     // …and the REVIEW set really does grant them, so the row above is a real difference
     // rather than two empty sets agreeing.
-    for (const s of ['apps:storage:read', 'apps:storage:write', 'buzz:read:self']) {
+    for (const s of [
+      'apps:storage:read',
+      'apps:storage:write',
+      'apps:storage',
+      'apps:storage:publish',
+      'buzz:read:self',
+    ]) {
       expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(s), s).toBe(true);
       expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.has(s), s).toBe(false);
     }
@@ -310,9 +325,9 @@ describe('clampPrivateRunScopes — EDITOR is READ-ONLY [REG]', () => {
 
 describe('private-run budget containment [REG]', () => {
   /**
-   * 🔴 FIXTURE BOUNDS OVERSHOOT AND ARE NOT MULTIPLES OF THE CAP. 137 and 1301 are
-   * chosen so a clamp mutant MOVES the output: a manifest budget of 1000 (the cap
-   * itself) or 2000 (a multiple) would land exactly on the boundary, the guard would
+   * 🔴 FIXTURE BOUNDS OVERSHOOT AND ARE NOT MULTIPLES OF THE CAP. 137 and 6301 are
+   * chosen so a clamp mutant MOVES the output: a manifest budget of 5000 (the cap
+   * itself) or 10000 (a multiple) would land exactly on the boundary, the guard would
    * never execute, and the mutant would survive a fully green suite.
    */
   it('a manifest budget UNDER the cap passes through verbatim', () => {
@@ -322,13 +337,14 @@ describe('private-run budget containment [REG]', () => {
 
   it('a manifest budget OVER the cap clamps to the cap', () => {
     const granted = clampPrivateRunScopes(['ai:write:budgeted'], 'moderator');
-    expect(resolveDevBuzzBudget(granted, undefined, 1301)).toBe(DEV_BUZZ_BUDGET_CAP);
-    expect(DEV_BUZZ_BUDGET_CAP).toBe(1000);
+    expect(resolveDevBuzzBudget(granted, undefined, 6301)).toBe(5000);
+    expect(DEV_BUZZ_BUDGET_CAP).toBe(5000);
   });
 
   it('an ABSENT manifest budget falls back to the platform default', () => {
     const granted = clampPrivateRunScopes(['ai:write:budgeted'], 'moderator');
-    expect(resolveDevBuzzBudget(granted, undefined, undefined)).toBe(DEV_BUZZ_BUDGET_DEFAULT);
+    expect(resolveDevBuzzBudget(granted, undefined, undefined)).toBe(1000);
+    expect(DEV_BUZZ_BUDGET_DEFAULT).toBe(1000);
   });
 
   it('🔴 a BAD manifest budget is refused by the PRODUCER, which is where it must be', () => {

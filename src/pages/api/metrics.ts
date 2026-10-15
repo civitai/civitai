@@ -62,6 +62,7 @@ import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.
 // otherwise indistinguishable from an unloaded module.
 import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
 import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
+import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared-storage.metrics';
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
@@ -209,6 +210,7 @@ async function collectRegistryMetrics(
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockStorageMetrics();
+  await seedAppBlockSharedStorageMetrics();
 
   const metrics = await collectRegistryMetrics(client.register, 'default');
 

@@ -23,7 +23,6 @@ import {
   decideAutoRetry,
   advanceReviewConsentLatch,
   buildReviewConsentNotification,
-  grantedPageScopes,
   INITIAL_REVIEW_CONSENT_LATCH,
   MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
@@ -85,6 +84,11 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import {
+  buildImagePickerReply,
+  resolveImagePickerRequest,
+  type BlockPickedImageInfo,
+} from './imagePickerLogic';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
 import { BlockImageBytesUploader } from './BlockImageBytesUploader';
 import type { BlockImageScanResult } from './blockImageScanLogic';
@@ -115,9 +119,11 @@ import {
   type WildcardPackErrorCode,
 } from './wildcardPackParse';
 import {
+  resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
 } from './requestConsentGate';
 import { BlockConsentNotice } from './BlockConsentNotice';
@@ -183,6 +189,8 @@ const BlockGenerationSourceUploadModal = dynamic(
   () => import('./BlockGenerationSourceUploadModal'),
   { ssr: false }
 );
+
+const BlockImagePickerModal = dynamic(() => import('./BlockImagePickerModal'), { ssr: false });
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -654,6 +662,9 @@ export interface PageBlockHostProps {
    *  Trimmed from the wrapped `token.scopes` so the block's capability check is
    *  accurate, and used to surface a consent-needed terminal state. */
   missingScopes?: string[];
+  /** The scopes the mint signed into `token`. When present, exactly this set is
+   *  advertised to the block — see `resolveAdvertisedScopes`. */
+  signedScopes?: string[];
   /** #3/#6: true when the app's approved manifest declares scopes the viewer has
    *  not granted (the token still mints with the granted subset). */
   needsConsent?: boolean;
@@ -838,6 +849,7 @@ export function PageBlockHost({
   tokenKind,
   declaredScopes,
   missingScopes,
+  signedScopes,
   needsConsent,
   tokenError,
   tokenTerminal = false,
@@ -1266,12 +1278,15 @@ export function PageBlockHost({
   // fail-closed in [[...path]].tsx), so the event is dark behind the same flag as
   // the rest of App Blocks.
 
-  // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
-  // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
+  // #3/#6: the scopes the minted JWT ACTUALLY carries. See
+  // requestConsentGate.resolveAdvertisedScopes. Posting `[]` (the old hardcode)
   // lied to the block about its capabilities.
+  // A boolean, not `viewer`: the run page builds that object inline, so its
+  // identity changes every render and would re-subscribe handlers keyed on it.
+  const viewerSignedIn = viewer != null;
   const grantedScopes = useMemo<string[]>(
-    () => grantedPageScopes(declaredScopes, missingScopes),
-    [declaredScopes, missingScopes]
+    () => resolveAdvertisedScopes(declaredScopes, missingScopes, signedScopes),
+    [declaredScopes, missingScopes, signedScopes]
   );
 
   // Current sub-path under /apps/run/<slug>/<...path> (no leading slash). Read
@@ -1322,7 +1337,8 @@ export function PageBlockHost({
         // controller posts the freshest payload via the ref.
         raw: token ?? '',
         // #3/#6: the REAL granted scopes the JWT carries (page = viewer-scoped
-        // ambient `apps:storage:*`; never money). Posting `[]` lied to the block
+        // consent-exempt storage scopes, plus any gated scope the viewer granted;
+        // never money). Posting `[]` lied to the block
         // about the capabilities it holds.
         scopes: grantedScopes,
         expiresAt: expiresAt ?? '',
@@ -1959,8 +1975,14 @@ export function PageBlockHost({
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
       // Copy shared with IframeHost's twin of this path — see the constant for why
       // the wording is surface-neutral (the old "in this preview" clause was false
-      // on the live page too, and outright wrong on a model page).
-      showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      // on the live page too, and outright wrong on a model page). Signed out →
+      // offer sign-in instead — see `resolveUngrantableConsentPrompt`.
+      const prompt = resolveUngrantableConsentPrompt(gateStatus, viewerSignedIn);
+      if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      else if (prompt === 'sign-in') {
+        const here = window.location.pathname + window.location.search + window.location.hash;
+        openLoginPopup(here, 'image-gen');
+      }
     });
     return off;
     // `status` is deliberately ABSENT: the handler reads it through
@@ -1978,6 +2000,7 @@ export function PageBlockHost({
     onConsentGranted,
     reviewMode,
     reviewRunForReal,
+    viewerSignedIn,
   ]);
 
   // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected
@@ -4235,6 +4258,45 @@ export function PageBlockHost({
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
   }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+
+  // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
+  // silent return strands the block until its picker timeout.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_IMAGE_PICKER', (raw) => {
+      const decision = resolveImagePickerRequest(raw);
+      if (decision.kind === 'drop') return;
+      if (decision.kind === 'refuse') {
+        send('IMAGE_PICKER_RESULT', { requestId: decision.requestId, error: decision.error });
+        return;
+      }
+      const { request } = decision;
+
+      // The modal lists a private library under the real session, so unapproved review code and a
+      // pre-handshake block are answered as a dismissal instead of opening it.
+      if (reviewMode || readGateStatus() !== 'ready') {
+        send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, []));
+        return;
+      }
+
+      let picked: BlockPickedImageInfo[] = [];
+      dialogStore.trigger({
+        id: `block-image-picker-${request.requestId}`,
+        component: BlockImagePickerModal,
+        props: {
+          sources: request.sources,
+          max: request.max,
+          onResolved: (result: BlockPickedImageInfo[]) => {
+            picked = result;
+          },
+        },
+        options: {
+          onClose: () => send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, picked)),
+        },
+      });
+    });
+    return off;
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //

@@ -194,6 +194,25 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
     expect(s.ecosystem).toBe('SDXL');
     expect((s.resources as { id: number }[]).map((r) => r.id).sort()).toEqual([1, 2]);
   });
+
+  // The "Image to Image" picker on an SD-family image sends the chosen ecosystem with the
+  // resources cleared; an empty list is "compatible" with anything, so it must not read as
+  // a reason to keep the current ecosystem (which then corrected to the workflow default, Qwen).
+  it.each(['OpenAI', 'NanoBanana'])(
+    'patch: an ecosystem picked with no resources replaces the current one (%s)',
+    (picked) => {
+      const store = makeStore();
+      store.set({ workflow: 'txt2img', ecosystem: 'Illustrious' });
+      applyGenerationData(store, {
+        runType: 'patch',
+        params: { workflow: 'img2img:edit', ecosystem: picked, prompt: 'a cat' },
+        resources: [],
+      } satisfies Payload);
+      const s = state(store);
+      expect(s.workflow).toBe('img2img:edit');
+      expect(s.ecosystem).toBe(picked);
+    }
+  );
 });
 
 describe('append respects the target cap', () => {

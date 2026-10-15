@@ -514,6 +514,9 @@ export function MediaFiltersDropdown({
       radius={12}
       opened={opened}
       onClose={close}
+      onChange={(next) => {
+        if (!next) close();
+      }}
       middlewares={{ flip: true, shift: true }}
       withinPortal
     >

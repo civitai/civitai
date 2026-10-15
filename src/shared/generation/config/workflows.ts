@@ -72,6 +72,7 @@ const EDIT_IMG_IDS = [
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Krea2,
+  ECO.Krea3,
   ECO.Ming,
 ];
 
@@ -115,6 +116,7 @@ const TXT2IMG_IDS = [
   ECO.Ideogram,
   ECO.Lens,
   ECO.Krea2,
+  ECO.Krea3,
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,

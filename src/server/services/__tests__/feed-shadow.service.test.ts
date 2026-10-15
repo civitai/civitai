@@ -71,6 +71,22 @@ describe('fetchFeedAnswer', () => {
   });
 });
 
+describe('fetchFeedAnswer refusals', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('keeps the feed\'s reason for a 400 and nothing for other failures', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"fieldErrors":{"tools":["Invalid input"]}}}', { status: 400 })));
+    const refused = await fetchFeedAnswer('http://feed', 'tools=1', 1000, 'primary');
+    expect(refused.status).toBe(400);
+    expect(refused.ids).toEqual([]);
+    expect(refused.error).toContain('tools');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('busy', { status: 503 })));
+    const down = await fetchFeedAnswer('http://feed', 'tools=1', 1000, 'primary');
+    expect(down).toMatchObject({ status: 503, ids: [] });
+    expect(down.error).toBeUndefined();
+  });
+});
+
 describe('meta flags', () => {
   it('asks the feed for images with visible meta, and for on-site ones', () => {
     const m = mapSearchInputToFeedQuery({ ...base, withMeta: true, fromPlatform: true });
@@ -182,6 +198,20 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(reason({ tags: [0, 5] })).toBe('ok');
   });
 
+  it('serves a post page to the public API only, in the requested sort', () => {
+    const website = mapSearchInputToFeedQuery({ ...base, postId: 4 }, 'primary', 'website');
+    expect(website).toEqual({ ok: false, reason: 'input:postId' });
+    const rest = mapSearchInputToFeedQuery({ ...base, postId: 4, sort: 'Newest' }, 'primary', 'rest');
+    expect(rest.ok).toBe(true);
+    const q = rest.ok ? new URLSearchParams(rest.query) : new URLSearchParams();
+    expect(q.get('postIds')).toBe('4');
+    expect(q.get('sort')).toBe('newest');
+    const both = mapSearchInputToFeedQuery({ ...base, postId: 4, postIds: [5, 4] }, 'primary', 'rest');
+    expect(both.ok && new URLSearchParams(both.query).get('postIds')).toBe('5,4');
+    const many = { ...base, postIds: Array.from({ length: 51 }, (_, i) => i + 1) };
+    expect(mapSearchInputToFeedQuery(many, 'primary', 'rest')).toEqual({ ok: false, reason: 'postIds>50' });
+  });
+
   it('serves a follow feed only from a resolved follow list the feed can take', () => {
     const signedIn = { ...base, currentUserId: 9, followed: true };
     const m = mapSearchInputToFeedQuery({ ...signedIn, followedUserIds: [7, 3, 0] });
@@ -290,6 +320,11 @@ describe('hub feeds', () => {
     );
     const noVersions = { ...sources, modelVersionIds: [] };
     expect(reason({ hubSources: noVersions, hideAutoResources: true })).toBe('ok');
+  });
+
+  it('refuses a post page next to the hub', () => {
+    const m = mapSearchInputToFeedQuery({ ...base, hubId: 1, hubSources: { userIds: [1], modelVersionIds: [], tagGroups: [], excluded: { userIds: [], modelVersionIds: [], tagGroups: [] } }, postId: 4 } as any, 'primary', 'rest');
+    expect(m).toEqual({ ok: false, reason: 'hub:driver' });
   });
 
   it('refuses a second driver next to the hub', () => {

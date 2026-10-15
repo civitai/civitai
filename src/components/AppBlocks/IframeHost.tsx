@@ -41,9 +41,11 @@ import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
 } from './requestConsentGate';
 import { BlockConsentNotice } from './BlockConsentNotice';
@@ -115,12 +117,18 @@ interface IframeHostProps {
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
   tokenKind?: 'block' | 'oauth';
+  /** The per-call Buzz budget `token` carries, as the mint reported it.
+   *  Forwarded to the block as-is; never derived here. */
+  buzzBudget?: number;
   /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
    *  but the viewer hasn't granted, so they were WITHHELD from `token`. The
    *  block sees a token without them and fires REQUEST_CONSENT on the action;
    *  we also trim them from the wrapped `token.scopes` we send the iframe so
    *  the block's "do I have this capability?" check is accurate. */
   missingScopes?: string[];
+  /** The scopes the mint signed into `token`. When present, exactly this set is
+   *  advertised to the block — see `resolveAdvertisedScopes`. */
+  signedScopes?: string[];
   /**
    * 🔴 THE MINT'S OWN VERDICT that the signed-in viewer's grant is short of the
    * app's approved manifest — and the input the HOST-SIDE consent notice keys on,
@@ -1182,7 +1190,9 @@ export function IframeHost({
   token,
   expiresAt,
   tokenKind,
+  buzzBudget,
   missingScopes,
+  signedScopes,
   needsConsent,
   domain,
   maxBrowsingLevel,
@@ -1474,40 +1484,14 @@ export function IframeHost({
     return () => window.removeEventListener('resize', onViewportChange);
   }, [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]);
 
-  // A6 lazy consent: the scopes ACTUALLY carried by the minted token — the
-  // manifest scopes minus the consent-gated ones the viewer hasn't granted yet
-  // (`missingScopes`, reported by the mint). The server signs exactly this set
-  // into the JWT; sending the full manifest scopes in the wrapped token would
-  // lie to the block (it would think it has `ai:write:budgeted` when the JWT
-  // doesn't), defeating the block's Generate-time consent check. For anon and
-  // fully-granted viewers `missingScopes` is empty, so this equals the manifest
-  // scopes — no behavior change. (Anon is gated block-side by `viewer === null`,
-  // not by scopes.)
-  const grantedScopes = useMemo<string[]>(() => {
-    const declared = install.manifest.scopes ?? [];
-    if (!missingScopes || missingScopes.length === 0) return declared;
-    const withheld = new Set(missingScopes);
-    return declared.filter((s) => !withheld.has(s));
-  }, [install.manifest.scopes, missingScopes]);
-
-  // Mirror the server's buzzBudget resolution (publisher's
-  // buzz_budget_per_gen → manifest default → 10, capped at 1000) so blocks
-  // can display the budget without a JWT decode. Only present when the token
-  // actually carries ai:write:budgeted (i.e. after consent); absent otherwise —
-  // a budget cap is meaningless without the spend scope it bounds.
-  //
-  // Must stay in lockstep with the server's `resolveBuzzBudget`
-  // (src/pages/api/v1/block-tokens/index.ts): require an INTEGER (not merely a
-  // finite number) so a fractional / Infinity / NaN value falls back to the
-  // default here exactly as the server mints it — otherwise the UI would show a
-  // per-gen budget the server never signed.
-  const buzzBudget = useMemo<number | undefined>(() => {
-    if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
-    const raw = install.publisherSettings?.buzz_budget_per_gen;
-    const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : 10;
-    if (candidate <= 0) return undefined;
-    return Math.min(candidate, 1000);
-  }, [grantedScopes, install.publisherSettings]);
+  // A6 lazy consent: the scopes ACTUALLY carried by the minted token. Sending the
+  // full manifest scopes would lie to the block (it would think it has
+  // `ai:write:budgeted` when the JWT doesn't), defeating its Generate-time consent
+  // check. See `resolveAdvertisedScopes` for why the mint's signed set wins.
+  const grantedScopes = useMemo<string[]>(
+    () => resolveAdvertisedScopes(install.manifest.scopes ?? [], missingScopes, signedScopes),
+    [install.manifest.scopes, missingScopes, signedScopes]
+  );
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.
   // Anon viewers see publisher default; authenticated viewers see their
@@ -2082,11 +2066,25 @@ export function IframeHost({
       // still sends, with `scopes: []`. The refusal is the signal; the names are
       // advisory. Delivered solely to the frame that asked.
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
-      showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      // Signed out → offer sign-in, not "unavailable" — see the shared gate.
+      const prompt = resolveUngrantableConsentPrompt(readGateStatus(), currentUser?.id != null);
+      if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      else if (prompt === 'sign-in') {
+        const here = window.location.pathname + window.location.search + window.location.hash;
+        openLoginPopup(here, 'image-gen');
+      }
     });
     return off;
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
-  }, [onMessage, send, readGateStatus, missingScopes, grantedScopes, openConsentModal]);
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    missingScopes,
+    grantedScopes,
+    openConsentModal,
+    currentUser?.id,
+  ]);
 
   // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
   // forward to blocks.* tRPC, echo the response back with matching requestId.

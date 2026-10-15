@@ -28,7 +28,10 @@ vi.mock('$lib/server/reports.service', () => ({
   getReportedGame: vi.fn(),
   getGameMirrors: vi.fn(async () => []),
   getOwnerFlaggedMinorModelIds,
+  getReportedModelId: vi.fn(),
+  getReportedModelStates: vi.fn(async () => []),
 }));
+vi.mock('$lib/server/model-moderation.service', () => ({}));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() }));
 vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));
@@ -43,7 +46,11 @@ const { load } = await import('../+page.server');
 
 /** `load` for one slug and query string. `redirect()`/`error()` throw, so callers that expect one catch. */
 const run = (slug: string, query = '?status=Pending') =>
-  load({ params: { slug }, url: new URL(`https://mod.example/reports/${slug}${query}`) } as never);
+  load({
+    params: { slug },
+    url: new URL(`https://mod.example/reports/${slug}${query}`),
+    locals: { user: { id: 1 } },
+  } as never);
 
 const caught = async (slug: string, query?: string) => {
   try {

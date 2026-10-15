@@ -7,6 +7,7 @@ import {
   REPLY_TYPE,
   ROWS,
   TOKEN,
+  replyKeysProblems,
   rowName,
   runRow,
   type MountMode,
@@ -150,6 +151,9 @@ describe('PageBlockHost forward-handler characterisation', () => {
     for (const t of covered) {
       expect((INVENTORY as Record<string, { reply: string }>)[t].reply).toBe(REPLY_TYPE[t]);
     }
+    // INVENTORY's `replyKeys` / `errorKeys` must agree with the reply payloads the rows pin,
+    // and every key they declare must show up in some row.
+    expect(replyKeysProblems(rows)).toEqual([]);
   });
 
   for (const row of rows) {

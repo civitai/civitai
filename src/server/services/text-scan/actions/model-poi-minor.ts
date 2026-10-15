@@ -15,6 +15,7 @@ import {
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
+import { textScanEmEntityType } from '~/server/services/text-scan/mode';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -24,6 +25,13 @@ export const POI_LOCKED_PROPERTIES = ['poi', 'nsfw', 'sfwOnly'];
 export type PoiMinorResult = { notified: boolean };
 
 const SYSTEM_USER_ID = constants.system.user.id;
+
+// The live rows that can act on poi/minor: the main pass, and the web-search pass once active.
+// The one whose workflow produced this verdict wins; 'Model' sorts first otherwise.
+const VERDICT_ROW_TYPES = [
+  textScanEmEntityType('Model', 'active'),
+  textScanEmEntityType('Model', 'active', 'web-search'),
+];
 
 // Dynamic: model.service imports the model moderation adapter, which imports this module.
 const loadModelService = () => import('~/server/services/model.service');
@@ -125,9 +133,11 @@ async function flagModelPoi({
             'poi', ${entry}::jsonb || jsonb_build_object(
               'at', now(),
               'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
-                            WHERE em."entityType" = 'Model' AND em."entityId" = m.id),
+                            WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                            ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
               'model', (SELECT em.result->'model' FROM "EntityModeration" em
-                        WHERE em."entityType" = 'Model' AND em."entityId" = m.id),
+                        WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
               'prev', jsonb_build_object(
                 'nsfw', m.nsfw,
                 'sfwOnly', m."sfwOnly",
@@ -228,9 +238,11 @@ async function flagModelMinor({
         'minor', ${entry}::jsonb || jsonb_build_object(
           'at', now(),
           'promptIds', (SELECT em.result->'promptIds' FROM "EntityModeration" em
-                        WHERE em."entityType" = 'Model' AND em."entityId" = m.id),
+                        WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                        ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1),
           'model', (SELECT em.result->'model' FROM "EntityModeration" em
-                    WHERE em."entityType" = 'Model' AND em."entityId" = m.id)
+                    WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
+                    ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1)
         )
       )
     )
@@ -298,12 +310,13 @@ async function notifyModelOwner({
 export async function grantModelTextScanPoi({
   modelId,
   userId,
-  currentHash,
+  grantHash,
 }: {
   modelId: number;
   userId: number;
-  currentHash: string | null;
+  grantHash: string;
 }) {
+  if (!grantHash) throw new Error('A granted appeal needs the grant hash it covers');
   const before = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
@@ -346,7 +359,7 @@ export async function grantModelTextScanPoi({
           jsonb_build_object(
             'at', now(),
             'by', ${userId}::int,
-            'textHash', COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash', ${currentHash}::text),
+            'textHash', ${grantHash}::text,
             'via', 'appeal'
           )
         )
@@ -403,15 +416,22 @@ export async function stampModelTextScanAppeal({
   userId,
   decision,
   labels,
-  currentHash = null,
+  grantHashes,
 }: {
   modelId: number;
   userId: number;
   decision: 'appealGranted' | 'appealUpheld';
   labels: TextScanFlagLabel[];
-  currentHash?: string | null;
+  grantHashes?: Partial<Record<TextScanFlagLabel, string>>;
 }) {
   if (!labels.length) return;
+  // A grant covers the text the moderator reviewed, per label because the scan that owns a label
+  // can differ. Falling back to the flagged hash would leave an owner's later edit uncovered, and
+  // the next scan of it would re-flag and erase the grant. An upheld ruling keeps the flagged one.
+  const granted = decision === 'appealGranted';
+  if (granted && !labels.every((label) => grantHashes?.[label]))
+    throw new Error('A granted appeal needs the grant hash it covers for every label');
+  const hashes = JSON.stringify(granted ? grantHashes : {});
   await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
@@ -422,7 +442,7 @@ export async function stampModelTextScanAppeal({
             ${decision}::text, jsonb_build_object(
               'at', now(),
               'by', ${userId}::int,
-              'textHash', COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash', ${currentHash}::text),
+              'textHash', COALESCE((${hashes}::jsonb)->>l.label, m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash'),
               'via', 'appeal'
             )
           )

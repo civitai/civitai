@@ -32,6 +32,11 @@ export const serverSchema = z
     // so PR previews + dev environments that haven't provisioned the apps DB
     // yet keep starting (the storage tRPC procedures throw cleanly when unset).
     APPS_DATABASE_URL: z.url().optional(),
+    // App Blocks document store — a SEPARATE least-privilege connection to the
+    // same datastore, as a role holding only `appdata_rw` (never superuser or
+    // BYPASSRLS; the store checks and refuses). Unset → the document store is
+    // disabled (`storage_disabled`); it never falls back to APPS_DATABASE_URL.
+    APPDATA_DATABASE_URL: z.url().optional(),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -311,9 +316,10 @@ export const serverSchema = z
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
     // when ms<=0 → the exact multi-minute hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
-    // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
-    // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the
-    // caller has stopped waiting for is the same outage. .int().positive() for the same
+    // Per-read deadline for the settings bootstrap (`settings-bootstrap.service`), which
+    // `_app` reads on every SSR render and `/api/user/settings` serves. Must stay well under
+    // `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s, the whole-bootstrap render ceiling): a result the
+    // render has stopped waiting for is the same outage. .int().positive() for the same
     // reason as above — withTimeoutFallback passes through unbounded when ms<=0.
     SETTINGS_READ_DEADLINE_MS: z.coerce.number().int().positive().default(2000),
     NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -957,6 +963,16 @@ export const serverSchema = z
     APPEAL_TRAINING_B2_SECRET_KEY: z.string().optional(),
     // Stored copies are matched through it: do not rotate or unset it while copies exist.
     APPEAL_OWNER_HASH_KEY: z.string().optional(),
+
+    // Scan label review copies. Any unset: no copies.
+    SCAN_LABEL_P3_B2_BUCKET: z.string().optional(),
+    SCAN_LABEL_P3_B2_ENDPOINT: z.string().optional(),
+    SCAN_LABEL_P3_B2_REGION: z.string().optional(),
+    SCAN_LABEL_P3_B2_ACCESS_KEY: z.string().optional(),
+    SCAN_LABEL_P3_B2_SECRET_KEY: z.string().optional(),
+    // The sweep's own key, for withdrawing copies. Either unset: nothing withdrawn.
+    SCAN_LABEL_P3_B2_DELETE_ACCESS_KEY: z.string().optional(),
+    SCAN_LABEL_P3_B2_DELETE_SECRET_KEY: z.string().optional(),
 
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),

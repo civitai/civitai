@@ -20,6 +20,9 @@ patchedDependencies:
   '@mantine/hooks':
     hash: b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64
     path: patches/@mantine__hooks.patch
+  '@prisma/client@6.13.0':
+    hash: 572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d
+    path: patches/@prisma__client@6.13.0.patch
 
 importers:
 
@@ -50,8 +53,8 @@ importers:
         specifier: 0.2.0-beta.98
         version: 0.2.0-beta.98
       '@civitai/components-chat':
-        specifier: ^0.4.0
-        version: 0.4.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
+        specifier: ^0.5.0
+        version: 0.5.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -77,8 +80,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0(next@16.3.1(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
       '@civitai/orchestration-client':
-        specifier: 0.2.0-beta.120
-        version: 0.2.0-beta.120
+        specifier: 0.2.0-beta.121
+        version: 0.2.0-beta.121
       '@civitai/sdk':
         specifier: ^0.11.0
         version: 0.11.0
@@ -237,7 +240,7 @@ importers:
         version: 8.8.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@prisma/client':
         specifier: ^6.3.0
-        version: 6.13.0(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)
+        version: 6.13.0(patch_hash=572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d)(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)
       '@prisma/instrumentation':
         specifier: ^7.4.2
         version: 7.4.2(@opentelemetry/api@1.9.0)
@@ -1223,6 +1226,9 @@ importers:
       kysely:
         specifier: ^0.28.7
         version: 0.28.17
+      semver:
+        specifier: ^7.6.0
+        version: 7.8.5
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -1248,6 +1254,9 @@ importers:
       '@types/node':
         specifier: ^20.19.9
         version: 20.19.9
+      '@types/semver':
+        specifier: ^7.7.1
+        version: 7.7.1
       '@typescript-eslint/parser':
         specifier: ^5.62.0
         version: 5.62.0(eslint@8.57.1)(typescript@5.9.2)
@@ -1719,6 +1728,9 @@ importers:
 
   packages/civitai-redis:
     dependencies:
+      cluster-key-slot:
+        specifier: ^1.1.2
+        version: 1.1.2
       lodash-es:
         specifier: ^4.17.21
         version: 4.17.21
@@ -1750,7 +1762,13 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../civitai-db-schema
+      semver:
+        specifier: ^7.6.0
+        version: 7.8.5
     devDependencies:
+      '@types/semver':
+        specifier: ^7.7.1
+        version: 7.7.1
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
@@ -2299,8 +2317,8 @@ packages:
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/components-chat@0.4.0':
-    resolution: {integrity: sha512-MypBAI5M+JdqEbrJtTWgIfrO8zzCwnieTwWs1/3RpH1KXC2p1Us7TAKdGdFodI/cOlrzyZYPklRTPAv3OyNUBw==}
+  '@civitai/components-chat@0.5.0':
+    resolution: {integrity: sha512-UlJaUlKesf6uzMrEVCUh9Ye/V3lfHx65Z/vz1uHwtGHyXPZSxptH0bloNi0yxHiY3WVcB0UVhCGmY+7/zaatGA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
@@ -2346,8 +2364,8 @@ packages:
     resolution: {integrity: sha512-ggULbVQdhp43MNq0vyhbVi91rljwrmCZGme38T7V2ZSBgz2vNbRnHycfOt3w0ecwMCOYnr7LGd5gs2pfMU7eKw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/orchestration-client@0.2.0-beta.120':
-    resolution: {integrity: sha512-bPWgs+iKUkI3fEaAe7z0TRTYI1vXza3dWE/deldS8MiXGt1zdPOz4uztLINxdREBFn/WECReKNpGAkHJik+09g==}
+  '@civitai/orchestration-client@0.2.0-beta.121':
+    resolution: {integrity: sha512-fhQznu6HakYBb9qWQQ2E96wkACUwutBwKq0u2f0hxcNgLxxyDzrQ08NtKf48oHU/yQSmA7dWP99CuVHQQrcusA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/sdk@0.11.0':
@@ -13839,7 +13857,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/components-chat@0.4.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
+  '@civitai/components-chat@0.5.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
       '@civitai/components': 0.9.3(@civitai/sdk@0.11.0)
@@ -13895,7 +13913,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/orchestration-client@0.2.0-beta.120':
+  '@civitai/orchestration-client@0.2.0-beta.121':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -15700,7 +15718,7 @@ snapshots:
 
   '@polka/url@1.0.0-next.29': {}
 
-  '@prisma/client@6.13.0(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)':
+  '@prisma/client@6.13.0(patch_hash=572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d)(prisma@6.13.0(typescript@5.9.2))(typescript@5.9.2)':
     optionalDependencies:
       prisma: 6.13.0(typescript@5.9.2)
       typescript: 5.9.2
@@ -17660,7 +17678,7 @@ snapshots:
       graphemer: 1.4.0
       ignore: 5.3.2
       natural-compare-lite: 1.4.0
-      semver: 7.7.2
+      semver: 7.8.5
       tsutils: 3.21.0(typescript@5.9.2)
     optionalDependencies:
       typescript: 5.9.2
@@ -17804,7 +17822,7 @@ snapshots:
       debug: 4.4.3
       globby: 11.1.0
       is-glob: 4.0.3
-      semver: 7.7.2
+      semver: 7.8.5
       tsutils: 3.21.0(typescript@5.9.2)
     optionalDependencies:
       typescript: 5.9.2
@@ -17818,7 +17836,7 @@ snapshots:
       debug: 4.4.3
       globby: 11.1.0
       is-glob: 4.0.3
-      semver: 7.7.2
+      semver: 7.8.5
       tsutils: 3.21.0(typescript@5.9.3)
     optionalDependencies:
       typescript: 5.9.3
@@ -17865,7 +17883,7 @@ snapshots:
       '@typescript-eslint/typescript-estree': 5.62.0(typescript@5.9.2)
       eslint: 8.57.1
       eslint-scope: 5.1.1
-      semver: 7.7.2
+      semver: 7.8.5
     transitivePeerDependencies:
       - supports-color
       - typescript
@@ -18138,9 +18156,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -20407,7 +20425,7 @@ snapshots:
       process-warning: 5.0.0
       rfdc: 1.4.1
       secure-json-parse: 4.1.0
-      semver: 7.8.1
+      semver: 7.8.5
       toad-cache: 3.7.1
 
   fastq@1.19.1:
@@ -21652,7 +21670,7 @@ snapshots:
       lodash.isstring: 4.0.1
       lodash.once: 4.1.1
       ms: 2.1.3
-      semver: 7.7.2
+      semver: 7.8.5
 
   jssha@3.3.1: {}
 
@@ -24652,7 +24670,7 @@ snapshots:
       detect-libc: 2.0.4
       node-addon-api: 6.1.0
       prebuild-install: 7.1.3
-      semver: 7.7.2
+      semver: 7.8.5
       simple-get: 4.0.1
       tar-fs: 3.1.3
       tunnel-agent: 0.6.0
