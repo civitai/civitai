@@ -23,8 +23,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 
 /**
  * Comment surfaces laid out full-width, so a conversation can render open and deeply nested
- * without the indentation running out of room. Everything else gets the shallower defaults —
- * `image` and `bountyEntry` sit in narrow columns and are shallower still.
+ * without the indentation running out of room. Everything else gets the shallower defaults.
  *
  * Deep threads reach the end of an article's ceiling for 99.5% of article threads (prod,
  * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
@@ -33,28 +32,23 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
 
 function getCommentMaxDepth(entityType: string) {
-  if (wideCommentSurfaces.has(entityType)) return 10;
-  switch (entityType) {
-    case 'image':
-    case 'bountyEntry':
-      return 3;
-    default:
-      return 5;
-  }
+  return wideCommentSurfaces.has(entityType) ? 10 : 5;
 }
 
 /**
- * Surfaces that open fewer reply levels than they can hold, because something below the section
- * has to stay reachable. A challenge puts its entry gallery *underneath* the discussion, and
- * opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
- * one level costs 4.2. Bounty and article have nothing below their discussion to scroll to.
+ * Reply levels a surface opens up front, where it differs from "as deep as it holds" on a wide
+ * surface or "none" elsewhere. A challenge puts its entry gallery *underneath* the discussion,
+ * and opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
+ * one level costs 4.2. `image` and `bountyEntry` sit in narrow detail columns, so they open part
+ * of their depth rather than all of it.
  */
-const autoExpandDepthOverrides: Record<string, number> = { challenge: 1 };
+const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
 function getCommentAutoExpandDepth(entityType: string) {
-  if (!wideCommentSurfaces.has(entityType)) return 0;
+  const override = autoExpandDepthOverrides[entityType];
+  if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
   const ceiling = getCommentMaxDepth(entityType) - 1;
-  return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
+  return Math.min(override ?? ceiling, ceiling);
 }
 
 /**
@@ -839,6 +833,11 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // encouraged "Powered by" form, so there is no notice and no poweredBy.
     attribution: 'MiniMax-Music3',
   },
+  'krea 2 community': {
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+    name: 'Krea 2 Community License Agreement',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -927,7 +926,68 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'Krea 2': baseLicenses['krea 2 community'],
+  'Krea 2 Turbo': baseLicenses['krea 2 community'],
 };
+
+type CivitaiLicenseAgreement = {
+  partner: string;
+  url?: string;
+  // Shown in place of the public licence's notice, which is written for the case
+  // the agreement now headlines.
+  notice?: string;
+};
+
+// Base models Civitai uses under its own agreement with the rights holder. Display only:
+// commercial-use, mature and same-license enforcement still come from baseModelLicenses.
+export const civitaiLicenseAgreements: Partial<Record<BaseModel, CivitaiLicenseAgreement>> = {
+  'MiniMax H3': {
+    partner: 'MiniMax',
+    notice:
+      'The MiniMax H3 Community License Agreement’s grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+  },
+};
+
+export type LicenseLine = { label?: string; name: string; url?: string; suffix?: string };
+export type DisplayedBaseModelLicense = {
+  lines: LicenseLine[];
+  notice?: string;
+  poweredBy?: string;
+};
+
+export function getDisplayedBaseModelLicense(
+  baseModel: string
+): DisplayedBaseModelLicense | undefined {
+  const license = baseModelLicenses[baseModel as BaseModel];
+  const agreement = civitaiLicenseAgreements[baseModel as BaseModel];
+  if (!agreement) {
+    if (!license) return undefined;
+    return {
+      lines: [{ name: license.name, url: license.url }],
+      notice: license.notice,
+      poweredBy: license.poweredBy,
+    };
+  }
+
+  // The agreement covers use on Civitai only. Downloaded weights stay under the public
+  // licence, so the two scopes get equal billing rather than one demoting the other.
+  const lines: LicenseLine[] = [
+    {
+      label: 'On Civitai (generation, training, sharing LoRAs):',
+      name: `covered by Civitai’s agreement with ${agreement.partner}`,
+      url: agreement.url,
+    },
+  ];
+  if (license)
+    lines.push({
+      label: 'Downloaded weights:',
+      name: license.name,
+      url: license.url,
+      suffix: 'applies',
+    });
+
+  return { lines, notice: agreement.notice, poweredBy: license?.poweredBy };
+}
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];

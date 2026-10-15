@@ -134,6 +134,7 @@ export const NAVIGATION: NavLink[] = [
   // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
+  { path: '/creator-services/disputes', label: 'Service Disputes' },
   {
     label: 'Audit',
     path: '/audit',

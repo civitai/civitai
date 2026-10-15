@@ -99,6 +99,13 @@ export const PERMISSIONS = [
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
+  // Moves held Buzz: a Refund returns it to the buyer, a Release pays the seller. Checked again by the
+  // main app's `/api/mod/creator-services/resolve-dispute` by this literal (`ModeratorGrantId`), so
+  // rename the two together. Reading the queue is the page grant.
+  {
+    id: 'creatorServices.resolveDispute',
+    label: 'Resolve a Creator Services dispute (refund or release Buzz)',
+  },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

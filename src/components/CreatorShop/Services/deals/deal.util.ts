@@ -43,7 +43,8 @@ export function useMyServiceDeals({
 
 /**
  * Every deal mutation refetches the deal on success. A CONFLICT means the deal moved on under the
- * viewer (the other party acted, or a job ran): refetch and say so rather than show an error.
+ * viewer (the other party acted, or a job ran), or an accept found the final files still being
+ * checked: refetch, and pass on the server's reason.
  */
 export function useServiceDealMutations(dealId: number) {
   const utils = trpc.useUtils();
@@ -51,14 +52,19 @@ export function useServiceDealMutations(dealId: number) {
     await Promise.all([
       utils.creatorServiceDeal.get.invalidate({ id: dealId }),
       utils.creatorServiceDeal.listMine.invalidate(),
+      // Accepting unlocks the final files, and a cancellation can hide them.
+      utils.creatorServiceDealFile.list.invalidate({ dealId }),
     ]);
   };
   const onError = async (error: TrpcishError) => {
     if (isConflict(error)) {
       await refresh();
       showErrorNotification({
-        title: 'This deal has changed',
-        error: { message: 'It was updated while you were looking at it. Check the latest state.' },
+        title: 'Not updated',
+        error: {
+          message:
+            error.message || 'It was updated while you were looking at it. Check the latest state.',
+        },
       });
       return;
     }
@@ -73,5 +79,8 @@ export function useServiceDealMutations(dealId: number) {
     cancelLate: trpc.creatorServiceDeal.cancelLate.useMutation(options),
     requestCancellation: trpc.creatorServiceDeal.requestCancellation.useMutation(options),
     respondCancellation: trpc.creatorServiceDeal.respondCancellation.useMutation(options),
+    acceptDelivery: trpc.creatorServiceDeal.acceptDelivery.useMutation(options),
+    requestRevision: trpc.creatorServiceDeal.requestRevision.useMutation(options),
+    openDispute: trpc.creatorServiceDeal.openDispute.useMutation(options),
   };
 }

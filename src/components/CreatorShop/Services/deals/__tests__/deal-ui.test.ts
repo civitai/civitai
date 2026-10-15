@@ -4,7 +4,12 @@ import {
   dealEscrowState,
   dealPageState,
   escrowCopy,
+  disputeNotice,
+  groupEventsByRound,
+  isModeratorHold,
   requestSentMessage,
+  roundLabel,
+  sheetEventText,
   visibleDealActions,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -67,11 +72,41 @@ describe('deal actions with the flag off', () => {
   });
 });
 
-describe('deal actions in P2', () => {
-  it('does not render delivery actions, which ship with file delivery', () => {
-    const d = deal({ status: 'Delivered', deliveredAt: new Date() });
-    expect(dealActions(d, BUYER).actions).toContain('acceptDelivery');
-    expect(rendered(d, BUYER, true)).toEqual(['requestCancellation']);
+describe('delivery actions', () => {
+  const delivered = deal({ status: 'Delivered', deliveredAt: new Date() });
+  const inWindow = deal({
+    status: 'Completed',
+    deliveredAt: new Date('2026-10-03T00:00:00Z'),
+    releaseAt: new Date(Date.now() + 3_600_000),
+  });
+
+  it('renders accept, revision and cancellation on a delivery, accept first', () => {
+    expect(rendered(delivered, BUYER, true)).toEqual([
+      'acceptDelivery',
+      'requestRevision',
+      'requestCancellation',
+    ]);
+    expect(dealButtons(dealActions(delivered, BUYER), { servicesEnabled: true })[0]).toEqual({
+      action: 'acceptDelivery',
+      primary: true,
+    });
+  });
+
+  it('renders Report a problem during the dispute window', () => {
+    expect(rendered(inWindow, BUYER, true)).toEqual(['openDispute']);
+  });
+
+  // Decision (Creator Services P3, briony 2026-10-15): accepting a delivery finishes a deal and a
+  // dispute is the buyer's only way to stop the payout on bad files, so both are exits and stay
+  // with the flag off. A revision asks for new work, an entry, so it goes dark. Keep this in step
+  // with the flag gate in creator-service-deal.router.ts: a dark flag must never trap held Buzz.
+  it('keeps accept and the dispute with the flag off, but not a revision', () => {
+    expect(rendered(delivered, BUYER, false)).toEqual(['acceptDelivery', 'requestCancellation']);
+    expect(rendered(inWindow, BUYER, false)).toEqual(['openDispute']);
+    expect(dealButtons(dealActions(delivered, BUYER), { servicesEnabled: false })[0]).toEqual({
+      action: 'acceptDelivery',
+      primary: true,
+    });
   });
 });
 
@@ -101,6 +136,21 @@ describe('escrow state', () => {
   it('calls the request held in its toast only when the hold is confirmed', () => {
     expect(requestSentMessage(false)).not.toMatch(/held/i);
     expect(requestSentMessage(true)).toMatch(/held/i);
+  });
+
+  it('never calls a completed deal paid before it settles', () => {
+    const state = dealEscrowState({ status: 'Completed', held: true, settled: false });
+    expect(state).toBe('awaitingRelease');
+    expect(escrowCopy[state].title).toBe('Held in escrow');
+    expect(dealEscrowState({ status: 'Completed', held: true, settled: true })).toBe('released');
+  });
+
+  it('keeps a disputed deal held until it settles, then says moderators settled it', () => {
+    expect(dealEscrowState({ status: 'Disputed', held: true, settled: false })).toBe('disputed');
+    expect(escrowCopy.disputed.title).toBe('Held in escrow');
+    const settled = dealEscrowState({ status: 'Disputed', held: true, settled: true });
+    expect(settled).toBe('disputeSettled');
+    expect(escrowCopy[settled].title).not.toMatch(/held|released|paid|refunded/i);
   });
 
   it('reports a closed-without-completing deal as refund pending, then refunded', () => {
@@ -164,5 +214,69 @@ describe('deal page buttons', () => {
       { action: 'accept', primary: true },
       { action: 'decline', primary: false },
     ]);
+  });
+});
+
+describe('accountability sheet rounds', () => {
+  it('starts a round at each revision and never goes back to an earlier one', () => {
+    // Escrow events are written with round 0 even after a revision.
+    const events = [0, 0, 0, 1, 1, 0, 2, 0].map((round, id) => ({ id, round }));
+    expect(
+      groupEventsByRound(events).map((group) => [group.round, group.events.map((e) => e.id)])
+    ).toEqual([
+      [0, [0, 1, 2]],
+      [1, [3, 4, 5]],
+      [2, [6, 7]],
+    ]);
+    expect(roundLabel(0)).toBe('Original order');
+    expect(roundLabel(2)).toBe('Revision 2');
+  });
+});
+
+describe('moderator holds', () => {
+  const event = (type: string, actorRole: string) => ({ type, actorRole });
+
+  it('is a hold when Civitai opened the latest dispute, not the buyer', () => {
+    expect(isModeratorHold([event('Completed', 'buyer'), event('Disputed', 'system')])).toBe(true);
+    expect(isModeratorHold([event('Completed', 'buyer'), event('Disputed', 'buyer')])).toBe(false);
+    expect(isModeratorHold([event('Disputed', 'system'), event('Disputed', 'buyer')])).toBe(false);
+    expect(isModeratorHold([event('Completed', 'system')])).toBe(false);
+    // Later events that open no dispute do not change who opened it.
+    expect(
+      isModeratorHold([event('Disputed', 'system'), event('DeadlineExtended', 'moderator')])
+    ).toBe(true);
+  });
+
+  it('reads a refused cancellation after a hold as a party dispute, not the hold', () => {
+    expect(
+      isModeratorHold([event('Disputed', 'system'), event('CancellationDeclined', 'seller')])
+    ).toBe(false);
+  });
+
+  it('labels a system hold neutrally and shows its reason to moderators only', () => {
+    const hold = { type: 'Disputed', actorRole: 'system', comment: 'internal_code' };
+    for (const viewer of ['buyer', 'seller'] as const)
+      expect(sheetEventText(hold, viewer, 'Opened a dispute')).toEqual({
+        label: 'Held the deal for moderator review',
+        comment: null,
+      });
+    expect(sheetEventText(hold, 'moderator', 'Opened a dispute').comment).toBe('internal_code');
+    const buyer = { type: 'Disputed', actorRole: 'buyer', comment: 'files are broken' };
+    expect(sheetEventText(buyer, 'seller', 'Opened a dispute')).toEqual({
+      label: 'Opened a dispute',
+      comment: 'files are broken',
+    });
+  });
+
+  it('shows the dispute notice only while the Buzz is still held', () => {
+    const events = [event('Disputed', 'system')];
+    expect(disputeNotice({ status: 'Disputed', settled: false, events })).toMatch(
+      /held for moderator review/
+    );
+    expect(disputeNotice({ status: 'Disputed', settled: true, events })).toBeNull();
+    expect(
+      disputeNotice({ status: 'Disputed', settled: false, events: [event('Disputed', 'buyer')] })
+    ).toMatch(/in dispute/);
+    expect(disputeNotice({ status: 'Completed', settled: false, events })).toBeNull();
   });
 });

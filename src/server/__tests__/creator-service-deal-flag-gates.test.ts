@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { DEAL_GATED_ACTIONS } from '~/shared/utils/creator-service-deal-view';
 
 /**
  * Which deal procedures sit behind `creatorServices`, pinned by text because the router's
@@ -53,9 +54,41 @@ describe('creator service deal flag gates', () => {
     expect(procedures[name]).not.toMatch(/\bgated\b/);
   });
 
+  // The deal view drops these from `actions` while the flag is off. A procedure gated here but
+  // still offered there is a button that answers 403. `request` makes a deal, so no deal offers it.
+  it('lists the same gated actions as the deal view', () => {
+    expect([...DEAL_GATED_ACTIONS].sort()).toEqual(
+      GATED.filter((name) => name !== 'request').sort()
+    );
+  });
+
   it('defines `gated` as the creatorServices flag', () => {
     expect(router).toContain(
       "const gated = guardedProcedure.use(isFlagProtected('creatorServices'));"
     );
+  });
+});
+
+// The services take these as optional, so dropping one here would still compile and still pass
+// every service test.
+describe('creator service deal router inputs', () => {
+  it.each(['decline', 'requestCancellation', 'openDispute'])(
+    'passes the reason code through on %s',
+    (name) => {
+      expect(procedures[name]).toContain('reasonCode: input.reasonCode,');
+    }
+  );
+
+  it.each(['get', 'listMine'])('tells %s whether the flag is on', (name) => {
+    expect(procedures[name]).toContain('servicesEnabled: !!ctx.features?.creatorServices,');
+  });
+
+  // The domain's levels and the buyer's consent come from the request, never the input.
+  it.each(['request', 'listMine'])('gives %s the levels the domain may serve', (name) => {
+    expect(procedures[name]).toContain('servableLevels: domainServableLevels(ctx),');
+  });
+
+  it("gives request the buyer's own browsing level as consent", () => {
+    expect(procedures.request).toContain('consentLevels: getRequestBrowsingLevel(ctx),');
   });
 });

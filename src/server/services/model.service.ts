@@ -3611,7 +3611,7 @@ async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForL
 
 export const publishModelById = async ({
   id,
-  versionIds,
+  versionIds: requestedVersionIds,
   publishedAt,
   meta,
   republishing,
@@ -3625,6 +3625,15 @@ export const publishModelById = async ({
   if (meta?.cannotPublish) {
     throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
   }
+  // Publish only touches this model's own versions; ids of versions on any other model are ignored.
+  const versionIds = requestedVersionIds?.length
+    ? (
+        await dbWrite.modelVersion.findMany({
+          where: { id: { in: requestedVersionIds }, modelId: id },
+          select: { id: true },
+        })
+      ).map((v) => v.id)
+    : requestedVersionIds;
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -3713,6 +3722,7 @@ export const publishModelById = async ({
           // for ModelVersion.publishedAt lives inside this call.
           await publishModelVersionsWithEarlyAccess({
             modelVersionIds: versionIds,
+            modelId: id,
             publishedAt,
             tx,
           });
@@ -3721,13 +3731,14 @@ export const publishModelById = async ({
           // publishedAt only flips while the row is mutable (Draft or
           // future-Scheduled) — anti-bump guard via raw SQL.
           await tx.modelVersion.updateMany({
-            where: { id: { in: versionIds } },
+            where: { id: { in: versionIds }, modelId: id },
             data: { status },
           });
           await tx.$executeRaw`
             UPDATE "ModelVersion"
             SET "publishedAt" = ${publishedAt}
             WHERE id IN (${Prisma.join(versionIds, ',')})
+            AND "modelId" = ${id}
             AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
           `;
         }
@@ -3750,6 +3761,7 @@ export const publishModelById = async ({
               "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
           FROM "ModelVersion" mv
           WHERE mv.id = p."modelVersionId"
+            AND mv."modelId" = ${id}
             AND p."userId" = ${model.userId}
             AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())

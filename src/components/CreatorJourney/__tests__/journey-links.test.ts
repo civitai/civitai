@@ -67,7 +67,7 @@ describe('journey ladder links', () => {
   it('links the Creator Showcase and the profile from the tier rewards', () => {
     const rewards = Object.values(tierRewards).flat() as string[];
     const linked = rewards.flatMap((reward) => hrefs(render(reward, rewardLinks('alice'))));
-    expect(linked.filter((href) => href === '/creators/showcase')).toHaveLength(2);
+    expect(linked.filter((href) => href === '/creators/showcase')).toHaveLength(3);
     expect(linked).toContain('/user/alice');
   });
 

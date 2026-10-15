@@ -25,6 +25,7 @@ import {
   respondServiceDealCancellation,
   withdrawServiceDeal,
 } from '~/server/services/creator-service-deal.service';
+import { domainServableLevels, getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 
 /**
@@ -52,6 +53,8 @@ export const creatorServiceDealRouter = router({
       buyerId: ctx.user.id,
       // From the request's domain, never the input: yellow, or green on the green site.
       buzzType: domainSpendType(ctx.features),
+      servableLevels: domainServableLevels(ctx),
+      consentLevels: getRequestBrowsingLevel(ctx),
     })
   ),
   accept: gated
@@ -66,6 +69,8 @@ export const creatorServiceDealRouter = router({
       ...input,
       status: ctx.features?.creatorServices ? input.status : 'open',
       userId: ctx.user.id,
+      servicesEnabled: !!ctx.features?.creatorServices,
+      servableLevels: domainServableLevels(ctx),
     })
   ),
 
@@ -74,6 +79,7 @@ export const creatorServiceDealRouter = router({
       dealId: input.id,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      servicesEnabled: !!ctx.features?.creatorServices,
     })
   ),
   withdraw: protectedProcedure
@@ -81,13 +87,18 @@ export const creatorServiceDealRouter = router({
     .mutation(({ input, ctx }) =>
       done(input.id, withdrawServiceDeal({ dealId: input.id, userId: ctx.user.id }))
     ),
-  decline: protectedProcedure.input(declineServiceDealSchema).mutation(async ({ input, ctx }) => {
-    await assertDealText(input.reason);
-    return done(
+  // The services scan a reason's text, unless the party is muted: then they drop it unscanned.
+  decline: protectedProcedure.input(declineServiceDealSchema).mutation(({ input, ctx }) =>
+    done(
       input.id,
-      declineServiceDeal({ dealId: input.id, userId: ctx.user.id, reason: input.reason })
-    );
-  }),
+      declineServiceDeal({
+        dealId: input.id,
+        userId: ctx.user.id,
+        reason: input.reason,
+        reasonCode: input.reasonCode,
+      })
+    )
+  ),
   requestRevision: gated
     .input(requestServiceDealRevisionSchema)
     .mutation(async ({ input, ctx }) => {
@@ -113,22 +124,21 @@ export const creatorServiceDealRouter = router({
     ),
   requestCancellation: protectedProcedure
     .input(requestServiceDealCancellationSchema)
-    .mutation(async ({ input, ctx }) => {
-      await assertDealText(input.reason);
-      return done(
+    .mutation(({ input, ctx }) =>
+      done(
         input.id,
         requestServiceDealCancellation({
           dealId: input.id,
           userId: ctx.user.id,
           reason: input.reason,
+          reasonCode: input.reasonCode,
         })
-      );
-    }),
+      )
+    ),
   respondCancellation: protectedProcedure
     .input(respondServiceDealCancellationSchema)
-    .mutation(async ({ input, ctx }) => {
-      await assertDealText(input.comment);
-      return done(
+    .mutation(({ input, ctx }) =>
+      done(
         input.id,
         respondServiceDealCancellation({
           dealId: input.id,
@@ -136,15 +146,17 @@ export const creatorServiceDealRouter = router({
           agree: input.agree,
           comment: input.comment,
         })
-      );
-    }),
-  openDispute: protectedProcedure
-    .input(openServiceDealDisputeSchema)
-    .mutation(async ({ input, ctx }) => {
-      await assertDealText(input.reason);
-      return done(
-        input.id,
-        openServiceDealDispute({ dealId: input.id, userId: ctx.user.id, reason: input.reason })
-      );
-    }),
+      )
+    ),
+  openDispute: protectedProcedure.input(openServiceDealDisputeSchema).mutation(({ input, ctx }) =>
+    done(
+      input.id,
+      openServiceDealDispute({
+        dealId: input.id,
+        userId: ctx.user.id,
+        reason: input.reason,
+        reasonCode: input.reasonCode,
+      })
+    )
+  ),
 });

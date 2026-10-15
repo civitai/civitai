@@ -43,9 +43,12 @@ import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const MIGRATION = join(
-  process.cwd(),
-  'packages/civitai-db-schema/prisma/migrations/20261005120000_creator_milestone/migration.sql'
+const MIGRATIONS = [
+  '20261005120000_creator_milestone',
+  '20261007120000_creator_milestone_cosmetic',
+  '20261027150000_creator_milestone_mythic',
+].map((name) =>
+  join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql')
 );
 
 const TIMESTAMP_OID = 1114;
@@ -162,7 +165,8 @@ beforeAll(async () => {
       "isModerator" boolean NOT NULL DEFAULT false, muted boolean NOT NULL DEFAULT false,
       "deletedAt" timestamp(3), "bannedAt" timestamp(3),
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}');
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, type text, data jsonb);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, type text, data jsonb, name text,
+      description text, source text, "permanentUnlock" boolean);
     CREATE TABLE "UserCosmetic" ("userId" int NOT NULL, "cosmeticId" int NOT NULL,
       "equippedAt" timestamp(3), "equippedToId" int);
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, type text, "nsfwLevel" int,
@@ -171,7 +175,7 @@ beforeAll(async () => {
       "expiresAt" timestamp(3) NOT NULL, points int NOT NULL DEFAULT 1);
     CREATE TABLE "UserProfile" ("userId" int PRIMARY KEY, "privacySettings" jsonb);
   `);
-  await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
 });
 
 beforeEach(async () => {

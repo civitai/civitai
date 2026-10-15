@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -89,11 +90,28 @@ const MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261025120000_creator_services_foundation/migration.sql'
 );
+const FILE_STATE_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028140000_creator_service_deal_file_state/migration.sql'
+);
+const NSFW_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028150000_creator_service_max_nsfw_level/migration.sql'
+);
+const REASON_CODE_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
+);
 
 const SELLER = 1;
 const BUYER = 2;
 const STRANGER = 3;
 const PRICE = 500;
+const PG = 1;
+const PG13 = 2;
+const R = 4;
+const SFW_LEVELS = PG | PG13;
+const ALL_LEVELS = 31;
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
@@ -157,7 +175,24 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
     buyerId: BUYER,
     requestText: 'please draw my cat',
     buzzType: 'yellow',
+    // A buyer on the mature-capable domain who browses at PG only, as most do.
+    servableLevels: ALL_LEVELS,
+    consentLevels: PG,
     ...overrides,
+  });
+
+/**
+ * Delivery without the file checks, which this suite does not exercise: production delivers through
+ * `deliverServiceDeal` (the files suite), and nothing else may move a deal to Delivered.
+ */
+const markDelivered = (dealId: number) =>
+  deals.transitionDeal({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Delivered',
+    actorId: SELLER,
+    event: 'Delivered',
+    set: Prisma.sql`, "deliveredAt" = now()`,
   });
 
 /** Moves a deal's clock instead of the test's: time is an input. */
@@ -176,20 +211,40 @@ const ageHoldLeg = (id: number, minutes: number) =>
 
 const conflict = expect.objectContaining({ code: 'CONFLICT' });
 
+/** A final for the deal's current round (or `round`), as the delivery seat's scanner leaves it. */
+const finals = (id: number, scanStatus = 'Passed', round?: number, status = 'Ready') =>
+  q(
+    `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, "scanStatus", status)
+     SELECT $1, COALESCE($3::int, "revisionsUsed"), 'Final', md5(random()::text), 'application/zip', 1,
+       $2::"ServiceDealFileScanStatus", $4::"ServiceDealFileStatus"
+     FROM "ServiceDeal" WHERE id = $1`,
+    [id, scanStatus, round ?? null, status]
+  );
+
+/** Delivers with a final that passed scanning, as a completed deal needs. */
+const deliver = async (id: number) => {
+  await finals(id);
+  await markDelivered(id);
+};
+
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(FILE_STATE_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(NSFW_MIGRATION, 'utf8'));
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   // clearAllMocks keeps a queued *Once; a test that fails early would leak it into the next.
   for (const fn of Object.values(buzz)) fn.mockReset();
+  shop.assertCreatorShopVisible.mockReset();
   locks.available = true;
   locks.held.clear();
   buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged());
@@ -870,7 +925,7 @@ describe('working a deal', () => {
   // Requesting a revision must not turn an on-time delivery into an instant refund.
   it('never offers the late cancel once anything was delivered', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
     await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '5 days' WHERE id = $1`, [id]);
     await expect(deals.cancelLateServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(
@@ -881,9 +936,9 @@ describe('working a deal', () => {
 
   it('counts revisions against the snapshot and completes with a 48h dispute window', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'bigger ears' });
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await expect(
       deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'again' })
     ).rejects.toEqual(conflict);
@@ -899,7 +954,7 @@ describe('working a deal', () => {
 
   it('auto-completes 3 days after delivery, and not before', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await age(id, 'deliveredAt', 71);
     expect(await deals.autoCompleteServiceDeals()).toMatchObject({ moved: 0 });
     await age(id, 'deliveredAt', 73);
@@ -909,7 +964,7 @@ describe('working a deal', () => {
 
   it('opens a dispute inside the window only', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
     await q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [
       id,
@@ -930,7 +985,7 @@ describe('timed transitions re-check their own deadline', () => {
     expect(await deals.expireServiceDeal(id)).toBe(false);
 
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     expect(await deals.autoCompleteServiceDeal(id)).toBe(false);
 
     await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
@@ -999,7 +1054,7 @@ describe('releasing to the seller', () => {
   const completed = async (overrides: Parameters<typeof request>[0] = {}) => {
     const { id } = await request(overrides);
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
     return id;
   };
@@ -1302,5 +1357,902 @@ describe('releasing to the seller', () => {
     expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
     expect(await escrow.sweepServiceDealRefunds()).toMatchObject({ exhausted: 1 });
     expect((await deal(id)).settledAt).toBeNull();
+  });
+});
+
+describe('the finals gate and dispute resolution', () => {
+  const delivered = async (overrides: Parameters<typeof request>[0] = {}) => {
+    const { id } = await request(overrides);
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await markDelivered(id);
+    return id;
+  };
+  const completed = async () => {
+    const id = await delivered();
+    await finals(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    return id;
+  };
+  const windowClosed = (id: number) =>
+    q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [id]);
+  const scan = (id: number, status: string) =>
+    q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = $2::"ServiceDealFileScanStatus" WHERE "dealId" = $1`,
+      [id, status]
+    );
+  const resolve = (id: number, resolution: 'Refund' | 'Release') =>
+    deals.resolveServiceDealDispute({ dealId: id, moderatorId: STRANGER, resolution, note: 'n' });
+  const disputeRow = async (id: number) =>
+    (
+      await q<{
+        disputeResolution: string | null;
+        disputeResolvedById: number | null;
+        disputeReason: string | null;
+      }>(
+        `SELECT "disputeResolution"::text, "disputeResolvedById", "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+        [id]
+      )
+    )[0];
+
+  it.each([
+    ['no final at all', async () => undefined],
+    ['a final still being scanned', (id: number) => finals(id, 'Pending')],
+    ['a final that failed scanning', (id: number) => finals(id, 'Failed')],
+    [
+      'a passed final beside a pending one',
+      async (id: number) => {
+        await finals(id);
+        await finals(id, 'Pending');
+      },
+    ],
+    // Only a Ready final counts, and one that is not Ready blocks, as delivery treats them.
+    ...(['Uploading', 'Failed'] as const).map(
+      (status) =>
+        [
+          `a passed final that is ${status}`,
+          (id: number) => finals(id, 'Passed', undefined, status),
+        ] as const
+    ),
+    [
+      'a passed Ready final beside a passed one still uploading',
+      async (id: number) => {
+        await finals(id);
+        await finals(id, 'Passed', undefined, 'Uploading');
+      },
+    ],
+    [
+      'a passed final from an earlier round only',
+      async (id: number) => {
+        await finals(id, 'Passed', 0);
+        await q(`UPDATE "ServiceDeal" SET "revisionsUsed" = 1 WHERE id = $1`, [id]);
+      },
+    ],
+  ])('will not complete a delivery with %s', async (_, setUp) => {
+    const id = await delivered();
+    await setUp(id);
+    await expect(deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER })).rejects.toEqual(
+      expect.objectContaining({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/still being checked/),
+      })
+    );
+    await age(id, 'deliveredAt', 24 * 4);
+    expect(await deals.autoCompleteServiceDeal(id)).toBe(false);
+    expect((await deal(id)).status).toBe('Delivered');
+  });
+
+  it('auto-completes on the first sweep after the finals clear, even past three days', async () => {
+    const id = await delivered();
+    await finals(id, 'Pending');
+    await age(id, 'deliveredAt', 24 * 5);
+    expect(await deals.autoCompleteServiceDeals()).toMatchObject({ moved: 0 });
+    await scan(id, 'Passed');
+    expect(await deals.autoCompleteServiceDeals()).toMatchObject({ moved: 1 });
+    const row = await deal(id);
+    expect(row.status).toBe('Completed');
+    expect(row.releaseAt!.getTime() - row.completedAt!.getTime()).toBe(48 * 3_600_000);
+  });
+
+  it('holds a release whose finals stopped passing, and pays nothing', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await scan(id, 'Failed');
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+  });
+
+  it('sends a delivered deal to the moderators, but never one whose payout is claimed', async () => {
+    const id = await delivered();
+    expect(await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED)).toBe(true);
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await events(id)).at(-1)).toBe('Disputed');
+
+    const paid = await completed();
+    await windowClosed(paid);
+    buzz.createBuzzTransaction.mockRejectedValueOnce(buzzError(503));
+    await expect(escrow.releaseDeal(paid)).rejects.toThrow();
+    expect(await escrow.holdServiceDealForReview(paid, escrow.FINAL_SCAN_FAILED)).toBe(false);
+    expect((await deal(paid)).status).toBe('Completed');
+  });
+
+  // Every road into Disputed, each refunded by a moderator exactly once.
+  it.each([
+    [
+      'a buyer dispute',
+      async () => {
+        const id = await completed();
+        await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'broken zip' });
+        return id;
+      },
+    ],
+    [
+      'a declined cancellation',
+      async () => {
+        const id = await delivered();
+        await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+        await deals.respondServiceDealCancellation({ dealId: id, userId: SELLER, agree: false });
+        return id;
+      },
+    ],
+    [
+      'a failed final',
+      async () => {
+        const id = await delivered();
+        await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+        return id;
+      },
+    ],
+    [
+      'an unavailable seller',
+      async () => {
+        const id = await completed();
+        await windowClosed(id);
+        await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
+        await escrow.sweepServiceDealReleases();
+        return id;
+      },
+    ],
+  ])('refunds %s once, and answers a repeat as already resolved', async (_, open) => {
+    const id = await open();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect(await resolve(id, 'Refund')).toEqual({ status: 'resolved', resolution: 'Refund' });
+    const row = await deal(id);
+    expect(row).toMatchObject({ status: 'Cancelled', closeReason: 'dispute_refund' });
+    expect(row.settledAt).not.toBeNull();
+    expect(await disputeRow(id)).toMatchObject({
+      disputeResolution: 'Refund',
+      disputeResolvedById: STRANGER,
+    });
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+
+    expect(await resolve(id, 'Refund')).toEqual({
+      status: 'already-resolved',
+      resolution: 'Refund',
+    });
+    expect(await resolve(id, 'Release')).toEqual({
+      status: 'already-resolved',
+      resolution: 'Refund',
+    });
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('releases a held seller once a moderator decides so, and only once', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    await escrow.sweepServiceDealReleases();
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.SELLER_UNAVAILABLE);
+
+    expect(await resolve(id, 'Release')).toEqual({ status: 'resolved', resolution: 'Release' });
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({
+      toAccountId: SELLER,
+      amount: PRICE,
+    });
+    const row = await deal(id);
+    expect(row.status).toBe('Completed');
+    expect(row.settledAt).not.toBeNull();
+
+    expect(await resolve(id, 'Release')).toEqual({
+      status: 'already-resolved',
+      resolution: 'Release',
+    });
+    await escrow.sweepServiceDealReleases();
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('releases a buyer dispute decided for the seller', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'not as previewed' });
+    expect(await resolve(id, 'Release')).toEqual({ status: 'resolved', resolution: 'Release' });
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect((await deal(id)).settledAt).not.toBeNull();
+  });
+
+  it('refuses to release for finals that did not pass scanning, and moves nothing', async () => {
+    const id = await delivered();
+    await finals(id, 'Failed');
+    await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+    expect(await resolve(id, 'Release')).toEqual({
+      status: 'refused',
+      reason: 'finals_not_passed',
+      message: expect.stringMatching(/passed scanning/),
+    });
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await disputeRow(id)).disputeResolution).toBeNull();
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(await events(id)).not.toContain('DisputeResolved');
+  });
+
+  it('refuses to release for a final that passed scanning but is not Ready', async () => {
+    const id = await delivered();
+    await finals(id, 'Passed', undefined, 'Failed');
+    await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+    expect(await resolve(id, 'Release')).toMatchObject({
+      status: 'refused',
+      reason: 'finals_not_passed',
+    });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
+  });
+
+  // A crash between the resolution and the payment must leave the refund claimed for the sweep.
+  it('claims the refund in the same transaction that resolves the dispute', async () => {
+    buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(503));
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+    await resolve(id, 'Refund');
+    const [row] = await q<{ same: boolean }>(
+      `SELECT t."createdAt" = d."closedAt" AS same FROM "ServiceDealTransaction" t
+       JOIN "ServiceDeal" d ON d.id = t."dealId" WHERE t."dealId" = $1 AND t.leg = 'Refund'`,
+      [id]
+    );
+    expect(row).toEqual({ same: true });
+  });
+
+  it.each([
+    ['banned', `"bannedAt" = now()`],
+    ['deleted', `"deletedAt" = now()`],
+  ])(
+    'holds a released deal again for a seller %s after the moderator decided',
+    async (_, column) => {
+      const id = await completed();
+      await q(
+        `UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute',
+       "disputeResolution" = 'Release', "disputeResolvedAt" = now() - interval '1 minute',
+       "disputeResolvedById" = $2 WHERE id = $1`,
+        [id, STRANGER]
+      );
+      await q(`UPDATE "User" SET ${column} WHERE id = $1`, [SELLER]);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      expect(await disputeRow(id)).toMatchObject({
+        disputeReason: escrow.SELLER_UNAVAILABLE,
+        disputeResolution: null,
+      });
+    }
+  );
+
+  // A claimed Release leg always completes, whatever happens to the finals afterwards.
+  it('never re-holds a release whose leg is already claimed when a final fails', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockRejectedValueOnce(buzzError(503));
+    await expect(escrow.releaseDeal(id)).rejects.toThrow();
+    await scan(id, 'Failed');
+    await q(
+      `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Release'`
+    );
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
+    expect((await deal(id)).status).toBe('Completed');
+  });
+
+  it('tells the moderator when the payout claim holds a released deal again', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+    // A final flips inside the resolving transaction, after its own check: the claim catches it.
+    await holder.db.exec(`
+      CREATE FUNCTION flip_final() RETURNS trigger AS $$ BEGIN
+        UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE "dealId" = NEW."dealId";
+        RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER flip_final AFTER INSERT ON "ServiceDealEvent"
+        FOR EACH ROW WHEN (NEW.type = 'DisputeResolved') EXECUTE FUNCTION flip_final();
+    `);
+    try {
+      expect(await resolve(id, 'Release')).toEqual({
+        status: 'held-for-review',
+        reason: escrow.FINAL_SCAN_FAILED,
+      });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    } finally {
+      await holder.db.exec(
+        `DROP TRIGGER flip_final ON "ServiceDealEvent"; DROP FUNCTION flip_final();`
+      );
+    }
+  });
+
+  // The parties' view of a held deal: no hold reason, no moderator id. Moderators see both.
+  it("keeps hold reasons and moderator ids out of the parties' view of a deal", async () => {
+    const at = new Date();
+    const held = {
+      id: 9,
+      buyerId: BUYER,
+      sellerId: SELLER,
+      status: 'Disputed',
+      disputeOpenedAt: at,
+      disputeReason: escrow.SELLER_UNAVAILABLE,
+      events: [
+        {
+          id: 1,
+          type: 'Disputed',
+          actorId: -1,
+          round: 0,
+          comment: escrow.SELLER_UNAVAILABLE,
+          createdAt: at,
+        },
+        {
+          id: 2,
+          type: 'DisputeResolved',
+          actorId: STRANGER,
+          round: 0,
+          comment: 'n',
+          createdAt: at,
+        },
+      ],
+    };
+    (
+      dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+    ).serviceDeal.findUnique = vi.fn().mockResolvedValue(held);
+
+    const buyer = await deals.getServiceDealView({
+      dealId: 9,
+      userId: BUYER,
+      servicesEnabled: true,
+    });
+    expect(buyer.dispute?.reason).toBeNull();
+    expect(buyer.events.map((e) => [e.actorId, e.comment])).toEqual([
+      [null, null],
+      [null, 'n'],
+    ]);
+
+    const moderator = await deals.getServiceDealView({
+      dealId: 9,
+      userId: STRANGER,
+      isModerator: true,
+      servicesEnabled: true,
+    });
+    expect(moderator.dispute?.reason).toBe(escrow.SELLER_UNAVAILABLE);
+    expect(moderator.events[0].comment).toBe(escrow.SELLER_UNAVAILABLE);
+  });
+
+  it('answers CONFLICT for a deal that is not in dispute', async () => {
+    const id = await delivered();
+    await expect(resolve(id, 'Refund')).rejects.toEqual(conflict);
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator decide again when a released deal is held after the decision', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+    // Released by a moderator, then a final flips before the claim: the backstop holds it again.
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Completed', "releaseAt" = now() - interval '1 minute',
+       "disputeResolution" = 'Release', "disputeResolvedAt" = now(), "disputeResolvedById" = $2 WHERE id = $1`,
+      [id, STRANGER]
+    );
+    await scan(id, 'Failed');
+    await escrow.sweepServiceDealReleases();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect(await disputeRow(id)).toMatchObject({
+      disputeReason: escrow.FINAL_SCAN_FAILED,
+      disputeResolution: null,
+    });
+    expect(await resolve(id, 'Refund')).toEqual({ status: 'resolved', resolution: 'Refund' });
+  });
+
+  it('pages the queue by how long each dispute has waited, not by deal age', async () => {
+    const ids: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const id = await delivered();
+      await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+      ids.push(id);
+      // Each new request needs the previous one answered: one open request per buyer per offering.
+    }
+    // The newest deal has waited longest; two share a dispute time, so the id breaks the tie.
+    await q(
+      `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() - interval '3 hours' WHERE id = $1`,
+      [ids[2]]
+    );
+    await q(
+      `UPDATE "ServiceDeal" SET "disputeOpenedAt" = now() - interval '1 hour' WHERE id = ANY($1)`,
+      [[ids[0], ids[1]]]
+    );
+    const first = await deals.listDisputedServiceDeals({ limit: 2 });
+    expect(first.items.map((item) => item.id)).toEqual([ids[2], ids[0]]);
+    const second = await deals.listDisputedServiceDeals({ limit: 2, cursor: first.nextCursor });
+    expect(second.items.map((item) => item.id)).toEqual([ids[1]]);
+    expect(second.nextCursor).toBeUndefined();
+    await expect(deals.listDisputedServiceDeals({ cursor: 'nope' })).rejects.toThrow(/cursor/);
+  });
+
+  it('lists the queue with what a decision needs', async () => {
+    const held = await delivered();
+    await finals(held, 'Failed');
+    await escrow.holdServiceDealForReview(held, escrow.FINAL_SCAN_FAILED);
+    const { items, nextCursor } = await deals.listDisputedServiceDeals({ limit: 20 });
+    expect(nextCursor).toBeUndefined();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: held,
+      disputeReason: escrow.FINAL_SCAN_FAILED,
+      finalsClear: false,
+      price: PRICE,
+      seller: { id: SELLER, unavailable: false },
+    });
+    expect(items[0].events.at(-1)).toMatchObject({ type: 'Disputed' });
+  });
+});
+
+// Decisions (briony, 2026-10-15): a muted party is never refused for being muted, only silenced.
+// Their free text is dropped (never scanned, never stored), any code is kept, and an action that
+// needs a reason gets `other`. The mute is read from the User row inside the transition.
+const { throwOnBlockedUserContent } = await import('~/server/services/blocklist.service');
+
+describe('reasons and reason codes', () => {
+  const scan = vi.mocked(throwOnBlockedUserContent);
+
+  const mute = (id: number, muted = true) =>
+    q(`UPDATE "User" SET muted = $2 WHERE id = $1`, [id, muted]);
+  /** The latest event a party made, past the system's own (a refund follows a decline). */
+  const lastEvent = async (id: number) =>
+    (
+      await q<{ type: string; comment: string | null; reasonCode: string | null }>(
+        `SELECT type::text, comment, "reasonCode" FROM "ServiceDealEvent"
+         WHERE "dealId" = $1 AND "actorId" <> -1 ORDER BY id DESC LIMIT 1`,
+        [id]
+      )
+    )[0];
+  const reasons = async (id: number) =>
+    (
+      await q<{ cancellationReason: string | null; disputeReason: string | null }>(
+        `SELECT "cancellationReason", "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+        [id]
+      )
+    )[0];
+  const accepted = async () => {
+    const { id } = await request();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    return id;
+  };
+  const completed = async () => {
+    const id = await accepted();
+    await deliver(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    return id;
+  };
+
+  it("stores an unmuted party's text and code, scanning the text", async () => {
+    const id = await accepted();
+    await deals.requestServiceDealCancellation({
+      dealId: id,
+      userId: BUYER,
+      reason: 'it is late',
+      reasonCode: 'not_delivered',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationRequested',
+      comment: 'it is late',
+      reasonCode: 'not_delivered',
+    });
+    expect((await reasons(id)).cancellationReason).toBe('it is late');
+    expect(scan).toHaveBeenCalledWith('it is late', expect.anything());
+  });
+
+  it("refuses an unmuted party's text the scan refuses, and moves nothing", async () => {
+    const id = await accepted();
+    scan.mockRejectedValueOnce(new Error('blocked'));
+    await expect(
+      deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'bad words' })
+    ).rejects.toThrow('blocked');
+    expect((await deal(id)).status).toBe('Accepted');
+  });
+
+  it("scans and keeps an unmuted seller's decline text", async () => {
+    const { id } = await request();
+    scan.mockClear();
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER, reason: 'fully booked' });
+    expect(await lastEvent(id)).toEqual({
+      type: 'Declined',
+      comment: 'fully booked',
+      reasonCode: null,
+    });
+    expect(scan).toHaveBeenCalledWith('fully booked', expect.anything());
+  });
+
+  it('takes a code without text', async () => {
+    const { id } = await request();
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER, reasonCode: 'too_busy' });
+    expect(await lastEvent(id)).toEqual({
+      type: 'Declined',
+      comment: null,
+      reasonCode: 'too_busy',
+    });
+  });
+
+  it.each([
+    ['requestCancellation', () => accepted(), 'Accepted'],
+    ['openDispute', () => completed(), 'Completed'],
+  ] as const)('%s refuses no text and no code, and moves nothing', async (action, make, status) => {
+    const id = await make();
+    const leave =
+      action === 'openDispute'
+        ? deals.openServiceDealDispute({ dealId: id, userId: BUYER })
+        : deals.requestServiceDealCancellation({ dealId: id, userId: BUYER });
+    await expect(leave).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect((await deal(id)).status).toBe(status);
+  });
+
+  it("drops a muted party's cancellation text unscanned and records `other`", async () => {
+    const id = await accepted();
+    await mute(BUYER);
+    scan.mockClear();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'bad words' });
+    expect((await deal(id)).status).toBe('CancellationRequested');
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationRequested',
+      comment: null,
+      reasonCode: 'other',
+    });
+    expect((await reasons(id)).cancellationReason).toBeNull();
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it("keeps a muted party's own code", async () => {
+    const id = await accepted();
+    await mute(SELLER);
+    await deals.requestServiceDealCancellation({
+      dealId: id,
+      userId: SELLER,
+      reason: 'x',
+      reasonCode: 'buyer_unresponsive',
+    });
+    expect(await lastEvent(id)).toMatchObject({ comment: null, reasonCode: 'buyer_unresponsive' });
+  });
+
+  it("drops a muted buyer's dispute text from the event and the deal", async () => {
+    const id = await completed();
+    await mute(BUYER);
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'broken' });
+    expect((await deal(id)).status).toBe('Disputed');
+    expect(await lastEvent(id)).toEqual({ type: 'Disputed', comment: null, reasonCode: 'other' });
+    expect((await reasons(id)).disputeReason).toBeNull();
+  });
+
+  it('gives a muted decline `other` only when it said something', async () => {
+    // Requested before the mute: a muted seller takes no new requests.
+    const { id: silent } = await request();
+    const { id: spoke } = await request({ buyerId: STRANGER });
+    await mute(SELLER);
+    await deals.declineServiceDeal({ dealId: silent, userId: SELLER });
+    expect(await lastEvent(silent)).toMatchObject({ comment: null, reasonCode: null });
+
+    await deals.declineServiceDeal({ dealId: spoke, userId: SELLER, reason: 'nope' });
+    expect(await lastEvent(spoke)).toMatchObject({ comment: null, reasonCode: 'other' });
+  });
+
+  it("scans and keeps an unmuted buyer's dispute text, on the event and the deal", async () => {
+    const id = await completed();
+    scan.mockClear();
+    await deals.openServiceDealDispute({
+      dealId: id,
+      userId: BUYER,
+      reason: 'zip is empty',
+      reasonCode: 'files_missing_or_broken',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'Disputed',
+      comment: 'zip is empty',
+      reasonCode: 'files_missing_or_broken',
+    });
+    expect((await reasons(id)).disputeReason).toBe('zip is empty');
+    expect(scan).toHaveBeenCalledWith('zip is empty', expect.anything());
+  });
+
+  it("scans and keeps an unmuted party's answer to a cancellation", async () => {
+    const id = await accepted();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    scan.mockClear();
+    await deals.respondServiceDealCancellation({
+      dealId: id,
+      userId: SELLER,
+      agree: true,
+      comment: 'fair enough',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationAccepted',
+      comment: 'fair enough',
+      reasonCode: null,
+    });
+    expect(scan).toHaveBeenCalledWith('fair enough', expect.anything());
+  });
+
+  it("drops a muted party's answer to a cancellation, with no code", async () => {
+    const id = await accepted();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    await mute(SELLER);
+    await deals.respondServiceDealCancellation({
+      dealId: id,
+      userId: SELLER,
+      agree: false,
+      comment: 'no way',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationDeclined',
+      comment: null,
+      reasonCode: null,
+    });
+    // The system's own reason for the dispute is not the party's text, and stays.
+    expect((await reasons(id)).disputeReason).toBe('cancellation_declined');
+  });
+
+  // The mute is read again inside the transition, so one landing after the text was scanned wins.
+  it('drops text scanned before a mute that lands before the transition', async () => {
+    const id = await accepted();
+    scan.mockImplementationOnce(async () => {
+      await mute(BUYER);
+    });
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    expect(await lastEvent(id)).toMatchObject({ comment: null, reasonCode: 'other' });
+    expect((await reasons(id)).cancellationReason).toBeNull();
+  });
+
+  // The other way round, the text was never scanned, so it must not be stored either.
+  it('never stores the unscanned text of a party unmuted before the transition', async () => {
+    const id = await accepted();
+    await mute(BUYER);
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (
+      fn: (tx: unknown) => Promise<unknown>
+    ) => {
+      await mute(BUYER, false);
+      return holder.db.transaction((tx) => fn(bridge(tx)));
+    }) as never);
+    scan.mockClear();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'unscanned' });
+    expect(scan).not.toHaveBeenCalled();
+    expect(await lastEvent(id)).toMatchObject({ comment: null, reasonCode: 'other' });
+    expect((await reasons(id)).cancellationReason).toBeNull();
+  });
+
+  it('lists event codes in the dispute queue', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({
+      dealId: id,
+      userId: BUYER,
+      reasonCode: 'not_as_previewed',
+    });
+    const { items } = await deals.listDisputedServiceDeals({});
+    expect(items[0].events.at(-1)).toMatchObject({
+      type: 'Disputed',
+      comment: null,
+      reasonCode: 'not_as_previewed',
+    });
+  });
+
+  describe('the deal view', () => {
+    const view = (servicesEnabled: boolean, userId = BUYER) => {
+      const at = new Date();
+      (
+        dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+      ).serviceDeal.findUnique = vi.fn().mockResolvedValue({
+        id: 9,
+        buyerId: BUYER,
+        sellerId: SELLER,
+        status: 'Delivered',
+        revisionsUsed: 0,
+        revisionsIncluded: 1,
+        requestedAt: at,
+        deliveredAt: at,
+        heldAt: at,
+        maxNsfwLevel: R,
+        events: [
+          {
+            id: 1,
+            type: 'Declined',
+            actorId: SELLER,
+            round: 0,
+            comment: null,
+            reasonCode: 'too_busy',
+            createdAt: at,
+          },
+        ],
+      });
+      return deals.getServiceDealView({ dealId: 9, userId, servicesEnabled });
+    };
+
+    it("reports the viewer's mute from their User row", async () => {
+      expect((await view(true)).viewerMuted).toBe(false);
+      await mute(BUYER);
+      expect((await view(true)).viewerMuted).toBe(true);
+    });
+
+    it("returns each event's code", async () => {
+      expect((await view(true)).events[0].reasonCode).toBe('too_busy');
+    });
+
+    // The page gates itself on these, as it does any mature content.
+    it("returns the deal's rating, and whether it is mature", async () => {
+      expect(await view(true)).toMatchObject({ maxNsfwLevel: R, mature: true });
+    });
+
+    it('offers the flag-gated actions only while the flag is on', async () => {
+      expect((await view(true)).actions).toContain('requestRevision');
+      expect((await view(false)).actions).toEqual(['acceptDelivery', 'requestCancellation']);
+    });
+
+    // `guardedProcedure` refuses a muted user a revision request; the exits stay offered.
+    it('offers a muted viewer only the actions the router lets them take', async () => {
+      await mute(BUYER);
+      expect((await view(true)).actions).toEqual(['acceptDelivery', 'requestCancellation']);
+    });
+
+    it('lists the same actions, by the flag and by the mute', async () => {
+      const id = await accepted();
+      await deliver(id);
+      const listed = async (servicesEnabled = true) => {
+        const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+        (
+          dbMock.dbWrite as unknown as { serviceDeal: { findMany: ReturnType<typeof vi.fn> } }
+        ).serviceDeal.findMany = vi.fn().mockResolvedValue([row]);
+        const { items } = await deals.listMyServiceDeals({
+          userId: BUYER,
+          role: 'buyer',
+          limit: 20,
+          servicesEnabled,
+        });
+        return items[0].actions;
+      };
+      expect(await listed()).toContain('requestRevision');
+      expect(await listed(false)).toEqual(['acceptDelivery', 'requestCancellation']);
+      await mute(BUYER);
+      expect(await listed()).toEqual(['acceptDelivery', 'requestCancellation']);
+    });
+  });
+});
+
+// Mature services (decision, briony 2026-10-15): SFW is always requestable; a mature service only on a
+// domain that serves its level, by a buyer whose own browsing level includes it.
+describe('mature services', () => {
+  const rate = (level: number) => q(`UPDATE "ServiceOffering" SET "maxNsfwLevel" = $1`, [level]);
+  const dealLevel = async (id: number) =>
+    (
+      await q<{ maxNsfwLevel: number }>(`SELECT "maxNsfwLevel" FROM "ServiceDeal" WHERE id = $1`, [
+        id,
+      ])
+    )[0].maxNsfwLevel;
+  const dealCount = async () =>
+    (await q<{ n: number }>(`SELECT count(*)::int n FROM "ServiceDeal"`))[0].n;
+
+  it('lets a PG-only buyer request a PG-13 service, on either domain', async () => {
+    await rate(PG13);
+    const { id } = await request({ consentLevels: PG, servableLevels: SFW_LEVELS });
+    expect(await dealLevel(id)).toBe(PG13);
+  });
+
+  it('refuses a PG-only buyer an R service, and holds nothing', async () => {
+    await rate(R);
+    await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await dealCount()).toBe(0);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('takes an R service from a buyer who opted into R, and snapshots its rating', async () => {
+    await rate(R);
+    const { id } = await request({ consentLevels: PG | R });
+    expect(await dealLevel(id)).toBe(R);
+    // The deal keeps its rating whatever the offering does later.
+    await rate(PG13);
+    expect(await dealLevel(id)).toBe(R);
+  });
+
+  it('answers a hidden mature service as not found, never as mature', async () => {
+    await rate(R);
+    shop.assertCreatorShopVisible.mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Shop not found' })
+    );
+    await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('answers a blocked buyer as blocked, never as mature', async () => {
+    await rate(R);
+    await q(`INSERT INTO "UserEngagement" VALUES ($1, $2, 'Block')`, [SELLER, BUYER]);
+    await expect(request({ consentLevels: PG })).rejects.toThrow(/cannot request this service/);
+  });
+
+  it('does not find a mature service on the SFW domain, even for a buyer who opted in', async () => {
+    await rate(R);
+    await expect(
+      request({ servableLevels: SFW_LEVELS, consentLevels: ALL_LEVELS })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await dealCount()).toBe(0);
+  });
+
+  // The checks before the INSERT are for the message; the INSERT repeats the rule itself.
+  it('refuses at the insert a service made mature after the checks, and holds nothing', async () => {
+    await rate(PG13);
+    shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+      await rate(R);
+      return [];
+    });
+    await expect(request({ consentLevels: PG })).rejects.toEqual(conflict);
+    expect(await dealCount()).toBe(0);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses at the insert a mature service on the SFW domain, past the checks', async () => {
+    await rate(PG13);
+    shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+      await rate(R);
+      return [];
+    });
+    await expect(
+      request({ servableLevels: SFW_LEVELS, consentLevels: ALL_LEVELS })
+    ).rejects.toEqual(conflict);
+    expect(await dealCount()).toBe(0);
+  });
+
+  describe('listing my deals', () => {
+    // The Prisma model calls are mocked in this suite; these run them against the real rows.
+    const fakePrisma = () => {
+      type Where = { buyerId?: number; maxNsfwLevel?: { in?: number[]; notIn?: number[] } };
+      type Row = { buyerId: number; maxNsfwLevel: number };
+      const matches = (row: Row, where: Where) =>
+        (where.buyerId === undefined || row.buyerId === where.buyerId) &&
+        (where.maxNsfwLevel?.in === undefined ||
+          where.maxNsfwLevel.in.includes(row.maxNsfwLevel)) &&
+        (where.maxNsfwLevel?.notIn === undefined ||
+          !where.maxNsfwLevel.notIn.includes(row.maxNsfwLevel));
+      const rows = () => q<Row>(`SELECT * FROM "ServiceDeal" ORDER BY id DESC`);
+      const model = dbMock.dbWrite as unknown as {
+        serviceDeal: { findMany: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
+      };
+      model.serviceDeal.findMany = vi.fn(async ({ where }) =>
+        (await rows()).filter((row) => matches(row, where))
+      );
+      model.serviceDeal.count = vi.fn(
+        async ({ where }) => (await rows()).filter((row) => matches(row, where)).length
+      );
+    };
+    const list = (servableLevels: number) =>
+      deals.listMyServiceDeals({
+        userId: BUYER,
+        role: 'buyer',
+        limit: 20,
+        servicesEnabled: true,
+        servableLevels,
+      });
+
+    it('leaves mature deals out on the SFW domain and says how many', async () => {
+      const { id: sfw } = await request();
+      // One unanswered request per buyer per offering: answer the first.
+      await deals.declineServiceDeal({ dealId: sfw, userId: SELLER });
+      await rate(R);
+      const { id: mature } = await request({ consentLevels: PG | R });
+      // Another buyer's mature deal: never in this buyer's list, nor in their count.
+      await request({ buyerId: STRANGER, consentLevels: PG | R });
+      fakePrisma();
+
+      const green = await list(SFW_LEVELS);
+      expect(green.items.map((item) => item.id)).toEqual([sfw]);
+      expect(green.hiddenOffDomain).toBe(1);
+
+      const red = await list(ALL_LEVELS);
+      expect(red.items.map((item) => item.id)).toEqual([mature, sfw]);
+      expect(red.items[0].maxNsfwLevel).toBe(R);
+      expect(red.hiddenOffDomain).toBe(0);
+    });
   });
 });

@@ -110,7 +110,7 @@ export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme" | "CardDecoration";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
@@ -269,6 +269,8 @@ export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevi
 export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
 
 export type ServiceDealFileKind = "Preview" | "Final";
+
+export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
 
 export type ServiceDealFileScanStatus = "Pending" | "Passed" | "Failed" | "NotScanned";
 
@@ -6195,6 +6197,7 @@ export interface ServiceOffering {
   price: number;
   acceptsBlue: boolean;
   previewKind: ServicePreviewKind;
+  maxNsfwLevel: number;
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;
@@ -6219,6 +6222,7 @@ export interface ServiceDeal {
   revisionsUsed: number;
   deliveryDays: number;
   previewKind: ServicePreviewKind;
+  maxNsfwLevel: number;
   status: ServiceDealStatus;
   heldAt: Date | null;
   settledAt: Date | null;
@@ -6255,6 +6259,7 @@ export interface ServiceDealEvent {
   type: ServiceDealEventType;
   round: number;
   comment: string | null;
+  reasonCode: string | null;
   createdAt: Date;
 }
 
@@ -6267,8 +6272,15 @@ export interface ServiceDealFile {
   s3Key: string;
   watermarkedKey: string | null;
   imageId: number | null;
+  scanKey: string | null;
+  nsfwLevel: number | null;
+  fileName: string;
   mimeType: string;
   size: number;
+  status: ServiceDealFileStatus;
+  failReason: string | null;
+  uploadedAt: Date | null;
+  processingAt: Date | null;
   scanStatus: ServiceDealFileScanStatus;
   createdAt: Date;
 }

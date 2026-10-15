@@ -140,6 +140,7 @@ import type {
   ServiceDealStatus,
   ServiceDealEventType,
   ServiceDealFileKind,
+  ServiceDealFileStatus,
   ServiceDealFileScanStatus,
   ServiceDisputeResolution,
   ServiceDealLeg,
@@ -4631,6 +4632,10 @@ export type ServiceDeal = {
   revisionsUsed: Generated<number>;
   deliveryDays: number;
   previewKind: ServicePreviewKind;
+  /**
+   * The offering's maxNsfwLevel when requested; never re-read from the offering.
+   */
+  maxNsfwLevel: Generated<number>;
   status: Generated<ServiceDealStatus>;
   /**
    * Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
@@ -4678,6 +4683,10 @@ export type ServiceDealEvent = {
   type: ServiceDealEventType;
   round: Generated<number>;
   comment: string | null;
+  /**
+   * Validated against the per-action lists in creator-services.constants; no DB CHECK.
+   */
+  reasonCode: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealFile = {
@@ -4688,11 +4697,28 @@ export type ServiceDealFile = {
   s3Key: string;
   watermarkedKey: string | null;
   /**
-   * The Image row a preview was ingested as, for the normal scanning pipeline.
+   * The hidden, downscaled, unwatermarked copy a preview is scanned as. Deleted once its verdict
+   * lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
    */
   imageId: number | null;
+  scanKey: string | null;
+  /**
+   * The rating the scan gave the preview, recorded when it passes.
+   */
+  nsfwLevel: number | null;
+  fileName: Generated<string>;
   mimeType: string;
   size: number;
+  /**
+   * Uploading until the seller confirms the object is in the bucket.
+   */
+  status: Generated<ServiceDealFileStatus>;
+  failReason: string | null;
+  uploadedAt: Timestamp | null;
+  /**
+   * Set when preview processing last started, so a crashed worker's file is picked up again.
+   */
+  processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
   createdAt: Generated<Timestamp>;
 };
@@ -4718,6 +4744,10 @@ export type ServiceOffering = {
   price: number;
   acceptsBlue: Generated<boolean>;
   previewKind: Generated<ServicePreviewKind>;
+  /**
+   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   */
+  maxNsfwLevel: Generated<number>;
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;

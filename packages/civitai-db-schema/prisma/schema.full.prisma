@@ -5163,6 +5163,8 @@ enum CosmeticType {
   // theme is the shape a later pass would want, and an enum value cannot be
   // dropped without recreating the type.
   ChatTheme
+  // A glow around the creator card; its own slot, so it stacks with a badge.
+  CardDecoration
 }
 
 enum CosmeticSource {
@@ -9764,6 +9766,15 @@ enum ServiceDealFileKind {
   Final
 }
 
+/// Where a file is on its way to being usable. A Preview is Ready once its watermarked derivative
+/// exists; a Final is Ready once the upload is confirmed. Scanning is tracked apart, in scanStatus.
+enum ServiceDealFileStatus {
+  Uploading
+  Processing
+  Ready
+  Failed
+}
+
 enum ServiceDealFileScanStatus {
   Pending
   Passed
@@ -9793,6 +9804,8 @@ model ServiceOffering {
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
+  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  maxNsfwLevel      Int                   @default(2)
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -9826,6 +9839,8 @@ model ServiceDeal {
   revisionsUsed             Int                     @default(0)
   deliveryDays              Int
   previewKind               ServicePreviewKind
+  /// The offering's maxNsfwLevel when requested; never re-read from the offering.
+  maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)
   /// Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
   /// deal without it was never paid for: the migration refuses any worked or payable status
@@ -9883,9 +9898,11 @@ model ServiceDealEvent {
   deal      ServiceDeal          @relation(fields: [dealId], references: [id], onDelete: Restrict)
   actorId   Int
   type      ServiceDealEventType
-  round     Int                  @default(0)
-  comment   String?
-  createdAt DateTime             @default(now())
+  round      Int                  @default(0)
+  comment    String?
+  /// Validated against the per-action lists in creator-services.constants; no DB CHECK.
+  reasonCode String?
+  createdAt  DateTime             @default(now())
 
   @@index([dealId, createdAt, id])
 }
@@ -9896,12 +9913,23 @@ model ServiceDealFile {
   deal           ServiceDeal               @relation(fields: [dealId], references: [id], onDelete: Restrict)
   round          Int                       @default(0)
   kind           ServiceDealFileKind
-  s3Key          String
+  s3Key          String                    @unique
   watermarkedKey String?
-  /// The Image row a preview was ingested as, for the normal scanning pipeline.
+  /// The hidden, downscaled, unwatermarked copy a preview is scanned as. Deleted once its verdict
+  /// lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
   imageId        Int?
+  scanKey        String?
+  /// The rating the scan gave the preview, recorded when it passes.
+  nsfwLevel      Int?
+  fileName       String                    @default("")
   mimeType       String
   size           Int
+  /// Uploading until the seller confirms the object is in the bucket.
+  status         ServiceDealFileStatus     @default(Uploading)
+  failReason     String?
+  uploadedAt     DateTime?
+  /// Set when preview processing last started, so a crashed worker's file is picked up again.
+  processingAt   DateTime?
   scanStatus     ServiceDealFileScanStatus @default(Pending)
   createdAt      DateTime                  @default(now())
 

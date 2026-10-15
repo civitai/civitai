@@ -51,6 +51,9 @@ export const appRouter = router({
   creatorServiceDeal: lazy(() =>
     import('./creator-service-deal.router').then((m) => m.creatorServiceDealRouter)
   ),
+  creatorServiceDealFile: lazy(() =>
+    import('./creator-service-deal-file.router').then((m) => m.creatorServiceDealFileRouter)
+  ),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),

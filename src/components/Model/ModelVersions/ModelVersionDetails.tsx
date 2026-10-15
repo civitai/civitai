@@ -39,7 +39,6 @@ import {
   IconGavel,
   IconHeart,
   IconInfoSquareRounded,
-  IconLicense,
   IconLock,
   IconMessageCircle2,
   IconPhotoPlus,
@@ -127,6 +126,7 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
+import { BaseModelLicense } from '~/components/Model/ModelVersions/BaseModelLicense';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
@@ -134,10 +134,10 @@ import { restoreMembership, snapshotMembership } from '~/store/engaged-models.st
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  baseModelLicenses,
   CAROUSEL_LIMIT,
   constants,
   getEffectiveCommercialUse,
+  getDisplayedBaseModelLicense,
   getEffectiveDifferentLicense,
   getRestrictedNsfwLevelsForBaseModel,
   hasAdditionalLicensePermissions,
@@ -535,7 +535,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   });
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
-  const license = baseModelLicenses[version.baseModel];
+  const license = getDisplayedBaseModelLicense(version.baseModel);
   // Link the base model to its ecosystem SEO landing page when one is live (SEO internal linking).
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
@@ -1860,25 +1860,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           <Group justify="space-between" align="flex-start" wrap="nowrap">
             {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
               <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
-                <Group gap={4} wrap="wrap" align="center">
-                  <IconLicense size={16} />
-                  <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap', lineHeight: 1.1 }}>
-                    License{model.licenses.length > 0 ? 's' : ''}:
-                  </Text>
-                  {license && (
-                    <Text
-                      component="a"
-                      href={license.url}
-                      rel="nofollow noreferrer"
-                      td="underline"
-                      target="_blank"
-                      size="xs"
-                      c="dimmed"
-                      style={{ lineHeight: 1.1 }}
-                    >
-                      {license.name}
-                    </Text>
-                  )}
+                <BaseModelLicense license={license} plural={model.licenses.length > 0}>
                   {showAddendumLicense && (
                     <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
                       <Anchor
@@ -1892,7 +1874,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       </Anchor>
                     </Link>
                   )}
-                </Group>
+                </BaseModelLicense>
                 {model.licenses.map(({ url, name }) => (
                   <Text
                     key={name}
