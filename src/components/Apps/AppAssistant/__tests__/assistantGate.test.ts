@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { ChatToolResult } from '@civitai/components-chat/civitai-chat';
 import {
   APP_ASSISTANT_TURN_TOOL_CALL_LIMIT,
   REPORT_READY,
   SET_CHECKLIST,
+  TURN_LIMIT_MESSAGE,
   TURN_LIMIT_REFUSAL,
   checkKindOf,
   createAssistantGate,
@@ -11,7 +12,7 @@ import {
   previewVerdictOf,
 } from '~/components/Apps/AppAssistant/assistantGate';
 
-const ctx = { conversationId: 'conv-1' };
+const ctx = { conversationId: 'conv-1', reply: 1 };
 const toolCtx = { signal: new AbortController().signal, conversationId: 'conv-1', files: [] };
 
 const run = (command: string, exitCode: number): ChatToolResult => ({
@@ -36,7 +37,6 @@ const write: ChatToolResult = {
 /** A gate whose conversation is `conv-1`, as the chat's first gated call of a reply sets it. */
 function gateInConversation() {
   const gate = createAssistantGate();
-  gate.startTurn();
   gate.beforeToolCall('sandbox__list_dir', {}, ctx);
   return gate;
 }
@@ -59,30 +59,59 @@ async function allPassing(gate: ReturnType<typeof createAssistantGate>) {
 const readyDecision = (gate: ReturnType<typeof createAssistantGate>) =>
   gate.beforeToolCall(REPORT_READY, {}, ctx);
 
-describe('per-reply tool-call limit', () => {
-  it('refuses every call after the limit, until the next reply starts', () => {
-    const onTurnLimit = vi.fn();
-    const gate = createAssistantGate({ onTurnLimit });
-    gate.startTurn();
-    for (let i = 0; i < APP_ASSISTANT_TURN_TOOL_CALL_LIMIT; i++)
-      expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual({ allow: true });
-    expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual({
-      refuse: TURN_LIMIT_REFUSAL,
-    });
-    // Any tool, including the page's own.
-    expect(gate.beforeToolCall('start_preview', {}, ctx)).toEqual({ refuse: TURN_LIMIT_REFUSAL });
-    expect(onTurnLimit.mock.calls).toEqual([[true]]);
+const STOP_AT_LIMIT = {
+  refuse:
+    'This reply made 150 tool calls, the most one reply may make, so it ended before this call ran.',
+  stop: true,
+  message:
+    'App Assistant stopped this reply after 150 tool calls, the most one reply may make. Press Continue to let it carry on.',
+};
 
-    gate.startTurn();
-    expect(onTurnLimit.mock.calls).toEqual([[true], [false]]);
-    expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual({ allow: true });
+describe('per-reply tool-call limit', () => {
+  it('allows 150 calls in a reply, then ends the reply on the next', () => {
+    const gate = createAssistantGate();
+    for (let i = 0; i < 150; i++)
+      expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual({ allow: true });
+    expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual(STOP_AT_LIMIT);
+    // Any tool, including the page's own.
+    expect(gate.beforeToolCall('start_preview', {}, ctx)).toEqual(STOP_AT_LIMIT);
   });
 
-  it('is well below the 1,000-step ceiling and names it in the refusal', () => {
-    expect(APP_ASSISTANT_TURN_TOOL_CALL_LIMIT).toBe(150);
-    expect(TURN_LIMIT_REFUSAL).toBe(
-      'This reply has made 150 tool calls, the most one reply may make, so nothing more runs in it. Stop now: tell the user what is done and what is left, and that they can say "continue" to carry on.'
+  it('counts refused report_ready calls toward the limit', () => {
+    const gate = createAssistantGate();
+    for (let i = 0; i < 150; i++)
+      expect(gate.beforeToolCall(REPORT_READY, {}, ctx)).toHaveProperty('refuse');
+    expect(gate.beforeToolCall(REPORT_READY, {}, ctx)).toEqual(STOP_AT_LIMIT);
+  });
+
+  it('starts a fresh count for each reply the chat numbers, as Continue and Retry are', () => {
+    const gate = createAssistantGate();
+    for (let i = 0; i < 150; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
+    expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual(STOP_AT_LIMIT);
+
+    const next = { ...ctx, reply: 2 };
+    for (let i = 0; i < 150; i++)
+      expect(gate.beforeToolCall('sandbox__read_file', {}, next)).toEqual({ allow: true });
+    expect(gate.beforeToolCall('sandbox__read_file', {}, next)).toEqual(STOP_AT_LIMIT);
+  });
+
+  it('gives a new reply all 150 calls, whatever the last one used', () => {
+    const gate = createAssistantGate();
+    for (let i = 0; i < 100; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
+    gate.beforeToolCall('sandbox__read_file', {}, { ...ctx, reply: 2 });
+    for (let i = 0; i < 149; i++)
+      expect(gate.beforeToolCall('sandbox__read_file', {}, { ...ctx, reply: 2 })).toEqual({
+        allow: true,
+      });
+    expect(gate.beforeToolCall('sandbox__read_file', {}, { ...ctx, reply: 2 })).toEqual(
+      STOP_AT_LIMIT
     );
+  });
+
+  it('is well below the 1,000-step ceiling and says so in both texts', () => {
+    expect(APP_ASSISTANT_TURN_TOOL_CALL_LIMIT).toBe(150);
+    expect(TURN_LIMIT_REFUSAL).toBe(STOP_AT_LIMIT.refuse);
+    expect(TURN_LIMIT_MESSAGE).toBe(STOP_AT_LIMIT.message);
   });
 });
 
@@ -385,8 +414,20 @@ describe('report_ready alongside other calls', () => {
   it('forgets calls left running by an earlier reply', async () => {
     const gate = await settledAndPassing();
     gate.beforeToolCall('sandbox__read_file', {}, ctx);
-    gate.startTurn();
+    expect(gate.beforeToolCall(REPORT_READY, {}, { ...ctx, reply: 2 })).toEqual({ allow: true });
     await expect(readyResult(gate)).resolves.toMatchObject({ ready: true });
+  });
+
+  it('ignores a call that did not run because its reply ended', async () => {
+    const gate = await settledAndPassing();
+    gate.onToolResult({
+      ...write,
+      output: { error: 'The page ended this reply before this call ran.' },
+      isError: true,
+      stopped: true,
+    });
+    gate.onToolResult({ ...run('cd my-app && npm test', 1), isError: true, stopped: true });
+    expect(readyDecision(gate)).toEqual({ allow: true });
   });
 
   it('fails when the checks no longer pass by the time it runs', async () => {

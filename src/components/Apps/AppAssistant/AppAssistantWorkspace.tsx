@@ -21,7 +21,6 @@ import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantCha
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import {
-  APP_ASSISTANT_TURN_TOOL_CALL_LIMIT,
   SANDBOX_SERVER_ID,
   createAssistantGate,
 } from '~/components/Apps/AppAssistant/assistantGate';
@@ -150,8 +149,7 @@ export function AppAssistantWorkspace({
     stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
 
-  const [turnLimitReached, setTurnLimitReached] = useState(false);
-  const gate = useMemo(() => createAssistantGate({ onTurnLimit: setTurnLimitReached }), []);
+  const gate = useMemo(() => createAssistantGate(), []);
   // What was verified belongs to the sandbox it was verified in.
   useEffect(() => gate.reset(), [activeName, gate]);
 
@@ -178,15 +176,15 @@ export function AppAssistantWorkspace({
     [canPreview, gate]
   );
 
-  // The chat reads these once at the start of every reply, which is where a reply's tool-call count restarts.
-  const instructions = useCallback(() => {
-    gate.startTurn();
-    return buildAssistantInstructions({
-      sandbox: live.current.active,
-      canPreview: live.current.canPreview,
-      previewHost: live.current.session?.host ?? null,
-    });
-  }, [gate]);
+  const instructions = useCallback(
+    () =>
+      buildAssistantInstructions({
+        sandbox: live.current.active,
+        canPreview: live.current.canPreview,
+        previewHost: live.current.session?.host ?? null,
+      }),
+    []
+  );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
   const mcpUrl =
@@ -347,12 +345,6 @@ export function AppAssistantWorkspace({
             tab === 'chat' ? 'flex w-full' : 'hidden'
           )}
         >
-          {turnLimitReached && (
-            <Alert color="yellow" variant="light" radius={0} className="shrink-0">
-              App Assistant stopped running tools in this reply after{' '}
-              {APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls. Say “continue” to let it carry on.
-            </Alert>
-          )}
           <AppAssistantChat
             tokens={tokens}
             tools={tools}

@@ -30,8 +30,8 @@ const m = vi.hoisted(() => ({
     beforeToolCall?: (
       name: string,
       input: unknown,
-      context: { conversationId: string }
-    ) => { allow: true } | { refuse: string };
+      context: { conversationId: string; reply: number }
+    ) => { allow: true } | { refuse: string; stop?: boolean; message?: string };
     onToolResult?: (result: {
       name: string;
       input: unknown;
@@ -385,7 +385,7 @@ describe('AppAssistantWorkspace hold while the sandbox starts', () => {
 });
 
 describe('AppAssistantWorkspace tool gate', () => {
-  const conv = { conversationId: 'c' };
+  const conv = { conversationId: 'c', reply: 1 };
 
   test('offers report_ready and set_checklist beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();
@@ -432,20 +432,13 @@ describe('AppAssistantWorkspace tool gate', () => {
     );
   });
 
-  test('pauses a reply at the tool-call limit with a notice, cleared when the next reply starts', async () => {
+  test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
     await mount();
-    m.chat!.instructions();
     for (let i = 0; i < 150; i++)
       expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
-    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toHaveProperty('refuse');
-    const notice = page.getByText(
-      /App Assistant stopped running tools in this reply after 150 tool calls/
-    );
-    await expect.element(notice).toBeInTheDocument();
-
-    // The chat reads the instructions at the start of every reply.
-    m.chat!.instructions();
-    await expect.element(notice).not.toBeInTheDocument();
-    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
+    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toMatchObject({ stop: true });
+    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
+      allow: true,
+    });
   });
 });

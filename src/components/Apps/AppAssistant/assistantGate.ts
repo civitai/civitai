@@ -10,9 +10,9 @@ export const SANDBOX_SERVER_ID = 'sandbox';
 const sandboxTool = (tool: string) => `${SANDBOX_SERVER_ID}__${tool}`;
 
 /**
- * Tool calls one reply may make before every further call is refused. It only refuses calls: the page
- * cannot end a reply, so a model that ignores the refusal still runs to `APP_ASSISTANT_MAX_STEPS`.
- * Calls stand in for steps because a step's Buzz cost is not visible to the page.
+ * Tool calls one reply may make. The next call does not run and ends the reply, with no further model
+ * request; Continue starts a new reply with a fresh count. Calls stand in for steps because a step's Buzz
+ * cost is not visible to the page.
  */
 export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 150;
 
@@ -21,7 +21,10 @@ export const SET_CHECKLIST = 'set_checklist';
 const CHECKLIST_MAX_ITEMS = 30;
 const CHECKLIST_LABEL_MAX = 200;
 
-export const TURN_LIMIT_REFUSAL = `This reply has made ${APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls, the most one reply may make, so nothing more runs in it. Stop now: tell the user what is done and what is left, and that they can say "continue" to carry on.`;
+/** What the assistant reads as the refused call's error, in the reply after. */
+export const TURN_LIMIT_REFUSAL = `This reply made ${APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls, the most one reply may make, so it ended before this call ran.`;
+/** What the user reads under the reply the limit ended. */
+export const TURN_LIMIT_MESSAGE = `App Assistant stopped this reply after ${APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls, the most one reply may make. Press Continue to let it carry on.`;
 
 // Every other sandbox tool clears the checks: write_file, edit_file and delete_path change files, and
 // dev_server_start/_restart run a command (the dev script, or one the assistant passes). A tool the
@@ -112,14 +115,7 @@ interface Verification {
 
 const unverified = (): Verification => ({ preview: null, tests: null, typecheck: null });
 
-export interface AssistantGateDeps {
-  /** Called with true when a reply reaches the tool-call limit, and with false when the next one starts. */
-  onTurnLimit?: (reached: boolean) => void;
-}
-
 export interface AssistantGate {
-  /** Call at the start of every reply. */
-  startTurn(): void;
   /** Forget what was verified, e.g. when another sandbox opens. */
   reset(): void;
   beforeToolCall: ChatToolGate;
@@ -131,10 +127,11 @@ export interface AssistantGate {
  * The page's own checks on the assistant's tool calls: a per-reply call limit, and a `report_ready`
  * that is refused until the tool results of this conversation show the app checked.
  */
-export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate {
+export function createAssistantGate(): AssistantGate {
   let conversationId: string | null = null;
+  // The chat numbers every reply, Continue and Retry included.
+  let reply: number | null = null;
   let turnCalls = 0;
-  let limitReached = false;
   let verification = unverified();
   let checklist: ChecklistItem[] | null = null;
   // Calls other than report_ready that were allowed and have not returned. The chat starts every call of
@@ -190,13 +187,13 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
       conversationId = context.conversationId;
       reset();
     }
-    if (turnCalls >= APP_ASSISTANT_TURN_TOOL_CALL_LIMIT) {
-      if (!limitReached) {
-        limitReached = true;
-        deps.onTurnLimit?.(true);
-      }
-      return { refuse: TURN_LIMIT_REFUSAL };
+    if (context.reply !== reply) {
+      reply = context.reply;
+      turnCalls = 0;
+      running = 0;
     }
+    if (turnCalls >= APP_ASSISTANT_TURN_TOOL_CALL_LIMIT)
+      return { refuse: TURN_LIMIT_REFUSAL, stop: true, message: TURN_LIMIT_MESSAGE };
     turnCalls++;
     if (name === REPORT_READY) {
       const refusal = notReady();
@@ -205,8 +202,9 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
     return { allow: true };
   };
 
-  const onToolResult = ({ name, input, output, isError, refused }: ChatToolResult) => {
-    if (refused !== undefined) return;
+  const onToolResult = ({ name, input, output, isError, refused, stopped }: ChatToolResult) => {
+    // Neither ran. One its ended reply did not run stays counted in `running`; the next reply starts at 0.
+    if (refused !== undefined || stopped) return;
     if (name !== REPORT_READY) running = Math.max(0, running - 1);
     if (name === PREVIEW_CHECK)
       verification.preview = isError ? 'error' : previewVerdictOf(output) ?? 'unreadable';
@@ -286,14 +284,6 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
   };
 
   return {
-    startTurn() {
-      turnCalls = 0;
-      running = 0;
-      if (limitReached) {
-        limitReached = false;
-        deps.onTurnLimit?.(false);
-      }
-    },
     reset,
     beforeToolCall,
     onToolResult,
