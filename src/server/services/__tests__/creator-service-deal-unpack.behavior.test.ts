@@ -201,6 +201,8 @@ async function accepted() {
     buyerId: BUYER,
     requestText: 'please',
     buzzType: 'yellow',
+    servableLevels: 31,
+    consentLevels: 1,
   });
   await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
   return id;
