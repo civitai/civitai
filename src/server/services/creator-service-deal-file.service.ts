@@ -273,7 +273,7 @@ export async function completeServiceDealUpload({
   if (held.status === 'unknown') throw couldNotCheck();
   if (held.status === 'absent' || held.size !== file.size) {
     const reason = 'The uploaded file did not match its declared size.';
-    await failFile(file.id, reason, 'Uploading');
+    if ((await failFile(file.id, reason, 'Uploading')) === 0) return currentState(file.id);
     await deleteObject(bucket, file.s3Key).catch(() => null);
     await deleteObject(bucket, heldKey).catch(() => null);
     throw throwBadRequestError(reason);
@@ -282,7 +282,7 @@ export async function completeServiceDealUpload({
   if (file.kind === 'Final' && fileExtension(file.fileName) === 'zip') {
     const refusal = await zipRefusal(bucket, heldKey);
     if (refusal) {
-      await failFile(file.id, refusal, 'Uploading');
+      if ((await failFile(file.id, refusal, 'Uploading')) === 0) return currentState(file.id);
       await deleteObject(bucket, file.s3Key).catch(() => null);
       await deleteObject(bucket, heldKey).catch(() => null);
       throw throwBadRequestError(refusal);
@@ -299,6 +299,18 @@ export async function completeServiceDealUpload({
   await deleteObject(bucket, moved === 1 ? file.s3Key : heldKey).catch(() => null);
   if (moved === 1 && file.kind === 'Final') await submitFinalScan({ ...file, s3Key: heldKey });
   return { id: file.id, status: next };
+}
+
+/**
+ * Where a file stands now. A completion that lost a race to another call returns this instead of
+ * failing the file or deleting anything: the other call's result is the one that stands, and its
+ * objects are not ours to remove.
+ */
+async function currentState(fileId: number) {
+  const [row] = await dbWrite.$queryRaw<{ status: ServiceDealFileStatus }[]>`
+    SELECT "status" FROM "ServiceDealFile" WHERE "id" = ${fileId}::int`;
+  if (!row) throw throwNotFoundError('File not found');
+  return { id: fileId, status: row.status };
 }
 
 const couldNotCheck = () =>

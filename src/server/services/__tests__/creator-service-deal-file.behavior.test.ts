@@ -378,35 +378,56 @@ describe('requesting an upload', () => {
 });
 
 describe('completing an upload', () => {
-  it('does not fail a file that another call already moved on', async () => {
+  /** The other call finishes while this one is mid-check: Ready, at its own held key. */
+  const WINNER_KEY = 'service-deals/files/winner-copy';
+  const otherCallFinishes = (fileId: number) =>
+    q(`UPDATE "ServiceDealFile" SET status = 'Ready', "s3Key" = $2 WHERE id = $1`, [
+      fileId,
+      WINNER_KEY,
+    ]);
+
+  it('does not fail a file that another call already moved on, nor delete anything', async () => {
     const dealId = await accepted('None');
     const { fileId } = await upload(dealId, { size: 1000 });
     // The first measurement is fine; while this call measures its copy, the other call finishes.
     s3.headObject.mockResolvedValueOnce({ status: 'present', size: 1000 });
     s3.headObject.mockImplementationOnce(async () => {
-      await q(`UPDATE "ServiceDealFile" SET status = 'Ready' WHERE id = $1`, [fileId]);
+      await otherCallFinishes(fileId);
       return { status: 'present', size: 999_999 };
     });
-    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST' }
-    );
-    expect(await fileRow(fileId)).toMatchObject({ status: 'Ready', failReason: null });
+    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).resolves.toEqual({
+      id: fileId,
+      status: 'Ready',
+    });
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Ready',
+      failReason: null,
+      s3Key: WINNER_KEY,
+    });
+    // The delivered file's bytes are not touched, and neither is anything else.
+    expect(s3.deleteObject).not.toHaveBeenCalled();
   });
 
-  it('does not fail a file that another call already moved on, for a refused zip either', async () => {
+  it('does the same when the losing call is the one that refuses a zip', async () => {
     const dealId = await accepted('None');
     const { fileId } = await upload(dealId, { size: 1000 });
     s3.headObject.mockResolvedValue({ status: 'present', size: 1000 });
     // The held copy's first bytes are not a zip; meanwhile the other call finishes.
     s3.send.mockImplementation(async (command: { input: { Range?: string } }) => {
       if (!command.input.Range) return {};
-      await q(`UPDATE "ServiceDealFile" SET status = 'Ready' WHERE id = $1`, [fileId]);
+      await otherCallFinishes(fileId);
       return body(Buffer.from('definitely not a zip file at all'));
     });
-    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST' }
-    );
-    expect(await fileRow(fileId)).toMatchObject({ status: 'Ready', failReason: null });
+    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).resolves.toEqual({
+      id: fileId,
+      status: 'Ready',
+    });
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Ready',
+      failReason: null,
+      s3Key: WINNER_KEY,
+    });
+    expect(s3.deleteObject).not.toHaveBeenCalled();
   });
 
   it('measures the object: a size that is not the declared one fails and removes it', async () => {
