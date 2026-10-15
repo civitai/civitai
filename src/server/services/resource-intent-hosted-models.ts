@@ -20,18 +20,15 @@ export type HostedModelSuggestion = {
 
 /**
  * Catalog entries ranked by how many distinct `needs` they cover, catalog order breaking ties,
- * capped at `HOSTED_MODELS_MAX`. An entry covering none is never returned. When `sfwOnly` is false
- * the viewer browses mature content, so only entries known to produce it (`matureSupport === true`)
- * are eligible; an unknown counts as unsupported.
+ * capped at `HOSTED_MODELS_MAX`. An entry covering none is never returned. Deliberately blind to the
+ * viewer's browsing level: every hosted model is listed in every mode.
  */
 export function matchHostedModels(
   needs: readonly HostedModelCapability[],
-  { sfwOnly }: { sfwOnly: boolean },
   catalog: readonly HostedModelCatalogEntry[] = HOSTED_MODEL_CATALOG
 ): HostedModelSuggestion[] {
   const wanted = new Set(needs);
   return catalog
-    .filter((entry) => sfwOnly || entry.matureSupport === true)
     .map((entry, order) => ({
       entry,
       order,

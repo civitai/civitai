@@ -27,13 +27,6 @@ export type HostedModelCatalogEntry = {
   modelId: number;
   goodAt: string;
   capabilities: readonly HostedModelCapability[];
-  /**
-   * Whether the model can produce mature output. `false` where the base model's licence restricts
-   * mature levels (`getRestrictedNsfwLevelsForBaseModel`) or this codebase records that the provider
-   * refuses mature requests; `null` where nothing here says either way. Mature-mode callers get only
-   * `true` entries.
-   */
-  matureSupport: boolean | null;
 };
 
 // Array order is the tie-break when two entries match the same number of needs.
@@ -46,7 +39,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'Follows plain-English prompts, renders text inside an image better than most, and edits a picture you supply.',
     capabilities: ['legible_text', 'image_editing'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.NanoBanana,
@@ -56,8 +48,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       "Keeps a subject's likeness across edits to outfit, hair or setting, and also does text-to-image.",
     capabilities: ['character_consistency', 'image_editing'],
-    // `REMIX_ENGINES` (remix.constants.ts) routes mature edits away from it: the provider refuses them.
-    matureSupport: false,
   },
   {
     ecosystemId: ECO.Imagen4,
@@ -67,7 +57,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'Photorealistic images with fine detail, compositional accuracy and legible in-image text.',
     capabilities: ['photoreal', 'legible_text'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.Seedream,
@@ -77,7 +66,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'Output up to 4K with strong prompt adherence and fine typography, including Chinese characters.',
     capabilities: ['high_resolution', 'legible_text'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.Grok,
@@ -86,7 +74,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     modelId: 2435474,
     goodAt: 'Still images and short clips from a text prompt or a reference image.',
     capabilities: ['reference_images'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.MAI,
@@ -96,7 +83,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'Photoreal, design-ready images and product shots, with stronger text rendering and pixel-level editing.',
     capabilities: ['photoreal', 'legible_text', 'image_editing'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.MuseImage,
@@ -106,7 +92,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'Plans its composition and reviews its own output, edits one element while leaving the rest pixel-identical, and composes from tagged reference images.',
     capabilities: ['image_editing', 'reference_images'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.Reve,
@@ -115,7 +100,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     modelId: 2781889,
     goodAt: 'Region-structured layout control, native 4K output, and dense scenes with fine text.',
     capabilities: ['design_layout', 'high_resolution', 'legible_text'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.Ideogram,
@@ -125,7 +109,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'Accurate text for posters, logos and typography-led design, plus editing with up to three reference images.',
     capabilities: ['legible_text', 'design_layout', 'image_editing', 'reference_images'],
-    matureSupport: false,
   },
   {
     ecosystemId: ECO.Ming,
@@ -135,7 +118,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'UI mockups, infographics, posters and slides with legible type, including RGBA output on a transparent background.',
     capabilities: ['design_layout', 'legible_text', 'transparent_background'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.WanImage27,
@@ -145,7 +127,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'Varied faces, stable text rendering, colour and layout control, and instruction editing.',
     capabilities: ['legible_text', 'design_layout', 'image_editing'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.Flux3,
@@ -154,7 +135,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     modelId: 2839203,
     goodAt: 'Generation and editing across styles and aspect ratios, including complex prompts.',
     capabilities: ['image_editing'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.Ernie,
@@ -163,7 +143,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     modelId: 2548387,
     goodAt: 'An open 8B DiT text-to-image model with a built-in prompt enhancer for short prompts.',
     capabilities: [],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.Lens,
@@ -173,7 +152,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'A compact 3.8B model with flexible resolution up to 1440×1440 and aspect ratios from 1:2 to 2:1.',
     capabilities: [],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.MageFlow,
@@ -183,7 +161,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'A 4B model for generation and editing at native 512–2048 px in any aspect ratio, with strong prompt following.',
     capabilities: ['image_editing', 'high_resolution'],
-    matureSupport: null,
   },
   {
     ecosystemId: ECO.HiDreamO1,
@@ -193,7 +170,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       'An 8B pixel-level model for text-to-image, instruction editing and multi-reference subject personalization up to 2048×2048.',
     capabilities: ['image_editing', 'reference_images', 'character_consistency', 'high_resolution'],
-    matureSupport: null,
   },
 ];
 

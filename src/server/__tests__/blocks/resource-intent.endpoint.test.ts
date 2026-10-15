@@ -57,7 +57,7 @@ vi.mock('~/server/services/resource-intent.service', () => ({
   getResourceIntent: (...args: unknown[]) => mockGetResourceIntent(...(args as [])),
 }));
 
-// The restricted-region list is read from env at module load, so a region case pins it here.
+// The restricted-region list is read from env at module load, so the region case pins it here.
 const mockIsRegionRestricted = vi.fn<(region: unknown) => boolean>(() => false);
 vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
   ...(await importOriginal<typeof RegionBlocking>()),
@@ -346,7 +346,7 @@ describe('needs → hostedModels', () => {
     });
   });
 
-  it('ranks, caps at three, and includes an SFW-only entry on a SFW ceiling', async () => {
+  it('ranks and caps at three', async () => {
     const { res } = await call({
       __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
       body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
@@ -355,11 +355,26 @@ describe('needs → hostedModels', () => {
     expect(hosted.map((h) => h.key)).toEqual(['Reve', 'Ideogram', 'Ming']);
   });
 
-  it('🔴 a mature ceiling drops entries not known to support mature content', async () => {
-    const { res } = await call({
-      body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
-    });
-    expect(res.body).toMatchObject({ maturity: { sfwOnly: false }, hostedModels: [] });
+  it('🔴 the browsing ceiling does not change hostedModels: same list for SFW, mature and region-clamped', async () => {
+    const body = { ...VALID_BODY, needs: ['legible_text', 'design_layout'] };
+    const sfw = await call({ __claims: { ...CLAIMS, maxBrowsingLevel: 3 }, body });
+    const mature = await call({ body });
+    mockIsRegionRestricted.mockReturnValue(true);
+    const clamped = await call({ body });
+    const read = (r: { res: { body: unknown } }) =>
+      r.res.body as { maturity: { sfwOnly: boolean }; hostedModels: { key: string }[] };
+    // The ceilings really differ, so an equal list is not an accident of identical inputs.
+    expect([sfw, mature, clamped].map((r) => read(r).maturity.sfwOnly)).toEqual([
+      true,
+      false,
+      true,
+    ]);
+    expect(read(mature).hostedModels).toEqual(read(sfw).hostedModels);
+    expect(read(clamped).hostedModels).toEqual(read(sfw).hostedModels);
+    // Ideogram and Nano Banana included on a mature ceiling too.
+    expect(read(mature).hostedModels.map((h) => h.key)).toEqual(['Reve', 'Ideogram', 'Ming']);
+    const nano = await call({ body: { ...VALID_BODY, needs: ['character_consistency'] } });
+    expect(read(nano).hostedModels.map((h) => h.key)).toEqual(['NanoBanana', 'HiDream-O1']);
   });
 
   it('empty needs is answered with an empty list, not omitted', async () => {
@@ -377,17 +392,6 @@ describe('needs → hostedModels', () => {
     }
     expect(mockCheckBlockLLMRateLimit).not.toHaveBeenCalled();
     expect(mockGetResourceIntent).not.toHaveBeenCalled();
-  });
-
-  it('🔴 a restricted region turns a mature token into a SFW ceiling for the hosted list too', async () => {
-    mockIsRegionRestricted.mockReturnValue(true);
-    const { res } = await call({
-      body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
-    });
-    expect(mockIsRegionRestricted).toHaveBeenCalled();
-    expect(res.body).toMatchObject({ maturity: { browsingLevel: 3, sfwOnly: true } });
-    const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
-    expect(hosted.map((h) => h.key)).toEqual(['Reve', 'Ideogram', 'Ming']);
   });
 
   it('accepts every capability once (8) and refuses a ninth', async () => {

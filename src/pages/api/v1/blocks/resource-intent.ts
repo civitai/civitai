@@ -119,8 +119,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       ...result,
       // Echo the applied ceiling (advisory — the clamp is authoritative).
       maturity: { browsingLevel, sfwOnly: isSfwCeiling },
-      // Only when asked for, so a caller that sends no `needs` gets the body it always got.
-      ...(needs && { hostedModels: matchHostedModels(needs, { sfwOnly: isSfwCeiling }) }),
+      // Only when asked for, so a caller that sends no `needs` gets the body it always got. Not
+      // filtered by the ceiling: every hosted model is listed in every browsing mode.
+      ...(needs && { hostedModels: matchHostedModels(needs) }),
     });
     return;
   } catch (e) {
