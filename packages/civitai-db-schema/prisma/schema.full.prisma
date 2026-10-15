@@ -1511,6 +1511,18 @@ model ModelVersionMetric {
   @@id(modelVersionId)
 }
 
+/// Images a model's owner generated with it, which the Creator Score's `models` category leaves out.
+/// Written by the nightly score job for owners who generated with their own models.
+model ModelSelfGeneration {
+  modelId         Int
+  userId          Int
+  generationCount BigInt   @default(0)
+  updatedAt       DateTime @default(now())
+
+  @@id([modelId, userId])
+  @@index([userId])
+}
+
 model ModelBaseModelMetric {
   model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId      Int
