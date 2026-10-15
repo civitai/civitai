@@ -1,4 +1,4 @@
-import type { ImageGenStepTemplate } from '@civitai/client';
+import type { ImageGenStepTemplate } from '@civitai/orchestration-client';
 import type { Krea3ImageGenInput } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';

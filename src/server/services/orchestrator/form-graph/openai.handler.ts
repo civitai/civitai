@@ -8,7 +8,7 @@ import type {
   OpenAiGpt15EditImageInput,
   OpenAiGpt2CreateImageInput,
   OpenAiGpt2EditImageInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type {
   OpenAiGpt25FlareCreateImageInput,
   OpenAiGpt25FlareEditImageInput,

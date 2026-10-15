@@ -44,7 +44,7 @@ describe('minimax music simple mode', () => {
   it('points both required fields at that step', async () => {
     const [, music] = await steps(simple);
     const input = music.input as any;
-    expect(input.caption).toEqual({ $ref: '$0', path: 'output.parsed.caption' });
+    expect(input.prompt).toEqual({ $ref: '$0', path: 'output.parsed.caption' });
     expect(input.lyrics).toEqual({ $ref: '$0', path: 'output.parsed.lyrics' });
   });
 
@@ -61,7 +61,7 @@ describe('minimax music custom mode', () => {
     const result = await steps(custom);
     expect(result.map((s) => s.$type)).toEqual(['miniMaxMusic3']);
     const input = result[0].input as any;
-    expect(input.caption).toBe(custom.musicDescription);
+    expect(input.prompt).toBe(custom.musicDescription);
     expect(input.lyrics).toBe(custom.lyrics);
   });
 });

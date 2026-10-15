@@ -10,7 +10,7 @@ import type {
   ChatCompletionInput,
   ChatCompletionStepTemplate,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import {
   ACE_AUDIO_MAX_BPM,
@@ -107,19 +107,19 @@ export const createAceAudioInput = defineHandler<EcosystemData<'Ace'>, StepInput
     cover,
     ...(data.aceAudioMode === 'simple'
       ? {
-          musicDescription: { $ref: chatRef!, path: 'output.parsed.musicDescription' },
+          prompt: { $ref: chatRef!, path: 'output.parsed.musicDescription' },
           lyrics: { $ref: chatRef!, path: 'output.parsed.lyrics' },
           bpm: { $ref: chatRef!, path: 'output.parsed.bpm' },
           key: { $ref: chatRef!, path: 'output.parsed.key' },
         }
       : {
-          musicDescription: custom?.musicDescription,
+          prompt: custom?.musicDescription,
           lyrics: custom?.lyrics,
           bpm: custom?.bpm,
           instrumentalWeight: custom?.instrumentalWeight,
           vocalWeight: custom?.vocalWeight,
           steps: custom?.steps,
-          cfg: custom?.cfgScale,
+          cfgScale: custom?.cfgScale,
         }),
   });
 

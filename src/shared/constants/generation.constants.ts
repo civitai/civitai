@@ -569,6 +569,8 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   'Flux2Klein_9B_base',
   'Flux2Klein_4B',
   'Flux2Klein_4B_base',
+  'Flux3Klein',
+  'Flux3Klein_base',
 ];
 
 // Flux Pro 1.1 / Ultra: excluded from the sdcpp 2-for-1 bonus and its footer alert.

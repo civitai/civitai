@@ -1025,6 +1025,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'ZImageTurbo',
   'ZImageBase',
   'Qwen',
+  'Flux3Klein',
+  'Flux3Klein_base',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1259,6 +1261,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Flux.3 - checkpoint only (FLUX 3 Image, BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3, supportType: 'generation', modelTypes: checkpointOnly },
+  // Flux.3 Klein - open weights, checkpoint and LoRA
+  { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1769,6 +1774,20 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.Flux3Klein,
+    defaults: {
+      model: { id: 3407486 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3Klein_base,
+    defaults: {
+      model: { id: 3407485 },
+      modelLocked: true,
+    },
+  },
+  {
     ecosystemId: ECO.Flux3Video,
     defaults: {
       model: { id: 3204701 },
@@ -2211,6 +2230,14 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
   {
     sourceEcosystemId: ECO.Flux2Klein_9B_base,
     targetEcosystemId: ECO.Flux2Klein_9B,
+    supportType: 'generation',
+    modelTypes: loraOnly,
+    support: 'partial',
+  },
+  // Flux3 Klein has partial support for Flux3 Klein-base
+  {
+    sourceEcosystemId: ECO.Flux3Klein_base,
+    targetEcosystemId: ECO.Flux3Klein,
     supportType: 'generation',
     modelTypes: loraOnly,
     support: 'partial',
@@ -4623,6 +4650,13 @@ export const ecosystemGroups: EcosystemGroup[] = [
     ],
     defaultEcosystemId: ECO.Flux2Klein_9B,
     sortOrder: 22,
+  },
+  {
+    id: 'Flux3Klein',
+    displayName: 'Flux.3 Klein',
+    ecosystemIds: [ECO.Flux3Klein, ECO.Flux3Klein_base],
+    defaultEcosystemId: ECO.Flux3Klein,
+    sortOrder: 23,
   },
   {
     id: 'LTXV',

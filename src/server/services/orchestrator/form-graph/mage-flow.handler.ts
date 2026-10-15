@@ -6,7 +6,7 @@ import type {
   ComfyMageFlow4bEditTurboImageInput,
   ComfyMageFlow4bTurboCreateImageGenInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { mageFlowVersionIds } from '~/shared/form-graph/generation/image/mage-flow.graph';
 import { defineHandler } from '../handlers/handler-factory';
