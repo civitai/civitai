@@ -7,7 +7,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const getReports = vi.fn();
-const getReportedAccountDetails = vi.fn(async (id: number) => ({ id }));
+const getReportedAccountDetails = vi.fn(
+  async (id: number) => ({ id } as { id: number; card?: { identity: { bannedAt: Date | null } } })
+);
+const lastModActivity = vi.fn(async () => ({
+  moderatorId: 3,
+  moderator: 'Valstrix',
+  at: new Date(),
+}));
+vi.mock('$lib/server/mod-activity', () => ({ lastModActivity }));
 const getSuspectImages = vi.fn(async () => null);
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
@@ -31,7 +39,6 @@ vi.mock('$lib/server/reported-account.service', () => ({ getReportedAccountModel
 const { load: layoutLoad } = await import('../+layout.server');
 const { load: indexLoad } = await import('../+page.server');
 const { load: accountLoad } = await import('../[userId]/[[tab=suspectTab]]/+page.server');
-const { load: retoolRedirect } = await import('../../../retool/user-reports/+page.server');
 
 const page = (items: { id: number; entityId: number | null }[]) => ({
   items,
@@ -94,6 +101,26 @@ describe('which account opens', () => {
 
   it('a path that is not a user id is a 404', async () => {
     await expect(runAccount({ userId: 'abc' })).rejects.toMatchObject({ status: 404 });
+  });
+
+  // Who banned it is the first question a ban raises; the card carries only when and why.
+  it('names who banned a banned account, and asks nothing for one that is not', async () => {
+    getReportedAccountDetails.mockResolvedValueOnce({
+      id: 5,
+      card: { identity: { bannedAt: new Date() } },
+    });
+    const banned = (await runAccount({ userId: '5' })) as unknown as {
+      account: { bannedBy: string | null };
+    };
+    expect(lastModActivity).toHaveBeenCalledWith('user', 5, 'ban');
+    expect(banned.account).toMatchObject({ bannedBy: 'Valstrix' });
+
+    lastModActivity.mockClear();
+    const clean = (await runAccount({ userId: '6' })) as unknown as {
+      account: { bannedBy: string | null };
+    };
+    expect(lastModActivity).not.toHaveBeenCalled();
+    expect(clean.account.bannedBy).toBeNull();
   });
 
   // Every open report on the account, by the account — not the ones on the current page of the
@@ -178,30 +205,5 @@ describe('reasons, read as the model queue reads them', () => {
   it('named: those reasons only', async () => {
     await runLayout('?status=Pending&reason=Spam');
     expect(asked()).toEqual(['Spam']);
-  });
-});
-
-describe('the retool redirect', () => {
-  const target = async (query: string) => {
-    try {
-      await retoolRedirect({ url: url(`/retool/user-reports${query}`) } as never);
-    } catch (e) {
-      return (e as { location: string }).location;
-    }
-    throw new Error('did not redirect');
-  };
-
-  it('moves ?user= and ?tab= into the path and keeps the rest', async () => {
-    expect(await target('?user=5&tab=images&page=2&tos=1')).toBe(
-      '/reports/user/5/images?page=2&tos=1'
-    );
-  });
-
-  it('drops a tab the route does not have rather than 404ing on it', async () => {
-    expect(await target('?user=5&tab=history')).toBe('/reports/user/5');
-  });
-
-  it('with no account, to the bare queue', async () => {
-    expect(await target('?status=Pending')).toBe('/reports/user?status=Pending');
   });
 });

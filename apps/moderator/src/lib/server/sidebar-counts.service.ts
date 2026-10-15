@@ -28,7 +28,6 @@ async function fetchCounts(): Promise<SidebarCounts> {
     imageTags,
     imageRatings,
     appeals,
-    reported,
     articles,
     ratingReviews,
     reports,
@@ -58,13 +57,6 @@ async function fetchCounts(): Promise<SidebarCounts> {
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .where('needsReview', '=', 'appeal')
       .executeTakeFirst(),
-    // Count per image, not per report. Rides Report_pending_id_idx (~270ms, streamed off render).
-    dbRead
-      .selectFrom('Report as r')
-      .innerJoin('ImageReport as ir', 'ir.reportId', 'r.id')
-      .select((eb) => eb.fn.count('ir.imageId').distinct().as('count'))
-      .where('r.status', '=', 'Pending')
-      .executeTakeFirst(),
     countModeratorArticles(),
     getRatingReviewCounts(),
     getReportCounts(),
@@ -91,7 +83,6 @@ async function fetchCounts(): Promise<SidebarCounts> {
     imageTags: Number(imageTags?.count ?? 0),
     imageRatings,
     appeals: Number(appeals?.count ?? 0),
-    reported: Number(reported?.count ?? 0),
     articles,
     ratingReviews: ratingReviews.Pending,
     feedbackNew,

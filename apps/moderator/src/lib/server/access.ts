@@ -80,7 +80,6 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/newUser', label: 'New Users', countKey: 'newUser' },
       { path: '/images/modRule', label: 'Rule Violations', countKey: 'modRule' },
       { path: '/images/remixSource', label: 'Remix Source', countKey: 'remixSource' },
-      { path: '/images/reported', label: 'Reported', countKey: 'reported' },
       { path: '/images/appeals', label: 'Appeals', countKey: 'appeals' },
       {
         path: '/images/removed-appeals',

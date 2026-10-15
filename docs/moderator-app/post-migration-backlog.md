@@ -65,7 +65,11 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       reported table now sends `reportedUser` rows to `/reports/user/<id>` and `post` rows to
       `/reports/post/<id>` (the Retool paths until 2026-10-14/15), falling back to the site link for anyone whose `data.nav` says they
       cannot open that queue. Every other entity keeps the site link — that is where it gets judged.
-- [ ] **Image reports are listed twice on the dashboard** — once under Reports and once under Images.
+- [x] **Image reports are listed twice on the dashboard** — once under Reports and once under Images.
+      **Closed 2026-10-15:** the grid moved to `/reports/image`, replacing the table there, and left the
+      Images nav, so there is one image-report page and one count (`report:image`). The note below is
+      the history of why the two numbers differed. The grid lists the same reasons the badge counts;
+      the one difference left is the grid's rating filter, which a moderator narrows by hand.
       *"No reason to show image reports here, they're listed under images."* Both are real queues
       (`/reports/image` is the report; `/images/reported` is the triage grid), so this is a decision
       about which one the dashboard should carry, not a removal anyone should make unilaterally.

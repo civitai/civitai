@@ -1,7 +1,6 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { setReportStatus, getGameMirrors, getReportedGame } from '$lib/server/reports.service';
-import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
 import {
   getReportedStorylines,
@@ -14,8 +13,9 @@ import { reportStatusActions } from '$lib/server/report-queue-actions';
 import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 
 // The table queues. Users, models and posts have their own routes (`/reports/user`, `/reports/model`,
-// `/reports/post`), each a queue layout with the open item in the path; a static route wins over this
-// one, so none of those slugs reaches here.
+// `/reports/post`), each a queue layout with the open item in the path, and images theirs
+// (`/reports/image`, the image queues' card grid); a static route wins over this one, so none of those
+// slugs reaches here.
 export const load: PageServerLoad = async ({ params, url }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
@@ -33,24 +33,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
 // Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
 export const actions: Actions = {
   ...reportStatusActions(),
-  /**
-   * The removal path main added with the `StickerPlacement` reason (#3766). Delegated, not
-   * reimplemented: the service settles escrow, and that must have one implementation.
-   */
-  removePlacement: async ({ request, locals }) => {
-    // Acting on reported content, not merely reading the queue — gated on its own path.
-    if (!canAccess(locals.user, '/reports')) return fail(403, { error: 'Not permitted.' });
-
-    const data = await request.formData();
-    const placementId = Number(data.get('placementId'));
-    if (!Number.isInteger(placementId) || placementId <= 0)
-      return fail(400, { error: 'Invalid placement.' });
-
-    const result = await removePlacement({ placementId, moderatorId: locals.user.id });
-    if (!result.ok) return fail(400, { error: result.error });
-    return { success: true, placementRemoved: placementId };
-  },
-
   /**
    * Delists the reported game on Game Frame, then sets the report Actioned (which pays the reporters).
    * The report is only touched once Game Frame says the game is down, so a failed call leaves it open.

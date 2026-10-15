@@ -245,7 +245,7 @@ A queue/stat board rather than a lookup tool.
 
 **Confirmed genuinely covered** (predicate-by-predicate): `UrgentReports`, `ActionReport`,
 `ErrorRatingQueue`, `ArticleReview`, `ReviewGrouped` (its seven buckets are split across
-`getImageReviewCounts` + `appeals` + `reported`, and all three arms match).
+`getImageReviewCounts` + `appeals` + `reported`, and all three arms matched until 2026-10-15. The `reported` arm was then dropped: its badge is now `report:image`, which counts Pending non-Automated reports rather than distinct images with a Pending report, so that one bucket no longer matches Retool's).
 
 **Confirmed dead in Retool too**, so not gaps: `HolidayPostsBulbs`, `LookUpTags`, `RatingTaggers`,
 `TaggerRatio`, `MuteStats` — no widget binds them. Note this corrects the row above: `RRatingStats`
