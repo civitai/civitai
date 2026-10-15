@@ -4,8 +4,10 @@ A storyline is a branching visual story told in posts. Each chapter is an ordina
 who starts the storyline writes the main path; other creators can continue it from the end of any
 chapter, so a story grows into a tree of alternatives that readers walk through and choose between.
 
-**Status:** behind the `storylines` feature flag, available to moderators and granted users. This page
-describes what is built; the in-app tool for making the next section is not (see the last section).
+**Status:** behind the `storylines` feature flag. Flipt decides who sees it; if Flipt is unreachable or
+the flag is missing there, it falls back to moderators and users granted the `storylines` permission.
+This page describes what is built; the in-app tool for making the next section is not (see the last
+section).
 
 ## For readers
 
