@@ -265,7 +265,8 @@ The legacy scanner supported 5 task types:
 ### Duplicate Model Files
 
 When a primary weights file (any of `primaryModelFileTypes`, at least 1 MB) gets its SHA256, `applyScanOutcome`
-looks for a primary weights file with the same SHA256 on another creator's public, published model
+looks for a primary weights file with the same SHA256 on another creator's public, published model, uploaded
+before the uploader's own first file with those bytes
 (`src/server/services/duplicate-model-hash.service.ts`). On a match the model is unpublished with reason
 `duplicate` and a message linking the original. Publishing runs the same lookup and refuses a match, for
 files hashed before the original went live. The same owner re-uploading their own file, CivitaiOfficial

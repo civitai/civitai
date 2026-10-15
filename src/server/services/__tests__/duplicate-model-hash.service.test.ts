@@ -32,6 +32,10 @@ const MATCH = {
   originalVersionId: 2000,
   originalUserId: ORIGINAL_OWNER_ID,
 };
+// The other owner's file was uploaded before the uploader's first copy of the bytes.
+const ROW = { ...MATCH, originalFileId: 400, ownerFirstFileId: 500 };
+// A copy of the uploader's own work: the other owner's file came after the uploader's first one.
+const LATER_COPY_ROW = { ...MATCH, originalFileId: 600, ownerFirstFileId: 500 };
 
 const scan = (overrides: Partial<Parameters<typeof checkDuplicateHashOnScan>[0]> = {}) =>
   checkDuplicateHashOnScan({
@@ -48,7 +52,7 @@ const scan = (overrides: Partial<Parameters<typeof checkDuplicateHashOnScan>[0]>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  queryRaw.mockResolvedValue([MATCH]);
+  queryRaw.mockResolvedValue([ROW]);
   mockIsFlipt.mockResolvedValue(true);
   mockUnpublishModelById.mockResolvedValue({});
 });
@@ -113,6 +117,36 @@ describe('checkDuplicateHashOnScan', () => {
     }
   });
 
+  it("does not treat a later copy of the uploader's own file as the original", async () => {
+    queryRaw.mockResolvedValue([LATER_COPY_ROW]);
+
+    await expect(scan()).resolves.toBe('none');
+
+    expect(mockUnpublishModelById).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('dates the uploader by their FIRST copy, so re-uploading their own weights is not a match', async () => {
+    // The scanned file (500) is newer than the other owner's (400), but the uploader already had
+    // these bytes in an older file (300): the other owner's file is the copy.
+    queryRaw.mockResolvedValue([{ ...MATCH, originalFileId: 400, ownerFirstFileId: 300 }]);
+
+    await expect(scan()).resolves.toBe('none');
+    expect(mockUnpublishModelById).not.toHaveBeenCalled();
+  });
+
+  it('skips a later copy and matches an earlier original listed after it', async () => {
+    queryRaw.mockResolvedValue([
+      { ...LATER_COPY_ROW, originalModelId: 3000 },
+      { ...ROW, originalModelId: 1000 },
+    ]);
+
+    await expect(scan()).resolves.toBe('unpublished');
+    expect(mockUnpublishModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ customMessage: expect.stringContaining('/models/1000?') })
+    );
+  });
+
   it('binds the uploader as the owner the original must differ from', async () => {
     await scan();
 
@@ -122,6 +156,11 @@ describe('checkDuplicateHashOnScan', () => {
     const ownerSlot = strings.findIndex((s) => s.trimEnd().endsWith('om."userId" <>'));
     expect(ownerSlot).toBeGreaterThanOrEqual(0);
     expect(values[ownerSlot]).toBe(OWNER_ID);
+
+    // ...and as the owner whose first copy of the bytes dates the comparison.
+    const firstCopySlot = strings.findIndex((s) => s.trimEnd().endsWith('m."userId" ='));
+    expect(firstCopySlot).toBeGreaterThanOrEqual(0);
+    expect(values[firstCopySlot]).toBe(OWNER_ID);
   });
 
   it.each([
@@ -166,6 +205,13 @@ describe('assertNotCrossOwnerDuplicate', () => {
       expect.objectContaining({ message: 'suppressed', path: 'publish', versionId: 100 }),
       'webhooks'
     );
+  });
+
+  it('lets a creator republish an original that someone else has since copied', async () => {
+    queryRaw.mockResolvedValue([LATER_COPY_ROW]);
+
+    await expect(assertPublish()).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it('lets an ordinary publish through', async () => {

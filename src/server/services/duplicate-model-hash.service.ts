@@ -34,17 +34,40 @@ function scopeFilter(scope: Scope) {
   )`;
 }
 
+type CandidateRow = CrossOwnerDuplicate & { originalFileId: number; ownerFirstFileId: number };
+
+/**
+ * Only a file uploaded before the owner's own first copy of those bytes counts as the original.
+ * Otherwise a creator whose work was copied would be matched against the copy: on republishing it,
+ * or on uploading the same weights again in a new version. ModelFile ids are assigned in upload order.
+ */
+export function pickOriginal(rows: CandidateRow[]): CrossOwnerDuplicate | null {
+  const row = rows.find((r) => r.originalFileId < r.ownerFirstFileId);
+  if (!row) return null;
+  const { fileId, originalModelId, originalVersionId, originalUserId } = row;
+  return { fileId, originalModelId, originalVersionId, originalUserId };
+}
+
 /** The earliest-published public original that a file in `scope` duplicates, if any. */
 export async function findCrossOwnerDuplicate({
   ownerId,
   ...scope
 }: Scope & { ownerId: number }): Promise<CrossOwnerDuplicate | null> {
-  const [match] = await dbWrite.$queryRaw<CrossOwnerDuplicate[]>`
+  const rows = await dbWrite.$queryRaw<CandidateRow[]>`
     SELECT
       c.id "fileId",
       om.id "originalModelId",
       ov.id "originalVersionId",
-      om."userId" "originalUserId"
+      om."userId" "originalUserId",
+      o.id "originalFileId",
+      (
+        SELECT min(f.id)
+        FROM "ModelFileHash" h
+        JOIN "ModelFile" f ON f.id = h."fileId"
+        JOIN "ModelVersion" v ON v.id = f."modelVersionId"
+        JOIN "Model" m ON m.id = v."modelId"
+        WHERE h.hash = ch.hash AND h.type = 'SHA256' AND m."userId" = ${ownerId}
+      ) "ownerFirstFileId"
     FROM "ModelFile" c
     JOIN "ModelFileHash" ch ON ch."fileId" = c.id AND ch.type = 'SHA256'
     JOIN "ModelFileHash" oh ON oh.hash = ch.hash AND oh.type = 'SHA256' AND oh."fileId" <> c.id
@@ -60,9 +83,8 @@ export async function findCrossOwnerDuplicate({
       AND om.availability <> 'Private'
       AND om."deletedAt" IS NULL
     ORDER BY ov."publishedAt" ASC NULLS LAST, ov.id ASC
-    LIMIT 1
   `;
-  return match ?? null;
+  return pickOriginal(rows);
 }
 
 export function duplicateHashMessage(match: CrossOwnerDuplicate) {
