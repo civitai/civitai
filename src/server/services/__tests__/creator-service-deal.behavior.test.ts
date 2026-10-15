@@ -137,6 +137,7 @@ const buzzError = (status: number) =>
 const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[0]> = {}) =>
   deals.requestServiceDeal({
     offeringId: 1,
+    expectedPrice: PRICE,
     buyerId: BUYER,
     requestText: 'please draw my cat',
     buzzType: 'yellow',
@@ -230,6 +231,13 @@ describe('request', () => {
       }),
     ]);
     expect(await events(id)).toEqual(['Requested', 'Held']);
+  });
+
+  it('refuses a request at a price other than the one the buyer was shown', async () => {
+    await q(`UPDATE "ServiceOffering" SET price = 50000`);
+    await expect(request()).rejects.toEqual(conflict);
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
   it('holds the price the offering has when requested, not one changed afterwards', async () => {
@@ -372,6 +380,26 @@ describe('a hold whose outcome is unknown', () => {
     expect((await deal(id)).heldAt).toBeNull();
   });
 
+  it('rotates the batch, so holds that keep finding nothing cannot starve one that landed', async () => {
+    const first = await unknownHold();
+    const second = await unknownHold();
+    await ageHoldLeg(first, 12);
+    await ageHoldLeg(second, 11);
+    await deals.withdrawServiceDeal({ dealId: first, userId: BUYER });
+    await escrow.reconcileUnconfirmedHolds({ limit: 1 });
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        accountId: BUYER,
+        amount: PRICE,
+        transactionId: 't',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
+    ]);
+    await escrow.reconcileUnconfirmedHolds({ limit: 1 });
+    expect((await deal(second)).heldAt).not.toBeNull();
+  });
+
   it('is left for a human when only part of the price moved', async () => {
     const id = await unknownHold();
     await ageHoldLeg(id, 11);
@@ -501,6 +529,16 @@ describe('closing with a refund', () => {
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
+  it('reads a 409 on a retried refund as already refunded, and settles', async () => {
+    const { id } = await request();
+    buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(409));
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+    expect((await deal(id)).settledAt).not.toBeNull();
+    expect((await legs(id)).find((l) => l.leg === 'Refund')).toMatchObject({
+      transactionId: `creator-service-${id}-hold:already-refunded`,
+    });
+  });
+
   it('does not receipt a refund that moved nothing', async () => {
     const { id } = await request();
     buzz.refundMultiAccountTransaction.mockResolvedValue({
@@ -609,6 +647,18 @@ describe('working a deal', () => {
     await deals.cancelLateServiceDeal({ dealId: id, userId: BUYER });
     expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'late' });
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  // Requesting a revision must not turn an on-time delivery into an instant refund.
+  it('never offers the late cancel once anything was delivered', async () => {
+    const id = await accepted();
+    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
+    await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '5 days' WHERE id = $1`, [id]);
+    await expect(deals.cancelLateServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(
+      conflict
+    );
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
   it('counts revisions against the snapshot and completes with a 48h dispute window', async () => {

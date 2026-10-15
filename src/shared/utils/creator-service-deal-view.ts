@@ -73,7 +73,8 @@ export function dealActorRole(
 }
 
 export function dealDeadlines(deal: DealTimingFields) {
-  const working = deal.status === 'Accepted' || deal.status === 'InRevision';
+  // Only before the first delivery: after one, the due date is history.
+  const working = deal.status === 'Accepted';
   return {
     acceptBy:
       deal.status === 'Requested' ? plus(deal.requestedAt, SERVICE_DEAL_ACCEPT_WINDOW_MS) : null,

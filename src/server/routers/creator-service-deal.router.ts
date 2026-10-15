@@ -44,6 +44,7 @@ export const creatorServiceDealRouter = router({
   request: gated.input(requestServiceDealSchema).mutation(({ input, ctx }) =>
     requestServiceDeal({
       offeringId: input.offeringId,
+      expectedPrice: input.expectedPrice,
       requestText: input.requestText,
       buyerId: ctx.user.id,
       // From the request's domain, never the input: yellow, or green on the green site.
@@ -60,15 +61,13 @@ export const creatorServiceDealRouter = router({
     .input(listMyServiceDealsSchema)
     .query(({ input, ctx }) => listMyServiceDeals({ ...input, userId: ctx.user.id })),
 
-  get: protectedProcedure
-    .input(getServiceDealSchema)
-    .query(({ input, ctx }) =>
-      getServiceDealView({
-        dealId: input.id,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      })
-    ),
+  get: protectedProcedure.input(getServiceDealSchema).query(({ input, ctx }) =>
+    getServiceDealView({
+      dealId: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
   withdraw: protectedProcedure
     .input(serviceDealActionSchema)
     .mutation(({ input, ctx }) =>

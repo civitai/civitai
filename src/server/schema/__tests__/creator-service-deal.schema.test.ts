@@ -8,12 +8,13 @@ describe('requestServiceDealSchema', () => {
     expect(
       requestServiceDealSchema.parse({
         offeringId: 1,
+        expectedPrice: 500,
         requestText: ' draw my cat ',
         price: 1,
         buzzType: 'blue',
         sellerId: 99,
         buyerId: 98,
       })
-    ).toEqual({ offeringId: 1, requestText: 'draw my cat' });
+    ).toEqual({ offeringId: 1, expectedPrice: 500, requestText: 'draw my cat' });
   });
 });

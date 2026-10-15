@@ -142,8 +142,15 @@ type OfferingRow = {
   status: string;
   open: number;
   maxOpenDeals: number | null;
+  price: number;
   blocked: boolean;
 };
+
+const priceChanged = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message: 'The price of this service has changed. Review it and try again.',
+  });
 
 /**
  * Creates the deal from the offering's CURRENT terms, copied in one statement, and takes the hold.
@@ -152,11 +159,14 @@ type OfferingRow = {
  */
 export async function requestServiceDeal({
   offeringId,
+  expectedPrice,
   buyerId,
   requestText,
   buzzType,
 }: {
   offeringId: number;
+  /** The price the buyer was shown. The hold never takes a different one. */
+  expectedPrice: number;
   buyerId: number;
   requestText: string;
   buzzType: string;
@@ -167,7 +177,7 @@ export async function requestServiceDeal({
   await throwOnBlockedUserContent(requestText, { surface: 'creator-service-request' });
 
   const [offering] = await dbWrite.$queryRaw<OfferingRow[]>`
-    SELECT o."id", o."sellerId", o."status"::text AS "status", o."maxOpenDeals",
+    SELECT o."id", o."sellerId", o."status"::text AS "status", o."maxOpenDeals", o."price",
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked"
@@ -177,9 +187,12 @@ export async function requestServiceDeal({
   if (offering.blocked) throw throwBadRequestError('You cannot request this service');
   if (offering.maxOpenDeals !== null && offering.open >= offering.maxOpenDeals)
     throw throwBadRequestError('This service is not taking new requests right now');
+  if (offering.price !== expectedPrice) throw priceChanged();
 
   // The checks above are for the message; this statement repeats them as its own preconditions.
   const dealId = await dbWrite.$transaction(async (tx) => {
+    // Serialises requests per offering, so two at the cap cannot both count the same open deals.
+    await tx.$queryRaw`SELECT 1 FROM "ServiceOffering" WHERE "id" = ${offeringId}::int FOR UPDATE`;
     const [created] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", "price", "buzzType",
         "feeAmount", "revisionsIncluded", "deliveryDays", "previewKind", "status", "requestText",
@@ -190,7 +203,11 @@ export async function requestServiceDeal({
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
+        AND o."price" = ${expectedPrice}::int
         AND o."sellerId" <> ${buyerId}::int
+        AND (o."maxOpenDeals" IS NULL OR o."maxOpenDeals" > (
+          SELECT count(*) FROM "ServiceDeal" d WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})
+        ))
         AND ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)}
       RETURNING "id"`;
     if (!created) return null;
@@ -352,11 +369,15 @@ export const acceptServiceDealDelivery = ({ dealId, userId }: { dealId: number; 
     set: complete,
   });
 
-/** The buyer leaves once the seller is a day past due, without the seller's agreement. */
+/**
+ * The buyer leaves once the seller is a day past due, without the seller's agreement. Accepted
+ * only: once anything was delivered the due date is history, and a revision must not turn an
+ * on-time delivery into an instant refund. A late revision goes through a cancellation request.
+ */
 export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; userId: number }) =>
   requireTransition({
     dealId,
-    from: ['Accepted', 'InRevision'],
+    from: ['Accepted'],
     to: 'Cancelled',
     actorId: userId,
     event: 'Cancelled',

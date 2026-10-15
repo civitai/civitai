@@ -5,6 +5,8 @@ const text = (max: number) => z.string().trim().min(1).max(max);
 
 export const requestServiceDealSchema = z.object({
   offeringId: z.number().int().positive(),
+  /** The price the buyer was shown; a request at any other price is refused. */
+  expectedPrice: z.number().int().positive(),
   requestText: text(5000),
 });
 

@@ -57,6 +57,12 @@ describe('dealActions', () => {
     });
   });
 
+  it('never offers the late cancel after a delivery, however late', () => {
+    expect(
+      dealActions(deal({ status: 'InRevision', dueAt: ago(100) }), BUYER, NOW).actions
+    ).toEqual(['requestCancellation']);
+  });
+
   it('offers a revision only while one is left', () => {
     const delivered = { status: 'Delivered' as const, deliveredAt: ago(1) };
     expect(dealActions(deal(delivered), BUYER, NOW)).toEqual({

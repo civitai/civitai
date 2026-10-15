@@ -289,13 +289,23 @@ export async function refundDeal(dealId: number) {
     dealId,
     'Refund',
     async () => {
-      const result = await refundMultiAccountTransaction(
-        {
-          externalTransactionIdPrefix: holdPrefix(dealId),
-          ...ledgerEntry(dealId, 'Creator service: refunded from escrow'),
-        },
-        BUZZ_CALL_OPTIONS
-      );
+      let result;
+      try {
+        result = await refundMultiAccountTransaction(
+          {
+            externalTransactionIdPrefix: holdPrefix(dealId),
+            ...ledgerEntry(dealId, 'Creator service: refunded from escrow'),
+          },
+          BUZZ_CALL_OPTIONS
+        );
+      } catch (error) {
+        // Buzz keys refunds on the prefix and answers a second one with 409: the money is already
+        // back (an earlier attempt landed and its receipt did not). As crucible and challenge
+        // refunds treat it. 404 stays a failure: this hold is confirmed, so "nothing to refund"
+        // is a discrepancy for a human.
+        if (getBuzzApiStatus(error) === 409) return `${holdPrefix(dealId)}:already-refunded`;
+        throw error;
+      }
       // A refund that moved nothing must not be receipted, or both recovery queries skip it and
       // the buyer's Buzz sits in escrow with nothing able to find it.
       if (!result.refundedTransactions.length)
@@ -331,13 +341,18 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
       AND (t."lastError" IS NULL OR t."lastError" NOT LIKE ${`${REFUSED_PREFIX}%`}::text)
       AND t."createdAt" <= now() - ${ms(SERVICE_DEAL_HOLD_RECONCILE_AFTER_MS)}
       AND t."createdAt" >= now() - ${ms(SERVICE_DEAL_HOLD_RECONCILE_LOOKBACK_MS)}
-    ORDER BY t."createdAt"
+    -- Least recently checked first, so holds that keep finding nothing for their 7 days cannot
+    -- hold every slot of the batch while one whose charge has landed waits behind them.
+    ORDER BY t."lastAttemptAt" ASC NULLS FIRST, t."createdAt"
     LIMIT ${limit}::int`;
 
   let held = 0;
   let cancelled = 0;
   for (const hold of due) {
     try {
+      await dbWrite.$executeRaw`
+        UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now()
+        WHERE "dealId" = ${hold.dealId}::int AND "leg" = 'Hold'::"ServiceDealLeg"`;
       const legs = await getMultiAccountTransactionsByPrefix(hold.externalTransactionId);
       const charged = legs
         .filter((leg) => leg.accountId === hold.buyerId)
