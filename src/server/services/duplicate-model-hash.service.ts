@@ -17,11 +17,22 @@ import type { ModelStatus } from '~/shared/utils/prisma/enums';
 // Tiny files collide for reasons that have nothing to do with copying (empty or stub uploads).
 export const DUPLICATE_HASH_MIN_SIZE_KB = 1024;
 
+// A file held by this many distinct owners is a commonly shared file (a base or merged checkpoint
+// many creators re-host), not one creator's work, so it is never auto-blocked. Only owners with a
+// live copy count, plus the uploader.
+export const DUPLICATE_HASH_SHARED_OWNER_THRESHOLD = 3;
+
 export type CrossOwnerDuplicate = {
   fileId: number;
+  modelId: number;
+  sha256: string;
   originalModelId: number;
   originalVersionId: number;
   originalUserId: number;
+  originalFileId: number;
+  ownerCount: number;
+  earliestHolderUserId: number;
+  earliestHolderFileId: number;
 };
 
 type Scope = { fileId: number } | { versionId: number } | { modelId: number };
@@ -34,7 +45,7 @@ function scopeFilter(scope: Scope) {
   )`;
 }
 
-type CandidateRow = CrossOwnerDuplicate & { originalFileId: number; ownerFirstFileId: number };
+type CandidateRow = CrossOwnerDuplicate & { ownerFirstFileId: number };
 
 /**
  * Only a file uploaded before the owner's own first copy of those bytes counts as the original.
@@ -44,11 +55,29 @@ type CandidateRow = CrossOwnerDuplicate & { originalFileId: number; ownerFirstFi
 export function pickOriginal(rows: CandidateRow[]): CrossOwnerDuplicate | null {
   const row = rows.find((r) => r.originalFileId < r.ownerFirstFileId);
   if (!row) return null;
-  const { fileId, originalModelId, originalVersionId, originalUserId } = row;
-  return { fileId, originalModelId, originalVersionId, originalUserId };
+  const { ownerFirstFileId: _, ...match } = row;
+  return match;
 }
 
-/** The earliest-published public original that a file in `scope` duplicates, if any. */
+export type DuplicateDecision =
+  | { action: 'block'; reason: 'cross-owner-copy' }
+  | { action: 'exempt'; reason: 'shared-file' }
+  | { action: 'review'; reason: 'original-not-earliest-holder' };
+
+export function decideDuplicate(match: CrossOwnerDuplicate): DuplicateDecision {
+  if (match.ownerCount >= DUPLICATE_HASH_SHARED_OWNER_THRESHOLD)
+    return { action: 'exempt', reason: 'shared-file' };
+  // The chosen original is the earliest-published live copy. When an earlier holder's copy is
+  // unpublished or deleted, the chosen one may itself be a copy, so a person decides.
+  if (match.earliestHolderUserId !== match.originalUserId)
+    return { action: 'review', reason: 'original-not-earliest-holder' };
+  return { action: 'block', reason: 'cross-owner-copy' };
+}
+
+/**
+ * The earliest-published public original that a file in `scope` duplicates, if any, with how many
+ * owners hold the file and who uploaded it first.
+ */
 export async function findCrossOwnerDuplicate({
   ownerId,
   ...scope
@@ -56,6 +85,8 @@ export async function findCrossOwnerDuplicate({
   const rows = await dbWrite.$queryRaw<CandidateRow[]>`
     SELECT
       c.id "fileId",
+      cv."modelId" "modelId",
+      ch.hash "sha256",
       om.id "originalModelId",
       ov.id "originalVersionId",
       om."userId" "originalUserId",
@@ -67,13 +98,44 @@ export async function findCrossOwnerDuplicate({
         JOIN "ModelVersion" v ON v.id = f."modelVersionId"
         JOIN "Model" m ON m.id = v."modelId"
         WHERE h.hash = ch.hash AND h.type = 'SHA256' AND m."userId" = ${ownerId}
-      ) "ownerFirstFileId"
+      ) "ownerFirstFileId",
+      (
+        SELECT count(DISTINCT m."userId")::int
+        FROM "ModelFileHash" h
+        JOIN "ModelFile" f ON f.id = h."fileId" AND f.type IN (${Prisma.join(
+          primaryModelFileTypes
+        )})
+        JOIN "ModelVersion" v ON v.id = f."modelVersionId"
+        JOIN "Model" m ON m.id = v."modelId"
+        WHERE h.hash = ch.hash AND h.type = 'SHA256'
+          AND (
+            m."userId" = ${ownerId}
+            OR (
+              m.status = 'Published' AND v.status = 'Published'
+              AND m.availability <> 'Private' AND m."deletedAt" IS NULL
+            )
+          )
+      ) "ownerCount",
+      eh."userId" "earliestHolderUserId",
+      eh."fileId" "earliestHolderFileId"
     FROM "ModelFile" c
+    JOIN "ModelVersion" cv ON cv.id = c."modelVersionId"
     JOIN "ModelFileHash" ch ON ch."fileId" = c.id AND ch.type = 'SHA256'
     JOIN "ModelFileHash" oh ON oh.hash = ch.hash AND oh.type = 'SHA256' AND oh."fileId" <> c.id
     JOIN "ModelFile" o ON o.id = oh."fileId" AND o.type IN (${Prisma.join(primaryModelFileTypes)})
     JOIN "ModelVersion" ov ON ov.id = o."modelVersionId"
     JOIN "Model" om ON om.id = ov."modelId"
+    -- Earliest other-owner upload of these bytes, in any status.
+    JOIN LATERAL (
+      SELECT f.id "fileId", m."userId"
+      FROM "ModelFileHash" h
+      JOIN "ModelFile" f ON f.id = h."fileId" AND f.type IN (${Prisma.join(primaryModelFileTypes)})
+      JOIN "ModelVersion" v ON v.id = f."modelVersionId"
+      JOIN "Model" m ON m.id = v."modelId"
+      WHERE h.hash = ch.hash AND h.type = 'SHA256' AND m."userId" <> ${ownerId}
+      ORDER BY f.id ASC
+      LIMIT 1
+    ) eh ON true
     WHERE ${scopeFilter(scope)}
       AND c.type IN (${Prisma.join(primaryModelFileTypes)})
       AND c."sizeKB" >= ${DUPLICATE_HASH_MIN_SIZE_KB}
@@ -91,24 +153,52 @@ export function duplicateHashMessage(match: CrossOwnerDuplicate) {
   return `This model contains a file identical to one in another creator's model (/models/${match.originalModelId}?modelVersionId=${match.originalVersionId}). Re-uploading another creator's files is not allowed.`;
 }
 
-function logMatch(
+// Axiom: name 'duplicate-model-hash'. message is the outcome: 'unpublished' / 'blocked' (flag on),
+// 'would-block' (flag off), 'exempt' or 'review-needed' (either way).
+type LogMessage = 'unpublished' | 'blocked' | 'would-block' | 'exempt' | 'review-needed';
+
+function logDecision(
   path: 'scan' | 'publish',
-  action: 'unpublished' | 'blocked' | 'suppressed',
+  message: LogMessage,
+  match: CrossOwnerDuplicate,
+  decision: DuplicateDecision,
   details: Record<string, unknown>
 ) {
   logToAxiom(
-    { type: 'info', name: 'duplicate-model-hash', message: action, path, ...details },
+    {
+      type: 'info',
+      name: 'duplicate-model-hash',
+      message,
+      path,
+      decision: decision.action,
+      reason: decision.reason,
+      ...match,
+      ...details,
+    },
     'webhooks'
   ).catch(() => null);
 }
 
+const logMessageFor = (decision: DuplicateDecision, acted: LogMessage): LogMessage => {
+  if (decision.action === 'exempt') return 'exempt';
+  if (decision.action === 'review') return 'review-needed';
+  return acted;
+};
+
 const isExempt = (ownerId: number) => ownerId === constants.system.officialUserId;
 
-export type DuplicateHashScanOutcome = 'skipped' | 'none' | 'suppressed' | 'unpublished';
+export type DuplicateHashScanOutcome =
+  | 'skipped'
+  | 'none'
+  | 'exempt'
+  | 'review'
+  | 'would-block'
+  | 'unpublished';
 
 /**
  * Called once a file's hashes land. Unpublishes the model when a primary model file is a byte-identical
- * copy of another creator's published one. While the kill switch is off, matches are logged only.
+ * copy of another creator's published one. Shared files and doubtful originals are logged, not acted
+ * on; while the kill switch is off, every match is logged only.
  */
 export async function checkDuplicateHashOnScan({
   fileId,
@@ -142,9 +232,12 @@ export async function checkDuplicateHashOnScan({
   const match = await findCrossOwnerDuplicate({ fileId, ownerId });
   if (!match) return 'none';
 
+  const decision = decideDuplicate(match);
   const enabled = await isFlipt(FLIPT_FEATURE_FLAGS.DUPLICATE_MODEL_HASH_BLOCK);
-  logMatch('scan', enabled ? 'unpublished' : 'suppressed', { modelId, ownerId, sha256, ...match });
-  if (!enabled) return 'suppressed';
+  const message = logMessageFor(decision, enabled ? 'unpublished' : 'would-block');
+  logDecision('scan', message, match, decision, { modelId, ownerId, flagEnabled: enabled });
+  if (decision.action !== 'block') return decision.action;
+  if (!enabled) return 'would-block';
 
   await unpublishModelById({
     id: modelId,
@@ -171,9 +264,11 @@ export async function assertNotCrossOwnerDuplicate({
   const match = await findCrossOwnerDuplicate({ ownerId, ...scope });
   if (!match) return;
 
+  const decision = decideDuplicate(match);
   const enabled = await isFlipt(FLIPT_FEATURE_FLAGS.DUPLICATE_MODEL_HASH_BLOCK);
-  logMatch('publish', enabled ? 'blocked' : 'suppressed', { ownerId, ...scope, ...match });
-  if (!enabled) return;
+  const message = logMessageFor(decision, enabled ? 'blocked' : 'would-block');
+  logDecision('publish', message, match, decision, { ownerId, ...scope, flagEnabled: enabled });
+  if (decision.action !== 'block' || !enabled) return;
 
   throw throwBadRequestError(duplicateHashMessage(match));
 }

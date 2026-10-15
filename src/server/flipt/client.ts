@@ -95,7 +95,7 @@ export enum FLIPT_FEATURE_FLAGS {
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
   // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
-  // logged to Axiom (name 'duplicate-model-hash', message 'suppressed') so the volume can be sized.
+  // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
   DUPLICATE_MODEL_HASH_BLOCK = 'duplicate-model-hash-block',
   // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
   // modelId so a percentage rollout picks a deterministic, sticky subset of content.
