@@ -485,7 +485,11 @@ export const openServiceDealDispute = ({
     actorId: userId,
     event: 'Disputed',
     comment: reason,
-    where: Prisma.sql`"buyerId" = ${userId}::int AND "releaseAt" > now() AND "settledAt" IS NULL`,
+    // clock_timestamp(), not now(): blocked behind a release claim's row lock, this UPDATE is
+    // re-checked against the row once the claim commits, and now() would still be this
+    // transaction's start, inside the window. A guard re-checked that way must test the row's own
+    // columns; a NOT EXISTS on the legs would read the old snapshot and miss the claim.
+    where: Prisma.sql`"buyerId" = ${userId}::int AND "releaseAt" > clock_timestamp() AND "settledAt" IS NULL`,
     set: Prisma.sql`, "disputeOpenedAt" = now(), "disputeReason" = ${reason}::text`,
   });
 

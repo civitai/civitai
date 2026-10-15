@@ -7,8 +7,10 @@ import {
   serviceDealUnconfirmedHoldsGauge,
 } from '~/server/prom/client';
 import {
+  createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
@@ -111,6 +113,46 @@ export async function claimRefund(tx: Db, dealId: number) {
   return claimed > 0;
 }
 
+/**
+ * Claims the Release leg for a Completed deal whose dispute window has closed, paid from a
+ * CONFIRMED hold (as `claimRefund`): its amount is the receipted hold less the fee.
+ *
+ * The deal row is locked first by an UPDATE gated on the release state. That serialises this claim
+ * against `openServiceDealDispute`: a dispute blocked on the lock re-checks its window against
+ * `clock_timestamp()` once this commits, which is past `releaseAt`, so it fails; a dispute that
+ * committed first leaves the deal Disputed, and this UPDATE matches nothing.
+ *
+ * `ON CONFLICT` names only (dealId, leg), so a Refund already holding the payout slot raises.
+ */
+export async function claimRelease(tx: Db, dealId: number) {
+  const releasable = await tx.$executeRaw`
+    UPDATE "ServiceDeal" SET "updatedAt" = now()
+    WHERE "id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
+      AND "releaseAt" <= now() AND "settledAt" IS NULL AND "heldAt" IS NOT NULL`;
+  if (releasable === 0) return false;
+
+  const claimed = await tx.$executeRaw`
+    INSERT INTO "ServiceDealTransaction" ("dealId", "leg", "externalTransactionId", "amount", "buzzType")
+    SELECT d."id", 'Release'::"ServiceDealLeg", ${serviceDealTransactionId(
+      dealId,
+      'release'
+    )}::text, h."amount" - d."feeAmount", d."buzzType"
+    FROM "ServiceDeal" d
+    JOIN "ServiceDealTransaction" h
+      ON h."dealId" = d."id" AND h."leg" = 'Hold'::"ServiceDealLeg" AND h."transactionId" IS NOT NULL
+    WHERE d."id" = ${dealId}::int
+    ON CONFLICT ("dealId", "leg") DO NOTHING`;
+  return claimed > 0;
+}
+
+/**
+ * Lock order: every transaction that writes both a deal and its legs locks the deal row FIRST, so
+ * release, refund, dispute and receipt paths cannot deadlock against each other.
+ */
+async function lockDeal(tx: Db, dealId: number) {
+  await tx.$queryRaw`SELECT "id" FROM "ServiceDeal" WHERE "id" = ${dealId}::int FOR UPDATE`;
+}
+
 async function readLeg(db: Db, dealId: number, leg: ServiceDealLeg) {
   const [row] = await db.$queryRaw<LegRow[]>`
     SELECT "id", "dealId", "leg", "externalTransactionId", "transactionId", "amount", "buzzType",
@@ -182,6 +224,7 @@ export async function runDealLeg(
       }
 
       await dbWrite.$transaction(async (tx) => {
+        await lockDeal(tx, dealId);
         await tx.$executeRaw`
           UPDATE "ServiceDealTransaction"
           SET "transactionId" = ${transactionId}::text, "lastError" = NULL
@@ -391,6 +434,7 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
 
       if (charged >= hold.amount) {
         await dbWrite.$transaction(async (tx) => {
+          await lockDeal(tx, hold.dealId);
           await tx.$executeRaw`
             UPDATE "ServiceDealTransaction"
             SET "transactionId" = ${hold.externalTransactionId}::text, "lastError" = NULL
@@ -488,4 +532,87 @@ export async function sweepServiceDealRefunds({ limit = 100 }: { limit?: number 
   serviceDealExhaustedLegsGauge.set(count);
 
   return { considered: due.length, refunded, exhausted: count };
+}
+
+/**
+ * Claims (if due) and pays the seller. Returns false while the deal is not releasable or the leg
+ * is backing off; `sweepServiceDealReleases` drives it again.
+ */
+export async function releaseDeal(dealId: number) {
+  await dbWrite.$transaction((tx) => claimRelease(tx, dealId));
+  const paid = await runDealLeg(
+    dealId,
+    'Release',
+    async (row) => {
+      const [{ sellerId }] = await dbWrite.$queryRaw<{ sellerId: number }[]>`
+        SELECT "sellerId" FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+      let transactionId: string | null = null;
+      try {
+        ({ transactionId } = await createBuzzTransaction(
+          {
+            amount: row.amount,
+            fromAccountId: ESCROW_ACCOUNT_ID,
+            fromAccountType: row.buzzType,
+            toAccountId: sellerId,
+            toAccountType: row.buzzType,
+            type: TransactionType.ServiceEscrow,
+            externalTransactionId: row.externalTransactionId,
+            ...ledgerEntry(dealId, 'Creator service: released to the seller'),
+          },
+          BUZZ_CALL_OPTIONS
+        ));
+      } catch (error) {
+        if (getBuzzApiStatus(error) !== 409) throw error;
+      }
+      if (transactionId) return transactionId;
+
+      // A 409 (the id is taken) or a success with no id: an earlier attempt may have paid and
+      // lost its receipt. Receipt only what the ledger shows reached this seller in full.
+      const existing = await getTransactionByExternalId(
+        row.externalTransactionId,
+        BUZZ_READ_OPTIONS
+      );
+      if (existing?.toAccountId === sellerId && existing.amount === row.amount)
+        return row.externalTransactionId;
+      throw new Error(
+        `creator service escrow: release for deal ${dealId} is not confirmed on the ledger`
+      );
+    },
+    (tx) => markSettled(tx, dealId, 'Released')
+  );
+  return paid !== null;
+}
+
+/**
+ * Completed deals past their dispute window with the seller not yet paid. Exhausted legs are left
+ * out so they cannot crowd the batch; the exhausted-legs gauge reports them.
+ */
+export async function sweepServiceDealReleases({ limit = 100 }: { limit?: number } = {}) {
+  const due = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT d."id" FROM "ServiceDeal" d
+    WHERE d."status" = 'Completed'::"ServiceDealStatus" AND d."settledAt" IS NULL
+      AND d."releaseAt" <= now() AND d."heldAt" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "ServiceDealTransaction" t
+        WHERE t."dealId" = d."id" AND t."leg" = 'Release'::"ServiceDealLeg"
+          AND t."transactionId" IS NULL AND t."attempts" >= ${MAX_LEG_ATTEMPTS}::int
+      )
+    ORDER BY d."releaseAt"
+    LIMIT ${limit}::int`;
+
+  let released = 0;
+  for (const { id } of due) {
+    try {
+      if (await releaseDeal(id)) released++;
+    } catch (error) {
+      logToAxiom({
+        name: 'creator-service-escrow',
+        type: 'error',
+        message: 'release could not be completed',
+        dealId: id,
+        error: (error as Error)?.message,
+      }).catch(() => null);
+    }
+  }
+  return { considered: due.length, released };
 }
