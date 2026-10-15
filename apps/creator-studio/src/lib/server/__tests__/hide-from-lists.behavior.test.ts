@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -40,7 +40,9 @@ vi.mock('@civitai/db/kysely', () => {
       .map((p) => `"${p}"`)
       .join('.'),
   });
-  sql.lit = (value: number): Ident => ({ ident: String(value) });
+  sql.lit = (value: number | string): Ident => ({
+    ident: typeof value === 'string' ? `'${value.replace(/'/g, "''")}'` : String(value),
+  });
   return { sql };
 });
 
@@ -88,6 +90,74 @@ beforeAll(async () => {
       (2, ${IMAGE}, 'ACCEPTED', ${HIDDEN}),
       (3, ${IMAGE}, 'ACCEPTED', ${OPTED_BACK_IN});
   `);
+});
+
+describe('Creator Studio "Who reacted" and reactions from before the lists launched', () => {
+  const PRE_IMAGE = 901;
+  const ARTICLE = 700;
+  const BEFORE = '2026-09-23 17:07:39';
+  const AT_LAUNCH = '2026-09-23 17:07:40';
+  const QUIET = 60;
+  const OPTED_IN = 50;
+  const OPTED_IN_BUT_HIDDEN = 40;
+  const AFTER = 31;
+  const reactors = async (entity: 'image' | 'article', id: number) =>
+    (
+      await getReactors(holder.db as never, OWNER, entity, id, {
+        reaction: 'Like',
+        cursor: null,
+      } as never)
+    )?.reactors.map((r) => r.userId);
+
+  beforeAll(async () => {
+    await holder.db.exec(`
+      CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int);
+      CREATE TABLE "ArticleReaction" ("articleId" int, "userId" int, reaction text, "createdAt" timestamp);
+      INSERT INTO "User" (id, username, settings) VALUES
+        (${QUIET}, 'quiet', '{}'),
+        (${OPTED_IN}, 'optin', '{"showPreLaunchReactions": true}'),
+        (${OPTED_IN_BUT_HIDDEN}, 'both', '{"showPreLaunchReactions": true, "hideFromReactionLists": true}'),
+        (${AFTER}, 'after', '{}');
+      INSERT INTO "Image" (id, "userId") VALUES (${PRE_IMAGE}, ${OWNER});
+      INSERT INTO "Article" VALUES (${ARTICLE}, ${OWNER});
+      INSERT INTO "ImageReaction" ("imageId", "userId", reaction, "createdAt") VALUES
+        (${PRE_IMAGE}, ${QUIET}, 'Like', '${BEFORE}'),
+        (${PRE_IMAGE}, ${OPTED_IN}, 'Like', '${BEFORE}'),
+        (${PRE_IMAGE}, ${OPTED_IN_BUT_HIDDEN}, 'Like', '${BEFORE}'),
+        (${PRE_IMAGE}, ${AFTER}, 'Like', '${AT_LAUNCH}'),
+        (${PRE_IMAGE}, ${OWNER}, 'Like', '${BEFORE}');
+      INSERT INTO "ArticleReaction" VALUES (${ARTICLE}, ${QUIET}, 'Like', '${BEFORE}');
+    `);
+  });
+
+  afterEach(() => holder.db.exec(`UPDATE "User" SET settings = '{}' WHERE id IN (${QUIET}, ${AFTER})`));
+
+  it('leaves out an older image reaction by default, still in the count', async () => {
+    const page = await getReactors(holder.db as never, OWNER, 'image', PRE_IMAGE, {
+      reaction: 'Like',
+      cursor: null,
+    } as never);
+    expect(page?.reactors.map((r) => r.userId)).toEqual([OPTED_IN, OWNER, AFTER]);
+    expect(page?.counts.Like).toBe(5);
+  });
+
+  it('lists the same older reaction once its reactor opts in', async () => {
+    await holder.db.exec(
+      `UPDATE "User" SET settings = '{"showPreLaunchReactions": true}' WHERE id = ${QUIET}`
+    );
+    expect(await reactors('image', PRE_IMAGE)).toEqual([QUIET, OPTED_IN, OWNER, AFTER]);
+  });
+
+  it('still hides a newer reaction from someone who opted out of reaction lists', async () => {
+    await holder.db.exec(
+      `UPDATE "User" SET settings = '{"hideFromReactionLists": true}' WHERE id = ${AFTER}`
+    );
+    expect(await reactors('image', PRE_IMAGE)).toEqual([OPTED_IN, OWNER]);
+  });
+
+  it('leaves article reactions alone', async () => {
+    expect(await reactors('article', ARTICLE)).toEqual([QUIET]);
+  });
 });
 
 describe('Creator Studio lists leave out a user who opted out', () => {
