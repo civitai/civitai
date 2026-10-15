@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
@@ -181,6 +182,9 @@ export async function upsertServiceOffering({
 }) {
   const { id, publish, ...fields } = input;
   await assertCanSellServices(sellerId);
+  await throwOnBlockedUserContent([fields.title, fields.description], {
+    surface: 'creator-service-offering',
+  });
 
   if (!id) {
     if (publish) await assertUnderActiveOfferingCap(sellerId);

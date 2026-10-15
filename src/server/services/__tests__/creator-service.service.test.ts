@@ -22,6 +22,11 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { visibleMatureServiceRatings } from '~/shared/constants/creator-service.constants';
 import { isMatureServiceLevel } from '~/shared/constants/creator-services.constants';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
 
 const SELLER = 7;
 const fields = {
@@ -165,6 +170,50 @@ describe('writes', () => {
       where: { id: 4, sellerId: SELLER, status: { not: ServiceOfferingStatus.Removed } },
       data: { status: ServiceOfferingStatus.Removed },
     });
+  });
+});
+
+// Launch blocker (briony, 2026-10-15): offering text goes through the same blocklist guard as
+// bounties, articles, posts and models, and a block refuses the write.
+describe('text check', () => {
+  const blocked = () =>
+    vi.mocked(throwOnBlockedUserContent).mockImplementationOnce(async () => {
+      throw new Error('Content blocked by content filter');
+    });
+
+  it('checks the title and description of a new offering under its own surface', async () => {
+    seller();
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith([fields.title, fields.description], {
+      surface: 'creator-service-offering',
+    });
+  });
+
+  it('refuses a blocked new offering and creates nothing', async () => {
+    seller();
+    blocked();
+    expect(
+      await rejects(
+        upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: true } })
+      )
+    ).toBe('Content blocked by content filter');
+    expect(dbMock.dbWrite.serviceOffering.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a blocked edit and updates nothing', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Active,
+    } as never);
+    blocked();
+    const edit = { ...fields, title: 'Edited title', description: 'Edited body', id: 5 };
+    expect(
+      await rejects(upsertServiceOffering({ sellerId: SELLER, input: { ...edit, publish: false } }))
+    ).toBe('Content blocked by content filter');
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(['Edited title', 'Edited body'], {
+      surface: 'creator-service-offering',
+    });
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
   });
 });
 
