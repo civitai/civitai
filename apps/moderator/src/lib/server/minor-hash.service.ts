@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_REDETECTED_FILTERS,
   type RedetectedFilters,
+  type RedetectedFlag,
 } from '$lib/minor-flags/redetected-filters';
 import type {
   FlagLabel,
@@ -300,6 +301,53 @@ LEFT JOIN LATERAL (
 ) ci ON TRUE
 `;
 
+/** Latest version's base model and trigger words, plus the model's tags, joined to a CTE named `pg`
+ *  with "modelId". Bounded by the page, like the cover images. */
+const modelFactsJoin = sql`
+LEFT JOIN LATERAL (
+  SELECT mv."baseModel", mv."trainedWords"[1:${sql.raw(
+    String(APPEAL_TRAINED_WORDS_CAP)
+  )}] AS "trainedWords", cardinality(mv."trainedWords") AS "trainedWordCount"
+  FROM "ModelVersion" mv
+  WHERE mv."modelId" = pg."modelId"
+  ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
+  LIMIT 1
+) v ON TRUE
+LEFT JOIN LATERAL (
+  SELECT array_agg(x.name ORDER BY x.name) AS tags,
+         (SELECT count(*)::int FROM "TagsOnModels" tc WHERE tc."modelId" = pg."modelId") AS "tagCount"
+  FROM (
+    SELECT tg.name::text AS name
+    FROM "TagsOnModels" tom
+    JOIN "Tag" tg ON tg.id = tom."tagId"
+    WHERE tom."modelId" = pg."modelId"
+    ORDER BY tg.name
+    LIMIT ${sql.raw(String(APPEAL_TAGS_CAP))}
+  ) x
+) t ON TRUE
+`;
+
+/** How many other flagged models the uploader has; `pg` carries "userId" and "modelId". */
+const uploaderFlagsJoin = sql`
+LEFT JOIN LATERAL (
+  SELECT count(*)::int AS "otherFlaggedModels"
+  FROM "Model" o
+  WHERE o."userId" = pg."userId" AND o.id <> pg."modelId" AND (o.minor OR o.poi)
+) up ON TRUE
+`;
+
+/** The uploader's appeals by outcome; `exclude` drops the appeal being viewed, if any. */
+const pastAppealsJoin = (exclude: RawBuilder<unknown>) => sql`
+LEFT JOIN LATERAL (
+  SELECT count(*) FILTER (WHERE pa.status::text = 'Approved')::int AS approved,
+         count(*) FILTER (WHERE pa.status::text = 'Rejected')::int AS rejected,
+         count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
+         count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
+  FROM "Appeal" pa
+  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' ${exclude}
+) ap ON TRUE
+`;
+
 const TEXT_SCAN_SEARCH_ENTITY_TYPE = 'Model:search';
 
 type ScanRowAlias = 'sm' | 'ss';
@@ -442,27 +490,7 @@ export async function getMinorFlagAppealsForReview({
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
            ) AS "pastAppeals"
     FROM pg
-    LEFT JOIN LATERAL (
-      SELECT mv."baseModel", mv."trainedWords"[1:${sql.raw(
-        String(APPEAL_TRAINED_WORDS_CAP)
-      )}] AS "trainedWords", cardinality(mv."trainedWords") AS "trainedWordCount"
-      FROM "ModelVersion" mv
-      WHERE mv."modelId" = pg."modelId"
-      ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
-      LIMIT 1
-    ) v ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT array_agg(x.name ORDER BY x.name) AS tags,
-             (SELECT count(*)::int FROM "TagsOnModels" tc WHERE tc."modelId" = pg."modelId") AS "tagCount"
-      FROM (
-        SELECT tg.name::text AS name
-        FROM "TagsOnModels" tom
-        JOIN "Tag" tg ON tg.id = tom."tagId"
-        WHERE tom."modelId" = pg."modelId"
-        ORDER BY tg.name
-        LIMIT ${sql.raw(String(APPEAL_TAGS_CAP))}
-      ) x
-    ) t ON TRUE
+    ${modelFactsJoin}
     ${coverImagesJoin}
     LEFT JOIN LATERAL (
       SELECT ma."createdAt", su.username
@@ -475,11 +503,7 @@ export async function getMinorFlagAppealsForReview({
       ORDER BY ma."createdAt" DESC
       LIMIT 1
     ) fb ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT count(*)::int AS "otherFlaggedModels"
-      FROM "Model" o
-      WHERE o."userId" = pg."userId" AND o.id <> pg."modelId" AND (o.minor OR o.poi)
-    ) up ON TRUE
+    ${uploaderFlagsJoin}
     LEFT JOIN "EntityModeration" sm
       ON sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
     LEFT JOIN "EntityModeration" ss
@@ -487,14 +511,7 @@ export async function getMinorFlagAppealsForReview({
     LEFT JOIN LATERAL (
       SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
     ) ls ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT count(*) FILTER (WHERE pa.status::text = 'Approved')::int AS approved,
-             count(*) FILTER (WHERE pa.status::text = 'Rejected')::int AS rejected,
-             count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
-             count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
-      FROM "Appeal" pa
-      WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.id <> pg."appealId"
-    ) ap ON TRUE
+    ${pastAppealsJoin(sql`AND pa.id <> pg."appealId"`)}
     ORDER BY ${outer}
   `.execute(dbRead);
 
@@ -535,13 +552,23 @@ export type RedetectedRow = {
   grantedByUsername: string | null;
   rulings: FlagRulingView[] | null;
   hasPendingAppeal: boolean;
+  modelType: string;
+  modelCreatedAt: Date;
+  baseModel: string | null;
+  trainedWords: string[];
+  trainedWordCount: number;
+  tags: string[];
+  tagCount: number;
   coverImages: AppealCoverImage[];
+  otherFlaggedModels: number;
+  pastAppeals: { approved: number; rejected: number; void: number; pending: number };
 };
 
 export type RedetectedQuery = Page & { filters?: RedetectedFilters };
 
-/** The partial index `Model_textScanRedetected_idx` (see its migration) is only used when this text
- *  matches its predicate, so every query over the queue repeats it character for character. */
+/** MUST match the predicate of the partial index `Model_textScanRedetected_idx` (see its migration)
+ *  character for character. The count runs on every Appeals page load as well, so a mismatch turns each
+ *  load into a seq scan of "Model". Every query over the queue repeats this fragment. */
 const redetectedIndexPredicate = sql`
   (m.meta->'textScanFlags'->'minor' ? 'redetected'
     OR m.meta->'textScanFlags'->'poi' ? 'redetected')
@@ -582,6 +609,7 @@ export async function getRedetectedModels({
     WITH pg AS (
       SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
              m.status::text AS status, m.minor, m.poi, l.label,
+             m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
              ${detectedAt} AS "detectedAt",
              l.entry->'redetected' AS redetected, l.entry->'appealGranted' AS granted,
              gu.username AS "grantedByUsername", l.entry->'rulings' AS rulings,
@@ -609,23 +637,46 @@ export async function getRedetectedModels({
       ORDER BY ${inner}
       LIMIT ${limit + 1} OFFSET ${offset}
     )
-    SELECT pg.*, COALESCE(ci.images, '[]'::jsonb) AS "coverImages"
+    SELECT pg.*,
+           v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
+           COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
+           COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
+           COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
+           COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+           jsonb_build_object(
+             'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
+             'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
+           ) AS "pastAppeals"
     FROM pg
+    ${modelFactsJoin}
     ${coverImagesJoin}
+    ${uploaderFlagsJoin}
+    ${pastAppealsJoin(sql``)}
     ORDER BY ${outer}
   `.execute(dbRead);
 
   return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
 }
 
-/** Every label waiting on a ruling, unfiltered: the tab badge counts the whole queue. */
-export async function getRedetectedCount() {
+/** Labels waiting on a ruling. With no arguments it is the whole queue, which the tab badge shows;
+ *  given the list's search and flag filter it is that list's total, over the same predicates. */
+export async function getRedetectedCount({
+  search,
+  flag = 'all',
+}: { search?: MinorSearch; flag?: RedetectedFlag } = {}) {
   const result = await sql<{ count: number }>`
     SELECT count(*)::int AS count
     FROM "Model" m
     ${redetectedLabelsJoin}
+    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
     WHERE ${redetectedIndexPredicate}
       AND l.entry ? 'redetected'
+      AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
+      AND ${searchPredicate(search, {
+        modelId: 'm.id',
+        userId: 'm.userId',
+        username: 'u.username',
+      })}
   `.execute(dbRead);
   return result.rows[0]?.count ?? 0;
 }

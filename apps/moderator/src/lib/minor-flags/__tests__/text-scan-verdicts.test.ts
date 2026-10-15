@@ -4,6 +4,7 @@ import {
   latestScanDisagrees,
   openVerdicts,
   poiInForce,
+  rulingText,
   scanVerdictProvenance,
   scanVerdictText,
 } from '../text-scan-verdicts';
@@ -103,5 +104,18 @@ describe('scanVerdictText', () => {
     expect(scanVerdictText({ detected: true, reason: 'Says 15.' })).toBe('detected — Says 15.');
     expect(scanVerdictText({ detected: false, reason: null })).toBe('not detected');
     expect(scanVerdictText({ detected: null, reason: 'Odd.' })).toBe('no verdict — Odd.');
+  });
+});
+
+describe('rulingText', () => {
+  it.each([
+    ['appealGranted', 'moderator', 'Cleared (moderator unflagged)'],
+    ['appealGranted', 'appeal', 'Cleared (appeal overturned)'],
+    ['appealUpheld', 'moderator', 'Kept flagged (kept by moderator)'],
+    ['appealUpheld', 'appeal', 'Kept flagged (upheld on appeal)'],
+    ['appealUpheld', undefined, 'Kept flagged'],
+    ['somethingNew', 'moderator', 'somethingNew'],
+  ])('%s via %s reads %s', (decision, via, text) => {
+    expect(rulingText(decision, via)).toBe(text);
   });
 });

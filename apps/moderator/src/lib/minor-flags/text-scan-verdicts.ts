@@ -31,12 +31,24 @@ export type FlagRulingView = {
   via?: string;
 };
 
-const RULING_LABELS: Record<string, string> = {
-  appealGranted: 'Cleared',
-  appealUpheld: 'Kept flagged',
+const RULING_TEXT: Record<string, { lead: string; via: Record<string, string> }> = {
+  appealGranted: {
+    lead: 'Cleared',
+    via: { appeal: 'appeal overturned', moderator: 'moderator unflagged' },
+  },
+  appealUpheld: {
+    lead: 'Kept flagged',
+    via: { appeal: 'upheld on appeal', moderator: 'kept by moderator' },
+  },
 };
 
-export const rulingLabel = (decision: string) => RULING_LABELS[decision] ?? decision;
+/** One earlier ruling in words, with the route worded for what that decision was. */
+export const rulingText = (decision: string, via?: string) => {
+  const text = RULING_TEXT[decision];
+  if (!text) return decision;
+  const route = via ? text.via[via] : undefined;
+  return route ? `${text.lead} (${route})` : text.lead;
+};
 
 export const CLEAR_VIA_LABELS: Record<string, string> = {
   appeal: 'appeal overturned',

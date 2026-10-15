@@ -201,6 +201,10 @@
   }
 
   const pageHref = (n: number) => urlWith(page.url, { page: n, [selectionParam]: null });
+  // Not inline: `{/` opens a closing tag in a template.
+  const selectPrompt = $derived(
+    `Select ${/^[aeiou]/i.test(itemLabel) ? 'an' : 'a'} ${itemLabel.toLowerCase()} from the queue.`
+  );
   const firstShown = $derived(offset + 1);
   const lastShown = $derived(offset + rows.length);
 </script>
@@ -272,7 +276,11 @@
       {/key}
     {:else}
       <div class="grid flex-1 place-items-center p-10 text-center text-base text-dark-0">
-        {rows.length ? `Select ${/^[aeiou]/i.test(itemLabel) ? 'an' : 'a'} ${itemLabel.toLowerCase()} from the queue.` : 'Nothing to review.'}
+        {#if rows.length}
+          {selectPrompt}
+        {:else}
+          {@render empty()}
+        {/if}
       </div>
     {/if}
   </section>

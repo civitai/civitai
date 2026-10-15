@@ -123,8 +123,15 @@ export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 export async function loadRedetectedQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
   const redetectedFilters: RedetectedFilters = parseQuery(url, redetectedFilterSchema);
-  const queue = await getRedetectedModels({ limit, offset, search, filters: redetectedFilters });
-  return { limit, page, offset, q, redetectedFilters, ...queue, fullBleed: true };
+  const [queue, total] = await Promise.all([
+    getRedetectedModels({ limit, offset, search, filters: redetectedFilters }),
+    // The footer's "of N" is decoration; a failure here must not take the list down with it.
+    getRedetectedCount({ search, flag: redetectedFilters.flag }).catch((err) => {
+      console.error('Re-detected total failed', err);
+      return undefined;
+    }),
+  ]);
+  return { limit, page, offset, q, redetectedFilters, total, ...queue, fullBleed: true };
 }
 
 export type RedetectedQueueData = Awaited<ReturnType<typeof loadRedetectedQueue>>;

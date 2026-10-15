@@ -2,17 +2,17 @@
   import { enhance } from '$app/forms';
   import { browser } from '$app/environment';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
+  import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
   import TriageCard from '$lib/components/minor-flags/TriageCard.svelte';
   import TriageDetailFrame from '$lib/components/minor-flags/TriageDetailFrame.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
   import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
-  import { clipList, pastAppealsText } from '$lib/minor-flags/appeal-row';
   import {
     flagInForce,
     latestScanDisagrees,
@@ -56,8 +56,6 @@
   );
   const labelName = (label: FlagLabel) => (label === 'poi' ? 'real person' : 'minor');
   const poiOpen = $derived(poiInForce(row));
-  const tags = $derived(clipList(row.tags, 12, row.tagCount));
-  const words = $derived(clipList(row.trainedWords, 8, row.trainedWordCount));
   const canUphold = $derived(flagInForce(row));
   const ago = (value: Date | string) => `${shortAge(value)} ago`;
 
@@ -224,46 +222,9 @@
       </TriageCard>
     </div>
 
-    <TriageCard title="Model">
-      <p class="m-0 text-base text-dark-0">
-        {row.modelType}{row.baseModel ? ` · ${row.baseModel}` : ''} ·
-        <span title={dateTime(row.modelCreatedAt)}>uploaded {ago(row.modelCreatedAt)}</span>
-      </p>
-      {#if tags.shown.length}
-        <div class="mt-3 flex flex-wrap items-center gap-1.5">
-          <span class="text-sm text-dark-2">Tags</span>
-          {#each tags.shown as tag (tag)}
-            <Badge variant="secondary" class="h-6 max-w-56 px-2.5 text-sm">
-              <span class="truncate">{tag}</span>
-            </Badge>
-          {/each}
-          {#if tags.more}<span class="text-sm text-dark-2">+{tags.more} more</span>{/if}
-        </div>
-      {/if}
-      {#if words.shown.length}
-        <div class="mt-3 flex flex-wrap items-center gap-1.5">
-          <span class="text-sm text-dark-2">Trigger words</span>
-          {#each words.shown as word, i (i)}
-            <Badge variant="outline" class="h-6 max-w-56 px-2.5 text-sm">
-              <span class="truncate">{word}</span>
-            </Badge>
-          {/each}
-          {#if words.more}<span class="text-sm text-dark-2">+{words.more} more</span>{/if}
-        </div>
-      {/if}
-    </TriageCard>
+    <ModelFactsCard {row} />
 
-    <TriageCard title="Uploader">
-      <p class="m-0 text-base text-dark-0">
-        {#if row.username}
-          <a href={userLookupUrl(row.userId)} class="font-medium {LINK_CLASS}">{row.username}</a>
-        {:else}
-          user #{row.userId}
-        {/if}
-        · {row.otherFlaggedModels} other flagged model{row.otherFlaggedModels === 1 ? '' : 's'}
-        · past appeals: {pastAppealsText(row.pastAppeals)}
-      </p>
-    </TriageCard>
+    <UploaderCard {row} />
   {/snippet}
   {#snippet actions()}
     <form

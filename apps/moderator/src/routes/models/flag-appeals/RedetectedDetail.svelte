@@ -6,11 +6,13 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
+  import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
+  import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
   import TriageCard from '$lib/components/minor-flags/TriageCard.svelte';
   import TriageDetailFrame from '$lib/components/minor-flags/TriageDetailFrame.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
-  import { clearViaLabel, rulingLabel } from '$lib/minor-flags/text-scan-verdicts';
+  import { clearViaLabel, rulingText } from '$lib/minor-flags/text-scan-verdicts';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
   import { urlWith } from '$lib/url';
   import AppealImages from './AppealImages.svelte';
@@ -39,6 +41,7 @@
     urlWith(page.url, { view: null, q: row.modelId, page: null, item: null, flag: null, sort: null })
   );
   const blocked = $derived(row.hasPendingAppeal);
+  const flagged = $derived(row.label === 'poi' ? row.poi : row.minor);
 </script>
 
 {#snippet verdictFields()}
@@ -92,9 +95,15 @@
           {#if row.redetected.names?.length}
             <p class="m-0 text-sm">Names: {row.redetected.names.join(', ')}</p>
           {/if}
+          <p class="m-0 text-sm">
+            Now:
+            <span class={flagged ? 'font-medium text-red-300' : 'font-medium text-emerald-300'}>
+              {flagged ? 'Currently flagged' : 'Not flagged'}
+            </span>
+          </p>
           <p class="m-0 text-sm text-dark-2">
-            Found on text edited after it was cleared. Nothing was flagged and the owner has not been
-            told.
+            Found on text edited after it was cleared. The scan held this instead of flagging; the
+            owner wasn't told.
           </p>
         </div>
       </TriageCard>
@@ -121,9 +130,9 @@
           {#if row.rulings?.length}
             <div class="rounded-md bg-dark-6 p-3 text-sm">
               <p class="m-0 font-medium text-white">Earlier rulings</p>
-              {#each row.rulings as ruling, i (i)}
+              {#each row.rulings as ruling (`${ruling.decision}:${ruling.at}:${ruling.by}`)}
                 <p class="m-0 mt-1">
-                  {rulingLabel(ruling.decision)}{ruling.via ? ` (${clearViaLabel(ruling.via)})` : ''}
+                  {rulingText(ruling.decision, ruling.via)}
                   {#if ruling.by}by user #{ruling.by}{/if}
                   {#if ruling.at}
                     <span class="text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
@@ -135,6 +144,10 @@
         </div>
       </TriageCard>
     </div>
+
+    <ModelFactsCard {row} />
+
+    <UploaderCard {row} />
 
     {#if blocked}
       <p class="m-0 text-sm text-dark-0">
@@ -176,7 +189,7 @@
         disabled={blocked}
         title={blocked ? APPEAL_FIRST : undefined}
       >
-        Unflag <Kbd>2</Kbd>
+        Dismiss <Kbd>2</Kbd>
       </Button>
     </form>
   {/snippet}

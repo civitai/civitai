@@ -25,10 +25,17 @@ const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "userId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Published',
+  "status" TEXT NOT NULL DEFAULT 'Published', "type" TEXT NOT NULL DEFAULT 'LORA',
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE, "meta" JSONB
 );
-CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
+CREATE TABLE "ModelVersion" (
+  "id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER,
+  "status" TEXT NOT NULL DEFAULT 'Published', "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
+  "baseModel" TEXT, "trainedWords" TEXT[]
+);
+CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL);
+CREATE TABLE "TagsOnModels" ("modelId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL);
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER, "userId" INTEGER NOT NULL, "publishedAt" TIMESTAMP
 );
@@ -38,7 +45,7 @@ CREATE TABLE "Image" (
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Pending'
+  "status" TEXT NOT NULL DEFAULT 'Pending', "userId" INTEGER
 );
 `;
 
@@ -240,5 +247,57 @@ describe('getRedetectedCount', () => {
     await seedModel(3, 1, { minor: { appealGranted: grant } });
     await seedModel(5, 1, null);
     expect(await getRedetectedCount()).toBe(3);
+  });
+});
+
+describe("getRedetectedCount with the list's filters", () => {
+  beforeEach(async () => {
+    await seedModel(1, 1, {
+      minor: { appealGranted: grant, redetected: redetected('2026-10-02T00:00:00Z') },
+    });
+    await seedModel(2, 2, {
+      minor: { appealGranted: grant, redetected: redetected('2026-10-01T00:00:00Z') },
+      poi: { appealGranted: grant, redetected: redetected('2026-10-03T00:00:00Z') },
+    });
+  });
+
+  it('counts under the flag filter and search, matching the list', async () => {
+    expect(await getRedetectedCount({ flag: 'poi' })).toBe(1);
+    expect(await getRedetectedCount({ flag: 'minor' })).toBe(2);
+    expect(await getRedetectedCount({ search: { username: 'OTHER' } })).toBe(2);
+    expect(await getRedetectedCount({ search: { modelOrUserId: 1 } })).toBe(1);
+    const filters = { flag: 'minor', sort: 'oldest' } as const;
+    const search = { username: 'owner' };
+    expect(await getRedetectedCount({ flag: 'minor', search })).toBe(
+      (await getRedetectedModels({ limit: 10, search, filters })).items.length
+    );
+  });
+});
+
+describe('model and uploader facts', () => {
+  it('carries the model, tags, trigger words, uploader flags and past appeals', async () => {
+    await seedModel(1, 1, {
+      minor: { appealGranted: grant, redetected: redetected('2026-10-02T00:00:00Z') },
+    });
+    await pg.exec(`
+      UPDATE "Model" SET "type" = 'Checkpoint' WHERE id = 1;
+      INSERT INTO "Model" (id, name, "userId", minor) VALUES (50, 'other flagged', 1, TRUE), (51, 'clean', 1, FALSE);
+      INSERT INTO "ModelVersion" (id, "modelId", "baseModel", "trainedWords")
+        VALUES (101, 1, 'SDXL 1.0', ARRAY['zed', 'alpha']);
+      INSERT INTO "Tag" VALUES (1, 'style'), (2, 'anime');
+      INSERT INTO "TagsOnModels" VALUES (1, 1), (1, 2);
+      INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId")
+        VALUES (20, 'Model', 50, 'Approved', 1), (21, 'Model', 51, 'Rejected', 1), (22, 'Model', 1, 'Pending', 1);
+    `);
+    const [row] = (await getRedetectedModels({ limit: 10 })).items;
+    expect(row).toMatchObject({
+      modelType: 'Checkpoint',
+      baseModel: 'SDXL 1.0',
+      trainedWords: ['zed', 'alpha'],
+      tags: ['anime', 'style'],
+      tagCount: 2,
+      otherFlaggedModels: 1,
+      pastAppeals: { approved: 1, rejected: 1, void: 0, pending: 1 },
+    });
   });
 });

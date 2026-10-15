@@ -67,6 +67,7 @@
   pageNumber={data.page}
   hasMore={data.hasMore}
   offset={data.offset}
+  total={data.total}
   {form}
   {empty}
 >
