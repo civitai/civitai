@@ -98,6 +98,10 @@ const NSFW_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028150000_creator_service_max_nsfw_level/migration.sql'
 );
+const TAKEDOWN_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028170000_creator_service_offering_takedown/migration.sql'
+);
 const REASON_CODE_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
@@ -233,11 +237,13 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TABLE "Report" (id serial PRIMARY KEY);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(FILE_STATE_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(NSFW_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(TAKEDOWN_MIGRATION, 'utf8'));
 });
 
 beforeEach(async () => {
@@ -270,7 +276,7 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -2278,5 +2284,40 @@ describe('an offering taken down mid-deal', () => {
     await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
     expect((await deal(id)).status).toBe('Completed');
+  });
+
+  // Decision (briony, 2026-10-15): after a MODERATOR takedown a pending request cannot be accepted,
+  // so a seller removed for a fraudulent listing never starts work on held Buzz. The buyer's exits
+  // stay open and refund as normal. A seller's own remove leaves accept as it was.
+  describe('by a moderator', () => {
+    const moderatorTakeDown = () =>
+      q(`UPDATE "ServiceOffering" SET status = 'Removed'::"ServiceOfferingStatus",
+           "removedReason" = 'misleading', "removedAt" = now(), "removedById" = 99 WHERE id = 1`);
+
+    it('refuses to accept a request that was pending at the takedown', async () => {
+      const { id } = await request();
+      await moderatorTakeDown();
+      await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(
+        conflict
+      );
+      expect((await deal(id)).status).toBe('Requested');
+    });
+
+    it("still refunds the buyer's withdraw of that request", async () => {
+      const { id } = await request();
+      await moderatorTakeDown();
+      await deals.withdrawServiceDeal({ dealId: id, userId: BUYER });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'withdrawn' });
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+      const refund = (await legs(id)).find((l) => l.leg === 'Refund');
+      expect(refund?.transactionId).toBeTruthy();
+    });
+
+    it("leaves accept alone after the seller's own remove", async () => {
+      const { id } = await request();
+      await takeDown();
+      await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+      expect((await deal(id)).status).toBe('Accepted');
+    });
   });
 });

@@ -48,9 +48,9 @@ export const creatorServiceRouter = router({
   remove: servicesProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => removeServiceOffering({ sellerId: ctx.user.id, id: input.id })),
+  // No rollout flags: they are evaluated on the caller, and a moderator outside the rollout must
+  // still be able to take down a listing that is live for those inside it.
   takedown: moderatorProcedure
-    .use(isFlagProtected('creatorShop'))
-    .use(isFlagProtected('creatorServices'))
     .input(takedownServiceOfferingSchema)
     .mutation(({ input, ctx }) => takedownServiceOffering({ moderatorId: ctx.user.id, input })),
 
