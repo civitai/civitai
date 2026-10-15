@@ -435,18 +435,21 @@ export async function getMinorFlagAppealsForReview({
     LEFT JOIN LATERAL (
       SELECT jsonb_agg(
                jsonb_build_object('id', c.id, 'url', c.url)
-               ORDER BY c."versionIndex" ASC NULLS LAST, c."postId", c."imageIndex" ASC NULLS LAST, c.id
+               ORDER BY c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
+                        c."imageIndex" ASC NULLS LAST, c.id
              ) AS images
       FROM (
-        SELECT i.id, i.url, mv.index AS "versionIndex", p.id AS "postId",
-               i.index AS "imageIndex"
+        -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
+        -- unpublished or draft model's appeal with no images at all.
+        SELECT i.id, i.url, p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
+               p.id AS "postId", i.index AS "imageIndex"
         FROM "ModelVersion" mv
-        JOIN "Post" p ON p."modelVersionId" = mv.id AND p."publishedAt" IS NOT NULL
+        JOIN "Post" p ON p."modelVersionId" = mv.id
         JOIN "Image" i ON i."postId" = p.id
         WHERE mv."modelId" = pg."modelId"
           AND p."userId" = pg."userId"
           AND i.type::text = 'image'
-        ORDER BY mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
+        ORDER BY unpublished, mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
         LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
       ) c
     ) ci ON TRUE
