@@ -124,6 +124,7 @@ export function CreatorControlsCard({
         <ShowcaseOptOutSetting flat />
         {flags.creatorControls && (
           <SettingsSection
+            id="metric-visibility"
             title={
               <Group gap={4} wrap="nowrap">
                 Metric visibility

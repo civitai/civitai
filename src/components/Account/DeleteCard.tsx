@@ -227,6 +227,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
 
       {flat ? (
         <PointerCard
+          id="delete-account"
           tone="danger"
           icon={<IconAlertTriangle size={18} />}
           title="Delete account"
