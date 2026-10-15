@@ -347,6 +347,7 @@
     "xml2js": "^0.6.2",
     "yaml": "^2.8.1",
     "yauzl": "3.4.0",
+    "yazl": "3.3.1",
     "zod": "^4.0.17",
     "zustand": "^4.3.7"
   },
@@ -387,6 +388,7 @@
     "@types/vimeo__player": "^2.18.3",
     "@types/xml2js": "^0.4.14",
     "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
     "@vitest/browser": "^4.1.11",

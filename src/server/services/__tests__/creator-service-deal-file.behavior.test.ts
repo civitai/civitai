@@ -106,6 +106,7 @@ const MIGRATIONS = [
   '20261028150000_creator_service_max_nsfw_level',
   '20261028160000_creator_service_deal_file_entries',
   '20261028170000_creator_service_offering_takedown',
+  '20261029130000_creator_service_deal_file_delivery',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -751,8 +752,9 @@ describe('who can download what', () => {
     const previewId = await readyPreview(dealId);
     await files.deliverServiceDeal({ dealId, userId: SELLER });
     await q(
-      `UPDATE "ServiceDealFile" SET "scanStatus" = $1::"ServiceDealFileScanStatus" WHERE id = $2`,
-      [scan, finalId]
+      `UPDATE "ServiceDealFile" SET "scanStatus" = $1::"ServiceDealFileScanStatus",
+        "deliveryKey" = $3, "deliverySize" = 777, "repackedAt" = now() WHERE id = $2`,
+      [scan, finalId, DELIVERY_KEY]
     );
     return { dealId, finalId, previewId };
   }
@@ -761,6 +763,74 @@ describe('who can download what', () => {
   it('gives the buyer nothing before the deal is completed, even for a clean final', async () => {
     const { finalId } = await delivered('Passed');
     expect(await download(finalId, BUYER)).toBeNull();
+  });
+
+  const DELIVERY_KEY = 'service-deals/delivered/built-by-the-server';
+
+  it("gives the buyer the archive the server built, never the seller's own upload", async () => {
+    const { dealId, finalId } = await delivered('Passed');
+    await complete(dealId);
+    const [row] = await q<{ s3Key: string }>(
+      `SELECT "s3Key" FROM "ServiceDealFile" WHERE id = $1`,
+      [finalId]
+    );
+    expect(await download(finalId, BUYER)).toMatchObject({ key: DELIVERY_KEY });
+    expect(row.s3Key).not.toBe(DELIVERY_KEY);
+    // The seller takes back their own bytes; a moderator reviews the original unless they ask for the buyer's.
+    expect(await download(finalId, SELLER)).toMatchObject({ key: row.s3Key });
+    expect(await download(finalId, MOD, true)).toMatchObject({ key: row.s3Key });
+    expect(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: MOD,
+        isModerator: true,
+        delivered: true,
+      })
+    ).toMatchObject({ key: DELIVERY_KEY });
+  });
+
+  it('never gives the buyer a zip that has no built archive, even a Passed one', async () => {
+    const { dealId, finalId } = await delivered('Passed');
+    await complete(dealId);
+    await q(`UPDATE "ServiceDealFile" SET "deliveryKey" = NULL WHERE id = $1`, [finalId]);
+    expect(await download(finalId, BUYER)).toBeNull();
+    // A moderator asking for the buyer's version gets nothing either; the original stays available.
+    expect(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: MOD,
+        isModerator: true,
+        delivered: true,
+      })
+    ).toBeNull();
+    expect(await download(finalId, MOD, true)).not.toBeNull();
+  });
+
+  it('serves a file that is not an archive as it was uploaded', async () => {
+    const dealId = await accepted();
+    const finalId = await uploaded(dealId, { fileName: 'notes.txt', mimeType: 'text/plain' });
+    await files.deliverServiceDeal({ dealId, userId: SELLER }).catch(() => null);
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "repackedAt" = now() WHERE id = $1`,
+      [finalId]
+    );
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Completed', "completedAt" = now(), "releaseAt" = now() + interval '2 days' WHERE id = $1`,
+      [dealId]
+    );
+    const [row] = await q<{ s3Key: string }>(
+      `SELECT "s3Key" FROM "ServiceDealFile" WHERE id = $1`,
+      [finalId]
+    );
+    expect(await download(finalId, BUYER)).toMatchObject({ key: row.s3Key });
+  });
+
+  it('tells the buyer the size of what they will download', async () => {
+    const { dealId, finalId } = await delivered('Passed');
+    await complete(dealId);
+    const seen = (await list(dealId, BUYER)).find((f) => f.id === finalId);
+    expect(seen?.size).toBe(777);
+    expect((await list(dealId, SELLER)).find((f) => f.id === finalId)?.size).toBe(1000);
   });
 
   it('gives the buyer a Passed final after completion, and a signed URL for it', async () => {
@@ -1245,7 +1315,7 @@ describe('a scanner verdict on a final', () => {
   /** What a passing Final has: unpacked, and its malware scan passed (the stub never does this). */
   const clearForPass = (fileId: number) =>
     q(
-      `UPDATE "ServiceDealFile" SET "unpackedAt" = now(), "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      `UPDATE "ServiceDealFile" SET "unpackedAt" = now(), "repackedAt" = now(), "malwareScanStatus" = 'Passed' WHERE id = $1`,
       [fileId]
     );
 

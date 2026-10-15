@@ -1,5 +1,5 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { PassThrough, Readable } from 'stream';
+import { PassThrough, Readable, Transform } from 'stream';
 import * as yauzl from 'yauzl';
 import {
   SERVICE_ZIP_ARCHIVE_EXTENSIONS,
@@ -375,4 +375,76 @@ export async function readEntry(
   }
 
   return { kind, bytes, data: keep(kind) ? Buffer.concat(chunks) : null };
+}
+
+/**
+ * Counts what passes through an entry being copied and cuts it the moment a limit is crossed, on the
+ * same terms as `readEntry`.
+ */
+class LimitedEntry extends Transform {
+  private bytes = 0;
+  constructor(
+    private readonly compressed: number,
+    private readonly cap: number,
+    private readonly budget: { used: number }
+  ) {
+    super();
+  }
+  _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    done: (error?: Error | null, data?: Buffer) => void
+  ) {
+    this.bytes += chunk.byteLength;
+    this.budget.used += chunk.byteLength;
+    if (this.budget.used > SERVICE_ZIP_MAX_TOTAL_BYTES)
+      return done(new ZipRejectedError('The archive is too large once unpacked.'));
+    if (this.bytes > this.cap) return done(new ZipRejectedError(TOO_LARGE_REFUSAL));
+    if (
+      this.bytes > SERVICE_ZIP_RATIO_FLOOR_BYTES &&
+      this.bytes > this.compressed * SERVICE_ZIP_MAX_RATIO
+    )
+      return done(new ZipRejectedError(RATIO_REFUSAL));
+    done(null, chunk);
+  }
+}
+
+/**
+ * An entry's bytes as a stream, for copying into an archive the server builds. Nothing but the bytes
+ * is taken from the original: not its name, sizes, flags, extra fields or comment.
+ */
+export async function openEntryStream(
+  zipfile: yauzl.ZipFile,
+  entry: ZipEntry,
+  budget: { used: number }
+): Promise<Readable> {
+  const source = await new Promise<Readable>((resolve, reject) =>
+    zipfile.openReadStream(entry.raw, (error, readable) =>
+      error || !readable
+        ? reject(new ZipRejectedError('A file in the archive could not be read.'))
+        : resolve(readable)
+    )
+  );
+  const cap = isIn(SERVICE_ZIP_IMAGE_EXTENSIONS, extensionOf(entry.path))
+    ? SERVICE_ZIP_MAX_IMAGE_BYTES
+    : SERVICE_ZIP_MAX_ENTRY_BYTES;
+  const limited = new LimitedEntry(Math.max(1, entry.raw.compressedSize), cap, budget);
+  source.on('error', (error) => limited.destroy(error));
+  limited.on('close', () => source.destroy());
+  return source.pipe(limited);
+}
+
+/**
+ * The name an entry has in the archive the server builds: the checked path, tidied. Throws when
+ * nothing usable is left, so a file can never be built under a name that was not checked.
+ */
+export function deliveryName(path: string) {
+  const name = path
+    .normalize('NFC')
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/')
+    .replace(/^(\.\/)+/, '');
+  if (!name || name.endsWith('/') || pathRefusal(name))
+    throw new ZipRejectedError('A file in the archive has an invalid name.');
+  return name;
 }

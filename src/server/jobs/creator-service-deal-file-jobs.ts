@@ -1,4 +1,5 @@
 import { createJob } from './job';
+import { repackFinals } from '~/server/services/creator-service-deal-repack.service';
 import {
   deleteEntryScanCopies,
   settleEntryScans,
@@ -37,8 +38,9 @@ export const creatorServiceDealFilesJob = createJob(
 );
 
 /**
- * Unpacks delivered Finals and settles their scans (see the notes in the unpack service). One
- * archive per run: it is streamed through memory.
+ * Unpacks delivered Finals, builds the archive a buyer downloads, and settles their scans (see the
+ * notes in the unpack and repack services). One archive per step per run: each is streamed through
+ * memory.
  *
  * Not behind the `creatorServices` flag, for the same reason as the preview job.
  */
@@ -46,14 +48,17 @@ export const creatorServiceUnpackJob = createJob(
   'creator-service-unpack',
   '* * * * *',
   async (jobContext) => {
-    const unpacked = await unpackFinals({ shouldStop: () => jobContext.status !== 'running' });
+    const shouldStop = () => jobContext.status !== 'running';
+    const unpacked = await unpackFinals({ shouldStop });
+    jobContext.checkIfCanceled();
+    const repacked = await repackFinals({ shouldStop });
     jobContext.checkIfCanceled();
     const entries = await settleEntryScans();
     jobContext.checkIfCanceled();
     const finals = await settleFinals();
     jobContext.checkIfCanceled();
     const copiesDeleted = await deleteEntryScanCopies();
-    return { unpacked, ...entries, ...finals, copiesDeleted };
+    return { unpacked, repacked, ...entries, ...finals, copiesDeleted };
   },
   { lockExpiration: 40 * 60 }
 );

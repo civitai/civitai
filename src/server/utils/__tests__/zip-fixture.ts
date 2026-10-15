@@ -18,6 +18,15 @@ export type FixtureEntry = {
   declaredSize?: number;
   /** Written in the headers in place of the real compressed size. */
   declaredCompressedSize?: number;
+  /** Written as the name in the entry's LOCAL header only; the directory keeps `name`. */
+  localName?: string;
+};
+
+export type FixtureOptions = {
+  /** Written as the entry count in the end-of-directory record, in place of the real count. */
+  declaredEntryCount?: number;
+  /** Bytes after the end-of-directory record. */
+  trailing?: Buffer;
 };
 
 const u16 = (n: number) => {
@@ -31,7 +40,7 @@ const u32 = (n: number) => {
   return b;
 };
 
-export function buildZip(entries: FixtureEntry[]) {
+export function buildZip(entries: FixtureEntry[], options: FixtureOptions = {}) {
   const local: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
@@ -41,6 +50,7 @@ export function buildZip(entries: FixtureEntry[]) {
     const methodCode = method === 'store' ? 0 : method === 'deflate' ? 8 : method;
     const body = methodCode === 8 ? deflateRawSync(data) : data;
     const name = Buffer.from(entry.name, 'utf8');
+    const localName = Buffer.from(entry.localName ?? entry.name, 'utf8');
     const flags = entry.flags ?? 0;
     const size = entry.declaredSize ?? data.byteLength;
     const compressedSize = entry.declaredCompressedSize ?? body.byteLength;
@@ -55,9 +65,9 @@ export function buildZip(entries: FixtureEntry[]) {
       u32(crc),
       u32(compressedSize),
       u32(size),
-      u16(name.byteLength),
+      u16(localName.byteLength),
       u16(0),
-      name,
+      localName,
     ]);
     central.push(
       Buffer.concat([
@@ -92,11 +102,12 @@ export function buildZip(entries: FixtureEntry[]) {
     u32(0x06054b50),
     u16(0),
     u16(0),
-    u16(entries.length),
-    u16(entries.length),
+    u16(options.declaredEntryCount ?? entries.length),
+    u16(options.declaredEntryCount ?? entries.length),
     u32(directory.byteLength),
     u32(offset),
     u16(0),
+    options.trailing ?? Buffer.alloc(0),
   ]);
 }
 

@@ -6308,14 +6308,18 @@ export interface ServiceDealFile {
   scanStatus: ServiceDealFileScanStatus;
   malwareScanStatus: ServiceDealFileScanStatus;
   unpackedAt: Date | null;
+  deliveryKey: string | null;
+  deliverySize: number | null;
+  repackedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
 }
 
 export interface ServiceDealFileEntry {
   id: number;
-  fileId: number;
-  file?: ServiceDealFile;
+  fileId: number | null;
+  file?: ServiceDealFile | null;
+  dealId: number;
   entryIndex: number;
   path: string;
   size: number;

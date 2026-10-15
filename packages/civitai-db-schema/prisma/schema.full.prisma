@@ -9968,6 +9968,12 @@ model ServiceDealFile {
   malwareScanStatus ServiceDealFileScanStatus @default(Pending)
   /// Set once the file's contents have been listed and checked (a zip unpacked, an image read).
   unpackedAt     DateTime?
+  /// What a buyer downloads: for a zip, an archive the server built from the entries it checked
+  /// (`deliveryKey`); for any other file the upload itself, with `deliveryKey` null. Set when the
+  /// file is ready for its malware scan.
+  deliveryKey    String?
+  deliverySize   Int?
+  repackedAt     DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
 
@@ -9979,8 +9985,11 @@ model ServiceDealFile {
 /// exists, so a retry after a crash reuses the object.
 model ServiceDealFileEntry {
   id         Int                       @id @default(autoincrement())
-  fileId     Int
-  file       ServiceDealFile           @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  /// Null once the file was deleted: an image whose scan has not finished, or that was rejected,
+  /// outlives its file so the evidence stays with the moderators.
+  fileId     Int?
+  file       ServiceDealFile?          @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  dealId     Int
   entryIndex Int
   path       String
   size       Int

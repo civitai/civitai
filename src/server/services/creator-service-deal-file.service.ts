@@ -4,7 +4,6 @@ import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { submitFinalScan } from '~/server/services/creator-service-deal-file-scan';
 import { holdServiceDealForReview } from '~/server/services/creator-service-escrow.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import { dealReadyToDeliver } from '~/server/services/creator-service-deal-file-sql';
@@ -303,7 +302,7 @@ export async function completeServiceDealUpload({
     }
   }
 
-  // A preview is processed by the job; a final is ready now and goes to its scan.
+  // A preview is processed by the job; a final is ready now and is unpacked by the job.
   const next: ServiceDealFileStatus = file.kind === 'Preview' ? 'Processing' : 'Ready';
   const moved = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
@@ -311,7 +310,6 @@ export async function completeServiceDealUpload({
     WHERE "id" = ${file.id}::int AND "status" = 'Uploading'::"ServiceDealFileStatus"`;
   // The seller's key is dead either way. A repeat call that lost the race removes its own copy.
   await deleteObject(bucket, moved === 1 ? file.s3Key : heldKey).catch(() => null);
-  if (moved === 1 && file.kind === 'Final') await submitFinalScan({ ...file, s3Key: heldKey });
   return { id: file.id, status: next };
 }
 
@@ -349,31 +347,43 @@ export async function deleteServiceDealFile({
       FOR UPDATE OF d`;
     if (!deal) throw throwNotFoundError('File not found');
     // Re-read under the lock: the state above is the one that is true now.
+    // An image that passed has no more use for its copy. One still being scanned, or rejected, keeps
+    // its copy and its row (detached from the file): that is what the moderators would need.
     const copies = await tx.$queryRaw<{ imageId: number }[]>`
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
-        AND e."scanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
+        AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
       FOR UPDATE OF e`;
+    await tx.$executeRaw`
+      DELETE FROM "ServiceDealFileEntry" e
+      WHERE e."fileId" = ${fileId}::int
+        AND (e."imageId" IS NULL OR e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus")`;
     const [file] = await tx.$queryRaw<
-      { id: number; s3Key: string; imageId: number | null; scanKey: string | null }[]
+      {
+        id: number;
+        s3Key: string;
+        deliveryKey: string | null;
+        imageId: number | null;
+        scanKey: string | null;
+      }[]
     >`
       DELETE FROM "ServiceDealFile" f USING "ServiceDeal" d
       WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND f."round" = d."revisionsUsed"
         AND d."status" IN (${WORKING})
-      RETURNING f."id", f."s3Key", f."imageId", f."scanKey"`;
+      RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId", f."scanKey"`;
     if (!file) throw throwNotFoundError('File not found');
     return { ...file, copies };
   });
 
   // The row is the source of truth; an object left behind is unreachable and harmless.
-  await deleteObject(await getBucket(), removed.s3Key).catch(() => null);
+  const bucket = await getBucket();
+  await deleteObject(bucket, removed.s3Key).catch(() => null);
+  if (removed.deliveryKey) await deleteObject(bucket, removed.deliveryKey).catch(() => null);
   if (removed.imageId) {
     // A preview deleted mid-scan: its hidden copy goes with it.
     const { deleteImageById } = await import('~/server/services/image.service');
     await deleteImageById({ id: removed.imageId, updatePost: false }).catch(() => null);
   }
-  // The rows went with the file; their hidden copies would otherwise be left behind. A rejected
-  // image's copy stays: it is what the moderators review.
   if (removed.copies.length) {
     const { deleteImageById } = await import('~/server/services/image.service');
     for (const { imageId } of removed.copies)
@@ -384,8 +394,8 @@ export async function deleteServiceDealFile({
 
 /**
  * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
- * overturn an earlier one. Passed also needs the file unpacked, never refused, its malware scan
- * passed and every image passed. A Failed Final sends a delivered deal to the moderators; one not
+ * overturn an earlier one. Passed also needs the file unpacked and ready, never refused, its malware
+ * scan passed and every image passed. A Failed Final sends a delivered deal to the moderators; one not
  * yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
  */
 export async function recordFinalScanResult({
@@ -401,6 +411,7 @@ export async function recordFinalScanResult({
       AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND (${verdict}::text = 'Failed' OR (
         "unpackedAt" IS NOT NULL
+        AND "repackedAt" IS NOT NULL
         AND "failReason" IS NULL
         AND "malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
         AND NOT EXISTS (
@@ -464,6 +475,7 @@ type FileRow = {
   fileName: string;
   mimeType: string;
   size: number;
+  deliverySize: number | null;
   status: ServiceDealFileStatus;
   failReason: string | null;
   scanStatus: ServiceDealFileScanStatus;
@@ -505,8 +517,8 @@ export async function listServiceDealFiles({
   if (!deal || (!isSeller && !isBuyer && !isModerator)) throw throwNotFoundError('Deal not found');
 
   const rows = await dbWrite.$queryRaw<FileRow[]>`
-    SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."status",
-      f."failReason", f."scanStatus", f."watermarkedKey"
+    SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
+      f."status", f."failReason", f."scanStatus", f."watermarkedKey"
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -534,7 +546,8 @@ export async function listServiceDealFiles({
         // What the buyer has not paid for does not even get a name.
         fileName: lockedFinal ? null : row.fileName,
         mimeType: lockedFinal ? null : row.mimeType,
-        size: row.size,
+        // A buyer is told the size of what they will download.
+        size: privileged ? row.size : row.deliverySize ?? row.size,
         status: row.status,
         failReason: privileged ? row.failReason : null,
         scanStatus: row.kind === 'Final' || privileged ? row.scanStatus : null,
@@ -554,19 +567,26 @@ export type ServiceDealFileDownload = { bucket: string; key: string; fileName: s
  * The object a user may download, or null (the route answers 404 for null, so a file id reveals
  * nothing). The seller may take back anything they uploaded; a moderator anything, for dispute
  * review; the buyer only a Final of the delivered round that has passed its scan, once they own it.
+ *
+ * A buyer gets the delivery file, never the upload: for a zip that is the archive the server built,
+ * and a zip without one is not downloadable by them at all. `delivered` asks a moderator for the
+ * buyer's version instead of the original.
  */
 export async function resolveServiceDealFileDownload({
   fileId,
   userId,
   isModerator,
+  delivered = false,
 }: {
   fileId: number;
   userId: number;
   isModerator: boolean;
+  delivered?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
     {
       s3Key: string;
+      deliveryKey: string | null;
       fileName: string;
       kind: ServiceDealFileKind;
       round: number;
@@ -579,7 +599,7 @@ export async function resolveServiceDealFileDownload({
       completedAt: Date | null;
     }[]
   >`
-    SELECT f."s3Key", f."fileName", f."kind", f."round", f."scanStatus", f."status",
+    SELECT f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus", f."status",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -595,7 +615,16 @@ export async function resolveServiceDealFileDownload({
       row.scanStatus === 'Passed' &&
       buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
   if (!allowed) return null;
-  return { bucket: await getBucket(), key: row.s3Key, fileName: row.fileName };
+
+  const isBuyer = row.buyerId === userId && row.sellerId !== userId;
+  const wantsDelivered = isBuyer || (isModerator && delivered);
+  let key = row.s3Key;
+  if (wantsDelivered) {
+    if (row.deliveryKey) key = row.deliveryKey;
+    // An archive is only ever handed out in the form the server built.
+    else if (fileExtension(row.fileName) === 'zip') return null;
+  }
+  return { bucket: await getBucket(), key, fileName: row.fileName };
 }
 
 export async function getServiceDealFileDownloadUrl(target: ServiceDealFileDownload) {
