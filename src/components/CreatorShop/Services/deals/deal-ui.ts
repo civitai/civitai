@@ -186,8 +186,8 @@ type SheetEvent = { type: string; actorRole: string; comment: string | null };
 
 /**
  * A dispute Civitai opened rather than the buyer: a payout held for moderators, or a final file
- * that failed its check. Its comment is an internal reason code; the server withholds it from the
- * parties, and the sheet shows it to moderators only.
+ * that failed its check. Its comment is an internal reason code for moderators: the sheet never
+ * shows it to a party, whatever the response carries.
  */
 export const isSystemDispute = (event: { type: string; actorRole: string }) =>
   event.type === 'Disputed' && event.actorRole === 'system';

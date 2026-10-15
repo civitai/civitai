@@ -241,6 +241,10 @@ describe('moderator holds', () => {
     expect(isModeratorHold([event('Completed', 'buyer'), event('Disputed', 'buyer')])).toBe(false);
     expect(isModeratorHold([event('Disputed', 'system'), event('Disputed', 'buyer')])).toBe(false);
     expect(isModeratorHold([event('Completed', 'system')])).toBe(false);
+    // Later events that open no dispute do not change who opened it.
+    expect(
+      isModeratorHold([event('Disputed', 'system'), event('DeadlineExtended', 'moderator')])
+    ).toBe(true);
   });
 
   it('reads a refused cancellation after a hold as a party dispute, not the hold', () => {
