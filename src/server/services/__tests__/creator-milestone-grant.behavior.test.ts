@@ -55,8 +55,8 @@ const MIGRATIONS = [
   '20261005120000_creator_milestone',
   '20261007120000_creator_milestone_cosmetic',
 ].map(migrationPath);
-const CARD_DECORATION_MIGRATION = migrationPath('20261027120000_cosmetic_type_card_decoration');
-const MYTHIC_MIGRATION = migrationPath('20261027130000_creator_milestone_mythic');
+const CARD_DECORATION_MIGRATION = migrationPath('20261027140000_cosmetic_type_card_decoration');
+const MYTHIC_MIGRATION = migrationPath('20261027150000_creator_milestone_mythic');
 
 const holder = { db: null as unknown as PGlite };
 const pg = {

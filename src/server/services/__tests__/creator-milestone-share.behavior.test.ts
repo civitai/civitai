@@ -46,7 +46,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const MIGRATIONS = [
   '20261005120000_creator_milestone',
   '20261007120000_creator_milestone_cosmetic',
-  '20261027130000_creator_milestone_mythic',
+  '20261027150000_creator_milestone_mythic',
 ].map((name) =>
   join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql')
 );

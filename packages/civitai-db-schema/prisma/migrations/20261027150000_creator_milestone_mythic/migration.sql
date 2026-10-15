@@ -1,6 +1,6 @@
 -- Idempotent: applied by hand, possibly more than once.
 --
--- 🔴 APPLY ONLY AFTER 20261027120000_cosmetic_type_card_decoration AND THE CODE THAT SHIPS WITH IT
+-- 🔴 APPLY ONLY AFTER 20261027140000_cosmetic_type_card_decoration AND THE CODE THAT SHIPS WITH IT
 -- ARE LIVE: the row is what grants, so applied early it grants crossings silently. Creators already
 -- past the threshold get the tier, silently, at their next score run or from the backfill.
 --
