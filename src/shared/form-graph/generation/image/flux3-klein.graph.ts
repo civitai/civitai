@@ -46,7 +46,7 @@ const modes = branch('flux3KleinMode', (ext: FamilyExt) => flux3KleinModeOf(ext.
 });
 
 export const flux3Klein = defineGraph<FamilyExt>({ scope: familyScope })
-  .field('images', img2imgImages({ max: 4 }))
+  .field('images', img2imgImages({ max: 10 }))
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
