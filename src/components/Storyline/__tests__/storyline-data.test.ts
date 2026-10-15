@@ -8,6 +8,7 @@ import type * as Trpc from '~/utils/trpc';
 import type * as Notifications from '~/utils/notifications';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { NsfwLevel } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 
 type MutationOptions = {
   onSuccess?: (data: unknown) => void;
@@ -31,6 +32,7 @@ const { server, spies } = vi.hoisted(() => ({
     mine: null as null | { items: { id: number; status: string; awaitingReadiness: boolean }[] },
     mutationResult: { ok: true as boolean, data: undefined as unknown, message: '' },
     myPosts: [] as unknown[],
+    defaultPostSort: '' as string,
     chapterPostIds: [] as number[],
   },
   spies: {
@@ -101,12 +103,25 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isLoading: false,
         }),
       },
+      // The server's sort filters, from post-sort.ts: a "most" sort lists only posts with at least
+      // one of what it counts, and no sort means the default (most reactions).
       'post.getInfinite': {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: server.myPosts, nextCursor: null }] },
-          isLoading: false,
-          isError: false,
-        }),
+        useInfiniteQuery: (input: { sort?: string }) => {
+          const counted: Record<string, string> = {
+            'Most Reactions': 'reactionCount',
+            'Most Comments': 'commentCount',
+            'Most Collected': 'collectedCount',
+          };
+          const key = counted[input.sort ?? server.defaultPostSort];
+          const items = key
+            ? (server.myPosts as Record<string, number>[]).filter((p) => (p[key] ?? 0) > 0)
+            : server.myPosts;
+          return {
+            data: { pages: [{ items, nextCursor: null }] },
+            isLoading: false,
+            isError: false,
+          };
+        },
       },
       'placement.getStorylineContinuePrice': {
         useQuery: () => ({
@@ -215,6 +230,7 @@ beforeEach(() => {
   server.mine = null;
   server.mutationResult = { ok: true, data: undefined, message: '' };
   server.myPosts = [];
+  server.defaultPostSort = constants.postFilterDefaults.sort;
   server.chapterPostIds = [];
   spies.mutate.length = 0;
   spies.invalidate.length = 0;
@@ -510,6 +526,31 @@ describe('StorylineContinueModal post picker', () => {
     );
     // The header cover comes with the storyline read: no image query left to wait on.
     expect(document.body.querySelectorAll('.mantine-Skeleton-root')).toHaveLength(0);
+  });
+
+  it('lists a post nobody has reacted to yet, such as the one just made to continue the story', () => {
+    server.storyline = {
+      id: 3,
+      userId: 9,
+      title: 'The Patch',
+      status: 'Ongoing',
+      maxNsfwLevel: NsfwLevel.PG13,
+      whoCanContinue: 'Anyone',
+      collaborators: [],
+      coverImage: null,
+    };
+    server.myPosts = [
+      { ...post(21), reactionCount: 0 },
+      { ...post(22), reactionCount: 5 },
+    ];
+    render(React.createElement(StorylineContinueModal, { parentPostId: 200 }));
+
+    const tiles = [...document.body.querySelectorAll('[role="radio"]')];
+    expect(tiles.map((node) => node.getAttribute('aria-label'))).toEqual([
+      'Post 21, rated PG',
+      'Post 22, rated PG',
+    ]);
+    expect(document.body.textContent).not.toContain('already chapters');
   });
 });
 

@@ -17,8 +17,10 @@ import {
   useSubmitStorylineContinuation,
 } from '~/components/Storyline/storyline.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { PostSort } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 export type StorylineContinueModalProps = {
@@ -51,6 +53,8 @@ export default function StorylineContinueModal({
     { enabled: !!storylineId }
   );
   // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
+  // Newest, all time: the default sort lists only posts that already have reactions, which leaves
+  // out the post just made to continue the story.
   const {
     data: postPages,
     isLoading: postsLoading,
@@ -60,6 +64,8 @@ export default function StorylineContinueModal({
       username: currentUser?.username,
       browsingLevel: allBrowsingLevelsFlag,
       limit: STORYLINE_CONTINUE_POST_LIMIT,
+      sort: PostSort.Newest,
+      period: MetricTimeframe.AllTime,
     },
     { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
