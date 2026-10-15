@@ -14,12 +14,14 @@ const router = readFileSync(
   'utf8'
 ).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
 
-// One chunk per procedure, keyed by name, whatever builder it starts from.
+// One chunk per top-level key of the router object, however its value is built or its key is
+// quoted, so a procedure written in an unexpected form still gets a chunk of its own.
 const procedures = Object.fromEntries(
   router
-    .split(/^ {2}(?=\w+: \w+(?:\.|\n))/m)
+    .slice(router.indexOf('router({'))
+    .split(/^ {2}(?=['"]?\w+['"]?\s*:)/m)
     .slice(1)
-    .map((chunk) => [chunk.slice(0, chunk.indexOf(':')), chunk])
+    .map((chunk) => [chunk.slice(0, chunk.indexOf(':')).replace(/['"\s]/g, ''), chunk])
 );
 
 const GATED = ['request', 'accept', 'requestRevision'];
@@ -47,6 +49,8 @@ describe('creator service deal flag gates', () => {
   // Decision (briony, 2026-10-15): exits stay open with the flag off. Do not gate these.
   it.each(UNGATED)('leaves %s open with the flag off', (name) => {
     expect(procedures[name]).toMatch(/^\w+: protectedProcedure\b/);
+    expect(procedures[name]).not.toContain('isFlagProtected');
+    expect(procedures[name]).not.toMatch(/\bgated\b/);
   });
 
   it('defines `gated` as the creatorServices flag', () => {
