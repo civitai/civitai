@@ -17,8 +17,8 @@ import {
   SERVICE_OFFERING_DEFAULT_RATING,
   SERVICE_OFFERING_RATINGS,
   SERVICE_TITLE_MAX,
-  isMatureServiceRating,
 } from '~/shared/constants/creator-service.constants';
+import { isMatureServiceLevel } from '~/shared/constants/creator-services.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ServiceOfferingStatus, ServicePreviewKind } from '~/shared/utils/prisma/enums';
 
@@ -34,7 +34,7 @@ const previewKindOptions = [
 
 const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
   value: rating,
-  label: isMatureServiceRating(rating)
+  label: isMatureServiceLevel(rating)
     ? `${browsingLevelLabels[rating]} (shown on civitai.red only)`
     : browsingLevelLabels[rating],
 }));

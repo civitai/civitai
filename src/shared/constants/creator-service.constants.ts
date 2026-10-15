@@ -1,6 +1,9 @@
 import { CREATOR_PROGRAM_MIN_CREATOR_SCORE } from '@civitai/buzz';
 import { NsfwLevel } from '~/server/common/enums';
-import { Flags } from '~/shared/utils/flags';
+import {
+  isMatureServiceLevel,
+  serviceRequestAllowed,
+} from '~/shared/constants/creator-services.constants';
 
 /** Selling services unlocks at Beacon, the same rung (and the same aggregate score) as the Creator Program. */
 export const SERVICES_MIN_CREATOR_SCORE = CREATOR_PROGRAM_MIN_CREATOR_SCORE;
@@ -32,14 +35,11 @@ export const SERVICE_OFFERING_RATINGS = [
 export const SERVICE_OFFERING_DEFAULT_RATING = NsfwLevel.PG13;
 
 /**
- * Decision (briony, 2026-10-15): an offering rated PG or PG-13 is visible and requestable by
- * everyone, everywhere, as before ratings existed. Only a mature rating (R and up) is held to the
- * domain and the viewer's browsing level. Taking the level filter literally would hide every
- * default (PG-13) offering from signed-out viewers, whose level is PG.
+ * The mature ratings a viewer may see on a storefront: exactly the ones they may request
+ * (`serviceRequestAllowed`, the rule the server enforces). Decision (briony, 2026-10-15): PG and
+ * PG-13 offerings show to everyone, everywhere; filtering them by level would hide every default
+ * (PG-13) offering from signed-out viewers, whose level is PG.
  */
-export const isMatureServiceRating = (rating: number) => rating > NsfwLevel.PG13;
-
-/** The mature ratings a viewer may see: in both their browsing level and the domain's. */
 export const visibleMatureServiceRatings = ({
   browsingLevel,
   servable,
@@ -49,7 +49,10 @@ export const visibleMatureServiceRatings = ({
 }) =>
   SERVICE_OFFERING_RATINGS.filter(
     (rating) =>
-      isMatureServiceRating(rating) &&
-      Flags.intersects(rating, browsingLevel ?? 0) &&
-      Flags.intersects(rating, servable)
+      isMatureServiceLevel(rating) &&
+      serviceRequestAllowed({
+        maxNsfwLevel: rating,
+        servableLevels: servable,
+        consentLevels: browsingLevel ?? 0,
+      })
   );

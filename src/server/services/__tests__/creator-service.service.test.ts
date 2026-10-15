@@ -20,10 +20,8 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import {
-  isMatureServiceRating,
-  visibleMatureServiceRatings,
-} from '~/shared/constants/creator-service.constants';
+import { visibleMatureServiceRatings } from '~/shared/constants/creator-service.constants';
+import { isMatureServiceLevel } from '~/shared/constants/creator-services.constants';
 
 const SELLER = 7;
 const fields = {
@@ -311,8 +309,8 @@ describe('storefront ratings', () => {
       NsfwLevel.X,
       NsfwLevel.XXX,
     ]);
-    expect(isMatureServiceRating(NsfwLevel.PG13)).toBe(false);
-    expect(isMatureServiceRating(NsfwLevel.R)).toBe(true);
+    expect(isMatureServiceLevel(NsfwLevel.PG13)).toBe(false);
+    expect(isMatureServiceLevel(NsfwLevel.R)).toBe(true);
   });
 
   it('rates a new offering PG-13 by default, and leaves the rating alone on an update without one', async () => {

@@ -127,7 +127,7 @@ export function getMyServiceOfferings(sellerId: number) {
   });
 }
 
-/** Offerings rated PG/PG-13, plus the mature ratings this viewer may see (see `isMatureServiceRating`). */
+/** Offerings rated PG/PG-13, plus the mature ratings this viewer may see (see `visibleMatureServiceRatings`). */
 export const shopRatingFilter = (matureRatings: readonly number[]) =>
   matureRatings.length
     ? {
