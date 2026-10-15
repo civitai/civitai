@@ -299,6 +299,8 @@ describe('applyDiscordCreatorJourneyRoles — config and inputs', () => {
     expect(sql).toContain('s."expiresAt" > $3::timestamp');
     expect(sql).toContain('NOT u.muted');
     expect(sql).toContain('"UserStrike"');
+    expect(sql).toContain('SUM(s.points)');
+    expect(sql).toMatch(/, 0\) < 2(?!\d)/);
     expect(params).toEqual([
       ['score:supernova', 'score:legend'],
       [42, 43],
