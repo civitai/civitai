@@ -167,6 +167,7 @@ const loadModelVersion = async ({
             name: true,
             type: true,
             status: true,
+            mode: true,
             publishedAt: true,
             nsfw: true,
             // The version editor gates paid access on this. Omitted, `model.poi` reads undefined and the

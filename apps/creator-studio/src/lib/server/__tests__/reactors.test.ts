@@ -171,8 +171,15 @@ describe('getReactors page', () => {
       cursor: { dir: 'after', userId: 500 },
     });
     const q = pageQuery();
-    expect(q?.text).toContain('AND "userId" < $3 ORDER BY "userId" DESC LIMIT $4');
-    expect(q?.params).toEqual([IMAGE, 'Like', 500, REACTORS_PAGE_SIZE + 1]);
+    expect(q?.text).toContain('AND "userId" < $5 ORDER BY "userId" DESC LIMIT $6');
+    expect(q?.params).toEqual([
+      IMAGE,
+      'Like',
+      OWNER,
+      'hideFromReactionLists',
+      500,
+      REACTORS_PAGE_SIZE + 1,
+    ]);
   });
 
   it('pages newer accounts with userId > cursor, ascending', async () => {
@@ -181,7 +188,7 @@ describe('getReactors page', () => {
       reaction: 'Like',
       cursor: { dir: 'before', userId: 500 },
     });
-    expect(pageQuery()?.text).toContain('AND "userId" > $3 ORDER BY "userId" ASC LIMIT $4');
+    expect(pageQuery()?.text).toContain('AND "userId" > $5 ORDER BY "userId" ASC LIMIT $6');
     expect(page?.reactors.map((r) => r.userId)).toEqual([502, 501]);
   });
 

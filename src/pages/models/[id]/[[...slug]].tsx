@@ -107,7 +107,10 @@ import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert'
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
-import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  modelVersionAccessInput,
+  useModelVersionPermission,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -314,10 +317,9 @@ export const getServerSideProps = createServerSideProps({
         [
           ssg.hiddenPreferences.getHidden.prefetch(),
           modelVersionIdParsed
-            ? ssg.common.getEntityAccess.prefetch({
-                entityId: modelVersionIdParsed as number,
-                entityType: 'ModelVersion',
-              })
+            ? ssg.common.getEntityAccess.prefetch(
+                modelVersionAccessInput(modelVersionIdParsed as number)
+              )
             : null,
           ssg.model.getCollectionShowcase.prefetch({ id }),
           // Creator-card CLS fix: SSR-prefetch user.getCreator (the SmartCreatorCard

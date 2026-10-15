@@ -741,6 +741,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               {features.batchPostScheduling &&
                 isOwner &&
                 !deleted &&
+                !model.mode &&
+                model.status === ModelStatus.Published &&
                 version.status === ModelStatus.Published && (
                   <Tooltip
                     label="Upload a set of images once and schedule them as posts over days or weeks, each attributed to this version."

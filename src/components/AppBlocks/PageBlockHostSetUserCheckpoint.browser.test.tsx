@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * PageBlockHost SET_USER_CHECKPOINT — fail-fast NACK parity (gotcha-#73).
@@ -203,6 +204,7 @@ describe('PageBlockHost SET_USER_CHECKPOINT (fail-fast NACK — no silent hang)'
       // empty/undefined error would surface a useless message to the user.
       expect(typeof payload.error).toBe('string');
       expect((payload.error ?? '').length).toBeGreaterThan(0);
+      expectReplyKeys('SET_USER_CHECKPOINT', 'error', ['error', 'ok'], payload);
     });
     replies.stop();
   });

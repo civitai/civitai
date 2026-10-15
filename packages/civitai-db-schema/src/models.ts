@@ -254,6 +254,24 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
+export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
+
+export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
+
+export type ServiceBuzzType = "yellow" | "blue" | "green";
+
+export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevision" | "Completed" | "Declined" | "Expired" | "CancellationRequested" | "Cancelled" | "Disputed";
+
+export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
+
+export type ServiceDealFileKind = "Preview" | "Final";
+
+export type ServiceDealFileScanStatus = "Pending" | "Passed" | "Failed" | "NotScanned";
+
+export type ServiceDisputeResolution = "Refund" | "Release";
+
+export type ServiceDealLeg = "Hold" | "Release" | "Fee" | "Refund";
+
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
 export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
@@ -722,6 +740,9 @@ export interface User {
   crucibleEntries?: CrucibleEntry[];
   crucibleEngagements?: CrucibleEngagement[];
   prizes?: Prize[];
+  serviceOfferings?: ServiceOffering[];
+  serviceDealsBought?: ServiceDeal[];
+  serviceDealsSold?: ServiceDeal[];
   gameFrameGames?: GameFrameGame[];
 }
 
@@ -6011,6 +6032,109 @@ export interface PlacementSuspension {
   reason: string | null;
   createdAt: Date;
   createdById: number | null;
+}
+
+export interface ServiceOffering {
+  id: number;
+  sellerId: number;
+  seller?: User;
+  title: string;
+  description: string;
+  coverImageId: number | null;
+  price: number;
+  acceptsBlue: boolean;
+  previewKind: ServicePreviewKind;
+  deliveryDays: number;
+  revisionsIncluded: number;
+  maxOpenDeals: number | null;
+  status: ServiceOfferingStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  deals?: ServiceDeal[];
+}
+
+export interface ServiceDeal {
+  id: number;
+  offeringId: number;
+  offering?: ServiceOffering;
+  buyerId: number;
+  buyer?: User;
+  sellerId: number;
+  seller?: User;
+  price: number;
+  buzzType: ServiceBuzzType;
+  feeAmount: number;
+  revisionsIncluded: number;
+  revisionsUsed: number;
+  deliveryDays: number;
+  previewKind: ServicePreviewKind;
+  status: ServiceDealStatus;
+  heldAt: Date | null;
+  settledAt: Date | null;
+  chatId: number | null;
+  requestText: string;
+  requestedAt: Date;
+  acceptedAt: Date | null;
+  dueAt: Date | null;
+  deliveredAt: Date | null;
+  completedAt: Date | null;
+  releaseAt: Date | null;
+  cancellationRequestedAt: Date | null;
+  cancellationRequestedById: number | null;
+  cancellationReason: string | null;
+  disputeOpenedAt: Date | null;
+  disputeReason: string | null;
+  disputeResolvedAt: Date | null;
+  disputeResolution: ServiceDisputeResolution | null;
+  disputeResolvedById: number | null;
+  closedAt: Date | null;
+  closeReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  events?: ServiceDealEvent[];
+  files?: ServiceDealFile[];
+  transactions?: ServiceDealTransaction[];
+}
+
+export interface ServiceDealEvent {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  actorId: number;
+  type: ServiceDealEventType;
+  round: number;
+  comment: string | null;
+  createdAt: Date;
+}
+
+export interface ServiceDealFile {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  round: number;
+  kind: ServiceDealFileKind;
+  s3Key: string;
+  watermarkedKey: string | null;
+  imageId: number | null;
+  mimeType: string;
+  size: number;
+  scanStatus: ServiceDealFileScanStatus;
+  createdAt: Date;
+}
+
+export interface ServiceDealTransaction {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  leg: ServiceDealLeg;
+  externalTransactionId: string;
+  transactionId: string | null;
+  amount: number;
+  buzzType: ServiceBuzzType;
+  attempts: number;
+  lastAttemptAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
 }
 
 export interface UserHub {
