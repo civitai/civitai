@@ -1853,7 +1853,7 @@
    ]
   },
   {
-   "prompt": "\\(escaped\\) [puppies] {kitties}, close-up; sci-fi | x-ies. glasses! iris? 1990s 12345, gas, cactus, boss, -dash-, \ud840\udc00ies",
+   "prompt": "\\(escaped\\) [puppies] {kitties}, close-up; sci-fi | x-ies. glasses! iris? 1990s 12345, gas, cactus, boss, -dash-, 'quoted, \ud840\udc00ies",
    "segments": [
     [
      "escaped"
@@ -1895,6 +1895,9 @@
      "dash"
     ],
     [
+     "quoted"
+    ],
+    [
      "\ud840\udc00ies"
     ]
    ],
@@ -1910,6 +1913,7 @@
     "iris",
     "kitty",
     "puppy",
+    "quoted",
     "scifi",
     "xie",
     "\ud840\udc00ie"
@@ -1927,6 +1931,7 @@
     "iris",
     "kitty",
     "puppy",
+    "quoted",
     "scifi",
     "xie",
     "\ud840\udc00ie"

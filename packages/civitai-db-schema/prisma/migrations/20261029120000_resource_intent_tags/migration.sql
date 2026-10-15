@@ -2,23 +2,24 @@
 -- content-tag arm's frozen vocabularies and its content-tag index builds.
 --
 -- Apply this MANUALLY, per environment. We do not use `prisma migrate deploy` anywhere;
--- this file exists for review/history. Nothing reads or writes either table yet. Re-runnable:
--- every statement is guarded (IF NOT EXISTS, DO blocks, CREATE OR REPLACE,
--- DROP ... IF EXISTS).
+-- this file exists for review/history. Re-runnable: every statement is guarded
+-- (IF NOT EXISTS, DO blocks, CREATE OR REPLACE, DROP ... IF EXISTS).
 --
 -- ResourceIntentVocabulary: one row per mined vocabulary. `payload` is the vocabulary
 -- document and `vocabVersion` is the sha256 hex of exactly those bytes (a CHECK), so a
 -- version names one payload forever. A row is inserted as 'candidate'; it may become
 -- 'frozen' (the trigger stamps `frozenAt`; `frozenBy` is required) or 'retired', and a
--- frozen row may become 'retired'. Nothing else about a row can change. Only a frozen
--- vocabulary is meant to be built into a served index.
+-- frozen row may become 'retired'. Nothing else about a row can change. The foreign key
+-- below accepts a vocabulary in any status; the store refuses a production build of one
+-- that is not frozen.
 --
 -- ResourceIntentTagIndexSnapshot: column-for-column the ResourceIntentCoocSnapshot table
 -- and its rules (see 20261011120000_resource_intent_cooc_snapshot), plus the
 -- `vocabVersion` the index was built from. A row is inserted when a build starts
 -- ('building') with a random id, then set 'ready', 'failed' or 'duplicate' once; only a
 -- 'building' row can change. `builtAt` is the database's clock. `contentHash` =
--- sha256(kind || NUL || payload) is the snapshot's identity, unique among ready rows. A
+-- sha256(kind || NUL || vocabVersion || NUL || payload) is the snapshot's identity, unique
+-- among ready rows. A
 -- study row is always pinned, ending after its build and at most 58 days from it; a
 -- production row is never pinned.
 
@@ -137,7 +138,7 @@ BEGIN
     ) THEN
         ALTER TABLE "ResourceIntentTagIndexSnapshot" ADD CONSTRAINT "ResourceIntentTagIndexSnapshot_vocabVersion_fkey"
             FOREIGN KEY ("vocabVersion") REFERENCES "ResourceIntentVocabulary"("vocabVersion")
-            ON DELETE RESTRICT ON UPDATE CASCADE;
+            ON DELETE RESTRICT ON UPDATE RESTRICT;
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'ResourceIntentTagIndexSnapshot_kind_pin_check'

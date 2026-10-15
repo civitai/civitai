@@ -1973,7 +1973,7 @@ model ResourceIntentTagIndexSnapshot {
   payload           Bytes?
   trainImageIds     Bytes?
   vocabVersion      String
-  vocabulary        ResourceIntentVocabulary @relation(fields: [vocabVersion], references: [vocabVersion])
+  vocabulary        ResourceIntentVocabulary @relation(fields: [vocabVersion], references: [vocabVersion], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
 }

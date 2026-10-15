@@ -13,15 +13,14 @@
  * - `\s` and `str.split()` include U+001C–U+001F and U+0085, and exclude U+FEFF;
  * - `str.isdigit()` also accepts the digit-valued `No` characters NFKC leaves alone;
  * - `len()` counts code points, not UTF-16 units.
- * Checked over every code point against Python's Unicode 16 tables: the only differences are code
- * points Unicode 16 leaves unassigned.
+ * `\p{L}`/`\p{N}` follow the runtime's Unicode version and Python follows its own; re-check parity
+ * after a Node or ICU upgrade.
  */
 
 const WORD = String.raw`\p{L}\p{N}_`;
 const SPACE = String.raw`\t\n\v\f\r\x1c-\x1f \x85\xa0\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}`;
 const DIGIT_NO = String.raw`\u{1369}-\u{1371}\u{19da}\u{24f5}-\u{24fd}\u{24ff}\u{2776}-\u{277e}\u{2780}-\u{2788}\u{278a}-\u{2792}\u{10a40}-\u{10a43}\u{10e60}-\u{10e68}\u{11052}-\u{1105a}`;
 
-/** `<lora:...>`, `<lyco:...>`, any `<...>` tag. */
 const ANGLE = /<[^>]*>/gu;
 const EMBED = new RegExp(String.raw`(?<![${WORD}])embedding:[^${SPACE}]+`, 'gu');
 /** `(word:1.2)` weights. */
@@ -31,7 +30,6 @@ const SPLIT = new RegExp(String.raw`[,\n\r;|.!?]+|(?<![${WORD}])break(?![${WORD}
 const NONWORD = new RegExp(String.raw`[^${WORD}${SPACE}'-]`, 'gu');
 const WHITESPACE = new RegExp(String.raw`[${SPACE}]+`, 'u');
 const ALL_DIGITS = new RegExp(String.raw`^[\p{Nd}${DIGIT_NO}]+$`, 'u');
-const EDGE_QUOTE_HYPHEN = /^['-]+|['-]+$/gu;
 
 export const TAG_MAX_SEGMENT_TOKENS = 4;
 export const TAG_GRAM_SIZES = [1, 2, 3] as const;
@@ -54,11 +52,28 @@ export const TAG_STOPWORDS: ReadonlySet<string> = new Set([
 
 const codePointLength = (s: string) => [...s].length;
 
-/** Singular form of one token: `-ies` → `-y` above 4 characters, else a trailing `s` dropped. */
+/** Python's `str.strip("'-")`. A regex `['-]+$` here is quadratic in a long run of `'`/`-`. */
+function stripQuotesAndHyphens(t: string): string {
+  let i = 0;
+  let j = t.length;
+  while (i < j && (t[i] === "'" || t[i] === '-')) i++;
+  while (j > i && (t[j - 1] === "'" || t[j - 1] === '-')) j--;
+  return t.slice(i, j);
+}
+
+/**
+ * Singular form of one token: `-ies` → `-y` above 4 code points; else a trailing `s` dropped above
+ * 3, except after `s`, `u` or `i`.
+ */
 export function singularizeTagToken(t: string): string {
-  const n = codePointLength(t);
-  if (n > 4 && t.endsWith('ies')) return t.slice(0, -3) + 'y';
-  if (n > 3 && t.endsWith('s') && !t.endsWith('ss') && !t.endsWith('us') && !t.endsWith('is'))
+  if (t.endsWith('ies') && codePointLength(t) > 4) return t.slice(0, -3) + 'y';
+  if (
+    t.endsWith('s') &&
+    !t.endsWith('ss') &&
+    !t.endsWith('us') &&
+    !t.endsWith('is') &&
+    codePointLength(t) > 3
+  )
     return t.slice(0, -1);
   return t;
 }
@@ -89,7 +104,7 @@ export function tagSegments(prompt: string): string[][] {
     const toks = piece
       .replace(NONWORD, ' ')
       .split(WHITESPACE)
-      .map((t) => t.replace(EDGE_QUOTE_HYPHEN, ''))
+      .map(stripQuotesAndHyphens)
       .filter((t) => t && !ALL_DIGITS.test(t));
     if (toks.length) out.push(toks);
   }

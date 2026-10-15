@@ -18,12 +18,13 @@ export const RESOURCE_INTENT_TAGS_SPEC = {
 } as const;
 
 /**
- * Synthetic prompts chosen so that every normalisation step changes their output. They are also
- * cases of the prototype parity fixture, so the hashed behaviour is the prototype's.
+ * Synthetic prompts chosen so that each normalisation step with an observable effect changes their
+ * output (the `\(` unescape has none: brackets become separators either way). They are also cases
+ * of the prototype parity fixture, so the hashed behaviour is the prototype's.
  */
 export const RESOURCE_INTENT_TAGS_FINGERPRINT_PROMPTS = [
   '<lora:Foo_Bar:0.8> (Watercolor Paintings:1.2), embedding:EasyNeg lighthouse BREAK dusk, breakfast, ébreak, été break',
-  '\\(escaped\\) [puppies] {kitties}, close-up; sci-fi | x-ies. glasses! iris? 1990s 12345, gas, cactus, boss, -dash-, 𠀀ies',
+  "\\(escaped\\) [puppies] {kitties}, close-up; sci-fi | x-ies. glasses! iris? 1990s 12345, gas, cactus, boss, -dash-, 'quoted, 𠀀ies",
   'a quiet mountain village with snowy roofs under the warm evening light',
   "the of and, Café au lait, ＦＵＬＬ, ΟΔΟΣ, ❶, ፩, rock'n'roll, under_score, हिन्दी",
   'glow:\t2.5 lamp, glow:\u{feff}2.5 lamp, glow:\u{1c}2.5 lamp, glow:\u{85}2.5 lamp',

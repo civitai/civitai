@@ -23,7 +23,7 @@ export function vocabularyPayload(label: string) {
 
 export const VOCAB = vocabularyPayload('fixture');
 
-/** As the cooc harness: `timestamp(3)` read as UTC, a UTC session, one vocabulary inserted. */
+/** As the cooc harness: `timestamp(3)` read as UTC, a UTC session, and `VOCAB` inserted and frozen. */
 export async function freshTagDb(opts: { extraSql?: string } = {}) {
   const db = new PGlite({
     parsers: { 1114: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) },
@@ -34,6 +34,10 @@ export async function freshTagDb(opts: { extraSql?: string } = {}) {
   await db.query(
     `INSERT INTO "ResourceIntentVocabulary" ("vocabVersion", "payload", "rulesSummary") VALUES ($1, $2, '{}')`,
     [VOCAB.vocabVersion, VOCAB.payload]
+  );
+  await db.query(
+    `UPDATE "ResourceIntentVocabulary" SET "status" = 'frozen', "frozenBy" = 'fixture' WHERE "vocabVersion" = $1`,
+    [VOCAB.vocabVersion]
   );
   const statements: string[] = [];
   const sql: CoocSql = {

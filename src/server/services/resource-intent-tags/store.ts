@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 
 import { COOC_MAX_PAYLOAD_BYTES } from '~/server/services/resource-intent-cooc/build';
@@ -5,7 +6,6 @@ import {
   assertCoocPin,
   COOC_SNAPSHOT_KINDS,
   COOC_STUDY_HARD_LIMIT_DAYS,
-  coocContentHash,
   DAY_MS,
   isAllocationFailure,
   isUndefinedTable,
@@ -19,11 +19,8 @@ import {
 /**
  * `ResourceIntentTagIndexSnapshot` storage: the co-occurrence store's lifecycle (begin → ready |
  * failed | duplicate, verified load, the served snapshot, retention, release) on the content-tag
- * index's own table. The rules that are policy rather than SQL — the content hash, the pin limits
- * and which rows retention deletes — are the co-occurrence store's own functions, so the two
- * snapshot kinds cannot drift apart.
- *
- * Nothing calls this yet: the build job, the holder and the request path arrive in later changes.
+ * index's own table. The pin limits and which rows retention deletes are the co-occurrence store's
+ * own functions, shared rather than copied.
  */
 
 export const TAG_INDEX_MAX_PAYLOAD_BYTES = COOC_MAX_PAYLOAD_BYTES;
@@ -43,8 +40,28 @@ export class TagIndexRetentionOverdueError extends Error {}
 const T = Prisma.raw('"ResourceIntentTagIndexSnapshot"');
 
 /**
+ * A snapshot's identity: sha256 of its kind, its vocabulary version and its payload, NUL-separated.
+ * The vocabulary is bound in so that a rebuild under a re-frozen vocabulary is a new snapshot even
+ * when the index bytes come out the same.
+ */
+export function tagIndexContentHash(
+  kind: CoocSnapshotKind,
+  vocabVersion: string,
+  payload: Uint8Array
+): string {
+  return createHash('sha256')
+    .update(kind)
+    .update('\0')
+    .update(vocabVersion)
+    .update('\0')
+    .update(payload)
+    .digest('hex');
+}
+
+/**
  * Record a build as started. `now` only validates the pin up front; the row's `builtAt` is the
- * database's clock, and the CHECK re-validates the pin against it.
+ * database's clock, and the CHECK re-validates the pin against it. A production build must name a
+ * frozen vocabulary; a study may evaluate a candidate.
  */
 export async function beginTagIndexBuild(
   sql: CoocSql,
@@ -63,9 +80,17 @@ export async function beginTagIndexBuild(
   assertCoocPin(b.kind, b.pinnedUntil, b.now);
   const [row] = await sql.query<{ id: string; builtAt: Date }>(Prisma.sql`
     INSERT INTO ${T} ("kind", "specHash", "vocabVersion", "trainStart", "trainEnd", "seed", "pinnedUntil")
-    VALUES (${b.kind}, ${b.specHash}, ${b.vocabVersion}, ${b.trainStart}, ${b.trainEnd}, ${b.seed},
-      ${b.pinnedUntil})
+    SELECT ${b.kind}, ${b.specHash}, v."vocabVersion", ${b.trainStart}, ${b.trainEnd}, ${b.seed},
+      ${b.pinnedUntil}
+    FROM "ResourceIntentVocabulary" v
+    WHERE v."vocabVersion" = ${b.vocabVersion} AND (${b.kind} = 'study' OR v."status" = 'frozen')
     RETURNING "id", "builtAt"`);
+  if (!row)
+    throw new Error(
+      `vocabulary ${b.vocabVersion} does not exist${
+        b.kind === 'production' ? ' or is not frozen' : ''
+      }`
+    );
   return row;
 }
 
@@ -89,11 +114,12 @@ export async function completeTagIndexBuild(
     throw new Error(
       `tag index payload ${r.payload.length} bytes exceeds ${TAG_INDEX_MAX_PAYLOAD_BYTES}`
     );
-  const [row] = await sql.query<{ kind: CoocSnapshotKind; status: string }>(Prisma.sql`
-    SELECT "kind", "status" FROM ${T} WHERE "id" = ${id}`);
+  const [row] = await sql.query<{ kind: CoocSnapshotKind; status: string; vocabVersion: string }>(
+    Prisma.sql`SELECT "kind", "status", "vocabVersion" FROM ${T} WHERE "id" = ${id}`
+  );
   if (!row) throw new Error(`tag index build ${id} not found`);
   if (row.status !== 'building') throw new Error(`tag index build ${id} is '${row.status}'`);
-  const contentHash = coocContentHash(row.kind, r.payload);
+  const contentHash = tagIndexContentHash(row.kind, row.vocabVersion, r.payload);
   const markDuplicate = async () => {
     await sql.execute(Prisma.sql`
       UPDATE ${T} SET "status" = 'duplicate' WHERE "id" = ${id} AND "status" = 'building'`);
@@ -139,7 +165,8 @@ const META_COLUMNS = Prisma.raw(
  * Load a ready snapshot by content hash and decode its payload with `decode`, refusing bytes whose
  * hash does not match, a row of another kind than the caller asked for, a payload `decode` rejects
  * (`TagIndexSnapshotCorruptError`; the decoder owns the size ceiling, as the cooc decoder does), and
- * a study snapshot whose pin has passed. An allocation failure while decoding is rethrown as it is: a later read can pass.
+ * a study snapshot whose pin has passed. An allocation failure while decoding is rethrown as is:
+ * a later read can pass.
  */
 export async function loadTagIndexSnapshot<P>(
   sql: CoocSql,
@@ -153,7 +180,7 @@ export async function loadTagIndexSnapshot<P>(
   const { payload, ...meta } = row;
   if (
     !COOC_SNAPSHOT_KINDS.includes(meta.kind) ||
-    coocContentHash(meta.kind, payload) !== contentHash
+    tagIndexContentHash(meta.kind, meta.vocabVersion, payload) !== contentHash
   )
     throw new TagIndexSnapshotHashMismatchError(
       `tag index snapshot ${contentHash}: content hash mismatch`
@@ -194,8 +221,9 @@ type RetentionRow = Parameters<typeof selectCoocSnapshotsToDelete>[0][number];
 
 /**
  * Runs retention (`selectCoocSnapshotsToDelete`'s rules), then re-reads the table with an
- * independent SQL predicate: any study row still past its pin or 60 days after its build fails the
- * sweep. A missing table (migration not applied here yet) is not an error.
+ * independent SQL predicate: any study row still past its pin or `COOC_STUDY_HARD_LIMIT_DAYS` after
+ * its build fails the sweep (the second disjunct is a backstop the 58-day pin CHECK keeps
+ * unreachable). A missing table (migration not applied here yet) is not an error.
  */
 export async function applyTagIndexRetention(
   sql: CoocSql,

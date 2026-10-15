@@ -2,7 +2,10 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it, vi } from 'vitest';
-import { coocContentHash, type CoocSql } from '~/server/services/resource-intent-cooc/store';
+import {
+  selectCoocSnapshotsToDelete,
+  type CoocSql,
+} from '~/server/services/resource-intent-cooc/store';
 import {
   applyTagIndexRetention,
   beginTagIndexBuild,
@@ -11,6 +14,7 @@ import {
   latestReadyTagIndexSnapshotId,
   loadTagIndexSnapshot,
   releaseTagIndexSnapshot,
+  tagIndexContentHash,
   TAG_INDEX_MAX_PAYLOAD_BYTES,
   TagIndexRetentionOverdueError,
   TagIndexSnapshotCorruptError,
@@ -86,7 +90,7 @@ describe('tag index store on the real migration', () => {
     const r = result();
     const { contentHash, created } = await completeTagIndexBuild(sql, id, r);
     expect(created).toBe(true);
-    expect(contentHash).toBe(coocContentHash('production', r.payload));
+    expect(contentHash).toBe(tagIndexContentHash('production', VOCAB.vocabVersion, r.payload));
     expect(await latestReadyTagIndexSnapshotId(sql)).toBe(contentHash);
     const loaded = await loadTagIndexSnapshot(sql, contentHash, {
       kind: 'production',
@@ -96,16 +100,84 @@ describe('tag index store on the real migration', () => {
     expect(loaded.payload).toEqual({ postings: [3, 1, 2] });
     expect(loaded.meta).toMatchObject({
       status: 'ready',
+      kind: 'production',
       vocabVersion: VOCAB.vocabVersion,
+      idsTried: 10,
       trainRows: 7,
+      vocab: 2,
+      models: 3,
       keptPairs: 4,
+      trainCreatedAtMin: ago(100),
+      trainCreatedAtMax: ago(11),
     });
   });
 
-  it('a build must name a vocabulary that exists', async () => {
+  it('a build must name a vocabulary that exists, in the store and by the foreign key', async () => {
+    const { db, sql } = await freshTagDb();
+    await expect(begin(sql, 'study', { vocabVersion: 'f'.repeat(64) })).rejects.toThrow(
+      /does not exist/
+    );
+    await expect(
+      db.query(
+        `INSERT INTO "ResourceIntentTagIndexSnapshot" ("kind","specHash","vocabVersion","trainStart","trainEnd","seed")
+         VALUES ('production','s', $1, now(), now(), 1)`,
+        ['f'.repeat(64)]
+      )
+    ).rejects.toThrow(/vocabVersion_fkey/);
+  });
+
+  it('a production build needs a frozen vocabulary; a study may use a candidate', async () => {
+    const { db, sql } = await freshTagDb();
+    const candidate = vocabularyPayload('candidate');
+    await db.query(
+      `INSERT INTO "ResourceIntentVocabulary" ("vocabVersion", "payload", "rulesSummary") VALUES ($1, $2, '{}')`,
+      [candidate.vocabVersion, candidate.payload]
+    );
+    await expect(
+      begin(sql, 'production', { vocabVersion: candidate.vocabVersion })
+    ).rejects.toThrow(/is not frozen/);
+    await expect(
+      begin(sql, 'study', { vocabVersion: candidate.vocabVersion })
+    ).resolves.toBeDefined();
+    await db.query(
+      `UPDATE "ResourceIntentVocabulary" SET "status" = 'retired' WHERE "vocabVersion" = $1`,
+      [VOCAB.vocabVersion]
+    );
+    await expect(begin(sql, 'production')).rejects.toThrow(/is not frozen/);
+    expect(await ids(db)).toHaveLength(1);
+  });
+
+  it('the same payload under another vocabulary is a distinct snapshot, not a duplicate', async () => {
+    const { db, sql } = await freshTagDb();
+    const other = vocabularyPayload('other');
+    await db.query(
+      `INSERT INTO "ResourceIntentVocabulary" ("vocabVersion", "payload", "rulesSummary") VALUES ($1, $2, '{}')`,
+      [other.vocabVersion, other.payload]
+    );
+    await db.query(
+      `UPDATE "ResourceIntentVocabulary" SET "status" = 'frozen', "frozenBy" = 'fixture' WHERE "vocabVersion" = $1`,
+      [other.vocabVersion]
+    );
+    const a = await completeTagIndexBuild(sql, (await begin(sql, 'production')).id, result());
+    const b = await completeTagIndexBuild(
+      sql,
+      (
+        await begin(sql, 'production', { vocabVersion: other.vocabVersion })
+      ).id,
+      result()
+    );
+    expect([a.created, b.created]).toEqual([true, true]);
+    expect(b.contentHash).not.toBe(a.contentHash);
+    expect(b.contentHash).toBe(tagIndexContentHash('production', other.vocabVersion, PAYLOAD));
+  });
+
+  it('missing rows are reported, not silently ignored', async () => {
     const { sql } = await freshTagDb();
-    await expect(begin(sql, 'production', { vocabVersion: 'f'.repeat(64) })).rejects.toThrow(
-      /vocabVersion_fkey/
+    await expect(completeTagIndexBuild(sql, 'nope', result())).rejects.toThrow(/not found/);
+    const opts = { kind: 'production' as const, now: NOW, decode: decodeJson };
+    await expect(loadTagIndexSnapshot(sql, 'nope', opts)).rejects.toThrow(/not found/);
+    await expect(releaseTagIndexSnapshot(sql, 'nope', { dryRun: true })).rejects.toThrow(
+      /not found/
     );
   });
 
@@ -224,6 +296,10 @@ describe('tag index store on the real migration', () => {
     expect(insert.split('RETURNING')[0]).not.toContain('"builtAt"');
     await completeTagIndexBuild(sql, id, result());
     expect(statements.filter((s) => /UPDATE[\s\S]*"builtAt"/.test(s))).toEqual([]);
+    const stored = await db.query<{ builtAt: Date }>(
+      `SELECT "builtAt" FROM "ResourceIntentTagIndexSnapshot"`
+    );
+    expect(stored.rows[0].builtAt.getTime()).toBe(builtAt.getTime());
     await expect(
       beginTagIndexBuild(sql, {
         kind: 'production',
@@ -241,6 +317,19 @@ describe('tag index store on the real migration', () => {
 });
 
 describe('tag index row guard trigger', () => {
+  it('overwrites a writer-supplied builtAt with the database clock', async () => {
+    const { db } = await freshTagDb();
+    await db.query(
+      `INSERT INTO "ResourceIntentTagIndexSnapshot" ("kind","specHash","vocabVersion","trainStart","trainEnd","seed","builtAt")
+       VALUES ('production','s', $1, now() - interval '100 days', now() - interval '10 days', 1, '2001-01-01')`,
+      [VOCAB.vocabVersion]
+    );
+    const r = await db.query<{ off: number }>(
+      `SELECT abs(extract(epoch FROM (now()::timestamp(3) - "builtAt"))) AS "off" FROM "ResourceIntentTagIndexSnapshot"`
+    );
+    expect(Number(r.rows[0].off)).toBeLessThan(60);
+  });
+
   it('refuses any change to a ready row, and any change of builtAt', async () => {
     const { db, sql } = await freshTagDb();
     const { id } = await begin(sql, 'production');
@@ -424,6 +513,22 @@ describe('tag index served snapshot', () => {
     expect(await latestReadyTagIndexSnapshotId(sql)).toBe('P');
   });
 
+  it('a full tie on trainEnd and builtAt is broken by the higher id, in SQL and in retention alike', async () => {
+    const { db, sql } = await freshTagDb();
+    const t = ago(9);
+    const b = ago(8);
+    await seed(db, { id: 'aaa', kind: 'production', trainEnd: t, builtAt: b, contentHash: 'A' });
+    await seed(db, { id: 'zzz', kind: 'production', trainEnd: t, builtAt: b, contentHash: 'Z' });
+    expect(await latestReadyTagIndexSnapshotId(sql)).toBe('Z');
+    const rows = (
+      await db.query<Parameters<typeof selectCoocSnapshotsToDelete>[0][number]>(
+        `SELECT "id","kind","status","trainEnd","builtAt","pinnedUntil" FROM "ResourceIntentTagIndexSnapshot"`
+      )
+    ).rows;
+    expect(selectCoocSnapshotsToDelete(rows, ahead(400))).toEqual(['aaa']);
+    expect((await applyTagIndexRetention(sql, ahead(400))).deleted).toEqual(['aaa']);
+  });
+
   it('retention protects exactly the row latestReadyTagIndexSnapshotId serves (random tables)', async () => {
     let x = 5;
     const rnd = () => (x = (x * 1103515245 + 12345) >>> 0) / 2 ** 32;
@@ -507,9 +612,9 @@ describe('tag index retention', () => {
     expect(await ids(db)).toEqual([six]);
   });
 
-  it('a sweep that leaves an overdue study row throws (so no heartbeat is written)', async () => {
+  it('a sweep that leaves an overdue study row throws, a row pinned to exactly now included', async () => {
     const { db, sql } = await freshTagDb();
-    await seed(db, { kind: 'study', trainEnd: ago(30), builtAt: ago(40), pinnedUntil: ago(1) });
+    await seed(db, { kind: 'study', trainEnd: ago(30), builtAt: ago(40), pinnedUntil: NOW });
     const deafToDeletes: CoocSql = {
       query: sql.query,
       execute: async (s) => (s.text.startsWith('DELETE') ? 0 : sql.execute(s)),
@@ -600,6 +705,7 @@ describe('ResourceIntentVocabulary rules (CHECKs and trigger)', () => {
     const { db } = await freshTagDb();
     const v = vocabularyPayload('other');
     await expect(insert(db, v, 'frozen')).rejects.toThrow(/inserted as candidate/);
+    await expect(insert(db, v, 'retired')).rejects.toThrow(/inserted as candidate/);
     await db.query(
       `INSERT INTO "ResourceIntentVocabulary" ("vocabVersion", "payload", "rulesSummary", "createdAt") VALUES ($1, $2, '{}', '2001-01-01')`,
       [v.vocabVersion, v.payload]
@@ -613,12 +719,14 @@ describe('ResourceIntentVocabulary rules (CHECKs and trigger)', () => {
 
   it('freezing needs frozenBy and stamps frozenAt itself', async () => {
     const { db } = await freshTagDb();
-    await expect(setStatus(db, VOCAB.vocabVersion, 'frozen')).rejects.toThrow(/status_check/);
+    const v = vocabularyPayload('other');
+    await insert(db, v);
+    await expect(setStatus(db, v.vocabVersion, 'frozen')).rejects.toThrow(/status_check/);
     await db.query(
       `UPDATE "ResourceIntentVocabulary" SET "status" = 'frozen', "frozenBy" = 'operator', "frozenAt" = '2001-01-01' WHERE "vocabVersion" = $1`,
-      [VOCAB.vocabVersion]
+      [v.vocabVersion]
     );
-    const r = await row(db, VOCAB.vocabVersion);
+    const r = await row(db, v.vocabVersion);
     expect(r.status).toBe('frozen');
     expect(r.frozenBy).toBe('operator');
     expect(Math.abs((r.frozenAt as Date).getTime() - Date.now())).toBeLessThan(3_600_000);
@@ -626,11 +734,14 @@ describe('ResourceIntentVocabulary rules (CHECKs and trigger)', () => {
 
   it('allows only candidate -> frozen -> retired and candidate -> retired', async () => {
     const { db } = await freshTagDb();
-    const v = VOCAB.vocabVersion;
+    const a = vocabularyPayload('a');
+    await insert(db, a);
+    const v = a.vocabVersion;
     await setStatus(db, v, 'frozen', 'operator');
     await expect(setStatus(db, v, 'candidate')).rejects.toThrow(/cannot become/);
     await setStatus(db, v, 'retired');
     await expect(setStatus(db, v, 'frozen')).rejects.toThrow(/cannot become/);
+    await expect(setStatus(db, v, 'candidate')).rejects.toThrow(/cannot become/);
     expect((await row(db, v)).status).toBe('retired');
     const other = vocabularyPayload('other');
     await insert(db, other);
@@ -642,22 +753,29 @@ describe('ResourceIntentVocabulary rules (CHECKs and trigger)', () => {
     });
   });
 
-  it('payload, version and rules never change, and frozenBy changes only by freezing', async () => {
+  it('every column but status is fixed, and frozenAt/frozenBy change only by freezing', async () => {
     const { db } = await freshTagDb();
-    const v = VOCAB.vocabVersion;
+    const a = vocabularyPayload('a');
+    await insert(db, a);
+    const swap = vocabularyPayload('swapped');
+    const update = (set: string, params: unknown[] = []) =>
+      db.query(`UPDATE "ResourceIntentVocabulary" SET ${set} WHERE "vocabVersion" = $1`, [
+        a.vocabVersion,
+        ...params,
+      ]);
+    // Payload and version together satisfy the sha256 CHECK, so only the trigger can refuse it.
     await expect(
-      db.query(
-        `UPDATE "ResourceIntentVocabulary" SET "rulesSummary" = '{"rules": 2}' WHERE "vocabVersion" = $1`,
-        [v]
-      )
+      update(`"payload" = $2, "vocabVersion" = $3`, [swap.payload, swap.vocabVersion])
     ).rejects.toThrow(/only status can change/);
-    await setStatus(db, v, 'frozen', 'operator');
-    await expect(
-      db.query(
-        `UPDATE "ResourceIntentVocabulary" SET "frozenBy" = 'someone else' WHERE "vocabVersion" = $1`,
-        [v]
-      )
-    ).rejects.toThrow(/set only by freezing/);
+    await expect(update(`"rulesSummary" = '{"rules": 2}'`)).rejects.toThrow(
+      /only status can change/
+    );
+    await expect(update(`"createdAt" = '2001-01-01'`)).rejects.toThrow(/only status can change/);
+    await expect(update(`"id" = 'another-id'`)).rejects.toThrow(/only status can change/);
+    await expect(update(`"frozenBy" = 'early'`)).rejects.toThrow(/set only by freezing/);
+    await setStatus(db, a.vocabVersion, 'frozen', 'operator');
+    await expect(update(`"frozenBy" = 'someone else'`)).rejects.toThrow(/set only by freezing/);
+    await expect(update(`"frozenAt" = '2001-01-01'`)).rejects.toThrow(/set only by freezing/);
   });
 
   it('a vocabulary an index was built from cannot be deleted', async () => {
@@ -718,5 +836,24 @@ describe('ResourceIntentTagIndexSnapshot mirrors ResourceIntentCoocSnapshot', ()
     const coocDefs = await defs('ResourceIntentCoocSnapshot');
     expect(coocDefs.length).toBe(5);
     expect(await defs('ResourceIntentTagIndexSnapshot')).toEqual(coocDefs);
+  });
+
+  it('the same row-guard trigger and function', async () => {
+    const { db } = await freshTagDb({ extraSql: COOC_SQL });
+    const guard = async (table: string) => {
+      const fn = await db.query<{ d: string }>(`SELECT pg_get_functiondef($1::regproc) AS d`, [
+        `"${table}_guard"`,
+      ]);
+      const triggers = await db.query<{ d: string }>(
+        `SELECT pg_get_triggerdef(oid) AS d FROM pg_trigger
+         WHERE tgrelid = $1::regclass AND NOT tgisinternal`,
+        [`"${table}"`]
+      );
+      return [...fn.rows, ...triggers.rows].map((r) => r.d.replaceAll(table, '<T>'));
+    };
+    const cooc = await guard('ResourceIntentCoocSnapshot');
+    expect(cooc).toHaveLength(2);
+    expect(cooc[0]).toContain('builtAt');
+    expect(await guard('ResourceIntentTagIndexSnapshot')).toEqual(cooc);
   });
 });
