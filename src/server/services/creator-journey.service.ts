@@ -14,7 +14,11 @@ import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
-import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import {
+  creatorAggregateScoreFromMeta,
+  creatorScoreFromMeta,
+  creatorScoreSplitFromMeta,
+} from '~/shared/utils/creator-score';
 import { achievedAtIsObserved } from '~/server/services/creator-milestone-grant.service';
 import type { ActivityMeasure } from '~/server/services/creator-milestone-registry';
 import {
@@ -363,6 +367,8 @@ export async function getLegendStatus(userId: number, source?: ShowcaseSource) {
  * read, so nothing here can hint at one, and the score itself stays on the owner's journey page. An
  * earned hidden milestone is still a secret to everyone but its owner: they get its art, never its name.
  * Badges the owner hides on their profile are left out, and so is everything for a banned or deleted user.
+ * `scoreSplit` is the score's makeup in whole percents, never its points; it goes with a shown tier,
+ * unless the owner turned it off.
  */
 export async function getProfileAchievements({
   userId,
@@ -376,7 +382,12 @@ export async function getProfileAchievements({
   const [user, rows] = await Promise.all([
     dbRead.user.findUnique({
       where: { id: userId },
-      select: { bannedAt: true, deletedAt: true, profile: { select: { privacySettings: true } } },
+      select: {
+        bannedAt: true,
+        deletedAt: true,
+        meta: true,
+        profile: { select: { privacySettings: true } },
+      },
     }),
     dbRead.userCreatorMilestone.findMany({
       where: { userId },
@@ -400,7 +411,8 @@ export async function getProfileAchievements({
       orderBy: [{ achievedAt: 'desc' }, { milestoneKey: 'asc' }],
     }),
   ]);
-  if (!user || user.bannedAt || user.deletedAt) return { tiers: [], achievements: [] };
+  if (!user || user.bannedAt || user.deletedAt)
+    return { tiers: [], achievements: [], scoreSplit: null };
 
   const privacy = user.profile?.privacySettings as PrivacySettingsSchema | null | undefined;
   const isOwner = viewerId === userId;
@@ -439,7 +451,10 @@ export async function getProfileAchievements({
       };
     });
 
-  return { tiers, achievements };
+  const scoreSplit =
+    tiers.length && privacy?.showScoreSplit !== false ? creatorScoreSplitFromMeta(user.meta) : null;
+
+  return { tiers, achievements, scoreSplit };
 }
 
 /**
