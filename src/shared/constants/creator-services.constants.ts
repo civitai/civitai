@@ -48,3 +48,12 @@ export type ServiceDealLegName = 'hold' | 'release' | 'fee' | 'refund';
  */
 export const serviceDealTransactionId = (dealId: number, leg: ServiceDealLegName) =>
   `creator-service-${dealId}-${leg}`;
+
+/**
+ * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about
+ * the other party or the files, so the parties never see it (see `dealVisibleReason`).
+ */
+export const SERVICE_DEAL_HOLD_REASONS = {
+  sellerUnavailable: 'seller_unavailable',
+  finalScanFailed: 'final_scan_failed',
+} as const;

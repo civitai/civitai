@@ -2,6 +2,7 @@ import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
   SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
+  SERVICE_DEAL_HOLD_REASONS,
   SERVICE_DEAL_LATE_CANCEL_AFTER_MS,
 } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealStatus } from '~/shared/utils/prisma/enums';
@@ -70,6 +71,16 @@ export function dealActorRole(
   if (actorId === deal.buyerId) return 'buyer';
   if (actorId === deal.sellerId) return 'seller';
   return 'moderator';
+}
+
+const HOLD_REASONS: readonly string[] = Object.values(SERVICE_DEAL_HOLD_REASONS);
+
+/**
+ * A dispute reason or event comment as the viewer may see it. A system hold's reason says the
+ * seller was banned or a file failed scanning: moderators see it, the parties never do.
+ */
+export function dealVisibleReason(reason: string | null, isModerator: boolean): string | null {
+  return !isModerator && reason !== null && HOLD_REASONS.includes(reason) ? null : reason;
 }
 
 /** An event's actor id as the parties may see it: their own ids only, never a moderator's. */

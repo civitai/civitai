@@ -32,6 +32,7 @@ import {
   dealActions,
   dealActorRole,
   dealEventActorId,
+  dealVisibleReason,
   dealDeadlines,
   dealViewerRole,
   nextDealDeadline,
@@ -706,7 +707,10 @@ export async function getServiceDealView({
         }
       : null,
     dispute: deal.disputeOpenedAt
-      ? { openedAt: deal.disputeOpenedAt, reason: deal.disputeReason }
+      ? {
+          openedAt: deal.disputeOpenedAt,
+          reason: dealVisibleReason(deal.disputeReason, isModerator),
+        }
       : null,
     held: !!deal.heldAt,
     settled: !!deal.settledAt,
@@ -719,7 +723,7 @@ export async function getServiceDealView({
       actorId: dealEventActorId(deal, event.actorId),
       actorRole: dealActorRole(deal, event.actorId),
       round: event.round,
-      comment: event.comment,
+      comment: dealVisibleReason(event.comment, isModerator),
       createdAt: event.createdAt,
     })),
   };

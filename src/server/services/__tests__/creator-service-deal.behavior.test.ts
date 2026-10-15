@@ -1547,22 +1547,28 @@ describe('the finals gate and dispute resolution', () => {
     expect(row).toEqual({ same: true });
   });
 
-  it('holds a released deal again for a seller banned after the moderator decided', async () => {
-    const id = await completed();
-    await q(
-      `UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute',
+  it.each([
+    ['banned', `"bannedAt" = now()`],
+    ['deleted', `"deletedAt" = now()`],
+  ])(
+    'holds a released deal again for a seller %s after the moderator decided',
+    async (_, column) => {
+      const id = await completed();
+      await q(
+        `UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute',
        "disputeResolution" = 'Release', "disputeResolvedAt" = now() - interval '1 minute',
        "disputeResolvedById" = $2 WHERE id = $1`,
-      [id, STRANGER]
-    );
-    await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
-    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
-    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
-    expect(await disputeRow(id)).toMatchObject({
-      disputeReason: escrow.SELLER_UNAVAILABLE,
-      disputeResolution: null,
-    });
-  });
+        [id, STRANGER]
+      );
+      await q(`UPDATE "User" SET ${column} WHERE id = $1`, [SELLER]);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      expect(await disputeRow(id)).toMatchObject({
+        disputeReason: escrow.SELLER_UNAVAILABLE,
+        disputeResolution: null,
+      });
+    }
+  );
 
   // A claimed Release leg always completes, whatever happens to the finals afterwards.
   it('never re-holds a release whose leg is already claimed when a final fails', async () => {
@@ -1600,6 +1606,55 @@ describe('the finals gate and dispute resolution', () => {
         `DROP TRIGGER flip_final ON "ServiceDealEvent"; DROP FUNCTION flip_final();`
       );
     }
+  });
+
+  // The parties' view of a held deal: no hold reason, no moderator id. Moderators see both.
+  it("keeps hold reasons and moderator ids out of the parties' view of a deal", async () => {
+    const at = new Date();
+    const held = {
+      id: 9,
+      buyerId: BUYER,
+      sellerId: SELLER,
+      status: 'Disputed',
+      disputeOpenedAt: at,
+      disputeReason: escrow.SELLER_UNAVAILABLE,
+      events: [
+        {
+          id: 1,
+          type: 'Disputed',
+          actorId: -1,
+          round: 0,
+          comment: escrow.SELLER_UNAVAILABLE,
+          createdAt: at,
+        },
+        {
+          id: 2,
+          type: 'DisputeResolved',
+          actorId: STRANGER,
+          round: 0,
+          comment: 'n',
+          createdAt: at,
+        },
+      ],
+    };
+    (
+      dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+    ).serviceDeal.findUnique = vi.fn().mockResolvedValue(held);
+
+    const buyer = await deals.getServiceDealView({ dealId: 9, userId: BUYER });
+    expect(buyer.dispute?.reason).toBeNull();
+    expect(buyer.events.map((e) => [e.actorId, e.comment])).toEqual([
+      [null, null],
+      [null, 'n'],
+    ]);
+
+    const moderator = await deals.getServiceDealView({
+      dealId: 9,
+      userId: STRANGER,
+      isModerator: true,
+    });
+    expect(moderator.dispute?.reason).toBe(escrow.SELLER_UNAVAILABLE);
+    expect(moderator.events[0].comment).toBe(escrow.SELLER_UNAVAILABLE);
   });
 
   it('answers CONFLICT for a deal that is not in dispute', async () => {

@@ -24,6 +24,7 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   SERVICE_DEAL_HOLD_RECONCILE_AFTER_MS,
+  SERVICE_DEAL_HOLD_REASONS,
   SERVICE_DEAL_HOLD_RECONCILE_LOOKBACK_MS,
   serviceDealTransactionId,
 } from '~/shared/constants/creator-services.constants';
@@ -114,8 +115,8 @@ export async function claimRefund(tx: Db, dealId: number) {
 }
 
 /** Why a deal went to the moderators instead of being paid out. */
-export const SELLER_UNAVAILABLE = 'seller_unavailable';
-export const FINAL_SCAN_FAILED = 'final_scan_failed';
+export const SELLER_UNAVAILABLE = SERVICE_DEAL_HOLD_REASONS.sellerUnavailable;
+export const FINAL_SCAN_FAILED = SERVICE_DEAL_HOLD_REASONS.finalScanFailed;
 
 /**
  * The deal's current round has at least one final, and every final in it passed scanning. The
