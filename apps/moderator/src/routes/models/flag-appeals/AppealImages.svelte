@@ -22,6 +22,6 @@
   </div>
 {:else}
   <p class="m-0 rounded-lg border border-dashed border-dark-4 p-6 text-center text-sm text-dark-0">
-    No published images on this model's posts.
+    No images on this model's posts.
   </p>
 {/if}
