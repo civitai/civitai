@@ -114,6 +114,7 @@ import {
   getAverageFinishTopPercent,
   getCreatorFinish,
   getCruciblePrizeWinners,
+  isPaidPrize,
   getCrucibleTotalPrizePool,
   getCruciblePublishableName,
   type CrucibleNameScan,
@@ -1214,7 +1215,8 @@ export const getCrucibleDetail = async ({
           ])
         )
           .get(id)
-          ?.map(({ userId, ...prize }) => prize) ?? []
+          ?.filter(isPaidPrize)
+          .map(({ userId, ...prize }) => prize) ?? []
       : [];
 
   return {
@@ -3651,7 +3653,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Filter entries that have a prize amount > 0
   const prizeWinners = finalizedEntries.filter(
     (entry): entry is FinalizedEntry & { position: number; prizePlace: number } =>
-      entry.position !== null && entry.prizePlace !== null && entry.prizeAmount > 0
+      entry.position !== null && entry.prizePlace !== null && isPaidPrize(entry)
   );
 
   // Awarded, not paid: each winner claims theirs and picks the currency. The key is the one this
@@ -4685,7 +4687,7 @@ export const getUserCrucibleStats = async ({
         seededPrizePool: crucible?.seededPrizePool ?? 0,
       }),
     });
-    if (winners.some((winner) => winner.userId === userId && winner.prizeAmount > 0))
+    if (winners.some((winner) => winner.userId === userId && isPaidPrize(winner)))
       cruciblesWon++;
     const finish = getCreatorFinish({ placed: crucibleRows, userId });
     if (finish) finishes.push(finish);

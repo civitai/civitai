@@ -364,6 +364,9 @@ export function getCruciblePrizeWinners({
     }));
 }
 
+/** A 0-Buzz place is not a prize: finalize pays it nothing, so no surface may show or count it. */
+export const isPaidPrize = ({ prizeAmount }: { prizeAmount: number }) => prizeAmount > 0;
+
 /** Smaller fields are too coarse to place a creator in: 2nd of 3 says little about skill. */
 export const AVG_FINISH_MIN_FIELD = 5;
 /** Below this, one lucky crucible would read as the creator's standing. */
