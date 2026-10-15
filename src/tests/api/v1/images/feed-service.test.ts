@@ -308,18 +308,12 @@ describe('/api/v1/images served by the feed service', () => {
     expect(h.meiliSearch).not.toHaveBeenCalled();
   });
 
-  it('finishes an offset|sortAt cursor on the search path without mapping it for the feed', async () => {
-    const res = await get({ cursor: '200|1788000000000' });
+  it('continues an offset|sortAt cursor on the feed service, as the offset inside the frozen set', async () => {
+    const res = await get({ cursor: '200|1788000000000', sort: 'Newest' });
     expect(res.statusCode).toBe(200);
-    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-    expect(h.mapped).not.toHaveBeenCalled();
-    expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-    expect(h.meiliSearch).toHaveBeenCalledWith(
-      expect.objectContaining({ cursor: '200|1788000000000' })
-    );
-    expect(await counted()).toEqual([
-      { outcome: 'unmapped', reason: 'cursor:legacy', route: 'rest', value: 1 },
-    ]);
+    expect(feedQuery().get('offset')).toBe('200');
+    expect(feedQuery().get('before')).toBe('1788000000000');
+    expect(h.meiliSearch).not.toHaveBeenCalled();
   });
 
   it('ignores ?page= on the feed service, as the search path does, so feed health never decides the page', async () => {
@@ -421,7 +415,7 @@ describe('/api/v1/images served by the feed service', () => {
         } as unknown as Parameters<typeof getImagesFromFeedServiceForRest>[0],
         {} as Parameters<typeof getImagesFromFeedServiceForRest>[1]
       );
-      // `|` alone already routes it away; without one the mapping refuses it.
+      // Neither half of `12|x` is a number the mapping can read: refused, like the bare one.
       expect(result).toBeUndefined();
       const bare = await getImagesFromFeedServiceForRest(
         {
@@ -436,8 +430,7 @@ describe('/api/v1/images served by the feed service', () => {
       expect(bare).toBeUndefined();
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
       expect(await counted()).toEqual([
-        { outcome: 'unmapped', reason: 'cursor:legacy', route: 'rest', value: 1 },
-        { outcome: 'rejected', reason: 'cursor:unparsed', route: 'rest', value: 1 },
+        { outcome: 'rejected', reason: 'cursor:unparsed', route: 'rest', value: 2 },
       ]);
     });
 
