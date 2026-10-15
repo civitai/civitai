@@ -236,4 +236,10 @@ describe('backfillExemptionParams', () => {
     expect(backfillExemptionParams.safeParse({ ratings: '' }).success).toBe(false);
     expect(backfillExemptionParams.safeParse({ ratings: 'Blocked' }).success).toBe(false);
   });
+
+  it('takes an explicit label of word characters and dashes, and refuses anything else', () => {
+    expect(backfillExemptionParams.parse({ label: 'poi-policy-2' }).label).toBe('poi-policy-2');
+    expect(backfillExemptionParams.safeParse({ label: 'poi policy' }).success).toBe(false);
+    expect(backfillExemptionParams.safeParse({ label: 'x'.repeat(41) }).success).toBe(false);
+  });
 });

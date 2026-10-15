@@ -41,7 +41,7 @@ export const backfillExemptionParams = z.object({
     .default([NsfwLevelDeprecated.None]),
   label: z
     .string()
-    .regex(/^[w-]{1,40}$/)
+    .regex(/^[\w-]{1,40}$/)
     .default('poi-policy'),
   createdBy: z.coerce.number().int().positive().optional(),
   probe: commaDelimitedNumberArray().optional(),
