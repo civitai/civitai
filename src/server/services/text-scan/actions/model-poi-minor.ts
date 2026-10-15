@@ -7,10 +7,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
 import {
   appealGrantCoversText,
   buildTextScanFlagEntry,
-  MAX_FLAG_RULINGS,
   readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
@@ -63,11 +63,7 @@ function classifyDetection(
   return appealGrantCoversText(model.meta, label, textHash) ? 'skip' : 'redetect';
 }
 
-// Labels are the closed TextScanFlagLabel union, so interpolating them as literals is safe.
-export const labelLiteral = (label: TextScanFlagLabel) => Prisma.raw(`'${label}'`);
 const labelColumn = (label: TextScanFlagLabel) => Prisma.raw(`m.${label}`);
-export const flagEntryPath = (label: TextScanFlagLabel) =>
-  Prisma.sql`(m.meta->${TEXT_SCAN_FLAGS_KEY}->${labelLiteral(label)})`;
 
 // promptIds / model of the scan row whose workflow produced the verdict.
 const verdictRowField = (field: 'promptIds' | 'model', workflowId: string) => Prisma.sql`(
@@ -75,34 +71,93 @@ const verdictRowField = (field: 'promptIds' | 'model', workflowId: string) => Pr
   WHERE em."entityType" = ANY(${VERDICT_ROW_TYPES}::text[]) AND em."entityId" = m.id
   ORDER BY em."workflowId" = ${workflowId} DESC NULLS LAST, em."entityType" LIMIT 1)`;
 
-// A flag write replaces the label entry, so the decisions on the old one move into a bounded
-// history instead of vanishing. Empty when there is nothing to carry.
-export const carriedRulings = (label: TextScanFlagLabel) => {
-  const prev = flagEntryPath(label);
-  return Prisma.sql`COALESCE((
-    SELECT jsonb_build_object('rulings', jsonb_agg(r.d ORDER BY r.d->>'at'))
-    FROM (
-      SELECT x.d FROM (
-        SELECT jsonb_array_elements(COALESCE(${prev}->'rulings', '[]'::jsonb)) AS d
-        UNION ALL SELECT ${prev}->'appealGranted' || '{"decision":"appealGranted"}'::jsonb
-          WHERE ${prev}->'appealGranted' IS NOT NULL
-        UNION ALL SELECT ${prev}->'appealUpheld' || '{"decision":"appealUpheld"}'::jsonb
-          WHERE ${prev}->'appealUpheld' IS NOT NULL
-      ) x
-      ORDER BY x.d->>'at' DESC LIMIT ${Prisma.raw(String(MAX_FLAG_RULINGS))}
-    ) r
-    HAVING count(*) > 0
-  ), '{}'::jsonb)`;
-};
-
 // The scan flags only past a clean slate. A moderator keeping a re-detection flags over the
-// grant, but only for the text the moderator was shown.
+// grant, but only for the text the moderator was shown, and never for the text the grant covers.
+// A retry after a failed side effect finds the grant already moved into the history, so none is required.
 const flagGuard = (label: TextScanFlagLabel, keptHash: string | null) =>
   keptHash
-    ? Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NOT NULL
-        AND ${flagEntryPath(label)}->'redetected'->>'textHash' = ${keptHash}`
+    ? Prisma.sql`${flagEntryPath(label)}->'redetected'->>'textHash' = ${keptHash}
+        AND ${flagEntryPath(label)}->'appealGranted'->>'textHash' IS DISTINCT FROM ${keptHash}`
     : Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NULL
         AND NOT (${labelLiteral(label)} = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`;
+
+// The flag a moderator keeps carries the marker until its side effects have landed, so a failure
+// leaves the item in the queue to retry.
+const keptMarker = (label: TextScanFlagLabel, kept: boolean) =>
+  kept
+    ? Prisma.sql`jsonb_build_object('redetected', ${flagEntryPath(label)}->'redetected')`
+    : Prisma.sql`'{}'::jsonb`;
+
+/** Drops the marker for exactly the text the moderator ruled on. */
+export async function dropRedetection({
+  modelId,
+  label,
+  textHash,
+}: {
+  modelId: number;
+  label: TextScanFlagLabel;
+  textHash: string;
+}) {
+  return redetectionUpdate({ modelId, label, textHash, match: 'equal' });
+}
+
+/** Drops a marker for text other than the one just scanned: the owner has moved on from it. */
+export function clearSupersededRedetection({
+  modelId,
+  label,
+  textHash,
+}: {
+  modelId: number;
+  label: TextScanFlagLabel;
+  textHash: string;
+}) {
+  return redetectionUpdate({ modelId, label, textHash, match: 'distinct' });
+}
+
+async function redetectionUpdate({
+  modelId,
+  label,
+  textHash,
+  match,
+}: {
+  modelId: number;
+  label: TextScanFlagLabel;
+  textHash: string;
+  match: 'equal' | 'distinct';
+}) {
+  const entry = flagEntryPath(label);
+  const compare = match === 'equal' ? Prisma.sql`=` : Prisma.sql`IS DISTINCT FROM`;
+  const changed = await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+      ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
+        ${labelLiteral(label)}, ${entry} - 'redetected'
+      )
+    )
+    WHERE m.id = ${modelId}
+      AND ${entry} ? 'redetected'
+      AND ${entry}->'redetected'->>'textHash' ${compare} ${textHash}
+  `;
+  return changed > 0;
+}
+
+// The owner is back on text the grant covers: a marker for other text is stale. Read from the meta
+// the caller already holds, so the common case costs nothing.
+async function dropStaleMarker({
+  modelId,
+  label,
+  meta,
+  textHash,
+}: {
+  modelId: number;
+  label: TextScanFlagLabel;
+  meta: Prisma.JsonValue;
+  textHash: string;
+}) {
+  const marker = readTextScanFlags(meta)[label]?.redetected;
+  if (marker && marker.textHash !== textHash)
+    await clearSupersededRedetection({ modelId, label, textHash });
+}
 
 export type FlagResult = { written: boolean; notified: boolean; redetected?: boolean };
 const NOT_FLAGGED: FlagResult = { written: false, notified: false };
@@ -163,6 +218,11 @@ export async function applyModelPoiMinor({
   textHash,
 }: ApplyTextScanArgs): Promise<PoiMinorResult> {
   let notified = false;
+  // A clean verdict from the pass that owns the label ends a re-detection of other text. No read:
+  // the statement matches nothing for the near-universal model without one.
+  for (const label of ['poi', 'minor'] as const)
+    if (outcome[label] && !outcome[label]!.detected)
+      await clearSupersededRedetection({ modelId: entityId, label, textHash });
   if (outcome.poi?.newlyDetected)
     notified =
       (
@@ -219,7 +279,10 @@ export async function flagModelPoi({
   if (!before || before.poi) return NOT_FLAGGED;
   if (!kept) {
     const action = classifyDetection('poi', before, textHash);
-    if (action === 'skip') return NOT_FLAGGED;
+    if (action === 'skip') {
+      await dropStaleMarker({ modelId, label: 'poi', meta: before.meta, textHash });
+      return NOT_FLAGGED;
+    }
     if (action === 'redetect')
       return {
         ...NOT_FLAGGED,
@@ -247,7 +310,10 @@ export async function flagModelPoi({
         ),
         meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
           ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
-            'poi', ${entry}::jsonb || ${carriedRulings('poi')} || jsonb_build_object(
+            'poi', ${entry}::jsonb || ${carriedRulings('poi')} || ${keptMarker(
+    'poi',
+    !!kept
+  )} || jsonb_build_object(
               'at', now(),
               'promptIds', ${verdictRowField('promptIds', workflowId)},
               'model', ${verdictRowField('model', workflowId)},
@@ -306,6 +372,7 @@ export async function flagModelPoi({
     )
     .catch(() => null);
 
+  if (kept) await dropRedetection({ modelId, label: 'poi', textHash });
   const notified = await notifyModelOwner({
     modelId,
     modelName: after.name,
@@ -344,7 +411,10 @@ export async function flagModelMinor({
   if (!model || model.minor) return NOT_FLAGGED;
   if (!kept) {
     const action = classifyDetection('minor', model, textHash);
-    if (action === 'skip') return NOT_FLAGGED;
+    if (action === 'skip') {
+      await dropStaleMarker({ modelId, label: 'minor', meta: model.meta, textHash });
+      return NOT_FLAGGED;
+    }
     if (action === 'redetect')
       return {
         ...NOT_FLAGGED,
@@ -363,7 +433,10 @@ export async function flagModelMinor({
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
-        'minor', ${entry}::jsonb || ${carriedRulings('minor')} || jsonb_build_object(
+        'minor', ${entry}::jsonb || ${carriedRulings('minor')} || ${keptMarker(
+    'minor',
+    !!kept
+  )} || jsonb_build_object(
           'at', now(),
           'promptIds', ${verdictRowField('promptIds', workflowId)},
           'model', ${verdictRowField('model', workflowId)}
@@ -385,6 +458,7 @@ export async function flagModelMinor({
     ...(kept && { isModerator: true }),
   });
 
+  if (kept) await dropRedetection({ modelId, label: 'minor', textHash });
   const notified = await notifyModelOwner({
     modelId,
     modelName: model.name,
@@ -475,13 +549,15 @@ export async function grantModelTextScanPoi({
         ),
         meta = jsonb_set(
           m.meta,
-          ARRAY[${TEXT_SCAN_FLAGS_KEY}::text, 'poi', 'appealGranted'],
-          jsonb_build_object(
-            'at', now(),
-            'by', ${userId}::int,
-            'textHash', ${grantHash}::text,
-            'via', 'appeal'
-          )
+          ARRAY[${TEXT_SCAN_FLAGS_KEY}::text, 'poi'],
+          (${flagEntryPath('poi')} - 'redetected')
+            || ${carriedRulings('poi', ['appealGranted'])}
+            || jsonb_build_object('appealGranted', jsonb_build_object(
+              'at', now(),
+              'by', ${userId}::int,
+              'textHash', ${grantHash}::text,
+              'via', 'appeal'
+            ))
         )
     WHERE m.id = ${modelId}
       AND m.poi
@@ -560,7 +636,8 @@ export async function stampModelTextScanAppeal({
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || (
         SELECT jsonb_object_agg(
           l.label,
-          COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label, '{}'::jsonb) || jsonb_build_object(
+          (COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label, '{}'::jsonb) - 'redetected')
+          || ${carriedRulings(Prisma.sql`l.label`, [decision])} || jsonb_build_object(
             ${decision}::text, jsonb_build_object(
               'at', now(),
               'by', ${userId}::int,

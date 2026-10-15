@@ -10,13 +10,18 @@ export default defineModeratorEndpoint('minorFlag.resolveRedetection', {
   notes: [
     '`keep` applies the flag exactly as the scan would have, including the owner notice.',
     'Dismissing clears the re-detected text and tells nobody.',
-    'Refuses when the re-detection changed or was already resolved.',
-    'An appeal the owner has open is resolved through `resolveAppeal`, not here.',
+    'Refuses when the re-detection changed or was already resolved, or when `textHash` is not the pending one.',
+    'Refuses while the owner has an open appeal: resolve it through `resolveAppeal` first.',
   ],
   rateLimit: minorFlagRateLimit,
   input: z.object({
     modelId,
     label: z.enum(TEXT_SCAN_FLAG_LABELS).describe('The flag the scan re-detected.'),
+    textHash: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe('The re-detected text hash the ruling was made on; a newer detection is refused.'),
     keep: moderatorBoolean.describe('True keeps the flag, false dismisses the re-detection.'),
   }),
   async handler(input, ctx) {
@@ -24,6 +29,7 @@ export default defineModeratorEndpoint('minorFlag.resolveRedetection', {
       modelId: input.modelId,
       label: input.label,
       keep: input.keep,
+      textHash: input.textHash,
       userId: ctx.actor.id,
     });
     return { resolved, modelId: input.modelId, affected: { modelIds: [input.modelId] } };

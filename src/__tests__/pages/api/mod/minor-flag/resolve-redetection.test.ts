@@ -51,24 +51,30 @@ beforeEach(() => {
 
 describe('minorFlag.resolveRedetection', () => {
   it('rules as the acting moderator', async () => {
-    expect(await call({ modelId: 42, label: 'minor', keep: true })).toBe(200);
+    expect(await call({ modelId: 42, label: 'minor', keep: true, textHash: 'h-1' })).toBe(200);
     expect(mockResolve).toHaveBeenCalledWith({
       modelId: 42,
       label: 'minor',
       keep: true,
+      textHash: 'h-1',
       userId: 7,
     });
   });
 
   it('passes a dismissal through as keep: false', async () => {
-    await call({ modelId: 42, label: 'poi', keep: 'false' });
+    await call({ modelId: 42, label: 'poi', keep: 'false', textHash: 'h-1' });
     expect(mockResolve).toHaveBeenCalledWith(
       expect.objectContaining({ label: 'poi', keep: false })
     );
   });
 
   it('rejects an unknown label before resolving anything', async () => {
-    expect(await call({ modelId: 42, label: 'nsfw', keep: true })).toBe(400);
+    expect(await call({ modelId: 42, label: 'nsfw', keep: true, textHash: 'h-1' })).toBe(400);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it('rejects a ruling that does not name the text it was made on', async () => {
+    expect(await call({ modelId: 42, label: 'minor', keep: true })).toBe(400);
     expect(mockResolve).not.toHaveBeenCalled();
   });
 });

@@ -120,7 +120,7 @@ beforeEach(() => {
 });
 
 describe('applyModelPoiMinor — nothing to do', () => {
-  it('reads nothing when no label is newly detected, and never writes a false', async () => {
+  it('reads nothing when no label is newly detected, and never writes a flag', async () => {
     await run(
       outcome({
         poi: poi({ detected: false, newlyDetected: false, names: [] }),
@@ -129,6 +129,23 @@ describe('applyModelPoiMinor — nothing to do', () => {
     );
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  it('a clean verdict costs one guarded update per label, with no read', async () => {
+    await run(outcome({ poi: poi({ detected: false, newlyDetected: false, names: [] }) }));
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    const text = sqlOf(call);
+    expect(text).toContain(`- 'redetected'`);
+    expect(text).toContain(`? 'redetected'`);
+    expect(text).toContain(`IS DISTINCT FROM`);
+    expect(call.slice(1)).toContain(textScanTextHash(SUBJECT));
+  });
+
+  it('a detection the owner already declared leaves a pending re-detection alone', async () => {
+    await run(outcome({ minor: minor({ detected: true, declared: true, newlyDetected: false }) }));
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
@@ -451,9 +468,8 @@ describe('grantModelTextScanPoi', () => {
     await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     const call = flat(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     const text = sqlOf(call);
-    expect(text).toMatch(
-      /meta = jsonb_set\(\s+m\.meta,\s+ARRAY\[\?::text, 'poi', 'appealGranted'\]/
-    );
+    expect(text).toMatch(/meta = jsonb_set\(\s+m\.meta,\s+ARRAY\[\?::text, 'poi'\],/);
+    expect(text).toContain(`- 'redetected'`);
     expect(text).toContain(`'textHash', ?::text,`);
     expect(text).toContain(`'via', 'appeal'`);
     expect(call.slice(1)).toEqual(expect.arrayContaining([3, 'h-current', MODEL_ID]));
