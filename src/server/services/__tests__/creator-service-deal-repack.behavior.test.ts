@@ -175,7 +175,9 @@ const files = await import('~/server/services/creator-service-deal-file.service'
 const deals = await import('~/server/services/creator-service-deal.service');
 const unpack = await import('~/server/services/creator-service-deal-unpack.service');
 const repack = await import('~/server/services/creator-service-deal-repack.service');
-const { SERVICE_UNPACK_STALE_MS } = await import('~/shared/constants/creator-services.constants');
+const { SERVICE_FINAL_MAX_BYTES, SERVICE_UNPACK_STALE_MS } = await import(
+  '~/shared/constants/creator-services.constants'
+);
 
 const MIGRATIONS = [
   '20261025120000_creator_services_foundation',
@@ -183,7 +185,8 @@ const MIGRATIONS = [
   '20261028140000_creator_service_deal_file_state',
   '20261028150000_creator_service_max_nsfw_level',
   '20261028160000_creator_service_deal_file_entries',
-  '20261029130000_creator_service_deal_file_delivery',
+  '20261028170000_creator_service_offering_takedown',
+  '20261029140000_creator_service_deal_file_delivery',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -273,6 +276,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
@@ -320,7 +324,7 @@ beforeEach(async () => {
     await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
   });
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -762,6 +766,17 @@ describe('what the built archive may hold', () => {
 });
 
 describe('an archive that came out too large to deliver', () => {
+  it('accepts one exactly as large as the size column can hold, and refuses one byte more', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+    expect(SERVICE_FINAL_MAX_BYTES).toBe(2 ** 31 - 1);
+    s3.headObject.mockImplementation(async (_bucket: string, key: string) => ({
+      status: 'present',
+      size: key.startsWith('service-deals/delivered/') ? SERVICE_FINAL_MAX_BYTES : 1000,
+    }));
+    expect(await repack.repackFinals()).toBe(1);
+    expect((await fileRow(fileId)).deliverySize).toBe(2 ** 31 - 1);
+  });
+
   it('is refused with a reason, not retried for ever', async () => {
     const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
     s3.headObject.mockImplementation(async (_bucket: string, key: string) => ({
