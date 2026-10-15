@@ -992,6 +992,28 @@ export function getEffectiveDifferentLicense(
   return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
 }
 
+// "Different permissions on merges" means nothing while merges are not allowed. The upsert form
+// used to hide that box without clearing it, so ~111k models store merges off with it still on:
+// every reader goes through this rather than the raw column, and those rows are left as stored.
+export function allowsDifferentLicenseOnMerges(permissions: {
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+}): boolean {
+  return permissions.allowDerivatives && permissions.allowDifferentLicense;
+}
+
+// The write-side half of the rule above. Only when the caller is writing permissions: a save that
+// omits both fields leaves the stored pair alone. `storedAllowDerivatives` covers a save that sends
+// only allowDifferentLicense to a model whose merges are already off.
+export function normalizeMergePermissions(
+  data: { allowDerivatives?: boolean; allowDifferentLicense?: boolean },
+  storedAllowDerivatives?: boolean
+) {
+  if (data.allowDerivatives === undefined && data.allowDifferentLicense === undefined) return;
+  if ((data.allowDerivatives ?? storedAllowDerivatives) === false)
+    data.allowDifferentLicense = false;
+}
+
 // Whether a model's own terms add anything to the base license, which decides if Attachment B
 // is offered. Returns true for every input: every element of a CommercialUse[] is in CommercialUse
 // by construction, so the `.some` is `length > 0` and the `!length` arm covers the rest, and

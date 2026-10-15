@@ -20,6 +20,7 @@ import {
   constants,
   FEATURED_MODEL_COLLECTION_ID,
   MODELS_SEARCH_INDEX,
+  normalizeMergePermissions,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -2924,6 +2925,7 @@ export const upsertModel = async (
 
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
+  normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
   // so what is stored is what the blurb actually says — and before the profanity filter below,
