@@ -4,9 +4,8 @@ A storyline is a branching visual story told in posts. Each chapter is an ordina
 who starts the storyline writes the main path; other creators can continue it from the end of any
 chapter, so a story grows into a tree of alternatives that readers walk through and choose between.
 
-**Status:** in development behind the `storylines` feature flag. The data model is in place; the
-reader and creator screens below are landing in separate changes, so this page describes the first
-version as designed rather than what is live today.
+**Status:** behind the `storylines` feature flag, available to moderators and granted users. This page
+describes what is built; the in-app tool for making the next section is not (see the last section).
 
 ## For readers
 
@@ -15,23 +14,27 @@ version as designed rather than what is live today.
 - **Reading.** In storyline mode, left and right in image detail walk the chapter's images and then
   move on to the next chapter, instead of paging the feed. A chip on the image says which storyline
   and chapter you are in; its x leaves, returning you to where you were in the feed.
-- **Where am I.** The chip opens a map of the storyline: the main path as a timeline, the forks off it,
-  and how readers have split at each fork, from the first recorded choice. Any chapter on the map can
-  be jumped to. On mobile the map is full screen.
+- **Where am I.** The chip opens a map of the storyline, a sheet that drops from the chip (a bottom
+  sheet on a phone) while the image stays visible: the main path as a timeline, the forks off it, and
+  how readers have split at each fork, from the first recorded choice. Any chapter on the map can be
+  jumped to.
 - **End of a chapter.** At the end of a chapter the reader picks how to continue. Each way on shows
   its first image and its share of readers. The main path is shown first and largest, with Read as
   the main action, then continuations by the storyline's endorsed collaborators, then everyone
   else's, ordered by how many readers took them. Writing a continuation sits below.
-- **Creating the next section.** A reader can ask to make their own continuation. Until that tool
-  ships, this joins an early-access list.
+- **Continuing it.** At the end of a chapter a reader can submit a post they already made as the next
+  chapter ("Use a post you made"), for the storyline's price in Buzz or free. It goes to the creator's
+  review unless the reader is an endorsed collaborator. A storyline that is closed or open only to
+  collaborators says so instead. The in-app tool for making the next section is not built yet:
+  "Create the next section" joins an early-access list.
 - **Content level.** Every storyline has a maximum content level set by its creator. A chapter above
   it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
   The same goes for a chapter whose post was removed or whose author was banned. Each reader's own
   browsing level still applies chapter by chapter.
-- **Titles.** A storyline's title is checked automatically. A title about a real person takes the
-  storyline down, and so does one about a minor that is not safe for work. A safe-for-work title about
-  a minor leaves it up, but every chapter in it, forks included, is then held to PG-13: anything above
-  is a placeholder, and new chapters above it are refused. Editing the title has it checked again.
+- **Titles.** A storyline's title is checked automatically. The check can raise the story's rating or
+  take it down. A storyline flagged for a minor stays up but can only hold safe-for-work chapters,
+  forks included: anything above is a placeholder, and new chapters above it are refused. Editing the
+  title has it checked again.
 - **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
   moderators. A chapter is reported as its post or image.
 
@@ -46,6 +49,11 @@ version as designed rather than what is live today.
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is
   withdrawn then if it turns out above the content level.
+- **Price and refunds.** A priced continuation's Buzz is held when it is submitted. If the creator
+  declines it they keep a share as a decline fee and the rest is returned. It is refunded in full if
+  it is withdrawn, if nobody answers in time, or if it can no longer be accepted (its parent chapter
+  was removed or the storyline was taken down). A submission whose payment never completed is settled
+  by a sweep.
 - **Credit.** A continuation can fork from the end of any chapter. Earlier chapters are referenced and
   credited to their authors, never copied.
 

@@ -1194,7 +1194,7 @@ export const serverSchema = z
     //   (GET /zones?name=civit.ai) and cached in-process. Optional.
     APPS_DEV_TUNNEL_CF_ZONE_ID: z.string().optional(),
     // Storylines: how many readers must choose at the end of a chapter before each way on's
-    // share is shown. A whole number of at least 1; anything else means the default of 20.
+    // share is shown. A whole number of at least 1; anything else means the default of 1.
     // Read as a string and parsed by `storylineShareMinChoices`, so a bad value cannot stop the
     // server from starting.
     STORYLINE_SHARE_MIN_CHOICES: z.string().optional(),

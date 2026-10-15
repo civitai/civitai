@@ -653,9 +653,9 @@ export async function moderateStorylineTitle({
       })
     : (await dbWrite.storyline.updateMany({ where: { id }, data: { moderatorNsfwLevel } })).count;
   if (!count) throw throwBadRequestError('The storyline changed since it was reviewed');
-  // A title the scan holds as about a minor, now rated NSFW: the takedown the scan would have made
-  // with this rating, marked as the scan's so a lift for the title can end it. Not for text a
-  // moderator has cleared (the scan's own rule), which includes a lift in this same call.
+  // The takedown the scan would make with this rating, marked as the scan's so a lift for the
+  // title can end it. Not for text a moderator has cleared (the scan's own rule), which includes a
+  // lift in this same call.
   if (moderatorNsfwLevel != null && moderatorNsfwLevel >= NsfwLevel.R) {
     const currentText = textScanTextHash(
       storylineTextScanSubject({ userId: storyline.userId, title: storyline.title })
@@ -962,9 +962,8 @@ export async function removeStorylineCollaborator({
  * outside their browsing level: the title and cast belong to a story they could not open. The
  * story is judged by its first chapter, or by its ceiling when that chapter is gone or unrated.
  *
- * Discussion, v1: the storyline's discussion is the comment thread of its first chapter's post
- * (`rootPostId`). The feature brief asks for one discussion separate from each chapter's own
- * comments; a storyline-level thread needs a schema change and is a follow-up.
+ * The storyline's discussion is the comment thread of its first chapter's post (`rootPostId`);
+ * a discussion separate from each chapter's own comments would need a schema change.
  */
 export async function getStoryline({
   id,
@@ -1667,10 +1666,6 @@ export async function getStorylineReaderCounts(chapterId: number) {
   return new Map(await getForkCounts(chapterId));
 }
 
-/**
- * How the readers who chose at the end of a chapter went: each way on's count and share, once
- * `STORYLINE_SHARE_MIN_CHOICES` (default 1) choices have been made; below that, only the total.
- */
 /** Not found unless this reader can see the storyline `chapterId` belongs to. */
 async function assertStorylineReadableByChapter(
   chapterId: number,
@@ -1687,6 +1682,10 @@ async function assertStorylineReadableByChapter(
   await getStorylineForRead(chapter.storylineId, viewer, browsingLevel);
 }
 
+/**
+ * How the readers who chose at the end of a chapter went: each way on's count and share, once
+ * `STORYLINE_SHARE_MIN_CHOICES` (default 1) choices have been made; below that, only the total.
+ */
 export async function getStorylineForkShares({
   chapterId,
   viewer,

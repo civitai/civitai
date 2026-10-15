@@ -597,6 +597,14 @@ const isRefusal = (error: unknown) => error instanceof TRPCError && error.code =
 
 const isPositiveId = (id: number | null): id is number => id != null;
 
+/** What the escrow has receipted for a placement row `pl`, as a SQL expression. */
+const receiptedHolds = Prisma.sql`(
+  SELECT COALESCE(SUM(t.amount), 0) FROM "PlacementTransaction" t
+  WHERE t."placementId" = pl.id
+    AND t.kind IN (${Prisma.join([...PLACEMENT_HOLD_KINDS])})
+    AND t."transactionId" IS NOT NULL
+)`;
+
 /**
  * Admits continuations whose post has since finished, and refunds the ones
  * whose post never will.
@@ -611,14 +619,6 @@ const isPositiveId = (id: number | null): id is number => id != null;
  * drafts read every tick would starve the rows behind it. A post under review
  * is left out of the selection for the same reason, and refunds at its deadline.
  */
-/** What the escrow has receipted for a placement row `pl`, as a SQL expression. */
-const receiptedHolds = Prisma.sql`(
-  SELECT COALESCE(SUM(t.amount), 0) FROM "PlacementTransaction" t
-  WHERE t."placementId" = pl.id
-    AND t.kind IN (${Prisma.join([...PLACEMENT_HOLD_KINDS])})
-    AND t."transactionId" IS NOT NULL
-)`;
-
 export async function startReadyStorylineContinuations({ limit = 200 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT pl.id

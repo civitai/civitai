@@ -21,7 +21,7 @@ export const STORYLINE_MINOR_CEILING = NsfwLevel.PG13;
 
 /**
  * The ceiling every chapter is held to: the owner's, lowered to safe for work while the title
- * scan holds the storyline as about a minor. The owner's own setting is kept, so a clean rescan
+ * scan restricts the storyline (`minorByScan`). The owner's own setting is kept, so a clean rescan
  * gives it back. Read this, never `maxNsfwLevel` alone, wherever a chapter or image is gated.
  */
 export const storylineCeiling = (storyline: { maxNsfwLevel: number; minorByScan: boolean }) =>

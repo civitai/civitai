@@ -43,6 +43,8 @@ The scanned entities, and the fields and labels each scans, are the profiles in
 `nsfw`) replaces XGuard; off or in shadow, XGuard still runs. Collection's (name, description of
 Public collections readable as Public or Unlisted → `nsfw`, a floor on the collection's rating)
 replaces Clavata only once Collection is cut over with `disableClavataFor`.
+Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
+`text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
 
 ### Model rules
 
