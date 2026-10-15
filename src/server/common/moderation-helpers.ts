@@ -1,3 +1,4 @@
+import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
 type UnpublishReasonDetail = {
   optionLabel: string;
   notificationMessage: string;
@@ -240,55 +241,11 @@ export function getUnpublishReason(reason: string): UnpublishReasonDetail | unde
   return lookupReason(unpublishReasons, reason);
 }
 
-/**
- * The reasons a moderator may take down a Creator Services OFFERING, worded for its seller. An
- * offering is a listing of work for hire, so these describe what is being offered, not an upload.
- */
-export const serviceOfferingTakedownReasons = {
-  'prohibited-content': {
-    optionLabel: 'Offers content our guidelines prohibit',
-    notificationMessage:
-      'Services offering to create content that is prohibited under our content guidelines are not allowed.',
-    type: 'policy',
-  },
-  'real-person-likeness': {
-    optionLabel: 'Offers real-person likeness',
-    notificationMessage:
-      'Services offering to depict real people are prohibited under our content guidelines.',
-    type: 'policy',
-  },
-  'hate-speech': {
-    optionLabel: 'Promotion of hate-speech or targeted attack',
-    notificationMessage:
-      'Content that attacks, harasses, or discriminates against an individual or group based on their race, ethnicity, nationality, religion, gender, sexual orientation, disability, or any other characteristic is prohibited under our content guidelines.',
-    type: 'policy',
-  },
-  'off-platform': {
-    optionLabel: 'Moves payment or contact off Civitai',
-    notificationMessage:
-      'Services must be requested, paid for and delivered on Civitai. Directing buyers to pay or deal elsewhere is not allowed.',
-    type: 'policy',
-  },
-  misleading: {
-    optionLabel: 'Misleading or fraudulent listing',
-    notificationMessage:
-      'Services must describe honestly what the buyer will receive. Misleading or fraudulent listings are prohibited under our Terms of Service.',
-    type: 'policy',
-  },
-  spam: {
-    optionLabel: 'Spam or advertorial content',
-    notificationMessage:
-      'Spam and advertisements are strictly prohibited under our Terms of Service.',
-    type: 'policy',
-  },
-  other: {
-    optionLabel: 'Other',
-    notificationMessage: '',
-    type: 'policy',
-  },
-} as const satisfies Record<string, UnpublishReasonDetail>;
-
-export type ServiceOfferingTakedownReason = keyof typeof serviceOfferingTakedownReasons;
+// One list for both places that take an offering down: here and the moderator app's report queue.
+export {
+  serviceOfferingTakedownReasons,
+  type ServiceOfferingTakedownReason,
+} from '@civitai/shared/service-offering-takedown';
 
 export function getServiceOfferingTakedownReason(
   reason: string

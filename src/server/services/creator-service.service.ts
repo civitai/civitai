@@ -4,6 +4,10 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
 import { createNotification } from '~/server/services/notification.service';
+import {
+  SERVICE_OFFERING_TAKEN_DOWN,
+  serviceOfferingTakenDownKey,
+} from '@civitai/shared/service-offering-takedown';
 import { NotificationCategory } from '~/server/common/enums';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
@@ -314,9 +318,9 @@ export async function takedownServiceOffering({
 
   await createNotification({
     userId: offering.sellerId,
-    type: 'service-offering-taken-down',
+    type: SERVICE_OFFERING_TAKEN_DOWN,
     category: NotificationCategory.System,
-    key: `service-offering-taken-down:${id}`,
+    key: serviceOfferingTakenDownKey(id),
     details: {
       offeringId: id,
       offeringTitle: offering.title,

@@ -26,6 +26,7 @@ const report = (reason: ReportReason = ReportReason.TOSViolation) =>
 beforeEach(() => {
   vi.clearAllMocks();
   reportFindFirst.mockResolvedValue(null);
+  dbMock.dbRead.serviceOffering.findUnique.mockResolvedValue({ id: 17 } as never);
   reportCreate.mockResolvedValue({ id: 74, details: {} });
 });
 
@@ -67,5 +68,13 @@ describe('filing an offering report', () => {
       details: { violation: 'Spam', comment: 'asks buyers to pay off-site' },
     });
     expect(parsed.success).toBe(true);
+  });
+});
+
+describe('reporting a service that does not exist', () => {
+  it('is a 404 before any report is written, not a failed join row', async () => {
+    dbMock.dbRead.serviceOffering.findUnique.mockResolvedValue(null as never);
+    await expect(report()).rejects.toThrow('That service no longer exists.');
+    expect(reportCreate).not.toHaveBeenCalled();
   });
 });

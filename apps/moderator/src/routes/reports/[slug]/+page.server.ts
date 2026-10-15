@@ -7,6 +7,12 @@ import {
   getReportStorylineId,
   setStorylineTakedown,
 } from '$lib/server/storyline-takedown.service';
+import {
+  getReportedServiceOfferings,
+  getReportServiceOfferingId,
+  takedownServiceOffering,
+} from '$lib/server/service-offering-takedown.service';
+import { isServiceOfferingTakedownReason } from '@civitai/shared/service-offering-takedown';
 import { canAccess } from '$lib/server/access';
 import { loadReportQueue } from '$lib/server/report-queue-load';
 import { reportStatusActions } from '$lib/server/report-queue-actions';
@@ -22,12 +28,13 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
   const queue = await loadReportQueue(type, url);
   const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
-  const [games, storylines] = await Promise.all([
+  const [games, storylines, serviceOfferings] = await Promise.all([
     type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
     type === 'storyline' ? getReportedStorylines(entityIds) : [],
+    type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
   ]);
 
-  return { ...queue, wide: true, games, storylines };
+  return { ...queue, wide: true, games, storylines, serviceOfferings };
 };
 
 // Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
@@ -102,6 +109,52 @@ export const actions: Actions = {
     return {
       success: true,
       storylineTakedown: storyline.changed ? 'Taken down' : 'Already taken down',
+    };
+  },
+
+  /**
+   * Takes the reported Creator Services offering down with a reason, then sets the report Actioned
+   * (which pays the reporters). Already taken down still actions the report: the content it is about
+   * is down. There is no restore.
+   */
+  takeDownServiceOffering: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'serviceOffering' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+    const reason = data.get('reason');
+    if (!isServiceOfferingTakedownReason(reason)) return fail(400, { error: 'Pick a reason.' });
+    const details =
+      String(data.get('details') ?? '')
+        .trim()
+        .slice(0, 1000) || null;
+    // `other` has no copy of its own, so the details are what the seller is told.
+    if (reason === 'other' && !details)
+      return fail(400, { error: 'Say what is wrong when the reason is Other.' });
+
+    const offeringId = await getReportServiceOfferingId(id);
+    if (!offeringId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const offering = await takedownServiceOffering({
+      offeringId,
+      reason,
+      details,
+      moderatorId: locals.user.id,
+    });
+    if (!offering) return fail(410, { error: 'That service no longer exists.', gone: true });
+
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Actioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(410, { error: `Taken down, but ${result.error}`, gone: true });
+    return {
+      success: true,
+      serviceOfferingTakedown: offering.changed ? 'Taken down' : 'Already taken down',
     };
   },
 

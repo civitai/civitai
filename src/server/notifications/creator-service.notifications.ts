@@ -1,10 +1,11 @@
+import { SERVICE_OFFERING_TAKEN_DOWN } from '@civitai/shared/service-offering-takedown';
 import { NotificationCategory } from '~/server/common/enums';
 import { getServiceOfferingTakedownReason } from '~/server/common/moderation-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const creatorServiceNotifications = createNotificationProcessor({
   // Sent once to the seller when a moderator takes their offering down. Never names the moderator.
-  'service-offering-taken-down': {
+  [SERVICE_OFFERING_TAKEN_DOWN]: {
     displayName: 'Service taken down',
     category: NotificationCategory.System,
     toggleable: false,
