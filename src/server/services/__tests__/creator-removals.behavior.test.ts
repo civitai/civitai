@@ -22,16 +22,25 @@ const { getMyRemovedImages, REMOVED_IMAGES_LIMIT } = await import(
   '~/server/services/creator-removed-images.service'
 );
 const { getReportAgainstScore } = await import('~/server/jobs/update-user-score');
-const { removalsQuery } = await import('~/server/services/creator-removals.service');
-const { findPolicyChangeRemovals } = await import(
+const { removalsQuery, withoutReversed } = await import(
+  '~/server/services/creator-removals.service'
+);
+const { findPolicyChangeRemovals, insertRemovalScoreExemptions } = await import(
   '~/server/services/removal-score-exemption.service'
 );
+
+// The pg pool interface over the same PGlite database.
+const pg = {
+  cancellableQuery: async (sql: string, params?: unknown[]) => ({
+    result: async () => (await holder.db.query(sql, params)).rows,
+  }),
+} as never;
 
 const OWNER = 42;
 const OTHER = 43; // whose only removal was reversed on appeal since the last run
 const RESTORED_OWNER = 44; // whose only removal a restore event reversed since the last run
 const SETTLED = 45; // whose removal was reversed on appeal before the last run, nothing since
-const EXEMPT_OWNER = 46; // one removal exempted since the last run, one made after its exemption
+const EXEMPT_OWNER = 46;
 const REMOVED_AT = 1_700_000_000;
 const LAST_RUN = REMOVED_AT + 86_400;
 const at = (seconds: number) =>
@@ -42,8 +51,9 @@ const RESTORED = 1; // removal reversed by an approved appeal
 const STILL_REMOVED = 2; // no appeal
 const REJECTED = 3; // appeal rejected
 const REMOVED_AGAIN = 4; // approved, then removed again later
-const EXEMPT = 7; // exempted after its removal
-const REMOVED_AFTER_EXEMPTION = 8; // exempted, then removed again later
+const EXEMPT = 7;
+const REMOVED_AFTER_EXEMPTION = 8;
+const POI_VERSION = 500;
 const removals = [
   { ownerId: OWNER, imageId: REMOVED_AGAIN, removedAt: REMOVED_AT + 7200 },
   { ownerId: OWNER, imageId: RESTORED, removedAt: REMOVED_AT },
@@ -74,6 +84,10 @@ beforeAll(async () => {
       "imageId" integer PRIMARY KEY, "reason" text NOT NULL,
       "createdAt" timestamp(3) NOT NULL DEFAULT now(), "createdBy" integer
     );
+    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "poi" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ModelVersion" ("id" integer PRIMARY KEY, "modelId" integer NOT NULL);
+    INSERT INTO "Model" (id, poi) VALUES (1, true), (2, false);
+    INSERT INTO "ModelVersion" (id, "modelId") VALUES (${POI_VERSION}, 1), (501, 2);
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" ("id" serial PRIMARY KEY, "reason" text NOT NULL);
     CREATE TABLE "UserReport" ("userId" integer NOT NULL, "reportId" integer NOT NULL);
@@ -205,22 +219,47 @@ describe('a removal score exemption', () => {
     expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AFTER_EXEMPTION]);
   });
 
-  it('does not propose a removal its exemption already covers', async () => {
+  it('covers a removal made in the same instant as the exemption, and not one a second later', async () => {
+    await holder.db.exec(
+      `INSERT INTO "RemovalScoreExemption" ("imageId", reason, "createdAt") VALUES (20, 'test', '${at(
+        REMOVED_AT
+      )}')`
+    );
+    const removal = (removedAt: number) => [{ ownerId: EXEMPT_OWNER, imageId: 20, removedAt }];
+
+    expect(await withoutReversed(removal(REMOVED_AT))).toEqual([]);
+    expect(await withoutReversed(removal(REMOVED_AT + 1))).toHaveLength(1);
+  });
+
+  it('inserts each image once, keeping the reason of an earlier run', async () => {
+    const inserted = await insertRemovalScoreExemptions(pg, [EXEMPT, 30], 'second run', 7);
+
+    expect(inserted).toBe(1);
+    const rows = await holder.db.query<{ imageId: number; reason: string; createdBy: number }>(
+      `SELECT "imageId", reason, "createdBy" FROM "RemovalScoreExemption" WHERE "imageId" IN (${EXEMPT}, 30) ORDER BY 1`
+    );
+    expect(rows.rows).toEqual([
+      { imageId: EXEMPT, reason: 'test', createdBy: null },
+      { imageId: 30, reason: 'second run', createdBy: 7 },
+    ]);
+  });
+
+  it('does not propose an image already exempted, even one removed again since', async () => {
     const policy = {
       cutoff: new Date(0),
       maxImageId: 100,
       ratings: ['None' as const],
       requireFirstRemovalAfterCutoff: true,
     };
-    const history = (imageId: number, removedAt: number) => ({
+    const history = (imageId: number, removedAt: number, resourceIds: number[] = []) => ({
       ownerId: EXEMPT_OWNER,
       imageId,
       removedAt,
       firstRemovedAt: removedAt,
       firstNsfw: 'None',
-      firstReason: 'poi',
-      lastReason: 'poi',
-      resourceIds: [],
+      firstReason: resourceIds.length ? '' : 'poi',
+      lastReason: resourceIds.length ? '' : 'poi',
+      resourceIds,
       minorRemovals: 0,
     });
     const ch = {
@@ -228,13 +267,14 @@ describe('a removal score exemption', () => {
         history(EXEMPT, REMOVED_AT),
         history(REMOVED_AFTER_EXEMPTION, LAST_RUN + 120),
         history(9, REMOVED_AT),
+        history(10, REMOVED_AT, [POI_VERSION]), // made with a POI model's version
+        history(11, REMOVED_AT, [501]), // made with another model's version
       ]),
     };
-    const pg = { cancellableQuery: async () => ({ result: async () => [] }) };
 
-    const found = await findPolicyChangeRemovals(ch as never, pg as never, policy);
+    const found = await findPolicyChangeRemovals(ch as never, pg, policy);
 
-    expect(found.map((r) => r.imageId)).toEqual([REMOVED_AFTER_EXEMPTION, 9]);
+    expect(found.map((r) => r.imageId)).toEqual([9, 10]);
   });
 });
 

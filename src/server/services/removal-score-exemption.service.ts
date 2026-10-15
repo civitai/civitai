@@ -1,29 +1,52 @@
 import { chunk } from 'lodash-es';
+import * as z from 'zod';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { withoutReversed } from '~/server/services/creator-removals.service';
+import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import {
   REMOVAL_RESTORED_EVENT,
   REPORTS_AGAINST_EVENT,
 } from '~/shared/constants/creator-journey.constants';
+import {
+  booleanString,
+  commaDelimitedEnumArray,
+  commaDelimitedNumberArray,
+} from '~/utils/zod-helpers';
 
 /**
  * A rule that took effect at `cutoff`. An image uploaded before it (`id <= maxImageId`) and first
  * removed at or after it was judged by the new rule, not the one it was posted under. Only the first
  * removal counts for that: an image removed, restored and removed again was judged under the first.
- * With `requireFirstRemovalAfterCutoff` off, an image first removed before the cutoff is covered too,
- * when that removal was reasoned `poi`.
  */
 export type PolicyChangeRule = {
   cutoff: Date;
   maxImageId: number;
-  ratings: NsfwRating[];
+  ratings: `${NsfwLevelDeprecated}`[];
   requireFirstRemovalAfterCutoff: boolean;
 };
 
-/** The image ratings a removal records. */
-export const NSFW_RATINGS = ['None', 'Soft', 'Mature', 'X'] as const;
-export type NsfwRating = (typeof NSFW_RATINGS)[number];
+// `Blocked` is never a rating an image was posted within the rules at.
+const EXEMPTIBLE_RATINGS = Object.values(NsfwLevelDeprecated).filter(
+  (r) => r !== NsfwLevelDeprecated.Blocked
+);
+
+/** The backfill route's params. Defaults are the real-people policy article. */
+export const backfillExemptionParams = z.object({
+  cutoff: z.coerce.date().default(new Date('2025-05-22T22:02:27Z')),
+  maxImageId: z.coerce.number().int().positive().default(77_895_843),
+  requireFirstRemovalAfterCutoff: booleanString().default(true),
+  ratings: commaDelimitedEnumArray(EXEMPTIBLE_RATINGS)
+    .refine((ratings) => ratings.length > 0)
+    .default([NsfwLevelDeprecated.None]),
+  label: z
+    .string()
+    .regex(/^[w-]{1,40}$/)
+    .default('poi-policy'),
+  createdBy: z.coerce.number().int().positive().optional(),
+  probe: commaDelimitedNumberArray().optional(),
+  dryRun: booleanString().default(true),
+});
 
 /** One counted removal of an image, with what its first removal recorded. Times in unix seconds. */
 export type RemovalHistory = {
@@ -71,10 +94,10 @@ export const policyChangeCandidatesQuery = (rule: PolicyChangeRule) => `
 `;
 
 /**
- * Uploaded before the rule, never removed as `minor`, rated one of `ratings` at its first removal
- * (ratings the earlier rules allowed for real people, so the image was within the rules when
- * posted), and POI-linked: first removed after the cutoff with a `poi` reason or a resource from a
- * model now flagged POI, or first removed before it with a `poi` reason.
+ * Uploaded before the rule, never removed as `minor`, rated one of `ratings` at its first removal,
+ * and POI-linked: a `poi` reason on the first or latest removal, or, when first removed after the
+ * cutoff, a resource from a model now flagged POI. With `requireFirstRemovalAfterCutoff` on, an
+ * image first removed before the cutoff is never covered.
  */
 export function isPolicyChangeRemoval(
   removal: RemovalHistory,
@@ -84,13 +107,10 @@ export function isPolicyChangeRemoval(
   if (Number(removal.imageId) > rule.maxImageId) return false;
   if (Number(removal.minorRemovals) > 0) return false;
   if (!(rule.ratings as string[]).includes(removal.firstNsfw)) return false;
+  const poiReason = removal.firstReason === 'poi' || removal.lastReason === 'poi';
   if (Number(removal.firstRemovedAt) < toSeconds(rule.cutoff))
-    return !rule.requireFirstRemovalAfterCutoff && removal.firstReason === 'poi';
-  return (
-    removal.firstReason === 'poi' ||
-    removal.lastReason === 'poi' ||
-    removal.resourceIds.some((id) => poiVersionIds.has(Number(id)))
-  );
+    return !rule.requireFirstRemovalAfterCutoff && poiReason;
+  return poiReason || removal.resourceIds.some((id) => poiVersionIds.has(Number(id)));
 }
 
 export async function getPoiVersionIds(pg: AugmentedPool) {
@@ -101,8 +121,8 @@ export async function getPoiVersionIds(pg: AugmentedPool) {
 }
 
 /**
- * Counted removals the rule covers and nothing yet reverses: an appeal-reversed or already-exempt
- * removal is left out, so a re-run with the same inputs finds nothing new.
+ * Counted removals the rule covers, of images with no exemption yet and no appeal reversing them.
+ * An image already exempted is left out even when removed again since: its row cannot be replaced.
  */
 export async function findPolicyChangeRemovals(
   ch: CustomClickHouseClient,
@@ -111,7 +131,21 @@ export async function findPolicyChangeRemovals(
 ) {
   const candidates = await ch.$query<RemovalHistory>(policyChangeCandidatesQuery(rule));
   const poiVersionIds = await getPoiVersionIds(pg);
-  return withoutReversed(candidates.filter((r) => isPolicyChangeRemoval(r, rule, poiVersionIds)));
+  const matched = candidates.filter((r) => isPolicyChangeRemoval(r, rule, poiVersionIds));
+  const exempt = new Set<number>();
+  for (const ids of chunk(
+    matched.map((r) => Number(r.imageId)),
+    10_000
+  )) {
+    const rows = await pg
+      .cancellableQuery<{ imageId: number }>(
+        `SELECT "imageId" FROM "RemovalScoreExemption" WHERE "imageId" = ANY($1::int[])`,
+        [ids]
+      )
+      .then((q) => q.result());
+    for (const { imageId } of rows) exempt.add(Number(imageId));
+  }
+  return withoutReversed(matched.filter((r) => !exempt.has(Number(r.imageId))));
 }
 
 /**
@@ -126,9 +160,10 @@ export async function previewTierUps(
   const tiers = await pg
     .cancellableQuery<{ name: string; threshold: number }>(
       `SELECT name, threshold FROM "CreatorMilestone"
-       WHERE track = 'score' AND threshold IS NOT NULL ORDER BY threshold DESC`
+       WHERE track = 'score' AND threshold IS NOT NULL`
     )
-    .then((q) => q.result());
+    .then((q) => q.result())
+    .then((rows) => rows.sort((a, b) => b.threshold - a.threshold));
   const tierUps: Record<string, number> = {};
   let owners = 0;
   for (const ids of chunk([...removalsByOwner.keys()], 10_000)) {

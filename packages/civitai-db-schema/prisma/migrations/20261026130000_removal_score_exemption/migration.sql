@@ -1,8 +1,8 @@
 -- Idempotent: applied by hand, possibly more than once.
 --
--- Images whose removal no longer counts against the owner's Creator Score. Read by the score job and
--- the removed-images list beside approved appeals; written only by the backfill route. Safe to apply
--- before or after the deploy: an empty table exempts nothing.
+-- Images whose removal no longer counts against the owner's Creator Score. Written only by the
+-- backfill route. Apply BEFORE deploying: the score job and the removed-images list query it
+-- unconditionally.
 
 CREATE TABLE IF NOT EXISTS "RemovalScoreExemption" (
   "imageId" INTEGER NOT NULL,

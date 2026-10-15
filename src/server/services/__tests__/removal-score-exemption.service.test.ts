@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  backfillExemptionParams,
   exemptionReason,
   isPolicyChangeRemoval,
   policyChangeCandidatesQuery,
+  previewTierUps,
   type PolicyChangeRule,
   type RemovalHistory,
 } from '~/server/services/removal-score-exemption.service';
@@ -53,7 +55,7 @@ describe('isPolicyChangeRemoval', () => {
       firstReason: 'poi',
     };
     expect(isPolicyChangeRemoval(removedUnderTheOldRule, rule, poiVersions)).toBe(false);
-    // The first-removal date alone decides it, whatever the rating.
+    // PG too: the date alone rejects it.
     expect(
       isPolicyChangeRemoval({ ...removedUnderTheOldRule, firstNsfw: 'None' }, rule, poiVersions)
     ).toBe(false);
@@ -95,12 +97,18 @@ describe('isPolicyChangeRemoval', () => {
     expect(isPolicyChangeRemoval(earlierPoiRemoval, withEarlierRemovals, poiVersions)).toBe(true);
   });
 
+  it('exempts a PG removal reported before the rule, restored, then removed as POI, only with the switch off', () => {
+    const removedAgainAsPoi = { ...earlierPoiRemoval, firstReason: 'reported', lastReason: 'poi' };
+    expect(isPolicyChangeRemoval(removedAgainAsPoi, rule, poiVersions)).toBe(false);
+    expect(isPolicyChangeRemoval(removedAgainAsPoi, withEarlierRemovals, poiVersions)).toBe(true);
+  });
+
   it('with requireFirstRemovalAfterCutoff off, still needs a removal before the rule to be PG and reasoned poi', () => {
     // The negative twin: a Mature image a moderator removed as POI under the old rule.
     const mature = { ...earlierPoiRemoval, firstNsfw: 'Mature' };
     expect(isPolicyChangeRemoval(mature, withEarlierRemovals, poiVersions)).toBe(false);
-    // A POI resource or a later poi reason is not enough before the rule.
-    const reported = { ...earlierPoiRemoval, firstReason: 'reported', lastReason: 'poi' };
+    // A POI resource is not enough before the rule.
+    const reported = { ...earlierPoiRemoval, firstReason: 'reported', lastReason: 'reported' };
     expect(isPolicyChangeRemoval(reported, withEarlierRemovals, poiVersions)).toBe(false);
   });
 
@@ -149,5 +157,83 @@ describe('exemptionReason', () => {
     expect(exemptionReason(rule, 'poi-policy')).toBe(
       'poi-policy cutoff=2025-05-22T22:02:27.000Z maxImageId=1000 ratings=None requireFirstRemovalAfterCutoff=true'
     );
+  });
+});
+
+describe('ClickHouse values as strings', () => {
+  it('reads 64-bit values ClickHouse returns as strings', () => {
+    const asStrings = {
+      ...policyChange,
+      imageId: '900',
+      firstRemovedAt: String(CUTOFF_S + DAY),
+      resourceIds: [String(POI_VERSION)],
+      minorRemovals: '0',
+    } as unknown as RemovalHistory;
+    expect(isPolicyChangeRemoval(asStrings, rule, poiVersions)).toBe(true);
+    expect(
+      isPolicyChangeRemoval({ ...asStrings, minorRemovals: '1' } as never, rule, poiVersions)
+    ).toBe(false);
+  });
+});
+
+describe('previewTierUps', () => {
+  // Lowest first, so the highest tier reached is picked by the code, not by the query's order.
+  const TIERS = [
+    { name: 'Kindle', threshold: 1_000 },
+    { name: 'Flame', threshold: 5_000 },
+    { name: 'Blaze', threshold: 10_000 },
+  ];
+  const fakePg = (totals: { id: number; total: number | null }[]) =>
+    ({
+      cancellableQuery: async (sql: string) => ({
+        result: async () => (sql.includes('"CreatorMilestone"') ? TIERS : totals),
+      }),
+    } as never);
+
+  it('counts each owner once, at the highest tier newly reached, with the boundary inclusive', async () => {
+    const pg = fakePg([
+      { id: 1, total: 900 }, // +9,100 reaches exactly Blaze, passing Kindle and Flame
+      { id: 2, total: 4_000 }, // +1,000 reaches exactly Flame
+      { id: 3, total: 1_000 }, // already Kindle, +1,000 reaches nothing
+      { id: 4, total: null }, // no score yet, +1,000 reaches Kindle
+    ]);
+    const removals = new Map([
+      [1, 91],
+      [2, 10],
+      [3, 10],
+      [4, 10],
+    ]);
+
+    expect(await previewTierUps(pg, removals, 100)).toEqual({
+      owners: 3,
+      byTier: { Blaze: 1, Flame: 1, Kindle: 1 },
+    });
+  });
+
+  it('does not count a tier the owner already held', async () => {
+    const pg = fakePg([{ id: 1, total: 5_000 }]);
+    expect(await previewTierUps(pg, new Map([[1, 1]]), 100)).toEqual({ owners: 0, byTier: {} });
+  });
+});
+
+describe('backfillExemptionParams', () => {
+  it('is a dry run of the article rule, PG only, unless told otherwise', () => {
+    expect(backfillExemptionParams.parse({})).toEqual({
+      cutoff: new Date('2025-05-22T22:02:27Z'),
+      maxImageId: 77_895_843,
+      requireFirstRemovalAfterCutoff: true,
+      ratings: ['None'],
+      label: 'poi-policy',
+      dryRun: true,
+    });
+    expect(backfillExemptionParams.parse({ dryRun: 'false' }).dryRun).toBe(false);
+  });
+
+  it('reads comma lists, and refuses an empty or unknown rating', () => {
+    const parsed = backfillExemptionParams.parse({ ratings: 'None,Soft', probe: '1,2' });
+    expect(parsed.ratings).toEqual(['None', 'Soft']);
+    expect(parsed.probe).toEqual([1, 2]);
+    expect(backfillExemptionParams.safeParse({ ratings: '' }).success).toBe(false);
+    expect(backfillExemptionParams.safeParse({ ratings: 'Blocked' }).success).toBe(false);
   });
 });

@@ -8,7 +8,8 @@ import {
 
 /**
  * The one definition of a counted removal: an image's latest removal, unless a restore event, an
- * approved image appeal or a score exemption came after it. The score job and the removed-images list both read it.
+ * approved image appeal or a score exemption came after it. The score job and the removed-images
+ * list both read it.
  */
 export type CreatorRemoval = { ownerId: number; imageId: number; removedAt: number };
 
@@ -75,8 +76,8 @@ export const reportsAgainstScore = (count: number | undefined, multiplier: numbe
  * score exemption.
  */
 export async function getOwnersWithReversalsSince(ch: CustomClickHouseClient, since: Date) {
-  // Primary, not the replica: an approval the replica has not seen yet would fall behind the job's
-  // next checkpoint.
+  // Primary, not the replica: an approval or exemption the replica has not seen yet would fall
+  // behind the job's next checkpoint.
   const approved = await dbWrite.$queryRaw<{ imageId: number }[]>`
     SELECT DISTINCT "entityId" AS "imageId" FROM "Appeal"
     WHERE "entityType" = 'Image' AND status = 'Approved' AND "resolvedAt" > ${since}

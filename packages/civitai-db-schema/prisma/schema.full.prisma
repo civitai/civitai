@@ -6845,7 +6845,7 @@ model Appeal {
 }
 
 /// An image whose removal no longer counts against its owner's Creator Score, because it was removed
-/// under a rule added after upload. Covers removals made before `createdAt`; a later one counts.
+/// under a rule added after upload. Covers removals up to and including `createdAt`; a later one counts.
 /// No FK: a removed image's row is deleted.
 model RemovalScoreExemption {
   imageId   Int      @id
