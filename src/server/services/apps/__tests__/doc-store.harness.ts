@@ -9,7 +9,12 @@ import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { Client } from 'pg';
 import type { DocStoreClient, DocStoreDb } from '~/server/services/apps/doc-store';
-import { APPDATA_TABLES, isReviewMaintenanceStatement, scanStatement } from './doc-store.sql-scan';
+import {
+  APPDATA_TABLES,
+  isAccountWipeStatement,
+  isReviewMaintenanceStatement,
+  scanStatement,
+} from './doc-store.sql-scan';
 
 export const MIGRATION_UP = path.resolve(
   __dirname,
@@ -51,6 +56,9 @@ const BEGIN_SETTINGS =
 /** The store's review-maintenance transaction: no namespace, maintenance on, app id or none. */
 const BEGIN_MAINTENANCE =
   /^BEGIN; SELECT set_config\('appdata\.app_id', '([^']*)', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.review_maintenance', 'on', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
+/** The store's account-wipe enumeration transaction: no app or namespace, one user id. */
+const BEGIN_ACCOUNT_WIPE =
+  /^BEGIN; SELECT set_config\('appdata\.app_id', '', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.account_wipe_uid', '([1-9][0-9]*)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
 
 /**
  * Wrap a store client so every statement is recorded and checked: the settings
@@ -60,18 +68,36 @@ const BEGIN_MAINTENANCE =
  * builder assembles, which no static scan can.
  */
 function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'violations'>) {
-  let bound: { app: string; ns: string; maintenance: boolean } | null = null;
+  let bound: {
+    app: string;
+    ns: string;
+    maintenance: boolean;
+    /** The user id an account-wipe enumeration transaction is bound to. */
+    wipeUid?: number;
+  } | null = null;
   const client: DocStoreClient = {
     async query(sql, params) {
       const m = BEGIN_SETTINGS.exec(sql);
       const mm = BEGIN_MAINTENANCE.exec(sql);
+      const mw = BEGIN_ACCOUNT_WIPE.exec(sql);
       if (m) bound = { app: m[1], ns: m[2], maintenance: false };
       else if (mm) bound = { app: mm[1], ns: '', maintenance: true };
+      else if (mw) bound = { app: '', ns: '', maintenance: false, wipeUid: Number(mw[1]) };
       else if (sql === 'COMMIT' || sql === 'ROLLBACK') bound = null;
       else if (/appdata/i.test(sql)) {
         const p = params ?? [];
         if (!bound) h.violations.push(`statement outside a bound transaction: ${sql}`);
-        else {
+        else if (isAccountWipeStatement(sql) || bound.wipeUid !== undefined) {
+          h.statements.push({ sql, params: p, app: bound.app, ns: bound.ns });
+          // The enumeration runs only in its own transaction, keyed on the bound user as $1.
+          if (bound.wipeUid === undefined || !isAccountWipeStatement(sql)) {
+            h.violations.push(
+              `account-wipe statement outside its transaction, or vice versa: ${sql}`
+            );
+          } else if (p[0] !== bound.wipeUid) {
+            h.violations.push(`$1 does not match the bound account-wipe user: ${sql}`);
+          }
+        } else {
           h.statements.push({ sql, params: p, app: bound.app, ns: bound.ns });
           const maintenanceShape = isReviewMaintenanceStatement(sql);
           if (maintenanceShape !== bound.maintenance) {

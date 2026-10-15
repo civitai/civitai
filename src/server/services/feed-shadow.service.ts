@@ -347,6 +347,8 @@ export type FeedAnswer = {
   status: number;
   ms: number;
   ids: number[];
+  /** The feed's reason for a 400, so a request the mapper thought fine can be read back. */
+  error?: string;
   route?: string;
   estimate?: number;
   candidates?: number;
@@ -520,7 +522,11 @@ export async function fetchFeedAnswer(
     headers: { ...traceContextHeaders(), 'x-request-source': source },
   });
   const ms = Date.now() - started;
-  if (!res.ok) return { status: res.status, ms, ids: [] };
+  if (!res.ok) {
+    let error: string | undefined;
+    if (res.status === 400) error = (await res.text().catch(() => '')).slice(0, 600) || undefined;
+    return { status: res.status, ms, ids: [], error };
+  }
   const body = (await res.json()) as {
     items?: number[];
     nextCursor?: string;

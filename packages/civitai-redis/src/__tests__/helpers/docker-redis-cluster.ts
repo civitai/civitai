@@ -178,6 +178,16 @@ export class DockerRedisCluster {
     return Date.now();
   }
 
+  /** Raw `redis-cli` on node `i` (e.g. to drive a slot migration); returns trimmed stdout. */
+  redisCli(i: number, args: string[]): string {
+    return this.cli(i, args);
+  }
+
+  /** Cluster node id of node `i`. */
+  nodeId(i: number): string {
+    return this.cli(i, ['cluster', 'myid']);
+  }
+
   stop(i: number): void {
     docker(['stop', '-t', '1', this.containers[i]]);
   }

@@ -2,7 +2,8 @@ import type { PromptIds } from '~/server/services/text-scan/types';
 
 export const TEXT_SCAN_FLAGS_KEY = 'textScanFlags';
 
-export type TextScanFlagLabel = 'poi' | 'minor';
+export const TEXT_SCAN_FLAG_LABELS = ['poi', 'minor'] as const;
+export type TextScanFlagLabel = (typeof TEXT_SCAN_FLAG_LABELS)[number];
 
 export const MAX_FLAG_REASON_CHARS = 300;
 export const MAX_FLAG_NAMES = 10;

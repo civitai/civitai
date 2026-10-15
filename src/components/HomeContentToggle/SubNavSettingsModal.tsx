@@ -147,6 +147,10 @@ export default function SubNavSettingsModal() {
   const rowsBeforeDrag = useRef<Row[] | null>(null);
   const source = isResolved ? settings ?? null : undefined;
   const [rows, setRows] = useSeededState(source, seedRows);
+  const [keepProfileLabels, setKeepProfileLabels] = useSeededState(
+    source,
+    (s) => s?.navigation?.keepProfileLabels ?? false
+  );
   const [showLabels, setShowLabels] = useSeededState(
     source,
     (s) => s?.navigation?.showLabels ?? true
@@ -212,7 +216,9 @@ export default function SubNavSettingsModal() {
     mutate.mutate({
       // Writing nothing when the layout equals the defaults keeps the row small AND leaves the
       // user tracking nav items that ship later.
-      navigation: matchesDefaults(rows, showLabels) ? undefined : rowsToConfig(rows, showLabels),
+      navigation: matchesDefaults(rows, showLabels, keepProfileLabels)
+        ? undefined
+        : rowsToConfig(rows, showLabels, keepProfileLabels),
     });
 
   // Deletes the key rather than writing empty groups, so the user resumes tracking the defaults —
@@ -249,6 +255,24 @@ export default function SubNavSettingsModal() {
                 checked={showLabels}
                 onChange={(e) => setShowLabels(e.currentTarget.checked)}
                 aria-label="Show labels"
+              />
+            </Group>
+          </Paper>
+
+          <Paper withBorder radius="md" p="md">
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <Stack gap={0} style={{ minWidth: 0 }}>
+                <Text size="sm" fw={600}>
+                  Keep profile tab labels
+                </Text>
+                <Text size="xs" c="dimmed">
+                  On narrow screens, scroll the profile tabs instead of shrinking them to icons.
+                </Text>
+              </Stack>
+              <Switch
+                checked={keepProfileLabels}
+                onChange={(e) => setKeepProfileLabels(e.currentTarget.checked)}
+                aria-label="Keep profile tab labels"
               />
             </Group>
           </Paper>

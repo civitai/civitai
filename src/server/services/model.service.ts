@@ -85,6 +85,7 @@ import type {
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
   SetModelMinorInput,
+  SetModelPoiInput,
   SetModelSfwOnlyInput,
   SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
@@ -137,8 +138,21 @@ import {
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
-import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
-import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
+import {
+  summarizeTextScan,
+  summarizeTextScanFlags,
+  textScanLabelDetected,
+  type TextScanLabelVerdict,
+  type TextScanModeratorSummary,
+} from '~/server/services/text-scan/moderator-summary';
+import {
+  TEXT_SCAN_WEB_SEARCH_LABELS,
+  textScanEmEntityType,
+} from '~/server/services/text-scan/mode';
+import {
+  POI_LOCKED_PROPERTIES,
+  reassertModelPoiRestrictions,
+} from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
@@ -1905,7 +1919,13 @@ export const deleteModelById = async ({
           },
         },
       },
-      select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
+      select: {
+        id: true,
+        userId: true,
+        nsfwLevel: true,
+        deletedBy: true,
+        modelVersions: { select: { id: true } },
+      },
     });
     if (!model) return null;
 
@@ -2478,11 +2498,11 @@ export async function setModelMinor({
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
 
+  // Dynamic: model.service is imported almost everywhere; only the ruling branches need the profiles.
+  const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
+
   if (!minor && recordTextScanRuling) {
-    // Dynamic: model.service is imported almost everywhere; only this branch needs the profiles.
-    const { stampModeratorTextScanRuling } = await import(
-      '~/server/services/text-scan/actions/appeal-text-hash'
-    );
+    const { stampModeratorTextScanRuling } = await loadAppealTextHash();
     const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'minor' });
     if (!stamped)
       logToAxiom({
@@ -2574,6 +2594,16 @@ export async function setModelMinor({
   }
   await applyModelFlagSideEffects({ before, after: result });
   if (!minor && result.poi) await reassertModelPoiRestrictions(id);
+  // The ruling went in ahead of the write above; this only closes the owner's now-moot appeal.
+  if (!minor && recordTextScanRuling && before.minor) {
+    const { settleFlagAppealsAfterModeratorLift } = await loadAppealTextHash();
+    await settleFlagAppealsAfterModeratorLift({
+      modelId: id,
+      userId,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+  }
 
   return result;
 }
@@ -2685,6 +2715,138 @@ export async function setModelSfwOnly({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
+
+  return result;
+}
+
+/**
+ * Set or lift a model's "depicts a real person" flag, as a moderator — what the model edit form's POI
+ * checkbox does, without the form. Setting it applies the restrictions a POI model always carries
+ * (SFW-only, not NSFW, SFW gallery, those fields locked against the creator), the same set
+ * `reassertModelPoiRestrictions` keeps in force; `applyModelFlagSideEffects` then carries `poi` to the
+ * model's images and the search index, which is what flags images made with it.
+ *
+ * Lifting mirrors `setModelMinor`'s unset: the ruling is stamped BEFORE the write, so a text scan
+ * landing mid-lift sees it and does not re-flag; sfwOnly/nsfw are left as they are; and the owner's
+ * now-moot appeal is closed.
+ */
+export async function setModelPoi({
+  id,
+  poi,
+  userId,
+  tracker,
+  isModerator,
+}: SetModelPoiInput & { userId: number; tracker?: Tracker; isModerator?: boolean }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
+  const lifting = !poi && before.poi;
+  if (lifting) {
+    const { stampModeratorTextScanRuling } = await loadAppealTextHash();
+    const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'poi' });
+    if (!stamped)
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: 'moderator poi ruling not recorded: model text unreadable',
+        modelId: id,
+      }).catch(() => null);
+  }
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  // A lift keeps whatever a minor flag still locks: the two share nsfw/sfwOnly.
+  const lockedProperties = poi
+    ? uniq([...prevLockedProperties, ...POI_LOCKED_PROPERTIES])
+    : uniq([
+        ...prevLockedProperties.filter((prop) => !POI_LOCKED_PROPERTIES.includes(prop)),
+        ...(before.minor ? MINOR_LOCKED_PROPERTIES : []),
+      ]);
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+  const data = poi
+    ? {
+        poi: true,
+        nsfw: false,
+        sfwOnly: true,
+        gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+        lockedProperties,
+      }
+    : {
+        poi: false,
+        lockedProperties,
+      };
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    data,
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  const modActivity = poi ? 'setPoi' : 'unsetPoi';
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: modActivity,
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-poi-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
+  if (tracker) {
+    tracker
+      .entityChanges(
+        diffEntityChanges({
+          entityType: 'Model',
+          entityId: id,
+          ownerId: before.userId,
+          before,
+          after: data as Record<string, unknown>,
+          actorRole: resolveActorRole({
+            actorUserId: userId,
+            ownerId: before.userId,
+            isModerator,
+          }),
+          reason: modActivity,
+        })
+      )
+      .catch(() => null);
+  }
+  await applyModelFlagSideEffects({ before, after: result });
+  if (lifting) {
+    const { settleFlagAppealsAfterModeratorLift } = await loadAppealTextHash();
+    await settleFlagAppealsAfterModeratorLift({
+      modelId: id,
+      userId,
+      liftedLabels: ['poi'],
+      recordRulings: false,
+    });
+  }
 
   return result;
 }
@@ -3155,6 +3317,18 @@ export const upsertModel = async (
       after: result,
       tagsChanged: !!tagsOnModels,
     });
+
+    // A lift is the moderator's only when their input set the flag false: a sweep clearing it
+    // between the read and the write must not be stamped as their decision.
+    const liftedLabels = (['minor', 'poi'] as const).filter(
+      (label) => beforeUpdate[label] && data[label] === false
+    );
+    if (isModerator && liftedLabels.length) {
+      const { settleFlagAppealsAfterModeratorLift } = await import(
+        '~/server/services/text-scan/actions/appeal-text-hash'
+      );
+      await settleFlagAppealsAfterModeratorLift({ modelId: result.id, userId, liftedLabels });
+    }
 
     // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
     // each resource: without this, a creator who adds RentCivit is told the model is "not enabled
@@ -5134,8 +5308,66 @@ export async function bustFeaturedModelsCache() {
 // locked / marked nsfw / hidden so mods can self-triage instead of escalating
 // (automated actions such as the profanity nsfw-lock or the text-scan nsfw flag are otherwise
 // invisible to them).
+const textScanRowSelect = {
+  status: true,
+  nsfwLevel: true,
+  triggeredLabels: true,
+  result: true,
+  updatedAt: true,
+} as const;
+
+// Once the web-search pass is active, the main pass is submitted without poi/minor, but its row
+// keeps the poi/minor it last carried, and the search mode can fall back to off. So each label
+// takes the newest Succeeded row that carries it, else whichever row carries it.
+type TextScanRow = Parameters<typeof summarizeTextScan>[0];
+
+function withWebSearchVerdict(
+  mainRow: TextScanRow,
+  searchRow: TextScanRow
+): TextScanModeratorSummary | null {
+  const main = summarizeTextScan(mainRow);
+  const search = summarizeTextScan(searchRow);
+  const base = main ?? search;
+  if (!base) return null;
+  const candidates = [
+    ...(main && mainRow ? [{ summary: main, row: mainRow, source: 'main' as const }] : []),
+    ...(search && searchRow
+      ? [{ summary: search, row: searchRow, source: 'web search' as const }]
+      : []),
+  ].sort((a, b) => b.summary.updatedAt.getTime() - a.summary.updatedAt.getTime());
+  const picks = TEXT_SCAN_WEB_SEARCH_LABELS.flatMap((label) => {
+    const carrying = candidates.filter((c) => c.summary.reasons.some((r) => r.label === label));
+    const picked = carrying.find((c) => c.summary.status === 'Succeeded') ?? carrying[0];
+    return picked ? [{ label, ...picked }] : [];
+  });
+  const labelVerdicts = picks.map(
+    ({ label, summary, row, source }): TextScanLabelVerdict => ({
+      label,
+      detected: textScanLabelDetected(row.result, label),
+      reason: summary.reasons.find((r) => r.label === label)?.reason ?? '',
+      source,
+      status: summary.status,
+      updatedAt: summary.updatedAt,
+    })
+  );
+  const fromSearch = (label: string) =>
+    (TEXT_SCAN_WEB_SEARCH_LABELS as readonly string[]).includes(label);
+  return {
+    ...base,
+    triggeredLabels: [
+      ...base.triggeredLabels.filter((label) => !fromSearch(label)),
+      ...picks.filter((p) => p.summary.triggeredLabels.includes(p.label)).map((p) => p.label),
+    ],
+    reasons: [
+      ...base.reasons.filter(({ label }) => !fromSearch(label)),
+      ...labelVerdicts.map(({ label, reason }) => ({ label, reason })),
+    ],
+    labelVerdicts,
+  };
+}
+
 export async function getModelModerationDetail({ id }: { id: number }) {
-  const [model, scan] = await Promise.all([
+  const [model, scan, searchScan] = await Promise.all([
     dbRead.model.findUnique({
       where: { id },
       select: {
@@ -5155,13 +5387,16 @@ export async function getModelModerationDetail({ id }: { id: number }) {
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Model', entityId: id } },
-      select: {
-        status: true,
-        nsfwLevel: true,
-        triggeredLabels: true,
-        result: true,
-        updatedAt: true,
+      select: textScanRowSelect,
+    }),
+    dbRead.entityModeration.findUnique({
+      where: {
+        entityType_entityId: {
+          entityType: textScanEmEntityType('Model', 'active', 'web-search'),
+          entityId: id,
+        },
       },
+      select: textScanRowSelect,
     }),
   ]);
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
@@ -5191,7 +5426,8 @@ export async function getModelModerationDetail({ id }: { id: number }) {
         }
       : null,
     textModeration: meta.textModeration ?? null,
-    textScan: summarizeTextScan(scan),
+    textScan: withWebSearchVerdict(scan, searchScan),
+    textScanFlags: summarizeTextScanFlags(model.meta),
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,

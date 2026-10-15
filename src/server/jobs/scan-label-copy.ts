@@ -152,7 +152,7 @@ export async function copyScanLabelImages({ store }: { store?: ScanLabelCopyStor
       `;
       await store.put(url, key);
       await dbWrite.$executeRaw`
-        UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = NULL, "withdrawReason" = NULL
+        UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = NULL, "withdrawReason" = NULL, "removedAt" = NULL
         WHERE key = ${key}
       `;
       await dbWrite.$executeRaw`

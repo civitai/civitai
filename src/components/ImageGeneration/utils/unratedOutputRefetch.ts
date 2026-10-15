@@ -3,7 +3,7 @@ import { getQueryKey } from '@trpc/react-query';
 import type { InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { updateWorkflowsStatus } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 import { queryClient, trpc } from '~/utils/trpc';
-import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
+import { isNeverRatedVideoStep, isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrator/orchestration-new.service';
 
 // No step event follows the rating of a finished workflow, so the generator re-reads it on a timer.
@@ -12,7 +12,12 @@ export const UNRATED_REFETCH_MAX_ATTEMPTS = 6;
 
 type CachedWorkflow = {
   id: string;
-  steps: Array<{ output?: Array<Partial<NormalizedWorkflowStepOutput>> }>;
+  metadata?: { params?: Record<string, unknown> | null } | null;
+  steps: Array<
+    Parameters<typeof isNeverRatedVideoStep>[0] & {
+      output?: Array<Partial<NormalizedWorkflowStepOutput>>;
+    }
+  >;
 };
 
 export function selectUnratedRefetch(
@@ -23,8 +28,10 @@ export function selectUnratedRefetch(
   const blobIds = new Set<string>();
   for (const workflow of workflows) {
     for (const step of workflow.steps ?? []) {
+      const neverRated = isNeverRatedVideoStep(step, workflow.metadata?.params);
       for (const output of step.output ?? []) {
-        if (!output.id || !isUnratedOutput(output as NormalizedWorkflowStepOutput)) continue;
+        if (!output.id || !isUnratedOutput(output as NormalizedWorkflowStepOutput, neverRated))
+          continue;
         if ((attempts.get(output.id) ?? 0) >= UNRATED_REFETCH_MAX_ATTEMPTS) continue;
         workflowIds.add(workflow.id);
         blobIds.add(output.id);

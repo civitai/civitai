@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
@@ -278,6 +279,7 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
       if (!r) throw new Error('no reply yet');
       // (b) reply carries the matching requestId + { purchased }.
       expect(r.payload).toEqual({ requestId: 'rq_buzz', purchased: true });
+      expectReplyKeys('OPEN_BUZZ_PURCHASE', 'success', ['purchased'], r.payload);
     });
     replies.stop();
   });

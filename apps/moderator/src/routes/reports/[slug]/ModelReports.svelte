@@ -482,7 +482,12 @@
         {#if selected.entityId != null}
           <div class="min-w-0 flex-1 rounded-xl border p-4 xl:overflow-y-auto">
             {#key selected.id}
-              <ModelPreview modelId={selected.entityId} reportId={selected.id} civitaiUrl={data.civitaiUrl} />
+              <ModelPreview
+                modelId={selected.entityId}
+                reportId={selected.id}
+                civitaiUrl={data.civitaiUrl}
+                canViewTrainingData={data.canViewTrainingData}
+              />
             {/key}
           </div>
         {/if}
@@ -667,16 +672,37 @@
 
                   <div class="flex items-center justify-between gap-3 p-3">
                     <div>
+                      <p class="m-0 text-sm font-medium">Flag as a real person (POI)</p>
+                      <p class="m-0 text-xs text-muted-foreground">
+                        {model.poi
+                          ? 'Flagged as depicting a real person. Unflagging leaves it SFW-only.'
+                          : 'Marks the model and its images as depicting a real person, which also makes it SFW-only.'}
+                      </p>
+                    </div>
+                    {#if !model.poi}
+                      {@render submit('setPoi', 'Flag POI')}
+                    {:else}
+                      <div class="flex shrink-0 items-center gap-2">
+                        {@render done('Flagged')}
+                        {@render confirmable('unsetPoi', 'Unflag', 'Yes, unflag')}
+                      </div>
+                    {/if}
+                  </div>
+
+                  <div class="flex items-center justify-between gap-3 p-3">
+                    <div>
                       <p class="m-0 text-sm font-medium">Make SFW-only</p>
                       <p class="m-0 text-xs text-muted-foreground">
                         {model.minor
                           ? 'SFW-only, because a minor model always is. Unflag minor first to change it.'
-                          : model.sfwOnly
+                          : model.poi
+                            ? 'SFW-only, because a real-person model always is. Unflag POI first to change it.'
+                            : model.sfwOnly
                             ? 'SFW-only. Allowing NSFW leaves its current rating as it is.'
                             : 'Rates the model SFW and limits its gallery to SFW images. The owner cannot undo it.'}
                       </p>
                     </div>
-                    {#if model.minor}
+                    {#if model.minor || model.poi}
                       {@render done('SFW-only')}
                     {:else if model.sfwOnly}
                       <div class="flex shrink-0 items-center gap-2">

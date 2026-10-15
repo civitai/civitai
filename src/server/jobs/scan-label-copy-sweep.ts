@@ -8,6 +8,8 @@ import { createJob } from './job';
 
 const JOB_LOG_NAME = 'scan-label-copy-sweep';
 const BATCH = 200;
+// A claim this old with no `removedAt` belongs to a sweep that died mid-delete; it is taken again.
+const STALE_CLAIM = Prisma.raw(`make_interval(hours => 1)`);
 
 export type WithdrawReason = 'excluded' | 'ineligible' | 'gone';
 
@@ -88,11 +90,19 @@ async function dueForWithdrawal(): Promise<{ due: Due[]; eligibilityRead: boolea
     INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId", "createdAt")
     SELECT "copyKey", "id", "imageId", COALESCE("copiedAt", now())
     FROM "ScanLabelItem" WHERE "copyKey" IS NOT NULL
-    ON CONFLICT ("key") DO UPDATE SET "withdrawnAt" = NULL, "withdrawReason" = NULL
+    ON CONFLICT ("key") DO UPDATE SET "withdrawnAt" = NULL, "withdrawReason" = NULL, "removedAt" = NULL
       WHERE "ScanLabelCopyObject"."withdrawnAt" IS NOT NULL
   `;
+  // Finished regardless of what the copy's item or image looks like now: the delete was decided.
+  const stale = await dbWrite.$queryRaw<Due[]>`
+    SELECT key, "itemId", "withdrawReason" AS reason
+    FROM "ScanLabelCopyObject"
+    WHERE "removedAt" IS NULL AND "withdrawnAt" < now() - ${STALE_CLAIM}
+    LIMIT ${BATCH}
+  `;
   const img = Prisma.raw('img');
-  const due = await dbWrite.$queryRaw<Due[]>`
+  const due = stale;
+  const fresh = await dbWrite.$queryRaw<Due[]>`
     SELECT o.key, o."itemId",
       CASE WHEN i.id IS NULL OR img.id IS NULL THEN 'gone' ELSE 'excluded' END AS reason
     FROM "ScanLabelCopyObject" o
@@ -103,9 +113,14 @@ async function dueForWithdrawal(): Promise<{ due: Due[]; eligibilityRead: boolea
     ORDER BY o."withdrawError" IS NOT NULL, o."createdAt"
     LIMIT ${BATCH}
   `;
+  const seen = new Set(due.map((d) => d.key));
+  for (const d of fresh)
+    if (!seen.has(d.key)) {
+      seen.add(d.key);
+      due.push(d);
+    }
   // A separate query: without the view, the checks above must still run.
   try {
-    const seen = new Set(due.map((d) => d.key));
     const ineligible = await dbWrite.$queryRaw<Due[]>`
       SELECT o.key, o."itemId", 'ineligible' AS reason
       FROM "ScanLabelCopyObject" o
@@ -128,7 +143,7 @@ async function dueForWithdrawal(): Promise<{ due: Due[]; eligibilityRead: boolea
   }
 }
 
-/** Withdraws copies whose item or image no longer qualifies. Idempotent: a withdrawn copy is final. */
+/** Withdraws copies whose item or image no longer qualifies. Idempotent: a removed copy is final. */
 export async function sweepScanLabelCopies({ store }: { store?: ScanLabelSweepStore | null } = {}) {
   if (store === undefined) store = scanLabelSweepStoreFromEnv();
   if (!store) {
@@ -149,12 +164,17 @@ export async function sweepScanLabelCopies({ store }: { store?: ScanLabelSweepSt
     // Marking after `remove` instead lets that upload's re-arm run first and be overwritten.
     const claimed = await dbWrite.$executeRaw`
       UPDATE "ScanLabelCopyObject"
-      SET "withdrawnAt" = now(), "withdrawReason" = ${reason}, "withdrawError" = NULL
-      WHERE key = ${key} AND "withdrawnAt" IS NULL
+      SET "withdrawnAt" = now(), "withdrawReason" = ${reason}, "withdrawError" = NULL, "removedAt" = NULL
+      WHERE key = ${key}
+        AND ("withdrawnAt" IS NULL OR ("removedAt" IS NULL AND "withdrawnAt" < now() - ${STALE_CLAIM}))
     `;
     if (!claimed) continue;
     try {
       await store.remove(key);
+      await dbWrite.$executeRaw`
+        UPDATE "ScanLabelCopyObject" SET "removedAt" = now()
+        WHERE key = ${key} AND "withdrawnAt" IS NOT NULL
+      `;
       await dbWrite.$executeRaw`
         UPDATE "ScanLabelItem" SET "copyState" = 'withdrawn', "copyKey" = NULL
         WHERE id = ${itemId} AND ("copyKey" = ${key} OR "copyKey" IS NULL)

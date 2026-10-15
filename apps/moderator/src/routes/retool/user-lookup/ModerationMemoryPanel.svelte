@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { enhance } from '$app/forms';
   import { FormState } from '$lib/form-state.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -27,7 +28,7 @@
   // not in `data`, so invalidating the page load would not bring it back.
   let version = $state(0);
 
-  const memory = $derived(browser ? fetchMemory(userId, version) : null);
+  const memory = $derived(browser ? fetchMemory(userId, version) : SSR_PENDING);
 
   let adding = $state(false);
   let striking = $state(false);

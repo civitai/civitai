@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import WalkPager from '$lib/components/WalkPager.svelte';
   import { fetchJson } from '$lib/fetch-json';
@@ -32,7 +33,7 @@
               ? `&removedBefore=${encodeURIComponent(cursor.at)}&beforeId=${cursor.imageId}`
               : '')
         )
-      : null
+      : SSR_PENDING
   );
 
   const advance = (next: ImageRemovalCursor) => {

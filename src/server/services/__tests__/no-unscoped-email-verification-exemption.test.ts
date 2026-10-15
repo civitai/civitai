@@ -105,6 +105,8 @@ const DERIVED_BASES: Record<string, string> = {
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorProcedure: 'protectedProcedure',
   promotionProcedure: 'protectedProcedure',
+  servicesGuardedProcedure: 'guardedProcedure',
+  servicesProcedure: 'protectedProcedure',
 };
 
 const stripComments = (s: string) =>

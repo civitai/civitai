@@ -138,6 +138,58 @@ describe('flux3.handler', () => {
   });
 });
 
+describe('krea3.handler', () => {
+  it('create sends ratio, resolution and thinking mode with no images', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '2k',
+      aspectRatio: '16:9',
+      thinkingMode: 'medium',
+      images: [IMAGE],
+    });
+    expect(firstInput(create)).toEqual({
+      engine: 'krea3',
+      prompt: 'a cat',
+      quantity: 1,
+      resolution: '2k',
+      aspectRatio: '16:9',
+      thinkingMode: 'medium',
+      images: [],
+    });
+  });
+
+  it('edit omits the ratio so Krea follows the references, and keeps image order', async () => {
+    const edit = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      aspectRatio: '16:9',
+      images: [IMAGE, IMAGE2],
+    });
+    const input = firstInput(edit) as Record<string, unknown>;
+    expect(input).toMatchObject({
+      engine: 'krea3',
+      resolution: '1k',
+      thinkingMode: 'instant',
+      images: [IMAGE.url, IMAGE2.url],
+    });
+    expect(input).not.toHaveProperty('aspectRatio');
+  });
+
+  it('falls back to the defaults for a resolution or thinking mode Krea 3 does not offer', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '4k',
+      thinkingMode: 'high',
+    });
+    expect(firstInput(create)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
+  });
+});
+
 describe('ideogram.handler', () => {
   // The fork is on the version id, so these two cases are the contract: 4.5 is a fal API
   // model, 4.0 runs on our own comfy. Getting it backwards bills the wrong provider.

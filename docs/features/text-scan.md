@@ -28,7 +28,7 @@ like a single call. At most `maxSegments` (default 10) segments are scanned. Any
 missing segment fails the whole scan, which the retry job then resubmits. The segments that did parse
 can still raise the stored verdict straight away: a higher nsfw level, or a poi, minor or scam flag
 the row does not already carry. Nothing is lowered or cleared, the row stays Failed, and modes apply
-as for a full verdict (shadow acts on nothing; an active search pass owns Model poi/minor). The retry
+as for a full verdict (shadow acts on nothing). The retry
 job resubmits a row while its `retryCount` is below 9, and every failed attempt adds one, so an entity
 gets its first scan and at most 8 retries; the count is not reset when the text changes. Every result's `meta`
 records `inputChars`, `inputCut` (some text was past the last segment and was not scanned), `segments`
@@ -144,7 +144,16 @@ never exceeds its main mode, and the `text-scan` kill switch turns both off.
   row and logs `scan-verdict` with `variant: 'web-search'` and `acted: false`. It never acts.
 - **active** (main scan also active) — the main scan stops asking for `poi`/`minor`; the search scan
   writes to `Model:search` and its `poi`/`minor` verdict goes through the Model adapter. `nsfw` only
-  ever comes from the main scan, and neither scan clears a flag the other set.
+  ever comes from the main scan, and neither scan clears a flag the other set. An edit that both
+  raises the rating and sets `poi`/`minor` sends the owner two notices, one per scan; deduplicating
+  them would risk dropping one.
+
+A scan acts on the labels it was submitted with, whatever the search rollout says when its verdict
+arrives: a main scan submitted before the search pass went active still acts on its `poi`/`minor`,
+and an active search scan still acts after the search rollout steps back, as long as the main mode
+is still active. Changing the rollout rescans nothing by itself. Existing models keep the flags they
+have; each model's next scan (an edit, a publish, a retry) uses the new split. The label set is part
+of the dedup hash, so that scan resubmits even when the text has not changed.
 
 Both scans share the subject, input cap, segmentation, prompt rows and dedupe rules; a long text
 splits into the same segments in both, so a long Model text costs up to 2 × `maxSegments` calls per

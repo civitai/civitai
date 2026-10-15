@@ -228,6 +228,7 @@ export const ECO = {
 
   // Krea AI
   Krea2: 70,
+  Krea3: 93,
 
   // Microsoft
   MAI: 71,
@@ -682,6 +683,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Krea 2',
     familyId: 20,
     sortOrder: 150,
+  },
+  {
+    id: ECO.Krea3,
+    key: 'Krea3',
+    displayName: 'Krea 3',
+    familyId: 20,
+    sortOrder: 151,
   },
 
   // Microsoft Family (familyId: 21)
@@ -1196,6 +1204,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   },
   { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
+  { ecosystemId: ECO.Krea3, supportType: 'generation', modelTypes: checkpointOnly },
+
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1422,6 +1432,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Krea2,
     defaults: {
       model: { id: 3072329 },
+    },
+  },
+  {
+    ecosystemId: ECO.Krea3,
+    defaults: {
+      model: { id: 3405360 },
+      modelLocked: true,
     },
   },
   {
@@ -2341,6 +2358,7 @@ export const BM = {
   Ideogram45: 111,
   Flux3: 112,
   Krea2Turbo: 113,
+  Krea3: 114,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -3107,6 +3125,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Krea 2 with Turbo distillation for reduced steps',
     type: 'image',
     ecosystemId: ECO.Krea2,
+    licenseId: 28,
+  },
+  {
+    id: BM.Krea3,
+    name: 'Krea 3',
+    description: "Krea AI's image model for reference-driven generation and editing",
+    type: 'image',
+    ecosystemId: ECO.Krea3,
+    hidden: true,
     licenseId: 28,
   },
 

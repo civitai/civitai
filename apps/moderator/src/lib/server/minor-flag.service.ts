@@ -22,7 +22,7 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
-/** `rescanQueued`: the owner edited the text while the appeal was open, so it is scanned again. */
+/** `rescanQueued` is always false now: the endpoint keeps it for compatibility. */
 export type AppealResult = { ok: true; rescanQueued: boolean } | { ok: false; error: string };
 
 export const resolveMinorFlagAppeal = (modelId: number, uphold: boolean): Promise<AppealResult> =>

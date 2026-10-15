@@ -9,6 +9,7 @@ import {
   type AppealGroup,
   type AppealSource,
 } from '$lib/minor-flags/appeal-filters';
+import type { FlagLabel, LatestScan, LatestScanSource } from '$lib/minor-flags/text-scan-verdicts';
 
 /**
  * The read half of the main app's `/moderator/minor-hash-matches`, ported per
@@ -236,6 +237,7 @@ export type MinorFlagAppealRow = {
   minor: boolean;
   poi: boolean;
   textScanFlags: unknown;
+  latestScan: LatestScan | null;
   flaggedAt: Date | null;
   flagSource: string | null;
   flagConfirmedFrom: string | null;
@@ -260,6 +262,45 @@ export type AppealQuery = Page & { filters?: AppealFilters };
 const APPEAL_TRAINED_WORDS_CAP = 8;
 const APPEAL_TAGS_CAP = 12;
 const APPEAL_COVER_COUNT = 4;
+
+const TEXT_SCAN_SEARCH_ENTITY_TYPE = 'Model:search';
+
+type ScanRowAlias = 'sm' | 'ss';
+const SCAN_ROW_SOURCE: Record<ScanRowAlias, LatestScanSource> = { sm: 'main', ss: 'web search' };
+
+const scanLabelValue = (row: ScanRowAlias, label: FlagLabel) =>
+  sql`${sql.raw(row)}.result->'labels'->${sql.lit(label)}`;
+
+const scanCarriesLabel = (row: ScanRowAlias, label: FlagLabel) =>
+  sql`COALESCE(jsonb_typeof(${scanLabelValue(row, label)}) = 'object', FALSE)`;
+
+// `updatedAt` is a UTC timestamp without time zone. jsonb renders it with no offset and the
+// TIMESTAMP parser that appends Z only reaches plain columns, so it is formatted as UTC here.
+const scanLabelSql = (row: ScanRowAlias, label: FlagLabel) => {
+  const value = scanLabelValue(row, label);
+  const r = sql.raw(row);
+  return sql`jsonb_build_object(
+    'detected', CASE WHEN jsonb_typeof(${value}->'detected') = 'boolean'
+                     THEN (${value}->>'detected')::boolean END,
+    'reason', ${value}->>'reason', 'source', ${sql.lit(SCAN_ROW_SOURCE[row])},
+    'status', ${r}.status::text,
+    'updatedAt', to_char(${r}."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  )`;
+};
+
+/** Per label: the newest Succeeded row that carries it, else whichever row carries it. Once web
+ *  search is active the main pass is submitted without poi/minor, but its row keeps the poi/minor it
+ *  last carried, and search mode can fall back to off, so neither row wins outright. */
+const latestScanLabelSql = (label: FlagLabel) => {
+  const rank = (row: ScanRowAlias) =>
+    sql`(${sql.raw(row)}.status::text = 'Succeeded', ${sql.raw(row)}."updatedAt")`;
+  return sql`CASE
+    WHEN ${scanCarriesLabel('ss', label)}
+     AND (NOT ${scanCarriesLabel('sm', label)} OR ${rank('ss')} >= ${rank('sm')})
+      THEN ${scanLabelSql('ss', label)}
+    WHEN ${scanCarriesLabel('sm', label)} THEN ${scanLabelSql('sm', label)}
+  END`;
+};
 
 /** A text-scan real-person flag sets `poi` and `meta.textScanFlags.poi` but writes no snapshot, so the
  *  snapshot source alone would file it under "No flag record". One expression feeds the list predicate,
@@ -357,6 +398,8 @@ export async function getMinorFlagAppealsForReview({
            COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
            fb.username AS "flaggedByUsername", fb."createdAt" AS "flaggedByAt",
            COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+           CASE WHEN ls.poi IS NULL AND ls.minor IS NULL THEN NULL
+                ELSE jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
            jsonb_build_object(
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
@@ -417,6 +460,13 @@ export async function getMinorFlagAppealsForReview({
       FROM "Model" o
       WHERE o."userId" = pg."userId" AND o.id <> pg."modelId" AND (o.minor OR o.poi)
     ) up ON TRUE
+    LEFT JOIN "EntityModeration" sm
+      ON sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
+    LEFT JOIN "EntityModeration" ss
+      ON ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE} AND ss."entityId" = pg."modelId"
+    LEFT JOIN LATERAL (
+      SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
+    ) ls ON TRUE
     LEFT JOIN LATERAL (
       SELECT count(*) FILTER (WHERE pa.status::text = 'Approved')::int AS approved,
              count(*) FILTER (WHERE pa.status::text = 'Rejected')::int AS rejected,

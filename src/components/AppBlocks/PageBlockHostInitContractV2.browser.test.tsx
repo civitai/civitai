@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure). NOT `typeof import(...)`, which
 // @typescript-eslint/consistent-type-imports rejects.
@@ -380,6 +381,7 @@ describe('PageBlockHost REQUEST_TOKEN → TOKEN_REFRESH_RESPONSE.requestId', () 
     });
     const reply = posts.last('TOKEN_REFRESH_RESPONSE')!.payload as { token?: { raw?: string } };
     expect(reply.token?.raw).toBe('tok_saffron_1938');
+    expectReplyKeys('REQUEST_TOKEN', 'success', ['token'], reply);
     posts.stop();
   });
 

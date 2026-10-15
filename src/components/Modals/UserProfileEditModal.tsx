@@ -586,6 +586,17 @@ export default function UserProfileEditModal() {
                   })
                 }
               />
+              <Switch
+                label="Show what my Creator Score is made of"
+                description="Visitors see the share from models, images, articles and followers, never the score"
+                checked={privacySettings?.showScoreSplit !== false}
+                onChange={(e) =>
+                  form.setValue('privacySettings', {
+                    ...privacySettings,
+                    showScoreSplit: e.currentTarget.checked,
+                  })
+                }
+              />
               <InputCosmeticSelect
                 name="badge"
                 label="Featured Badge"

@@ -25,6 +25,7 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
+import { maskHiddenReactors } from '~/server/services/reaction-privacy.service';
 import {
   getBlockCheckOwnerIdsForModelComment,
   throwIfBlockedByOwners,
@@ -80,6 +81,10 @@ export const getCommentsInfiniteHandler = async ({
     GROUP BY c."parentId"
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
+  await maskHiddenReactors(
+    allComments.map((c) => c.reactions),
+    user
+  );
 
   return {
     nextCursor,
@@ -92,11 +97,14 @@ export const getCommentsInfiniteHandler = async ({
 
 export const getCommentReactionsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetCommentReactionsSchema;
+  ctx: Context;
 }) => {
   try {
     const reactions = await getCommentReactions(input);
+    await maskHiddenReactors([reactions], ctx.user);
 
     return reactions;
   } catch (error) {
@@ -266,6 +274,10 @@ export const getCommentHandler = async ({ input, ctx }: { input: GetByIdInput; c
       if (blocked) throw throwNotFoundError();
     }
 
+    await maskHiddenReactors(
+      [comment.reactions, ...comment.comments.map((c) => c.reactions)],
+      ctx.user
+    );
     return comment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -293,6 +305,10 @@ export const getCommentCommentsHandler = async ({
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
+    await maskHiddenReactors(
+      comment.comments.map((c) => c.reactions),
+      ctx.user
+    );
     return comment.comments;
   } catch (error) {
     throw throwDbError(error);
@@ -322,7 +338,13 @@ export const getCommentCommentsCountHandler = async ({
   }
 };
 
-export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
+export const toggleLockHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   const { id } = input;
 
   try {
@@ -340,6 +362,7 @@ export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
       },
     });
 
+    await maskHiddenReactors([updatedComment.reactions], ctx.user);
     return updatedComment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

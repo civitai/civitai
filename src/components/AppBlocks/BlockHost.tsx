@@ -37,6 +37,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     terminal,
     pending,
     missingScopes,
+    signedScopes,
     // 🔴 THE MINT ALREADY REPORTED THIS AND NOTHING HERE READ IT. `useBlockToken`
     // has surfaced `needsConsent` since A6, but this dispatcher destructured every
     // sibling field and dropped this one — so the model slot's host had no
@@ -109,6 +110,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       tokenKind={kind}
       buzzBudget={buzzBudget}
       missingScopes={missingScopes}
+      signedScopes={signedScopes}
       needsConsent={needsConsent}
       domain={domain}
       maxBrowsingLevel={maxBrowsingLevel}

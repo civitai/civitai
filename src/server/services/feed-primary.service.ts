@@ -36,6 +36,18 @@ export const countFeedPrimary = (
 ) => requestCounter.inc({ outcome, reason: reasonLabel(reason), route });
 
 const UNMAPPED_LOG_INTERVAL_MS = 60_000;
+// A 400 is a request the mapper thought the feed could take and the feed refused: a limit the
+// two disagree on. One a minute with the feed's own reason is enough to find which.
+let refusedLoggedAt = 0;
+function logRefused(query: string, error: string | undefined, route: FeedPrimaryRoute | undefined) {
+  const now = Date.now();
+  if (now - refusedLoggedAt < UNMAPPED_LOG_INTERVAL_MS) return;
+  refusedLoggedAt = now;
+  logToAxiom(
+    { type: 'warning', name: 'feed-primary-refused', route, error, query: query.slice(0, 2000) },
+    'civitai-prod'
+  );
+}
 const unmappedLoggedAt = new Map<string, number>();
 function logUnmapped(reason: string, input: CapturableSearchInput) {
   const now = Date.now();
@@ -188,6 +200,7 @@ export async function serveFromFeed<T extends { id: number }>(
   }
   if (answer.status !== 200) {
     count('error', `status:${answer.status}`);
+    if (answer.status === 400) logRefused(mapping.query, answer.error, deps.route);
     return { ok: false, reason: `status:${answer.status}` };
   }
   // A feed build without the any-of sources ignores them and answers with the open feed. Only

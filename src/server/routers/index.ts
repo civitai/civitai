@@ -48,6 +48,9 @@ export const appRouter = router({
   huggingFaceImport: lazy(() =>
     import('./huggingface-import.router').then((m) => m.huggingFaceImportRouter)
   ),
+  creatorServiceDeal: lazy(() =>
+    import('./creator-service-deal.router').then((m) => m.creatorServiceDealRouter)
+  ),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
@@ -130,6 +133,9 @@ export const appRouter = router({
   ),
   creatorShop: lazy(() =>
     import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)
+  ),
+  creatorService: lazy(() =>
+    import('~/server/routers/creator-service.router').then((m) => m.creatorServiceRouter)
   ),
   productBadge: lazy(() =>
     import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)

@@ -136,6 +136,10 @@ import {
   queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
+import {
+  closeAppealsDeletedByOwner,
+  closeAppealsOnDeletedModel,
+} from '~/server/services/report.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getLatestAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -951,6 +955,19 @@ export const deleteModelHandler = async ({
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+    // The owner's own delete closes the appeal with a notice. A permanent delete leaves no row to
+    // read `deletedBy` from. Any other delete, including a moderator's earlier one that this call
+    // repeats, closes it quietly.
+    const deletedByCaller =
+      permanently || ('deletedBy' in model && model.deletedBy === ctx.user.id);
+    if (model.userId === ctx.user.id && deletedByCaller)
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Model,
+        entityIds: [id],
+        ownerId: ctx.user.id,
+      });
+    else await closeAppealsOnDeletedModel({ modelId: id });
 
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',

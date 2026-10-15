@@ -5,6 +5,7 @@ import type { ResourceSelectModalProps } from '~/components/ImageGeneration/Gene
 import type { GenerationResource } from '~/shared/types/generation.types';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * App Blocks PAGE resource picker (Design 1 — host-chrome).
@@ -304,6 +305,7 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     const payload = replies.last('RESOURCE_PICKER_RESULT')!.payload as {
       selected: Record<string, unknown>;
     };
+    expectReplyKeys('OPEN_RESOURCE_PICKER', 'success', ['selected'], payload);
     const sel = payload.selected;
     const sensitiveAbsent = [
       'availability',
@@ -658,6 +660,12 @@ describe('PageBlockHost resource picker — multi-select', () => {
     });
     // A list reply never ALSO carries the single-pick field.
     expect(replies.last('RESOURCE_PICKER_RESULT')!.payload).not.toHaveProperty('selected');
+    expectReplyKeys(
+      'OPEN_RESOURCE_PICKER',
+      'success',
+      ['selectedResources'],
+      replies.last('RESOURCE_PICKER_RESULT')!.payload
+    );
     replies.stop();
   });
 
@@ -749,6 +757,7 @@ describe('PageBlockHost resource picker — multi-select', () => {
         error:
           'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.',
       });
+      expectReplyKeys('OPEN_RESOURCE_PICKER', 'error', ['error'], r.payload);
     });
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
     replies.stop();

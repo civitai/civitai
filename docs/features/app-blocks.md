@@ -365,7 +365,9 @@ for something the API could serve.
 `src/components/AppBlocks/hostHandlerParity.ts`** — a compile-time-enforced
 inventory of every block→host message, which hosts must handle it, and whether
 it is REQUEST-style (awaits a `*_RESULT`/ack reply — an unhandled one hangs the
-block) or fire-and-forget. Rather than duplicate a list here that will re-drift,
+block) or fire-and-forget. For a request it also records the top-level payload keys
+of the success and error replies (`replyKeys` / `errorKeys`), which the host tests
+check against real replies. Rather than duplicate a list here that will re-drift,
 read that file. As of this writing the families are:
 
 - **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.
