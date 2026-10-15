@@ -8,6 +8,9 @@ import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/e
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
+const getMultiAccountTransactionsByPrefix = vi.fn();
+const getTransactionByExternalId = vi.fn();
+const refundTransaction = vi.fn();
 const createNotification = vi.fn();
 const afterPostsPublish = vi.fn();
 
@@ -19,6 +22,9 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
+  refundTransaction,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -63,6 +69,17 @@ const runningCheck = () => {
 };
 const notice = () => createNotification.mock.calls[0]?.[0];
 
+const REFUNDED = { refundedTransactions: [{ amount: 50 }], totalRefunded: 1 };
+
+/** One leg per prefix, already refunded: a 409 then reads as settled. */
+function legsAlreadyRefunded() {
+  getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+    { transactionId: `${prefix}-leg`, externalTransactionId: `${prefix}-User`, amount: 50 },
+  ]);
+  getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
+  refundTransaction.mockResolvedValue({ transactionId: 'refunded' });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   findEntry.mockResolvedValue(entry());
@@ -71,7 +88,8 @@ beforeEach(() => {
   );
   executeRaw.mockResolvedValue(1);
   deleteEntry.mockResolvedValue({});
-  refundMultiAccountTransaction.mockResolvedValue(undefined);
+  refundMultiAccountTransaction.mockResolvedValue(REFUNDED);
+  legsAlreadyRefunded();
   createNotification.mockResolvedValue(undefined);
   afterPostsPublish.mockResolvedValue(undefined);
   dbMock.dbWrite.$queryRaw.mockResolvedValue([]);

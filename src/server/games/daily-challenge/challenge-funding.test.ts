@@ -5,20 +5,21 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Verifies chargeEntryFees' two-leg (house + pool) charging and its NO-REFUND partial-failure
-// contract: the buzz ledger keeps a refunded externalTransactionId occupied and exposes no
-// refund state, so refunding a leg would make a later retry treat it as "already paid" and
-// commit the entry for free. chargeEntryFees must therefore never refund; it partitions images
+// contract: the buzz ledger keeps a refunded externalTransactionId occupied, so refunding a
+// leg would make a later retry treat it as "already paid" and commit the entry for free. chargeEntryFees must therefore never refund; it partitions images
 // into fully-paid (committable) and unpaid, and half-paid images self-heal on retry.
 
 const {
   mockCreateBuzzTransaction,
   mockCreateBuzzTransactionMany,
+  mockGetMultiAccountTransactionsByPrefix,
   mockGetTransactionByExternalId,
   mockRefundMultiAccountTransaction,
   mockRefundTransaction,
 } = vi.hoisted(() => ({
   mockCreateBuzzTransaction: vi.fn(),
   mockCreateBuzzTransactionMany: vi.fn(),
+  mockGetMultiAccountTransactionsByPrefix: vi.fn(),
   mockGetTransactionByExternalId: vi.fn(),
   mockRefundMultiAccountTransaction: vi.fn().mockResolvedValue({ refundedTransactions: [] }),
   mockRefundTransaction: vi.fn(),
@@ -31,6 +32,7 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
   createBuzzTransactionMany: mockCreateBuzzTransactionMany,
+  getMultiAccountTransactionsByPrefix: mockGetMultiAccountTransactionsByPrefix,
   getTransactionByExternalId: mockGetTransactionByExternalId,
   refundMultiAccountTransaction: mockRefundMultiAccountTransaction,
   refundTransaction: mockRefundTransaction,
@@ -60,6 +62,9 @@ const batchResult = (n: number, conflicts: string[] = []) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockGetMultiAccountTransactionsByPrefix.mockReset();
+  mockGetTransactionByExternalId.mockReset();
+  mockRefundTransaction.mockReset();
   mockRefundMultiAccountTransaction.mockResolvedValue({ refundedTransactions: [] });
   mockLogToAxiom.mockResolvedValue(undefined);
 });
@@ -460,26 +465,58 @@ describe('refundUserChallengeFunds — void refunds pool legs only', () => {
     await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
   });
 
-  // 409 (→ BAD_REQUEST) is what the buzz service returns for a prefix whose transactions were
-  // ALREADY reversed — a refunded externalTransactionId stays occupied in the ledger. A challenge
-  // voided first and deleted afterwards hits this on the delete, and treating it as a failure
-  // aborted the delete and left the challenge undeletable forever.
-  it('tolerates the buzz conflict when a prefix was already refunded', async () => {
+  const conflict = () =>
+    new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'There is a conflict with the transaction',
+      cause: new BuzzApiError(409, 'Conflict'),
+    });
+  const poolLeg = (imageId: number) => ({
+    transactionId: `tx-${imageId}`,
+    externalTransactionId: `challenge-entry-fee-7-${imageId}`,
+    amount: 75,
+  });
+
+  // A challenge voided first and deleted afterwards hits the 409 on the delete; treating it as a
+  // failure aborted the delete and left the challenge undeletable forever.
+  it('tolerates the buzz conflict when every leg was already refunded', async () => {
     mockChallengeFindUnique.mockResolvedValue({
       source: ChallengeSource.User,
-      basePrizePool: 500,
+      basePrizePool: 0,
       createdById: USER_ID,
       entryFee: ENTRY_FEE,
     });
-    mockRefundMultiAccountTransaction.mockRejectedValue(
-      new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'There is a conflict with the transaction',
-        cause: new BuzzApiError(409, 'Conflict'),
-      })
-    );
+    mockRefundMultiAccountTransaction.mockRejectedValue(conflict());
+    mockGetMultiAccountTransactionsByPrefix.mockResolvedValue([poolLeg(10), poolLeg(11)]);
+    mockGetTransactionByExternalId.mockResolvedValue({ amount: 75 });
 
     await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
+    expect(mockRefundTransaction).not.toHaveBeenCalled();
+  });
+
+  // The prefix refund answers 409 when ANY leg has a refund, and then reverses none of the others:
+  // an entry charged after an earlier void would otherwise never be returned.
+  it('refunds the entries a conflict left unrefunded', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 0,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(conflict());
+    mockGetMultiAccountTransactionsByPrefix.mockResolvedValue([
+      poolLeg(10),
+      poolLeg(11),
+      poolLeg(12),
+    ]);
+    mockGetTransactionByExternalId.mockImplementation(async (extId: string) =>
+      extId === 'refund-tx-11' ? { amount: 75 } : null
+    );
+    mockRefundTransaction.mockResolvedValue({ transactionId: 'ok' });
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 2 });
+    expect(mockGetMultiAccountTransactionsByPrefix).toHaveBeenCalledWith('challenge-entry-fee-7-');
+    expect(mockRefundTransaction.mock.calls.map(([id]) => id)).toEqual(['tx-10', 'tx-12']);
   });
 
   // Tolerance is keyed to the buzz status, not to BAD_REQUEST — a bad request from anywhere else

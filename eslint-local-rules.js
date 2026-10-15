@@ -128,6 +128,7 @@ const IO_CALL_NAMES = new Set([
   'createMultiAccountBuzzTransaction',
   'refundTransaction',
   'refundMultiAccountTransaction',
+  'refundAllLegsByPrefix',
   'getMultiAccountTransactionsByPrefix',
   'deleteBidsForModelVersion',
   // observability (Axiom HTTP ingest)
