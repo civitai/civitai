@@ -240,7 +240,9 @@ describe('requesting an upload', () => {
       fileName: 'passwd.zip',
     });
     // The key is built from ids and a uuid, never from the typed name.
-    expect(row.s3Key).toMatch(new RegExp(`^service-deals/${dealId}/0/final/[0-9a-f-]{36}$`));
+    expect(row.s3Key).toMatch(
+      new RegExp(`^service-deals/uploads/${dealId}/0/final/[0-9a-f-]{36}$`)
+    );
     expect(result.uploadUrl).toBe(`https://put/${row.s3Key}`);
   });
 
@@ -389,6 +391,41 @@ describe('completing an upload', () => {
     );
   });
 
+  it('moves the upload to a key only the server has, and measures THAT copy', async () => {
+    const dealId = await accepted();
+    const { fileId } = await upload(dealId, { size: 1000 });
+    const uploadKey = (await fileRow(fileId)).s3Key;
+    s3.send.mockResolvedValue(body(ZIP));
+    s3.headObject.mockResolvedValue({ status: 'present', size: 1000 });
+    await files.completeServiceDealUpload({ fileId, userId: SELLER });
+
+    const row = await fileRow(fileId);
+    expect(row.s3Key).not.toBe(uploadKey);
+    expect(row.s3Key).toMatch(new RegExp(`^service-deals/files/${dealId}/0/final/[0-9a-f-]{36}$`));
+    const copy = s3.send.mock.calls.map(([command]) => command.input).find((i) => i.CopySource);
+    expect(copy).toMatchObject({ Key: row.s3Key, CopySource: `bucket/${uploadKey}` });
+    // The seller's key is dead.
+    expect(s3.deleteObject).toHaveBeenCalledWith('bucket', uploadKey);
+  });
+
+  it('fails a file whose bytes changed after the seller said they were done', async () => {
+    const dealId = await accepted();
+    const { fileId } = await upload(dealId, { size: 1000 });
+    // The seller's key still reads right; the server's copy is what it really is.
+    s3.headObject.mockImplementation(async (_bucket: string, key: string) => ({
+      status: 'present',
+      size: key.includes('/uploads/') ? 1000 : 4_000_000,
+    }));
+    s3.send.mockResolvedValue(body(ZIP));
+    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).rejects.toMatchObject(
+      {
+        code: 'BAD_REQUEST',
+      }
+    );
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Failed' });
+    expect(s3.deleteObject).toHaveBeenCalledTimes(2);
+  });
+
   it('does not fail a file because the bucket could not be asked', async () => {
     const dealId = await accepted();
     const { fileId } = await upload(dealId);
@@ -482,6 +519,32 @@ describe('the scanner seam', () => {
 });
 
 describe('deleting', () => {
+  it('takes the hidden scan copy of a preview deleted mid-scan with it', async () => {
+    const dealId = await accepted();
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.png',
+      mimeType: 'image/png',
+      size: 500,
+    });
+    s3.send.mockResolvedValue(body(Buffer.from('original bytes')));
+    preview.scanCopy.mockResolvedValue({
+      data: Buffer.from('c'),
+      mimeType: 'image/webp',
+      width: 10,
+      height: 10,
+      frames: 1,
+    });
+    s3.uploadImageBufferToStore.mockResolvedValue({ key: 'scan-copy-key' });
+    images.createImage.mockResolvedValue({ id: 321 });
+    images.deleteImageById.mockResolvedValue(undefined);
+    await files.startPreviewScans();
+    expect((await fileRow(fileId)).imageId).toBe(321);
+
+    await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 321, updatePost: false });
+  });
+
   it('leaves a delivered round alone: after a revision its files can be neither completed nor removed', async () => {
     const dealId = await accepted('None');
     const old = await uploaded(dealId);
@@ -932,10 +995,21 @@ describe('preview pipeline', () => {
     expect(await q(`SELECT 1 FROM "Image"`)).toEqual([]);
   });
 
-  it('deletes the copy of a failed preview, and keeps the pointer when a delete fails so it is retried', async () => {
+  it('keeps the copy of a REJECTED preview for moderation, and deletes a passed one', async () => {
     const { fileId } = await waiting();
     await files.startPreviewScans();
     await verdict('Blocked');
+    await files.settlePreviewScans();
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect((await fileRow(fileId)).imageId).not.toBeNull();
+    expect(await q(`SELECT 1 FROM "Image"`)).toHaveLength(1);
+  });
+
+  it('keeps the pointer when a delete fails, so the copy is retried', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
     await files.settlePreviewScans();
 
     images.deleteImageById.mockRejectedValueOnce(new Error('s3 down'));
@@ -943,6 +1017,45 @@ describe('preview pipeline', () => {
     expect((await fileRow(fileId)).imageId).not.toBeNull();
     expect(await files.deleteScanCopies()).toBe(1);
     expect((await fileRow(fileId)).imageId).toBeNull();
+  });
+
+  it('re-creates the Image row when a crash left the stored object but no row', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await q(`DELETE FROM "Image"`);
+    await q(
+      `UPDATE "ServiceDealFile" SET "imageId" = NULL, "processingAt" = now() - interval '1 hour' WHERE id = $1`,
+      [fileId]
+    );
+    s3.uploadImageBufferToStore.mockClear();
+    expect(await files.startPreviewScans()).toBe(1);
+    expect(s3.uploadImageBufferToStore).not.toHaveBeenCalled();
+    expect(images.createImage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ url: 'scan-copy-key' })
+    );
+    expect((await fileRow(fileId)).imageId).not.toBeNull();
+  });
+
+  it('only publishes a file that is still Processing and Passed, even if it changed after the claim', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    // Failed by something else after it passed: the claim must not pick it up...
+    await q(`UPDATE "ServiceDealFile" SET status = 'Failed' WHERE id = $1`, [fileId]);
+    expect(await files.publishPreviews()).toBe(0);
+    expect(preview.build).not.toHaveBeenCalled();
+    // ...and a file that fails WHILE it is being built is not made Ready by the write.
+    await q(
+      `UPDATE "ServiceDealFile" SET status = 'Processing', "processingAt" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    preview.build.mockImplementationOnce(async () => {
+      await q(`UPDATE "ServiceDealFile" SET status = 'Failed' WHERE id = $1`, [fileId]);
+      return { data: DERIVATIVE, mimeType: 'image/webp', width: 512, height: 300, frames: 1 };
+    });
+    await files.publishPreviews();
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Failed' });
   });
 
   it('fails a preview the seller can fix, with the reason, before anything is stored', async () => {

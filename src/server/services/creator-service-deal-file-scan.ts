@@ -3,9 +3,10 @@
  *
  * A Final's `scanStatus` starts Pending and only a scanner's verdict moves it, through
  * `recordFinalScanResult` in the file service. Nothing here can produce Passed: `submitFinalScan`
- * is typed to return Pending and today does nothing else, so with no scanner wired nothing is ever
- * downloadable and no deal can complete on an unscanned file. The real scanner replaces this
- * function's body and reports its verdict from its result handler.
+ * is typed to return Pending and today does nothing else, so with no scanner wired no Final is ever
+ * downloadable. Paying out on a deal whose Finals are unscanned is stopped by the completion gate in
+ * the deal service, not here. The real scanner replaces this function's body and reports its
+ * verdict from its result handler.
  */
 export type FinalScanTarget = {
   id: number;
