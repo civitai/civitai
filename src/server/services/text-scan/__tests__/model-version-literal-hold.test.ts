@@ -34,7 +34,7 @@ vi.mock('~/server/services/model.service', () => ({
 vi.mock('~/server/services/training.service', () => ({}));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: mockRefresh } }));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
-vi.mock('~/server/services/text-scan/submit', () => ({ scanModelRules: mockScan }));
+vi.mock('~/server/services/text-scan/submit', () => ({ scanModelAndRules: mockScan }));
 vi.mock('~/server/services/text-scan/model-rules-hold', () => ({ checkModelRulesLiteralHold }));
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({
   unpublishLiveModelForLiteralRules,
@@ -115,7 +115,7 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     expect(mockTrack).not.toHaveBeenCalled();
     expect(mockProcessEngagement).not.toHaveBeenCalled();
     expect(mockRefresh).not.toHaveBeenCalled();
-    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID);
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: true });
   });
 
   it('logs and carries on as a normal publish when the takedown throws', async () => {
@@ -127,7 +127,7 @@ describe('publishModelVersionHandler — Model rules literal hit on a live model
     expect(mockLog).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'text-scan', type: 'error', entityId: MODEL_ID })
     );
-    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID);
+    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID, { rules: true });
     expect(mockTrack).toHaveBeenCalledTimes(1);
     expect(mockRefresh).toHaveBeenCalledWith(MODEL_ID);
   });

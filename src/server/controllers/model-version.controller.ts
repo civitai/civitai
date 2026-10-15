@@ -108,7 +108,7 @@ import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
-import { scanModelRules } from '~/server/services/text-scan/submit';
+import { scanModelAndRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -920,7 +920,8 @@ export const publishModelVersionHandler = async ({
         });
       }
     }
-    if (!ctx.user.isModerator) scanModelRules(updatedVersion.modelId);
+    // The Model scan reads only public versions, so the newly public one needs a scan of its own.
+    scanModelAndRules(updatedVersion.modelId, { rules: !ctx.user.isModerator });
     // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
     if (held) return { ...updatedVersion, held };
 
