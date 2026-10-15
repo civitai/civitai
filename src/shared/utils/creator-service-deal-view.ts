@@ -26,7 +26,12 @@ export type DealAction =
 export type DealViewerRole = 'buyer' | 'seller' | 'moderator';
 export type DealActorRole = 'buyer' | 'seller' | 'system' | 'moderator';
 
-export type DealDeadlineKind = 'acceptBy' | 'due' | 'autoCompleteAt' | 'autoCancelAt' | 'disputeUntil';
+export type DealDeadlineKind =
+  | 'acceptBy'
+  | 'due'
+  | 'autoCompleteAt'
+  | 'autoCancelAt'
+  | 'disputeUntil';
 
 export type DealTimingFields = {
   status: ServiceDealStatus;
@@ -48,7 +53,10 @@ const PRIMARY: DealAction[] = ['accept', 'acceptDelivery', 'respondCancellation'
 
 const plus = (date: Date | null, ms: number) => (date ? new Date(date.getTime() + ms) : null);
 
-export function dealViewerRole(deal: Pick<DealTimingFields, 'buyerId' | 'sellerId'>, viewerId: number) {
+export function dealViewerRole(
+  deal: Pick<DealTimingFields, 'buyerId' | 'sellerId'>,
+  viewerId: number
+) {
   if (viewerId === deal.buyerId) return 'buyer' as const;
   if (viewerId === deal.sellerId) return 'seller' as const;
   return 'moderator' as const;
@@ -67,7 +75,8 @@ export function dealActorRole(
 export function dealDeadlines(deal: DealTimingFields) {
   const working = deal.status === 'Accepted' || deal.status === 'InRevision';
   return {
-    acceptBy: deal.status === 'Requested' ? plus(deal.requestedAt, SERVICE_DEAL_ACCEPT_WINDOW_MS) : null,
+    acceptBy:
+      deal.status === 'Requested' ? plus(deal.requestedAt, SERVICE_DEAL_ACCEPT_WINDOW_MS) : null,
     due: working ? deal.dueAt : null,
     lateCancelFrom: working ? plus(deal.dueAt, SERVICE_DEAL_LATE_CANCEL_AFTER_MS) : null,
     autoCompleteAt:
@@ -82,7 +91,13 @@ export function dealDeadlines(deal: DealTimingFields) {
 
 export function nextDealDeadline(deal: DealTimingFields) {
   const deadlines = dealDeadlines(deal);
-  const kinds: DealDeadlineKind[] = ['acceptBy', 'due', 'autoCompleteAt', 'autoCancelAt', 'disputeUntil'];
+  const kinds: DealDeadlineKind[] = [
+    'acceptBy',
+    'due',
+    'autoCompleteAt',
+    'autoCancelAt',
+    'disputeUntil',
+  ];
   let next: { kind: DealDeadlineKind; at: Date } | null = null;
   for (const kind of kinds) {
     const at = deadlines[kind];

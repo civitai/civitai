@@ -105,16 +105,25 @@ const deal = async (id: number) =>
   )[0];
 
 const legs = (id: number) =>
-  q<{ leg: string; amount: number; transactionId: string | null; attempts: number; lastError: string | null }>(
+  q<{
+    leg: string;
+    amount: number;
+    transactionId: string | null;
+    attempts: number;
+    lastError: string | null;
+  }>(
     `SELECT leg::text, amount, "transactionId", attempts, "lastError" FROM "ServiceDealTransaction"
      WHERE "dealId" = $1 ORDER BY id`,
     [id]
   );
 
 const events = async (id: number) =>
-  (await q<{ type: string }>(`SELECT type::text FROM "ServiceDealEvent" WHERE "dealId" = $1 ORDER BY id`, [id])).map(
-    (e) => e.type
-  );
+  (
+    await q<{ type: string }>(
+      `SELECT type::text FROM "ServiceDealEvent" WHERE "dealId" = $1 ORDER BY id`,
+      [id]
+    )
+  ).map((e) => e.type);
 
 const charged = (amount = PRICE) => ({
   transactionIds: [{ transactionId: 'tx-hold', accountType: 'yellow', amount, duplicate: false }],
@@ -136,7 +145,10 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
 
 /** Moves a deal's clock instead of the test's: time is an input. */
 const age = (id: number, column: string, hours: number) =>
-  q(`UPDATE "ServiceDeal" SET "${column}" = now() - make_interval(hours => ${hours}) WHERE id = $1`, [id]);
+  q(
+    `UPDATE "ServiceDeal" SET "${column}" = now() - make_interval(hours => ${hours}) WHERE id = $1`,
+    [id]
+  );
 
 const ageHoldLeg = (id: number, minutes: number) =>
   q(
@@ -162,12 +174,19 @@ beforeEach(async () => {
   locks.available = true;
   locks.held.clear();
   buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged());
-  buzz.refundMultiAccountTransaction.mockImplementation(async ({ externalTransactionIdPrefix }) => ({
-    refundedTransactions: [
-      { originalTransactionId: 'tx-hold', refundTransactionId: 'tx-refund', accountType: 'yellow', amount: PRICE },
-    ],
-    externalTransactionIdPrefix,
-  }));
+  buzz.refundMultiAccountTransaction.mockImplementation(
+    async ({ externalTransactionIdPrefix }) => ({
+      refundedTransactions: [
+        {
+          originalTransactionId: 'tx-hold',
+          refundTransactionId: 'tx-refund',
+          accountType: 'yellow',
+          amount: PRICE,
+        },
+      ],
+      externalTransactionIdPrefix,
+    })
+  );
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   chat.upsertDealChat.mockResolvedValue({ id: 77 });
   chat.createMessage.mockResolvedValue({});
@@ -204,7 +223,11 @@ describe('request', () => {
       externalTransactionIdPrefix: `creator-service-${id}-hold`,
     });
     expect(await legs(id)).toEqual([
-      expect.objectContaining({ leg: 'Hold', amount: PRICE, transactionId: `creator-service-${id}-hold` }),
+      expect.objectContaining({
+        leg: 'Hold',
+        amount: PRICE,
+        transactionId: `creator-service-${id}-hold`,
+      }),
     ]);
     expect(await events(id)).toEqual(['Requested', 'Held']);
   });
@@ -246,7 +269,11 @@ describe('request', () => {
     buzz.createMultiAccountBuzzTransaction.mockRejectedValue(buzzError(400));
     await expect(request()).rejects.toThrow();
     const [{ id }] = await q<{ id: number }>(`SELECT id FROM "ServiceDeal"`);
-    expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'payment_refused', heldAt: null });
+    expect(await deal(id)).toMatchObject({
+      status: 'Cancelled',
+      closeReason: 'payment_refused',
+      heldAt: null,
+    });
     expect((await legs(id)).map((l) => l.leg)).toEqual(['Hold']);
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
@@ -266,7 +293,13 @@ describe('a hold whose outcome is unknown', () => {
 
     await ageHoldLeg(id, 11);
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
-      { accountId: BUYER, amount: PRICE, transactionId: 't', externalTransactionId: 'x', accountType: 'yellow' },
+      {
+        accountId: BUYER,
+        amount: PRICE,
+        transactionId: 't',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
     ]);
     expect(await escrow.reconcileUnconfirmedHolds()).toMatchObject({ held: 1 });
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
@@ -286,7 +319,13 @@ describe('a hold whose outcome is unknown', () => {
     expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'payment_failed' });
 
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
-      { accountId: BUYER, amount: PRICE, transactionId: 't', externalTransactionId: 'x', accountType: 'yellow' },
+      {
+        accountId: BUYER,
+        amount: PRICE,
+        transactionId: 't',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
     ]);
     await escrow.reconcileUnconfirmedHolds();
     // The seller can never accept it: the deal is closed, however it got its hold.
@@ -309,7 +348,13 @@ describe('a hold whose outcome is unknown', () => {
 
     await ageHoldLeg(id, 11);
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
-      { accountId: BUYER, amount: PRICE, transactionId: 't', externalTransactionId: 'x', accountType: 'yellow' },
+      {
+        accountId: BUYER,
+        amount: PRICE,
+        transactionId: 't',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
     ]);
     await escrow.reconcileUnconfirmedHolds();
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
@@ -318,7 +363,9 @@ describe('a hold whose outcome is unknown', () => {
   it('treats a charge the ledger calls a duplicate as unknown, not as paid', async () => {
     buzz.createMultiAccountBuzzTransaction.mockResolvedValueOnce({
       ...charged(),
-      transactionIds: [{ transactionId: 't', accountType: 'yellow', amount: PRICE, duplicate: true }],
+      transactionIds: [
+        { transactionId: 't', accountType: 'yellow', amount: PRICE, duplicate: true },
+      ],
     });
     const { id, held } = await request();
     expect(held).toBe(false);
@@ -329,7 +376,13 @@ describe('a hold whose outcome is unknown', () => {
     const id = await unknownHold();
     await ageHoldLeg(id, 11);
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
-      { accountId: BUYER, amount: 100, transactionId: 't', externalTransactionId: 'x', accountType: 'yellow' },
+      {
+        accountId: BUYER,
+        amount: 100,
+        transactionId: 't',
+        externalTransactionId: 'x',
+        accountType: 'yellow',
+      },
     ]);
     await escrow.reconcileUnconfirmedHolds();
     expect(await deal(id)).toMatchObject({ status: 'Requested', heldAt: null });
@@ -344,13 +397,19 @@ describe('closing with a refund', () => {
     expect((await deal(id)).settledAt).not.toBeNull();
     expect(await legs(id)).toEqual([
       expect.objectContaining({ leg: 'Hold' }),
-      expect.objectContaining({ leg: 'Refund', amount: PRICE, transactionId: `creator-service-${id}-hold` }),
+      expect.objectContaining({
+        leg: 'Refund',
+        amount: PRICE,
+        transactionId: `creator-service-${id}-hold`,
+      }),
     ]);
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(await events(id)).toEqual(['Requested', 'Held', 'Declined', 'Refunded']);
 
     // A second close and a sweep pay nothing more.
-    await expect(deals.declineServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(conflict);
+    await expect(deals.declineServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(
+      conflict
+    );
     await escrow.sweepServiceDealRefunds();
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
   });
@@ -371,8 +430,12 @@ describe('closing with a refund', () => {
   it('only the parties can close: a stranger, or the wrong party, moves nothing', async () => {
     const { id } = await request();
     await expect(deals.declineServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(conflict);
-    await expect(deals.withdrawServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(conflict);
-    await expect(deals.withdrawServiceDeal({ dealId: id, userId: STRANGER })).rejects.toEqual(conflict);
+    await expect(deals.withdrawServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(
+      conflict
+    );
+    await expect(deals.withdrawServiceDeal({ dealId: id, userId: STRANGER })).rejects.toEqual(
+      conflict
+    );
     expect((await deal(id)).status).toBe('Requested');
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
@@ -393,29 +456,57 @@ describe('closing with a refund', () => {
     buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(503));
     await deals.declineServiceDeal({ dealId: id, userId: SELLER });
     expect((await deal(id)).settledAt).toBeNull();
-    expect((await legs(id)).find((l) => l.leg === 'Refund')).toMatchObject({ attempts: 1, transactionId: null });
+    expect((await legs(id)).find((l) => l.leg === 'Refund')).toMatchObject({
+      attempts: 1,
+      transactionId: null,
+    });
 
     // Inside the backoff: the sweep does not call Buzz again.
     await escrow.sweepServiceDealRefunds();
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
 
     for (let attempt = 2; attempt <= MAX_LEG_ATTEMPTS + 2; attempt++) {
-      await q(`UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Refund'`);
+      await q(
+        `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Refund'`
+      );
       await escrow.sweepServiceDealRefunds();
     }
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(MAX_LEG_ATTEMPTS);
 
     buzz.refundMultiAccountTransaction.mockResolvedValue({
-      refundedTransactions: [{ originalTransactionId: 'a', refundTransactionId: 'b', accountType: 'yellow', amount: PRICE }],
+      refundedTransactions: [
+        {
+          originalTransactionId: 'a',
+          refundTransactionId: 'b',
+          accountType: 'yellow',
+          amount: PRICE,
+        },
+      ],
       externalTransactionIdPrefix: 'p',
     });
     await escrow.sweepServiceDealRefunds();
     expect((await deal(id)).settledAt).toBeNull();
   });
 
+  it('refuses a leg past its ceiling to any caller, not only the sweep', async () => {
+    const { id } = await request();
+    buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(503));
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+    await q(
+      `UPDATE "ServiceDealTransaction" SET attempts = ${MAX_LEG_ATTEMPTS}, "lastAttemptAt" = now() - interval '1 day'
+       WHERE leg = 'Refund'`
+    );
+    buzz.refundMultiAccountTransaction.mockClear();
+    expect(await escrow.refundDeal(id)).toBe(false);
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
   it('does not receipt a refund that moved nothing', async () => {
     const { id } = await request();
-    buzz.refundMultiAccountTransaction.mockResolvedValue({ refundedTransactions: [], externalTransactionIdPrefix: 'p' });
+    buzz.refundMultiAccountTransaction.mockResolvedValue({
+      refundedTransactions: [],
+      externalTransactionIdPrefix: 'p',
+    });
     await deals.declineServiceDeal({ dealId: id, userId: SELLER });
     expect((await legs(id)).find((l) => l.leg === 'Refund')).toMatchObject({ transactionId: null });
     expect((await deal(id)).settledAt).toBeNull();
@@ -438,10 +529,48 @@ describe('the Refund claim', () => {
     );
   });
 
+  // The two halves of "confirmed" are each required on their own, so neither can be dropped as
+  // redundant: the deal's marker, and a receipted Hold row whose amount is what is refunded.
+  it('claims nothing when the deal is marked held but no Hold receipt exists', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
+    const { id } = await request();
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Cancelled', "closedAt" = now(), "heldAt" = now() WHERE id = $1`,
+      [id]
+    );
+    expect(await escrow.claimRefund(dbMock.dbWrite as never, id)).toBe(false);
+  });
+
+  it('claims nothing when the Hold is receipted but the deal is not marked held', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
+    const { id } = await request();
+    await q(`UPDATE "ServiceDeal" SET status = 'Cancelled', "closedAt" = now() WHERE id = $1`, [
+      id,
+    ]);
+    await q(`UPDATE "ServiceDealTransaction" SET "transactionId" = 'x' WHERE "dealId" = $1`, [id]);
+    expect(await escrow.claimRefund(dbMock.dbWrite as never, id)).toBe(false);
+  });
+
+  // Plan rule: the status change and the Pending receipt commit together. Inside one transaction
+  // now() is the transaction's start, so the two timestamps are equal only if they did.
+  it('is written in the same transaction that closes the deal', async () => {
+    buzz.refundMultiAccountTransaction.mockRejectedValue(buzzError(503));
+    const { id } = await request();
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+    const [row] = await q<{ same: boolean }>(
+      `SELECT t."createdAt" = d."closedAt" AS same FROM "ServiceDealTransaction" t
+       JOIN "ServiceDeal" d ON d.id = t."dealId" WHERE t."dealId" = $1 AND t.leg = 'Refund'`,
+      [id]
+    );
+    expect(row).toEqual({ same: true });
+  });
+
   it('claims nothing for a deal whose hold is unconfirmed', async () => {
     buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(buzzError(504));
     const { id } = await request();
-    await q(`UPDATE "ServiceDeal" SET status = 'Cancelled', "closedAt" = now() WHERE id = $1`, [id]);
+    await q(`UPDATE "ServiceDeal" SET status = 'Cancelled', "closedAt" = now() WHERE id = $1`, [
+      id,
+    ]);
     expect(await escrow.claimRefund(dbMock.dbWrite as never, id)).toBe(false);
     expect((await legs(id)).map((l) => l.leg)).toEqual(['Hold']);
   });
@@ -460,7 +589,9 @@ describe('working a deal', () => {
     expect(row.status).toBe('Accepted');
     expect(row.dueAt!.getTime() - row.acceptedAt!.getTime()).toBe(3 * 86_400_000);
     expect(chat.upsertDealChat).toHaveBeenCalledWith({ sellerId: SELLER, buyerId: BUYER });
-    expect(chat.createMessage).toHaveBeenCalledWith(expect.objectContaining({ userId: -1, chatId: 77 }));
+    expect(chat.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: -1, chatId: 77 })
+    );
   });
 
   it('refuses an accept across a block made since the request', async () => {
@@ -471,7 +602,9 @@ describe('working a deal', () => {
 
   it('lets the buyer leave a day past due, not before', async () => {
     const id = await accepted();
-    await expect(deals.cancelLateServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(conflict);
+    await expect(deals.cancelLateServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(
+      conflict
+    );
     await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '25 hours' WHERE id = $1`, [id]);
     await deals.cancelLateServiceDeal({ dealId: id, userId: BUYER });
     expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'late' });
@@ -510,7 +643,9 @@ describe('working a deal', () => {
     const id = await accepted();
     await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
     await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
-    await q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [id]);
+    await q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [
+      id,
+    ]);
     await expect(
       deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'zip is empty' })
     ).rejects.toEqual(conflict);
@@ -520,11 +655,31 @@ describe('working a deal', () => {
   });
 });
 
+describe('timed transitions re-check their own deadline', () => {
+  // The sweeps select by deadline, but the deal can move between that SELECT and the UPDATE.
+  it('will not expire, auto-complete or auto-cancel a deal whose clock has not run out', async () => {
+    const id = (await request()).id;
+    expect(await deals.expireServiceDeal(id)).toBe(false);
+
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    expect(await deals.autoCompleteServiceDeal(id)).toBe(false);
+
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    expect(await deals.autoCancelServiceDeal(id)).toBe(false);
+    expect((await deal(id)).status).toBe('CancellationRequested');
+  });
+});
+
 describe('cancellation requests', () => {
   const requested = async () => {
     const { id } = await request();
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
-    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'changed my mind' });
+    await deals.requestServiceDealCancellation({
+      dealId: id,
+      userId: BUYER,
+      reason: 'changed my mind',
+    });
     return id;
   };
 
@@ -534,7 +689,10 @@ describe('cancellation requests', () => {
       deals.respondServiceDealCancellation({ dealId: id, userId: BUYER, agree: true })
     ).rejects.toEqual(conflict);
     await deals.respondServiceDealCancellation({ dealId: id, userId: SELLER, agree: true });
-    expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'cancellation_agreed' });
+    expect(await deal(id)).toMatchObject({
+      status: 'Cancelled',
+      closeReason: 'cancellation_agreed',
+    });
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
   });
 
@@ -551,7 +709,10 @@ describe('cancellation requests', () => {
     expect(await deals.autoCancelServiceDeals()).toMatchObject({ moved: 0 });
     await age(id, 'cancellationRequestedAt', 49);
     expect(await deals.autoCancelServiceDeals()).toMatchObject({ moved: 1 });
-    expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'cancellation_unanswered' });
+    expect(await deal(id)).toMatchObject({
+      status: 'Cancelled',
+      closeReason: 'cancellation_unanswered',
+    });
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
   });
 });

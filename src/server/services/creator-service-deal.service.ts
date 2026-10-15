@@ -109,7 +109,10 @@ export async function transitionDeal(t: Transition) {
 
 /** CONFLICT, so the client refetches on the code rather than on copy. */
 const movedOn = () =>
-  new TRPCError({ code: 'CONFLICT', message: 'This deal has moved on. Refresh to see where it is.' });
+  new TRPCError({
+    code: 'CONFLICT',
+    message: 'This deal has moved on. Refresh to see where it is.',
+  });
 
 async function requireTransition(t: Transition) {
   if (!(await transitionDeal(t))) throw movedOn();
@@ -133,7 +136,14 @@ const notBlockedBetween = (buyer: Prisma.Sql, seller: Prisma.Sql) => Prisma.sql`
       OR (ue."userId" = ${seller} AND ue."targetUserId" = ${buyer}))
 )`;
 
-type OfferingRow = { id: number; sellerId: number; status: string; open: number; maxOpenDeals: number | null; blocked: boolean };
+type OfferingRow = {
+  id: number;
+  sellerId: number;
+  status: string;
+  open: number;
+  maxOpenDeals: number | null;
+  blocked: boolean;
+};
 
 /**
  * Creates the deal from the offering's CURRENT terms, copied in one statement, and takes the hold.
@@ -288,7 +298,10 @@ async function openDealChat(dealId: number) {
     userId: -1,
     chatId: chat.id,
     contentType: 'Markdown',
-    content: `Deal accepted: **${deal.title.replace(/[\\*_[\]`]/g, '')}**. [Open the deal](/services/deals/${dealId})`,
+    content: `Deal accepted: **${deal.title.replace(
+      /[\\*_[\]`]/g,
+      ''
+    )}**. [Open the deal](/services/deals/${dealId})`,
   });
 }
 
@@ -470,39 +483,62 @@ async function sweep(
   return { considered: due.length, moved };
 }
 
-/** Requests nobody answered. The deadline is repeated in each transition's WHERE. */
+/**
+ * The timed transitions, one deal at a time. Each repeats its deadline in its own WHERE, so a deal
+ * whose clock restarted between the sweep's SELECT and the UPDATE (a re-delivery after a
+ * revision) is not moved on the strength of the old one.
+ */
+export const expireServiceDeal = (dealId: number) =>
+  transitionDeal({
+    dealId,
+    from: ['Requested'],
+    to: 'Expired',
+    actorId: -1,
+    event: 'Expired',
+    where: Prisma.sql`"requestedAt" + ${ms(SERVICE_DEAL_ACCEPT_WINDOW_MS)} <= now()`,
+    set: Prisma.sql`, "closeReason" = 'expired'`,
+    refund: true,
+  });
+
+export const autoCompleteServiceDeal = (dealId: number) =>
+  transitionDeal({
+    dealId,
+    from: ['Delivered'],
+    to: 'Completed',
+    actorId: -1,
+    event: 'Completed',
+    comment: 'auto',
+    where: Prisma.sql`"deliveredAt" + ${ms(SERVICE_DEAL_AUTO_COMPLETE_MS)} <= now()`,
+    set: complete,
+  });
+
+export const autoCancelServiceDeal = (dealId: number) =>
+  transitionDeal({
+    dealId,
+    from: ['CancellationRequested'],
+    to: 'Cancelled',
+    actorId: -1,
+    event: 'Cancelled',
+    comment: 'cancellation_unanswered',
+    where: Prisma.sql`"cancellationRequestedAt" + ${ms(
+      SERVICE_DEAL_CANCELLATION_RESPONSE_MS
+    )} <= now()`,
+    set: Prisma.sql`, "closeReason" = 'cancellation_unanswered'`,
+    refund: true,
+  });
+
 export const expireServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
     { status: 'Requested', column: 'requestedAt', after: SERVICE_DEAL_ACCEPT_WINDOW_MS },
     limit,
-    (dealId) =>
-      transitionDeal({
-        dealId,
-        from: ['Requested'],
-        to: 'Expired',
-        actorId: -1,
-        event: 'Expired',
-        where: Prisma.sql`"requestedAt" + ${ms(SERVICE_DEAL_ACCEPT_WINDOW_MS)} <= now()`,
-        set: Prisma.sql`, "closeReason" = 'expired'`,
-        refund: true,
-      })
+    expireServiceDeal
   );
 
 export const autoCompleteServiceDeals = ({ limit = 100 } = {}) =>
   sweep(
     { status: 'Delivered', column: 'deliveredAt', after: SERVICE_DEAL_AUTO_COMPLETE_MS },
     limit,
-    (dealId) =>
-      transitionDeal({
-        dealId,
-        from: ['Delivered'],
-        to: 'Completed',
-        actorId: -1,
-        event: 'Completed',
-        comment: 'auto',
-        where: Prisma.sql`"deliveredAt" + ${ms(SERVICE_DEAL_AUTO_COMPLETE_MS)} <= now()`,
-        set: complete,
-      })
+    autoCompleteServiceDeal
   );
 
 export const autoCancelServiceDeals = ({ limit = 100 } = {}) =>
@@ -513,20 +549,7 @@ export const autoCancelServiceDeals = ({ limit = 100 } = {}) =>
       after: SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
     },
     limit,
-    (dealId) =>
-      transitionDeal({
-        dealId,
-        from: ['CancellationRequested'],
-        to: 'Cancelled',
-        actorId: -1,
-        event: 'Cancelled',
-        comment: 'cancellation_unanswered',
-        where: Prisma.sql`"cancellationRequestedAt" + ${ms(
-          SERVICE_DEAL_CANCELLATION_RESPONSE_MS
-        )} <= now()`,
-        set: Prisma.sql`, "closeReason" = 'cancellation_unanswered'`,
-        refund: true,
-      })
+    autoCancelServiceDeal
   );
 
 const dealUserSelect = { id: true, username: true, image: true } as const;
@@ -594,7 +617,9 @@ export async function getServiceDealView({
           reason: deal.cancellationReason,
         }
       : null,
-    dispute: deal.disputeOpenedAt ? { openedAt: deal.disputeOpenedAt, reason: deal.disputeReason } : null,
+    dispute: deal.disputeOpenedAt
+      ? { openedAt: deal.disputeOpenedAt, reason: deal.disputeReason }
+      : null,
     held: !!deal.heldAt,
     settled: !!deal.settledAt,
     deadlines: dealDeadlines(deal),

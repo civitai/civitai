@@ -52,21 +52,34 @@ export const creatorServiceDealRouter = router({
   ),
   accept: gated
     .input(serviceDealActionSchema)
-    .mutation(({ input, ctx }) => done(input.id, acceptServiceDeal({ dealId: input.id, userId: ctx.user.id }))),
+    .mutation(({ input, ctx }) =>
+      done(input.id, acceptServiceDeal({ dealId: input.id, userId: ctx.user.id }))
+    ),
   listMine: protectedProcedure
     .use(isFlagProtected('creatorServices'))
     .input(listMyServiceDealsSchema)
     .query(({ input, ctx }) => listMyServiceDeals({ ...input, userId: ctx.user.id })),
 
-  get: protectedProcedure.input(getServiceDealSchema).query(({ input, ctx }) =>
-    getServiceDealView({ dealId: input.id, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-  ),
+  get: protectedProcedure
+    .input(getServiceDealSchema)
+    .query(({ input, ctx }) =>
+      getServiceDealView({
+        dealId: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   withdraw: protectedProcedure
     .input(serviceDealActionSchema)
-    .mutation(({ input, ctx }) => done(input.id, withdrawServiceDeal({ dealId: input.id, userId: ctx.user.id }))),
+    .mutation(({ input, ctx }) =>
+      done(input.id, withdrawServiceDeal({ dealId: input.id, userId: ctx.user.id }))
+    ),
   decline: protectedProcedure.input(declineServiceDealSchema).mutation(async ({ input, ctx }) => {
     await assertDealText(input.reason);
-    return done(input.id, declineServiceDeal({ dealId: input.id, userId: ctx.user.id, reason: input.reason }));
+    return done(
+      input.id,
+      declineServiceDeal({ dealId: input.id, userId: ctx.user.id, reason: input.reason })
+    );
   }),
   requestRevision: protectedProcedure
     .input(requestServiceDealRevisionSchema)
@@ -74,7 +87,11 @@ export const creatorServiceDealRouter = router({
       await assertDealText(input.comment);
       return done(
         input.id,
-        requestServiceDealRevision({ dealId: input.id, userId: ctx.user.id, comment: input.comment })
+        requestServiceDealRevision({
+          dealId: input.id,
+          userId: ctx.user.id,
+          comment: input.comment,
+        })
       );
     }),
   acceptDelivery: protectedProcedure
@@ -84,14 +101,20 @@ export const creatorServiceDealRouter = router({
     ),
   cancelLate: protectedProcedure
     .input(serviceDealActionSchema)
-    .mutation(({ input, ctx }) => done(input.id, cancelLateServiceDeal({ dealId: input.id, userId: ctx.user.id }))),
+    .mutation(({ input, ctx }) =>
+      done(input.id, cancelLateServiceDeal({ dealId: input.id, userId: ctx.user.id }))
+    ),
   requestCancellation: protectedProcedure
     .input(requestServiceDealCancellationSchema)
     .mutation(async ({ input, ctx }) => {
       await assertDealText(input.reason);
       return done(
         input.id,
-        requestServiceDealCancellation({ dealId: input.id, userId: ctx.user.id, reason: input.reason })
+        requestServiceDealCancellation({
+          dealId: input.id,
+          userId: ctx.user.id,
+          reason: input.reason,
+        })
       );
     }),
   respondCancellation: protectedProcedure
@@ -108,8 +131,13 @@ export const creatorServiceDealRouter = router({
         })
       );
     }),
-  openDispute: protectedProcedure.input(openServiceDealDisputeSchema).mutation(async ({ input, ctx }) => {
-    await assertDealText(input.reason);
-    return done(input.id, openServiceDealDispute({ dealId: input.id, userId: ctx.user.id, reason: input.reason }));
-  }),
+  openDispute: protectedProcedure
+    .input(openServiceDealDisputeSchema)
+    .mutation(async ({ input, ctx }) => {
+      await assertDealText(input.reason);
+      return done(
+        input.id,
+        openServiceDealDispute({ dealId: input.id, userId: ctx.user.id, reason: input.reason })
+      );
+    }),
 });

@@ -32,8 +32,14 @@ const deal = (overrides: Partial<DealTimingFields> = {}): DealTimingFields => ({
 
 describe('dealActions', () => {
   it('lets the seller accept only a confirmed hold, and always decline', () => {
-    expect(dealActions(deal(), SELLER, NOW)).toEqual({ actions: ['accept', 'decline'], primaryAction: 'accept' });
-    expect(dealActions(deal({ heldAt: null }), SELLER, NOW)).toEqual({ actions: ['decline'], primaryAction: null });
+    expect(dealActions(deal(), SELLER, NOW)).toEqual({
+      actions: ['accept', 'decline'],
+      primaryAction: 'accept',
+    });
+    expect(dealActions(deal({ heldAt: null }), SELLER, NOW)).toEqual({
+      actions: ['decline'],
+      primaryAction: null,
+    });
   });
 
   it('lets the buyer withdraw a request, and nothing else', () => {
@@ -42,7 +48,9 @@ describe('dealActions', () => {
 
   it('offers the late cancel only from a day past due', () => {
     const working = { status: 'Accepted' as const };
-    expect(dealActions(deal({ ...working, dueAt: ago(23) }), BUYER, NOW).actions).toEqual(['requestCancellation']);
+    expect(dealActions(deal({ ...working, dueAt: ago(23) }), BUYER, NOW).actions).toEqual([
+      'requestCancellation',
+    ]);
     expect(dealActions(deal({ ...working, dueAt: ago(25) }), BUYER, NOW)).toEqual({
       actions: ['cancelLate', 'requestCancellation'],
       primaryAction: 'cancelLate',
@@ -82,12 +90,15 @@ describe('dealActions', () => {
 
 describe('deadlines', () => {
   it('derives each from the timing constants', () => {
-    expect(dealDeadlines(deal({ requestedAt: NOW })).acceptBy).toEqual(new Date(NOW.getTime() + 48 * HOUR));
+    expect(dealDeadlines(deal({ requestedAt: NOW })).acceptBy).toEqual(
+      new Date(NOW.getTime() + 48 * HOUR)
+    );
+    expect(dealDeadlines(deal({ status: 'Delivered', deliveredAt: NOW })).autoCompleteAt).toEqual(
+      new Date(NOW.getTime() + 72 * HOUR)
+    );
     expect(
-      dealDeadlines(deal({ status: 'Delivered', deliveredAt: NOW })).autoCompleteAt
-    ).toEqual(new Date(NOW.getTime() + 72 * HOUR));
-    expect(
-      dealDeadlines(deal({ status: 'CancellationRequested', cancellationRequestedAt: NOW })).autoCancelAt
+      dealDeadlines(deal({ status: 'CancellationRequested', cancellationRequestedAt: NOW }))
+        .autoCancelAt
     ).toEqual(new Date(NOW.getTime() + 48 * HOUR));
     expect(dealDeadlines(deal({ status: 'Accepted', dueAt: NOW })).lateCancelFrom).toEqual(
       new Date(NOW.getTime() + 24 * HOUR)
@@ -95,7 +106,10 @@ describe('deadlines', () => {
   });
 
   it('picks the soonest relevant one for the list card', () => {
-    expect(nextDealDeadline(deal({ status: 'Accepted', dueAt: NOW }))).toEqual({ kind: 'due', at: NOW });
+    expect(nextDealDeadline(deal({ status: 'Accepted', dueAt: NOW }))).toEqual({
+      kind: 'due',
+      at: NOW,
+    });
     expect(nextDealDeadline(deal({ status: 'Declined' }))).toBeNull();
   });
 });

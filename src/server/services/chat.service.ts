@@ -385,7 +385,13 @@ export const upsertChat = async ({
  * chat caps do not apply to this pair. A block still does: the deal refuses to be requested or
  * accepted across one, and this refuses again rather than trusting that it was checked.
  */
-export const upsertDealChat = async ({ sellerId, buyerId }: { sellerId: number; buyerId: number }) => {
+export const upsertDealChat = async ({
+  sellerId,
+  buyerId,
+}: {
+  sellerId: number;
+  buyerId: number;
+}) => {
   const [blocked, blockedBy] = await Promise.all([
     BlockedUsers.getCached({ userId: sellerId }),
     BlockedByUsers.getCached({ userId: sellerId }),
