@@ -8,8 +8,11 @@ import { createMessage, upsertDealChat } from '~/server/services/chat.service';
 import {
   claimHold,
   claimRefund,
+  dealFinalsClear,
   holdDeal,
+  lockDeal,
   refundDeal,
+  releaseDeal,
 } from '~/server/services/creator-service-escrow.service';
 import {
   throwBadRequestError,
@@ -28,6 +31,8 @@ import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/pri
 import {
   dealActions,
   dealActorRole,
+  dealEventActorId,
+  dealVisibleReason,
   dealDeadlines,
   dealViewerRole,
   nextDealDeadline,
@@ -392,16 +397,38 @@ const complete = Prisma.sql`, "completedAt" = now(), "releaseAt" = now() + ${ms(
   SERVICE_DEAL_DISPUTE_WINDOW_MS
 )}`;
 
-export const acceptServiceDealDelivery = ({ dealId, userId }: { dealId: number; userId: number }) =>
-  requireTransition({
+const finalsPending = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message: 'The final files are still being checked. You can accept once they are ready.',
+  });
+
+/**
+ * Completes only once the round's finals have all passed scanning: the buyer downloads them at
+ * completion, and the dispute window that follows must start with the files in hand.
+ */
+export async function acceptServiceDealDelivery({
+  dealId,
+  userId,
+}: {
+  dealId: number;
+  userId: number;
+}) {
+  const moved = await transitionDeal({
     dealId,
     from: ['Delivered'],
     to: 'Completed',
     actorId: userId,
     event: 'Completed',
-    where: Prisma.sql`"buyerId" = ${userId}::int`,
+    where: Prisma.sql`"buyerId" = ${userId}::int AND ${dealFinalsClear()}`,
     set: complete,
   });
+  if (moved) return;
+  const [deal] = await dbWrite.$queryRaw<{ waiting: boolean }[]>`
+    SELECT "status" = 'Delivered'::"ServiceDealStatus" AND "buyerId" = ${userId}::int AS "waiting"
+    FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+  throw deal?.waiting ? finalsPending() : movedOn();
+}
 
 /**
  * The buyer leaves once the seller is a day past due, without the seller's agreement. Accepted
@@ -567,7 +594,8 @@ export const autoCompleteServiceDeal = (dealId: number) =>
     actorId: -1,
     event: 'Completed',
     comment: 'auto',
-    where: Prisma.sql`"deliveredAt" + ${ms(SERVICE_DEAL_AUTO_COMPLETE_MS)} <= now()`,
+    where: Prisma.sql`"deliveredAt" + ${ms(SERVICE_DEAL_AUTO_COMPLETE_MS)} <= now()
+      AND ${dealFinalsClear()}`,
     set: complete,
   });
 
@@ -679,7 +707,10 @@ export async function getServiceDealView({
         }
       : null,
     dispute: deal.disputeOpenedAt
-      ? { openedAt: deal.disputeOpenedAt, reason: deal.disputeReason }
+      ? {
+          openedAt: deal.disputeOpenedAt,
+          reason: dealVisibleReason(deal.disputeReason, isModerator),
+        }
       : null,
     held: !!deal.heldAt,
     settled: !!deal.settledAt,
@@ -689,10 +720,10 @@ export async function getServiceDealView({
     events: deal.events.map((event) => ({
       id: event.id,
       type: event.type,
-      actorId: event.actorId,
+      actorId: dealEventActorId(deal, event.actorId),
       actorRole: dealActorRole(deal, event.actorId),
       round: event.round,
-      comment: event.comment,
+      comment: dealVisibleReason(event.comment, isModerator),
       createdAt: event.createdAt,
     })),
   };
@@ -745,5 +776,215 @@ export async function listMyServiceDeals({
       ...dealActions(deal, userId),
     })),
     nextCursor: deals.length > limit ? page[page.length - 1].id : undefined,
+  };
+}
+
+export type ServiceDisputeResolutionInput = 'Refund' | 'Release';
+
+export type ResolveServiceDealDisputeResult =
+  | { status: 'resolved' | 'already-resolved'; resolution: ServiceDisputeResolutionInput }
+  | { status: 'held-for-review'; reason: string | null }
+  | { status: 'refused'; reason: 'finals_not_passed'; message: string };
+
+const FINALS_NOT_PASSED =
+  'The final files have not passed scanning. Refund, or clear the file in moderation first.';
+
+/**
+ * A moderator settles a Disputed deal, whatever sent it there: the buyer, a declined
+ * cancellation, a failed final, or a seller unavailable at payout.
+ *
+ * - Refund: Cancelled, and the hold goes back to the buyer through `claimRefund`.
+ * - Release: Completed with the window closed now, and the seller is paid through `claimRelease`,
+ *   the only writer of a Release leg. Refused while the round's finals have not all passed
+ *   scanning: nobody is paid for files that failed, and the buyer could not download them.
+ *
+ * Idempotent: a deal already resolved answers with its resolution and moves no money. The deal row
+ * is locked before it is read, so two moderators cannot both resolve it.
+ */
+export async function resolveServiceDealDispute({
+  dealId,
+  moderatorId,
+  resolution,
+  note,
+}: {
+  dealId: number;
+  moderatorId: number;
+  resolution: ServiceDisputeResolutionInput;
+  note?: string | null;
+}): Promise<ResolveServiceDealDisputeResult> {
+  const outcome = await dbWrite.$transaction(async (tx) => {
+    await lockDeal(tx, dealId);
+    const [deal] = await tx.$queryRaw<
+      {
+        status: ServiceDealStatus;
+        resolution: ServiceDisputeResolutionInput | null;
+        clear: boolean;
+      }[]
+    >`
+      SELECT "status"::text AS "status", "disputeResolution"::text AS "resolution",
+        ${dealFinalsClear()} AS "clear"
+      FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+    if (!deal) return 'not-found' as const;
+    if (deal.status !== 'Disputed')
+      return deal.resolution ? { already: deal.resolution } : ('not-disputed' as const);
+    if (resolution === 'Release' && !deal.clear) return 'finals' as const;
+
+    const resolved = Prisma.sql`"disputeResolution" = ${resolution}::"ServiceDisputeResolution",
+      "disputeResolvedAt" = now(), "disputeResolvedById" = ${moderatorId}::int, "updatedAt" = now()`;
+    if (resolution === 'Release')
+      await tx.$executeRaw`
+        UPDATE "ServiceDeal"
+        SET "status" = 'Completed'::"ServiceDealStatus",
+            "completedAt" = COALESCE("completedAt", now()), "releaseAt" = now(), ${resolved}
+        WHERE "id" = ${dealId}::int AND "status" = 'Disputed'::"ServiceDealStatus"`;
+    else
+      await tx.$executeRaw`
+        UPDATE "ServiceDeal"
+        SET "status" = 'Cancelled'::"ServiceDealStatus", "closedAt" = now(),
+            "closeReason" = 'dispute_refund', ${resolved}
+        WHERE "id" = ${dealId}::int AND "status" = 'Disputed'::"ServiceDealStatus"`;
+    await tx.$executeRaw`
+      INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
+      VALUES (${dealId}::int, ${moderatorId}::int, 'DisputeResolved'::"ServiceDealEventType",
+        ${note ?? resolution}::text)`;
+    if (resolution === 'Refund') await claimRefund(tx, dealId);
+    return 'resolved' as const;
+  });
+
+  if (outcome === 'not-found') throw throwNotFoundError('Deal not found');
+  if (outcome === 'not-disputed') throw movedOn();
+  if (outcome === 'finals')
+    return { status: 'refused', reason: 'finals_not_passed', message: FINALS_NOT_PASSED };
+  if (typeof outcome === 'object')
+    return { status: 'already-resolved', resolution: outcome.already };
+
+  // Committed; the sweeps finish either payment if this one fails.
+  await (resolution === 'Release' ? releaseDeal(dealId) : refundDeal(dealId)).catch((error) =>
+    logToAxiom({
+      name: 'creator-service-deal',
+      type: 'error',
+      message: 'payment after dispute resolution failed; the sweep will retry',
+      dealId,
+      resolution,
+      error: (error as Error)?.message,
+    }).catch(() => null)
+  );
+  // The payout claim re-checks the finals and the seller; if it held the deal again, it is back in
+  // the queue and the moderator must not be told it was released.
+  const [after] = await dbWrite.$queryRaw<{ status: ServiceDealStatus; reason: string | null }[]>`
+    SELECT "status"::text AS "status", "disputeReason" AS "reason"
+    FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+  if (after?.status === 'Disputed') return { status: 'held-for-review', reason: after.reason };
+  return { status: 'resolved', resolution };
+}
+
+type DisputedDealRow = {
+  id: number;
+  offeringId: number;
+  offeringTitle: string;
+  buyerId: number;
+  buyerUsername: string | null;
+  sellerId: number;
+  sellerUsername: string | null;
+  sellerUnavailable: boolean;
+  price: number;
+  buzzType: string;
+  revisionsUsed: number;
+  disputeOpenedAt: Date | null;
+  disputeReason: string | null;
+  cancellationReason: string | null;
+  completedAt: Date | null;
+  deliveredAt: Date | null;
+  finalsClear: boolean;
+  cursor: string;
+};
+
+type DisputedDealEventRow = {
+  id: number;
+  dealId: number;
+  type: ServiceDealEventType;
+  actorId: number;
+  round: number | null;
+  comment: string | null;
+  createdAt: Date;
+};
+
+/**
+ * Opaque to callers: the last row's dispute time, as the database wrote it, and its id, so the
+ * order is stable across ties. The time never passes through a JS Date, whose time zone handling
+ * could shift it against a `timestamp without time zone` column.
+ */
+const DISPUTE_CURSOR = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})_(\d+)$/;
+
+function parseDisputeCursor(cursor: string | undefined) {
+  if (!cursor) return null;
+  const match = DISPUTE_CURSOR.exec(cursor);
+  if (!match) throw throwBadRequestError('Invalid cursor');
+  return { openedAt: match[1], id: Number(match[2]) };
+}
+
+/**
+ * The moderators' queue: Disputed deals, longest-waiting dispute first, with what a decision
+ * needs. `finalsClear` false means a Release will be refused.
+ */
+export async function listDisputedServiceDeals({
+  cursor,
+  limit = 20,
+}: {
+  cursor?: string;
+  limit?: number;
+}) {
+  const after = parseDisputeCursor(cursor);
+  const page_ = after
+    ? Prisma.sql`AND (d."disputeOpenedAt", d."id") > (${after.openedAt}::timestamp, ${after.id}::int)`
+    : Prisma.empty;
+  const rows = await dbWrite.$queryRaw<DisputedDealRow[]>`
+    SELECT d."id", o."id" AS "offeringId", o."title" AS "offeringTitle",
+      d."buyerId", b."username" AS "buyerUsername", d."sellerId", s."username" AS "sellerUsername",
+      (s."bannedAt" IS NOT NULL OR s."deletedAt" IS NOT NULL) AS "sellerUnavailable",
+      d."price", d."buzzType"::text AS "buzzType", d."revisionsUsed", d."disputeOpenedAt",
+      d."disputeReason", d."cancellationReason", d."completedAt", d."deliveredAt",
+      ${dealFinalsClear(Prisma.sql`d`)} AS "finalsClear",
+      to_char(d."disputeOpenedAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') || '_' || d."id" AS "cursor"
+    FROM "ServiceDeal" d
+    JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+    JOIN "User" b ON b."id" = d."buyerId"
+    JOIN "User" s ON s."id" = d."sellerId"
+    WHERE d."status" = 'Disputed'::"ServiceDealStatus" ${page_}
+    ORDER BY d."disputeOpenedAt", d."id"
+    LIMIT ${limit + 1}::int`;
+  const page = rows.slice(0, limit);
+  const events = page.length
+    ? await dbWrite.$queryRaw<DisputedDealEventRow[]>`
+        SELECT "id", "dealId", "type"::text AS "type", "actorId", "round", "comment", "createdAt"
+        FROM "ServiceDealEvent"
+        WHERE "dealId" IN (${Prisma.join(page.map((row) => Prisma.sql`${row.id}::int`))})
+        ORDER BY "createdAt", "id"`
+    : [];
+
+  return {
+    items: page.map((row) => ({
+      id: row.id,
+      offering: { id: row.offeringId, title: row.offeringTitle },
+      buyer: { id: row.buyerId, username: row.buyerUsername },
+      seller: {
+        id: row.sellerId,
+        username: row.sellerUsername,
+        unavailable: row.sellerUnavailable,
+      },
+      price: row.price,
+      buzzType: row.buzzType,
+      revisionsUsed: row.revisionsUsed,
+      disputeOpenedAt: row.disputeOpenedAt,
+      disputeReason: row.disputeReason,
+      cancellationReason: row.cancellationReason,
+      completedAt: row.completedAt,
+      deliveredAt: row.deliveredAt,
+      finalsClear: row.finalsClear,
+      events: events
+        .filter((event) => event.dealId === row.id)
+        .map(({ dealId: _, ...event }) => event),
+    })),
+    nextCursor: rows.length > limit ? page[page.length - 1].cursor : undefined,
   };
 }
