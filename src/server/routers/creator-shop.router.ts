@@ -56,6 +56,7 @@ import {
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { servicesCountForPublish } from '~/server/services/creator-service.service';
 import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import * as z from 'zod';
@@ -264,7 +265,15 @@ export const creatorShopRouter = router({
     .mutation(({ input, ctx }) => {
       const { userId: targetUserId, ...patch } = input;
       const userId = ctx.user.isModerator && targetUserId ? targetUserId : ctx.user.id;
-      return updateCreatorShopSettings({ ...patch, userId });
+      return updateCreatorShopSettings({
+        ...patch,
+        userId,
+        servicesEnabled: servicesCountForPublish({
+          shopOwnerId: userId,
+          callerId: ctx.user.id,
+          callerHasServicesFlag: ctx.features.creatorServices,
+        }),
+      });
     }),
   // #endregion
 
