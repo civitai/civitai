@@ -12,6 +12,7 @@ import {
   TextCensor,
   englishDataset,
   DataSet,
+  type MatchPayload,
   asteriskCensorStrategy,
   grawlixCensorStrategy,
   assignIncrementingIds,
@@ -180,10 +181,22 @@ export class SimpleProfanityFilter {
   }
 
   /**
+   * Drop matches whose full surrounding word is whitelisted. Shared by `clean()` and
+   * `analyze()` so rendered output and moderation verdicts agree.
+   */
+  private excludeWhitelisted(text: string, matches: MatchPayload[]): MatchPayload[] {
+    return matches.filter((match) => {
+      const { startIndex, endIndex } = this.dataset.getPayloadWithPhraseMetadata(match);
+      const fullWord = this.extractFullWord(text, startIndex, endIndex + 1);
+      return !this.isWhitelistedWord(fullWord);
+    });
+  }
+
+  /**
    * Clean profane words from text
    */
   clean(text: string): string {
-    const matches = this.matcher.getAllMatches(text);
+    const matches = this.excludeWhitelisted(text, this.matcher.getAllMatches(text));
     return this.censor.applyTo(text, matches);
   }
 
@@ -203,11 +216,7 @@ export class SimpleProfanityFilter {
     }
 
     // Filter out matches where the full word is in the whitelist
-    const filteredMatches = matches.filter((match) => {
-      const { startIndex, endIndex } = this.dataset.getPayloadWithPhraseMetadata(match);
-      const fullWord = this.extractFullWord(text, startIndex, endIndex + 1);
-      return !this.isWhitelistedWord(fullWord);
-    });
+    const filteredMatches = this.excludeWhitelisted(text, matches);
 
     // If all matches were filtered out, return clean result
     if (filteredMatches.length === 0) {
