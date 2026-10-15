@@ -1547,6 +1547,61 @@ describe('the finals gate and dispute resolution', () => {
     expect(row).toEqual({ same: true });
   });
 
+  it('holds a released deal again for a seller banned after the moderator decided', async () => {
+    const id = await completed();
+    await q(
+      `UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute',
+       "disputeResolution" = 'Release', "disputeResolvedAt" = now() - interval '1 minute',
+       "disputeResolvedById" = $2 WHERE id = $1`,
+      [id, STRANGER]
+    );
+    await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(await disputeRow(id)).toMatchObject({
+      disputeReason: escrow.SELLER_UNAVAILABLE,
+      disputeResolution: null,
+    });
+  });
+
+  // A claimed Release leg always completes, whatever happens to the finals afterwards.
+  it('never re-holds a release whose leg is already claimed when a final fails', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockRejectedValueOnce(buzzError(503));
+    await expect(escrow.releaseDeal(id)).rejects.toThrow();
+    await scan(id, 'Failed');
+    await q(
+      `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Release'`
+    );
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
+    expect((await deal(id)).status).toBe('Completed');
+  });
+
+  it('tells the moderator when the payout claim holds a released deal again', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+    // A final flips inside the resolving transaction, after its own check: the claim catches it.
+    await holder.db.exec(`
+      CREATE FUNCTION flip_final() RETURNS trigger AS $$ BEGIN
+        UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE "dealId" = NEW."dealId";
+        RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER flip_final AFTER INSERT ON "ServiceDealEvent"
+        FOR EACH ROW WHEN (NEW.type = 'DisputeResolved') EXECUTE FUNCTION flip_final();
+    `);
+    try {
+      expect(await resolve(id, 'Release')).toEqual({
+        status: 'held-for-review',
+        reason: escrow.FINAL_SCAN_FAILED,
+      });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    } finally {
+      await holder.db.exec(
+        `DROP TRIGGER flip_final ON "ServiceDealEvent"; DROP FUNCTION flip_final();`
+      );
+    }
+  });
+
   it('answers CONFLICT for a deal that is not in dispute', async () => {
     const id = await delivered();
     await expect(resolve(id, 'Refund')).rejects.toEqual(conflict);

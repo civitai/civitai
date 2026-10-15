@@ -31,6 +31,7 @@ import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/pri
 import {
   dealActions,
   dealActorRole,
+  dealEventActorId,
   dealDeadlines,
   dealViewerRole,
   nextDealDeadline,
@@ -715,7 +716,7 @@ export async function getServiceDealView({
     events: deal.events.map((event) => ({
       id: event.id,
       type: event.type,
-      actorId: event.actorId,
+      actorId: dealEventActorId(deal, event.actorId),
       actorRole: dealActorRole(deal, event.actorId),
       round: event.round,
       comment: event.comment,
@@ -778,6 +779,7 @@ export type ServiceDisputeResolutionInput = 'Refund' | 'Release';
 
 export type ResolveServiceDealDisputeResult =
   | { status: 'resolved' | 'already-resolved'; resolution: ServiceDisputeResolutionInput }
+  | { status: 'held-for-review'; reason: string | null }
   | { status: 'refused'; reason: 'finals_not_passed'; message: string };
 
 const FINALS_NOT_PASSED =
@@ -863,6 +865,12 @@ export async function resolveServiceDealDispute({
       error: (error as Error)?.message,
     }).catch(() => null)
   );
+  // The payout claim re-checks the finals and the seller; if it held the deal again, it is back in
+  // the queue and the moderator must not be told it was released.
+  const [after] = await dbWrite.$queryRaw<{ status: ServiceDealStatus; reason: string | null }[]>`
+    SELECT "status"::text AS "status", "disputeReason" AS "reason"
+    FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+  if (after?.status === 'Disputed') return { status: 'held-for-review', reason: after.reason };
   return { status: 'resolved', resolution };
 }
 

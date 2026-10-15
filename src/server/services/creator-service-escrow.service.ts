@@ -221,7 +221,8 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
     )
   )
     return 'held';
-  // A moderator who resolved the dispute as Release has already weighed the seller's standing.
+  // A moderator who resolved the dispute as Release weighed the seller's standing as it was then;
+  // a ban or deletion after that decision holds the deal again.
   if (
     await holdForReview(
       tx,
@@ -229,7 +230,14 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
       SELLER_UNAVAILABLE,
       Prisma.sql`${unclaimed}
       AND NOT ${sellerCanBePaid(Prisma.sql`d."sellerId"`)}
-      AND d."disputeResolution" IS DISTINCT FROM 'Release'::"ServiceDisputeResolution"`
+      AND NOT (
+        d."disputeResolution" IS NOT DISTINCT FROM 'Release'::"ServiceDisputeResolution"
+        AND EXISTS (
+          SELECT 1 FROM "User" u WHERE u."id" = d."sellerId"
+            AND (u."bannedAt" IS NULL OR u."bannedAt" <= d."disputeResolvedAt")
+            AND (u."deletedAt" IS NULL OR u."deletedAt" <= d."disputeResolvedAt")
+        )
+      )`
     )
   )
     return 'held';

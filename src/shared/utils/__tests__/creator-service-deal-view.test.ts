@@ -3,6 +3,7 @@ import {
   dealActions,
   dealActorRole,
   dealDeadlines,
+  dealEventActorId,
   nextDealDeadline,
   type DealTimingFields,
 } from '~/shared/utils/creator-service-deal-view';
@@ -128,6 +129,19 @@ describe('dealActorRole', () => {
       'buyer',
       'seller',
       'moderator',
+    ]);
+  });
+});
+
+// A moderator's id would let either party look up who ruled on their deal.
+describe('dealEventActorId', () => {
+  it("shows the parties' own ids and hides everyone else's", () => {
+    const d = { buyerId: BUYER, sellerId: SELLER };
+    expect([-1, BUYER, SELLER, 42].map((id) => dealEventActorId(d, id))).toEqual([
+      null,
+      BUYER,
+      SELLER,
+      null,
     ]);
   });
 });

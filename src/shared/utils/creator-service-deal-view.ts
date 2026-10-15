@@ -72,6 +72,14 @@ export function dealActorRole(
   return 'moderator';
 }
 
+/** An event's actor id as the parties may see it: their own ids only, never a moderator's. */
+export function dealEventActorId(
+  deal: Pick<DealTimingFields, 'buyerId' | 'sellerId'>,
+  actorId: number
+): number | null {
+  return actorId === deal.buyerId || actorId === deal.sellerId ? actorId : null;
+}
+
 export function dealDeadlines(deal: DealTimingFields) {
   // Only before the first delivery: after one, the due date is history.
   const working = deal.status === 'Accepted';
