@@ -2024,5 +2024,33 @@ describe('reasons and reason codes', () => {
       expect((await view(true)).actions).toContain('requestRevision');
       expect((await view(false)).actions).toEqual(['acceptDelivery', 'requestCancellation']);
     });
+
+    // `guardedProcedure` refuses a muted user a revision request; the exits stay offered.
+    it('offers a muted viewer only the actions the router lets them take', async () => {
+      await mute(BUYER);
+      expect((await view(true)).actions).toEqual(['acceptDelivery', 'requestCancellation']);
+    });
+
+    it('lists the same actions, by the flag and by the mute', async () => {
+      const id = await accepted();
+      await deliver(id);
+      const listed = async (servicesEnabled = true) => {
+        const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+        (
+          dbMock.dbWrite as unknown as { serviceDeal: { findMany: ReturnType<typeof vi.fn> } }
+        ).serviceDeal.findMany = vi.fn().mockResolvedValue([row]);
+        const { items } = await deals.listMyServiceDeals({
+          userId: BUYER,
+          role: 'buyer',
+          limit: 20,
+          servicesEnabled,
+        });
+        return items[0].actions;
+      };
+      expect(await listed()).toContain('requestRevision');
+      expect(await listed(false)).toEqual(['acceptDelivery', 'requestCancellation']);
+      await mute(BUYER);
+      expect(await listed()).toEqual(['acceptDelivery', 'requestCancellation']);
+    });
   });
 });

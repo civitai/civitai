@@ -46,7 +46,7 @@ describe('dealActions', () => {
 
   // With `creatorServices` off the router refuses these, so offering them is a dead button.
   it('drops the flag-gated actions, and a primary among them, while the flag is off', () => {
-    const off = { servicesEnabled: false };
+    const off = { gatedAllowed: false };
     expect(dealActions(deal(), SELLER, NOW, off)).toEqual({
       actions: ['decline'],
       primaryAction: null,

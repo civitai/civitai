@@ -52,7 +52,10 @@ export type DealTimingFields = {
 
 const PRIMARY: DealAction[] = ['accept', 'acceptDelivery', 'respondCancellation', 'cancelLate'];
 
-/** Behind the `creatorServices` flag on the router: offered only while it is on. */
+/**
+ * Behind `gated` on the router: the `creatorServices` flag, and `guardedProcedure`, which refuses a
+ * muted user. Not offered while either would refuse them.
+ */
 export const DEAL_GATED_ACTIONS: readonly DealAction[] = ['accept', 'requestRevision'];
 
 const plus = (date: Date | null, ms: number) => (date ? new Date(date.getTime() + ms) : null);
@@ -134,7 +137,7 @@ export function dealActions(
   deal: DealTimingFields,
   viewerId: number,
   now = new Date(),
-  { servicesEnabled = true }: { servicesEnabled?: boolean } = {}
+  { gatedAllowed = true }: { gatedAllowed?: boolean } = {}
 ) {
   const role = dealViewerRole(deal, viewerId);
   const actions: DealAction[] = [];
@@ -182,7 +185,7 @@ export function dealActions(
     }
   }
 
-  const offered = servicesEnabled
+  const offered = gatedAllowed
     ? actions
     : actions.filter((action) => !DEAL_GATED_ACTIONS.includes(action));
   return {

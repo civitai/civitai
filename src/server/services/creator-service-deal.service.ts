@@ -776,7 +776,9 @@ export async function getServiceDealView({
   // From the row, not the session, so a fresh mute shows before the next sign-in.
   const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
     SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
-  const { actions, primaryAction } = dealActions(deal, userId, new Date(), { servicesEnabled });
+  const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
+    gatedAllowed: servicesEnabled && !viewer?.muted,
+  });
   return {
     id: deal.id,
     status: deal.status,
@@ -866,6 +868,9 @@ export async function listMyServiceDeals({
   });
 
   const page = deals.slice(0, limit);
+  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
+    SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const gatedAllowed = servicesEnabled && !viewer?.muted;
   return {
     items: page.map((deal) => ({
       id: deal.id,
@@ -879,7 +884,7 @@ export async function listMyServiceDeals({
       requestedAt: deal.requestedAt,
       dueAt: deal.dueAt,
       nextDeadline: nextDealDeadline(deal),
-      ...dealActions(deal, userId, new Date(), { servicesEnabled }),
+      ...dealActions(deal, userId, new Date(), { gatedAllowed }),
     })),
     nextCursor: deals.length > limit ? page[page.length - 1].id : undefined,
   };
