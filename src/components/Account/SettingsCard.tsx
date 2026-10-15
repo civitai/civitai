@@ -267,15 +267,17 @@ export function HideFromReactionListsToggle() {
   const { mutate, isPending } = useMutateUserSettings();
 
   return (
-    <Switch
-      name="hideFromReactionLists"
-      label={HIDE_FROM_REACTION_LISTS_LABEL}
-      description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
-      checked={hideFromReactionLists ?? false}
-      disabled={isPending}
-      onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
-      styles={{ track: { flex: '0 0 1em' } }}
-    />
+    <div id="hide-reaction-lists">
+      <Switch
+        name="hideFromReactionLists"
+        label={HIDE_FROM_REACTION_LISTS_LABEL}
+        description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
+        checked={hideFromReactionLists ?? false}
+        disabled={isPending}
+        onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+    </div>
   );
 }
 
