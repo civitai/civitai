@@ -130,6 +130,14 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       WHERE a.id = ${entityId} AND u.username IS NOT NULL
     )`,
 
+  // An offering has no page of its own; it is listed in its seller's shop.
+  serviceOffering: (entityId) =>
+    sql<string | null>`(
+      SELECT '/user/' || u.username || '/shop'
+      FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"
+      WHERE o.id = ${entityId} AND u.username IS NOT NULL
+    )`,
+
   // Absolute, on games.civitai.com: Game Frame computes it, and `getReportItemUrl` uses it as-is.
   gameFrameGame: (entityId) =>
     sql<string | null>`(
@@ -811,7 +819,18 @@ export async function getReportedModelStates(ids: number[]): Promise<ReportedMod
   if (!ids.length) return [];
   const rows = await dbRead
     .selectFrom('Model')
-    .select(['id', 'name', 'status', 'mode', 'minor', 'sfwOnly', 'poi', 'nsfw', 'deletedAt', 'meta'])
+    .select([
+      'id',
+      'name',
+      'status',
+      'mode',
+      'minor',
+      'sfwOnly',
+      'poi',
+      'nsfw',
+      'deletedAt',
+      'meta',
+    ])
     .where('id', 'in', ids)
     .execute();
   return rows.map(({ deletedAt, meta, ...r }) => ({

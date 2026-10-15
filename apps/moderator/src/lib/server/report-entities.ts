@@ -102,6 +102,13 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     table: 'Storyline',
     ownerColumn: 'userId',
   },
+  // A Creator Services offering; its owner is the seller.
+  serviceOffering: {
+    reportTable: 'ServiceOfferingReport',
+    fk: 'serviceOfferingId',
+    table: 'ServiceOffering',
+    ownerColumn: 'sellerId',
+  },
   challenge: {
     reportTable: 'ChallengeReport',
     fk: 'challengeId',

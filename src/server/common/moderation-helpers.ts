@@ -254,7 +254,7 @@ export const serviceOfferingTakedownReasons = {
   'real-person-likeness': {
     optionLabel: 'Offers real-person likeness',
     notificationMessage:
-      'Services offering to depict real people in a mature context are prohibited under our content guidelines.',
+      'Services offering to depict real people are prohibited under our content guidelines.',
     type: 'policy',
   },
   'hate-speech': {

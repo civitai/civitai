@@ -58,6 +58,7 @@ const EXPECTED: [string, string, string][] = [
   ['announcement', 'AnnouncementReport', 'announcementId'],
   ['crucible', 'CrucibleReport', 'crucibleId'],
   ['storyline', 'StorylineReport', 'storylineId'],
+  ['serviceOffering', 'ServiceOfferingReport', 'serviceOfferingId'],
   ['challenge', 'ChallengeReport', 'challengeId'],
   ['gameFrameGame', 'GameFrameGameReport', 'gameFrameGameId'],
   ['chat', 'ChatReport', 'chatId'],
@@ -195,8 +196,18 @@ describe('report rows link to what was reported', () => {
       'context:model3dReview',
       'context:reportedUser',
       'context:announcement',
+      'context:serviceOffering',
     ])
       expect(statements.some((sql) => sql.includes('AS "' + column + '"'))).toBe(true);
+  });
+
+  it("links a service offering report to its seller's shop", async () => {
+    await service.getMostReported({ limit: 10 });
+
+    const sql = emitted().find((s) => s.includes('context:serviceOffering'))!;
+    expect(flat(sql)).toContain(
+      `SELECT '/user/' || u.username || '/shop' FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"`
+    );
   });
 
   it('falls back to the main app resolver for a commentV2 whose thread names no entity', async () => {
