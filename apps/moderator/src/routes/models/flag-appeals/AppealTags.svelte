@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import { SOURCE_LABELS, sourceKey } from '$lib/minor-flags/appeal-filters';
 
   let {
@@ -24,17 +25,10 @@
 
 <Badge variant="outline" class={cn(sizing, TONE[source])}>{SOURCE_LABELS[source]}</Badge>
 {#if row.minor}
-  <Badge variant="outline" class={cn(sizing, 'border-red-500/40 bg-red-500/15 text-red-300')}>
-    Minor
-  </Badge>
+  <FlagBadge label="minor" {size} />
 {/if}
 {#if row.poi}
-  <Badge
-    variant="outline"
-    class={cn(sizing, 'border-orange-500/40 bg-orange-500/15 text-orange-300')}
-  >
-    Real person
-  </Badge>
+  <FlagBadge label="poi" {size} />
 {/if}
 {#if !row.minor && !row.poi}
   <Badge

@@ -8,6 +8,7 @@ import {
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview,
   getModelMinorState,
+  getRedetectedCount,
   getRedetectedModels,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
@@ -19,6 +20,12 @@ import {
   DEFAULT_APPEAL_FILTERS,
   type AppealFilters,
 } from '$lib/minor-flags/appeal-filters';
+import {
+  DEFAULT_REDETECTED_FILTERS,
+  REDETECTED_FLAGS,
+  REDETECTED_SORTS,
+  type RedetectedFilters,
+} from '$lib/minor-flags/redetected-filters';
 import { MAX_INT4 } from '$lib/server/users.service';
 import {
   confirmMinorFlag,
@@ -47,6 +54,11 @@ const appealFilterSchema = z.object({
   source: z.enum(APPEAL_SOURCES).catch(DEFAULT_APPEAL_FILTERS.source),
   flag: z.enum(APPEAL_FLAGS).catch(DEFAULT_APPEAL_FILTERS.flag),
   sort: z.enum(APPEAL_SORTS).catch(DEFAULT_APPEAL_FILTERS.sort),
+});
+
+const redetectedFilterSchema = z.object({
+  flag: z.enum(REDETECTED_FLAGS).catch(DEFAULT_REDETECTED_FILTERS.flag),
+  sort: z.enum(REDETECTED_SORTS).catch(DEFAULT_REDETECTED_FILTERS.sort),
 });
 
 function parsePaging(url: URL) {
@@ -110,19 +122,35 @@ export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 
 export async function loadRedetectedQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
-  const queue = await getRedetectedModels({ limit, offset, search });
-  return { limit, page, offset, q, ...queue, fullBleed: true };
+  const redetectedFilters: RedetectedFilters = parseQuery(url, redetectedFilterSchema);
+  const [queue, total] = await Promise.all([
+    getRedetectedModels({ limit, offset, search, filters: redetectedFilters }),
+    // The footer's "of N" is decoration; a failure here must not take the list down with it.
+    getRedetectedCount({ search, flag: redetectedFilters.flag }).catch((err) => {
+      console.error('Re-detected total failed', err);
+      return undefined;
+    }),
+  ]);
+  return { limit, page, offset, q, redetectedFilters, total, ...queue, fullBleed: true };
 }
 
 export type RedetectedQueueData = Awaited<ReturnType<typeof loadRedetectedQueue>>;
 
 /** The flag-appeals page serves two queues; `?view=redetected` swaps the appeal triage for the
- *  re-detected labels. Only the chosen one is queried. */
+ *  re-detected labels. Only the chosen one is queried; the tab badge count rides along on both. */
 export async function loadFlagQueue(url: URL) {
   const { view } = parseQuery(url, viewSchema);
-  return view === 'redetected'
-    ? { view, ...(await loadRedetectedQueue(url)) }
-    : { view, ...(await loadAppealQueue(url)) };
+  // The badge is decoration; a failure here must not take the list down with it.
+  const count = getRedetectedCount().catch((err) => {
+    console.error('Re-detected count failed', err);
+    return null;
+  });
+  if (view === 'redetected') {
+    const [queue, redetectedCount] = await Promise.all([loadRedetectedQueue(url), count]);
+    return { view, redetectedCount, ...queue };
+  }
+  const [queue, redetectedCount] = await Promise.all([loadAppealQueue(url), count]);
+  return { view, redetectedCount, ...queue };
 }
 
 export type FlagQueueData = Awaited<ReturnType<typeof loadFlagQueue>>;
