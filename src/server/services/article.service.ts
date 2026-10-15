@@ -1094,6 +1094,7 @@ export const upsertArticle = async ({
               content: textForModeration,
               labels: ['nsfw'],
               recordForReview: true,
+              rearmRetries: true,
             }),
         }).catch((e) => {
           logToAxiom({
@@ -1533,6 +1534,7 @@ export async function applyArticleContentChange({
             content: textForModeration,
             labels: ['nsfw'],
             recordForReview: true,
+            rearmRetries: true,
           }),
       }).catch((e) => {
         logToAxiom({
@@ -2607,6 +2609,7 @@ export async function rescanArticle({
           labels: ['nsfw'],
           recordForReview: true,
           forceRescan: true,
+          rearmRetries: true,
         }),
     }).catch((e) => {
       logToAxiom({

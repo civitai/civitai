@@ -46,6 +46,8 @@ describe('articleModerationAdapter — text scan', () => {
         labels: ['nsfw'],
       })
     );
+    // A retry must count against the cap, not reset it.
+    expect(vi.mocked(submitTextModeration).mock.calls[0][0]).not.toHaveProperty('rearmRetries');
   });
 
   it('parks a draft on retry without scanning it on either path', async () => {

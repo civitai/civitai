@@ -404,7 +404,7 @@ describe('article text scan — public content only', () => {
       expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID })
     );
     expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID })
+      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID, rearmRetries: true })
     );
   });
 
@@ -430,7 +430,7 @@ describe('article text scan — public content only', () => {
       expect.objectContaining({ entityType: 'Article', entityId: CREATED_ID })
     );
     expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ entityType: 'Article', entityId: CREATED_ID })
+      expect.objectContaining({ entityType: 'Article', entityId: CREATED_ID, rearmRetries: true })
     );
   });
 
@@ -531,7 +531,12 @@ describe('rescanArticle — public content only', () => {
       expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID, force: true })
     );
     expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID, forceRescan: true })
+      expect.objectContaining({
+        entityType: 'Article',
+        entityId: ARTICLE_ID,
+        forceRescan: true,
+        rearmRetries: true,
+      })
     );
   });
 });
