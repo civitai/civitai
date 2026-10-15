@@ -5152,6 +5152,8 @@ enum CosmeticType {
   // theme is the shape a later pass would want, and an enum value cannot be
   // dropped without recreating the type.
   ChatTheme
+  // A glow around the creator card; its own slot, so it stacks with a badge.
+  CardDecoration
 }
 
 enum CosmeticSource {
@@ -9673,9 +9675,11 @@ model ServiceDealEvent {
   deal      ServiceDeal          @relation(fields: [dealId], references: [id], onDelete: Restrict)
   actorId   Int
   type      ServiceDealEventType
-  round     Int                  @default(0)
-  comment   String?
-  createdAt DateTime             @default(now())
+  round      Int                  @default(0)
+  comment    String?
+  /// Validated against the per-action lists in creator-services.constants; no DB CHECK.
+  reasonCode String?
+  createdAt  DateTime             @default(now())
 
   @@index([dealId, createdAt, id])
 }

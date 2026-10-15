@@ -19,4 +19,10 @@ export const tierRewards: Partial<Record<string, string[]>> = {
     'A place in the Creator Showcase Hall of Fame',
     discordRoleRewards['score:legend'].line,
   ],
+  'score:mythic': [
+    'Mythic badge',
+    'A Mythic glow on your creator card, everywhere it appears',
+    'A place in the Mythic section of the Creator Showcase',
+    discordRoleRewards['score:mythic'].line,
+  ],
 };

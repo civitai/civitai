@@ -90,4 +90,7 @@ export type StickerCosmetic = Omit<SimpleCosmetic, 'data'> & {
   data: { slug: string; url: string; animated?: boolean; uses?: number; pricePerUse?: number };
 };
 
+export type CardGlow = { color?: string; intensity?: number; animated?: boolean };
+export type CardDecorationCosmetic = Omit<SimpleCosmetic, 'data'> & { data: { glow?: CardGlow } };
+
 export type WithClaimKey<T> = T & { claimKey: string };

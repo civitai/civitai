@@ -119,3 +119,12 @@ export const SERVICE_FINAL_EXTENSIONS = [
  * this fails, and so does one the scan left unrated. Relaxing it is this one number.
  */
 export const SERVICE_PREVIEW_MAX_NSFW_LEVEL = 2;
+
+/**
+ * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about
+ * the other party or the files, so the parties never see it (see `dealVisibleReason`).
+ */
+export const SERVICE_DEAL_HOLD_REASONS = {
+  sellerUnavailable: 'seller_unavailable',
+  finalScanFailed: 'final_scan_failed',
+} as const;

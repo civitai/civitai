@@ -3,6 +3,8 @@ import {
   dealActions,
   dealActorRole,
   dealDeadlines,
+  dealEventActorId,
+  dealVisibleReason,
   nextDealDeadline,
   type DealTimingFields,
 } from '~/shared/utils/creator-service-deal-view';
@@ -129,5 +131,33 @@ describe('dealActorRole', () => {
       'seller',
       'moderator',
     ]);
+  });
+});
+
+// A moderator's id would let either party look up who ruled on their deal.
+describe('dealEventActorId', () => {
+  it("shows the parties' own ids and hides everyone else's", () => {
+    const d = { buyerId: BUYER, sellerId: SELLER };
+    expect([-1, BUYER, SELLER, 42].map((id) => dealEventActorId(d, id))).toEqual([
+      null,
+      BUYER,
+      SELLER,
+      null,
+    ]);
+  });
+});
+
+// The buyer must not learn the seller was banned, nor anyone the details of a failed scan.
+describe('dealVisibleReason', () => {
+  it('hides a system hold reason from the parties and shows it to moderators', () => {
+    for (const reason of ['seller_unavailable', 'final_scan_failed']) {
+      expect(dealVisibleReason(reason, false)).toBeNull();
+      expect(dealVisibleReason(reason, true)).toBe(reason);
+    }
+  });
+
+  it("shows a party's own words and other system notes to everyone", () => {
+    for (const reason of ['broken zip', 'cancellation_declined', 'auto', null])
+      expect(dealVisibleReason(reason, false)).toBe(reason);
   });
 });

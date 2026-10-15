@@ -13,11 +13,16 @@ import {
 } from '@mantine/core';
 import { IconMessage } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { Countdown } from '~/components/Countdown/Countdown';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { DealAccountabilitySheet } from '~/components/CreatorShop/Services/deals/DealAccountabilitySheet';
 import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealActionsPanel';
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
-import { dealPageState, dealStatusLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
+import {
+  dealPageState,
+  dealStatusLabel,
+  disputeNotice,
+} from '~/components/CreatorShop/Services/deals/deal-ui';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -48,11 +53,51 @@ function deadlineLines(deal: ServiceDealView) {
         DATE
       )}.`
     );
+  if (deadlines.autoCompleteAt)
+    lines.push(
+      viewerRole === 'buyer'
+        ? `Accept it or ask for a revision by ${formatDate(
+            deadlines.autoCompleteAt,
+            DATE
+          )}. If you don't respond, the delivery is accepted for you.`
+        : `If the buyer doesn't respond by ${formatDate(
+            deadlines.autoCompleteAt,
+            DATE
+          )}, the delivery is accepted automatically.`
+    );
   if (deadlines.autoCancelAt)
     lines.push(
       `Unanswered, the cancellation goes through on ${formatDate(deadlines.autoCancelAt, DATE)}.`
     );
   return lines;
+}
+
+/** The 48h after completion when the buyer can still report the final files; payout follows. */
+function DisputeWindow({ deal, until }: { deal: ServiceDealView; until: Date }) {
+  const at = formatDate(until, DATE);
+  const body = {
+    buyer: `If the final files are missing, broken or not what the preview showed, report it before ${at}. After that, the Buzz is paid to the seller.`,
+    seller: `The Buzz is paid to you after ${at}, unless the buyer reports a problem with the files before then.`,
+    moderator: `The buyer can report a problem until ${at}. After that, the Buzz is paid to the seller.`,
+  }[deal.viewerRole];
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Stack gap={4}>
+        <Text fw={600}>
+          {until > new Date() ? (
+            <>
+              Dispute window closes in <Countdown endTime={until} />
+            </>
+          ) : (
+            'The dispute window has closed'
+          )}
+        </Text>
+        <Text size="sm" c="dimmed">
+          {body}
+        </Text>
+      </Stack>
+    </Paper>
+  );
 }
 
 export function ServiceDealPage({ dealId }: { dealId: number }) {
@@ -69,6 +114,7 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
 
   const counterparty = deal.viewerRole === 'seller' ? deal.buyer : deal.seller;
   const lines = deadlineLines(deal);
+  const notice = disputeNotice(deal);
 
   return (
     <Stack gap="lg" py="md">
@@ -101,6 +147,9 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
         <Grid.Col span={{ base: 12, md: 7 }}>
           <Stack gap="lg">
             <DealEscrowPanel deal={deal} />
+            {deal.deadlines.disputeUntil && (
+              <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+            )}
             {lines.length > 0 && (
               <Paper withBorder radius="md" p="md">
                 <Stack gap={4}>
@@ -121,12 +170,9 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                 </Text>
               </Stack>
             </Paper>
-            {deal.status === 'Disputed' && (
+            {notice && (
               <Paper withBorder radius="md" p="md">
-                <Text size="sm">
-                  This deal is in dispute and with our moderators. The Buzz stays held until they
-                  resolve it.
-                </Text>
+                <Text size="sm">{notice}</Text>
               </Paper>
             )}
           </Stack>

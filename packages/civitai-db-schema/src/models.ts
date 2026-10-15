@@ -110,7 +110,7 @@ export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme" | "CardDecoration";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
@@ -6148,6 +6148,7 @@ export interface ServiceDealEvent {
   type: ServiceDealEventType;
   round: number;
   comment: string | null;
+  reasonCode: string | null;
   createdAt: Date;
 }
 

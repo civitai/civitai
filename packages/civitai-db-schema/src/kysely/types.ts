@@ -4677,6 +4677,10 @@ export type ServiceDealEvent = {
   type: ServiceDealEventType;
   round: Generated<number>;
   comment: string | null;
+  /**
+   * Validated against the per-action lists in creator-services.constants; no DB CHECK.
+   */
+  reasonCode: string | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealFile = {
