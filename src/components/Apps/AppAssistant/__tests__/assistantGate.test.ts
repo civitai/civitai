@@ -249,11 +249,13 @@ describe('reading tool results', () => {
   it.each([
     ['npm test', 'tests'],
     ['cd my-app && npm test', 'tests'],
-    ['cd my-app && npm run test -- src/block.test.ts', 'tests'],
+    ['cd avatar-gen && npm run test', 'tests'],
+    ['cd my-app && npm run test -- src/block.test.ts', null],
     ['cd my-app&&npm test', 'tests'],
-    ['cd my-app && npx vitest run src/block.test.ts', 'tests'],
+    ['cd my-app && npx -y vitest run', 'tests'],
+    ['cd my-app && npx vitest run src/block.test.ts', null],
     ['cd my-app && npx tsc --noEmit', 'typecheck'],
-    ['cd my-app && npx tsc --noEmit -p tsconfig.json', 'typecheck'],
+    ['cd my-app && npx tsc --noEmit -p scratch/tsconfig.json', null],
     ['cd my-app && npm run typecheck', 'typecheck'],
     ['cd my-app && npm test | tail', null],
     ['cd my-app && npm test && npx tsc --noEmit', null],
@@ -269,6 +271,10 @@ describe('reading tool results', () => {
     ['cd my-app && npx tsc', null],
     ['cd my-app && npx tsc --showConfig', null],
     ['cd my-app && npm test\ntrue', null],
+    ['cd my-app && npm test\rtrue', null],
+    ['cd my-app && npm test &', null],
+    ['cd my-app && npm test $(true)', null],
+    ['cd my-app && npm test `true`', null],
     ['cd my-app && npx tsc --noEmit\nexit 0', null],
   ] as const)('%s is a %s run', (command, kind) => {
     expect(checkKindOf(command)).toBe(kind);

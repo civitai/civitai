@@ -27,17 +27,16 @@ const FILE_CHANGES = new Set(['write_file', 'edit_file', 'delete_path'].map(sand
 const PREVIEW_CHECK = sandboxTool('preview_check');
 const RUN_COMMAND = sandboxTool('run_command');
 
-// Only the check alone, in a fixed form, counts: a pipe, `;`, `||`, a newline or a flag (`-u`,
-// `--help`) can exit 0 without the check passing. Spaces and tabs only, since a newline starts a
-// new command; test path filters are the only free arguments.
+// Only the bare check counts: a pipe, `;`, `||`, a newline, a flag (`-u`, `--help`), a path filter
+// or a `-p` config can exit 0 without the whole check passing. Spaces and tabs only, since a newline
+// starts a new command.
 const SP = '[ \\t]+';
 const CD = `(?:cd${SP}[\\w./-]+[ \\t]*&&[ \\t]*)?`;
-const PATHS = `(?:${SP}(?!-)[\\w./@-]+)*`;
 const TEST_COMMAND = new RegExp(
-  `^[ \\t]*${CD}(?:npm${SP}(?:run${SP})?test(?:${SP}--)?|npx${SP}(?:-y${SP})?vitest${SP}run)${PATHS}[ \\t]*$`
+  `^[ \\t]*${CD}(?:npm${SP}(?:run${SP})?test|npx${SP}(?:-y${SP})?vitest${SP}run)[ \\t]*$`
 );
 const TYPECHECK_COMMAND = new RegExp(
-  `^[ \\t]*${CD}(?:npx${SP}(?:-y${SP})?tsc${SP}--noEmit(?:${SP}-p${SP}[\\w./-]+)?|npm${SP}run${SP}typecheck)[ \\t]*$`
+  `^[ \\t]*${CD}(?:npx${SP}(?:-y${SP})?tsc${SP}--noEmit|npm${SP}run${SP}typecheck)[ \\t]*$`
 );
 
 export type CheckKind = 'tests' | 'typecheck';
