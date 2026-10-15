@@ -8,7 +8,8 @@ export const PAGE_ROUTE_OTHER = 'other';
 
 /**
  * Next writes this at build time; its keys are every page's route pattern. The dist dir mirrors
- * `distDir` in `next.config.mjs`; `next dev` builds into its `dev/` subdirectory.
+ * `distDir` in `next.config.mjs`; `next dev` builds into its `dev/` subdirectory, and lists only
+ * pages compiled so far, so in dev a page first compiled after the first lookup labels `other`.
  */
 export function pagesManifestPath(nodeEnv = process.env.NODE_ENV) {
   return path.resolve(

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   __resetPageRoutesForTest,
@@ -35,16 +35,20 @@ describe('readPageRoutes', () => {
     expect(pagesManifestPath('development')).toBe(
       path.resolve(process.cwd(), '.next/dev/server/pages-manifest.json')
     );
+    vi.stubEnv('NODE_ENV', 'development');
+    expect(pagesManifestPath()).toBe(
+      path.resolve(process.cwd(), '.next/dev/server/pages-manifest.json')
+    );
   });
 
   it('returns an empty set, without throwing, for a missing or malformed manifest', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pages-manifest-bad-'));
+    onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
     fs.writeFileSync(path.join(dir, 'bad.json'), '{not json');
     expect(readPageRoutes(path.join(dir, 'absent.json')).size).toBe(0);
     expect(readPageRoutes(path.join(dir, 'bad.json')).size).toBe(0);
     expect(warn).toHaveBeenCalledTimes(2);
-    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 
