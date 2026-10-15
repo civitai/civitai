@@ -218,11 +218,16 @@ async function zipRefusal(bucket: string, key: string) {
   }
 }
 
-const failFile = (fileId: number, reason: string) =>
+/**
+ * Fails a file. `onlyFrom` limits it to a file still in that status: a call that lost a race must
+ * not undo another call that already moved the file on (an upload completed twice at once).
+ */
+const failFile = (fileId: number, reason: string, onlyFrom: ServiceDealFileStatus | null = null) =>
   dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "status" = 'Failed'::"ServiceDealFileStatus", "failReason" = ${reason}::text
-    WHERE "id" = ${fileId}::int`;
+    WHERE "id" = ${fileId}::int
+      AND (${onlyFrom}::text IS NULL OR "status"::text = ${onlyFrom}::text)`;
 
 /**
  * The seller says the bytes are in the bucket. The seller holds a long-lived upload URL for the key
@@ -268,7 +273,7 @@ export async function completeServiceDealUpload({
   if (held.status === 'unknown') throw couldNotCheck();
   if (held.status === 'absent' || held.size !== file.size) {
     const reason = 'The uploaded file did not match its declared size.';
-    await failFile(file.id, reason);
+    if ((await failFile(file.id, reason, 'Uploading')) === 0) return currentState(file.id);
     await deleteObject(bucket, file.s3Key).catch(() => null);
     await deleteObject(bucket, heldKey).catch(() => null);
     throw throwBadRequestError(reason);
@@ -277,7 +282,7 @@ export async function completeServiceDealUpload({
   if (file.kind === 'Final' && fileExtension(file.fileName) === 'zip') {
     const refusal = await zipRefusal(bucket, heldKey);
     if (refusal) {
-      await failFile(file.id, refusal);
+      if ((await failFile(file.id, refusal, 'Uploading')) === 0) return currentState(file.id);
       await deleteObject(bucket, file.s3Key).catch(() => null);
       await deleteObject(bucket, heldKey).catch(() => null);
       throw throwBadRequestError(refusal);
@@ -294,6 +299,18 @@ export async function completeServiceDealUpload({
   await deleteObject(bucket, moved === 1 ? file.s3Key : heldKey).catch(() => null);
   if (moved === 1 && file.kind === 'Final') await submitFinalScan({ ...file, s3Key: heldKey });
   return { id: file.id, status: next };
+}
+
+/**
+ * Where a file stands now. A completion that lost a race to another call returns this instead of
+ * failing the file or deleting anything: the other call's result is the one that stands, and its
+ * objects are not ours to remove.
+ */
+async function currentState(fileId: number) {
+  const [row] = await dbWrite.$queryRaw<{ status: ServiceDealFileStatus }[]>`
+    SELECT "status" FROM "ServiceDealFile" WHERE "id" = ${fileId}::int`;
+  if (!row) throw throwNotFoundError('File not found');
+  return { id: fileId, status: row.status };
 }
 
 const couldNotCheck = () =>
