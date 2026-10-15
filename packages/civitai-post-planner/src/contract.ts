@@ -38,7 +38,7 @@ export function isPlannerReadAction(action: PlannerAction): action is PlannerRea
 }
 
 /** Everything a read accepts on the query string; a proxy forwards nothing else. */
-export const PLANNER_READ_PARAMS = ['from', 'to', 'modelVersionId', 'id'] as const;
+export const PLANNER_READ_PARAMS = ['from', 'to', 'modelVersionId', 'tag', 'id'] as const;
 
 export interface PlannerRequests {
   scheduled: Parameters<PlannerBackend['getScheduled']>[0];

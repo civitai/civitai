@@ -11,6 +11,8 @@ export interface PlannerLocation {
   /** YYYY-MM-DD anchor day: the day itself, or the week/month containing it. */
   anchor: string;
   modelVersionId?: number;
+  /** A tag name; the range then holds only posts carrying it. */
+  tag?: string;
 }
 
 export interface PlannerRelease {
@@ -85,6 +87,7 @@ export interface PlannerBackend {
     from: string;
     to: string;
     modelVersionId?: number;
+    tag?: string;
   }): Promise<ScheduledRange>;
   getPostDetail(id: number): Promise<PlannerPostDetail>;
   /** `expectedScope` is what the UI showed; the server refuses when its own computation differs. */
