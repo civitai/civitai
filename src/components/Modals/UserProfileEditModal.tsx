@@ -60,6 +60,7 @@ import type {
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
+import { changedCosmeticId } from '~/components/Modals/profile-cosmetic-ids';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import type { UserWithProfile } from '~/types/router';
 
@@ -439,7 +440,7 @@ export default function UserProfileEditModal() {
       nameplateId !== prevNameplateId ||
       profileDecoration !== prevProfileDecorationId ||
       profileBackground !== prevProfileBackgroundId ||
-      cardDecoration !== prevCardDecoration ||
+      changedCosmeticId(cardDecoration, prevCardDecoration) !== undefined ||
       leaderboardShowcase !== prevLeaderboardShowcase;
     const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
@@ -452,7 +453,7 @@ export default function UserProfileEditModal() {
         nameplateId,
         profileDecorationId: profileDecoration?.id ?? null,
         profileBackgroundId: profileBackground?.id ?? null,
-        cardDecorationId: cardDecoration?.id ?? null,
+        cardDecorationId: changedCosmeticId(cardDecoration, prevCardDecoration),
         leaderboardShowcase,
       });
   };
@@ -600,8 +601,7 @@ export default function UserProfileEditModal() {
                     data={backgrounds}
                     onShopClick={handleClose}
                   />
-                  {/* Card glows are earned, not sold yet, so there is no shop to link and no picker
-                      to show anyone who has none. */}
+                  {/* No shop link: card glows are not in the shop yet. */}
                   {cardDecorations.length > 0 && (
                     <InputCosmeticSelect
                       name="cardDecoration"

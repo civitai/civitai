@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   createNotification: vi.fn(async () => undefined),
@@ -707,27 +707,82 @@ describe('Mythic', () => {
       (await cosmeticsOf(ELIGIBLE)).filter((c) => c.claimKey === MYTHIC).map((c) => c.cosmeticId)
     ).toEqual(cosmetics.map((c) => c.id).sort((a, b) => a - b));
     expect(await worn(ELIGIBLE)).toEqual([{ cosmeticId: glow?.id, type: 'CardDecoration' }]);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledTimes(1);
     expect(mocks.refreshCosmetics).toHaveBeenCalledWith([ELIGIBLE]);
+    expect(mocks.purgeCache).toHaveBeenCalledTimes(1);
     expect(mocks.purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${ELIGIBLE}`] });
+  });
+
+  const mythicGlowOf = async (userId: number) => {
+    const glow = (await mythicCosmetics()).find((c) => c.type === 'CardDecoration');
+    return q<{ worn: boolean }>(
+      `SELECT "equippedAt" IS NOT NULL AS worn FROM "UserCosmetic"
+       WHERE "userId" = $1 AND "cosmeticId" = $2`,
+      [userId, glow?.id]
+    );
+  };
+  /** A glow from elsewhere (the shop, later) that `userId` owns, worn or not. */
+  const giveShopGlow = async (userId: number, wearing: boolean) => {
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Cosmetic" (name, type) VALUES ('Shop glow', 'CardDecoration') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "equippedAt")
+       VALUES ($1, $2, CASE WHEN $3::boolean THEN now() END)`,
+      [userId, id, wearing]
+    );
+    return id;
+  };
+
+  afterEach(async () => {
+    await q(`DELETE FROM "UserCosmetic" WHERE "cosmeticId" IN (
+      SELECT id FROM "Cosmetic" WHERE name = 'Shop glow')`);
+    await q(`DELETE FROM "Cosmetic" WHERE name = 'Shop glow'`);
   });
 
   it('leaves a glow the creator already wears on, and grants the Mythic one unworn', async () => {
     await addUser(WEARER, 50_000_000);
-    const [{ id: own }] = await q<{ id: number }>(
-      `INSERT INTO "Cosmetic" (name, type) VALUES ('Shop glow', 'CardDecoration') RETURNING id`
-    );
-    await q(
-      `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "equippedAt") VALUES ($1, $2, now())`,
-      [WEARER, own]
-    );
+    const own = await giveShopGlow(WEARER, true);
+    const transitions = await applyUserScoreUpdates(pg, [
+      [String(WEARER), { models: 100_000_000 }],
+    ]);
+    const crossings = await grantScoreTierMilestones(pg, transitions);
+    expect(crossings.map((c) => c.milestoneKey)).toContain(MYTHIC);
+    expect(await mythicGlowOf(WEARER)).toEqual([{ worn: false }]);
+    expect(await worn(WEARER)).toEqual([{ cosmeticId: own, type: 'CardDecoration' }]);
+    expect(mocks.refreshCosmetics).not.toHaveBeenCalled();
+  });
+
+  it('wears the Mythic glow for a creator who owns another glow but is not wearing it', async () => {
+    await addUser(WEARER, 50_000_000);
+    await giveShopGlow(WEARER, false);
     const transitions = await applyUserScoreUpdates(pg, [
       [String(WEARER), { models: 100_000_000 }],
     ]);
     await grantScoreTierMilestones(pg, transitions);
-    expect(await worn(WEARER)).toEqual([{ cosmeticId: own, type: 'CardDecoration' }]);
-    expect(mocks.refreshCosmetics).not.toHaveBeenCalled();
-    await q(`DELETE FROM "UserCosmetic" WHERE "cosmeticId" = $1`, [own]);
-    await q(`DELETE FROM "Cosmetic" WHERE id = $1`, [own]);
+    expect(await mythicGlowOf(WEARER)).toEqual([{ worn: true }]);
+  });
+
+  it('decides per creator: one wearing a glow does not stop another being equipped', async () => {
+    await addUser(WEARER, 50_000_000);
+    await addUser(ELIGIBLE, 50_000_000);
+    await giveShopGlow(WEARER, true);
+    const transitions = await applyUserScoreUpdates(pg, [
+      [String(WEARER), { models: 100_000_000 }],
+      [String(ELIGIBLE), { models: 100_000_000 }],
+    ]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(await mythicGlowOf(WEARER)).toEqual([{ worn: false }]);
+    expect(await mythicGlowOf(ELIGIBLE)).toEqual([{ worn: true }]);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledWith([ELIGIBLE]);
+  });
+
+  it('keeps the committed grant when refreshing the caches fails', async () => {
+    mocks.refreshCosmetics.mockRejectedValueOnce(new Error('redis down'));
+    const crossings = await cross(ELIGIBLE, 50_000_000, 100_000_000);
+    expect(crossings.map((c) => c.milestoneKey)).toContain(MYTHIC);
+    expect(await mythicGlowOf(ELIGIBLE)).toEqual([{ worn: true }]);
   });
 
   it('wears the glow for a creator the backfill grants silently, and refreshes their card', async () => {

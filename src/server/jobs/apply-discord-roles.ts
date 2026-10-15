@@ -103,8 +103,7 @@ const applyDiscordActivityRoles = createJob(
   }
 );
 
-// Tiers are cumulative milestones (a Mythic also holds score:legend and score:supernova), so a Mythic
-// holds all three roles, as a Top 10 holder also holds Top 100.
+// Tiers are cumulative: a holder of a higher tier holds every lower one, as Top 10 holds Top 100.
 const CREATOR_JOURNEY_TIERS = [
   { milestoneKey: scoreTierKey('supernova'), configField: 'supernovaRoleId' },
   { milestoneKey: scoreTierKey('legend'), configField: 'legendRoleId' },

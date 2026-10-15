@@ -3,7 +3,7 @@ import { dbRead } from '~/server/db/client';
 
 /**
  * Creator Journey settings that differ per environment: the Discord role and channel IDs for the
- * guild, and who is told when a creator becomes a Legend or a Mythic. Kept in `KeyValue` so no guild-specific
+ * guild, and who is told when a creator reaches a staff-alerted tier. Kept in `KeyValue` so no guild-specific
  * ID or staff account lives in the code; the row is written by hand.
  */
 export const CREATOR_JOURNEY_CONFIG_KEY = 'creator-journey:config';

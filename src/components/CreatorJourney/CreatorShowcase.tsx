@@ -105,8 +105,7 @@ export function CreatorShowcaseView({
             ))}
           </ShowcaseSection>
 
-          {/* Hidden until someone holds it, so the deploy that ships it before its milestone row
-              shows no empty tier. */}
+          {/* Hidden while empty: this ships before the Mythic milestone row exists. */}
           {data.mythics.length > 0 && (
             <ShowcaseSection
               accent={MYTHIC.accent}

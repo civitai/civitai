@@ -39,7 +39,10 @@ const wearing = (...cosmetics: { type: string; data: unknown }[]) =>
   })) as unknown as UserWithCosmetics['cosmetics'];
 
 /** The card root: the first element carrying Mantine's Card class. */
-function cardRoot(cosmetics: UserWithCosmetics['cosmetics']) {
+function cardRoot(
+  cosmetics: UserWithCosmetics['cosmetics'],
+  props: { className?: string; style?: Record<string, string> } = {}
+) {
   const html = renderToStaticMarkup(
     createElement(
       MantineProvider,
@@ -47,7 +50,10 @@ function cardRoot(cosmetics: UserWithCosmetics['cosmetics']) {
       createElement(
         IntersectionObserverProvider,
         null,
-        createElement(CreatorCardSimple, { user: { id: 7, username: 'ellie', cosmetics } })
+        createElement(CreatorCardSimple, {
+          user: { id: 7, username: 'ellie', cosmetics },
+          ...props,
+        })
       )
     )
   );
@@ -61,8 +67,19 @@ describe('creator card glow', () => {
     const root = cardRoot(
       wearing({ type: 'Badge', data: { url: 'x' } }, { type: 'CardDecoration', data: MYTHIC_GLOW })
     );
-    expect(root).toContain(classes.glow);
-    expect(root).toContain(classes.glowAnimated);
+    const tokens = /class="([^"]*)"/.exec(root)?.[1].split(' ') ?? [];
+    expect(tokens).toEqual(expect.arrayContaining([classes.glow, classes.glowAnimated]));
+    expect(root).toContain('--card-glow-color:#22b8cf');
+  });
+
+  it('keeps the caller’s class and style beside the glow', () => {
+    const root = cardRoot(wearing({ type: 'CardDecoration', data: MYTHIC_GLOW }), {
+      className: 'caller-class',
+      style: { maxWidth: '450px' },
+    });
+    const classes_ = /class="([^"]*)"/.exec(root)?.[1].split(' ') ?? [];
+    expect(classes_).toEqual(expect.arrayContaining(['caller-class', classes.glow]));
+    expect(root).toContain('max-width:450px');
     expect(root).toContain('--card-glow-color:#22b8cf');
   });
 

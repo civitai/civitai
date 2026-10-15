@@ -158,6 +158,22 @@ describe('applyDiscordCreatorJourneyRoles — grants', () => {
     expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith('222', MYTHIC.id);
   });
 
+  it('skips only the Mythic pass while no Mythic role is configured', async () => {
+    holderRows = [...mythic(1, '111')];
+    await applyDiscordCreatorJourneyRoles(ROLES);
+    expect(idsWritten('grant', 'Legend')).toEqual(['111']);
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith(expect.anything(), MYTHIC.id);
+  });
+
+  it('takes the Mythic role from an account that no longer holds Mythic', async () => {
+    mockConfig.mockResolvedValue({ ...CONFIG, mythicRoleId: MYTHIC.id });
+    holderRows = [...mythic(1, '111'), ...legend(2, '222')];
+    accountsInRole = { Mythic: ['111', '222'] };
+    await applyDiscordCreatorJourneyRoles(ROLES);
+    expect(mockDiscord.removeRoleFromUser).toHaveBeenCalledWith('222', MYTHIC.id);
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalledWith('111', MYTHIC.id);
+  });
+
   it('does not re-grant an account that already holds the role', async () => {
     holderRows = [supernova(1, '111'), supernova(2, '222')];
     accountsInRole = { Supernova: ['111'] };

@@ -11,6 +11,7 @@ import {
 } from '~/server/services/creator-milestone-exclusions';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { chunk } from 'lodash-es';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('creator-milestone-grant');
@@ -39,7 +40,7 @@ export type MilestoneGrant = {
   name: string;
   threshold: number | null;
   silent: boolean;
-  /** The grant equipped a cosmetic, so the user's cached cosmetics are stale. */
+  /** Equipped a cosmetic: the user's cosmetics cache needs a refresh. */
   equipped: boolean;
 };
 
@@ -79,9 +80,8 @@ const milestoneCosmeticsSql = `
   SELECT "milestoneKey", "cosmeticId" FROM "CreatorMilestoneCosmetic"`;
 
 /**
- * `equippedAt` for a granted cosmetic: a card glow is worn on arrival unless the user already wears
- * one, every other type arrives unequipped. Compared as text so the statement still parses before
- * the `CardDecoration` enum value is applied.
+ * Equips a granted card glow unless one is already worn. Compared as text so the statement still
+ * parses before the `CardDecoration` enum value is applied.
  */
 function equipOnGrantSql(userId: string, cosmetic: string) {
   return `CASE WHEN ${cosmetic}.type::text = 'CardDecoration' AND NOT EXISTS (
@@ -91,10 +91,7 @@ function equipOnGrantSql(userId: string, cosmetic: string) {
       ) THEN now() END`;
 }
 
-/**
- * Grants each row of CTE `granted` its milestone's cosmetics, claimed under the milestone key.
- * Returns one row per cosmetic inserted, with whether it was equipped.
- */
+/** Grants each row of CTE `granted` its milestone's cosmetics, claimed under the milestone key. */
 export function insertMilestoneCosmeticsSql(granted: string) {
   return `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "equippedAt")
       SELECT g."userId", mc."cosmeticId", mc."milestoneKey", ${equipOnGrantSql('g."userId"', 'c')}
@@ -109,14 +106,17 @@ export function insertMilestoneCosmeticsSql(granted: string) {
  * Drops the cached cosmetics and creator card of users a grant equipped something for. The grant is
  * committed by then, so a failure here is logged rather than thrown: the caches expire on their own.
  */
+const REFRESH_CHUNK = 200;
+
 export async function refreshEquippedCosmetics(userIds: number[]) {
-  const ids = [...new Set(userIds)];
-  if (!ids.length) return;
-  try {
-    await userCosmeticCache.refresh(ids);
-    await purgeCache({ tags: ids.map((id) => `user-creator-${id}`) });
-  } catch (e) {
-    log('refreshing cosmetics after a grant failed', e);
+  // A backfill batch can equip thousands; purgeCache reads one Redis set per tag at once.
+  for (const ids of chunk([...new Set(userIds)], REFRESH_CHUNK)) {
+    try {
+      await userCosmeticCache.refresh(ids);
+      await purgeCache({ tags: ids.map((id) => `user-creator-${id}`) });
+    } catch (e) {
+      log('refreshing cosmetics after a grant failed', e);
+    }
   }
 }
 
