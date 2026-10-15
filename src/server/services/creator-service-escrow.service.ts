@@ -9,9 +9,9 @@ import {
 import {
   createMultiAccountBuzzTransaction,
   getMultiAccountTransactionsByPrefix,
-  getTransactionByExternalId,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
 import {
   BUZZ_CALL_TIMEOUT_MS,
   LEG_RETRY_BACKOFF_MINUTES,
@@ -282,35 +282,12 @@ export async function holdDeal({
   }
 }
 
-type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
-
-/**
- * Read-only: splits the transactions under a prefix by whether each already has its refund, which
- * a single refund keys `refund-<transactionId>`. The same shape as `getPrefixRefundState` in the
- * shared `buzz-prefix-refund.ts`, which replaces this once it lands.
- */
-async function getPrefixRefundState(externalTransactionIdPrefix: string) {
-  const state = { reversed: [] as PrefixLeg[], missing: [] as PrefixLeg[] };
-  const legs = await getMultiAccountTransactionsByPrefix(
-    externalTransactionIdPrefix,
-    BUZZ_READ_OPTIONS
-  );
-  for (const leg of legs) {
-    const refund = await getTransactionByExternalId(
-      `refund-${leg.transactionId}`,
-      BUZZ_READ_OPTIONS
-    );
-    (refund ? state.reversed : state.missing).push(leg);
-  }
-  return state;
-}
-
 /**
  * Why the hold is not fully refunded, or null when it is. The reversed legs must also add up to
  * what was held, so a listing that came back short cannot settle the deal.
  */
 async function holdRefundShortfall(dealId: number, heldAmount: number) {
-  const { reversed, missing } = await getPrefixRefundState(holdPrefix(dealId));
+  const { reversed, missing } = await getPrefixRefundState(holdPrefix(dealId), BUZZ_READ_OPTIONS);
   if (missing.length)
     return `unrefunded legs ${missing.map((leg) => leg.transactionId).join(', ')}`;
   const listed = reversed.reduce((sum, leg) => sum + leg.amount, 0);
