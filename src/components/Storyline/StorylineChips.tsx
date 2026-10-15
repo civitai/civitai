@@ -16,11 +16,11 @@ import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants'
 import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
 
-/** The surface every storyline card sits on (G3). */
+/** The surface every storyline card sits on. */
 export const storylineCardClass =
   'rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
 
-/** The design system's one chip (G1): light, small, round; on an image, a dark translucent fill. */
+/** The design system's one chip: light, small, round; on an image, a dark translucent fill. */
 function Chip({
   onImage,
   className,
@@ -194,7 +194,7 @@ export function StorylineRankChip({
   );
 }
 
-/** An icon and a count, with the noun for screen readers and as a tooltip (G2). */
+/** An icon and a count, with the noun for screen readers and as a tooltip. */
 export function StorylineStat({
   icon: Icon,
   count,

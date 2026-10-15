@@ -4779,9 +4779,9 @@ export type Storyline = {
    */
   tosViolation: Generated<boolean>;
   /**
-   * The title scan holds a takedown. Set on a poi or minor verdict and cleared on a clean rescan
-   * or by a moderator lifting it for the title they reviewed; neither clears `tosViolation`
-   * while a moderator's takedown is in place.
+   * The title scan holds a takedown. Cleared on a clean rescan or by a moderator lifting it
+   * for the title they reviewed; neither clears `tosViolation` while a moderator's takedown is
+   * in place.
    */
   tosViolationByScan: Generated<boolean>;
   /**
@@ -4790,9 +4790,9 @@ export type Storyline = {
    */
   tosViolationByModerator: Generated<boolean>;
   /**
-   * The title scan found the title to be about a minor. Not a takedown: every chapter is held
-   * to safe for work (`storylineCeiling`) while it is set, whatever `maxNsfwLevel` says. Set and
-   * cleared only by the scan, on a minor and a clean minor verdict.
+   * The title scan's restricting finding. Not a takedown: every chapter is held to
+   * `storylineCeiling` while it is set, whatever `maxNsfwLevel` says. Set and cleared only
+   * by the scan.
    */
   minorByScan: Generated<boolean>;
   /**

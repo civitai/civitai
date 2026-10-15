@@ -47,15 +47,10 @@ export const notifyStorylineTitleModerated = (
   });
 
 /**
- * nsfw sets the title's rating, which only ever narrows who is shown the story (the higher of it
- * and chapter 1's level). A person of interest takes the storyline down, and so does a minor with
- * an NSFW title (R or above, by the higher of a moderator's rating and this verdict's). A minor
- * with a safe title does not: it sets `minorByScan`, which holds every chapter to safe for work
- * (`storylineCeiling`) and is cleared by a clean minor verdict.
- *
- * Fail closed: a minor finding with no rating to judge the title by takes it down, and a lift
- * needs poi and minor both answered. The scan's takedown is marked as its own, recorded even over
- * a moderator's takedown, and its lift never clears theirs.
+ * Applies a title-scan verdict: it can set the title's rating (which only ever narrows who is shown
+ * the story), restrict the storyline (`minorByScan`, which holds every chapter to
+ * `storylineCeiling`), take it down, or lift a takedown the scan made. The scan's takedown is held
+ * apart from a moderator's, and its lift never clears theirs.
  */
 export async function applyStorylineTextScan({
   entityId,
@@ -125,8 +120,7 @@ export async function applyStorylineTextScan({
 
   if (takeDown) {
     // Not again over the scan's own takedown, nor for text a moderator has cleared. Keep this
-    // write unconditional otherwise: a clean minor answer above may have just lifted the cap, and a
-    // person of interest must still take the storyline down.
+    // write unconditional otherwise: lifting the restriction above must not skip a takedown.
     const { count } = await dbWrite.storyline.updateMany({
       where: {
         id: entityId,

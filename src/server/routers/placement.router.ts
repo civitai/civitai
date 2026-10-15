@@ -161,13 +161,10 @@ function assertPromotionSurfaceReadable(ctx: Context, surface: PlacementSurface)
 }
 
 /**
- * Storylines are refused by every shared space endpoint, for everyone, until
- * the storyline feature wires its own flag and its target check.
- *
- * Without this the surface would fall through to the sticker flags above, and
- * a storyline space opens at price 0 by default: it is safe only once its
- * creation path refuses a target that is not a storyline chapter. Until then
- * nothing may configure or read one through these routes.
+ * Storyline spaces are reached only through the storyline procedures below, which
+ * run the feature flag and the chapter check. Left unrouted here, the surface
+ * would fall through to the sticker flags above, and a storyline space opens at
+ * price 0 by default.
  */
 function assertSurfaceRouted(surface: PlacementSurface) {
   if (surface === 'storyline') throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);

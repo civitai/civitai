@@ -7,7 +7,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * The storyline placement procedures answer `notAvailable` until the submission path is routed.
+ * The storyline placement procedures answer `notAvailable` when the feature is off for the viewer.
  * That is a state of the feature, not a failure, so the UI says "not available yet" for it rather
  * than an error.
  */

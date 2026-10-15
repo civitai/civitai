@@ -316,8 +316,7 @@ export const PLACEMENT_SURFACES = {
    * other surfaces have. A free placement spends one of the creator's scarce
    * free slots and the placer's one-a-day allowance, because on those surfaces
    * the price is the spam gate and free is the exception to it. Here free is the
-   * norm — a popular story should be able to take twenty continuations in a day
-   * — so a zero-priced continuation is an ordinary placement that costs nothing:
+   * norm, so a zero-priced continuation is an ordinary placement that costs nothing:
    * written with `free: false` and `amount: 0`, it holds no slot, spends no
    * allowance and takes no escrow. What bounds it instead is the per-owner
    * pending cap (enforced under a lock, since a spammer pays nothing to race
