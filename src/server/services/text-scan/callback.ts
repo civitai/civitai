@@ -200,7 +200,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   // the whole text, so it may raise the stored verdict now; it never lowers or clears it.
   const raisePartialVerdict = async (outputs: TextScanOutput[]) => {
     const subject = (await profile.load([entityId])).get(entityId);
-    if (!subject) return;
+    if (!subject || subject.notPublic) return;
     const stored = await readTextScanVerdict({
       entityType: emEntityType,
       entityId,
@@ -288,6 +288,19 @@ export async function handleTextScanCallback(event: { workflowId: string; status
 
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return log('info', 'entity gone before callback', ctx);
+  // Failed, not a verdict: a Succeeded row with this content hash would dedupe the publish rescan.
+  // The retry cron parks it until that rescan re-arms it.
+  if (subject.notPublic) {
+    const recorded = await recordTextScanFailure({
+      entityType: emEntityType,
+      entityId,
+      workflowId,
+      marker,
+      status: EntityModerationStatus.Failed,
+    });
+    if (!recorded) return log('warning', 'stale callback ignored', ctx);
+    return log('info', 'subject not public; verdict dropped', ctx);
+  }
 
   const { output, flaggedSegments } = mergeTextScanOutputs(parsed.outputs, labels);
 
