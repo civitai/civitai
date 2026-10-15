@@ -350,7 +350,6 @@ describe('getProfileAchievements', () => {
   describe('score split', () => {
     it('gives a visitor whole-percent shares of the positive categories', async () => {
       const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
-      // 700,001 / 300,007 / 0 / 234,559 of 1,234,567 positive points.
       expect(result.scoreSplit).toEqual({ models: 57, images: 24, articles: 0, users: 19 });
     });
 
@@ -374,6 +373,38 @@ describe('getProfileAchievements', () => {
       const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
       expect(result.tiers).not.toEqual([]);
       expect(result.scoreSplit).toBeNull();
+    });
+
+    it('is left out for the owner too when they turn it off', async () => {
+      given([SUPERNOVA], { privacySettings: { showScoreSplit: false } });
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: OWNER })).scoreSplit
+      ).toBeNull();
+    });
+
+    it('goes with a hidden tier only for the owner, who alone sees that tier', async () => {
+      const hiddenTier = row({
+        key: 'score:mythic',
+        track: 'score',
+        threshold: 5000000,
+        hidden: true,
+        name: 'Mythic',
+        cosmeticId: 4000,
+      });
+      given([hiddenTier, MODELS]);
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: VISITOR })).scoreSplit
+      ).toBeNull();
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: OWNER })).scoreSplit
+      ).not.toBeNull();
+    });
+
+    it('is shown while any tier badge still shows', async () => {
+      given([SUPERNOVA, SPARK], { privacySettings: { hiddenBadgeIds: [2864] } });
+      const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+      expect(result.tiers.map((t) => t.key)).toEqual(['score:spark']);
+      expect(result.scoreSplit).not.toBeNull();
     });
 
     it('is shown when the owner never chose', async () => {

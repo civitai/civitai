@@ -333,7 +333,6 @@ describe('achievements tab', () => {
     expect(split.textContent).toBe(
       'Where this Creator Score comes fromModels 57%Images 24%Followers 19%'
     );
-    // Under the band, not above it or among the achievements.
     expect(split.parentElement?.querySelector('[data-tier-ladder]')).not.toBeNull();
     const ladderBand = el.querySelector('[data-tier-ladder]') as HTMLElement;
     expect(

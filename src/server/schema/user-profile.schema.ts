@@ -55,7 +55,7 @@ export const privacySettingsSchema = z.object({
   showFollowing: z.boolean().optional(),
   showRating: z.boolean().optional(),
   showBadges: z.boolean().optional(),
-  // Whether visitors see what the Creator Score is made of; shown unless false.
+  // Default on: shown unless explicitly false.
   showScoreSplit: z.boolean().optional(),
   // Ordered cosmetic ids of badges the user pinned to the top of their profile.
   highlightedBadgeIds: z.array(z.number()).optional(),

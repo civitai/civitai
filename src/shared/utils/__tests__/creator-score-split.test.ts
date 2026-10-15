@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { creatorScoreSplitFromMeta } from '~/shared/utils/creator-score';
+import { scoreCategories } from '~/components/Account/UserScoreDisplay';
+import { privacySettingsSchema } from '~/server/schema/user-profile.schema';
+import {
+  CREATOR_SCORE_SPLIT_CATEGORIES,
+  creatorScoreSplitFromMeta,
+} from '~/shared/utils/creator-score';
 
 const split = (scores: Record<string, unknown>) => creatorScoreSplitFromMeta({ scores });
 
@@ -49,5 +54,17 @@ describe('creatorScoreSplitFromMeta', () => {
     expect(split({ models: 0, reportsAgainst: -1000 })).toBeNull();
     expect(creatorScoreSplitFromMeta(null)).toBeNull();
     expect(creatorScoreSplitFromMeta({})).toBeNull();
+  });
+});
+
+describe('split categories', () => {
+  it('match the categories the score bar draws, so none drops out of the public bar', () => {
+    expect(scoreCategories.map((c) => c.key)).toEqual([...CREATOR_SCORE_SPLIT_CATEGORIES]);
+  });
+
+  it('survive the privacy settings schema, which strips unknown keys on save', () => {
+    expect(privacySettingsSchema.parse({ showScoreSplit: false, junk: 1 })).toEqual({
+      showScoreSplit: false,
+    });
   });
 });

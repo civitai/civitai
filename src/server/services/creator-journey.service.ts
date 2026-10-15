@@ -367,8 +367,6 @@ export async function getLegendStatus(userId: number, source?: ShowcaseSource) {
  * read, so nothing here can hint at one, and the score itself stays on the owner's journey page. An
  * earned hidden milestone is still a secret to everyone but its owner: they get its art, never its name.
  * Badges the owner hides on their profile are left out, and so is everything for a banned or deleted user.
- * `scoreSplit` is the score's makeup in whole percents, never its points; it goes with a shown tier,
- * unless the owner turned it off.
  */
 export async function getProfileAchievements({
   userId,

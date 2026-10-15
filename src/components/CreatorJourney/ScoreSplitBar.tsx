@@ -2,7 +2,7 @@ import { ColorSwatch, Group, Progress, Stack, Text, Tooltip } from '@mantine/cor
 import { scoreCategories } from '~/components/Account/UserScoreDisplay';
 import type { CreatorScoreSplit } from '~/shared/utils/creator-score';
 
-/** What a creator's score is made of, as whole-percent shares. Never the points. */
+/** Shares only: the points must never reach the client. */
 export function ScoreSplitBar({ split }: { split: CreatorScoreSplit }) {
   const shown = scoreCategories.filter(({ key }) => split[key] > 0);
   if (!shown.length) return null;
