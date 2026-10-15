@@ -5762,6 +5762,7 @@ export const publishPrivateModel = async (
       availability: true,
       status: true,
       meta: true,
+      type: true,
     },
   });
 
@@ -5769,22 +5770,20 @@ export const publishPrivateModel = async (
 
   assertPrivateFlowPublishable({ status: model.status, meta: model.meta, isModerator });
 
-  const versions = await dbWrite.modelVersion.findMany({
+  const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
-    select: {
-      id: true,
-      baseModel: true,
-      publishedAt: true,
-      meta: true,
-      model: { select: { type: true, userId: true } },
-    },
+    select: { id: true, baseModel: true, publishedAt: true, meta: true },
   });
 
   if (!versions.length) {
     throw throwBadRequestError('Model has no published versions');
   }
 
-  if (publishVersions) assertBaseModelAttestations({ versions, grandfatherPublished: false });
+  if (publishVersions)
+    assertBaseModelAttestations({
+      versions: versions.map((version) => ({ ...version, model })),
+      grandfatherPublished: false,
+    });
 
   const versionIds = versions.map((v) => v.id);
   const now = new Date();

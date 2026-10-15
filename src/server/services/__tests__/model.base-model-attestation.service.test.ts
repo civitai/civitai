@@ -181,6 +181,7 @@ describe('publishPrivateModel — H3 attestation', () => {
       availability: 'Private',
       status: ModelStatus.Published,
       meta: {},
+      type: ModelType.LORA,
     });
     // The showcase-post check is the next step after the gate.
     mockDbWrite.post.findMany.mockRejectedValue(new Error('reached the post check'));
@@ -188,7 +189,7 @@ describe('publishPrivateModel — H3 attestation', () => {
   const goPublic = () => publishPrivateModel({ modelId: MODEL_ID, publishVersions: true });
 
   it('refuses an unattested H3 LoRA going public, though its private publish set publishedAt', async () => {
-    mockDbWrite.modelVersion.findMany.mockResolvedValue([
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
       versionRow({ status: ModelStatus.Published, publishedAt: new Date('2026-09-01') }),
     ]);
 
@@ -197,7 +198,7 @@ describe('publishPrivateModel — H3 attestation', () => {
   });
 
   it('lets an attested one through', async () => {
-    mockDbWrite.modelVersion.findMany.mockResolvedValue([
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
       versionRow({ status: ModelStatus.Published, meta: attestedMeta() }),
     ]);
 
@@ -205,7 +206,7 @@ describe('publishPrivateModel — H3 attestation', () => {
   });
 
   it('lets a non-H3 model through (control)', async () => {
-    mockDbWrite.modelVersion.findMany.mockResolvedValue([
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
       versionRow({ status: ModelStatus.Published, baseModel: 'SDXL 1.0' }),
     ]);
 

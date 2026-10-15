@@ -110,6 +110,7 @@ import {
 import {
   Availability,
   LicensingFeeSettlementCurrency,
+  ModelStatus,
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
@@ -432,8 +433,16 @@ export function ModelVersionUpsertForm({
   const requiresRightsAffirmation =
     !alreadyAffirmed && !moderatingSomeoneElsesModel && (submittedFee > 0 || gateCharges);
   // Owner-only, as on the server: a moderator can't give this statement on the creator's behalf.
+  // A version already public on this base model is grandfathered, so its edits don't ask.
   const attestingOwnerId = modelOwnerId ?? currentUser?.id;
+  const attestationGrandfathered =
+    requiresBaseModelAttestationFor({ baseModel: version?.baseModel, modelType: model?.type }) &&
+    !!version?.status &&
+    version.status !== ModelStatus.Draft &&
+    version.status !== ModelStatus.Scheduled &&
+    version.status !== ModelStatus.Training;
   const requiresBaseModelAttestation =
+    !attestationGrandfathered &&
     requiresBaseModelAttestationFor({ baseModel, modelType: model?.type }) &&
     attestingOwnerId != null &&
     attestingOwnerId === currentUser?.id &&
