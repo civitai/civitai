@@ -1,7 +1,19 @@
 import { Button, Group, Paper, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { dealActionLabel, dealButtons } from '~/components/CreatorShop/Services/deals/deal-ui';
+import {
+  cancellationCodeOptions,
+  cancellationReasonLine,
+  dealActionLabel,
+  dealButtons,
+  declineCodeOptions,
+  disputeCodeOptions,
+} from '~/components/CreatorShop/Services/deals/deal-ui';
+import type {
+  ServiceDealCancellationReasonCode,
+  ServiceDealDeclineReasonCode,
+  ServiceDealDisputeReasonCode,
+} from '~/shared/constants/creator-services.constants';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDealMutations } from '~/components/CreatorShop/Services/deals/deal.util';
 import { DealTextActionModal } from '~/components/CreatorShop/Services/deals/DealTextActionModal';
@@ -67,9 +79,15 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
             'Use this if the final files are missing, broken or not what the preview showed. The Buzz stays held and our moderators review the deal, then decide whether it goes to the seller or back to you.',
           required: true,
           maxLength: 2000,
+          codes: disputeCodeOptions,
+          muted: deal.viewerMuted,
           choices: [{ label: 'Report to moderators', color: 'red', value: 'send' }],
-          onSubmit: (_: string, reason?: string) =>
-            mutations.openDispute.mutateAsync({ id, reason: reason ?? '' }),
+          onSubmit: (_: string, reason?: string, code?: string) =>
+            mutations.openDispute.mutateAsync({
+              id,
+              reason,
+              reasonCode: code as ServiceDealDisputeReasonCode | undefined,
+            }),
         },
       }),
     accept: () =>
@@ -99,8 +117,15 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
           title: 'Decline request',
           description: 'The buyer gets their Buzz back.',
           maxLength: 1000,
+          codes: declineCodeOptions,
+          muted: deal.viewerMuted,
           choices: [{ label: 'Decline', color: 'red', value: 'decline' }],
-          onSubmit: (_: string, reason?: string) => mutations.decline.mutateAsync({ id, reason }),
+          onSubmit: (_: string, reason?: string, code?: string) =>
+            mutations.decline.mutateAsync({
+              id,
+              reason,
+              reasonCode: code as ServiceDealDeclineReasonCode | undefined,
+            }),
         },
       }),
     requestCancellation: () =>
@@ -112,9 +137,15 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
             'The other side can agree or refuse. If they do not answer in time, the cancellation goes through and the buyer is refunded.',
           required: true,
           maxLength: 1000,
+          codes: cancellationCodeOptions(deal.viewerRole === 'seller' ? 'seller' : 'buyer'),
+          muted: deal.viewerMuted,
           choices: [{ label: 'Send request', color: 'red', value: 'send' }],
-          onSubmit: (_: string, reason?: string) =>
-            mutations.requestCancellation.mutateAsync({ id, reason: reason ?? '' }),
+          onSubmit: (_: string, reason?: string, code?: string) =>
+            mutations.requestCancellation.mutateAsync({
+              id,
+              reason,
+              reasonCode: code as ServiceDealCancellationReasonCode | undefined,
+            }),
         },
       }),
     respondCancellation: () =>
@@ -122,10 +153,9 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
         component: DealTextActionModal,
         props: {
           title: 'Respond to cancellation',
-          description: deal.cancellation?.reason
-            ? `Their reason: "${deal.cancellation.reason}"`
-            : undefined,
+          description: cancellationReasonLine(deal),
           maxLength: 1000,
+          muted: deal.viewerMuted,
           choices: [
             { label: 'Keep the deal', value: 'refuse' },
             { label: 'Agree to cancel', color: 'red', value: 'agree' },

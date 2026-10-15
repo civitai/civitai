@@ -1,6 +1,7 @@
-import { Divider, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Divider, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   groupEventsByRound,
+  reasonLabel,
   roundLabel,
   sheetEventText,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
@@ -83,6 +84,11 @@ export function DealAccountabilitySheet({ deal }: { deal: ServiceDealView }) {
                             {actorName(deal, event)}
                           </Text>
                           <Text size="sm">{text.label}</Text>
+                          {reasonLabel(event.reasonCode) && (
+                            <Badge size="sm" variant="light" color="gray">
+                              {reasonLabel(event.reasonCode)}
+                            </Badge>
+                          )}
                         </Group>
                         {text.comment && (
                           <Text size="sm" c="dimmed" className="whitespace-pre-line break-words">
