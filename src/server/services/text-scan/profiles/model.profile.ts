@@ -11,8 +11,10 @@ const PUBLIC_STATUSES = [ModelStatus.Published, ModelStatus.Scheduled];
 /**
  * Shared with the `ModelRules` profile, so both scans read the same model text. `publicOnly` loads
  * only what the public can see: a Published or Scheduled, non-Private model and its public versions.
- * The default load returns a model whatever its state and marks it `notPublic`; only `scanEntity`
- * skips it, so rulings and the lab still read it. `prePublish` loads a model that is not public yet
+ * `publicVersionsOnly` keeps every model but reads only its public versions, so a draft version's
+ * text is scanned when it is published, not before. The default load returns a model whatever its
+ * state, with every version, and marks it `notPublic`; only `scanEntity` skips it, so rulings and
+ * the lab still read it. `prePublish` loads a model that is not public yet
  * as the post-publish scan will see it, so the two text hashes agree: any status, and the public
  * versions plus the ones this publish makes public.
  */
@@ -20,8 +22,13 @@ export async function loadModelScanSubjects(
   ids: number[],
   {
     publicOnly = false,
+    publicVersionsOnly = publicOnly,
     prePublish,
-  }: { publicOnly?: boolean; prePublish?: { versionIds: number[] } } = {}
+  }: {
+    publicOnly?: boolean;
+    publicVersionsOnly?: boolean;
+    prePublish?: { versionIds: number[] };
+  } = {}
 ): Promise<Map<number, TextScanSubject>> {
   const publicVersions = { status: { in: PUBLIC_STATUSES } };
   const rows = await dbWrite.model.findMany({
@@ -48,7 +55,7 @@ export async function loadModelScanSubjects(
       modelVersions: {
         ...(prePublish
           ? { where: { OR: [publicVersions, { id: { in: prePublish.versionIds } }] } }
-          : publicOnly
+          : publicVersionsOnly
           ? { where: publicVersions }
           : {}),
         select: { name: true, description: true, trainedWords: true },
@@ -88,5 +95,5 @@ export async function loadModelScanSubjects(
 registerTextScanProfile({
   entityType: 'Model',
   labels: ['nsfw', 'poi', 'minor'],
-  load: (ids) => loadModelScanSubjects(ids),
+  load: (ids) => loadModelScanSubjects(ids, { publicVersionsOnly: true }),
 });

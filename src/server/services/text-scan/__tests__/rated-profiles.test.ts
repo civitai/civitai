@@ -53,7 +53,7 @@ describe('rated-entity profiles', () => {
     );
   });
 
-  it('Model: every version, tags stripped, boolean nsfw declared as a level', async () => {
+  it('Model: public versions, tags stripped, boolean nsfw declared as a level', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([
       {
         id: 1,
