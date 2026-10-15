@@ -14,10 +14,12 @@
 // node is authoritative or an error: the node answers with the value, or nil only for a key in a
 // slot it serves that is absent; a key it does not serve, a key in a slot it is importing, and an
 // absent key in a slot it is migrating away all answer MOVED/ASK. So a stale slot map or a
-// migration can only produce error REPLIES, never a wrong value or a false miss. Each key whose
-// reply is an error is re-read on its own through the normal routed GET, which follows MOVED/ASK.
-// A TRANSPORT failure (deadline, closed or reconnecting connection) rejects the call, as a failed
-// GET did before, rather than re-sending the keys to the same struggling node.
+// migration can only produce MOVED/ASK replies, never a wrong value or a false miss. Each key whose
+// reply is MOVED or ASK is re-read on its own through the normal routed GET, which follows them.
+// ANY OTHER failure — another error reply (LOADING, CLUSTERDOWN, TRYAGAIN, OOM, …) or a transport
+// failure (deadline, closed or reconnecting connection) — rejects the call, as a failed GET did
+// before. Those mean the node itself is struggling, and re-reading key by key would only send it
+// N more commands.
 //
 // The batch bypasses the router's per-command instrumentation, so `track` must account it as
 // `keys.length` commands (see trackClusterCommands in ./client).
@@ -42,8 +44,8 @@ export type PipelinedGetDeps<V> = {
   track<T>(count: number, run: () => Promise<T>): Promise<T>;
   /** True when a reply is a usable value (e.g. a Buffer for the buffer client). */
   isValue(v: unknown): v is V;
-  /** True for an error REPLY from Redis (as opposed to a transport/client-side failure). */
-  isServerError(err: unknown): boolean;
+  /** True for a MOVED or ASK error reply — the only failures a routed re-read can fix. */
+  isRedirect(err: unknown): boolean;
   /** Called once per batch that had to re-read some keys on their own. */
   onReread?(keyCount: number, firstError: unknown): void;
 };
@@ -100,12 +102,13 @@ export function createPipelinedGet<V>(deps: PipelinedGetDeps<V>) {
               firstError ??= new Error(`pipelined GET returned a ${typeof v}`);
               reread.push(idx[j]);
             }
-          } else if (deps.isServerError(r.reason)) {
-            // MOVED/ASK/any other error reply: this key alone takes the routed path.
+          } else if (deps.isRedirect(r.reason)) {
+            // MOVED/ASK: this key alone takes the routed path, which follows the redirect.
             firstError ??= r.reason;
             reread.push(idx[j]);
           } else {
-            // Transport failure: the node is unreachable or stuck. Reject, as a failed GET did.
+            // Any other error reply, or a transport failure: the node is unreachable, stuck or
+            // refusing reads. Reject, as a failed GET did; never re-ask it key by key.
             throw r.reason;
           }
         }
@@ -189,7 +192,7 @@ export function createClusterPipelinedGet(opts: {
     },
     track: opts.track,
     isValue: (v): v is Buffer => Buffer.isBuffer(v),
-    isServerError: (err) => err instanceof ErrorReply,
+    isRedirect: (err) => err instanceof ErrorReply && /^(MOVED|ASK) /.test(err.message),
     onReread: (keyCount, err) =>
       log(
         `Pipelined cluster GET re-read ${keyCount} keys on their own: ${

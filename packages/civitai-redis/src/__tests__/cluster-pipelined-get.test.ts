@@ -56,7 +56,7 @@ function fakeCluster(opts: { mapOverride?: (slot: number) => string | undefined 
       return run();
     },
     isValue: (v): v is Buffer => Buffer.isBuffer(v),
-    isServerError: (err) => err instanceof ErrorReply,
+    isRedirect: (err) => err instanceof ErrorReply && /^(MOVED|ASK) /.test(err.message),
     onReread: (keyCount, err) => rereads.push({ keyCount, err }),
   };
   const put = (key: string, value = Buffer.from(`value-of-${key}`), node?: string) =>
@@ -131,6 +131,26 @@ describe('createPipelinedGet', () => {
     await expect(c.get(keys)).rejects.toBe(closed);
     expect(c.counts.routed).toBe(0);
   });
+
+  it.each([
+    'LOADING Redis is loading the dataset in memory',
+    'CLUSTERDOWN The cluster is down',
+    'TRYAGAIN Multiple keys request during rehashing of slot',
+    'OOM command not allowed',
+  ])(
+    'a node answering "%s" to every key: the call rejects and issues zero extra GETs',
+    async (message) => {
+      const c = fakeCluster();
+      const keys = ids(60).map(keyOf);
+      keys.forEach((k) => c.put(k));
+      const refused = new ErrorReply(message);
+      c.brokenNodes.set('n2', refused);
+      await expect(c.get(keys)).rejects.toBe(refused);
+      expect(c.counts.routed).toBe(0);
+      expect(c.counts.pipelined).toBe(60); // only the batch itself was sent
+      expect(c.rereads).toEqual([]);
+    }
+  );
 
   it('a node that cannot be reached at all rejects the call', async () => {
     const c = fakeCluster();
@@ -343,12 +363,23 @@ describe('createClusterPipelinedGet (the wiring client.ts uses)', () => {
     expect(w.calls.routed).toBe(40);
   });
 
-  it('an ErrorReply is re-read; any other error rejects', async () => {
+  it('a MOVED/ASK reply is re-read; any other error reply or failure rejects', async () => {
     const moved = wired(undefined, async () => {
       throw new ErrorReply('MOVED 1 elsewhere');
     });
     expect(await moved.get(moved.keys)).toEqual(moved.expected);
     expect(moved.logs.some((l) => l.includes('re-read 40 keys'))).toBe(true);
+
+    const ask = wired(undefined, async () => {
+      throw new ErrorReply('ASK 1 elsewhere');
+    });
+    expect(await ask.get(ask.keys)).toEqual(ask.expected);
+
+    const loading = wired(undefined, async () => {
+      throw new ErrorReply('LOADING Redis is loading the dataset in memory');
+    });
+    await expect(loading.get(loading.keys)).rejects.toThrow('LOADING');
+    expect(loading.calls.routed).toBe(0);
 
     const transport = wired(undefined, async () => {
       throw new Error('Socket closed unexpectedly');
