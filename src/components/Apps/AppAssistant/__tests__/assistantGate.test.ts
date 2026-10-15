@@ -230,6 +230,7 @@ describe('set_checklist', () => {
       /items must be an array/
     );
     expect(() => execute(['x'.repeat(201)])).toThrow(/items must be an array/);
+    expect(() => execute([])).toThrow(/items must be an array/);
   });
 
   it('accepts a JSON string of the items and rejects anything else', async () => {
@@ -248,7 +249,8 @@ describe('reading tool results', () => {
   it.each([
     ['npm test', 'tests'],
     ['cd my-app && npm test', 'tests'],
-    ['cd my-app && npm run test -- --run', 'tests'],
+    ['cd my-app && npm run test -- src/block.test.ts', 'tests'],
+    ['cd my-app&&npm test', 'tests'],
     ['cd my-app && npx vitest run src/block.test.ts', 'tests'],
     ['cd my-app && npx tsc --noEmit', 'typecheck'],
     ['cd my-app && npx tsc --noEmit -p tsconfig.json', 'typecheck'],
@@ -261,6 +263,13 @@ describe('reading tool results', () => {
     ['cd my-app && npx tsc --version', null],
     ['cd my-app && npm test -- --help', null],
     ['cd my-app && npx vitest -h', null],
+    ['cd my-app && npx tsc -v', null],
+    ['cd my-app && npm test -- -u', null],
+    ['cd my-app && npx vitest list', null],
+    ['cd my-app && npx tsc', null],
+    ['cd my-app && npx tsc --showConfig', null],
+    ['cd my-app && npm test\ntrue', null],
+    ['cd my-app && npx tsc --noEmit\nexit 0', null],
   ] as const)('%s is a %s run', (command, kind) => {
     expect(checkKindOf(command)).toBe(kind);
   });

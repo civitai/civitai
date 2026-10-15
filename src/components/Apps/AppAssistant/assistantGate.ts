@@ -27,16 +27,17 @@ const FILE_CHANGES = new Set(['write_file', 'edit_file', 'delete_path'].map(sand
 const PREVIEW_CHECK = sandboxTool('preview_check');
 const RUN_COMMAND = sandboxTool('run_command');
 
-// Only a command that is the check alone counts: `npm test | tail`, `; echo` or `|| true` could exit 0
-// over a failing run. Arguments are flags and paths, nothing a shell would act on.
-const CD = String.raw`(?:cd\s+[\w./-]+\s*&&\s*)?`;
-// `--help`/`--version` exit 0 without checking anything.
-const ARGS = String.raw`(?:\s+(?!-h\b|-v\b|--help\b|--version\b)[\w./=:@,-]+)*`;
+// Only the check alone, in a fixed form, counts: a pipe, `;`, `||`, a newline or a flag (`-u`,
+// `--help`) can exit 0 without the check passing. Spaces and tabs only, since a newline starts a
+// new command; test path filters are the only free arguments.
+const SP = '[ \\t]+';
+const CD = `(?:cd${SP}[\\w./-]+[ \\t]*&&[ \\t]*)?`;
+const PATHS = `(?:${SP}(?!-)[\\w./@-]+)*`;
 const TEST_COMMAND = new RegExp(
-  String.raw`^\s*${CD}(?:npm\s+(?:run\s+)?test|npx\s+(?:-y\s+)?vitest(?:\s+run)?)${ARGS}\s*$`
+  `^[ \\t]*${CD}(?:npm${SP}(?:run${SP})?test(?:${SP}--)?|npx${SP}(?:-y${SP})?vitest${SP}run)${PATHS}[ \\t]*$`
 );
 const TYPECHECK_COMMAND = new RegExp(
-  String.raw`^\s*${CD}(?:npx\s+(?:-y\s+)?tsc|npm\s+run\s+typecheck)${ARGS}\s*$`
+  `^[ \\t]*${CD}(?:npx${SP}(?:-y${SP})?tsc${SP}--noEmit(?:${SP}-p${SP}[\\w./-]+)?|npm${SP}run${SP}typecheck)[ \\t]*$`
 );
 
 export type CheckKind = 'tests' | 'typecheck';
@@ -88,7 +89,7 @@ export function normalizeChecklist(raw: unknown): ChecklistItem[] | null {
 }
 
 interface Verification {
-  /** The last preview check's verdict since the last file change; null when none ran. */
+  /** The last preview check's verdict since the last file change or other command; null when none ran. */
   preview: string | null;
   tests: boolean | null;
   typecheck: boolean | null;
@@ -131,7 +132,7 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
     const out: string[] = [];
     if (verification.preview === null)
       out.push(
-        'Run sandbox__preview_check: it has not run since your last file change (write_file, edit_file, delete_path, or a run_command other than the test or typecheck run).'
+        'Run sandbox__preview_check: it has not run since your last file change or other command (write_file, edit_file, delete_path, or a run_command other than the test or typecheck run).'
       );
     else if (verification.preview !== 'ok')
       out.push(
@@ -139,13 +140,13 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
       );
     if (verification.tests === null)
       out.push(
-        'Run the tests with sandbox__run_command as cd <blockId> && npm test, on its own and unpiped: they have not run since your last file change.'
+        'Run the tests with sandbox__run_command as cd <blockId> && npm test, on its own and unpiped: they have not run since your last file change or other command.'
       );
     else if (!verification.tests)
       out.push('The last test run failed. Fix it, then run cd <blockId> && npm test again.');
     if (verification.typecheck === null)
       out.push(
-        'Run the typecheck with sandbox__run_command as cd <blockId> && npx tsc --noEmit, on its own and unpiped: it has not run since your last file change.'
+        'Run the typecheck with sandbox__run_command as cd <blockId> && npx tsc --noEmit, on its own and unpiped: it has not run since your last file change or other command.'
       );
     else if (!verification.typecheck)
       out.push(
@@ -238,7 +239,7 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
 
   const report_ready: ChatTool = {
     description:
-      'Call this before you tell the user the app is ready, every time. It is refused until, since your last file change, sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. When it is refused, do what it says; never tell the user the app is ready without it.',
+      'Call this before you tell the user the app is ready, every time. It is refused until, since your last file change or other run_command, sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. When it is refused, do what it says; never tell the user the app is ready without it.',
     activity: 'Checking the app is ready…',
     inputSchema: { properties: {} },
     execute: () => ({
