@@ -35,10 +35,12 @@ const journey = ({
   total,
   earnedKeys,
   unlocks = [],
+  mythic = false,
 }: {
   total: number;
   earnedKeys: string[];
   unlocks?: unknown[];
+  mythic?: boolean;
 }) =>
   ({
     scores: { total },
@@ -47,6 +49,7 @@ const journey = ({
       tier('score:star', 'Star', 100_000),
       tier('score:supernova', 'Supernova', 1_000_000),
       tier('score:legend', 'Legend', 10_000_000),
+      ...(mythic ? [tier('score:mythic', 'Mythic', 100_000_000)] : []),
     ],
     earned: earnedKeys.map((key) => ({
       key,
@@ -68,7 +71,12 @@ let container: HTMLDivElement | undefined;
 const HOW_TO_CLAIM = ' How to claim';
 
 /** Each list item's text, and whether it shows the check rather than the lock. */
-function items(props: { total: number; earnedKeys: string[]; unlocks?: unknown[] }) {
+function items(props: {
+  total: number;
+  earnedKeys: string[];
+  unlocks?: unknown[];
+  mythic?: boolean;
+}) {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -103,6 +111,7 @@ afterEach(() => {
 
 const SUPERNOVA = tierRewards['score:supernova'] ?? [];
 const LEGEND = tierRewards['score:legend'] ?? [];
+const MYTHIC = tierRewards['score:mythic'] ?? [];
 
 describe('tier rewards on the ladder', () => {
   it('lists every Supernova and Legend reward, leaving "Recognition only" to tiers without any', () => {
@@ -185,5 +194,28 @@ describe('tier rewards on the ladder', () => {
   it('keeps How to claim on an earned rung', () => {
     items({ total: 20_000_000, earnedKeys: ['score:supernova', 'score:legend'] });
     expect(container?.querySelectorAll('li button')).toHaveLength(2);
+  });
+
+  it('lists the Mythic rewards on its rung, checked once granted, with its own role guide', () => {
+    const locked = items({ total: 0, earnedKeys: [], mythic: true });
+    expect(MYTHIC).toHaveLength(4);
+    for (const reward of MYTHIC)
+      expect(locked.get(reward)).toEqual({ checked: false, locked: true });
+    act(() => root?.unmount());
+    container?.remove();
+
+    const earned = items({
+      total: 120_000_000,
+      earnedKeys: ['score:supernova', 'score:legend', 'score:mythic'],
+      mythic: true,
+    });
+    for (const reward of MYTHIC)
+      expect(earned.get(reward)).toEqual({ checked: true, locked: false });
+    const buttons = [...(container?.querySelectorAll('li button') ?? [])];
+    expect(buttons.map((b) => b.closest('li')?.textContent)).toContain(
+      discordRoleRewards['score:mythic'].line + HOW_TO_CLAIM
+    );
+    act(() => (buttons[buttons.length - 1] as HTMLButtonElement).click());
+    expect(useDialogStore.getState().dialogs.map((d) => d.props)).toEqual([{ tier: 'mythic' }]);
   });
 });

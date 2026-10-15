@@ -103,11 +103,12 @@ const applyDiscordActivityRoles = createJob(
   }
 );
 
-// Tiers are cumulative milestones (a Legend also holds score:supernova), so a Legend holds both roles,
-// as a Top 10 holder also holds Top 100.
+// Tiers are cumulative milestones (a Mythic also holds score:legend and score:supernova), so a Mythic
+// holds all three roles, as a Top 10 holder also holds Top 100.
 const CREATOR_JOURNEY_TIERS = [
   { milestoneKey: scoreTierKey('supernova'), configField: 'supernovaRoleId' },
   { milestoneKey: scoreTierKey('legend'), configField: 'legendRoleId' },
+  { milestoneKey: scoreTierKey('mythic'), configField: 'mythicRoleId' },
 ] as const;
 
 /**
@@ -159,12 +160,13 @@ export const applyDiscordCreatorJourneyRoles = async (
   now = new Date()
 ) => {
   const config = await getCreatorJourneyConfig();
-  // One role configured for both tiers would be granted by one pass and stripped by the other.
-  if (config.supernovaRoleId && config.supernovaRoleId === config.legendRoleId) {
+  // One role configured for two tiers would be granted by one pass and stripped by the other.
+  const roleIds = CREATOR_JOURNEY_TIERS.map((tier) => config[tier.configField]).filter(Boolean);
+  if (new Set(roleIds).size !== roleIds.length) {
     logToAxiom({
       type: 'error',
       name: 'discord-role-sync-aborted',
-      error: { reason: 'supernova and legend share a role id' },
+      error: { reason: 'two creator journey tiers share a role id' },
     });
     return;
   }

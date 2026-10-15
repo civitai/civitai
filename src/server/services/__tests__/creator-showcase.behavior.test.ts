@@ -131,6 +131,11 @@ beforeAll(async () => {
     CREATE TABLE "UserProfile" ("userId" int PRIMARY KEY, "privacySettings" jsonb);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  // The Mythic row ships in its own migration, which also needs the full Cosmetic table.
+  await holder.db.exec(`
+    INSERT INTO "CreatorMilestone" (key, track, threshold, name, "sortOrder")
+    VALUES ('score:mythic', 'score', 100000000, 'Mythic', 10);
+  `);
 });
 
 const cache = new Map<string, unknown>();
@@ -248,6 +253,32 @@ describe('new Supernovas this month', () => {
   it('keeps a silently granted Legend in the Hall of Fame', async () => {
     await grant(GOOD, 'score:legend', LAST_MONTH, true);
     expect(ids((await showcase()).legends)).toEqual([GOOD]);
+  });
+});
+
+describe('Mythic', () => {
+  beforeEach(async () => {
+    for (const id of [GOOD, MUTED, OTHER]) await addUser(id, { muted: id === MUTED });
+  });
+
+  it('lists every Mythic in good standing, whenever they crossed, and keeps them in the Hall of Fame', async () => {
+    for (const id of [GOOD, MUTED, OTHER]) await grant(id, 'score:legend', LAST_MONTH, true);
+    await grant(GOOD, 'score:mythic', LAST_MONTH, true);
+    await grant(MUTED, 'score:mythic', LAST_MONTH);
+    await grant(OTHER, 'score:mythic', '2026-09-01 00:00:00');
+    const rows = await showcase();
+    expect(ids(rows.mythics)).toEqual([OTHER, GOOD]);
+    expect(ids(rows.legends)).toEqual([GOOD, OTHER]);
+  });
+
+  it('dates a Mythic by the crossing and leaves a silent grant founding', async () => {
+    await grant(GOOD, 'score:mythic', LAST_MONTH, true);
+    await grant(OTHER, 'score:mythic', THIS_MONTH);
+    const { mythics } = await getCreatorShowcase({ pg, now: NOW });
+    expect(mythics.map(({ user, founding, since }) => ({ id: user.id, founding, since }))).toEqual([
+      { id: GOOD, founding: true, since: null },
+      { id: OTHER, founding: false, since: expect.any(Date) },
+    ]);
   });
 });
 

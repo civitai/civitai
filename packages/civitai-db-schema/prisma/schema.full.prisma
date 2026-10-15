@@ -5152,6 +5152,8 @@ enum CosmeticType {
   // theme is the shape a later pass would want, and an enum value cannot be
   // dropped without recreating the type.
   ChatTheme
+  // A glow around the creator card; its own slot, so it stacks with a badge.
+  CardDecoration
 }
 
 enum CosmeticSource {

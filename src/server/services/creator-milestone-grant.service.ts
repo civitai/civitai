@@ -1,5 +1,7 @@
+import { purgeCache } from '~/server/cloudflare/client';
 import { NotificationCategory } from '~/server/common/enums';
 import type { AugmentedPool } from '~/server/db/db-helpers';
+import { userCosmeticCache } from '~/server/redis/caches';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { nextCreatorScoreUnlocks } from '~/shared/utils/creator-score-unlocks';
 import {
@@ -9,6 +11,9 @@ import {
 } from '~/server/services/creator-milestone-exclusions';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('creator-milestone-grant');
 
 export type ScoreTotalTransition = { userId: number; oldTotal: number | null; newTotal: number };
 
@@ -34,6 +39,8 @@ export type MilestoneGrant = {
   name: string;
   threshold: number | null;
   silent: boolean;
+  /** The grant equipped a cosmetic, so the user's cached cosmetics are stale. */
+  equipped: boolean;
 };
 
 /**
@@ -71,13 +78,46 @@ const milestoneCosmeticsSql = `
   UNION
   SELECT "milestoneKey", "cosmeticId" FROM "CreatorMilestoneCosmetic"`;
 
-/** Grants each row of CTE `granted` its milestone's cosmetics, claimed under the milestone key. */
+/**
+ * `equippedAt` for a granted cosmetic: a card glow is worn on arrival unless the user already wears
+ * one, every other type arrives unequipped. Compared as text so the statement still parses before
+ * the `CardDecoration` enum value is applied.
+ */
+function equipOnGrantSql(userId: string, cosmetic: string) {
+  return `CASE WHEN ${cosmetic}.type::text = 'CardDecoration' AND NOT EXISTS (
+        SELECT 1 FROM "UserCosmetic" worn JOIN "Cosmetic" wc ON wc.id = worn."cosmeticId"
+        WHERE worn."userId" = ${userId} AND worn."equippedAt" IS NOT NULL
+          AND wc.type::text = 'CardDecoration'
+      ) THEN now() END`;
+}
+
+/**
+ * Grants each row of CTE `granted` its milestone's cosmetics, claimed under the milestone key.
+ * Returns one row per cosmetic inserted, with whether it was equipped.
+ */
 export function insertMilestoneCosmeticsSql(granted: string) {
-  return `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
-      SELECT g."userId", mc."cosmeticId", mc."milestoneKey"
+  return `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "equippedAt")
+      SELECT g."userId", mc."cosmeticId", mc."milestoneKey", ${equipOnGrantSql('g."userId"', 'c')}
       FROM ${granted} g
       JOIN (${milestoneCosmeticsSql}) mc ON mc."milestoneKey" = g."milestoneKey"
-      ON CONFLICT DO NOTHING`;
+      JOIN "Cosmetic" c ON c.id = mc."cosmeticId"
+      ON CONFLICT DO NOTHING
+      RETURNING "userId", "equippedAt" IS NOT NULL AS equipped`;
+}
+
+/**
+ * Drops the cached cosmetics and creator card of users a grant equipped something for. The grant is
+ * committed by then, so a failure here is logged rather than thrown: the caches expire on their own.
+ */
+export async function refreshEquippedCosmetics(userIds: number[]) {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  try {
+    await userCosmeticCache.refresh(ids);
+    await purgeCache({ tags: ids.map((id) => `user-creator-${id}`) });
+  } catch (e) {
+    log('refreshing cosmetics after a grant failed', e);
+  }
 }
 
 export async function grantMilestones(
@@ -90,14 +130,17 @@ export async function grantMilestones(
     WITH candidates AS (${candidates.sql}),
     granted AS (${insertMilestoneGrantsSql('candidates')}),
     cosmetics AS (${insertMilestoneCosmeticsSql('granted')})
-    SELECT g."userId", g."milestoneKey", m.name, m.threshold, g.silent
+    SELECT g."userId", g."milestoneKey", m.name, m.threshold, g.silent,
+      EXISTS (SELECT 1 FROM cosmetics c WHERE c."userId" = g."userId" AND c.equipped) AS equipped
     FROM granted g
     JOIN "CreatorMilestone" m ON m.key = g."milestoneKey"
     `,
     candidates.params
   );
   onCancel?.(query.cancel);
-  return query.result();
+  const grants = await query.result();
+  await refreshEquippedCosmetics(grants.filter((g) => g.equipped).map((g) => g.userId));
+  return grants;
 }
 
 /**
@@ -162,6 +205,19 @@ export async function markMilestonesSeen(
 
 export type MilestoneBatchResult = { users: number; inserted: number; lastUserId: number | null };
 
+const equippedUserIdsSql = (inserted: string) =>
+  `ARRAY(SELECT DISTINCT "userId" FROM ${inserted} WHERE equipped) AS "equippedUserIds"`;
+
+type EquippedUserIds = { equippedUserIds: number[] };
+
+async function withEquippedRefreshed(
+  rows: Promise<(MilestoneBatchResult & EquippedUserIds)[]>
+): Promise<MilestoneBatchResult> {
+  const [{ equippedUserIds, ...row }] = await rows;
+  await refreshEquippedCosmetics(equippedUserIds);
+  return row;
+}
+
 /**
  * One batch of the launch backfill: the next `limit` users above `afterUserId` whose total reaches the
  * lowest score tier, granted every tier they hold in the same statement. Rows are stamped seen so the
@@ -171,7 +227,7 @@ export async function backfillScoreTierBatch(
   pg: AugmentedPool,
   { afterUserId, maxUserId, limit }: { afterUserId: number; maxUserId?: number; limit: number }
 ): Promise<MilestoneBatchResult> {
-  const query = await pg.cancellableQuery<MilestoneBatchResult>(
+  const query = await pg.cancellableQuery<MilestoneBatchResult & EquippedUserIds>(
     `
     WITH batch AS (
       SELECT u.id, (u.meta->'scores'->>'total')::numeric AS total
@@ -196,12 +252,12 @@ export async function backfillScoreTierBatch(
     SELECT
       (SELECT count(*) FROM batch)::int AS users,
       (SELECT count(*) FROM granted)::int AS inserted,
-      (SELECT max(id) FROM batch) AS "lastUserId"
+      (SELECT max(id) FROM batch) AS "lastUserId",
+      ${equippedUserIdsSql('cosmetics')}
     `,
     [afterUserId, maxUserId ?? null, limit]
   );
-  const [row] = await query.result();
-  return row;
+  return withEquippedRefreshed(query.result());
 }
 
 /**
@@ -218,7 +274,7 @@ export async function grantMilestoneCosmeticsBatch(
     milestoneKey,
   }: { afterUserId: number; maxUserId?: number; limit: number; milestoneKey?: string }
 ): Promise<MilestoneBatchResult> {
-  const query = await pg.cancellableQuery<MilestoneBatchResult>(
+  const query = await pg.cancellableQuery<MilestoneBatchResult & EquippedUserIds>(
     `
     WITH m AS (
       SELECT "milestoneKey" AS key, "cosmeticId"
@@ -234,23 +290,24 @@ export async function grantMilestoneCosmeticsBatch(
       ORDER BY 1
       LIMIT $3
     ), granted AS (
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
-      SELECT ucm."userId", m."cosmeticId", m.key
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "equippedAt")
+      SELECT ucm."userId", m."cosmeticId", m.key, ${equipOnGrantSql('ucm."userId"', 'c')}
       FROM batch
       JOIN "UserCreatorMilestone" ucm ON ucm."userId" = batch.id
       JOIN m ON m.key = ucm."milestoneKey"
+      JOIN "Cosmetic" c ON c.id = m."cosmeticId"
       ON CONFLICT DO NOTHING
-      RETURNING "userId"
+      RETURNING "userId", "equippedAt" IS NOT NULL AS equipped
     )
     SELECT
       (SELECT count(*) FROM batch)::int AS users,
       (SELECT count(*) FROM granted)::int AS inserted,
-      (SELECT max(id) FROM batch) AS "lastUserId"
+      (SELECT max(id) FROM batch) AS "lastUserId",
+      ${equippedUserIdsSql('granted')}
     `,
     [afterUserId, maxUserId ?? null, limit, milestoneKey ?? null]
   );
-  const [row] = await query.result();
-  return row;
+  return withEquippedRefreshed(query.result());
 }
 
 type UserRange = { afterUserId: number; maxUserId?: number };
