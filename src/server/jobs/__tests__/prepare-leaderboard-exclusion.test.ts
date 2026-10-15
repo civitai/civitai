@@ -15,7 +15,7 @@ vi.mock('~/server/services/leaderboard.service', () => ({
   isLeaderboardPopulated: vi.fn(),
 }));
 vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/metric-excluded-users.service')>()),
+  ...(await importOriginal<Record<string, unknown>>()),
   getMetricExcludedUserIdsOrThrow: vi.fn(),
   getMetricExcludedUserIds: vi.fn(),
 }));

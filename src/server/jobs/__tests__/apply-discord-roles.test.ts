@@ -80,6 +80,7 @@ beforeEach(() => {
   mockDbWrite.$queryRaw.mockResolvedValueOnce([{ boards: 31 }]);
   mockDbWrite.user.findMany.mockResolvedValue([]);
   vi.mocked(getMetricExcludedUserIds).mockResolvedValue([]);
+  vi.mocked(getMetricExcludedUserIdsOrThrow).mockResolvedValue([]);
 });
 
 describe('applyDiscordLeaderboardRoles — metadata must follow Discord', () => {
