@@ -7,6 +7,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   createEntityAppealSchema,
   createReportInputSchema,
+  createReportOutputSchema,
   getLatestAppealSchema,
   getRecentAppealsSchema,
 } from '~/server/schema/report.schema';
@@ -19,6 +20,7 @@ export const reportRouter = router({
   create: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createReportInputSchema)
+    .output(createReportOutputSchema)
     .mutation(createReportHandler),
   // #region [appeal]
   getRecentAppeals: protectedProcedure

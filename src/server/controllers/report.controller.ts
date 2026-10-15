@@ -61,7 +61,7 @@ export async function createReportHandler({
       });
     }
 
-    return result;
+    return result ? { id: result.id, status: result.status } : null;
   } catch (e) {
     // The reported entity was deleted between the client rendering it and the
     // report landing, so the entity-report FK has nothing to point at. Search

@@ -215,6 +215,11 @@ export const createReportInputSchema = z
     message: 'Services cannot be reported yet.',
   });
 
+// What `report.create` returns to the client: the report's id and status, nothing else.
+export const createReportOutputSchema = z
+  .object({ id: z.number(), status: z.enum(ReportStatus) })
+  .nullable();
+
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({
   type: z.enum(ReportEntity),
