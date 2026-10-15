@@ -961,8 +961,8 @@ describe('open deals per offering', () => {
 });
 
 describe('releasing to the seller', () => {
-  const completed = async () => {
-    const { id } = await request();
+  const completed = async (overrides: Parameters<typeof request>[0] = {}) => {
+    const { id } = await request(overrides);
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
     await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
@@ -1041,6 +1041,36 @@ describe('releasing to the seller', () => {
     const guard = dispute.slice(0, dispute.indexOf('});'));
     expect(guard).toContain('"releaseAt" > clock_timestamp()');
     expect(guard).not.toContain('"releaseAt" > now()');
+  });
+
+  it('pays a green deal in green, from and to', async () => {
+    const id = await completed({ buzzType: 'green' });
+    await windowClosed(id);
+    expect(await escrow.releaseDeal(id)).toBe(true);
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({
+      fromAccountType: 'green',
+      toAccountType: 'green',
+    });
+  });
+
+  // Decision, the claim's half of the dispute race: the claim LOCKS the deal row with an UPDATE
+  // gated on the release state before it inserts the leg. An INSERT..SELECT alone reads a snapshot
+  // and locks nothing, so a dispute could commit beside a claimed payout. PGlite cannot reproduce
+  // that interleaving, so this pins the text. Keep it unless the two are serialised another way.
+  it('decision: the release claim locks the deal row before it inserts the leg', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/server/services/creator-service-escrow.service.ts'),
+      'utf8'
+    );
+    const start = source.indexOf('export async function claimRelease');
+    const claim = source.slice(start, source.indexOf('\n}\n', start));
+    const lock = claim.indexOf('UPDATE "ServiceDeal"');
+    const insert = claim.indexOf('INSERT INTO "ServiceDealTransaction"');
+    expect(lock).toBeGreaterThan(-1);
+    expect(insert).toBeGreaterThan(lock);
+    expect(claim.slice(lock, insert)).toContain(`"status" = 'Completed'`);
+    expect(claim.slice(lock, insert)).toContain('"releaseAt" <= now()');
+    expect(claim.slice(lock, insert)).toContain('if (releasable === 0) return false;');
   });
 
   it('pays the receipted hold less the fee', async () => {
