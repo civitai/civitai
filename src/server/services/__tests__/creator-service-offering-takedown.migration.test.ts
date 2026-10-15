@@ -96,4 +96,11 @@ describe('offering takedown migration', () => {
     await q(`DELETE FROM "Report" WHERE id = 1`);
     expect(await q(`SELECT count(*)::int AS n FROM "ServiceOfferingReport"`)).toEqual([{ n: 0 }]);
   });
+
+  it('drops the join row with the offering', async () => {
+    await q(`INSERT INTO "Report" DEFAULT VALUES`);
+    await q(`INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 1)`);
+    await q(`DELETE FROM "ServiceOffering" WHERE id = 1`);
+    expect(await q(`SELECT count(*)::int AS n FROM "ServiceOfferingReport"`)).toEqual([{ n: 0 }]);
+  });
 });
