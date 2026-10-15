@@ -1,9 +1,9 @@
 import { Group, Text } from '@mantine/core';
 import { IconLicense } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import type { DisplayedBaseModelLicense } from '~/server/common/constants';
+import type { DisplayedBaseModelLicense, LicenseLine } from '~/server/common/constants';
 
-function LicenseLink({ name, url }: DisplayedBaseModelLicense['primary']) {
+function LicenseLink({ name, url }: LicenseLine) {
   if (url == null)
     return (
       <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
@@ -27,6 +27,24 @@ function LicenseLink({ name, url }: DisplayedBaseModelLicense['primary']) {
   );
 }
 
+function ScopedLine(line: LicenseLine) {
+  return (
+    <Group gap={4} wrap="wrap" align="center">
+      {line.label && (
+        <Text size="xs" c="dimmed" fw={600} style={{ lineHeight: 1.1 }}>
+          {line.label}
+        </Text>
+      )}
+      <LicenseLink {...line} />
+      {line.suffix && (
+        <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
+          {line.suffix}
+        </Text>
+      )}
+    </Group>
+  );
+}
+
 export function BaseModelLicense({
   license,
   plural,
@@ -36,6 +54,10 @@ export function BaseModelLicense({
   plural: boolean;
   children?: ReactNode;
 }) {
+  const lines = license?.lines ?? [];
+  // A lone public licence sits beside the label; scoped lines each get a row.
+  const inline = lines.length === 1 && !lines[0].label ? lines[0] : undefined;
+
   return (
     <>
       <Group gap={4} wrap="wrap" align="center">
@@ -43,17 +65,10 @@ export function BaseModelLicense({
         <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap', lineHeight: 1.1 }}>
           License{plural ? 's' : ''}:
         </Text>
-        {license && <LicenseLink {...license.primary} />}
+        {inline && <LicenseLink {...inline} />}
         {children}
       </Group>
-      {license?.selfHosted && (
-        <Group gap={4} wrap="wrap" align="center">
-          <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
-            Self-hosted use:
-          </Text>
-          <LicenseLink {...license.selfHosted} />
-        </Group>
-      )}
+      {!inline && lines.map((line) => <ScopedLine key={line.name} {...line} />)}
     </>
   );
 }

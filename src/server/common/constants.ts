@@ -839,6 +839,11 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // encouraged "Powered by" form, so there is no notice and no poweredBy.
     attribution: 'MiniMax-Music3',
   },
+  'krea 2 community': {
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+    name: 'Krea 2 Community License Agreement',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -927,25 +932,31 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'Krea 2': baseLicenses['krea 2 community'],
+  'Krea 2 Turbo': baseLicenses['krea 2 community'],
 };
 
 type CivitaiLicenseAgreement = {
   partner: string;
   url?: string;
+  // Shown in place of the public licence's notice, which is written for the case
+  // the agreement now headlines.
+  notice?: string;
 };
 
 // Base models Civitai uses under its own agreement with the rights holder. Display only:
 // commercial-use, mature and same-license enforcement still come from baseModelLicenses.
 export const civitaiLicenseAgreements: Partial<Record<BaseModel, CivitaiLicenseAgreement>> = {
-  'MiniMax H3': { partner: 'MiniMax' },
+  'MiniMax H3': {
+    partner: 'MiniMax',
+    notice:
+      'The MiniMax H3 Community License Agreement’s grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+  },
 };
 
-type LicenseLink = { name: string; url?: string };
+export type LicenseLine = { label?: string; name: string; url?: string; suffix?: string };
 export type DisplayedBaseModelLicense = {
-  primary: LicenseLink;
-  // The public licence, still linked when an agreement replaces it as the headline: it is
-  // what governs anyone who downloads and runs the weights themselves.
-  selfHosted?: LicenseLink;
+  lines: LicenseLine[];
   notice?: string;
   poweredBy?: string;
 };
@@ -958,21 +969,30 @@ export function getDisplayedBaseModelLicense(
   if (!agreement) {
     if (!license) return undefined;
     return {
-      primary: { name: license.name, url: license.url },
+      lines: [{ name: license.name, url: license.url }],
       notice: license.notice,
       poweredBy: license.poweredBy,
     };
   }
 
-  return {
-    primary: {
-      name: `Licensed to Civitai under agreement with ${agreement.partner}`,
+  // The agreement covers use on Civitai only. Downloaded weights stay under the public
+  // licence, so the two scopes get equal billing rather than one demoting the other.
+  const lines: LicenseLine[] = [
+    {
+      label: 'On Civitai (generation, training, sharing LoRAs):',
+      name: `covered by Civitai’s agreement with ${agreement.partner}`,
       url: agreement.url,
     },
-    selfHosted: license && { name: license.name, url: license.url },
-    notice: license?.notice,
-    poweredBy: license?.poweredBy,
-  };
+  ];
+  if (license)
+    lines.push({
+      label: 'Downloaded weights:',
+      name: license.name,
+      url: license.url,
+      suffix: 'applies',
+    });
+
+  return { lines, notice: agreement.notice, poweredBy: license?.poweredBy };
 }
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
