@@ -16,8 +16,8 @@
 
   /**
    * Every report about the open item, one line each: the reason, who filed it, when, its status, and
-   * its ruling beside it. One row is open at a time and shows the rest — the reporter's own words and
-   * the raw details — so an item with several reports grows the column by a line per report rather
+   * its ruling beside it. One row is open at a time and shows the rest — the reporters' own words (the
+   * filer's, and each folded-in reporter's) and the raw details — so an item with several reports grows the column by a line per report rather
    * than by a block per report.
    *
    * Each report keeps its own ruling: reports about one item can need different answers (an ownership
@@ -94,6 +94,21 @@
   };
 </script>
 
+<!-- `lookup` is what User Lookup resolves — a username, or the id of an account that no longer has
+     one. Linking the "#123" label instead searched for the string "#123". -->
+{#snippet said(label: string | null, lookup: string | number | null, at: string | null, words: string | null)}
+  <div class="rounded-md border bg-muted/40 p-2 text-sm">
+    <p class="m-0 text-xs text-muted-foreground">
+      {#if label && lookup != null}<a href={userLookupUrl(lookup)} class="link">{label}</a>{:else}—{/if}{at
+        ? ` · ${dateTime(at)}`
+        : ''}
+    </p>
+    <p class="m-0 mt-0.5 wrap-break-word">
+      {#if words}{words}{:else}<span class="text-muted-foreground">No comment.</span>{/if}
+    </p>
+  </div>
+{/snippet}
+
 <section aria-labelledby="reports-heading" class="flex flex-col gap-2">
   <h3 id="reports-heading" class="m-0 text-sm font-semibold">
     {reports.length > 1 ? `Reports (${reports.length})` : 'Report'}
@@ -164,9 +179,14 @@
                   r.createdAt
                 )}
               </p>
+              <!-- One block per reporter, each saying who wrote it: the others are folded into the one
+                   report, and their words were reachable only through the raw details. -->
               {#if comment}
-                <p class="m-0 wrap-break-word rounded-md border bg-muted/40 p-2 text-sm">{comment}</p>
+                {@render said(r.reportedByUsername, r.reportedByUsername, null, comment)}
               {/if}
+              {#each r.additionalReporters ?? [] as a, i (`${a.userId}:${i}`)}
+                {@render said(a.username ?? `#${a.userId}`, a.username ?? a.userId, a.createdAt, a.comment)}
+              {/each}
               <!-- Collapsed: the evidence is what gets read, and a 16rem JSON dump pushed it — and the
                    actions — off the column. -->
               {#if r.details}

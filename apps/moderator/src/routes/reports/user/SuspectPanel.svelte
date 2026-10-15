@@ -15,6 +15,10 @@
   import ProfileContent from '$lib/components/ProfileContent.svelte';
   import ContentCounts from '../../retool/user-lookup/ContentCounts.svelte';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
+  import SharedIpAccounts from '$lib/components/SharedIpAccounts.svelte';
+  import { fetchSharedIpAccounts } from '../../retool/user-lookup/signals';
+  import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { SUSPECT_TABS, SUSPECT_TAB_LABELS, type SuspectTab } from './tabs';
   import type { AccountData } from './account.server';
   import { FormState } from '$lib/form-state.svelte';
@@ -45,6 +49,12 @@
     canAct: boolean;
     civitaiUrl: string;
   } = $props();
+
+  // Derived, not fetched in an effect: a new account or tab is a new promise, and `SSR_PENDING` keeps
+  // the server render in the same branch the browser hydrates.
+  const sharedIps = $derived(
+    browser ? (tab === 'details' ? fetchSharedIpAccounts(suspectId) : null) : SSR_PENDING
+  );
 
   const selected = new SelectionSet<string | number>();
   const blockedIds = $derived(
@@ -160,6 +170,22 @@
           label === 'Models' ? tabHref('models') : label === 'Images' ? tabHref('images') : null}
       />
     </div>
+  </section>
+
+  <!-- The accounts sharing an address with this one, and the hand-off to Bulk Ban — for bots and
+       the people running them. Client-fetched (`/api/shared-ip-accounts`): the shared-IP scan is the
+       slow half of a lookup (~750ms against ClickHouse), and the profile should not wait on it. -->
+  <section class="mt-6 border-t border-dark-4 pt-4">
+    <h3 class="mb-2 text-sm font-semibold text-white">Accounts sharing its addresses</h3>
+    {#await sharedIps}
+      <p class="text-sm text-dark-2">Checking addresses…</p>
+    {:then result}
+      {#if result}
+        <SharedIpAccounts accountId={suspectId} accounts={result.accounts} truncated={result.truncated} />
+      {/if}
+    {:catch}
+      <p class="text-sm text-dark-2">Could not load the shared addresses.</p>
+    {/await}
   </section>
 {:else if tab === 'models' && models}
   <section>
@@ -296,6 +322,7 @@
     endLabel="End of this account's content."
     card={imageCard}
     minColumn={200}
+    pagerTop
   />
 {/if}
 

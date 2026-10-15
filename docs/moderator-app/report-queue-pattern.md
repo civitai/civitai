@@ -1,7 +1,9 @@
 # Report queue pages — the pattern
 
 How to build a report queue that is not a table: a queue down the left, the reported item across the
-rest. `/reports/user`, `/reports/model` and `/reports/post` are built this way; the remaining types under
+rest. `/reports/user`, `/reports/model` and `/reports/post` are built this way. `/reports/image` is the
+exception on purpose: an image report is judged by looking at the image, so it is the image queues' card
+grid (`$lib/components/image-queue/`), one card per report; the remaining types under
 `/reports/[slug]` use the shared table (`ReportsTable.svelte`) until each moves over on purpose, when
 someone has looked at how it is worked.
 

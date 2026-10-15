@@ -81,7 +81,7 @@
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
-      <AddressesPanel {signals} />
+      <AddressesPanel {signals} accountId={result.identity.id} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
       <SocialsPanel

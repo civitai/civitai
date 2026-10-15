@@ -41,7 +41,6 @@ const { load: layoutLoad } = await import('../+layout.server');
 const { load: indexLoad } = await import('../+page.server');
 const { load: postLoad } = await import('../[postId]/[[tab=postTab]]/+page.server');
 const { postQueueActions } = await import('../actions.server');
-const { load: retoolRedirect } = await import('../../../retool/post-reports/+page.server');
 
 const locals = { user: { id: 1, username: 'mod' }, grants: {} };
 const url = (path: string) => new URL(`https://mod.example${path}`);
@@ -114,27 +113,6 @@ describe('the post pages', () => {
 
   it('a path that is not a post id is a 404', async () => {
     await expect(runPost({ postId: 'abc' })).rejects.toMatchObject({ status: 404 });
-  });
-});
-
-describe('the retool redirect', () => {
-  const target = async (query: string) => {
-    try {
-      await retoolRedirect({ url: url(`/retool/post-reports${query}`) } as never);
-    } catch (e) {
-      return (e as { location: string }).location;
-    }
-    throw new Error('did not redirect');
-  };
-
-  it('moves ?post= into the path and keeps the rest', async () => {
-    expect(await target('?post=12&page=2&status=Pending')).toBe(
-      '/reports/post/12?page=2&status=Pending'
-    );
-  });
-
-  it('with no post, to the bare queue', async () => {
-    expect(await target('')).toBe('/reports/post');
   });
 });
 

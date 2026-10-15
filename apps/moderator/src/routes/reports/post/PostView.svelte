@@ -150,7 +150,8 @@
   </header>
   {#if !data.canAct}
     <p class="m-0 text-xs text-muted-foreground">
-      Read-only: ruling on a report, removing images or acting on the owner needs the Users permission.
+      Read-only: ruling on a report, removing images or acting on the owner needs access to the Users
+      page (`/users`), granted on `/admin`.
     </p>
   {/if}
 

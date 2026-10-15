@@ -6,12 +6,13 @@
   import { hasOpenReport, nextItemId, reportsForItem } from '$lib/report-queue';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { userReportUrl } from '$lib/entity-url';
+  import { userLookupUrl, userReportUrl } from '$lib/entity-url';
   import { clearPaging } from '$lib/paging';
   import UserCard from '$lib/components/user-card/UserCard.svelte';
   import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
   import SuspectPanel from './SuspectPanel.svelte';
-  import ReportColumn from './ReportColumn.svelte';
+  import ReportList from '$lib/components/report-queue/ReportList.svelte';
+  import AccountActions from './AccountActions.svelte';
 
   // The open account, rendered the same by the bare queue (its first account) and by
   // `[userId]/[[tab]]`. Every form holds its own result (`FormState`), so the page's `form` is not read.
@@ -63,7 +64,7 @@
   );
 
   // A refusal belongs to the account it was raised on. The account's own forms remount with it
-  // (`ReportColumn` is keyed); this one lives above the key, so it is cleared by hand.
+  // (`SuspectPanel` and `AccountActions` each sit in a `{#key account.suspectId}`); this one lives above the key, so it is cleared by hand.
   let shownId: number | null = null;
   $effect.pre(() => {
     const id = account?.suspectId ?? null;
@@ -84,7 +85,8 @@
   {/if}
   {#if !canAct}
     <p class="m-0 text-xs text-muted-foreground">
-      Read-only: ruling on a report or acting on an account needs the Users permission.
+      Read-only: ruling on a report or acting on an account needs access to the Users page
+      (`/users`), granted on `/admin`.
     </p>
   {/if}
 
@@ -114,27 +116,44 @@
       {/if}
     {/snippet}
 
+    <!-- The reports, then what to do about the account (`AccountActions`), one row per action. -->
     {#snippet actions()}
       {#key account.suspectId}
-        <ReportColumn
-          suspectId={account.suspectId}
+        <ReportList
           reports={openReports}
-          account={account.details
-            ? {
-                username: account.details.card.identity.username,
-                bannedAt: account.details.card.identity.bannedAt,
-                banReason: account.details.card.identity.banReason,
-                muted: !!account.details.card.identity.muted,
-                mutedUntil: account.timedMute?.muteExpiresAt ?? null,
-                profile: account.details.profile,
-              }
-            : null}
-          {canAct}
-          {canBan}
-          onReportSubmit={reportForm.enhance}
-          {pendingId}
-          reportError={reportForm.error}
-        />
+          canRule={canAct}
+          action="?/actionReport"
+          onSubmit={reportForm.enhance}
+          busyId={pendingId}
+          error={reportForm.error}
+        >
+          {#snippet empty()}
+            <!-- Every report on the account is ruled on, or it was opened from a link (User Lookup,
+                 the dashboard) for an account with none open. -->
+            <p class="m-0 text-sm text-muted-foreground">
+              No open reports on this account.
+              <a href={userLookupUrl(account.suspectId, 'reports')} class="link">
+                All its reports in User Lookup
+              </a>
+            </p>
+          {/snippet}
+        </ReportList>
+
+        {#if canAct && account.details}
+          <AccountActions
+            suspectId={account.suspectId}
+            {canBan}
+            account={{
+              username: account.details.card.identity.username,
+              bannedAt: account.details.card.identity.bannedAt,
+              banReason: account.details.card.identity.banReason,
+              bannedBy: account.bannedBy,
+              muted: !!account.details.card.identity.muted,
+              mutedUntil: account.timedMute?.muteExpiresAt ?? null,
+              profile: account.details.profile,
+            }}
+          />
+        {/if}
       {/key}
     {/snippet}
   </ReportDetailColumns>

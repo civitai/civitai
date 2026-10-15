@@ -10,8 +10,9 @@ const isStatus = (v: string): v is ReportStatus => (reportStatuses as string[]).
  * offers them: the `/reports/[slug]` tables and the model queue. Access is gated globally in
  * hooks.server.ts (route-tier check), so these don't re-check here.
  *
- * `rulingsOnly`: the queue sets an outcome (`REPORT_RULINGS`) and nothing else — the model queue, as
- * the user queue's `actionReport` already did. Refused here and not only by disabled buttons, so a
+ * `rulingsOnly`: the queue sets an outcome (`REPORT_RULINGS`) and nothing else, as the user queue's
+ * `actionReport` does. No caller passes it yet: the model queue sets all four statuses until whether
+ * Processing still marks an ownership claim is settled. Refused here and not only by disabled buttons, so a
  * stale tab or a hand-built POST cannot put a report back in Pending or Processing.
  */
 export const reportStatusActions = ({ rulingsOnly = false } = {}) => ({

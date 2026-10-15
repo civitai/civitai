@@ -6,6 +6,7 @@ import { accountEnforcementActions } from '$lib/server/account-actions';
 import { getTimedMute } from '$lib/server/user-actions.service';
 import { loadItemReports } from '$lib/server/report-queue-load';
 import { ReportEntity } from '$lib/reports';
+import { lastModActivity } from '$lib/server/mod-activity';
 import { ingestionErrorLevelSet } from '@civitai/shared';
 import { loadAccountHistory } from '$lib/server/account-history';
 import { getReportedAccountDetails } from '$lib/server/user-lookup.service';
@@ -82,8 +83,14 @@ export async function loadAccount(user: number, tab: SuspectTab, url: URL, local
     loadItemReports(ReportEntity.User, user),
   ]);
 
+  // Who banned it — the first question a ban raises, and the card carries only when and why.
+  const lastBan = details?.card?.identity?.bannedAt
+    ? await lastModActivity('user', user, 'ban')
+    : null;
+
   return {
     suspectId: user,
+    bannedBy: lastBan?.moderator ?? null,
     tab,
     details,
     suspect,

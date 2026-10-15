@@ -16,6 +16,7 @@
     type ModelUnpublishReason,
   } from '$lib/model-unpublish-reasons';
   import { getReportItemUrl, reportStatuses } from '$lib/reports';
+  import { denied } from '$lib/permissions';
   import { hasOpenReport, nextItemId, reportsForItem } from '$lib/report-queue';
   import { clearPaging } from '$lib/paging';
   import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
@@ -561,13 +562,17 @@
                     ? 'Taken down: hidden from the site until a moderator brings it back.'
                     : 'For ownership and claim reports. Hides the model as taken down; only a moderator can bring it back.'}
                 </p>
+                {#if !canTakeDown}
+                  <!-- Says why the button is greyed out and which permission to ask for on `/admin`. -->
+                  <p class="m-0 mt-1 text-xs text-amber-300">{denied('model.takeDown')}</p>
+                {/if}
               </div>
               <div class="flex shrink-0 items-center gap-2">
                 {#if takenDown}{@render done('Taken down')}{/if}
                 {#if !canTakeDown}
-                  <span class="max-w-32 text-right text-xs text-muted-foreground">
-                    Needs the “Take down a model” permission
-                  </span>
+                  <Button type="button" size="sm" variant="outline" disabled>
+                    {takenDown ? 'Bring back' : 'Take down'}
+                  </Button>
                 {:else if takenDown}
                   {@render confirmable('bringBack', 'Bring back', 'Yes, bring back')}
                 {:else}
