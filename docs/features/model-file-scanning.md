@@ -257,10 +257,23 @@ The legacy scanner supported 5 task types:
 ### Decisions
 
 - **D1**: `rawScanResult` populated with a normalized envelope `{ source: 'orchestrator', ... }`. No schema migration.
-- **D2**: Hash-blocking kept commented out, matching legacy. Re-enabling is a separate product decision.
+- **D2**: The legacy blocklist check (hash matches a model unpublished for a violation) stays off. It is superseded by the cross-owner duplicate check below.
 - **D3**: `model-hash-fix` notification synthesized from `AutoV2` diff in `applyScanOutcome` (orchestrator doesn't expose legacy's `fixed[]` array).
 - **D4**: `applyScanOutcome` bumps `scanRequestedAt = now()` when `outcome.failed === true`, so the file retries via the 24h-stale path. Prevents tight retry loops on permanently broken AIRs.
 - **D5**: Switched from `dataForModelsCache.bust()` to `.refresh()` for proactive re-warm.
+
+### Duplicate Model Files
+
+When a primary weights file (any of `primaryModelFileTypes`, at least 1 MB) gets its SHA256, `applyScanOutcome`
+looks for a primary weights file with the same SHA256 on another creator's public, published model
+(`src/server/services/duplicate-model-hash.service.ts`). On a match the model is unpublished with reason
+`duplicate` and a message linking the original. Publishing runs the same lookup and refuses a match, for
+files hashed before the original went live. The same owner re-uploading their own file, CivitaiOfficial
+uploads, and moderators publishing (to restore a false positive) are exempt. A rescan of unchanged bytes
+does not re-trigger it.
+
+Both halves sit behind the `duplicate-model-hash-block` Flipt flag, default off. While it is off every match
+is logged to Axiom (`name: 'duplicate-model-hash'`, `message: 'suppressed'`) and nothing is blocked.
 
 ### Known Gap (Matches Legacy)
 

@@ -32,6 +32,7 @@ import {
   stampWorkflowPublished,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
+import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import {
   applyTrainingWorkflowOverlay,
   collectTrainingWorkflowRefs,
@@ -846,6 +847,7 @@ export const publishModelHandler = async ({
       ownerId: model.userId,
       callerId: ctx.user.id,
     });
+    await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
@@ -2504,6 +2506,11 @@ export const publishPrivateModelHandler = async ({
       meta: model.meta as ModelMeta | null,
       ownerId: model.userId,
       callerId: userId,
+    });
+    await assertNotCrossOwnerDuplicate({
+      modelId: model.id,
+      ownerId: model.userId,
+      isModerator: ctx.user.isModerator,
     });
 
     const { versionIds, held } = await publishPrivateModel(

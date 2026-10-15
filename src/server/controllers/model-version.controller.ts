@@ -104,6 +104,7 @@ import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
+import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
@@ -875,6 +876,11 @@ export const publishModelVersionHandler = async ({
       meta: version.model.meta as ModelMeta | null,
       ownerId: version.model.userId,
       callerId: ctx.user.id,
+    });
+    await assertNotCrossOwnerDuplicate({
+      versionId: input.id,
+      ownerId: version.model.userId,
+      isModerator: ctx.user.isModerator,
     });
 
     const republishing =
