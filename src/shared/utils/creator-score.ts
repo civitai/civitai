@@ -61,3 +61,35 @@ export function creatorAggregateScoreFromMeta(meta: unknown): number {
   const sum = CREATOR_SCORE_CATEGORIES.reduce((acc, key) => acc + finiteOr0(scores?.[key]), 0);
   return Math.max(sum, finiteOr0(scores?.total));
 }
+
+/** The categories a public score split shows: positive points only, no reports or staff awards. */
+export const CREATOR_SCORE_SPLIT_CATEGORIES = ['models', 'images', 'articles', 'users'] as const;
+
+export type CreatorScoreSplit = Record<(typeof CREATOR_SCORE_SPLIT_CATEGORIES)[number], number>;
+
+/**
+ * Each split category's whole-percent share of their sum, the shares adding up to 100 (largest
+ * remainder). Shares only, so the split cannot be multiplied back into a score. Null when no
+ * category is positive.
+ */
+export function creatorScoreSplitFromMeta(meta: unknown): CreatorScoreSplit | null {
+  const scores = (meta as UserMetaCategoryScores | null | undefined)?.scores;
+  const values = CREATOR_SCORE_SPLIT_CATEGORIES.map((key) => Math.max(finiteOr0(scores?.[key]), 0));
+  const pool = values.reduce((sum, value) => sum + value, 0);
+  if (pool <= 0) return null;
+
+  const exact = values.map((value) => (value / pool) * 100);
+  const shares = exact.map(Math.floor);
+  let left = 100 - shares.reduce((sum, share) => sum + share, 0);
+  const byRemainder = exact
+    .map((value, index) => ({ index, remainder: value - shares[index] }))
+    .sort((a, b) => b.remainder - a.remainder);
+  for (const { index } of byRemainder) {
+    if (left <= 0) break;
+    shares[index]++;
+    left--;
+  }
+  return Object.fromEntries(
+    CREATOR_SCORE_SPLIT_CATEGORIES.map((key, index) => [key, shares[index]])
+  ) as CreatorScoreSplit;
+}

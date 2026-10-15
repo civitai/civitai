@@ -74,8 +74,8 @@ interface PageProps {
   sandbox: string;
   trustTier: 'unverified' | 'verified' | 'internal';
   slug: string;
-  /** #3/#6: the page manifest's declared scopes, used to compute the actual
-   *  granted set (declared − missingScopes) for BLOCK_INIT. */
+  /** #3/#6: the page manifest's declared scopes. BLOCK_INIT advertises the
+   *  mint's signed set instead; this is only the fallback input. */
   scopes: string[];
   /**
    * The author's beta declaration for this app's store listing.
@@ -585,8 +585,9 @@ function AppPage(props: PageProps) {
   );
 
   // #3/#6: take the consent signal + error from the mint, not just token/expiry.
-  // `missingScopes` lets PageBlockHost compute the REAL granted set (declared −
-  // missing) for BLOCK_INIT; `needsConsent`/`error` let it surface a terminal
+  // `signedScopes` is the set the mint signed, which PageBlockHost advertises in
+  // BLOCK_INIT (see `resolveAdvertisedScopes`); `missingScopes` drives consent;
+  // `needsConsent`/`error` let it surface a terminal
   // state instead of hanging at `no_token`.
   // `refresh` re-mints the page token after a consent grant so the new scopes
   // flow to the block via TOKEN_REFRESH (wired to PageBlockHost.onConsentGranted,
@@ -598,6 +599,7 @@ function AppPage(props: PageProps) {
     kind,
     needsConsent,
     missingScopes,
+    signedScopes,
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,
@@ -759,6 +761,7 @@ function AppPage(props: PageProps) {
           tokenKind={kind}
           declaredScopes={scopes}
           missingScopes={missingScopes}
+          signedScopes={signedScopes}
           needsConsent={needsConsent}
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}

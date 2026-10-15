@@ -1,11 +1,77 @@
 import { describe, expect, it } from 'vitest';
 import {
+  resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
   type HostConsentNoticeInput,
 } from '../requestConsentGate';
+
+// ===========================================================================
+// resolveAdvertisedScopes — what BLOCK_INIT / TOKEN_REFRESH tell the block it
+// holds, and the "granted" set every consent gate below reads.
+// ===========================================================================
+describe('resolveAdvertisedScopes', () => {
+  const DECLARED = ['apps:storage:read', 'apps:storage:publish', 'ai:write:budgeted'];
+
+  describe('the mint reported its signed set', () => {
+    it('anonymous viewer: advertises ONLY the signed scopes, not the gated ones the mint stripped', () => {
+      // The anon mint strips every consent-gated scope yet reports
+      // `missingScopes: []` — the old `declared − missing` derivation advertised
+      // all three here.
+      const signed = ['apps:storage:read'];
+      expect(resolveAdvertisedScopes(DECLARED, [], signed)).toEqual(['apps:storage:read']);
+    });
+
+    it('signed-in viewer: equals declared − missing when the manifest holds only known scopes', () => {
+      const missing = ['ai:write:budgeted'];
+      const signed = ['apps:storage:read', 'apps:storage:publish'];
+      expect(resolveAdvertisedScopes(DECLARED, missing, signed)).toEqual(signed);
+      expect(resolveAdvertisedScopes(DECLARED, missing, undefined)).toEqual(signed);
+    });
+
+    it('signed-in viewer: drops a deprecated declared scope the mint no longer signs', () => {
+      const declared = ['apps:storage:read', 'media:read:owned'];
+      expect(resolveAdvertisedScopes(declared, [], ['apps:storage:read'])).toEqual([
+        'apps:storage:read',
+      ]);
+    });
+
+    it('an empty signed set advertises nothing (does not fall back to the manifest)', () => {
+      expect(resolveAdvertisedScopes(DECLARED, [], [])).toEqual([]);
+    });
+  });
+
+  // Moved from `pageBlockHostLogic.test.ts` (`grantedPageScopes`): the fallback
+  // for a mint response with no `scopes` field. Cases unchanged.
+  describe('fallback: no signed set reported → declared − missing', () => {
+    it('returns the declared scopes when nothing is withheld (NOT the old hardcoded [])', () => {
+      const declared = ['apps:storage:read', 'apps:storage:write'];
+      expect(resolveAdvertisedScopes(declared, [], undefined)).toEqual(declared);
+      expect(resolveAdvertisedScopes(declared, undefined, undefined)).toEqual(declared);
+      expect(resolveAdvertisedScopes(declared, [], undefined)).not.toEqual([]);
+    });
+
+    it('strips the consent-withheld scopes from the granted set', () => {
+      const declared = ['apps:storage:read', 'apps:storage:write', 'social:read'];
+      expect(resolveAdvertisedScopes(declared, ['social:read'], undefined)).toEqual([
+        'apps:storage:read',
+        'apps:storage:write',
+      ]);
+    });
+
+    it('returns [] only when every declared scope is withheld', () => {
+      expect(resolveAdvertisedScopes(['social:read'], ['social:read'], undefined)).toEqual([]);
+    });
+
+    it('is a no-op for a missingScopes entry that was never declared', () => {
+      const declared = ['apps:storage:read'];
+      expect(resolveAdvertisedScopes(declared, ['ai:write:budgeted'], undefined)).toEqual(declared);
+    });
+  });
+});
 
 /**
  * Lazy-consent (REQUEST_CONSENT) — the host's handler must:
@@ -251,6 +317,27 @@ describe('resolveHostConsentNotice (the host-side missing-permissions backstop)'
           resolveRequestConsent(status, missingScopes)
         );
       }
+    }
+  });
+});
+
+describe('resolveUngrantableConsentPrompt (what the HOST shows; the block always gets CONSENT_UNAVAILABLE)', () => {
+  it('signed-in viewer → the "unavailable" toast, at any status', () => {
+    for (const status of ['loading', 'ready', 'timeout', 'fatal', 'no_token'] as const) {
+      expect(resolveUngrantableConsentPrompt(status, true)).toBe('toast');
+    }
+  });
+
+  it('signed-out viewer after BLOCK_READY → sign-in, never the toast', () => {
+    // Signing in is what makes an anon viewer's gated scope grantable, so
+    // "isn't available here" would be false.
+    expect(resolveUngrantableConsentPrompt('ready', false)).toBe('sign-in');
+  });
+
+  it('signed-out viewer before BLOCK_READY → nothing (no pre-handshake login popup)', () => {
+    // Same refusal REQUEST_SIGN_IN applies, via the shared `resolveRequestSignIn`.
+    for (const status of ['loading', 'timeout', 'fatal', 'no_token'] as const) {
+      expect(resolveUngrantableConsentPrompt(status, false)).toBe('none');
     }
   });
 });
