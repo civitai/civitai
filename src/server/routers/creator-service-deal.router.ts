@@ -28,9 +28,10 @@ import {
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 
 /**
- * Entries into a deal are behind `creatorServices`. Exits are NOT: turning the flag off must not
- * trap a buyer's held Buzz or a seller's open deal, so viewing a deal, withdrawing, declining,
- * cancelling and the cancellation exchange stay open to the parties. Every transition checks the
+ * Entries into a deal are behind `creatorServices`, and so is a revision request, which needs a
+ * seller upload. Exits are NOT: turning the flag off must not trap a buyer's held Buzz or a
+ * seller's open deal, so viewing a deal, withdrawing, declining, accepting a delivery, cancelling,
+ * the cancellation exchange and disputes stay open to the parties. Every transition checks the
  * acting party in SQL, so none of these trusts an id from the input beyond the deal's own.
  */
 const gated = guardedProcedure.use(isFlagProtected('creatorServices'));
@@ -87,7 +88,7 @@ export const creatorServiceDealRouter = router({
       declineServiceDeal({ dealId: input.id, userId: ctx.user.id, reason: input.reason })
     );
   }),
-  requestRevision: protectedProcedure
+  requestRevision: gated
     .input(requestServiceDealRevisionSchema)
     .mutation(async ({ input, ctx }) => {
       await assertDealText(input.comment);
