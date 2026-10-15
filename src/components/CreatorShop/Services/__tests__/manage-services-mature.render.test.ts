@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import type * as Trpc from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 // The SFW domain lists none of a seller's own mature offerings (getMine counts them instead);
 // the panel must say where they went, or a seller thinks their service vanished.
@@ -13,24 +15,18 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // `getMine` is mocked at the tRPC hook, so the real `useQueryMyServices` maps its response.
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    creatorService: {
-      getSellEligibility: { useQuery: () => ({ data: { canSell: true }, isLoading: false }) },
-      getMine: {
-        useQuery: () => ({
-          data: { items: mocks.mine.offerings, hiddenOffDomain: mocks.mine.hiddenOffDomain },
-          isLoading: false,
-        }),
-      },
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof Trpc>()),
+  trpc: makeTrpcProxy({
+    'creatorService.getSellEligibility': {
+      useQuery: () => ({ data: { canSell: true }, isLoading: false }),
     },
-  },
-}));
-vi.mock('~/components/CreatorShop/Services/creator-service.util', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  useMutateMyServices: () => ({
-    setStatus: { mutate: () => undefined },
-    remove: { mutate: () => undefined },
+    'creatorService.getMine': {
+      useQuery: () => ({
+        data: { items: mocks.mine.offerings, hiddenOffDomain: mocks.mine.hiddenOffDomain },
+        isLoading: false,
+      }),
+    },
   }),
 }));
 vi.mock('~/components/CreatorShop/Services/deals/ServiceDealsList', () => ({
