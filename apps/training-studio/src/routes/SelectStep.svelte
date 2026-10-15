@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     IconBoltFilled,
+    IconSparkles,
     IconStarFilled,
     IconCheck,
     IconStack2,
@@ -101,7 +102,7 @@
   // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
   const FEATURED: Partial<Record<Media, string[]>> = {
-    image: ['zimage', 'anima', 'krea2'],
+    image: ['zimage', 'flux3klein', 'anima', 'krea2'],
     video: ['minimaxh3', 'wan', 'ltx'],
   };
   const featuredCards = $derived.by(() => {
@@ -470,7 +471,7 @@
             {#if card.flag}
               <div class="mt-1">
                 <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} />{/if}{card.flag}
                 </span>
               </div>
             {/if}
