@@ -110,6 +110,12 @@ beforeEach(() => {
     status: 'Published',
   });
   mockTx.$executeRaw.mockResolvedValue(0);
+  // The requested versions are this model's own.
+  dbMock.dbWrite.modelVersion.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where?: { id?: { in?: number[] }; modelId?: number };
+  }) => (where?.modelId === MODEL_ID ? (where.id?.in ?? []).map((id) => ({ id })) : [])) as never);
   dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
     id: MODEL_ID,
     status: 'UnpublishedViolation',
