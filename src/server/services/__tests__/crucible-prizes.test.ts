@@ -16,6 +16,9 @@ const claim = dbMock.dbWrite.crucible.updateMany;
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const createBuzzTransactionMany = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
+const getMultiAccountTransactionsByPrefix = vi.fn();
+const getTransactionByExternalId = vi.fn();
+const refundTransaction = vi.fn();
 const createNotification = vi.fn();
 const getAllEntryElos = vi.fn();
 const getAllVoteCounts = vi.fn();
@@ -26,6 +29,9 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   createBuzzTransactionMany,
   refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
+  refundTransaction,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -125,6 +131,17 @@ const setupCrucible = ({
   getAllEntryElos.mockResolvedValue(elos);
 };
 
+const REFUNDED = { refundedTransactions: [{ amount: 50 }], totalRefunded: 1 };
+
+/** One leg per prefix, already refunded: a 409 then reads as settled. */
+function legsAlreadyRefunded() {
+  getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+    { transactionId: `${prefix}-leg`, externalTransactionId: `${prefix}-User`, amount: 50 },
+  ]);
+  getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
+  refundTransaction.mockResolvedValue({ transactionId: 'refunded' });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   getAllVoteCounts.mockResolvedValue({});
@@ -140,7 +157,8 @@ beforeEach(() => {
     inputs.map((input, i) => ({ ...input, id: 100 + i }))
   );
   createNotification.mockResolvedValue(undefined);
-  refundMultiAccountTransaction.mockResolvedValue(undefined);
+  refundMultiAccountTransaction.mockResolvedValue(REFUNDED);
+  legsAlreadyRefunded();
   setupCrucible();
 });
 
