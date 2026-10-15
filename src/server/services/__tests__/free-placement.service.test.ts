@@ -456,6 +456,8 @@ describe('the advisory locks have exactly one call site', () => {
   // storyline-placement takes one per placer (0x74ee0003) for the pending cap's
   // count-then-insert, since a zero-priced continuation costs nothing to race. It is
   // the only lock in its transaction and is never taken alongside the free path's.
+  // scan-label-flag takes one per post (0x5c1a0001) for the scan label queue's per-post cap
+  // count-then-insert; the only lock in its transaction.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
@@ -464,6 +466,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/platform-feedback.service.ts',
+    'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
     'services/support-membership-code.service.ts',
     'services/text-scan/prompt.ts',
