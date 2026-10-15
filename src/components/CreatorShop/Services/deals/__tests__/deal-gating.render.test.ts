@@ -75,11 +75,23 @@ const deal = (maxNsfwLevel: number) => ({
 });
 
 describe('deal page gate', () => {
-  it('wraps the whole deal in <Gated> at the deal rating, so a mature deal on green redirects', () => {
+  it('renders nothing of the deal outside <Gated>, so a mature deal on green redirects', () => {
     mocks.deal = deal(8);
     const html = render(createElement(ServiceDealPage, { dealId: 7 }));
-    // The title must be inside the gate, or the redirect would leave the deal readable on green.
-    expect(html).toMatch(/<section data-gate="8">[\s\S]*Portrait commission[\s\S]*<\/section>/);
+    const gate = html.match(/<section data-gate="(\d+)">[\s\S]*<\/section>/);
+    expect(gate?.[1]).toBe('8');
+    // The redirect hides only what is inside the gate: every field the fixture carries must be in it.
+    const outside = html.replace(gate?.[0] ?? '', '');
+    for (const field of ['Portrait commission', 'please', 'seller', 'Deal #7'])
+      expect({
+        field,
+        inside: gate?.[0].includes(field),
+        outside: outside.includes(field),
+      }).toEqual({
+        field,
+        inside: true,
+        outside: false,
+      });
   });
 
   it('labels a mature deal with its rating and a PG-13 one with nothing', () => {
