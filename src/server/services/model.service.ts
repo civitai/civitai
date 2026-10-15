@@ -2483,12 +2483,15 @@ export async function setModelMinor({
   tracker,
   isModerator,
   recordTextScanRuling,
+  reapplySideEffects,
 }: SetModelMinorInput & {
   userId: number;
   activity?: ModelMinorActivity;
   tracker?: Tracker;
   isModerator?: boolean;
   recordTextScanRuling?: boolean;
+  /** Redo the fan-out for a flag an earlier attempt set but did not finish propagating. */
+  reapplySideEffects?: boolean;
 }) {
   const before = await dbRead.model.findUnique({
     where: { id },
@@ -2598,7 +2601,10 @@ export async function setModelMinor({
       )
       .catch(() => null);
   }
-  await applyModelFlagSideEffects({ before, after: result });
+  await applyModelFlagSideEffects({
+    before: reapplySideEffects ? { ...before, minor: !minor } : before,
+    after: result,
+  });
   if (!minor && result.poi) await reassertModelPoiRestrictions(id);
   // The ruling went in ahead of the write above; this only closes the owner's now-moot appeal.
   if (!minor && recordTextScanRuling && before.minor) {

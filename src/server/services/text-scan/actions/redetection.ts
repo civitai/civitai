@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   dropRedetection,
@@ -9,6 +10,7 @@ import {
 import { carriedRulings, flagEntryPath, labelLiteral } from '~/server/services/text-scan/flag-sql';
 import {
   getTextScanRedetection,
+  readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
@@ -54,13 +56,50 @@ async function dismissRedetection({
 const stale = () =>
   throwBadRequestError('This re-detection changed or was already resolved. Reload the queue.');
 
+const LOCK_SECONDS = 120;
+const lockKey = (modelId: number, label: TextScanFlagLabel) =>
+  `${REDIS_SYS_KEYS.TEXT_SCAN.REDETECTION_LOCK}:${modelId}:${label}` as const;
+
+// A keep runs for seconds across several writes, and the queue keeps listing the row meanwhile.
+// One resolution per model and label at a time; the lock expires on its own if the process dies.
+// A Redis outage lets the request through: the hash guards still refuse a conflicting ruling.
+async function withResolutionLock<T>(
+  modelId: number,
+  label: TextScanFlagLabel,
+  run: () => Promise<T>
+): Promise<T> {
+  const key = lockKey(modelId, label);
+  const acquired = await sysRedis
+    .set(key, '1', { NX: true, EX: LOCK_SECONDS })
+    .then((reply) => !!reply)
+    .catch(() => true);
+  if (!acquired)
+    throw throwBadRequestError('This re-detection is being resolved. Reload the queue.');
+  try {
+    return await run();
+  } finally {
+    await sysRedis.del(key).catch(() => null);
+  }
+}
+
 /**
  * A moderator's call on a label the scan re-detected after a human had cleared it. Keeping applies
  * the flag exactly as the scan would have (restrictions, snapshot, owner notice) and records the
  * moderator's upheld ruling; dismissing stamps a fresh clear on the re-detected text and tells no one.
  * An appeal the owner still has open is resolved by its own flow, not here.
  */
-export async function resolveTextScanRedetection({
+export function resolveTextScanRedetection(args: {
+  modelId: number;
+  label: TextScanFlagLabel;
+  keep: boolean;
+  /** The re-detected text the moderator was shown; the ruling applies to that and nothing newer. */
+  textHash: string;
+  userId: number;
+}): Promise<RedetectionOutcome> {
+  return withResolutionLock(args.modelId, args.label, () => resolve(args));
+}
+
+async function resolve({
   modelId,
   label,
   keep,
@@ -70,7 +109,6 @@ export async function resolveTextScanRedetection({
   modelId: number;
   label: TextScanFlagLabel;
   keep: boolean;
-  /** The re-detected text the moderator was shown; the ruling applies to that and nothing newer. */
   textHash: string;
   userId: number;
 }): Promise<RedetectionOutcome> {
@@ -81,14 +119,27 @@ export async function resolveTextScanRedetection({
   const detection = model ? getTextScanRedetection(model.meta, label) : null;
   if (!model || !detection || detection.textHash !== textHash) throw stale();
 
-  // The owner's appeal is decided by its own flow; ruling here would leave it open on a moved target.
+  // Any label: the owner's appeal covers the model, and the queue disables its buttons on the same
+  // rule (`hasPendingAppeal` in the moderator app's getRedetectedModels).
   const openAppeal = await dbWrite.appeal.findFirst({
     where: { entityType: EntityType.Model, entityId: modelId, status: AppealStatus.Pending },
     select: { id: true },
   });
   if (openAppeal) throw throwBadRequestError("Resolve the owner's open appeal first.");
 
+  // The label entry was written by a keep of this very detection that did not finish, as opposed to
+  // a flag from another route.
+  const entry = readTextScanFlags(model.meta)[label];
+  const ownEntry =
+    !!entry?.workflowId && entry.workflowId === detection.workflowId && entry.textHash === textHash;
+
   if (!keep) {
+    if (ownEntry)
+      throw throwBadRequestError('A keep of this flag is unfinished. Retry Keep to complete it.');
+    if (model[label]) {
+      if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+      return 'closed';
+    }
     if (!(await dismissRedetection({ modelId, label, textHash, userId }))) throw stale();
     logToAxiom({
       name: 'text-scan',
@@ -102,7 +153,7 @@ export async function resolveTextScanRedetection({
   }
 
   // Flagged by another route since: there is nothing left to apply.
-  if (model[label]) {
+  if (model[label] && !ownEntry) {
     if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
     return 'closed';
   }
@@ -112,7 +163,7 @@ export async function resolveTextScanRedetection({
     workflowId: detection.workflowId,
     reason: detection.reason ?? '',
     textHash,
-    kept: { userId },
+    kept: { userId, resume: model[label] && ownEntry },
   };
   const { written } =
     label === 'poi'
@@ -120,13 +171,17 @@ export async function resolveTextScanRedetection({
       : await flagModelMinor(flag);
   if (!written) throw stale();
 
-  // The flag write dropped the marker once its side effects landed; the upheld ruling lands on the new entry.
-  await stampModelTextScanAppeal({
-    modelId,
-    userId,
-    decision: 'appealUpheld',
-    labels: [label],
-    via: 'moderator',
-  });
+  // Once per keep: a resumed keep may already have recorded it, and re-stamping would push the first
+  // into the history.
+  if (!(ownEntry && entry?.appealUpheld?.textHash === textHash))
+    await stampModelTextScanAppeal({
+      modelId,
+      userId,
+      decision: 'appealUpheld',
+      labels: [label],
+      via: 'moderator',
+    });
+  // Last, so a failure anywhere above leaves the item in the queue to retry.
+  await dropRedetection({ modelId, label, textHash });
   return 'kept';
 }

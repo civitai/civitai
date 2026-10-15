@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type { TextScanOutcome } from '~/server/services/text-scan/types';
 
@@ -56,11 +57,14 @@ db.entityModeration.findUnique.mockImplementation(
     ).rows[0] ?? null) as never
 );
 
-const { mockSetModelMinor, mockCreateNotification, searchMode } = vi.hoisted(() => ({
-  mockSetModelMinor: vi.fn(),
-  mockCreateNotification: vi.fn(),
-  searchMode: { value: 'off' as 'off' | 'shadow' | 'active' },
-}));
+const { mockSetModelMinor, mockSideEffects, mockCreateNotification, searchMode } = vi.hoisted(
+  () => ({
+    mockSetModelMinor: vi.fn(),
+    mockSideEffects: vi.fn(),
+    mockCreateNotification: vi.fn(),
+    searchMode: { value: 'off' as 'off' | 'shadow' | 'active' },
+  })
+);
 // The rollout lives in redis; the helper that maps a mode to its row stays real.
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
@@ -68,7 +72,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
-  applyModelFlagSideEffects: vi.fn(),
+  applyModelFlagSideEffects: mockSideEffects,
 }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
@@ -223,6 +227,7 @@ const resolve = (label: 'minor' | 'poi', keep: boolean, textHash = NEWER) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mockSetModelMinor.mockReset();
+  mockSideEffects.mockReset();
   searchMode.value = 'off';
 });
 
@@ -599,6 +604,218 @@ describe('poi', () => {
       expect.objectContaining({ decision: 'appealGranted', textHash: SCANNED }),
     ]);
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('poi re-detections', () => {
+  const grantPoi = async () =>
+    grantModelTextScanPoi({
+      modelId: MODEL_ID,
+      userId: 3,
+      grantHash: (await loadGrantTextHash('Model', MODEL_ID, 'poi'))!,
+    });
+  const redetectPoi = async () => {
+    await seed({ poi: true, scanHash: SCANNED });
+    await grantPoi();
+    await apply('poi', NEWER);
+    vi.clearAllMocks();
+  };
+  const pendingPoi = async () => (await stored()).meta.textScanFlags.poi.redetected;
+
+  it('a clean scan of different text clears the marker', async () => {
+    await redetectPoi();
+    await clean('poi', 'hash-clean');
+    expect(await pendingPoi()).toBeUndefined();
+  });
+
+  it('the owner reverting to the cleared text clears the marker', async () => {
+    await redetectPoi();
+    await apply('poi', SCANNED);
+    expect(await pendingPoi()).toBeUndefined();
+  });
+
+  it('a second overturn strips the marker and moves the grant it replaces into the history', async () => {
+    await redetectPoi();
+    await holder.db.query(`UPDATE "Model" SET poi = true WHERE id = $1`, [MODEL_ID]);
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 4, grantHash: 'g-second' });
+    const entry = (await stored()).meta.textScanFlags.poi;
+    expect(entry.redetected).toBeUndefined();
+    expect(entry.appealGranted).toMatchObject({ textHash: 'g-second', by: 4 });
+    expect(entry.rulings).toEqual([
+      expect.objectContaining({ decision: 'appealGranted', textHash: SCANNED }),
+    ]);
+  });
+
+  it('dismiss clears the new text and tells nobody', async () => {
+    await redetectPoi();
+    expect(await resolve('poi', false)).toBe('dismissed');
+    const entry = (await stored()).meta.textScanFlags.poi;
+    expect(entry.appealGranted).toMatchObject({ textHash: NEWER, via: 'moderator', by: 9 });
+    expect(entry.redetected).toBeUndefined();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it('refuses a ruling on a hash that moved since the queue loaded', async () => {
+    await redetectPoi();
+    await apply('poi', 'hash-moved');
+    await expect(resolve('poi', true, NEWER)).rejects.toThrow(/changed or was already/);
+    await expect(resolve('poi', false, NEWER)).rejects.toThrow(/changed or was already/);
+    expect((await stored()).poi).toBe(false);
+  });
+
+  it('keep and dismiss on a model flagged by another route only close the marker', async () => {
+    for (const keep of [true, false]) {
+      await redetectPoi();
+      await holder.db.query(`UPDATE "Model" SET poi = true WHERE id = $1`, [MODEL_ID]);
+      expect(await resolve('poi', keep)).toBe('closed');
+      const entry = (await stored()).meta.textScanFlags.poi;
+      expect(entry.redetected).toBeUndefined();
+      expect(entry.appealGranted.textHash).toBe(SCANNED);
+      expect(entry.appealUpheld).toBeUndefined();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(mockSideEffects).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('a keep that fails part-way', () => {
+  it('poi: a retry runs the side effects, notice and ruling that were missed', async () => {
+    await seed({ poi: true, scanHash: SCANNED });
+    await grantModelTextScanPoi({
+      modelId: MODEL_ID,
+      userId: 3,
+      grantHash: (await loadGrantTextHash('Model', MODEL_ID, 'poi'))!,
+    });
+    await apply('poi', NEWER);
+    vi.clearAllMocks();
+    mockSideEffects.mockReset();
+    mockSideEffects.mockRejectedValueOnce(new Error('search index down'));
+
+    await expect(resolve('poi', true)).rejects.toThrow('search index down');
+    // The column is set but nothing propagated, and the item is still in the queue.
+    expect((await stored()).poi).toBe(true);
+    expect((await stored()).meta.textScanFlags.poi.redetected?.textHash).toBe(NEWER);
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+
+    // Neither a dismissal nor a second moderator may treat it as flagged by someone else.
+    await expect(resolve('poi', false)).rejects.toThrow(/unfinished/);
+
+    expect(await resolve('poi', true)).toBe('kept');
+
+    expect(mockSideEffects).toHaveBeenCalledTimes(2);
+    expect(mockSideEffects.mock.calls[1][0]).toMatchObject({
+      before: { poi: false },
+      after: { poi: true },
+    });
+    expect(mockCreateNotification).toHaveBeenCalledTimes(1);
+    const entry = (await stored()).meta.textScanFlags.poi;
+    expect(entry.appealUpheld).toMatchObject({ by: 9, via: 'moderator' });
+    expect(entry.redetected).toBeUndefined();
+    expect(entry.rulings).toHaveLength(1);
+  });
+
+  it('minor: a retry finishes after setModelMinor set the column and then failed', async () => {
+    await seed({ scanHash: SCANNED });
+    await holder.db.query(
+      `UPDATE "Model" SET meta = jsonb_set(meta, '{textScanFlags,minor,appealGranted}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify({ at: 'x', by: 3, textHash: SCANNED, via: 'appeal' }), MODEL_ID]
+    );
+    await apply('minor', NEWER);
+    vi.clearAllMocks();
+    mockSetModelMinor.mockReset();
+    mockSetModelMinor.mockImplementationOnce(async () => {
+      await holder.db.query(`UPDATE "Model" SET minor = true WHERE id = $1`, [MODEL_ID]);
+      throw new Error('fan-out failed');
+    });
+
+    await expect(resolve('minor', true)).rejects.toThrow('fan-out failed');
+    expect((await stored()).minor).toBe(true);
+    expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(NEWER);
+
+    expect(await resolve('minor', true)).toBe('kept');
+
+    expect(mockSetModelMinor).toHaveBeenCalledTimes(2);
+    expect(mockSetModelMinor.mock.calls[1][0]).toMatchObject({
+      minor: true,
+      reapplySideEffects: true,
+    });
+    expect(mockCreateNotification).toHaveBeenCalledTimes(1);
+    const entry = (await stored()).meta.textScanFlags.minor;
+    expect(entry.appealUpheld).toMatchObject({ by: 9 });
+    expect(entry.redetected).toBeUndefined();
+    expect(entry.rulings).toHaveLength(1);
+  });
+});
+
+describe('resolution safety', () => {
+  const setup = async () => {
+    await seed({ scanHash: SCANNED });
+    await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealGranted',
+      labels: ['minor'],
+      grantHashes: { minor: SCANNED },
+    });
+    await apply('minor', NEWER);
+    vi.clearAllMocks();
+    mockSetModelMinor.mockReset();
+  };
+
+  it('refuses a request while another resolution of the same label runs', async () => {
+    await setup();
+    redisMock.sysRedis.set.mockResolvedValueOnce(null as never);
+
+    await expect(resolve('minor', true)).rejects.toThrow(/being resolved/);
+
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+    expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(NEWER);
+  });
+
+  it('takes a per-model, per-label lock and releases it, even when the ruling fails', async () => {
+    await setup();
+    await resolve('minor', false);
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+      `system:text-scan:redetection-lock:${MODEL_ID}:minor`,
+      '1',
+      { NX: true, EX: 120 }
+    );
+    expect(redisMock.sysRedis.del).toHaveBeenCalledWith(
+      `system:text-scan:redetection-lock:${MODEL_ID}:minor`
+    );
+
+    redisMock.sysRedis.del.mockClear();
+    await expect(resolve('minor', false)).rejects.toThrow();
+    expect(redisMock.sysRedis.del).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      'another model',
+      async () =>
+        holder.db.query(
+          `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Model', 999, 'Pending')`
+        ),
+    ],
+    [
+      'a decided appeal on this model',
+      async () =>
+        holder.db.query(
+          `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Model', ${MODEL_ID}, 'Approved')`
+        ),
+    ],
+    [
+      'a pending appeal on another entity type',
+      async () =>
+        holder.db.query(
+          `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Bounty', ${MODEL_ID}, 'Pending')`
+        ),
+    ],
+  ])('does not block on %s', async (_name, insert) => {
+    await setup();
+    await insert();
+    expect(await resolve('minor', false)).toBe('dismissed');
   });
 });
 

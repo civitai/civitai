@@ -73,7 +73,7 @@ const verdictRowField = (field: 'promptIds' | 'model', workflowId: string) => Pr
 
 // The scan flags only past a clean slate. A moderator keeping a re-detection flags over the
 // grant, but only for the text the moderator was shown, and never for the text the grant covers.
-// A retry after a failed side effect finds the grant already moved into the history, so none is required.
+// Resuming a keep whose side effects failed skips this guard: that flag write already happened.
 const flagGuard = (label: TextScanFlagLabel, keptHash: string | null) =>
   keptHash
     ? Prisma.sql`${flagEntryPath(label)}->'redetected'->>'textHash' = ${keptHash}
@@ -81,8 +81,8 @@ const flagGuard = (label: TextScanFlagLabel, keptHash: string | null) =>
     : Prisma.sql`${flagEntryPath(label)}->'appealGranted' IS NULL
         AND NOT (${labelLiteral(label)} = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`;
 
-// The flag a moderator keeps carries the marker until its side effects have landed, so a failure
-// leaves the item in the queue to retry.
+// The flag a moderator keeps carries the marker until the whole keep has landed (the caller drops it
+// last), so a failure leaves the item in the queue and a retry finishes it.
 const keptMarker = (label: TextScanFlagLabel, kept: boolean) =>
   kept
     ? Prisma.sql`jsonb_build_object('redetected', ${flagEntryPath(label)}->'redetected')`
@@ -163,7 +163,11 @@ export type FlagResult = { written: boolean; notified: boolean; redetected?: boo
 const NOT_FLAGGED: FlagResult = { written: false, notified: false };
 
 /** Set when a moderator keeps a re-detection: the flag lands over the grant and is theirs. */
-export type KeptRedetection = { userId: number };
+export type KeptRedetection = {
+  userId: number;
+  /** The flag is already written by an earlier attempt of this same keep: finish what it did not. */
+  resume?: boolean;
+};
 
 async function recordRedetection({
   modelId,
@@ -247,6 +251,44 @@ export async function applyModelPoiMinor({
   return { notified };
 }
 
+// A keep that died after the flag UPDATE left `poi` set but its side effects undone. The pre-flag
+// state the side effects diff against is the snapshot the flag write recorded on the entry.
+async function resumedPoi(modelId: number, meta: Prisma.JsonValue) {
+  const after = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      userId: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!after) throw new Error(`Model ${modelId} vanished while resuming its poi flag`);
+  const prev = readTextScanFlags(meta).poi?.prev;
+  const gallery = (after.gallerySettings ?? {}) as Record<string, unknown>;
+  const prior = {
+    userId: after.userId,
+    poi: false,
+    minor: after.minor,
+    name: after.name,
+    nsfw: prev?.nsfw ?? after.nsfw,
+    sfwOnly: prev?.sfwOnly ?? after.sfwOnly,
+    gallerySettings: (prev
+      ? { ...gallery, level: prev.galleryLevel ?? undefined }
+      : after.gallerySettings) as Prisma.JsonValue,
+    lockedProperties: prev?.lockedProperties ?? after.lockedProperties,
+    meta,
+  };
+  return { prior, after: after as ModelFlagRow };
+}
+
 export async function flagModelPoi({
   modelId,
   workflowId,
@@ -276,7 +318,7 @@ export async function flagModelPoi({
       meta: true,
     },
   });
-  if (!before || before.poi) return NOT_FLAGGED;
+  if (!before || (before.poi && !kept?.resume)) return NOT_FLAGGED;
   if (!kept) {
     const action = classifyDetection('poi', before, textHash);
     if (action === 'skip') {
@@ -298,7 +340,11 @@ export async function flagModelPoi({
   }
 
   const entry = JSON.stringify(buildTextScanFlagEntry({ workflowId, reason, names, textHash }));
-  const [after] = await dbWrite.$queryRaw<ModelFlagRow[]>`
+  let prior = before;
+  let after: ModelFlagRow | undefined;
+  if (kept?.resume) ({ prior, after } = await resumedPoi(modelId, before.meta));
+  else
+    [after] = await dbWrite.$queryRaw<ModelFlagRow[]>`
     UPDATE "Model" m
     SET poi = TRUE,
         nsfw = FALSE,
@@ -311,9 +357,9 @@ export async function flagModelPoi({
         meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
           ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
             'poi', ${entry}::jsonb || ${carriedRulings('poi')} || ${keptMarker(
-    'poi',
-    !!kept
-  )} || jsonb_build_object(
+      'poi',
+      !!kept
+    )} || jsonb_build_object(
               'at', now(),
               'promptIds', ${verdictRowField('promptIds', workflowId)},
               'model', ${verdictRowField('model', workflowId)},
@@ -335,8 +381,8 @@ export async function flagModelPoi({
   if (!after) return NOT_FLAGGED;
 
   const { applyModelFlagSideEffects } = await loadModelService();
-  await applyModelFlagSideEffects({ before, after });
-  if (before.nsfw) await updateModelNsfwLevels([modelId]);
+  await applyModelFlagSideEffects({ before: prior, after });
+  if (prior.nsfw) await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);
 
   await new Tracker()
@@ -344,12 +390,12 @@ export async function flagModelPoi({
       diffEntityChanges({
         entityType: 'Model',
         entityId: modelId,
-        ownerId: before.userId,
+        ownerId: prior.userId,
         before: {
-          poi: before.poi,
-          nsfw: before.nsfw,
-          sfwOnly: before.sfwOnly,
-          lockedProperties: before.lockedProperties,
+          poi: prior.poi,
+          nsfw: prior.nsfw,
+          sfwOnly: prior.sfwOnly,
+          lockedProperties: prior.lockedProperties,
         },
         after: {
           poi: after.poi,
@@ -372,7 +418,6 @@ export async function flagModelPoi({
     )
     .catch(() => null);
 
-  if (kept) await dropRedetection({ modelId, label: 'poi', textHash });
   const notified = await notifyModelOwner({
     modelId,
     modelName: after.name,
@@ -408,7 +453,7 @@ export async function flagModelMinor({
     where: { id: modelId },
     select: { userId: true, name: true, minor: true, lockedProperties: true, meta: true },
   });
-  if (!model || model.minor) return NOT_FLAGGED;
+  if (!model || (model.minor && !kept?.resume)) return NOT_FLAGGED;
   if (!kept) {
     const action = classifyDetection('minor', model, textHash);
     if (action === 'skip') {
@@ -429,14 +474,17 @@ export async function flagModelMinor({
   }
 
   const entry = JSON.stringify(buildTextScanFlagEntry({ workflowId, reason, textHash }));
-  const written = await dbWrite.$executeRaw`
+  // A resumed keep already wrote the entry; only setModelMinor's work onwards is outstanding.
+  const written = kept?.resume
+    ? 1
+    : await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
         'minor', ${entry}::jsonb || ${carriedRulings('minor')} || ${keptMarker(
-    'minor',
-    !!kept
-  )} || jsonb_build_object(
+        'minor',
+        !!kept
+      )} || jsonb_build_object(
           'at', now(),
           'promptIds', ${verdictRowField('promptIds', workflowId)},
           'model', ${verdictRowField('model', workflowId)}
@@ -456,9 +504,9 @@ export async function flagModelMinor({
     userId: kept?.userId ?? SYSTEM_USER_ID,
     activity: 'setMinorTextScan',
     ...(kept && { isModerator: true }),
+    ...(kept?.resume && { reapplySideEffects: true }),
   });
 
-  if (kept) await dropRedetection({ modelId, label: 'minor', textHash });
   const notified = await notifyModelOwner({
     modelId,
     modelName: model.name,

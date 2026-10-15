@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -76,5 +77,14 @@ describe('minorFlag.resolveRedetection', () => {
   it('rejects a ruling that does not name the text it was made on', async () => {
     expect(await call({ modelId: 42, label: 'minor', keep: true })).toBe(400);
     expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it('answers a refusal from the service with a client error, not a 500', async () => {
+    mockResolve.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'being resolved' })
+    );
+    const status = await call({ modelId: 42, label: 'minor', keep: true, textHash: 'h-1' });
+    expect(status).toBeGreaterThanOrEqual(400);
+    expect(status).toBeLessThan(500);
   });
 });
