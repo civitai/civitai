@@ -1,3 +1,12 @@
+import {
+  SERVICE_DEAL_CANCELLATION_REASON_CODES,
+  SERVICE_DEAL_DECLINE_REASON_CODES,
+  SERVICE_DEAL_DISPUTE_REASON_CODES,
+} from '~/shared/constants/creator-services.constants';
+import type {
+  ServiceDealCancellationReasonCode,
+  ServiceDealReasonCode,
+} from '~/shared/constants/creator-services.constants';
 import type { DealAction } from '~/shared/utils/creator-service-deal-view';
 import type { ServiceDealStatus } from '~/shared/utils/prisma/enums';
 
@@ -225,3 +234,152 @@ export function disputeNotice(deal: {
     ? 'This deal is held for moderator review. The Buzz stays held until they resolve it.'
     : 'This deal is in dispute and with our moderators. The Buzz stays held until they resolve it.';
 }
+
+export const reasonCodeLabel: Record<ServiceDealReasonCode, string> = {
+  too_busy: 'Too busy right now',
+  out_of_scope: 'Outside what I offer',
+  price_or_terms: 'Price or terms',
+  not_delivered: 'Not delivered',
+  quality: 'Quality problems',
+  changed_mind: 'Changed my mind',
+  buyer_unresponsive: 'Buyer not responding',
+  cannot_complete: "Can't complete it",
+  files_missing_or_broken: 'Files missing or broken',
+  not_as_previewed: 'Not what the preview showed',
+  other: 'Other',
+};
+
+const codeOptions = (codes: readonly ServiceDealReasonCode[]) =>
+  codes.map((value) => ({ value, label: reasonCodeLabel[value] }));
+
+export const declineCodeOptions = codeOptions(SERVICE_DEAL_DECLINE_REASON_CODES);
+export const disputeCodeOptions = codeOptions(SERVICE_DEAL_DISPUTE_REASON_CODES);
+
+/**
+ * Cancellation reasons offered to each side. The server takes any of them from either party;
+ * the picker shows the ones that party could mean, so a seller is never offered "Changed my mind".
+ */
+const CANCELLATION_CODES_BY_ROLE: Record<'buyer' | 'seller', ServiceDealCancellationReasonCode[]> =
+  {
+    buyer: ['not_delivered', 'quality', 'changed_mind', 'other'],
+    seller: ['buyer_unresponsive', 'cannot_complete', 'other'],
+  };
+
+export const cancellationCodeOptions = (role: 'buyer' | 'seller') =>
+  codeOptions(
+    SERVICE_DEAL_CANCELLATION_REASON_CODES.filter((code) =>
+      CANCELLATION_CODES_BY_ROLE[role].includes(code)
+    )
+  );
+
+/**
+ * What a reason form sends. A muted viewer's text is never sent: the server would drop it, and the
+ * form never shows them a box. Empty values are left out rather than sent as "".
+ */
+export function reasonFormValues({
+  muted,
+  text,
+  code,
+}: {
+  muted: boolean;
+  text: string;
+  code: string | null;
+}) {
+  const trimmed = muted ? '' : text.trim();
+  return { text: trimmed || undefined, code: code ?? undefined };
+}
+
+/**
+ * How a reason form marks what it needs. An asterisk goes on a field only when it is the one way
+ * to meet the requirement: the picker for a muted viewer (no text box), the text box when there
+ * is no picker. With both, either meets it, so neither is starred and the hint says so.
+ */
+export function reasonFormLabels({
+  required,
+  hasCodes,
+  muted,
+}: {
+  required: boolean;
+  hasCodes: boolean;
+  muted: boolean;
+}) {
+  return {
+    codeRequired: required && hasCodes && muted,
+    codeClearable: !(required && hasCodes && muted),
+    textRequired: required && !hasCodes,
+    textLabel: !required
+      ? 'Comment (optional)'
+      : hasCodes
+      ? 'Details (optional if you picked a reason)'
+      : 'Reason',
+    hint: required && hasCodes && !muted ? 'Pick a reason, add details, or both.' : undefined,
+  };
+}
+
+/** A reason form can be sent when nothing is required, or the text or a picked code gives one. */
+export function textActionReady({
+  required,
+  text,
+  code,
+  hasCodes,
+}: {
+  required: boolean;
+  text: string;
+  code: string | null;
+  hasCodes: boolean;
+}) {
+  if (!required) return true;
+  return !!text || (hasCodes && !!code);
+}
+
+/** The label for a stored reason code, or null for none or one this client doesn't know. */
+export const reasonLabel = (code: string | null | undefined) =>
+  code && Object.hasOwn(reasonCodeLabel, code)
+    ? reasonCodeLabel[code as ServiceDealReasonCode]
+    : null;
+
+/**
+ * What the other side gave as their reason for asking to cancel: the code of the latest request
+ * and its text, either of which may be missing (a muted party has no text).
+ */
+export function cancellationReasonLine(deal: {
+  cancellation: { reason: string | null } | null;
+  events: { type: string; reasonCode: string | null }[];
+}) {
+  const latest = deal.events.filter((event) => event.type === 'CancellationRequested').at(-1);
+  const code = reasonLabel(latest?.reasonCode);
+  const text = deal.cancellation?.reason;
+  if (code && text) return `Their reason: ${code}. "${text}"`;
+  if (code) return `Their reason: ${code}.`;
+  if (text) return `Their reason: "${text}"`;
+  return undefined;
+}
+
+const inList = <T extends string>(list: readonly T[], code: string | undefined) =>
+  code !== undefined && (list as readonly string[]).includes(code) ? (code as T) : undefined;
+
+/**
+ * The inputs each exit sends. A code is sent only if it belongs to that action's list, so a code
+ * picked for one action can never reach another's schema.
+ */
+export const exitInputs = {
+  decline: (id: number, text: string | undefined, code: string | undefined) => ({
+    id,
+    reason: text,
+    reasonCode: inList(SERVICE_DEAL_DECLINE_REASON_CODES, code),
+  }),
+  requestCancellation: (id: number, text: string | undefined, code: string | undefined) => ({
+    id,
+    reason: text,
+    reasonCode: inList(SERVICE_DEAL_CANCELLATION_REASON_CODES, code),
+  }),
+  openDispute: (id: number, text: string | undefined, code: string | undefined) => ({
+    id,
+    reason: text,
+    reasonCode: inList(SERVICE_DEAL_DISPUTE_REASON_CODES, code),
+  }),
+};
+
+/** Which side's cancellation reasons a viewer is offered. */
+export const cancellationSide = (viewerRole: 'buyer' | 'seller' | 'moderator') =>
+  viewerRole === 'seller' ? ('seller' as const) : ('buyer' as const);
