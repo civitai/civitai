@@ -145,6 +145,8 @@ async function accepted(previewKind = 'Image') {
   const { id } = await deals.requestServiceDeal({
     offeringId: 1,
     expectedPrice: 500,
+    expectedRevisionsIncluded: 1,
+    expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
     buzzType: 'yellow',
@@ -260,6 +262,8 @@ describe('requesting an upload', () => {
         const { id } = await deals.requestServiceDeal({
           offeringId: 1,
           expectedPrice: 500,
+          expectedRevisionsIncluded: 1,
+          expectedDeliveryDays: 3,
           buyerId: BUYER,
           requestText: 'please',
           buzzType: 'yellow',
