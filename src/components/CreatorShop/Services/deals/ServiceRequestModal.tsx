@@ -1,10 +1,11 @@
 import { Anchor, Button, Group, Modal, Paper, Stack, Text, Textarea } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
 import { isConflict } from '~/components/CreatorShop/Services/deals/deal.util';
+import { requestSentMessage } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useDomainColor } from '~/hooks/useDomainColor';
@@ -26,15 +27,20 @@ export function ServiceRequestModal({
   const domain = useDomainColor();
   const utils = trpc.useUtils();
   const [text, setText] = useState('');
+  // Each request is a separate hold, so a second click must never fire before the first settles.
+  const inFlight = useRef(false);
 
   const request = trpc.creatorServiceDeal.request.useMutation({
-    onSuccess: async ({ id }) => {
+    onSettled: () => {
+      inFlight.current = false;
+    },
+    onSuccess: async ({ id, held }) => {
       await utils.creatorService.getForShop.invalidate();
       showSuccessNotification({
         title: 'Request sent',
         message: (
           <Text size="sm">
-            Your Buzz is held until the deal completes.{' '}
+            {requestSentMessage(held)}{' '}
             <Anchor component={NextLink} href="/services/deals" inherit>
               See your service requests
             </Anchor>
@@ -101,13 +107,15 @@ export function ServiceRequestModal({
             color="yellow"
             disabled={!trimmed}
             loading={request.isPending}
-            onClick={() =>
+            onClick={() => {
+              if (inFlight.current) return;
+              inFlight.current = true;
               request.mutate({
                 offeringId: offering.id,
                 expectedPrice: offering.price,
                 requestText: trimmed,
-              })
-            }
+              });
+            }}
           >
             Send request · hold {offering.price.toLocaleString()} Buzz
           </Button>

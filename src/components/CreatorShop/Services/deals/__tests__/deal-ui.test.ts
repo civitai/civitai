@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dealButtons,
   dealEscrowState,
   dealPageState,
   escrowCopy,
+  requestSentMessage,
   visibleDealActions,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -91,6 +93,16 @@ describe('escrow state', () => {
     expect(dealEscrowState({ status: 'Requested', held: true, settled: false })).toBe('held');
   });
 
+  it('never says a refund is coming for a deal that was never charged', () => {
+    for (const status of ['Declined', 'Expired', 'Cancelled'] as const)
+      expect(dealEscrowState({ status, held: false, settled: false })).toBe('closedUncharged');
+  });
+
+  it('calls the request held in its toast only when the hold is confirmed', () => {
+    expect(requestSentMessage(false)).not.toMatch(/held/i);
+    expect(requestSentMessage(true)).toMatch(/held/i);
+  });
+
   it('reports a closed-without-completing deal as refund pending, then refunded', () => {
     for (const status of ['Declined', 'Expired', 'Cancelled'] as const) {
       expect(dealEscrowState({ status, held: true, settled: false })).toBe('refundPending');
@@ -112,5 +124,18 @@ describe('deal page routes with the flag off', () => {
     expect(
       resolveServiceDealsListPage({ ...signedIn, features: { creatorServices: true } })
     ).toEqual({ props: {} });
+  });
+});
+
+describe('deal page buttons', () => {
+  it('drops a primary the flag filter removed, so accept never renders with the flag off', () => {
+    const d = { actions: ['accept', 'decline'] as const, primaryAction: 'accept' as const };
+    expect(dealButtons({ ...d, actions: [...d.actions] }, { servicesEnabled: false })).toEqual([
+      { action: 'decline', primary: false },
+    ]);
+    expect(dealButtons({ ...d, actions: [...d.actions] }, { servicesEnabled: true })).toEqual([
+      { action: 'accept', primary: true },
+      { action: 'decline', primary: false },
+    ]);
   });
 });

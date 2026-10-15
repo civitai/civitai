@@ -1,6 +1,9 @@
 import { Badge, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { dealStatusLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
+import {
+  dealStatusLabel,
+  visibleDealActions,
+} from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { formatDate } from '~/utils/date-helpers';
@@ -52,7 +55,7 @@ export function ServiceDealsList({
                 <Text fw={600} lineClamp={1}>
                   {deal.offering.title}
                 </Text>
-                {deal.actions.length > 0 ? (
+                {visibleDealActions(deal.actions, { servicesEnabled: true }).length > 0 ? (
                   <Badge color="yellow" variant="light" radius="sm">
                     Awaiting you
                   </Badge>

@@ -29,6 +29,24 @@ export function visibleDealActions(
   );
 }
 
+/** The buttons the deal page shows, in order. The primary is dropped if the filter removed it. */
+export function dealButtons(
+  deal: { actions: DealAction[]; primaryAction: DealAction | null },
+  { servicesEnabled }: { servicesEnabled: boolean }
+) {
+  const actions = visibleDealActions(deal.actions, { servicesEnabled });
+  const primary =
+    deal.primaryAction && actions.includes(deal.primaryAction) ? deal.primaryAction : null;
+  const ordered = primary ? [primary, ...actions.filter((a) => a !== primary)] : actions;
+  return ordered.map((action) => ({ action, primary: action === primary }));
+}
+
+/** The request toast. Only a confirmed hold may be called held. */
+export const requestSentMessage = (held: boolean) =>
+  held
+    ? 'Your Buzz is held until the deal completes.'
+    : "We're confirming your payment; the seller can accept once it's confirmed.";
+
 export type DealPageState = { kind: 'loading' } | { kind: 'notFound' } | { kind: 'deal' };
 
 /**
@@ -46,20 +64,29 @@ export function dealPageState({
   return hasDeal ? { kind: 'deal' } : { kind: 'notFound' };
 }
 
-export type EscrowState = 'confirming' | 'held' | 'refundPending' | 'refunded' | 'released';
+export type EscrowState =
+  | 'confirming'
+  | 'held'
+  | 'closedUncharged'
+  | 'refundPending'
+  | 'refunded'
+  | 'released';
 
 const REFUND_STATUSES: ServiceDealStatus[] = ['Declined', 'Expired', 'Cancelled'];
 
 /**
- * Never says "held" until the hold is confirmed. A refund-bound deal whose hold never confirmed
- * is still "refund pending": a charge that lands late is found and returned.
+ * Never says "held" until the hold is confirmed. A closed deal whose hold never confirmed took no
+ * Buzz; the server still looks for a charge that lands late and returns it.
  */
 export function dealEscrowState(deal: {
   status: ServiceDealStatus;
   held: boolean;
   settled: boolean;
 }): EscrowState {
-  if (REFUND_STATUSES.includes(deal.status)) return deal.settled ? 'refunded' : 'refundPending';
+  if (REFUND_STATUSES.includes(deal.status)) {
+    if (deal.settled) return 'refunded';
+    return deal.held ? 'refundPending' : 'closedUncharged';
+  }
   if (deal.status === 'Completed') return deal.settled ? 'released' : 'held';
   return deal.held ? 'held' : 'confirming';
 }
@@ -75,9 +102,14 @@ export const escrowCopy: Record<EscrowState, { title: string; body: string; colo
     body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is cancelled.',
     color: 'yellow',
   },
+  closedUncharged: {
+    title: 'Closed, nothing charged',
+    body: 'This deal closed before the payment was confirmed, so no Buzz was taken. If a charge turns up late, it is returned automatically.',
+    color: 'gray',
+  },
   refundPending: {
     title: 'Refund on its way',
-    body: 'This deal closed without completing. Any Buzz taken for it is being returned to the buyer.',
+    body: 'This deal closed without completing. The Buzz held for it is being returned to the buyer.',
     color: 'red',
   },
   refunded: {

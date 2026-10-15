@@ -1,23 +1,17 @@
 import { Button, Group, Paper, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import {
-  dealActionLabel,
-  visibleDealActions,
-} from '~/components/CreatorShop/Services/deals/deal-ui';
+import { dealActionLabel, dealButtons } from '~/components/CreatorShop/Services/deals/deal-ui';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDealMutations } from '~/components/CreatorShop/Services/deals/deal.util';
 import { DealTextActionModal } from '~/components/CreatorShop/Services/deals/DealTextActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { DealAction } from '~/shared/utils/creator-service-deal-view';
 
 export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
   const features = useFeatureFlags();
   const mutations = useServiceDealMutations(deal.id);
-  const actions = visibleDealActions(deal.actions, {
-    servicesEnabled: !!features.creatorServices,
-  });
-  if (actions.length === 0) return null;
+  const buttons = dealButtons(deal, { servicesEnabled: !!features.creatorServices });
+  if (buttons.length === 0) return null;
 
   const id = deal.id;
   const confirm = (title: string, body: string, onConfirm: () => void, danger = false) =>
@@ -94,22 +88,16 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
       }),
   };
 
-  const primary =
-    deal.primaryAction && actions.includes(deal.primaryAction) ? deal.primaryAction : null;
-  const ordered: DealAction[] = primary
-    ? [primary, ...actions.filter((action) => action !== primary)]
-    : actions;
-
   return (
     <Paper withBorder radius="md" p="md">
       <Stack gap="sm">
         <Text fw={600}>Your move</Text>
         <Group gap="sm">
-          {ordered.map((action) => (
+          {buttons.map(({ action, primary }) => (
             <Button
               key={action}
-              color={action === primary ? 'yellow' : 'gray'}
-              variant={action === primary ? 'filled' : 'light'}
+              color={primary ? 'yellow' : 'gray'}
+              variant={primary ? 'filled' : 'light'}
               onClick={run[action]}
             >
               {dealActionLabel[action]}
