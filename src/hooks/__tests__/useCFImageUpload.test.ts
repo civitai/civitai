@@ -15,6 +15,7 @@ vi.mock('~/utils/media-preprocessors', () => ({
   preprocessFile: vi.fn(async () => ({
     type: 'image',
     objectUrl: 'blob:fake-object-url',
+    mimeType: 'image/jpeg',
     meta: {},
     metadata: { width: 64, height: 48, hash: 'LKO2' },
   })),
@@ -182,6 +183,10 @@ describe('useCFImageUpload — the tracked file must not lie about a refused PUT
       id: UPLOAD_ID,
       objectUrl: 'blob:fake-object-url',
       type: 'image',
+      width: 64,
+      height: 48,
+      hash: 'LKO2',
+      mimeType: 'image/jpeg',
     });
     h.unmount();
   });
@@ -243,6 +248,10 @@ describe('useCFImageUpload — the tracked file must not lie about a refused PUT
       id: UPLOAD_ID,
       objectUrl: 'blob:fake-object-url',
       type: 'image',
+      width: 64,
+      height: 48,
+      hash: 'LKO2',
+      mimeType: 'image/jpeg',
     });
     h.unmount();
   });

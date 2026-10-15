@@ -33,7 +33,7 @@ type UploadResult = {
   type: MediaType;
   width: number;
   height: number;
-  hash: string;
+  hash?: string;
   mimeType: string;
 };
 
