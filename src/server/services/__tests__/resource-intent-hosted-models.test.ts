@@ -14,26 +14,42 @@ import {
 } from '~/shared/constants/hosted-model-catalog.constants';
 
 describe('hosted model catalog integrity', () => {
-  it('pins the operator-approved entries, in ranking order', () => {
+  it('pins the operator-approved entries in ranking order: key, model, capabilities, mature support', () => {
     expect(
-      HOSTED_MODEL_CATALOG.map((e) => [ecosystemById.get(e.ecosystemId)?.key, e.modelId])
+      HOSTED_MODEL_CATALOG.map((e) => [
+        ecosystemById.get(e.ecosystemId)?.key,
+        e.modelId,
+        e.capabilities,
+        e.matureSupport,
+      ])
     ).toEqual([
-      ['OpenAI', 1532032],
-      ['NanoBanana', 1903424],
-      ['Imagen4', 1669468],
-      ['Seedream', 1951069],
-      ['Grok', 2435474],
-      ['MAI', 2673730],
-      ['MuseImage', 2909814],
-      ['Reve', 2781889],
-      ['Ideogram', 2872974],
-      ['Ming', 2961930],
-      ['WanImage27', 2516180],
-      ['Flux3', 2839203],
-      ['Ernie', 2548387],
-      ['Lens', 2655865],
-      ['MageFlow', 2812690],
-      ['HiDream-O1', 2618495],
+      ['OpenAI', 1532032, ['legible_text', 'image_editing'], null],
+      ['NanoBanana', 1903424, ['character_consistency', 'image_editing'], false],
+      ['Imagen4', 1669468, ['photoreal', 'legible_text'], null],
+      ['Seedream', 1951069, ['high_resolution', 'legible_text'], null],
+      ['Grok', 2435474, ['reference_images'], null],
+      ['MAI', 2673730, ['photoreal', 'legible_text', 'image_editing'], null],
+      ['MuseImage', 2909814, ['image_editing', 'reference_images'], null],
+      ['Reve', 2781889, ['design_layout', 'high_resolution', 'legible_text'], null],
+      [
+        'Ideogram',
+        2872974,
+        ['legible_text', 'design_layout', 'image_editing', 'reference_images'],
+        false,
+      ],
+      ['Ming', 2961930, ['design_layout', 'legible_text', 'transparent_background'], null],
+      ['WanImage27', 2516180, ['legible_text', 'design_layout', 'image_editing'], null],
+      ['Flux3', 2839203, ['image_editing'], null],
+      // No source claim for these two maps to a tag, so no `needs` can return them.
+      ['Ernie', 2548387, [], null],
+      ['Lens', 2655865, [], null],
+      ['MageFlow', 2812690, ['image_editing', 'high_resolution'], null],
+      [
+        'HiDream-O1',
+        2618495,
+        ['image_editing', 'reference_images', 'character_consistency', 'high_resolution'],
+        null,
+      ],
     ]);
   });
 
@@ -59,14 +75,15 @@ describe('hosted model catalog integrity', () => {
     }
   });
 
-  it('🔴 matureSupport is false exactly where a base model of the ecosystem restricts mature levels', () => {
-    for (const e of HOSTED_MODEL_CATALOG) {
-      const restricted = getBaseModelsByEcosystemId(e.ecosystemId).some(
+  it('🔴 a licence that restricts mature levels always means matureSupport false', () => {
+    const restricted = HOSTED_MODEL_CATALOG.filter((e) =>
+      getBaseModelsByEcosystemId(e.ecosystemId).some(
         (bm) => getRestrictedNsfwLevelsForBaseModel(bm.name).length > 0
-      );
-      if (restricted) expect(e.matureSupport, e.name).toBe(false);
-      if (e.matureSupport === false) expect(restricted, e.name).toBe(true);
-    }
+      )
+    );
+    // Positive control: the licence data does flag one of the catalog's ecosystems.
+    expect(restricted.map((e) => e.modelId)).toEqual([2872974]);
+    for (const e of restricted) expect(e.matureSupport, e.name).toBe(false);
   });
 });
 
@@ -158,16 +175,13 @@ describe('matchHostedModels', () => {
     });
   });
 
-  it('against the real catalog: mature mode returns only entries known to support it', () => {
-    const supported = new Set(
-      HOSTED_MODEL_CATALOG.filter((e) => e.matureSupport === true).map((e) => e.modelId)
-    );
+  it('against the real catalog: no entry is known to support mature content, so mature mode is empty', () => {
     for (const need of HOSTED_MODEL_CAPABILITIES) {
-      for (const id of ids(matchHostedModels([need], MATURE))) expect(supported.has(id)).toBe(true);
+      expect(matchHostedModels([need], MATURE), need).toEqual([]);
     }
     // Ideogram (false) is eligible on a SFW ceiling.
     expect(ids(matchHostedModels(['legible_text', 'design_layout'], SFW))).toEqual([
-      2673730, 2781889, 2872974,
+      2781889, 2872974, 2961930,
     ]);
   });
 });

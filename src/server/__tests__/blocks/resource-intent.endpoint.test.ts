@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { HOSTED_MODEL_CAPABILITIES } from '~/shared/constants/hosted-model-catalog.constants';
 
 import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
+import type * as RegionBlocking from '~/server/utils/region-blocking';
 
 /**
  * Endpoint-contract tests for POST /api/v1/blocks/resource-intent.
@@ -53,6 +55,13 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
 
 vi.mock('~/server/services/resource-intent.service', () => ({
   getResourceIntent: (...args: unknown[]) => mockGetResourceIntent(...(args as [])),
+}));
+
+// The restricted-region list is read from env at module load, so a region case pins it here.
+const mockIsRegionRestricted = vi.fn<(region: unknown) => boolean>(() => false);
+vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
+  ...(await importOriginal<typeof RegionBlocking>()),
+  isRegionRestricted: (region: unknown) => mockIsRegionRestricted(region),
 }));
 
 const handler = (await import('~/pages/api/v1/blocks/resource-intent')).default;
@@ -118,6 +127,7 @@ beforeEach(() => {
   mockGetFeatureFlags.mockReturnValue({ resourceIntentJev: true });
   mockCheckBlockLLMRateLimit.mockResolvedValue({ allowed: true });
   mockGetResourceIntent.mockResolvedValue(SERVICE_RESULT);
+  mockIsRegionRestricted.mockReturnValue(false);
 });
 
 describe('the auth/clamp mirror with generation-resources.ts', () => {
@@ -342,7 +352,7 @@ describe('needs → hostedModels', () => {
       body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
     });
     const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
-    expect(hosted.map((h) => h.key)).toEqual(['MAI', 'Reve', 'Ideogram']);
+    expect(hosted.map((h) => h.key)).toEqual(['Reve', 'Ideogram', 'Ming']);
   });
 
   it('🔴 a mature ceiling drops entries not known to support mature content', async () => {
@@ -367,6 +377,37 @@ describe('needs → hostedModels', () => {
     }
     expect(mockCheckBlockLLMRateLimit).not.toHaveBeenCalled();
     expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a restricted region turns a mature token into a SFW ceiling for the hosted list too', async () => {
+    mockIsRegionRestricted.mockReturnValue(true);
+    const { res } = await call({
+      body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
+    });
+    expect(mockIsRegionRestricted).toHaveBeenCalled();
+    expect(res.body).toMatchObject({ maturity: { browsingLevel: 3, sfwOnly: true } });
+    const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
+    expect(hosted.map((h) => h.key)).toEqual(['Reve', 'Ideogram', 'Ming']);
+  });
+
+  it('accepts every capability once (8) and refuses a ninth', async () => {
+    const all = [...HOSTED_MODEL_CAPABILITIES];
+    expect(all).toHaveLength(8);
+    expect((await call({ body: { ...VALID_BODY, needs: all } })).res.statusCode).toBe(200);
+    const nine = await call({ body: { ...VALID_BODY, needs: [...all, 'photoreal'] } });
+    expect(nine.res.statusCode).toBe(400);
+  });
+
+  it('needs is stripped on the checkpoint path too', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentJev: true,
+      resourceIntentCheckpoint: true,
+    });
+    const body = { ...VALID_BODY, kind: 'checkpoint', needs: ['photoreal'] };
+    const { res } = await call({ __claims: { ...CLAIMS, maxBrowsingLevel: 3 }, body });
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual({ ...VALID_BODY, kind: 'checkpoint' });
+    const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
+    expect(hosted.map((h) => h.key)).toEqual(['Imagen4', 'MAI']);
   });
 
   it('a degraded primitive response still carries the hosted list', async () => {

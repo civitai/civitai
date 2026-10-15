@@ -28,9 +28,10 @@ export type HostedModelCatalogEntry = {
   goodAt: string;
   capabilities: readonly HostedModelCapability[];
   /**
-   * Whether the model can produce mature output. `false` only where the base model's licence
-   * restricts mature levels (`getRestrictedNsfwLevelsForBaseModel`); `null` where nothing in this
-   * codebase says either way. Mature-mode callers get only `true` entries.
+   * Whether the model can produce mature output. `false` where the base model's licence restricts
+   * mature levels (`getRestrictedNsfwLevelsForBaseModel`) or this codebase records that the provider
+   * refuses mature requests; `null` where nothing here says either way. Mature-mode callers get only
+   * `true` entries.
    */
   matureSupport: boolean | null;
 };
@@ -55,7 +56,8 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     goodAt:
       "Keeps a subject's likeness across edits to outfit, hair or setting, and also does text-to-image.",
     capabilities: ['character_consistency', 'image_editing'],
-    matureSupport: null,
+    // `REMIX_ENGINES` (remix.constants.ts) routes mature edits away from it: the provider refuses them.
+    matureSupport: false,
   },
   {
     ecosystemId: ECO.Imagen4,
@@ -93,7 +95,7 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     modelId: 2673730,
     goodAt:
       'Photoreal, design-ready images and product shots, with stronger text rendering and pixel-level editing.',
-    capabilities: ['photoreal', 'design_layout', 'legible_text', 'image_editing'],
+    capabilities: ['photoreal', 'legible_text', 'image_editing'],
     matureSupport: null,
   },
   {
@@ -111,7 +113,7 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     name: 'Reve 2.1',
     maker: 'Reve',
     modelId: 2781889,
-    goodAt: 'Region-structured layout control at native 4K, handling dense scenes and fine text.',
+    goodAt: 'Region-structured layout control, native 4K output, and dense scenes with fine text.',
     capabilities: ['design_layout', 'high_resolution', 'legible_text'],
     matureSupport: null,
   },
