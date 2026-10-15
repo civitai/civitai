@@ -4771,8 +4771,20 @@ export type ServiceOffering = {
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;
   status: Generated<ServiceOfferingStatus>;
+  /**
+   * Set only when a moderator removes the offering: a key of the moderator reason list in code.
+   * Null on a seller's own remove, which is how the two are told apart.
+   */
+  removedReason: string | null;
+  removedDetails: string | null;
+  removedAt: Timestamp | null;
+  removedById: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type ServiceOfferingReport = {
+  serviceOfferingId: number;
+  reportId: number;
 };
 export type Session = {
   id: Generated<number>;
@@ -5765,6 +5777,7 @@ export type DB = {
   ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceOffering: ServiceOffering;
+  ServiceOfferingReport: ServiceOfferingReport;
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;
