@@ -9,7 +9,11 @@ import {
   type DiscordRoleTier,
 } from '~/components/CreatorJourney/discord-claim-guide';
 
-const tierNames: Record<DiscordRoleTier, string> = { supernova: 'Supernova', legend: 'Legend' };
+const tierNames: Record<DiscordRoleTier, string> = {
+  supernova: 'Supernova',
+  legend: 'Legend',
+  mythic: 'Mythic',
+};
 
 export function DiscordClaimGuideModal({ tier }: { tier: DiscordRoleTier }) {
   const dialog = useDialogContext();

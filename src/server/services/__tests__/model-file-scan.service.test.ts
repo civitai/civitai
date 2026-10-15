@@ -25,6 +25,7 @@ const {
   mockLimitConcurrency,
   mockUnpublishModelById,
   mockCheckMinorHashOnScan,
+  mockCheckDuplicateHashOnScan,
   mockIsFlipt,
   mockBustOrchestratorModelCache,
   mockResourceDataBust,
@@ -56,6 +57,7 @@ const {
     }),
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
     mockCheckMinorHashOnScan: vi.fn().mockResolvedValue('skipped'),
+    mockCheckDuplicateHashOnScan: vi.fn().mockResolvedValue('none'),
     mockIsFlipt: vi.fn().mockResolvedValue(true),
     mockBustOrchestratorModelCache: vi.fn().mockResolvedValue(undefined),
     mockResourceDataBust: vi.fn().mockResolvedValue(undefined),
@@ -118,6 +120,10 @@ vi.mock('~/server/services/model.service', () => ({
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
+
+vi.mock('~/server/services/duplicate-model-hash.service', () => ({
+  checkDuplicateHashOnScan: mockCheckDuplicateHashOnScan,
+}));
 
 vi.mock('~/server/services/minor-hash.service', () => ({
   checkMinorHashOnScan: mockCheckMinorHashOnScan,
@@ -1435,6 +1441,80 @@ describe('model-file-scan.service', () => {
   // ==========================================================================
   // applyScanOutcome — minor-hash-detection wiring
   // ==========================================================================
+  describe('applyScanOutcome — duplicate-hash wiring', () => {
+    const scannedFile = {
+      id: 710,
+      type: 'Model',
+      sizeKB: 150_000,
+      modelVersionId: 40,
+      modelVersion: {
+        modelId: 65,
+        model: { userId: 790, status: 'Draft', meta: { showcaseCollectionId: 1 } },
+      },
+    };
+
+    it('passes the scanned file, its owner and the previous SHA256 to the duplicate check', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue(scannedFile);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([
+        { type: 'SHA256', hash: 'OLDHASH' },
+        { type: 'AutoV2', hash: 'AV2' },
+      ]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 710,
+        hashes: { SHA256: 'NEWHASH' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckDuplicateHashOnScan).toHaveBeenCalledExactlyOnceWith({
+        fileId: 710,
+        fileType: 'Model',
+        sizeKB: 150_000,
+        sha256: 'NEWHASH',
+        previousSha256: 'OLDHASH',
+        modelId: 65,
+        ownerId: 790,
+        modelStatus: 'Draft',
+        modelMeta: { showcaseCollectionId: 1 },
+      });
+    });
+
+    // A failed lookup must not fail the webhook: its dedupe key is already taken, so a 500 would
+    // drop the redelivery and the scan results with it.
+    it('still applies the rest of the outcome when the duplicate check throws', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue(scannedFile);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+      mockCheckDuplicateHashOnScan.mockRejectedValueOnce(new Error('db down'));
+
+      await expect(
+        applyScanOutcome({
+          fileId: 710,
+          hashes: { SHA256: 'NEWHASH' },
+          virusScan: { result: ScanResultCode.Success, message: null },
+        })
+      ).resolves.toBeUndefined();
+
+      expect(mockCheckDuplicateHashOnScan).toHaveBeenCalledTimes(1);
+      expect(mockDeleteFilesForModelVersionCache).toHaveBeenCalledWith(40);
+    });
+
+    it('does not run without a SHA256', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue(scannedFile);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 710,
+        hashes: { AutoV2: 'AV2' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckDuplicateHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
   describe('applyScanOutcome — minor-hash wiring', () => {
     it('calls checkMinorHashOnScan with the fileId/modelId/userId/sha256 derived from the scanned file', async () => {
       mockDbWrite.modelFile.findUnique.mockResolvedValue({

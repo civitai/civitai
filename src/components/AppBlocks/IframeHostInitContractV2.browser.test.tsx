@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure). NOT `typeof import(...)`, which
 // @typescript-eslint/consistent-type-imports rejects.
@@ -309,6 +310,7 @@ describe('IframeHost — token.buzzBudget is the signed budget it was handed', (
     };
     expect(push.token.buzzBudget).toBe(53);
     expect(reply.token.buzzBudget).toBe(53);
+    expectReplyKeys('REQUEST_TOKEN', 'success', ['token'], reply);
     posts.stop();
   });
 

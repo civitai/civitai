@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
 
 // Unit tests for upsertModel's owner-writable fields: moderation-owned meta and availability.
 // Scaffold mirrors model-locked-properties.service.test.ts.
@@ -99,6 +100,11 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
 }));
+const { mockSettleAppeals } = vi.hoisted(() => ({ mockSettleAppeals: vi.fn() }));
+vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppealTextHash>()),
+  settleFlagAppealsAfterModeratorLift: mockSettleAppeals,
+}));
 import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -128,6 +134,11 @@ const storedModel = {
   meta: null as Record<string, unknown> | null,
   availability: Availability.Public as Availability,
   status: ModelStatus.Published as ModelStatus,
+  createdAt: new Date('2025-01-01T00:00:00Z'),
+  allowNoCredit: true,
+  allowCommercialUse: ['Image'] as string[],
+  allowDerivatives: true,
+  allowDifferentLicense: false,
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
@@ -449,5 +460,134 @@ describe('availability', () => {
     await upsert({ userId: OWNER_ID, availability: Availability.Public });
 
     expect(createData().availability).toBe(Availability.Public);
+  });
+});
+
+describe('flag appeals settled by a moderator save', () => {
+  it('settles the poi appeal when a moderator turns poi off', async () => {
+    mockStored({ poi: true });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: false });
+
+    expect(mockSettleAppeals).toHaveBeenCalledWith({
+      modelId: MODEL_ID,
+      userId: MODERATOR_ID,
+      liftedLabels: ['poi'],
+    });
+    expect(mockSettleAppeals.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('names every label the save lifted', async () => {
+    mockStored({ poi: true, minor: true });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      poi: false,
+      minor: false,
+    });
+
+    expect(mockSettleAppeals).toHaveBeenCalledWith(
+      expect.objectContaining({ liftedLabels: ['minor', 'poi'] })
+    );
+  });
+
+  it('settles nothing when no flag went from set to unset', async () => {
+    mockStored({ poi: true });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: true });
+    mockStored({ poi: false });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: false });
+
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+
+  it('settles nothing for a flag the moderator did not set, even if another path cleared it', async () => {
+    mockStored({ poi: true });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true });
+
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+
+  it('never settles for the owner, whose locks keep the flag in force', async () => {
+    mockStored({ poi: true, lockedProperties: ['poi'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: false });
+
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+});
+
+describe('merge permissions on save', () => {
+  it('stores "different permissions" off when the owner saves with merges off', async () => {
+    mockStored({ allowDerivatives: true, allowDifferentLicense: true } as Partial<
+      typeof storedModel
+    >);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      allowDerivatives: false,
+      allowDifferentLicense: true,
+    });
+
+    expect(updateData()).toMatchObject({ allowDerivatives: false, allowDifferentLicense: false });
+  });
+
+  it('does the same on create', async () => {
+    await upsert({ userId: OWNER_ID, allowDerivatives: false, allowDifferentLicense: true });
+
+    expect(createData()).toMatchObject({ allowDerivatives: false, allowDifferentLicense: false });
+  });
+
+  it('control: keeps it on while merges are allowed', async () => {
+    mockStored({ allowDerivatives: false, allowDifferentLicense: false } as Partial<
+      typeof storedModel
+    >);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      allowDerivatives: true,
+      allowDifferentLicense: true,
+    });
+
+    expect(updateData()).toMatchObject({ allowDerivatives: true, allowDifferentLicense: true });
+  });
+});
+
+describe('permission snapshots', () => {
+  it('records a permission change in the save transaction', async () => {
+    mockStored();
+    mockDbWrite.modelPermissionSnapshot.findFirst.mockResolvedValue(null);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, allowDerivatives: false });
+
+    expect(mockDbWrite.modelPermissionSnapshot.createMany).toHaveBeenCalledTimes(1);
+    const { data } = mockDbWrite.modelPermissionSnapshot.createMany.mock.calls[0][0] as {
+      data: Record<string, unknown>[];
+    };
+    expect(data).toEqual([
+      expect.objectContaining({ modelId: MODEL_ID, source: 'baseline', allowDerivatives: true }),
+      expect.objectContaining({
+        modelId: MODEL_ID,
+        source: 'live',
+        allowDerivatives: false,
+        actorUserId: OWNER_ID,
+        actorRole: 'owner',
+      }),
+    ]);
+  });
+
+  it('control: a save that leaves permissions alone writes and reads nothing', async () => {
+    mockStored();
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, allowDerivatives: true, name: 'Renamed' });
+
+    expect(mockDbWrite.modelPermissionSnapshot.findFirst).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelPermissionSnapshot.createMany).not.toHaveBeenCalled();
   });
 });

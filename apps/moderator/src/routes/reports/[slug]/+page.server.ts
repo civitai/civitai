@@ -13,6 +13,7 @@ import {
 import {
   bringBackReportedModel,
   setReportedModelMinor,
+  setReportedModelPoi,
   setReportedModelSfwOnly,
   takeDownReportedModel,
   unpublishReportedModel,
@@ -24,6 +25,10 @@ import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
 import { canAccess } from '$lib/server/access';
+import {
+  getMergePermissionChecks,
+  type MergePermissionCheck,
+} from '$lib/server/merge-permission.service';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
@@ -38,7 +43,7 @@ import {
 const isStatus = (v: string): v is ReportStatus => (reportStatuses as string[]).includes(v);
 const isReason = (v: string): v is ReportReason => (reportReasons as string[]).includes(v);
 
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, locals }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
 
@@ -77,13 +82,14 @@ export const load: PageServerLoad = async ({ params, url }) => {
   });
   const entityIds = data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
   const games = type === 'gameFrameGame' ? await getGameMirrors(entityIds) : [];
-  const [ownerFlaggedMinor, models] =
+  const [ownerFlaggedMinor, models, mergePermission] =
     type === 'model'
       ? await Promise.all([
           getOwnerFlaggedMinorModelIds(entityIds),
           getReportedModelStates(entityIds),
+          getMergePermissionChecks(data.items),
         ])
-      : [[], []];
+      : [[], [], {} as Record<number, MergePermissionCheck>];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
@@ -94,6 +100,12 @@ export const load: PageServerLoad = async ({ params, url }) => {
     // sized against the viewport, which `wide` cannot do — its padding puts the page an unknown
     // distance down. Every other type keeps the full-width table it had.
     ...(type === 'model' ? { fullBleed: true } : { wide: true }),
+    // The preview's training-data viewer: shown to whoever `/api/training-data` would serve, so a
+    // moderator never gets a button that only answers 403.
+    canViewTrainingData:
+      type === 'model' &&
+      (canAccess(locals.user, '/audit/training-data') ||
+        canAccess(locals.user, '/audit/training-models')),
     // A `?report=` view ran with no status/reason filter, so echoing the defaults would put chips
     // saying "Pending + Processing" above an Actioned row and a note about hiding Automated above an
     // Automated one — the operator reads that as the filters being broken.
@@ -104,6 +116,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     games,
     ownerFlaggedMinor,
     models,
+    mergePermission,
     ...data,
   };
 };
@@ -271,6 +284,14 @@ export const actions: Actions = {
       case 'unsetSfwOnly':
         result = await setReportedModelSfwOnly(modelId, false);
         done = 'Allowed NSFW on';
+        break;
+      case 'setPoi':
+        result = await setReportedModelPoi(modelId, true);
+        done = 'Flagged as a real person';
+        break;
+      case 'unsetPoi':
+        result = await setReportedModelPoi(modelId, false);
+        done = 'Unflagged as a real person';
         break;
       // Both directions behind the one grant: whoever may take a model down may bring it back.
       case 'takeDown':

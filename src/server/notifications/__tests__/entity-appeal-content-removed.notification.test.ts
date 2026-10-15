@@ -46,7 +46,7 @@ describe('entity-appeal-content-removed — prepareMessage', () => {
     });
 
     expect(m!.message).toBe(
-      "We couldn't review your appeal in time: the model was removed before a moderator reached it, so your appeal was closed. Your appeal fee has been refunded. You're welcome to upload it again."
+      "We couldn't review your appeal in time: the model was removed before a moderator reached it, so your appeal was closed. Your appeal fee has been refunded."
     );
   });
 

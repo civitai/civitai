@@ -84,6 +84,14 @@ describe('the Models section', () => {
     expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
   });
 
+  it('badges both queues', () => {
+    const models = NAVIGATION.find((n) => n.path === '/models');
+    expect(models?.children?.map((c) => [c.path, c.countKey])).toEqual([
+      ['/models/minor-hash-matches', 'minorHashMatches'],
+      ['/models/flag-appeals', 'modelFlagAppeals'],
+    ]);
+  });
+
   it('is hidden from whoever holds neither page', () => {
     applyGrants({ '/bounties/poi-appeals': ['moderator:reviewer'] });
     expect(labelsUnder('Models')).toBeUndefined();
@@ -116,13 +124,30 @@ describe('/admin grantable pages', () => {
 describe('the text-scan lab', () => {
   it('declares the text-scan lab permissions and pages', () => {
     const ids = PERMISSIONS.map((p) => p.id);
-    expect(ids).toContain('textScan.prompt.publish');
-    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual(['textScan.prompt.publish']);
+    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual([
+      'textScan.prompt.publish',
+      'textScan.modelRules.edit',
+      'textScan.testSets.edit',
+    ]);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
-      ['/text-scan/check', 'Check'],
-      ['/text-scan/prompts', 'Versions'],
+      ['/text-scan/prompts', 'Prompts'],
+      ['/text-scan/model-rules', 'Model rules'],
     ]);
+  });
+
+  it('does not offer the retired Check page on /admin', () => {
+    expect(pageAccessState().paths).not.toContain('/text-scan/check');
+  });
+});
+
+describe('the Model rules history endpoint', () => {
+  it('is gated with the Model rules page', () => {
+    applyGrants({ '/text-scan/model-rules': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(true);
+
+    applyGrants({ '/text-scan/prompts': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(false);
   });
 });
 

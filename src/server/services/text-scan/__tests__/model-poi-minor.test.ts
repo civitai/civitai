@@ -416,7 +416,7 @@ describe('grantModelTextScanPoi', () => {
   // Review Focus 2.
   it('clears poi and keeps the poi lock so a rescan of the same text cannot put it back', async () => {
     expect(
-      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' })
+      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' })
     ).toBe(true);
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain('poi = FALSE');
@@ -430,20 +430,20 @@ describe('grantModelTextScanPoi', () => {
   // A grant recorded apart from the lift would outlive a failed lift, and a recorded grant reads as
   // lifted, so nothing could retry it.
   it('records the appeal grant in the statement that lifts poi', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
     const text = sqlOf(call);
     expect(text).toMatch(
       /meta = jsonb_set\(\s+m\.meta,\s+ARRAY\[\?::text, 'poi', 'appealGranted'\]/
     );
-    expect(text).toContain(`'textHash', COALESCE(m.meta->?->'poi'->>'textHash', ?::text)`);
+    expect(text).toContain(`'textHash', ?::text,`);
     expect(text).toContain(`'via', 'appeal'`);
     expect(call.slice(1)).toEqual(expect.arrayContaining([3, 'h-current', MODEL_ID]));
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('restores the pre-poi nsfw and sfwOnly from the snapshot', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain(
       `ELSE COALESCE((m.meta->?->'poi'->'prev'->>'nsfw')::boolean, m.nsfw) END`
@@ -455,7 +455,7 @@ describe('grantModelTextScanPoi', () => {
 
   // Review Focus 4.
   it('never re-opens NSFW on a model that is still minor', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain('nsfw = CASE WHEN m.minor THEN m.nsfw');
     expect(text).toContain(`"sfwOnly" = CASE WHEN m.minor THEN m."sfwOnly"`);
@@ -463,14 +463,14 @@ describe('grantModelTextScanPoi', () => {
   });
 
   it('runs side effects and levels only when a row changed', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     expect(mockSideEffects).toHaveBeenCalledTimes(1);
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
 
     vi.clearAllMocks();
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
     expect(
-      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' })
+      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' })
     ).toBe(false);
     expect(mockSideEffects).not.toHaveBeenCalled();
   });
@@ -478,31 +478,66 @@ describe('grantModelTextScanPoi', () => {
   it('does nothing for a model that is not poi', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel({ poi: false }));
     expect(
-      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' })
+      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' })
     ).toBe(false);
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
 describe('stampModelTextScanAppeal', () => {
-  it('stamps only the named labels, with the flagged text hash and the current one as fallback', async () => {
+  it('grants each label against its own hash, not the flagged one, so a verdict for that text cannot re-flag', async () => {
     await stampModelTextScanAppeal({
       modelId: MODEL_ID,
       userId: 3,
       decision: 'appealGranted',
-      labels: ['poi'],
-      currentHash: 'h-current',
+      labels: ['poi', 'minor'],
+      grantHashes: { poi: 'h-main', minor: 'h-search' },
     });
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const text = sqlOf(call);
     expect(text).toContain('unnest(');
-    expect(text).toContain(`'textHash', COALESCE(m.meta->?->l.label->>'textHash', ?::text)`);
+    expect(text).toContain(
+      `'textHash', COALESCE((?::jsonb)->>l.label, m.meta->?->l.label->>'textHash')`
+    );
     expect(text).toContain(`'via', 'appeal'`);
-    expect(call.slice(1)).toContainEqual(['poi']);
-    expect(call.slice(1)).toEqual(
-      expect.arrayContaining(['appealGranted', 3, MODEL_ID, 'h-current'])
+    expect(call.slice(1)).toContainEqual(['poi', 'minor']);
+    expect(call.slice(1).map((v) => (typeof v === 'string' ? v : ''))).toContain(
+      JSON.stringify({ poi: 'h-main', minor: 'h-search' })
     );
   });
+
+  it('keeps an upheld ruling on the flagged text', async () => {
+    await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealUpheld',
+      labels: ['poi'],
+      grantHashes: { poi: 'h-main' },
+    });
+    const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    // The hash map is empty for an upheld ruling, so the flagged hash wins.
+    expect(call.slice(1)).toContain('{}');
+    expect(call.slice(1)).not.toContain(JSON.stringify({ poi: 'h-main' }));
+  });
+
+  it.each([
+    ['no hashes', undefined],
+    ['a hash for only one label', { poi: 'h-main' }],
+  ])(
+    'refuses a grant with %s instead of falling back to the flagged hash',
+    async (_n, grantHashes) => {
+      await expect(
+        stampModelTextScanAppeal({
+          modelId: MODEL_ID,
+          userId: 3,
+          decision: 'appealGranted',
+          labels: ['poi', 'minor'],
+          grantHashes,
+        })
+      ).rejects.toThrow(/grant hash/i);
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    }
+  );
 
   it('writes nothing for an empty label list', async () => {
     await stampModelTextScanAppeal({

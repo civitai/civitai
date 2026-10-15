@@ -132,6 +132,16 @@ import type {
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
   OutboxEntity,
+  ServiceOfferingStatus,
+  ServicePreviewKind,
+  ServiceBuzzType,
+  ServiceDealStatus,
+  ServiceDealEventType,
+  ServiceDealFileKind,
+  ServiceDealFileStatus,
+  ServiceDealFileScanStatus,
+  ServiceDisputeResolution,
+  ServiceDealLeg,
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
@@ -3597,6 +3607,18 @@ export type ModelMetricDaily = {
   date: Timestamp;
   count: number;
 };
+export type ModelPermissionSnapshot = {
+  id: Generated<number>;
+  modelId: number;
+  effectiveAt: Generated<Timestamp>;
+  source: string;
+  actorUserId: number | null;
+  actorRole: string | null;
+  allowNoCredit: boolean;
+  allowCommercialUse: CommercialUse[];
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+};
 export type ModelReport = {
   modelId: number;
   reportId: number;
@@ -3619,6 +3641,12 @@ export type ModelReportStat = {
   claimPending: number;
   claimActioned: number;
   claimUnactioned: number;
+};
+export type ModelSelfGeneration = {
+  modelId: number;
+  userId: number;
+  generationCount: Generated<string>;
+  updatedAt: Generated<Timestamp>;
 };
 export type ModelTag = {
   modelId: number;
@@ -3734,6 +3762,16 @@ export type ModerationRule = {
   order: number | null;
   reason: string | null;
   createdById: number;
+};
+export type ModerationRuleVersion = {
+  id: Generated<number>;
+  ruleId: number;
+  definition: unknown;
+  enabled: boolean;
+  action: ModerationRuleAction;
+  reason: string | null;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
 };
 export type NewOrderPlayer = {
   userId: number;
@@ -4360,6 +4398,15 @@ export type ReferralReward = {
   revokedAt: Timestamp | null;
   revokedReason: string | null;
 };
+export type RemovalScoreExemption = {
+  imageId: number;
+  /**
+   * The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+   */
+  reason: string;
+  createdAt: Generated<Timestamp>;
+  createdBy: number | null;
+};
 export type Report = {
   id: Generated<number>;
   userId: number;
@@ -4567,6 +4614,144 @@ export type ScannerLabelReview = {
   reviewedAt: Generated<Timestamp>;
   verdict: ReviewVerdict;
   note: string | null;
+};
+export type ServiceDeal = {
+  id: Generated<number>;
+  offeringId: number;
+  buyerId: number;
+  sellerId: number;
+  price: number;
+  buzzType: ServiceBuzzType;
+  /**
+   * Kept by the platform out of `price` on release; the seller receives the rest.
+   */
+  feeAmount: Generated<number>;
+  revisionsIncluded: number;
+  revisionsUsed: Generated<number>;
+  deliveryDays: number;
+  previewKind: ServicePreviewKind;
+  /**
+   * The offering's maxNsfwLevel when requested; never re-read from the offering.
+   */
+  maxNsfwLevel: Generated<number>;
+  status: Generated<ServiceDealStatus>;
+  /**
+   * Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
+   * deal without it was never paid for: the migration refuses any worked or payable status
+   * without it. Release and Refund receipts are NOT tied to it in the database, so code must
+   * claim them only against a paid Hold.
+   */
+  heldAt: Timestamp | null;
+  /**
+   * Set once the Release or Refund leg's Buzz call has succeeded.
+   */
+  settledAt: Timestamp | null;
+  chatId: number | null;
+  requestText: string;
+  requestedAt: Generated<Timestamp>;
+  acceptedAt: Timestamp | null;
+  dueAt: Timestamp | null;
+  /**
+   * Latest delivery. Starts the auto-complete window.
+   */
+  deliveredAt: Timestamp | null;
+  completedAt: Timestamp | null;
+  /**
+   * When the release leg may run: the end of the dispute window after completion.
+   * Required once Completed (a CHECK in the migration).
+   */
+  releaseAt: Timestamp | null;
+  cancellationRequestedAt: Timestamp | null;
+  cancellationRequestedById: number | null;
+  cancellationReason: string | null;
+  disputeOpenedAt: Timestamp | null;
+  disputeReason: string | null;
+  disputeResolvedAt: Timestamp | null;
+  disputeResolution: ServiceDisputeResolution | null;
+  disputeResolvedById: number | null;
+  closedAt: Timestamp | null;
+  closeReason: string | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ServiceDealEvent = {
+  id: Generated<number>;
+  dealId: number;
+  actorId: number;
+  type: ServiceDealEventType;
+  round: Generated<number>;
+  comment: string | null;
+  /**
+   * Validated against the per-action lists in creator-services.constants; no DB CHECK.
+   */
+  reasonCode: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealFile = {
+  id: Generated<number>;
+  dealId: number;
+  round: Generated<number>;
+  kind: ServiceDealFileKind;
+  s3Key: string;
+  watermarkedKey: string | null;
+  /**
+   * The hidden, downscaled, unwatermarked copy a preview is scanned as. Deleted once its verdict
+   * lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
+   */
+  imageId: number | null;
+  scanKey: string | null;
+  /**
+   * The rating the scan gave the preview, recorded when it passes.
+   */
+  nsfwLevel: number | null;
+  fileName: Generated<string>;
+  mimeType: string;
+  size: number;
+  /**
+   * Uploading until the seller confirms the object is in the bucket.
+   */
+  status: Generated<ServiceDealFileStatus>;
+  failReason: string | null;
+  uploadedAt: Timestamp | null;
+  /**
+   * Set when preview processing last started, so a crashed worker's file is picked up again.
+   */
+  processingAt: Timestamp | null;
+  scanStatus: Generated<ServiceDealFileScanStatus>;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealTransaction = {
+  id: Generated<number>;
+  dealId: number;
+  leg: ServiceDealLeg;
+  externalTransactionId: string;
+  transactionId: string | null;
+  amount: number;
+  buzzType: ServiceBuzzType;
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
+  lastError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceOffering = {
+  id: Generated<number>;
+  sellerId: number;
+  title: string;
+  description: string;
+  coverImageId: number | null;
+  price: number;
+  acceptsBlue: Generated<boolean>;
+  previewKind: Generated<ServicePreviewKind>;
+  /**
+   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   */
+  maxNsfwLevel: Generated<number>;
+  deliveryDays: number;
+  revisionsIncluded: Generated<number>;
+  maxOpenDeals: number | null;
+  status: Generated<ServiceOfferingStatus>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Session = {
   id: Generated<number>;
@@ -5473,8 +5658,10 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
+  ModelSelfGeneration: ModelSelfGeneration;
   ModelTag: ModelTag;
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;
@@ -5485,6 +5672,7 @@ export type DB = {
   ModelVersionSaleItem: ModelVersionSaleItem;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
+  ModerationRuleVersion: ModerationRuleVersion;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;
@@ -5527,6 +5715,7 @@ export type DB = {
   ReferralMilestone: ReferralMilestone;
   ReferralRedemption: ReferralRedemption;
   ReferralReward: ReferralReward;
+  RemovalScoreExemption: RemovalScoreExemption;
   Report: Report;
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
@@ -5549,6 +5738,11 @@ export type DB = {
   ScanLabelVote: ScanLabelVote;
   ScannerContentSnapshot: ScannerContentSnapshot;
   ScannerLabelReview: ScannerLabelReview;
+  ServiceDeal: ServiceDeal;
+  ServiceDealEvent: ServiceDealEvent;
+  ServiceDealFile: ServiceDealFile;
+  ServiceDealTransaction: ServiceDealTransaction;
+  ServiceOffering: ServiceOffering;
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;

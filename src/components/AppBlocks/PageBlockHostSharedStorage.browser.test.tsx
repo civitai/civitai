@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import {
   SAVE_BYTES_MAX_PER_WINDOW,
   SAVE_BYTES_WINDOW_MS,
@@ -276,6 +277,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       const r = replies.last('SAVE_IMAGE_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_save_url', ok: true });
+      expectReplyKeys('SAVE_IMAGE', 'success', ['ok'], r.payload);
     });
     replies.stop();
   });
@@ -295,6 +297,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
         ok: false,
         error: 'image url is not allowed',
       });
+      expectReplyKeys('SAVE_IMAGE', 'error', ['error', 'ok'], r.payload);
     });
     // The disallowed URL was NEVER fetched host-side.
     expect(mocks.saveDownload).not.toHaveBeenCalled();

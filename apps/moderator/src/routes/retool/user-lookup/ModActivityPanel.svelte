@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
@@ -33,10 +34,10 @@
   // Each request is keyed on only what it depends on: the Retool era on nothing, the filter summary on
   // the ratings toggle (about a second on the largest accounts), and the page on everything.
   const retool = $derived(
-    browser ? fetchJson<RetoolActivityRow[]>(url({ view: 'retool' })) : null
+    browser ? fetchJson<RetoolActivityRow[]>(url({ view: 'retool' })) : SSR_PENDING
   );
   const summary = $derived(
-    browser ? fetchJson<ModActivityCount[]>(url({ view: 'summary', ratings })) : null
+    browser ? fetchJson<ModActivityCount[]>(url({ view: 'summary', ratings })) : SSR_PENDING
   );
 
   const query = $derived(
@@ -60,7 +61,7 @@
       ? fetchJson<{ rows: Row[]; next: ModActivityCursor | null }>(
           cursor ? `${query}&before=${encodeURIComponent(cursor.at)}&beforeId=${cursor.id}` : query
         )
-      : null
+      : SSR_PENDING
   );
 
   const advance = (next: ModActivityCursor) => {

@@ -17,10 +17,11 @@ export default defineModeratorEndpoint('textScan.harness', {
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
+    'scanEntity/scanTexts take ruleOverrides (lab only): a positive id replaces that Model rule, a negative id adds an unsaved one, enabled:false drops it.',
   ],
   rateLimit: { max: 120, windowSeconds: 60 },
   input: textScanHarnessSchema,
-  auditExclude: ['content', 'promptOverrides', 'texts'],
+  auditExclude: ['content', 'promptOverrides', 'ruleOverrides', 'texts'],
   async handler(input, ctx) {
     const result = await runTextScanHarnessAction(input, { moderatorId: ctx.actor.id });
     return result.kind === 'csv' ? { csv: result.body } : (result.body as Record<string, unknown>);

@@ -24,7 +24,9 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { revokeTimedMute, setMuted } = await import('../user-actions.service');
+const { callModEndpointAs, requestCookie, revokeTimedMute, setMuted } = await import(
+  '../user-actions.service'
+);
 
 type Call = { url: string; body: unknown };
 let calls: Call[];
@@ -83,5 +85,37 @@ describe('moderator-app unmutes go through the main app', () => {
     await setMuted({ userId: 42, muted: true, moderatorId: 7 });
     expect(calls).toEqual([]);
     expect(captured.some((sql) => /^update "User"/i.test(sql))).toBe(true);
+  });
+});
+
+describe('callModEndpointAs', () => {
+  let cookies: (string | null)[];
+  beforeEach(() => {
+    cookies = [];
+    vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+      cookies.push(new Headers(init.headers).get('cookie'));
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+  });
+
+  it('forwards the given cookie instead of the current request session', async () => {
+    expect(
+      await callModEndpointAs('civ-token=launching-moderator', 'text-scan', {}, 'Scan')
+    ).toEqual({ ok: true, body: {} });
+    expect(cookies).toEqual(['civ-token=launching-moderator']);
+  });
+
+  it('refuses an empty cookie as no session, without sending', async () => {
+    expect(await callModEndpointAs('', 'text-scan', {}, 'Scan')).toEqual({
+      ok: false,
+      error: 'Scan failed: no session to forward.',
+      requestNeverSent: true,
+      noSession: true,
+    });
+    expect(cookies).toEqual([]);
+  });
+
+  it('reads the cookie of the request in scope', () => {
+    expect(requestCookie()).toBe('civ-token=the-moderators-session');
   });
 });

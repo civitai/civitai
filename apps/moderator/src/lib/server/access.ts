@@ -110,11 +110,8 @@ export const NAVIGATION: NavLink[] = [
     label: 'Models',
     path: '/models',
     children: [
-      // No `countKey`: the Pending count costs ~10s, and `sidebar-counts.service.ts` is one Promise.all
-      // that every navigation in the app waits on. The counts live on the page's own tabs instead,
-      // fetched separately. A countKey nothing produces renders as a silently missing badge.
-      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches' },
-      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals' },
+      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches', countKey: 'minorHashMatches' },
+      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals', countKey: 'modelFlagAppeals' },
     ],
   },
   {
@@ -137,6 +134,7 @@ export const NAVIGATION: NavLink[] = [
   // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
+  { path: '/creator-services/disputes', label: 'Service Disputes' },
   {
     label: 'Audit',
     path: '/audit',
@@ -155,8 +153,8 @@ export const NAVIGATION: NavLink[] = [
     label: 'Text Scan',
     path: '/text-scan',
     children: [
-      { path: '/text-scan/check', label: 'Check' },
-      { path: '/text-scan/prompts', label: 'Versions' },
+      { path: '/text-scan/prompts', label: 'Prompts' },
+      { path: '/text-scan/model-rules', label: 'Model rules' },
     ],
   },
   {

@@ -5,6 +5,7 @@ import type { BlockPickedImageInfo } from '~/components/AppBlocks/imagePickerLog
 import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
@@ -170,6 +171,7 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
 
     await vi.waitFor(() => expect(replies.results()).toHaveLength(1));
     expect(replies.results()[0]).toEqual({ requestId: 'rq_single', selected: postedPick(1) });
+    expectReplyKeys('OPEN_IMAGE_PICKER', 'success', ['selected'], replies.results()[0]);
     // The pick is the only reply: closing after it does not add a dismissal.
     await settle();
     expect(replies.results()).toHaveLength(1);
@@ -199,6 +201,7 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
 
     await vi.waitFor(() => expect(replies.results()).toHaveLength(1));
     expect(replies.results()[0]).toEqual({ requestId: 'rq_dismiss' });
+    expectReplyKeys('OPEN_IMAGE_PICKER', 'success', [], replies.results()[0]);
     replies.stop();
   });
 
@@ -218,6 +221,7 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
       selectedImages: [postedPick(3), generatedPick],
     });
     expect(replies.results()[0]).not.toHaveProperty('selected');
+    expectReplyKeys('OPEN_IMAGE_PICKER', 'success', ['selectedImages'], replies.results()[0]);
     replies.stop();
   });
 
@@ -248,6 +252,7 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
     await vi.waitFor(() => expect(replies.results()).toHaveLength(1));
     const reply = replies.results()[0] as { requestId: string; error: string };
     expect(Object.keys(reply).sort()).toEqual(['error', 'requestId']);
+    expectReplyKeys('OPEN_IMAGE_PICKER', 'error', ['error'], reply);
     expect(reply.requestId).toBe('rq_refused');
     expect(reply.error).toMatch(error);
     expect(useDialogStore.getState().dialogs).toHaveLength(0);

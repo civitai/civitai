@@ -39,7 +39,6 @@ import {
   IconGavel,
   IconHeart,
   IconInfoSquareRounded,
-  IconLicense,
   IconLock,
   IconMessageCircle2,
   IconPhotoPlus,
@@ -101,7 +100,10 @@ import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
+import {
+  getModelVersionActionLayout,
+  showRequestReviewFor,
+} from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
 import { ModelVersionSaleBanner } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
@@ -124,6 +126,7 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
+import { BaseModelLicense } from '~/components/Model/ModelVersions/BaseModelLicense';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
@@ -131,10 +134,10 @@ import { restoreMembership, snapshotMembership } from '~/store/engaged-models.st
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  baseModelLicenses,
   CAROUSEL_LIMIT,
   constants,
   getEffectiveCommercialUse,
+  getDisplayedBaseModelLicense,
   getEffectiveDifferentLicense,
   getRestrictedNsfwLevelsForBaseModel,
   hasAdditionalLicensePermissions,
@@ -161,6 +164,7 @@ import {
 import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -353,13 +357,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({
+        const result = await publishModelMutation.mutateAsync({
           id: model.id,
           versionIds,
         });
+        notifyIfPublishHeld(result);
       } else {
         // Just republish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id });
+        const result = await publishVersionMutation.mutateAsync({ id: version.id });
+        notifyIfPublishHeld(result);
       }
       await queryUtils.model.getById.invalidate({ id: model.id });
     } catch (e) {
@@ -425,14 +431,19 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           model.status === ModelStatus.UnpublishedViolation && user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({
+        const result = await publishModelMutation.mutateAsync({
           id: model.id,
           publishedAt: publishDate,
           versionIds,
         });
+        notifyIfPublishHeld(result);
       } else {
         // Just publish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id, publishedAt: publishDate });
+        const result = await publishVersionMutation.mutateAsync({
+          id: version.id,
+          publishedAt: publishDate,
+        });
+        notifyIfPublishHeld(result);
       }
 
       await queryUtils.model.getById.invalidate({ id: model.id });
@@ -512,14 +523,19 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? user?.isModerator
       : isOwnerOrMod);
   // Show request review for owners (non-mods) when model/version is unpublished due to violation
-  const showRequestReview =
-    isOwner &&
-    !user?.isModerator &&
-    (model.status === ModelStatus.UnpublishedViolation ||
-      version.status === ModelStatus.UnpublishedViolation);
+  const violation =
+    model.status === ModelStatus.UnpublishedViolation ||
+    version.status === ModelStatus.UnpublishedViolation;
+  const underReview = !!(model.meta?.needsReview || version.meta?.needsReview);
+  const showRequestReview = showRequestReviewFor({
+    isOwner: !!isOwner,
+    isModerator: !!user?.isModerator,
+    violation,
+    underReview,
+  });
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
-  const license = baseModelLicenses[version.baseModel];
+  const license = getDisplayedBaseModelLicense(version.baseModel);
   // Link the base model to its ecosystem SEO landing page when one is live (SEO internal linking).
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
@@ -642,7 +658,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               color="yellow"
               onClick={handleRequestReviewClick}
               loading={requestReviewMutation.isPending || requestVersionReviewMutation.isPending}
-              disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
               fullWidth
             >
               Request a Review
@@ -741,6 +756,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               {features.batchPostScheduling &&
                 isOwner &&
                 !deleted &&
+                !model.mode &&
+                model.status === ModelStatus.Published &&
                 version.status === ModelStatus.Published && (
                   <Tooltip
                     label="Upload a set of images once and schedule them as posts over days or weeks, each attributed to this version."
@@ -1060,7 +1077,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </AlertWithIcon>
           )}
 
-          {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
+          {version.status === ModelStatus.UnpublishedViolation && !underReview && (
             <ModelUnpublishedAlert
               reason={version.meta?.unpublishedReason}
               customMessage={version.meta?.customMessage}
@@ -1074,18 +1091,21 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               icon={<IconLock />}
               title="Private Model"
             >
-              {model.status !== ModelStatus.UnpublishedViolation &&
-              version.status !== ModelStatus.UnpublishedViolation ? (
+              {!violation ? (
                 <Text>
                   Want to start earning Buzz?{' '}
                   <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
+                </Text>
+              ) : underReview ? (
+                <Text>
+                  This model is private and is currently being reviewed by our moderators.
                 </Text>
               ) : (
                 <Text>This model is private and has been unpublished due to a violation.</Text>
               )}
             </AlertWithIcon>
           )}
-          {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (
+          {version.status === ModelStatus.UnpublishedViolation && underReview && (
             <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationMark />}>
               This version is currently being reviewed by our moderators. It will be visible to the
               community once it has been approved.
@@ -1840,25 +1860,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           <Group justify="space-between" align="flex-start" wrap="nowrap">
             {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
               <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
-                <Group gap={4} wrap="wrap" align="center">
-                  <IconLicense size={16} />
-                  <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap', lineHeight: 1.1 }}>
-                    License{model.licenses.length > 0 ? 's' : ''}:
-                  </Text>
-                  {license && (
-                    <Text
-                      component="a"
-                      href={license.url}
-                      rel="nofollow noreferrer"
-                      td="underline"
-                      target="_blank"
-                      size="xs"
-                      c="dimmed"
-                      style={{ lineHeight: 1.1 }}
-                    >
-                      {license.name}
-                    </Text>
-                  )}
+                <BaseModelLicense license={license} plural={model.licenses.length > 0}>
                   {showAddendumLicense && (
                     <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
                       <Anchor
@@ -1872,7 +1874,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       </Anchor>
                     </Link>
                   )}
-                </Group>
+                </BaseModelLicense>
                 {model.licenses.map(({ url, name }) => (
                   <Text
                     key={name}

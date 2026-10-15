@@ -17,11 +17,10 @@
  * Charges use deterministic externalTransactionId values so re-charge attempts are idempotent.
  * CRITICAL INVARIANT: an entry-fee charge is NEVER refunded outside of challenge cancellation.
  * The buzz ledger keeps a refunded transaction's externalTransactionId occupied (a retry gets
- * an idempotency `conflict` for it) and exposes no queryable refund state — so any refunded
- * leg would look "already paid" to a later retry and the entry would commit for free. Instead
- * of refunding on partial failure, we report exactly which images are fully paid and the
- * caller commits only those; a half-paid image self-heals on retry (the paid leg conflicts,
- * the missing leg is charged).
+ * an idempotency `conflict` for it), so any refunded leg would look "already paid" to a later
+ * retry and the entry would commit for free. Instead of refunding on partial failure, we report
+ * exactly which images are fully paid and the caller commits only those; a half-paid image
+ * self-heals on retry (the paid leg conflicts, the missing leg is charged).
  *
  * Cancellation reverses the actual charges (never mints a fresh credit): pool parts via a
  * prefix refund over `challenge-entry-fee-${challengeId}-`, the initial prize via a prefix
@@ -37,10 +36,9 @@ import {
   createBuzzTransaction,
   createBuzzTransactionMany,
   getTransactionByExternalId,
-  refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import type { PrizeInput } from '~/server/services/prize.service';
-import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   CHALLENGE_ENTRY_HOUSE_CUT,
@@ -133,8 +131,7 @@ export async function chargeEntryFees({
   entryFee: number;
   fromAccountType: ChallengeBuzzType;
 }): Promise<ChargeEntryFeesResult> {
-  if (entryFee <= 0 || imageIds.length === 0)
-    return { paidImageIds: imageIds, unpaidImageIds: [] };
+  if (entryFee <= 0 || imageIds.length === 0) return { paidImageIds: imageIds, unpaidImageIds: [] };
 
   const houseAmount = Math.min(entryFee, CHALLENGE_ENTRY_HOUSE_CUT);
   const poolAmount = entryFee - houseAmount;
@@ -209,7 +206,8 @@ export async function chargeEntryFees({
   }
 
   if (unpaidImageIds.length > 0) {
-    const houseOrphans = paidSet.size < housePaidIds.length ? housePaidIds.filter((id) => !paidSet.has(id)) : [];
+    const houseOrphans =
+      paidSet.size < housePaidIds.length ? housePaidIds.filter((id) => !paidSet.has(id)) : [];
     logToAxiom({
       type: 'warning',
       name: 'challenge-entry-fee-partial-charge',
@@ -264,15 +262,10 @@ async function filterChargedImageIds(
  * challenges with no initial prize.
  */
 /**
- * Reverse one challenge-fund prefix, tolerating both ways the buzz service can say "there is
- * nothing left to return":
- *   - 404 (→ NOT_FOUND): the prefix matches no transactions at all — an entryFee challenge that
- *     never took a paid entry, or a prize that was never actually charged.
- *   - 409 (→ BAD_REQUEST): the transactions it matches were already reversed. A refunded
- *     externalTransactionId stays occupied in the ledger (see the header), so re-running a refund
- *     conflicts rather than no-op'ing. Reached whenever a challenge is voided and then deleted.
- * Either way zero Buzz is owed, so neither may abort the surrounding void/delete. Returns the
- * count of transactions reversed.
+ * Reverse one challenge-fund prefix and return the transactions and Buzz this call reversed. A
+ * prefix matching nothing (a challenge that never took a paid entry, a prize never charged) and
+ * legs an earlier void already reversed both count as zero, so neither aborts the surrounding
+ * void/delete.
  */
 async function refundChallengeFundsByPrefix(input: {
   externalTransactionIdPrefix: string;
@@ -280,11 +273,9 @@ async function refundChallengeFundsByPrefix(input: {
   details: { challengeId: number };
 }): Promise<{ count: number; amount: number }> {
   try {
-    const { refundedTransactions, totalRefunded } = await refundMultiAccountTransaction(input);
-    return { count: refundedTransactions.length, amount: totalRefunded };
+    const { refundedLegs, refundedAmount } = await refundAllLegsByPrefix(input);
+    return { count: refundedLegs, amount: refundedAmount };
   } catch (e) {
-    const status = getBuzzApiStatus(e);
-    if (status === 404 || status === 409) return { count: 0, amount: 0 };
     // Kept for a NOT_FOUND raised without a buzz cause — the tolerance predates mapError
     // carrying one, and callers below rely on it.
     if (e instanceof TRPCError && e.code === 'NOT_FOUND') return { count: 0, amount: 0 };

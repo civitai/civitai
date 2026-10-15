@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -163,6 +164,32 @@ const reportedGameFrameFilter = ({
   return [...filters, { details: { path: ['violation'], equals: violation } }];
 };
 
+// A merge-permission report names the reporter's model the merge uses; folded into an earlier report
+// on the same merge it would lose that, and the moderator would have no model to look up. Narrowed to
+// the source model, so two reports about the same pairing still dedupe.
+const reportedMergeSourceFilter = ({
+  reportType,
+  reason,
+  details,
+}: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}): Prisma.ReportWhereInput[] => {
+  if (reportType !== ReportEntity.Model || reason !== ReportReason.AdminAttention) return [];
+  const { reason: detailReason, sourceModelId } = (details ?? {}) as {
+    reason?: unknown;
+    sourceModelId?: unknown;
+  };
+  if (detailReason !== MERGE_PERMISSION_REPORT_REASON) return [];
+  if (typeof sourceModelId !== 'number')
+    throw throwBadRequestError('report: a merge-permission report must name the source model');
+  return [
+    { details: { path: ['reason'], equals: MERGE_PERMISSION_REPORT_REASON } },
+    { details: { path: ['sourceModelId'], equals: sourceModelId } },
+  ];
+};
+
 /** The existing report a new one on this entity would be folded into, if any. */
 export const findReportToFoldInto = ({
   reportType,
@@ -190,6 +217,7 @@ export const findReportToFoldInto = ({
   const narrowing = [
     ...(('AND' in placement ? placement.AND : undefined) ?? []),
     ...reportedGameFrameFilter({ reportType, reason, details }),
+    ...reportedMergeSourceFilter({ reportType, reason, details }),
   ];
   return db.report.findFirst({
     where: {
@@ -1180,10 +1208,41 @@ export async function closeAppealsDeletedByOwner({
 }
 
 /**
+ * Closes and refunds a deleted model's pending appeals without a notice: the owner is already told
+ * about the removal. Model appeals are flag disputes, so nothing is left to rule on once the model
+ * is gone. Best-effort: the delete already happened, so failures are logged, not thrown. The sweep
+ * stays the safety net.
+ */
+export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number }) {
+  try {
+    const pending = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT a.id FROM "Appeal" a
+      WHERE a."entityType" = 'Model'::"EntityType" AND a."entityId" = ${modelId}
+        AND a.status = 'Pending'::"AppealStatus" AND a."entityRemovedAt" IS NULL
+        AND NOT EXISTS (SELECT 1 FROM "Model" m WHERE m.id = a."entityId" AND m."deletedAt" IS NULL)
+    `;
+    const closed = await closeOrphans(
+      pending.map((a) => a.id),
+      null
+    );
+    for (const appeal of closed) await refundOrphan(appeal);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'close-appeals-on-deleted-model',
+      message: 'Failed to close appeals on deleted model',
+      modelId,
+      error: (e as Error).message,
+    });
+  }
+}
+
+/**
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
- * refunded; anything else stays Pending, stamped `entityRemovedAt`, for review. Both are told.
- * Some appeals are closed defensively without a notice.
+ * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
+ * stamped `entityRemovedAt`, for review, and its owner is told. Some appeals are closed
+ * defensively without a notice.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
@@ -1216,16 +1275,21 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     ...rest.filter((a) => a.modelDeletedByAppellant === true).map((a) => a.id),
   ]);
 
-  const closedQuietly = await closeOrphans(
-    quiet.map((a) => a.id),
-    null
-  );
+  // Model appeals are flag disputes, so a deleted model leaves nothing to rule on. Only images,
+  // where the removal itself can be what is appealed, are routed for review.
+  const notOwnerDeleted = rest.filter((a) => !ownerDeletedIds.has(a.id));
+  const closeQuietIds = [
+    ...quiet.map((a) => a.id),
+    ...notOwnerDeleted.filter((a) => a.entityType === EntityType.Model).map((a) => a.id),
+  ];
+
+  const closedQuietly = await closeOrphans(closeQuietIds, null);
   const closedOwnerDeleted = await closeOrphans(
     rest.filter((a) => ownerDeletedIds.has(a.id)).map((a) => a.id),
     OrphanedAppealReason.DeletedByOwner
   );
   const routed = await routeOrphansForReview(
-    rest.filter((a) => !ownerDeletedIds.has(a.id)).map((a) => a.id)
+    notOwnerDeleted.filter((a) => a.entityType !== EntityType.Model).map((a) => a.id)
   );
 
   let refunded = 0;

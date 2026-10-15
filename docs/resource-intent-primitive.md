@@ -13,7 +13,7 @@ Three consequences worth knowing before you read the rest of this document: `que
 ## Architecture
 
 ```
-POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
+POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?, kind?, needs?}
   → [redis cache, key sha256(prompt|baseModel|browsingLevel|cap|specHash|stage3SpecHash), TTL 1h]
   → Jev request #1: 6 questions, one round trip      (src/server/services/ai/jev.ts)
   → criteria (versioned object, criteriaVersion: 2)  (src/server/schema/resource-intent.schema.ts)
@@ -41,6 +41,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/services/resource-intent-stage3.ts`          | Stage 3 (R4c question, option orders, averaging) and the HYBRID_10 merge as pure functions, plus `RESOURCE_INTENT_STAGE3_SPEC_HASH`. Light, like stage 1, so a study script can import it. |
 | `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity-seeded pool + `ResourceInsight` ordering + hard cap, and the hybrid's one-version-per-model `basePool`. |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
+| `src/shared/constants/hosted-model-catalog.constants.ts`, `src/server/services/resource-intent-hosted-models.ts` | The curated hosted-model catalog and its capability matcher, which answer `needs`. See [Hosted models](#hosted-models-needs--hostedmodels). |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. No-ops without `--execute`. Samples the gold and grades stage-1 agreement, then runs the retrieval comparison below. |
 | `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, the non-inferiority bound, the MRR sign test), the MET / NOT MET / VOID verdict and its report. |
@@ -115,6 +116,16 @@ A request with `kind: 'checkpoint'` asks for checkpoints instead of add-ons. It 
 - **Degrade.** A search or hydration failure returns `degraded: true` with empty suggestions and `model: 'checkpoint-unavailable'` (not the add-on path's `'jev-unavailable'`: no vendor is involved), reason `checkpoint_error`, cached 60 s. A study fail-closed reports the same `model`.
 - **No single-flight.** With no prompt in the key, one entry serves every request for an ecosystem, so concurrent misses on a cold or just-expired key each run the search (up to a 300-id or a 500-document page) and hydration; no vendor call. Likewise each distinct known `baseModel` — even one no checkpoint carries — costs one such search on BASE_BM (or the ATTACH_BM fallback) and an hour-long entry; the known set bounds how many such keys there are. Revisit both once the flag opens, against the per-ecosystem request rate.
 - **Rate limit.** The same per-instance LLM bucket as add-on requests, although this mode makes no vendor call; kept while the mode is dark.
+
+## Hosted models (`needs` → `hostedModels`)
+
+Single-model hosted generators (GPT Image, Nano Banana, Ideogram, …) have no add-ons, so neither the add-on nor the checkpoint list can surface them. A caller that sends `needs` also gets `hostedModels`: entries from the curated catalog in `src/shared/constants/hosted-model-catalog.constants.ts`, matched by capability tag. It is deliberately separate from `ECOSYSTEM_SEO`, and nothing reads one from the other.
+
+- **Request.** `needs?: HostedModelCapability[]`, at most 8 items, each one of `legible_text`, `design_layout`, `photoreal`, `image_editing`, `character_consistency`, `high_resolution` (a claimed native output of at least 2048 px on a side), `transparent_background`, `reference_images`. Any other value is a 400, like the rest of the body. `needs` is answered in the route and stripped before the primitive runs, so it is not in the cache key, the shadow row or the vendor request.
+- **Response.** `hostedModels` is present only when `needs` was sent (`needs: []` gets `[]`); a request without `needs` gets exactly the body it got before. Each item is `{key, name, maker, modelId, url, goodAt, capabilities}`: `key` is the ecosystem's `EcosystemRecord.key` (`'HiDream-O1'`, not the `ECO` constant name), `url` is `https://civitai.com/models/<modelId>`. It does not depend on `degraded` or `kind`: a degraded response still carries it.
+- **Ranking.** By the number of distinct `needs` an entry covers, then catalog order; entries covering none are dropped; at most 3 (`HOSTED_MODELS_MAX`). The caller's `baseModel` does not affect it.
+- **Maturity.** Not filtered: every hosted model is listed in every browsing mode, whatever the ceiling the response echoes in `maturity` (an operator decision). The catalog carries no maturity field, and a test pins that the same `needs` get the same list on a SFW, a mature and a region-clamped ceiling.
+- **No vendor call, no cache, no extra rate-limit cost.** It is a pure in-memory match, computed after the primitive returns.
 
 ## Caching, rate limits, flag
 

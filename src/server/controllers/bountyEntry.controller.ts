@@ -22,7 +22,7 @@ import type {
   UpsertBountyEntryInput,
 } from '~/server/schema/bounty-entry.schema';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
-import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -46,9 +46,7 @@ export const getBountyEntryHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
-        reactions: {
-          select: getReactionsSelectV2,
-        },
+        reactions: viewerReactionsSelect(ctx.user?.id),
         stats: {
           select: {
             likeCountAllTime: true,

@@ -182,6 +182,19 @@ describe('<civitai-post-planner>', () => {
     expect(el._lightbox).toBe(2);
   });
 
+  it('widens the day grid to show a 3 AM post without touching the hour range', async () => {
+    const early = post(3, at(10, 3, 0));
+    await mount({ view: 'day', anchor: '2026-10-10' }, [post(1, POST_A), early], () =>
+      page.getByRole('button', { name: /^3:00 AM, untitled/ })
+    );
+
+    expect(page.getByRole('button', { name: 'Show all hours' }).elements()).toHaveLength(1);
+    const chip = page.getByRole('button', { name: /^3:00 AM, untitled/ }).element();
+    const column = page.getByLabelText('Saturday, October 10').element();
+    const top = chip.getBoundingClientRect().top - column.getBoundingClientRect().top;
+    expect(Math.round(top)).toBe(0);
+  });
+
   it('offers Undo after a move, and Undo reschedules back to the original time', async () => {
     const { backend } = await mount({ view: 'month', anchor: '2026-10-01' });
 
@@ -249,6 +262,37 @@ describe('<civitai-post-planner>', () => {
     expect(backend.shift).not.toHaveBeenCalled();
   });
 
+  it('keeps the drawer prev/next controls in the header and focus on the one pressed', async () => {
+    const { el } = await mount({ view: 'month', anchor: '2026-10-01' }, [
+      post(1, POST_A),
+      post(2, POST_B),
+      post(3, at(12, 18, 0)),
+    ]);
+    const detail = el.host!.backend.getPostDetail;
+    el.host!.backend.getPostDetail = vi.fn(async (id: number) => ({
+      ...(await detail(id)),
+      description: id === 1 ? 'short' : 'long\n'.repeat(80),
+    }));
+    const control = (label: string) =>
+      el.renderRoot.querySelector<HTMLElement>(`.drawer-head [aria-label="${label}"]`)!;
+
+    await userEvent.click(chipA());
+    const next = page.getByRole('button', { name: 'Next post' });
+    await expect.element(next).toBeInTheDocument();
+    const before = control('Next post').getBoundingClientRect().top;
+
+    await userEvent.click(next);
+    await vi.waitFor(() => expect(el._selectedId).toBe(2));
+    await expect.element(page.getByText(/long/)).toBeInTheDocument();
+    expect(control('Next post').getBoundingClientRect().top).toBe(before);
+    expect(el.shadowRoot!.activeElement).toBe(control('Next post'));
+
+    await userEvent.click(next);
+    await vi.waitFor(() => expect(el._selectedId).toBe(3));
+    expect(control('Next post').hasAttribute('disabled')).toBe(true);
+    expect(el.shadowRoot!.activeElement).toBe(control('Close'));
+  });
+
   it('shows a still for a video cover in the calendar and the drawer strip', async () => {
     const video = post(1, POST_A, { cover: { url: 'vid-1', type: 'video' } });
     const { backend } = await mount({ view: 'month', anchor: '2026-10-01' }, [video]);
@@ -269,5 +313,4 @@ describe('<civitai-post-planner>', () => {
       'https://img.test/vid-1/anim=false,transcode=true,width=192/vid-1.jpeg'
     );
   });
-
 });

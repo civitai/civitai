@@ -108,7 +108,8 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   //     the viewer's identity, i.e. content other viewers read. SENSITIVE (needs a
   //     justification) and CONSENT-GATED: deliberately absent from CONSENT_EXEMPT_SCOPES,
   //     so a token carries it only after the viewer granted it for this app. Required by
-  //     any shared collection whose `write` is not `owner`.
+  //     a shared collection whose `write` lets viewers author documents
+  //     (`collectionNeedsPublishScope`, `block-storage.constants.ts`).
   //
   // SKIP_OAUTH_CHECK for the same reason as the rest of the storage family. Both are in the
   // BEARER dev-token allowlist (`DEV_TOKEN_SCOPE_ALLOWLIST`), whose tokens the storage routes

@@ -315,6 +315,8 @@ export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean()
 
 export type SetModelSfwOnlyInput = z.infer<typeof setModelSfwOnlySchema>;
 export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boolean() });
+export type SetModelPoiInput = z.infer<typeof setModelPoiSchema>;
+export const setModelPoiSchema = z.object({ id: z.number(), poi: z.boolean() });
 
 export type MinorFlagSnapshot = {
   at: string;
@@ -379,6 +381,20 @@ export type ModelMeta = Partial<{
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
   textScanFlags: TextScanFlags;
+  /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
+  modelRules: {
+    ruleIds: number[];
+    workflowId: string;
+    textHash: string;
+    at: string;
+    /** Absent for an LLM match. A literal one carries a synthetic `workflowId` of `literal:<textHash>`. */
+    source?: 'literal';
+  };
+  /**
+   * Rules a moderator approved by republishing, for the text they reviewed: a rescan of that same
+   * text does not act on them again, while edited text is judged afresh.
+   */
+  modelRulesCleared: { ruleIds: number[]; textHash: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean | null;

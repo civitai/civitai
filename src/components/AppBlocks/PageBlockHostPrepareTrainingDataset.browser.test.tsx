@@ -3,6 +3,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 import { BLOCK_TRAINING_DATASET_MAX_ITEMS } from '~/server/schema/blocks/training-dataset.schema';
@@ -162,7 +163,9 @@ describe('PageBlockHost PREPARE_TRAINING_DATASET (training dataset bridge)', () 
     const replies = await mountReady();
     postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_1', items: ITEMS });
 
-    expect(await replyFor(replies, 'rq_1')).toEqual({ requestId: 'rq_1', result: RESULT });
+    const prepared = await replyFor(replies, 'rq_1');
+    expect(prepared).toEqual({ requestId: 'rq_1', result: RESULT });
+    expectReplyKeys('PREPARE_TRAINING_DATASET', 'success', ['result'], prepared);
     expect(prepareMutate).toHaveBeenCalledTimes(1);
     expect(prepareMutate).toHaveBeenCalledWith({ blockToken: 'tok_page', items: ITEMS });
     expect(replies.of('TRAINING_DATASET_RESULT')).toHaveLength(1);
@@ -177,10 +180,9 @@ describe('PageBlockHost PREPARE_TRAINING_DATASET (training dataset bridge)', () 
     }));
     postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_2', items: tooMany });
 
-    expect(await replyFor(replies, 'rq_2')).toEqual({
-      requestId: 'rq_2',
-      error: 'invalid training dataset',
-    });
+    const refused = await replyFor(replies, 'rq_2');
+    expect(refused).toEqual({ requestId: 'rq_2', error: 'invalid training dataset' });
+    expectReplyKeys('PREPARE_TRAINING_DATASET', 'error', ['error'], refused);
     expect(prepareMutate).not.toHaveBeenCalled();
     replies.stop();
   });

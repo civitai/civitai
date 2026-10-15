@@ -14,17 +14,42 @@ export type HourBand = { startHour: number; endHour: number };
 export const DEFAULT_BAND: HourBand = { startHour: 6, endHour: 26 };
 export const ALL_HOURS_BAND: HourBand = { startHour: 0, endHour: 24 };
 
-export function hourBand(allHours: boolean): HourBand {
-  return allHours ? ALL_HOURS_BAND : DEFAULT_BAND;
+/**
+ * The default band widened just enough that every post on the grid's days has a column: a
+ * small-hours post the previous day's column cannot show pulls the start down, and the late rows
+ * retreat by the same amount so no hour appears twice.
+ */
+export function fittedBand(posts: PlannerPost[], dayKeys: string[]): HourBand {
+  const days = new Set(dayKeys);
+  let startHour = DEFAULT_BAND.startHour;
+  for (const post of posts) {
+    const date = new Date(post.publishedAt);
+    if (!days.has(localDayKey(date))) continue;
+    const place = placeInBand(date, DEFAULT_BAND);
+    if (place && days.has(place.dayKey)) continue;
+    startHour = Math.min(startHour, date.getHours());
+  }
+  return { startHour, endHour: Math.min(DEFAULT_BAND.endHour, 24 + startHour) };
+}
+
+export function hourBand(allHours: boolean, posts: PlannerPost[], dayKeys: string[]): HourBand {
+  return allHours ? ALL_HOURS_BAND : fittedBand(posts, dayKeys);
 }
 
 export type HourRow = { hour: number; label: string; top: number };
 
+export function hourLabel(hour: number, locale?: string): string {
+  return new Date(2000, 0, 1, hour % 24).toLocaleTimeString(locale, { hour: 'numeric' });
+}
+
 export function hourRows(band: HourBand, locale?: string): HourRow[] {
   const rows: HourRow[] = [];
   for (let hour = band.startHour; hour < band.endHour; hour++) {
-    const label = new Date(2000, 0, 1, hour % 24).toLocaleTimeString(locale, { hour: 'numeric' });
-    rows.push({ hour, label, top: (hour - band.startHour) * HOUR_HEIGHT_PX });
+    rows.push({
+      hour,
+      label: hourLabel(hour, locale),
+      top: (hour - band.startHour) * HOUR_HEIGHT_PX,
+    });
   }
   return rows;
 }

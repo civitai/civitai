@@ -839,6 +839,11 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // encouraged "Powered by" form, so there is no notice and no poweredBy.
     attribution: 'MiniMax-Music3',
   },
+  'krea 2 community': {
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+    name: 'Krea 2 Community License Agreement',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -927,7 +932,68 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'Krea 2': baseLicenses['krea 2 community'],
+  'Krea 2 Turbo': baseLicenses['krea 2 community'],
 };
+
+type CivitaiLicenseAgreement = {
+  partner: string;
+  url?: string;
+  // Shown in place of the public licence's notice, which is written for the case
+  // the agreement now headlines.
+  notice?: string;
+};
+
+// Base models Civitai uses under its own agreement with the rights holder. Display only:
+// commercial-use, mature and same-license enforcement still come from baseModelLicenses.
+export const civitaiLicenseAgreements: Partial<Record<BaseModel, CivitaiLicenseAgreement>> = {
+  'MiniMax H3': {
+    partner: 'MiniMax',
+    notice:
+      'The MiniMax H3 Community License Agreement’s grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+  },
+};
+
+export type LicenseLine = { label?: string; name: string; url?: string; suffix?: string };
+export type DisplayedBaseModelLicense = {
+  lines: LicenseLine[];
+  notice?: string;
+  poweredBy?: string;
+};
+
+export function getDisplayedBaseModelLicense(
+  baseModel: string
+): DisplayedBaseModelLicense | undefined {
+  const license = baseModelLicenses[baseModel as BaseModel];
+  const agreement = civitaiLicenseAgreements[baseModel as BaseModel];
+  if (!agreement) {
+    if (!license) return undefined;
+    return {
+      lines: [{ name: license.name, url: license.url }],
+      notice: license.notice,
+      poweredBy: license.poweredBy,
+    };
+  }
+
+  // The agreement covers use on Civitai only. Downloaded weights stay under the public
+  // licence, so the two scopes get equal billing rather than one demoting the other.
+  const lines: LicenseLine[] = [
+    {
+      label: 'On Civitai (generation, training, sharing LoRAs):',
+      name: `covered by Civitai’s agreement with ${agreement.partner}`,
+      url: agreement.url,
+    },
+  ];
+  if (license)
+    lines.push({
+      label: 'Downloaded weights:',
+      name: license.name,
+      url: license.url,
+      suffix: 'applies',
+    });
+
+  return { lines, notice: agreement.notice, poweredBy: license?.poweredBy };
+}
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
@@ -990,6 +1056,28 @@ export function getEffectiveDifferentLicense(
   baseModel?: string | null
 ): boolean {
   return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
+}
+
+// "Different permissions on merges" means nothing while merges are not allowed. The upsert form
+// used to hide that box without clearing it, so ~111k models store merges off with it still on:
+// every reader goes through this rather than the raw column, and those rows are left as stored.
+export function allowsDifferentLicenseOnMerges(permissions: {
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+}): boolean {
+  return permissions.allowDerivatives && permissions.allowDifferentLicense;
+}
+
+// The write-side half of the rule above. Only when the caller is writing permissions: a save that
+// omits both fields leaves the stored pair alone. `storedAllowDerivatives` covers a save that sends
+// only allowDifferentLicense to a model whose merges are already off.
+export function normalizeMergePermissions(
+  data: { allowDerivatives?: boolean; allowDifferentLicense?: boolean },
+  storedAllowDerivatives?: boolean
+) {
+  if (data.allowDerivatives === undefined && data.allowDifferentLicense === undefined) return;
+  if ((data.allowDerivatives ?? storedAllowDerivatives) === false)
+    data.allowDifferentLicense = false;
 }
 
 // Whether a model's own terms add anything to the base license, which decides if Attachment B

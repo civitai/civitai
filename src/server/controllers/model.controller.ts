@@ -32,6 +32,7 @@ import {
   stampWorkflowPublished,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
+import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import {
   applyTrainingWorkflowOverlay,
   collectTrainingWorkflowRefs,
@@ -136,7 +137,10 @@ import {
   queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
-import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
+import {
+  closeAppealsDeletedByOwner,
+  closeAppealsOnDeletedModel,
+} from '~/server/services/report.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getLatestAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -167,7 +171,9 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
+import { scanModelRules } from '~/server/services/text-scan/submit';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
@@ -841,10 +847,19 @@ export const publishModelHandler = async ({
       ownerId: model.userId,
       callerId: ctx.user.id,
     });
+    await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
-    const updatedModel = await publishModelById({ ...input, meta, republishing });
+    const updatedModel = await publishModelById({
+      ...input,
+      meta: withModelRulesClearance(meta, modelMeta, isModerator),
+      republishing,
+      enforceModelRules: !isModerator,
+    });
+    // Held for review: not published, so no publish side effects below.
+    if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
+    if (!isModerator) scanModelRules(updatedModel.id);
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -943,8 +958,9 @@ export const deleteModelHandler = async ({
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
-    // Anyone else's delete, including a moderator's earlier one that this call repeats, leaves the
-    // appeal to the sweep's review routing. A permanent delete leaves no row to read `deletedBy` from.
+    // The owner's own delete closes the appeal with a notice. A permanent delete leaves no row to
+    // read `deletedBy` from. Any other delete, including a moderator's earlier one that this call
+    // repeats, closes it quietly.
     const deletedByCaller =
       permanently || ('deletedBy' in model && model.deletedBy === ctx.user.id);
     if (model.userId === ctx.user.id && deletedByCaller)
@@ -953,6 +969,7 @@ export const deleteModelHandler = async ({
         entityIds: [id],
         ownerId: ctx.user.id,
       });
+    else await closeAppealsOnDeletedModel({ modelId: id });
 
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',
@@ -2490,18 +2507,25 @@ export const publishPrivateModelHandler = async ({
       ownerId: model.userId,
       callerId: userId,
     });
-
-    const { versionIds } = await publishPrivateModel({
-      ...input,
+    await assertNotCrossOwnerDuplicate({
+      modelId: model.id,
+      ownerId: model.userId,
       isModerator: ctx.user.isModerator,
     });
+
+    const { versionIds, held } = await publishPrivateModel(
+      { ...input, isModerator: ctx.user.isModerator },
+      { enforceModelRules: !ctx.user.isModerator }
+    );
+    // The hold refreshed the caches itself and nothing went public, so no publish side effects.
+    if (held) return { held };
     await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([
       { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
-    return true;
+    return { held };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

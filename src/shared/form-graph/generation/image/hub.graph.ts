@@ -16,6 +16,7 @@ import { flux3 } from './flux3.graph';
 import { flux2Klein } from './flux2-klein.graph';
 import { boogu } from './boogu.graph';
 import { krea2 } from './krea2.graph';
+import { krea3 } from './krea3.graph';
 import { imagen4 } from './imagen4.graph';
 import { ponyV7 } from './pony-v7.graph';
 import { reve } from './reve.graph';
@@ -92,6 +93,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['Flux2Klein_9B', 'Flux2Klein_9B_base', 'Flux2Klein_4B', 'Flux2Klein_4B_base'], flux2Klein],
       [['Boogu'], boogu],
       [['Krea2'], krea2],
+      [['Krea3'], krea3],
       [['Imagen4'], imagen4],
       [['PonyV7'], ponyV7],
       [['Reve'], reve],

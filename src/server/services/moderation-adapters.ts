@@ -12,6 +12,7 @@ import {
 import {
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
+  modelRulesTextScanAdapter,
   postTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
@@ -30,6 +31,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Challenge: challengeModerationAdapter,
   Crucible: crucibleModerationAdapter,
   Model: modelModerationAdapter,
+  ModelRules: modelRulesTextScanAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
   Bounty: bountyModerationAdapter,
   BountyEntry: bountyEntryTextScanAdapter,

@@ -13,6 +13,7 @@ import {
 import { createPgliteHarness, type Harness } from './doc-store.harness';
 import {
   assertUsageConsistent,
+  snapshot,
   BOARD,
   ctx,
   expectCode,
@@ -62,17 +63,6 @@ async function rowsByTable(
 }
 
 const NONE = Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0]));
-
-/** A full snapshot of one app id's rows, for "untouched" comparisons. */
-async function snapshot(h: Harness, appId: string) {
-  const out: Record<string, unknown[]> = {};
-  for (const t of APPDATA_TABLES) {
-    out[t] = await h.raw(`SELECT * FROM appdata.${t} WHERE app_id = $1 ORDER BY 1, 2, 3, 4, 5`, [
-      appId,
-    ]);
-  }
-  return out;
-}
 
 /** Every kind of row a moderator can create: private + shared docs, an index row, a counter,
  * a counter-created doc, a mark, and a tombstone. */

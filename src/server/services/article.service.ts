@@ -28,6 +28,7 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -765,7 +766,12 @@ export const getArticleById = async ({
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the
       // field doesn't flow into external webhook / search-index payloads.
-      select: { ...articleDetailSelect, moderatorNsfwLevel: true, scheduledAt: true },
+      select: {
+        ...articleDetailSelect,
+        moderatorNsfwLevel: true,
+        scheduledAt: true,
+        reactions: viewerReactionsSelect(userId),
+      },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);

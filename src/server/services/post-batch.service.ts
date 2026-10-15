@@ -90,6 +90,8 @@ async function assertCanUseModelVersion(modelVersionId: number, user: SessionUse
     throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
   // Publishing or rescheduling a version moves every pending post on it to the release instant,
   // which would collapse a spread-out batch past the gap and the cap.
+  if (version.model.status !== ModelStatus.Published)
+    throw throwBadRequestError('This model is not published, so it cannot be promoted.');
   if (version.status !== ModelStatus.Published)
     throw throwBadRequestError('Publish this version before promoting it with a batch.');
 }

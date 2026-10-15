@@ -34,13 +34,20 @@ export const useQueryModelVersionsEngagement = (
   return { alreadyNotifying, alreadyDownloaded, ...rest };
 };
 
+// The SSR prefetch, this query and its invalidations must share one shape: the React Query key is
+// built from the raw input, before the schema coerces a scalar id into an array.
+export const modelVersionAccessInput = (modelVersionId: number) => ({
+  entityId: [modelVersionId],
+  entityType: 'ModelVersion',
+});
+
 export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?: number }) => {
   const { data: modelVersion } = trpc.modelVersion.getById.useQuery(
     { id: modelVersionId as number },
     { enabled: !!modelVersionId }
   );
   const { data: entities, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
-    { entityId: [modelVersionId], entityType: 'ModelVersion' },
+    modelVersionAccessInput(modelVersionId as number),
     { enabled: !!modelVersion }
   );
   const currentUser = useCurrentUser();
@@ -107,10 +114,7 @@ export const useMutateModelVersion = () => {
   const modelVersionEarlyAccessPurchaseMutation = trpc.modelVersion.earlyAccessPurchase.useMutation(
     {
       onSuccess(_, { modelVersionId }) {
-        queryUtils.common.getEntityAccess.invalidate({
-          entityId: [modelVersionId],
-          entityType: 'ModelVersion',
-        });
+        queryUtils.common.getEntityAccess.invalidate(modelVersionAccessInput(modelVersionId));
 
         // Manage donation goals:
         queryUtils.modelVersion.donationGoal.invalidate({ id: modelVersionId });

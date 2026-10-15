@@ -15,6 +15,7 @@ const { buzz, events } = vi.hoisted(() => ({
     createBuzzTransaction: vi.fn(),
     createBuzzTransactionMany: vi.fn(),
     getMultiAccountTransactionsByPrefix: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
   },
   events: [] as string[],
 }));
@@ -268,7 +269,10 @@ beforeEach(() => {
     events.push(name);
     return {};
   };
-  buzz.refundMultiAccountTransaction.mockImplementation(moved('refund'));
+  buzz.refundMultiAccountTransaction.mockImplementation(async () => {
+    events.push('refund');
+    return { refundedTransactions: [{ amount: 100 }], totalRefunded: 1 };
+  });
   buzz.refundTransaction.mockImplementation(moved('refund'));
   buzz.createBuzzTransaction.mockImplementation(moved('buzz'));
   buzz.createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => {
@@ -278,6 +282,7 @@ beforeEach(() => {
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
     { accountType: 'yellow', amount: 100 },
   ]);
+  buzz.getTransactionByExternalId.mockResolvedValue(null);
 });
 
 const moved = (name: string) => events.filter((e) => e === name).length;
@@ -487,11 +492,32 @@ describe('settleBountyPayout', () => {
     ]);
   });
 
-  it('treats a refund the Buzz service already made (404/409) as done', async () => {
+  it('treats a refund the Buzz service already made (409) as done', async () => {
     Object.assign(bounty!, { refunded: true });
     benefactors[0].awardedToId = null;
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'leg-1', accountType: 'yellow', amount: 100 },
+    ]);
+    buzz.getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
     expect(await settleBountyPayout(4)).toBe(true);
+    expect(bounty?.payoutSettledAt).toBeInstanceOf(Date);
+    expect(buzz.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refunds the legs a 409 left unrefunded before settling', async () => {
+    Object.assign(bounty!, { refunded: true });
+    benefactors[0].awardedToId = null;
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'leg-1', accountType: 'yellow', amount: 60 },
+      { transactionId: 'leg-2', accountType: 'green', amount: 40 },
+    ]);
+    buzz.getTransactionByExternalId.mockImplementation(async (extId: string) =>
+      extId === 'refund-leg-1' ? { type: 'Refund' } : null
+    );
+    expect(await settleBountyPayout(4)).toBe(true);
+    expect(buzz.refundTransaction.mock.calls.map(([id]) => id)).toEqual(['leg-2']);
     expect(bounty?.payoutSettledAt).toBeInstanceOf(Date);
   });
 });
@@ -674,7 +700,7 @@ describe('refundBountyBenefactorFunds', () => {
   it('logs a failed refund with the bounty and carries on', async () => {
     buzz.refundMultiAccountTransaction
       .mockRejectedValueOnce(new Error('buzz down'))
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({ refundedTransactions: [{ amount: 100 }], totalRefunded: 1 });
     expect(await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ' })).toEqual({
       refunded: [6],
       failed: [5],

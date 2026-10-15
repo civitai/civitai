@@ -11,8 +11,8 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import {
-  loadTextScanTextHash,
-  queueTextScanRescan,
+  loadGrantTextHash,
+  settleFlagAppealsAfterModeratorLift,
   stampModeratorTextScanRuling,
 } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
@@ -23,7 +23,6 @@ import {
 import {
   hasOpenTextScanFlag,
   hasTextScanVerdict,
-  readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
@@ -666,6 +665,16 @@ export async function revertMinorHashAutoFlag({
     activity: 'rollbackMinorAutoHash',
   });
 
+  // After the lift, and only for a moderator's own revert: an appeal's revert is followed by its
+  // own resolution, which must not be pre-empted.
+  if (recordTextScanRuling)
+    await settleFlagAppealsAfterModeratorLift({
+      modelId,
+      userId,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+
   return report;
 }
 
@@ -768,13 +777,14 @@ export async function resolveMinorFlagAppeal({
   const upheld = flagged.filter((label) => decide(label) === 'uphold');
   const overturned = flagged.filter((label) => decide(label) === 'overturn');
 
-  let currentHash: string | null = null;
-  if (overturned.length) {
-    currentHash = await loadTextScanTextHash('Model', modelId);
-    if (!currentHash)
+  const grantHashes: Record<string, string> = {};
+  for (const label of overturned) {
+    const hash = await loadGrantTextHash('Model', modelId, label);
+    if (!hash)
       throw throwBadRequestError(
         "Could not read this model's text, so the grant cannot record what it covers. The appeal is still open."
       );
+    grantHashes[label] = hash;
   }
 
   if (upheld.includes('minor')) await confirmMinorHashAutoFlag({ modelId, userId });
@@ -795,7 +805,7 @@ export async function resolveMinorFlagAppeal({
       userId,
       decision: 'appealGranted',
       labels: ['minor'],
-      currentHash,
+      grantHashes,
     });
     const snapshot = meta?.minorFlagSnapshot;
     const origin = snapshot?.confirmedFrom ?? snapshot?.source;
@@ -804,7 +814,8 @@ export async function resolveMinorFlagAppeal({
       await revertMinorHashAutoFlag({ modelId, userId });
     else await setModelMinor({ id: modelId, minor: false, userId });
   }
-  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId, currentHash });
+  if (overturned.includes('poi'))
+    await grantModelTextScanPoi({ modelId, userId, grantHash: grantHashes.poi });
 
   const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({
@@ -814,13 +825,9 @@ export async function resolveMinorFlagAppeal({
     userId,
   });
 
-  const flags = readTextScanFlags(meta);
-  const rescanQueued = overturned.some((label) => {
-    const flaggedHash = flags[label]?.textHash;
-    return !!flaggedHash && flaggedHash !== currentHash;
-  });
-  if (rescanQueued) await queueTextScanRescan('Model', modelId);
-  return { rescanQueued };
+  // The grants cover the current text, so there is nothing to rescan. The moderator app still reads
+  // the flag.
+  return { rescanQueued: false };
 }
 
 export async function dismissMinorHashMatch({
