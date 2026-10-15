@@ -7,12 +7,12 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { browsingLevels, browsingLevelLabels, NsfwLevel } from '@civitai/shared';
-  import type { PageData } from './$types';
+  import type { AccountData } from './account.server';
   import { clearPaging } from '$lib/paging';
 
   // No box of its own: the Images tab folds it into one toolbar card with the counts and the selection
   // actions, instead of three stacked cards before the first image.
-  let { filters }: { filters: PageData['filters'] } = $props();
+  let { filters }: { filters: AccountData['filters'] } = $props();
 
   // 0 is not a browsing level — it is an image nothing has rated yet. Without a box of its own,
   // ticking every rating reads as "all images" and silently excludes them.

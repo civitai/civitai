@@ -1,30 +1,25 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import { page as pageState } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
-  import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
   import AccountHistory from '$lib/components/AccountHistory.svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ProfileContent from '$lib/components/ProfileContent.svelte';
-  import UserCard from '$lib/components/user-card/UserCard.svelte';
-  import ContentCounts from '../user-lookup/ContentCounts.svelte';
-  import { STRIKE_REASONS } from '$lib/moderation-reasons';
+  import ContentCounts from '../../retool/user-lookup/ContentCounts.svelte';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
   import { SUSPECT_TABS, SUSPECT_TAB_LABELS, type SuspectTab } from './tabs';
-  import type { PageData } from './$types';
+  import type { AccountData } from './account.server';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import { entityUrl, modelLookupUrl, userLookupUrl } from '$lib/entity-url';
+  import { entityUrl, modelLookupUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
   import { clearPaging, nonPagingSearch } from '$lib/paging';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
@@ -38,30 +33,18 @@
     accountHistory,
     canAct,
     civitaiUrl,
-    strikeError,
-    notifyError,
-    imagesError,
-    imageResult,
   }: {
     suspectId: number;
     tab: SuspectTab;
-    details: NonNullable<PageData['details']>;
+    details: NonNullable<AccountData['details']>;
     /** Each of these three is loaded only while its own tab is open, so null means "not this tab". */
-    suspect: PageData['suspect'];
-    models: PageData['models'];
-    filters: PageData['filters'];
-    accountHistory: PageData['accountHistory'];
+    suspect: AccountData['suspect'];
+    models: AccountData['models'];
+    filters: AccountData['filters'];
+    accountHistory: AccountData['accountHistory'];
     canAct: boolean;
     civitaiUrl: string;
-    strikeError: string | null;
-    notifyError: string | null;
-    imagesError: string | null;
-    imageResult: string | null;
   } = $props();
-
-  let striking = $state(false);
-  let strikeReason = $state('');
-  let notifying = $state(false);
 
   const selected = new SelectionSet<string | number>();
   const blockedIds = $derived(
@@ -70,14 +53,17 @@
     )
   );
 
-  // This panel owns its writes so a success can tear down what it armed. Inferring that from the
-  // action's return shape left a strike form open with a live submit after the strike had landed.
+  // This panel owns its image writes so a success can clear the selection it armed. Strike and notify
+  // moved to the report column beside it, with the report they answer.
+  // What the server says it did — it can differ from what was asked (images already removed, a follow-up
+  // that failed) — so the result line reports that rather than the request.
+  let imageResult = $state<string | null>(null);
   const onSubmit = new FormState({
     reload: true,
-    onSuccess: () => {
-      striking = false;
-      notifying = false;
+    onSubmit: () => (imageResult = null),
+    onSuccess: (data) => {
       selected.clear();
+      imageResult = typeof data?.imageResult === 'string' ? data.imageResult : null;
     },
   });
 
@@ -90,14 +76,14 @@
     untrack(() => selected.clear());
   });
 
-  // In the URL like `user=`, so a link handed to a colleague opens the same view. The image page is
+  // In the path with the account, so a link handed to a colleague opens the same view — and so the
+  // queue, a layout reading only its own params, does not reload under a tab click. The image page is
   // dropped: it indexes a grid the other tabs do not have.
   function tabHref(next: SuspectTab) {
     const params = new URLSearchParams(pageState.url.search);
-    if (next === 'details') params.delete('tab');
-    else params.set('tab', next);
     clearPaging(params);
-    return `${pageState.url.pathname}?${params}`;
+    const query = params.size ? `?${params}` : '';
+    return `${userReportUrl(suspectId, next)}${query}`;
   }
 
   // How many image filters are on, for the collapsed toggle. Open by default only when some are, so a
@@ -128,60 +114,6 @@
   );
 </script>
 
-<!-- Who this is, above every tab: the ban, mute and strike state decides what any tab's evidence
-     means, and the enforcement buttons have to be reachable from whichever tab settled it. The card is
-     its own box; wrapping it in a second one framed the header twice. -->
-<UserCard card={details.card} lookupLink openReports={false} class="mb-3">
-  {#snippet actions()}
-    {#if canAct}
-      {#if !striking}
-        <Button size="sm" variant="destructive" onclick={() => (striking = true)}>Strike</Button>
-      {/if}
-      {#if !notifying}
-        <Button size="sm" onclick={() => (notifying = true)}>Notify</Button>
-      {/if}
-    {/if}
-  {/snippet}
-</UserCard>
-
-{#if striking || notifying}
-  <section class="mb-3 rounded-xl border border-dark-4 bg-dark-6 p-4">
-    {#if striking}
-      <form method="POST" action="?/strike" use:enhance={onSubmit.enhance}>
-        <input type="hidden" name="userId" value={suspectId} />
-        {#if strikeError}
-          <ErrorAlert class="mb-2" message={strikeError} />
-        {/if}
-        <CannedReasonPicker reasons={STRIKE_REASONS} idPrefix="strike" bind:value={strikeReason} />
-        <div class="mt-2 flex gap-2">
-          <Button type="submit" size="sm" variant="destructive" disabled={onSubmit.submitting}>
-            {onSubmit.submitting ? 'Working…' : 'Issue strike'}
-          </Button>
-          <Button type="button" size="sm" variant="outline" onclick={() => (striking = false)}>
-            Cancel
-          </Button>
-        </div>
-      </form>
-    {/if}
-
-    {#if notifying}
-      <form method="POST" action="?/notify" use:enhance={onSubmit.enhance} class={striking ? 'mt-4' : ''}>
-        <input type="hidden" name="userId" value={suspectId} />
-        {#if notifyError}
-          <ErrorAlert class="mb-2" message={notifyError} />
-        {/if}
-        <Textarea name="message" rows={2} placeholder="What should this user be told?" required />
-        <div class="mt-2 flex gap-2">
-          <Button type="submit" size="sm" disabled={onSubmit.submitting}>Send</Button>
-          <Button type="button" size="sm" variant="outline" onclick={() => (notifying = false)}>
-            Cancel
-          </Button>
-        </div>
-      </form>
-    {/if}
-  </section>
-{/if}
-
 <Tabs
   value={tab}
   onValueChange={(v) =>
@@ -199,7 +131,7 @@
   <!-- One box, two columns: what the account says about itself on the left, what it has posted on
        the right. Three stacked boxes, each with its own dividers and headings, read as a form. -->
   <section
-    class="mb-4 grid gap-6 rounded-xl border border-dark-4 bg-dark-6 p-5 lg:grid-cols-[minmax(0,1fr)_16rem]"
+    class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]"
   >
     <div class="min-w-0">
       <h3 class="mb-3 text-sm font-semibold text-white">
@@ -230,7 +162,7 @@
     </div>
   </section>
 {:else if tab === 'models' && models}
-  <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <section>
     <h3 class="mb-3 text-xs tracking-wide text-dark-2 uppercase">
       {num(models.items.length)}{models.truncated ? '+' : ''} models · newest first, deleted and unpublished
       included
@@ -296,16 +228,14 @@
     {/if}
   </section>
 {:else if tab === 'activity' && accountHistory}
-  <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <section>
     <AccountHistory userId={suspectId} {civitaiUrl} {...accountHistory} />
   </section>
 {:else if tab === 'images' && suspect}
   <!-- One toolbar card above the grid: the counts, the filters and the selection actions used to be
        three stacked cards, which pushed the first image most of a screen down. -->
   <section
-    class="mb-4 rounded-xl border p-4 {selected.size > 0
-      ? 'border-blue-500/40 bg-blue-500/5'
-      : 'border-dark-4 bg-dark-6'}"
+    class="mb-4 rounded-lg border p-3 {selected.size > 0 ? 'border-blue-500/40 bg-blue-500/5' : ''}"
   >
     <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <p class="text-sm text-dark-2">
@@ -334,8 +264,8 @@
       </div>
     {/if}
 
-    {#if imagesError}
-      <ErrorAlert class="mt-3" message={imagesError} />
+    {#if onSubmit.error}
+      <ErrorAlert class="mt-3" message={onSubmit.error} />
     {:else if imageResult}
       <p class="mt-3 text-sm text-dark-0" role="status">{imageResult}</p>
     {/if}

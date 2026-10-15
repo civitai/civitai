@@ -62,8 +62,8 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
 - [x] **A reported account or post opens the queue that rules on it.** *"In the urgent reports, user
       should link to the User Report page and highlight/pick that User Report"*, and *"when we have the
       post reports page, same as above"* — which became possible the day Post Reports shipped. The Most
-      reported table now sends `reportedUser` rows to `/retool/user-reports?user=` and `post` rows to
-      `/retool/post-reports?post=`, falling back to the site link for anyone whose `data.nav` says they
+      reported table now sends `reportedUser` rows to `/reports/user/<id>` and `post` rows to
+      `/reports/post/<id>` (the Retool paths until 2026-10-14/15), falling back to the site link for anyone whose `data.nav` says they
       cannot open that queue. Every other entity keeps the site link — that is where it gets judged.
 - [ ] **Image reports are listed twice on the dashboard** — once under Reports and once under Images.
       *"No reason to show image reports here, they're listed under images."* Both are real queues

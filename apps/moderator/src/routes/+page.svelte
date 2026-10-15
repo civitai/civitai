@@ -14,7 +14,7 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { postReportUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
   import {
     getReportItemUrl,
     reportDetailEntries,
@@ -173,10 +173,10 @@
     if (row.entityId === null) return null;
     // `ReportEntity.User` is the string `reportedUser`, not `user` — the enum key and its value differ
     // for exactly this one entity.
-    if (row.entity === ReportEntity.User && reachable.has('/retool/user-reports'))
-      return `/retool/user-reports?user=${row.entityId}`;
-    if (row.entity === ReportEntity.Post && reachable.has('/retool/post-reports'))
-      return `/retool/post-reports?post=${row.entityId}`;
+    if (row.entity === ReportEntity.User && reachable.has('/reports/user'))
+      return userReportUrl(row.entityId);
+    if (row.entity === ReportEntity.Post && reachable.has('/reports/post'))
+      return postReportUrl(row.entityId);
     return null;
   };
 

@@ -40,10 +40,9 @@
   } from '$lib/reports';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
-  import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
-  import type { ActionData, PageData } from './$types';
+  import type { PageData } from './$types';
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data }: { data: PageData } = $props();
 
   /**
    * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
@@ -74,7 +73,6 @@
   });
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
   const placementForm = new FormState({ onSuccess: null, reload: true });
-  const sweepForm = new FormState({ onSuccess: null, reload: true });
   const delistForm = new FormState({
     onSuccess: (result) => {
       confirmingDelist = null;
@@ -118,10 +116,6 @@
       data.items[Math.min(selectedIndex, data.items.length - 1)] ??
       null
   );
-
-  const ownerFlaggedMinor = $derived(new Set(data.ownerFlaggedMinor));
-  const isOwnerFlaggedMinor = (entityId: number | null) =>
-    entityId != null && ownerFlaggedMinor.has(entityId);
 
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
   const fmtDate = dateTime;
@@ -201,26 +195,6 @@
   <p>{data.totalItems} reports</p>
 </header>
 
-<!-- Retool's `ActionAllPostReports`. Only meaningful here: the query keys on every image in the post
-     already being blocked, which is a post-shaped question. -->
-{#if data.type === 'post'}
-  <form method="POST" action="?/actionResolvedPosts" use:enhance={sweepForm.enhance} class="mb-4">
-    <Button type="submit" variant="outline" size="sm">Action reports already resolved by content</Button>
-    <span class="ml-2 text-xs text-muted-foreground">
-      Pending reports whose post is entirely blocked already.
-    </span>
-  </form>
-  <!-- A bulk action that reports nothing is indistinguishable from one that did nothing. -->
-  {#if form && 'actioned' in form && form.actioned != null}
-    <p class="mb-4 text-sm text-green-300" role="status">
-      Actioned {form.actioned} of {form.found}{form.skipped ? `, ${form.skipped} already handled` : ''}{form.more ? ' — more remain, run it again.' : ''}
-    </p>
-  {/if}
-{/if}
-
-{#if sweepForm.error}
-  <p class="mb-4 text-sm text-red-300" role="alert">{sweepForm.error}</p>
-{/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
   <div class="flex flex-col gap-1">
@@ -281,7 +255,7 @@
         <TableBody>
           {#each data.items as report (report.id)}
             {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId, report.contextUrl)}
-            <!-- Striped, and the open row marked with the same blue as post-reports' queue. The stripe is
+            <!-- Striped, and the open row marked with the same blue as the report queues. The stripe is
                  dropped on the open row rather than layered under it, so which one wins never depends
                  on Tailwind's variant order. -->
             <TableRow
@@ -301,9 +275,6 @@
                   <a href={itemUrl} target="_blank" rel="noreferrer" class="link">#{report.entityId}</a>
                 {:else}
                   #{report.entityId}
-                {/if}
-                {#if isOwnerFlaggedMinor(report.entityId)}
-                  <OwnerFlaggedMinorBadge />
                 {/if}
               </TableCell>
               <TableCell>{report.reason}</TableCell>
@@ -404,10 +375,6 @@
               #{selected.entityId}{/if}
             <IconExternalLink size={14} />
           </a>
-        {/if}
-
-        {#if isOwnerFlaggedMinor(selected.entityId)}
-          <div><OwnerFlaggedMinorBadge /></div>
         {/if}
 
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">

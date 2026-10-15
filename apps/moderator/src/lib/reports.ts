@@ -56,6 +56,13 @@ export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
   ReportStatus.Processing,
 ];
 
+/** The statuses a moderator can set from a report queue: the outcome, and nothing in between. Pending
+ *  and Processing are states a report arrives in or was left in, not decisions — claiming was removed,
+ *  and the queues still FILTER on them because older reports carry them. */
+export const REPORT_RULINGS = [ReportStatus.Actioned, ReportStatus.Unactioned] as const;
+export const isReportRuling = (v: string): v is (typeof REPORT_RULINGS)[number] =>
+  (REPORT_RULINGS as readonly string[]).includes(v);
+
 /** What a queue badge counts: reports nobody has picked up. `Processing` is deliberately excluded —
  *  a moderator sets it while investigating an ownership claim, which can run for weeks, so counting it
  *  makes an idle queue read as a growing backlog. The queue page still LANDS on both. */
