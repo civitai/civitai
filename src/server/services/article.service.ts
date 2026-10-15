@@ -94,6 +94,7 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { isPublicArticle } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
   computeArticleDerivedNsfwLevel,
@@ -1076,7 +1077,7 @@ export const upsertArticle = async ({
       }
 
       // Submit for text moderation (non-blocking, fire-and-forget)
-      if (result.content) {
+      if (result.content && isPublicArticle(result)) {
         const textForModeration = [data.title, removeTags(result.content)]
           .filter(Boolean)
           .join(' ');
@@ -1328,6 +1329,7 @@ export const upsertArticle = async ({
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
         coverId: coverId ?? article.coverId,
+        isPublic: isPublicArticle(result),
       },
     });
 
@@ -1368,6 +1370,7 @@ type ArticleContentChangeContext = {
   title: string | null;
   previousContent: string | null;
   coverId: number | null;
+  isPublic: boolean;
 };
 
 /**
@@ -1412,7 +1415,14 @@ export async function applyArticleContentChange({
   if (!resolved) {
     const stored = await dbWrite.article.findUnique({
       where: { id },
-      select: { userId: true, title: true, content: true, coverId: true },
+      select: {
+        userId: true,
+        title: true,
+        content: true,
+        coverId: true,
+        status: true,
+        scheduledAt: true,
+      },
     });
     if (!stored) throw throwNotFoundError(`No article with id ${id}`);
     resolved = {
@@ -1420,9 +1430,10 @@ export async function applyArticleContentChange({
       title: stored.title,
       previousContent: stored.content,
       coverId: stored.coverId,
+      isPublic: isPublicArticle(stored),
     };
   }
-  const { ownerId, title, previousContent, coverId } = resolved;
+  const { ownerId, title, previousContent, coverId, isPublic } = resolved;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1496,7 +1507,8 @@ export async function applyArticleContentChange({
   // orchestrator-wise. If the article's text was emptied out entirely,
   // drop any stale EntityModeration row — otherwise the retry cron would
   // keep re-submitting and `recomputeArticleIngestion` could still read
-  // the old blocked/error state.
+  // the old blocked/error state. A draft waits for the save that makes it public: the
+  // author may still edit it.
   {
     const currentTitle = title ?? '';
     const hasText = articleHasText(currentTitle, content);
@@ -1505,7 +1517,7 @@ export async function applyArticleContentChange({
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
-    } else {
+    } else if (isPublic) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
       submitTextModerationOrScan({
@@ -2484,7 +2496,15 @@ export async function rescanArticle({
   const db = await getDbWithoutLag('article', id);
   const article = await db.article.findUnique({
     where: { id },
-    select: { id: true, userId: true, content: true, title: true, coverId: true },
+    select: {
+      id: true,
+      userId: true,
+      content: true,
+      title: true,
+      coverId: true,
+      status: true,
+      scheduledAt: true,
+    },
   });
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -2565,7 +2585,7 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  if (article.content) {
+  if (article.content && isPublicArticle(article)) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');
