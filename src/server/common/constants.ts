@@ -838,6 +838,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
     name: 'Krea 2 Community License Agreement',
   },
+  'flux kommunity': {
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md',
+    name: 'FLUX Kommunity License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -881,6 +885,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
   'Flux.3': baseLicenses['bfl tos'],
+  'Flux.3 Klein': baseLicenses['flux kommunity'],
+  'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
   'Flux.2 Klein 9B': baseLicenses['flux1D'],
