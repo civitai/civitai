@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
-import { clickhouseDate } from './clickhouse-date';
+import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
 import { utcMs } from '$lib/format';
 import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
@@ -969,6 +969,121 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
     .limit(limit)
     .execute();
   return rows as RetoolActivityRow[];
+}
+
+// IMAGE REMOVALS, from ClickHouse `default.images`. ModActivity finds image actions through the account's
+// current Image rows, and a blocked image is hard-deleted from Postgres after 7 days, so its removal
+// drops off that list. This log is keyed by owner and survives the delete.
+//
+// Owner is recorded from 2024 on; 2023 rows carry ownerId 0 and cannot be attributed. `ownerId` is not
+// in the sort key (time, imageId, userId), but the table is small enough that the scan measured
+// 164–237ms on the two largest accounts (~39k and ~33k removals).
+//
+// A non-owner `Delete` is not always a moderator: several frequent actors are not moderators today
+// (former moderators, or collaborators), so the actor's current role is returned for the UI to show.
+export type ImageRemovalRow = {
+  key: string;
+  type: 'DeleteTOS' | 'Delete' | 'Restore';
+  at: string;
+  imageId: number;
+  actorId: number;
+  actorUsername: string | null;
+  actorIsModerator: boolean;
+  tosReason: string | null;
+  violationType: string | null;
+};
+
+export type ImageRemovalCounts = { tos: number; deletedByOthers: number; restored: number };
+
+export type ImageRemovalCursor = { at: string; imageId: number };
+
+const REMOVALS_SCOPE = (userId: number) => `ownerId = ${userId}
+  AND (type IN ('DeleteTOS', 'Restore') OR (type = 'Delete' AND userId != ownerId))`;
+
+/**
+ * Ends every page on a whole (time, imageId) group. No column is unique per row — one image can be
+ * removed and restored in the same second, and a DeleteTOS can repeat — so a plain keyset cursor drops
+ * whichever row of a tie falls past the page edge. A page runs over `pageSize` by at most the size
+ * of its last group. Not a whole second: a bulk removal logs hundreds of rows in one second.
+ */
+export async function getImageRemovals(
+  userId: number,
+  before?: ImageRemovalCursor,
+  pageSize = 50
+): Promise<{
+  rows: ImageRemovalRow[];
+  next: ImageRemovalCursor | null;
+  counts: ImageRemovalCounts;
+}> {
+  // The ClickHouse helper interpolates with NO escaping.
+  if (before && !(isClickhouseDateTime(before.at) && Number.isInteger(before.imageId)))
+    throw new Error('[image-removals] malformed cursor');
+  const scope = REMOVALS_SCOPE(userId);
+  const olderThan = before
+    ? `AND (time, imageId) < (toDateTime('${before.at}'), ${before.imageId})`
+    : '';
+  const ch = getClickhouse();
+
+  const [keys, countRows] = await Promise.all([
+    ch.$query<{ time: string; imageId: string }>(`
+      SELECT time, imageId FROM default.images WHERE ${scope} ${olderThan}
+      ORDER BY time DESC, imageId DESC LIMIT ${pageSize + 1}
+    `),
+    ch.$query<{ tos: string; deletedByOthers: string; restored: string }>(`
+      SELECT countIf(type = 'DeleteTOS') AS tos, countIf(type = 'Delete') AS deletedByOthers,
+             countIf(type = 'Restore') AS restored
+      FROM default.images WHERE ${scope}
+    `),
+  ]);
+  const counts = {
+    tos: Number(countRows[0]?.tos ?? 0),
+    deletedByOthers: Number(countRows[0]?.deletedByOthers ?? 0),
+    restored: Number(countRows[0]?.restored ?? 0),
+  };
+  if (!keys.length) return { rows: [], next: null, counts };
+
+  const edge = keys[Math.min(pageSize, keys.length) - 1];
+  const boundary = { at: edge.time, imageId: Number(edge.imageId) };
+  // Enum order puts Restore after the removals, so DESC lists a same-second restore above its removal.
+  const rows = await ch.$query<{
+    type: ImageRemovalRow['type'];
+    time: string;
+    imageId: string;
+    userId: string;
+    tosReason: string | null;
+    violationType: string | null;
+  }>(`
+    SELECT type, time, imageId, userId, tosReason, violationType
+    FROM default.images
+    WHERE ${scope} ${olderThan}
+      AND (time, imageId) >= (toDateTime('${boundary.at}'), ${boundary.imageId})
+    ORDER BY time DESC, imageId DESC, type DESC
+  `);
+
+  const actors = await usersByIds(rows.map((r) => Number(r.userId)));
+  return {
+    rows: rows.map((r, i) => {
+      const actorId = Number(r.userId);
+      const actor = actors.get(actorId);
+      return {
+        // The table has no row id and a (time, imageId, type) triple can repeat; the page is replaced
+        // whole on every move, so a positional suffix is stable enough.
+        key: `${r.time}:${r.imageId}:${r.type}:${i}`,
+        type: r.type,
+        at: clickhouseDate(r.time),
+        imageId: Number(r.imageId),
+        actorId,
+        actorUsername: actor?.username ?? null,
+        actorIsModerator: !!actor?.isModerator,
+        tosReason: r.tosReason,
+        violationType: r.violationType,
+      };
+    }),
+    // A page that filled up may have older rows; when the extra row shared the boundary group it is
+    // already on this page, and the next fetch simply comes back empty.
+    next: keys.length > pageSize ? boundary : null,
+    counts,
+  };
 }
 
 // TRAINING RUNS (Retool's NewSubmittedTrainsBrett). The summary line is what a moderator acts on: what

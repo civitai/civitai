@@ -1,5 +1,6 @@
 import { applyCollectionTextScan } from '~/server/services/text-scan/actions/collection';
 import { applyStorylineTextScan } from '~/server/services/text-scan/actions/storyline';
+import { applyModelRulesTextScan } from '~/server/services/text-scan/actions/model-rules';
 import { createTextScanAdapter } from '~/server/services/text-scan/adapter';
 import { applyRatingFloor } from '~/server/services/text-scan/rated-entities';
 
@@ -23,4 +24,10 @@ export const collectionTextScanAdapter = createTextScanAdapter('Collection', {
 
 export const storylineTextScanAdapter = createTextScanAdapter('Storyline', {
   applyTextScan: applyStorylineTextScan,
+});
+
+export const modelRulesTextScanAdapter = createTextScanAdapter('ModelRules', {
+  applyTextScan: async (args) => {
+    await applyModelRulesTextScan(args);
+  },
 });

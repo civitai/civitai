@@ -128,7 +128,7 @@ import {
   type CruciblePrizeWinner,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
-import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
@@ -4107,11 +4107,7 @@ export type CancelCrucibleResult = {
   failedRefunds: Array<{ entryId: number | null; userId: number; error: string }>;
 };
 
-/**
- * Buzz keys refunds on `externalTransactionIdPrefix`: a second refund of one returns 409, and a
- * prefix matching nothing returns 404. Neither means money is owed, so tolerating both is what
- * makes cancelling safe to re-run — the same tolerance as `refundChallengeFundsByPrefix`.
- */
+/** Safe to re-run: legs an earlier attempt reversed are reported as already settled. */
 async function refundCrucibleTransactionOnce({
   externalTransactionIdPrefix,
   description,
@@ -4125,25 +4121,18 @@ async function refundCrucibleTransactionOnce({
   label: string;
   reason?: string;
 }): Promise<'refunded' | 'already-settled'> {
-  try {
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix,
-      description,
-      details: {
-        entityId: crucibleId,
-        entityType: 'Crucible',
-        reason,
-      },
-    });
-    return 'refunded';
-  } catch (error) {
-    const status = getBuzzApiStatus(error);
-    if (status === 404 || status === 409) {
-      log(`Refund for ${label} already settled (buzz ${status}); nothing moved`);
-      return 'already-settled';
-    }
-    throw error;
-  }
+  const { refundedLegs } = await refundAllLegsByPrefix({
+    externalTransactionIdPrefix,
+    description,
+    details: {
+      entityId: crucibleId,
+      entityType: 'Crucible',
+      reason,
+    },
+  });
+  if (refundedLegs > 0) return 'refunded';
+  log(`Refund for ${label} already settled; nothing moved`);
+  return 'already-settled';
 }
 
 const NOT_RUNNING = 'Entries can only be removed while the crucible is running';

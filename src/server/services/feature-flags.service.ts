@@ -380,6 +380,9 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
+  // the Flipt flag is the only on-switch, including for moderators.
+  creatorServices: { availability: [], fliptKey: 'creator-services' },
   // One flag drives both halves of creator announcements: these surfaces and the
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.

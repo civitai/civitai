@@ -7,7 +7,20 @@ import {
   getGameMirrors,
   getOwnerFlaggedMinorModelIds,
   getReportedGame,
+  getReportedModelId,
+  getReportedModelStates,
 } from '$lib/server/reports.service';
+import {
+  bringBackReportedModel,
+  setReportedModelMinor,
+  setReportedModelPoi,
+  setReportedModelSfwOnly,
+  takeDownReportedModel,
+  unpublishReportedModel,
+  unsetReportedModelMinor,
+} from '$lib/server/model-moderation.service';
+import { isModelUnpublishReason, MINOR_UNPUBLISH_REASONS } from '$lib/model-unpublish-reasons';
+import { denied } from '$lib/permissions';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
@@ -17,6 +30,10 @@ import {
   setStorylineTakedown,
 } from '$lib/server/storyline-takedown.service';
 import { canAccess } from '$lib/server/access';
+import {
+  getMergePermissionChecks,
+  type MergePermissionCheck,
+} from '$lib/server/merge-permission.service';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
@@ -31,7 +48,7 @@ import {
 const isStatus = (v: string): v is ReportStatus => (reportStatuses as string[]).includes(v);
 const isReason = (v: string): v is ReportReason => (reportReasons as string[]).includes(v);
 
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, locals }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
 
@@ -70,7 +87,14 @@ export const load: PageServerLoad = async ({ params, url }) => {
   });
   const entityIds = data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
   const games = type === 'gameFrameGame' ? await getGameMirrors(entityIds) : [];
-  const ownerFlaggedMinor = type === 'model' ? await getOwnerFlaggedMinorModelIds(entityIds) : [];
+  const [ownerFlaggedMinor, models, mergePermission] =
+    type === 'model'
+      ? await Promise.all([
+          getOwnerFlaggedMinorModelIds(entityIds),
+          getReportedModelStates(entityIds),
+          getMergePermissionChecks(data.items),
+        ])
+      : [[], [], {} as Record<number, MergePermissionCheck>];
   const storylines = type === 'storyline' ? await getReportedStorylines(entityIds) : [];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
@@ -78,7 +102,16 @@ export const load: PageServerLoad = async ({ params, url }) => {
   // while it is hiding it — once reasons are chosen explicitly, the choice is the whole story.
   return {
     type,
-    wide: true,
+    // The model layout owns its height: the queue and the two detail columns each scroll on their own,
+    // sized against the viewport, which `wide` cannot do — its padding puts the page an unknown
+    // distance down. Every other type keeps the full-width table it had.
+    ...(type === 'model' ? { fullBleed: true } : { wide: true }),
+    // The preview's training-data viewer: shown to whoever `/api/training-data` would serve, so a
+    // moderator never gets a button that only answers 403.
+    canViewTrainingData:
+      type === 'model' &&
+      (canAccess(locals.user, '/audit/training-data') ||
+        canAccess(locals.user, '/audit/training-models')),
     // A `?report=` view ran with no status/reason filter, so echoing the defaults would put chips
     // saying "Pending + Processing" above an Actioned row and a note about hiding Automated above an
     // Automated one — the operator reads that as the filters being broken.
@@ -88,6 +121,8 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reportedBy,
     games,
     ownerFlaggedMinor,
+    models,
+    mergePermission,
     storylines,
     ...data,
   };
@@ -268,6 +303,85 @@ export const actions: Actions = {
         ? 'Restored, but its title scan still keeps it down'
         : 'Restored',
     };
+  },
+
+  /**
+   * Acts on the reported model through the main app — the model page's moderator menu without the
+   * second tab. It does NOT touch the report: closing it is the panel's Report status buttons, a
+   * separate decision. Doing both in one click took the report out of the queue before its result
+   * could be seen, made a second action on the same model impossible from the panel, and paid the
+   * reporters (Actioned does) as a side effect of a model button.
+   *
+   * The model is read from the REPORT, never the form — a stale tab must not act on one model while
+   * a moderator believes they are looking at another.
+   */
+  moderateModel: async ({ request, locals, params }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'model' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const modelId = await getReportedModelId(id);
+    if (modelId == null) return fail(410, { error: 'That report no longer exists.', gone: true });
+
+    const action = String(data.get('modelAction'));
+    let result;
+    let done: string;
+    switch (action) {
+      case 'unpublish': {
+        const reason = String(data.get('reason') ?? '');
+        if (!isModelUnpublishReason(reason)) return fail(400, { error: 'Pick a reason.' });
+        const customMessage = String(data.get('customMessage') ?? '').trim() || undefined;
+        if (reason === 'other' && !customMessage)
+          return fail(400, { error: 'A message to the owner is required for "Other".' });
+        const alsoFlagMinor =
+          MINOR_UNPUBLISH_REASONS.has(reason) && data.get('alsoFlagMinor') === 'on';
+        result = await unpublishReportedModel({ modelId, reason, customMessage, alsoFlagMinor });
+        done = alsoFlagMinor ? 'Flagged as minor and unpublished' : 'Unpublished';
+        break;
+      }
+      case 'setMinor':
+        result = await setReportedModelMinor(modelId);
+        done = 'Flagged as minor';
+        break;
+      case 'unsetMinor':
+        result = await unsetReportedModelMinor(modelId);
+        done = 'Unflagged as minor';
+        break;
+      case 'setSfwOnly':
+        result = await setReportedModelSfwOnly(modelId, true);
+        done = 'Set as SFW-only';
+        break;
+      case 'unsetSfwOnly':
+        result = await setReportedModelSfwOnly(modelId, false);
+        done = 'Allowed NSFW on';
+        break;
+      case 'setPoi':
+        result = await setReportedModelPoi(modelId, true);
+        done = 'Flagged as a real person';
+        break;
+      case 'unsetPoi':
+        result = await setReportedModelPoi(modelId, false);
+        done = 'Unflagged as a real person';
+        break;
+      // Both directions behind the one grant: whoever may take a model down may bring it back.
+      case 'takeDown':
+      case 'bringBack':
+        if (!locals.grants['model.takeDown']) return fail(403, { error: denied('model.takeDown') });
+        result =
+          action === 'takeDown'
+            ? await takeDownReportedModel(modelId)
+            : await bringBackReportedModel(modelId);
+        done = action === 'takeDown' ? 'Taken down' : 'Brought back';
+        break;
+      default:
+        return fail(400, { error: 'Unknown action.' });
+    }
+    if (!result.ok) return fail(400, { error: result.error });
+    return { success: true, moderated: `${done} model #${modelId}` };
   },
 
   saveNotes: async ({ request }) => {

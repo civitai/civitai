@@ -219,7 +219,7 @@ const WORKFLOW_BODY = {
 type RouteSpec = {
   load: () => Promise<{ default: unknown }>;
   method: 'GET' | 'POST';
-  query?: Record<string, string>;
+  query?: Record<string, string | string[]>;
   body?: unknown;
   /** The `requiredScope` the route declares, or null for an any-token route. */
   scope: string | null;
@@ -420,6 +420,15 @@ const ROUTES: Record<string, RouteSpec> = {
     method: 'POST',
     body: { name: 'search_models', arguments: { query: 'cat' } },
     scope: null,
+  },
+  // The document store's one catch-all, driven as a single-document read. The fixture row has
+  // no manifest, so an admitted request declares no collection and answers 404 after the read
+  // bucket is charged.
+  'src/pages/api/v1/blocks/storage/[[...path]].ts': {
+    load: () => import('~/pages/api/v1/blocks/storage/[[...path]]'),
+    method: 'GET',
+    query: { path: ['prefs', 'k'] },
+    scope: 'apps:storage',
   },
   'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
     load: () => import('~/pages/api/v1/blocks/user-checkpoint/set'),
@@ -5480,6 +5489,271 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
       []
+    ),
+  },
+  'src/pages/api/v1/blocks/storage/[[...path]].ts': {
+    'no bearer': X(
+      401,
+      {
+        code: 'unauthenticated',
+        message: 'a block token is required',
+        error: 'a block token is required',
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'wrong method, no bearer': X(
+      401,
+      {
+        code: 'unauthenticated',
+        message: 'a block token is required',
+        error: 'a block token is required',
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'non-JWT bearer (OAuth tokens off)': X(
+      401,
+      {
+        code: 'unauthenticated',
+        message: 'a block token is required',
+        error: 'a block token is required',
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'runtime flag off, valid JWT': X(
+      401,
+      {
+        code: 'unauthenticated',
+        message: 'a block token is required',
+        error: 'a block token is required',
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'bad JWT': X(
+      401,
+      { code: 'unauthenticated', message: 'invalid block token', error: 'invalid block token' },
+      false,
+      [],
+      [],
+      null
+    ),
+    revoked: X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'block instance revoked',
+        error: 'block instance revoked',
+        details: { reason: 'instance_revoked' },
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'not approved': X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'revoked AND not approved': X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'block instance revoked',
+        error: 'block instance revoked',
+        details: { reason: 'instance_revoked' },
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'missing scope': X(
+      403,
+      {
+        code: 'insufficient_scope',
+        message: 'missing required scope: apps:storage',
+        error: 'missing required scope: apps:storage',
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'token carries an unknown scope': X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'unknown scope: made:up:scope',
+        error: 'unknown scope: made:up:scope',
+        details: { reason: 'context_binding' },
+      },
+      false,
+      [],
+      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
+      null
+    ),
+    'anonymous subject': X(
+      404,
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
+      true,
+      ['checkDocStoreRateLimit("read", "apb_row", "ip:203.0.113.7")'],
+      [],
+      ['apps:storage']
+    ),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      404,
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
+      true,
+      ['checkDocStoreRateLimit("read", "apb_row", "u:42")'],
+      ['hydrate:42'],
+      ['apps:storage']
+    ),
+    'rate limited': X(
+      429,
+      {
+        code: 'rate_limited',
+        message: 'rate limit exceeded',
+        error: 'rate limit exceeded',
+        details: { bucket: 'read', retryAfter: 7 },
+        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+      },
+      true,
+      ['checkDocStoreRateLimit("read", "apb_row", "u:42")'],
+      ['hydrate:42'],
+      ['apps:storage']
+    ),
+    'hub OAuth token': X(
+      404,
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
+      true,
+      ['checkDocStoreRateLimit("read", "apb_row", "u:42")'],
+      ['hydrate:42'],
+      ['apps:storage']
+    ),
+    'missing approval row': X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
+      true,
+      [],
+      [],
+      ['apps:storage']
+    ),
+    'approval row read throws': X(
+      503,
+      {
+        code: 'service_unavailable',
+        message: 'app block status unavailable',
+        error: 'app block status unavailable',
+      },
+      false,
+      [],
+      [],
+      null
+    ),
+    'consent revoked for the route scope': X(
+      404,
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
+      true,
+      ['checkDocStoreRateLimit("read", "apb_row", "u:42")'],
+      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}', 'hydrate:42'],
+      ['apps:storage']
+    ),
+    'consent marker unavailable': X(
+      404,
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
+      true,
+      ['checkDocStoreRateLimit("read", "apb_row", "u:42")'],
+      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}', 'hydrate:42'],
+      ['apps:storage']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
+      false,
+      [],
+      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
+      null
+    ),
+    'dev token, no approval row': X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
+      true,
+      [],
+      [],
+      ['apps:storage']
+    ),
+    'private-run token, row not approved': X(
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
+      true,
+      [],
+      [],
+      ['apps:storage']
     ),
   },
   'src/pages/api/v1/blocks/user-checkpoint/set.ts': {

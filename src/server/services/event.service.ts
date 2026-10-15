@@ -592,7 +592,7 @@ export async function getMyEventHats({
     }));
     const [scores, entities, live] = await Promise.all([
       getCosmeticScores(scored, keys),
-      getPlaceableEntities(placed),
+      getPlaceableEntities(placed, user),
       liveHatTotals(scored, hats),
     ]);
 
@@ -651,7 +651,10 @@ export async function getPlaceableEventContent({
         placeableIds(entityType, user.id, undefined, PLACEABLE_PER_TYPE)
       )
     );
-    return getPlaceableEntities(ids.flatMap((x) => x.entities));
+    return getPlaceableEntities(
+      ids.flatMap((x) => x.entities),
+      user
+    );
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -675,7 +678,7 @@ export async function getPlaceableEventContentPage({
       cursor,
       PLACEABLE_PER_TYPE
     );
-    return { items: await getPlaceableEntities(entities), nextCursor };
+    return { items: await getPlaceableEntities(entities, user), nextCursor };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -739,12 +742,15 @@ async function placeableIds(
 
 // Title and cover image for each entity, in the order given. An entity with no usable cover (still
 // scanning, or removed) is kept with a null image, so a worn hat never disappears from the list.
-async function getPlaceableEntities(entities: { entityType: CosmeticEntity; entityId: number }[]) {
+async function getPlaceableEntities(
+  entities: { entityType: CosmeticEntity; entityId: number }[],
+  viewer: PlaceableUser
+) {
   if (!entities.length) return [];
   const modelIds = entities.filter((e) => e.entityType === 'Model').map((e) => e.entityId);
   const articleIds = entities.filter((e) => e.entityType === 'Article').map((e) => e.entityId);
   const [covers, models, articles] = await Promise.all([
-    getEntityCoverImage({ entities }),
+    getEntityCoverImage({ entities, viewer }),
     modelIds.length
       ? dbRead.model.findMany({
           where: { id: { in: modelIds } },

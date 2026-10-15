@@ -93,6 +93,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
+  // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
+  // logged to Axiom (name 'duplicate-model-hash', message 'suppressed') so the volume can be sized.
+  DUPLICATE_MODEL_HASH_BLOCK = 'duplicate-model-hash-block',
   // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
   // modelId so a percentage rollout picks a deterministic, sticky subset of content.
   // DEFAULT-OFF — isFlipt returns false for an unknown flag or an unreachable Flipt.
@@ -181,6 +185,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
   IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
 
+  // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
+  // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
+  SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
+
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
@@ -267,6 +275,8 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // config poll alone. Evaluated once per model-file scan and once per nightly
   // job run — nowhere near hot enough for the cache to be worth the extra lag.
   FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
+  // Same shape: thrown when the duplicate-hash unpublish misfires, read once per model-file scan.
+  FLIPT_FEATURE_FLAGS.DUPLICATE_MODEL_HASH_BLOCK,
   // The stop button for a sweep that can permanently double production counters
   // — nothing takes a counter back down. Evaluated about ten times per
   // five-minute tick, so the cache saves nothing measurable and the staleness is

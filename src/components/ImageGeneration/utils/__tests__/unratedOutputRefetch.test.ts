@@ -42,6 +42,7 @@ describe('selectUnratedRefetch', () => {
         workflow('pending', [image('c', { available: false })]),
         workflow('audio', [image('d', { type: 'audio' })]),
         workflow('mesh', [image('e', { type: 'model3d' })]),
+        workflow('unscanned', [image('f', { type: 'video', nsfwLevel: 'na' })]),
       ],
       new Map()
     );
@@ -56,6 +57,27 @@ describe('selectUnratedRefetch', () => {
     );
 
     expect(workflowIds).toEqual(['wf-1']);
+  });
+
+  it('skips unrated video from an engine the orchestrator never rates, as WorkflowData does', () => {
+    const kling = { params: { ecosystem: 'Kling' } };
+    const video = (id: string) => [image(id, { type: 'video' })];
+    const { workflowIds } = selectUnratedRefetch(
+      [
+        { id: 'wf-level', metadata: kling, steps: [{ $type: 'videoGen', output: video('a') }] },
+        { id: 'step-level', steps: [{ $type: 'videoGen', metadata: kling, output: video('b') }] },
+        { id: 'image', steps: [{ $type: 'videoGen', metadata: kling, output: [image('c')] }] },
+        { id: 'upscale', steps: [{ $type: 'videoUpscaler', metadata: kling, output: video('d') }] },
+        {
+          id: 'own-params',
+          metadata: kling,
+          steps: [{ $type: 'videoGen', metadata: { params: { prompt: 'x' } }, output: video('e') }],
+        },
+      ],
+      new Map()
+    );
+
+    expect(workflowIds).toEqual(['image', 'upscale', 'own-params']);
   });
 
   it('stops once an output has used up its attempts', () => {

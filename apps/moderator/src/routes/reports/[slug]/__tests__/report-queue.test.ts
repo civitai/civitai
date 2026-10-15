@@ -28,7 +28,10 @@ vi.mock('$lib/server/reports.service', () => ({
   getReportedGame: vi.fn(),
   getGameMirrors: vi.fn(async () => []),
   getOwnerFlaggedMinorModelIds,
+  getReportedModelId: vi.fn(),
+  getReportedModelStates: vi.fn(async () => []),
 }));
+vi.mock('$lib/server/model-moderation.service', () => ({}));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() }));
 vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));
@@ -38,12 +41,19 @@ vi.mock('$lib/server/storyline-takedown.service', () => ({
   setStorylineTakedown: vi.fn(),
 }));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
+const MERGE_CHECKS = { 501: { sourceModelId: 115 } };
+const getMergePermissionChecks = vi.fn(async (_reports: unknown[]) => MERGE_CHECKS);
+vi.mock('$lib/server/merge-permission.service', () => ({ getMergePermissionChecks }));
 
 const { load } = await import('../+page.server');
 
 /** `load` for one slug and query string. `redirect()`/`error()` throw, so callers that expect one catch. */
 const run = (slug: string, query = '?status=Pending') =>
-  load({ params: { slug }, url: new URL(`https://mod.example/reports/${slug}${query}`) } as never);
+  load({
+    params: { slug },
+    url: new URL(`https://mod.example/reports/${slug}${query}`),
+    locals: { user: { id: 1 } },
+  } as never);
 
 const caught = async (slug: string, query?: string) => {
   try {
@@ -166,5 +176,27 @@ describe('the default reason set', () => {
     expect([...DEFAULT_REPORT_REASONS].sort()).toEqual(
       reportReasons.filter((r) => r !== ReportReason.Automated).sort()
     );
+  });
+});
+
+describe('merge permission checks', () => {
+  const items = [{ id: 501, entityId: 7, details: {} }];
+  const page = () =>
+    getReports.mockResolvedValueOnce({ items, totalItems: 1, page: 1, limit: 20 } as never);
+
+  it("checks the page's model reports and hands the answer to the page", async () => {
+    page();
+    const data = await run('model');
+
+    expect(getMergePermissionChecks).toHaveBeenCalledExactlyOnceWith(items);
+    expect(data).toMatchObject({ mergePermission: MERGE_CHECKS });
+  });
+
+  it('does not look anything up for another report type', async () => {
+    page();
+    const data = await run('image');
+
+    expect(getMergePermissionChecks).not.toHaveBeenCalled();
+    expect(data).toMatchObject({ mergePermission: {} });
   });
 });

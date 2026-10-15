@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure). NOT `typeof import(...)`, which
 // @typescript-eslint/consistent-type-imports rejects.
@@ -227,8 +228,13 @@ const baseProps = {
  * from a genuine zero, so nothing is asserted until the channel has been proven
  * to carry traffic.
  */
-async function mountAndCaptureInit(context: ModelSlotContext) {
-  await renderWithProviders(<IframeHost {...baseProps} context={context} />);
+async function mountAndCaptureInit(
+  context: ModelSlotContext,
+  over: { install?: BlockInstall; buzzBudget?: number } = {}
+) {
+  const { rerender } = await renderWithProviders(
+    <IframeHost {...baseProps} {...over} context={context} />
+  );
   await vi.waitFor(() => {
     if (!iframeEl().contentWindow) throw new Error('not mounted yet');
   });
@@ -237,8 +243,84 @@ async function mountAndCaptureInit(context: ModelSlotContext) {
     if (posts.of('BLOCK_INIT').length === 0) throw new Error('listener saw no BLOCK_INIT');
   });
   const init = posts.last('BLOCK_INIT')!.payload as BlockInitPayload;
-  return { posts, init };
+  return { posts, init, rerender };
 }
+
+describe('IframeHost — token.buzzBudget is the signed budget it was handed', () => {
+  // The mint reports what it signed and BlockHost passes it down. The install setting
+  // behind it is often private, so the host must never work the number out itself:
+  // 777 is what a derivation from `publisherSettings` would give, 1000 the default.
+  const SIGNED = 53;
+  const withSetting: BlockInstall = { ...install, publisherSettings: { buzz_budget_per_gen: 777 } };
+
+  test.each([
+    ['the setting is private', install],
+    ['a different setting is public', withSetting],
+  ])('BLOCK_INIT carries the signed budget when %s', async (_l, inst) => {
+    const { posts, init } = await mountAndCaptureInit(signedInContext(), {
+      install: inst,
+      buzzBudget: SIGNED,
+    });
+    expect(init.token.buzzBudget).toBe(53);
+    posts.stop();
+  });
+
+  test('a rotated token is pushed with ITS signed budget', async () => {
+    const { posts, rerender } = await mountAndCaptureInit(signedInContext(), {
+      install: withSetting,
+      buzzBudget: SIGNED,
+    });
+    await rerender(
+      <IframeHost
+        {...baseProps}
+        install={withSetting}
+        token="tok_rotated_6120"
+        buzzBudget={91}
+        context={signedInContext()}
+      />
+    );
+    type Push = { token: { raw?: string; buzzBudget?: number } };
+    const rotated = () =>
+      posts
+        .of('TOKEN_REFRESH')
+        .map((m) => m.payload as Push)
+        .find((p) => p.token.raw === 'tok_rotated_6120');
+    await vi.waitFor(() => {
+      if (!rotated()) throw new Error('no push for the rotated token yet');
+    });
+    expect(rotated()!.token.buzzBudget).toBe(91);
+    posts.stop();
+  });
+
+  test('a REQUEST_TOKEN push and a REQUEST_TOKEN reply carry it too', async () => {
+    const { posts } = await mountAndCaptureInit(signedInContext(), {
+      install: withSetting,
+      buzzBudget: SIGNED,
+    });
+    const pushesBefore = posts.of('TOKEN_REFRESH').length;
+    postFromBlock('REQUEST_TOKEN');
+    postFromBlock('REQUEST_TOKEN', { requestId: 'req-budget-7719' });
+    await vi.waitFor(() => {
+      expect(posts.of('TOKEN_REFRESH').length).toBe(pushesBefore + 1);
+      expect(posts.of('TOKEN_REFRESH_RESPONSE')).toHaveLength(1);
+    });
+    const push = posts.last('TOKEN_REFRESH')!.payload as { token: { buzzBudget?: number } };
+    const reply = posts.last('TOKEN_REFRESH_RESPONSE')!.payload as {
+      token: { buzzBudget?: number };
+    };
+    expect(push.token.buzzBudget).toBe(53);
+    expect(reply.token.buzzBudget).toBe(53);
+    expectReplyKeys('REQUEST_TOKEN', 'success', ['token'], reply);
+    posts.stop();
+  });
+
+  test('with no signed budget the block is told none, whatever the settings say', async () => {
+    const { posts, init } = await mountAndCaptureInit(signedInContext(), { install: withSetting });
+    expect(init.token.scopes).toContain('ai:write:budgeted');
+    expect(init.token).not.toHaveProperty('buzzBudget');
+    posts.stop();
+  });
+});
 
 describe('IframeHost BLOCK_INIT — viewer.signedIn (v2)', () => {
   test('a signed-in viewer reaches the block with signedIn: true', async () => {

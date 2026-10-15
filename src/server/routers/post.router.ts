@@ -27,6 +27,8 @@ import {
   addResourceToPostImageInput,
   createPostWithImagesSchema,
   getPostTagsSchema,
+  getImageMoveTargetsSchema,
+  moveImagesToPostSchema,
   getScheduledPostsSchema,
   plannerPostIdSchema,
   plannerPublishNowSchema,
@@ -47,6 +49,7 @@ import {
   validateBatchScheduleSchema,
 } from './../schema/post.schema';
 import { addPostImage, getPostEditDetail, getPostImageIds } from './../services/post.service';
+import { getImageMoveTargets, moveImagesToPost } from './../services/post-image-move.service';
 import {
   getPlannerPostDetail,
   getScheduledPosts,
@@ -169,6 +172,14 @@ export const postRouter = router({
     .input(reorderPostImagesSchema)
     .use(isOwnerOrModerator)
     .mutation(reorderPostImagesHandler),
+  getImageMoveTargets: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getImageMoveTargetsSchema)
+    .query(({ ctx, input }) => getImageMoveTargets({ ...input, userId: ctx.user.id })),
+  moveImages: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(moveImagesToPostSchema)
+    .mutation(({ ctx, input }) => moveImagesToPost({ ...input, userId: ctx.user.id })),
   getTags: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getPostTagsSchema)

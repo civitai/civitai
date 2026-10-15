@@ -6,6 +6,7 @@ import {
   CHIP_HEIGHT_PX,
   countOutsideBand,
   DEFAULT_BAND,
+  fittedBand,
   HOUR_HEIGHT_PX,
   hourBand,
   hourRows,
@@ -37,8 +38,39 @@ describe('hourRows / bandHeight', () => {
     expect(hourRows(ALL_HOURS_BAND, 'en-US').map((r) => r.hour)).toEqual(
       Array.from({ length: 24 }, (_, i) => i)
     );
-    expect(hourBand(true)).toBe(ALL_HOURS_BAND);
-    expect(hourBand(false)).toBe(DEFAULT_BAND);
+    expect(hourBand(true, [], ['2026-10-10'])).toBe(ALL_HOURS_BAND);
+    expect(hourBand(false, [], ['2026-10-10'])).toEqual(DEFAULT_BAND);
+  });
+});
+
+describe('fittedBand', () => {
+  it('stays at the default when every post on the grid days already has a column', () => {
+    const posts = [post(new Date(2026, 9, 10, 9, 0), 1), post(new Date(2026, 9, 11, 1, 30), 2)];
+    expect(fittedBand(posts, ['2026-10-10', '2026-10-11'])).toEqual(DEFAULT_BAND);
+  });
+
+  it('opens early enough for a 3 AM post without changing the hour range by hand', () => {
+    const band = fittedBand([post(new Date(2026, 9, 10, 3, 0), 1)], ['2026-10-10']);
+    expect(band).toEqual({ startHour: 3, endHour: 26 });
+    expect(placeInBand(new Date(2026, 9, 10, 3, 0), band)).toEqual({
+      dayKey: '2026-10-10',
+      minutes: 180,
+    });
+    expect(countOutsideBand([post(new Date(2026, 9, 10, 3, 0), 1)], ['2026-10-10'], band)).toBe(0);
+  });
+
+  it('gives a 1 AM post on the first grid day its own column and drops the duplicate late rows', () => {
+    const early = post(new Date(2026, 9, 10, 1, 10), 1);
+    const band = fittedBand([early], ['2026-10-10']);
+    expect(band).toEqual({ startHour: 1, endHour: 25 });
+    expect(hourRows(band).map((r) => r.hour)).toEqual(Array.from({ length: 24 }, (_, i) => i + 1));
+    expect(layoutColumn([early], '2026-10-10', band)).toHaveLength(1);
+  });
+
+  it('ignores posts outside the grid days', () => {
+    expect(fittedBand([post(new Date(2026, 9, 20, 3, 0), 1)], ['2026-10-10'])).toEqual(
+      DEFAULT_BAND
+    );
   });
 });
 

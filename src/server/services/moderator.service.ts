@@ -12,6 +12,8 @@ type ModelModActivity = {
     | 'unsetMinor'
     | 'setSfwOnly'
     | 'unsetSfwOnly'
+    | 'setPoi'
+    | 'unsetPoi'
     | 'setMinorAutoHash'
     | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'
@@ -80,7 +82,11 @@ type UserModActivity = {
     // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
     | `mintMembershipCode:${string}`
     // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
-    | `revokeMembershipCode:${string}`;
+    | `revokeMembershipCode:${string}`
+    // A moderator awarded Creator Score (`grantCreatorScore:<grantId>:<amount>`) or withdrew a grant
+    // (`revokeCreatorScore:<grantId>`). The grant itself lives on CreatorScoreGrant.
+    | `grantCreatorScore:${string}`
+    | `revokeCreatorScore:${string}`;
 };
 
 type ComicProjectModActivity = {

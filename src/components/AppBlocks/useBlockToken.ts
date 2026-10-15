@@ -9,6 +9,9 @@ interface UseBlockTokenResult {
    *  BLOCK_INIT.token.expiresAt so blocks don't have to JWT-decode. */
   expiresAt: string | null;
   kind: 'block' | 'oauth' | undefined;
+  /** The per-call Buzz budget the current token carries, as the mint reported it.
+   *  `undefined` when the token carries no spend scope. */
+  buzzBudget: number | undefined;
   error: Error | null;
   pending: boolean;
   /** A6: true when the app's approved manifest declares scopes the viewer has
@@ -17,6 +20,9 @@ interface UseBlockTokenResult {
   needsConsent: boolean;
   /** A6: the consent-gated scopes withheld from the current token. */
   missingScopes: string[];
+  /** The scopes the mint signed into the current token. `undefined` when the
+   *  response omits them (the dev-tunnel mint) — see `resolveAdvertisedScopes`. */
+  signedScopes: string[] | undefined;
   /** Advisory maturity signal mirrored from the mint (BLOCK_INIT). The color
    *  domain the token was minted on, or null when unresolved. */
   domain: 'green' | 'blue' | 'red' | null;
@@ -51,10 +57,12 @@ interface TokenResponse {
   token: string;
   expiresAt: string;
   kind?: 'block' | 'oauth';
+  buzzBudget?: number;
   /** A6: present from the server when the viewer's grant is short of the
    *  app's approved manifest. Older responses omit these → treat as no-op. */
   needsConsent?: boolean;
   missingScopes?: string[];
+  scopes?: string[];
   /** Advisory maturity signal. Omitted by pre-feature responses → fail closed. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
@@ -88,10 +96,12 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   const [token, setToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [kind, setKind] = useState<'block' | 'oauth' | undefined>(undefined);
+  const [buzzBudget, setBuzzBudget] = useState<number | undefined>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<boolean>(true);
   const [needsConsent, setNeedsConsent] = useState<boolean>(false);
   const [missingScopes, setMissingScopes] = useState<string[]>([]);
+  const [signedScopes, setSignedScopes] = useState<string[] | undefined>(undefined);
   const [domain, setDomain] = useState<'green' | 'blue' | 'red' | null>(null);
   const [maxBrowsingLevel, setMaxBrowsingLevel] = useState<number | undefined>(undefined);
   const [effectiveBrowsingLevel, setEffectiveBrowsingLevel] = useState<number | undefined>(
@@ -234,8 +244,16 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
       setToken(data.token);
       setExpiresAt(data.expiresAt);
       setKind(data.kind === 'block' || data.kind === 'oauth' ? data.kind : undefined);
+      setBuzzBudget(
+        typeof data.buzzBudget === 'number' && Number.isFinite(data.buzzBudget)
+          ? data.buzzBudget
+          : undefined
+      );
       setNeedsConsent(data.needsConsent === true);
       setMissingScopes(Array.isArray(data.missingScopes) ? data.missingScopes : []);
+      setSignedScopes(
+        Array.isArray(data.scopes) ? data.scopes.filter((s) => typeof s === 'string') : undefined
+      );
       setDomain(
         data.domain === 'green' || data.domain === 'blue' || data.domain === 'red'
           ? data.domain
@@ -449,10 +467,12 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
     token: scopedToken,
     expiresAt: scopedExpiresAt,
     kind: tokenMatchesInstance ? kind : undefined,
+    buzzBudget: tokenMatchesInstance ? buzzBudget : undefined,
     error,
     pending,
     needsConsent,
     missingScopes,
+    signedScopes: tokenMatchesInstance ? signedScopes : undefined,
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,

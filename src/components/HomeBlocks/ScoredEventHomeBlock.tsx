@@ -165,9 +165,10 @@ export function ScoredEventHomeBlock({
       ) : (
         <>
           {copy.title}{' '}
+          {/* Its own line, and never broken, so no word of it is left alone on a line. */}
           {copy.accent && (
             <span
-              className={styles.accent}
+              className={clsx(styles.accent, 'block w-fit whitespace-nowrap')}
               style={{ backgroundImage: `linear-gradient(90deg, ${colors.join(', ')})` }}
             >
               {copy.accent}
@@ -369,13 +370,13 @@ export function ScoredEventHomeBlock({
           <UnstyledButton
             onClick={openVideo}
             aria-label={`Watch the ${video.title} video`}
-            // On the faded side, clear of the characters.
-            className="group absolute bottom-3.5 left-[22%] z-[3] flex -translate-x-1/2 flex-col items-center gap-1.5"
+            // Centered on the art, and see-through so the art still reads behind it.
+            className="group absolute left-1/2 top-1/2 z-[3] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5"
           >
-            <span className="flex size-[52px] items-center justify-center rounded-full bg-white/90 text-dark-7 shadow-lg transition-transform group-hover:scale-110">
+            <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
               <IconPlayerPlayFilled size={22} />
             </span>
-            <span className="rounded-full bg-dark-9/70 px-2.5 py-0.5 text-xs font-bold text-white">
+            <span className="rounded-full bg-dark-9/40 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-md">
               {Number.isFinite(video.duration) && Math.round(video.duration ?? 0) > 0
                 ? `Watch · ${filmLength(video.duration ?? 0)}`
                 : 'Watch'}
@@ -455,7 +456,7 @@ function Positions({
             {t.team}
           </span>
           <span className="font-extrabold tabular-nums">
-            <AnimatedCount value={t.score} resetKey={t.team} />
+            <AnimatedCount value={t.score} abbreviate={false} resetKey={t.team} />
           </span>
         </div>
       ))}
@@ -546,17 +547,21 @@ function HatTiles({
         </NextLink>
       ) : (
         shown < HOME_BLOCK_HAT_TILES && (
+          // Laid out like a hat tile, a plus for its picture and two short lines for its name and
+          // points, so the words fit its width without wrapping.
           <NextLink
             href={`/events/${event}#team-hats`}
-            className="grid w-[104px] shrink-0 place-items-center rounded-[11px] border-[1.5px] border-dashed border-white/25 p-2 text-center text-xs font-bold text-white no-underline"
+            className="flex w-[104px] shrink-0 flex-col rounded-[11px] border-[1.5px] border-dashed border-white/25 text-white no-underline"
             data-testid="event-home-block-get-hat"
           >
-            <span>
-              <IconPlus size={20} className="mx-auto block text-gray-4" />
-              Get another hat
-              <span className="block text-[11px] font-medium text-gray-5">
-                One more post scoring
+            <span className="grid h-[86px] place-items-center border-0 border-b-[1.5px] border-dashed border-white/15">
+              <span className="grid size-[34px] place-items-center rounded-full bg-white/10">
+                <IconPlus size={20} className="text-gray-4" />
               </span>
+            </span>
+            <span className="block px-2 pb-1.5 pt-1 text-[11px]">
+              <span className="block truncate font-bold">Another hat</span>
+              <span className="block truncate font-medium text-gray-5">+1 post scoring</span>
             </span>
           </NextLink>
         )

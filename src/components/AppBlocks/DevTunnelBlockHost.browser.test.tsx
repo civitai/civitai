@@ -114,6 +114,19 @@ describe('/apps/dev/[blockId] client', () => {
     });
   });
 
+  test('forwards the mint-signed scopes, so the host advertises the clamped set, not the manifest', async () => {
+    // The owned dev-tunnel mint signs a clamped set that can differ from the
+    // manifest; a set distinct from FRAME.scopes proves it is the hook's value.
+    m.useBlockToken.mockReturnValue({
+      token: 't',
+      error: null,
+      signedScopes: ['apps:storage:read'],
+    });
+    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    expect(m.hostProps?.signedScopes).toEqual(['apps:storage:read']);
+  });
+
   test('a failed mint shows the owner-specific copy instead of the host', async () => {
     m.useBlockToken.mockReturnValue({ token: null, error: new Error('nope') });
     renderWithProviders(<DevTunnelPage {...FRAME} />);

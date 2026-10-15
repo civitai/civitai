@@ -602,6 +602,14 @@ describe('getActiveDevTunnel', () => {
 });
 
 describe('reserveDevSessionBuzz (spend-cap backstop)', () => {
+  // The per-call budget cap equals the default session cap (both 5000).
+  it('at the default cap, one 5000 call fits a fresh session and a 5001 call never does', async () => {
+    expect(DEV_TUNNEL_SESSION_BUZZ_CAP).toBe(5000);
+    expect(await reserveDevSessionBuzz('over', 5001)).toEqual({ allowed: false, total: 0 });
+    expect(await reserveDevSessionBuzz('exact', 5000)).toEqual({ allowed: true, total: 5000 });
+    expect(await reserveDevSessionBuzz('exact', 1)).toEqual({ allowed: false, total: 5000 });
+  });
+
   it('allows spend under the ceiling and DENIES + rolls back once it would exceed', async () => {
     const cap = 100;
     expect(await reserveDevSessionBuzz('sess', 60, cap)).toEqual({ allowed: true, total: 60 });

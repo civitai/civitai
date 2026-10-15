@@ -119,6 +119,24 @@ describe('mod/text-scan', () => {
     );
   });
 
+  it('sets the web-search rollout as the signed-in moderator, shadow only unless allowActive is sent', async () => {
+    await call({
+      action: 'putWebSearchModes',
+      moderatorId: 1,
+      entityType: 'Model',
+      rollout: { shadow: 10 },
+    });
+    expect(runTextScanHarnessAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'putWebSearchModes',
+        entityType: 'Model',
+        rollout: { shadow: 10, active: 0 },
+        allowActive: false,
+      }),
+      { moderatorId: MOD }
+    );
+  });
+
   it('writes config as the signed-in moderator', async () => {
     await call({ action: 'putConfig', moderatorId: 1, config: { thinking: true } });
     expect(runTextScanHarnessAction).toHaveBeenCalledWith(
@@ -194,6 +212,7 @@ describe('mod/text-scan', () => {
       { action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' },
       { action: 'putConfig', config: { thinking: true } },
       { action: 'putModes', entityType: 'Post', rollout: { shadow: 100 } },
+      { action: 'putWebSearchModes', entityType: 'Model', rollout: { shadow: 10 } },
       { action: 'getPrompts' },
       { action: 'quoteEntities', entityType: 'Post', entityIds: [1] },
       {

@@ -33,15 +33,20 @@ import {
   BatchComposerStoreContext,
   createBatchComposerStore,
   useBatchComposerStore,
-  useBatchComposerStoreApi,
 } from './batch-composer.store';
+import { clearDraft, useDraftPersistence } from './batch-composer.draft';
 import type { PlannedPost } from './batch-composer.utils';
-import { defaultTitleTemplate, describeCadence, fixSpacing } from './batch-composer.utils';
+import {
+  defaultTitleTemplate,
+  describeCadence,
+  fixSpacing,
+  promotedFromResource,
+} from './batch-composer.utils';
 import { BatchMediaGrid } from './BatchMediaGrid';
 import { SavePresetButton } from './BatchPresets';
 import type { DroppedFile } from './BatchMediaGrid';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 import { BatchProgressModal } from './BatchProgressModal';
 import { BatchReviewTable } from './BatchReviewTable';
 import { BatchSharedMetadata, rememberShared } from './BatchSharedMetadata';
@@ -67,9 +72,7 @@ export function BatchComposer({ modelId, modelVersionId, startAt }: BatchCompose
       startAt,
     })
   );
-  useEffect(() => {
-    store.getState().updateShared({ promotedVersionId: modelVersionId ?? null });
-  }, [store, modelVersionId]);
+  useDraftPersistence(store, currentUser?.id);
 
   if (currentUser?.muted)
     return (
@@ -112,27 +115,51 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
   const trackedFiles = fileUploadContext?.[0] ?? [];
   const uploading = trackedFiles.filter((x) => x.status === 'pending' || x.status === 'uploading');
 
-  const { data: versions, isLoading: versionsLoading } = trpc.model.getVersions.useQuery(
-    { id: modelId ?? 0, excludeUnpublished: true },
+  const { data: model, isLoading: modelLoading } = trpc.model.getById.useQuery(
+    { id: modelId ?? 0 },
     { enabled: !!modelId && !modelVersionId }
   );
   const { data: version } = trpc.modelVersion.getById.useQuery(
     { id: modelVersionId ?? 0 },
     { enabled: !!modelVersionId }
   );
+  const [promotedVersionId, promotedNames, hydrated, setPromoted] = useBatchComposerStore(
+    (state) => [
+      state.shared.promotedVersionId,
+      state.promotedNames,
+      state.hydrated,
+      state.setPromoted,
+    ]
+  );
+  // The query's version wins over whatever the draft held; re-applied once the draft is in.
+  useEffect(() => {
+    if (!modelVersionId) return;
+    setPromoted(
+      version
+        ? { id: modelVersionId, model: version.model.name, version: version.name }
+        : { id: modelVersionId }
+    );
+  }, [modelVersionId, version, hydrated, setPromoted]);
   const names = useMemo(
-    () => ({ model: version?.model.name ?? null, version: version?.name ?? null }),
-    [version?.model.name, version?.name]
+    () => ({ model: promotedNames?.model ?? null, version: promotedNames?.version ?? null }),
+    [promotedNames]
   );
   const promoted = useMemo(
     () =>
-      modelVersionId
+      promotedVersionId
         ? {
-            id: modelVersionId,
-            label: version ? `${version.model.name} ${version.name}` : 'Loading…',
+            id: promotedVersionId,
+            label: promotedNames ? `${promotedNames.model} ${promotedNames.version}` : 'Loading…',
+            locked: !!modelVersionId,
           }
         : null,
-    [modelVersionId, version]
+    [promotedVersionId, promotedNames, modelVersionId]
+  );
+  const unavailableReason = describeUnavailable(
+    version ? { status: version.status, model: version.model } : model ?? null
+  );
+  const publishedVersions = model?.modelVersions.filter(
+    (candidate) => candidate.status === ModelStatus.Published
   );
 
   const [skippedCount, setSkippedCount] = useState(0);
@@ -183,15 +210,10 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
   const submittedRef = useRef(false);
   const uploadingRef = useRef(0);
   uploadingRef.current = uploading.length;
-  const storeApi = useBatchComposerStoreApi();
-  const leavePredicate = useCallback(
-    () =>
-      !submittedRef.current && (uploadingRef.current > 0 || storeApi.getState().media.length > 0),
-    [storeApi]
-  );
+  const leavePredicate = useCallback(() => !submittedRef.current && uploadingRef.current > 0, []);
   useCatchNavigation({
     name: 'batch-composer',
-    message: 'Your batch has not been scheduled yet. Leave and lose it?',
+    message: 'Uploads are still running and would be lost. Leave anyway?',
     predicate: leavePredicate,
   });
 
@@ -273,7 +295,7 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
   };
 
   const backUrl = modelId
-    ? getModelUrl({ modelId, modelName: version?.model.name, modelVersionId })
+    ? getModelUrl({ modelId, modelName: version?.model.name ?? model?.name, modelVersionId })
     : '/';
 
   if (screen === 'review')
@@ -286,6 +308,9 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
         calendarHref={features.postPlanner ? '/user/schedule' : null}
         onSubmitted={() => {
           submittedRef.current = true;
+        }}
+        onDone={() => {
+          if (currentUser) void clearDraft(currentUser.id);
         }}
       />
     );
@@ -327,10 +352,9 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
           </Text>
         )}
       </div>
-      {version && version.status !== ModelStatus.Published && (
+      {unavailableReason && (
         <Alert color="red" variant="light" icon={<IconInfoCircle size={18} />}>
-          This version is not published yet. Publish it first: scheduling or publishing a version
-          moves every pending post on it to the release date, which would undo a spread-out batch.
+          {unavailableReason}
         </Alert>
       )}
       <Alert
@@ -346,8 +370,9 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
               : 'Pick a model version and every post is attributed to it, listing it as a resource so anyone who likes an image can open and use the model from it.'}
           </li>
           <li>
-            Posts go live one at a time over days or weeks instead of in one burst, so the model
-            keeps appearing in feeds and in its own gallery for as long as the schedule runs.
+            Posts go live one at a time over days or weeks instead of in one burst, so your images
+            keep showing up in feeds and in the model&apos;s gallery for as long as the schedule
+            runs.
           </li>
           <li>
             Each post counts toward your daily limit on the day it goes live, and you can move or
@@ -355,62 +380,95 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
           </li>
         </ul>
       </Alert>
-      {versions && (
-        <Select
-          description="Select a version so every post is attributed to it"
-          placeholder="Select a version"
-          value={modelVersionId ? String(modelVersionId) : null}
-          nothingFoundMessage={versionsLoading ? 'Loading…' : 'No versions found'}
-          data={versions.map(({ id, name }) => ({ label: name, value: id.toString() }))}
-          onChange={(value) =>
-            router.replace({ query: { ...router.query, modelVersionId: value } }, undefined, {
-              shallow: true,
-            })
-          }
-          maw={400}
-        />
+      {unavailableReason ? null : (
+        <>
+          {publishedVersions && (
+            <Select
+              description="Select a version so every post is attributed to it"
+              placeholder="Select a version"
+              value={modelVersionId ? String(modelVersionId) : null}
+              nothingFoundMessage={modelLoading ? 'Loading…' : 'No published versions'}
+              data={publishedVersions.map(({ id, name }) => ({
+                label: name,
+                value: id.toString(),
+              }))}
+              onChange={(value) =>
+                router.replace({ query: { ...router.query, modelVersionId: value } }, undefined, {
+                  shallow: true,
+                })
+              }
+              maw={400}
+            />
+          )}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="flex flex-col gap-8">
+              <Section number={1} title="Media">
+                <BatchMediaGrid
+                  onDrop={handleDrop}
+                  onImport={openGeneratorImport}
+                  canAdd={canAdd && !currentUser?.muted}
+                  error={error}
+                  loading={loading}
+                  uploading={uploading}
+                  skippedCount={skippedCount}
+                />
+              </Section>
+              <Section
+                number={2}
+                title="Apply to every post"
+                disabledReason={plan.uploaded.length ? null : 'Add media first'}
+                action={
+                  features.postPresets && <SavePresetButton disabled={!plan.uploaded.length} />
+                }
+              >
+                <BatchSharedMetadata
+                  disabled={!plan.uploaded.length}
+                  promoted={promoted}
+                  onPromotedChange={(resource) =>
+                    setPromoted(resource ? promotedFromResource(resource) : null)
+                  }
+                  titlePreviews={plan.posts.slice(0, 2).map((post) => post.title ?? 'Untitled')}
+                />
+              </Section>
+              <Section
+                number={3}
+                title="Schedule"
+                disabledReason={plan.uploaded.length ? null : 'Add media first'}
+              >
+                <ScheduleBuilder
+                  disabled={!plan.uploaded.length}
+                  generationIssue={plan.generationIssue}
+                />
+              </Section>
+            </div>
+            <BatchSummaryRail variant="desktop" {...railProps} />
+          </div>
+          <BatchSummaryRail variant="mobile" {...railProps} />
+        </>
       )}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="flex flex-col gap-8">
-          <Section number={1} title="Media">
-            <BatchMediaGrid
-              onDrop={handleDrop}
-              onImport={openGeneratorImport}
-              canAdd={canAdd && !currentUser?.muted}
-              error={error}
-              loading={loading}
-              uploading={uploading}
-              skippedCount={skippedCount}
-            />
-          </Section>
-          <Section
-            number={2}
-            title="Apply to every post"
-            disabledReason={plan.uploaded.length ? null : 'Add media first'}
-            action={features.postPresets && <SavePresetButton disabled={!plan.uploaded.length} />}
-          >
-            <BatchSharedMetadata
-              disabled={!plan.uploaded.length}
-              promoted={promoted}
-              titlePreviews={plan.posts.slice(0, 2).map((post) => post.title ?? 'Untitled')}
-            />
-          </Section>
-          <Section
-            number={3}
-            title="Schedule"
-            disabledReason={plan.uploaded.length ? null : 'Add media first'}
-          >
-            <ScheduleBuilder
-              disabled={!plan.uploaded.length}
-              generationIssue={plan.generationIssue}
-            />
-          </Section>
-        </div>
-        <BatchSummaryRail variant="desktop" {...railProps} />
-      </div>
-      <BatchSummaryRail variant="mobile" {...railProps} />
     </Container>
   );
+}
+
+/** Why the queried model or version cannot be promoted, mirroring `assertCanUseModelVersion`. */
+function describeUnavailable(
+  target: {
+    status: ModelStatus;
+    model?: { status: ModelStatus; mode?: ModelModifier | null };
+    mode?: ModelModifier | null;
+  } | null
+): string | null {
+  if (!target) return null;
+  const model = target.model ?? target;
+  if (model.mode === ModelModifier.TakenDown)
+    return 'This model has been taken down, so it cannot be promoted.';
+  if (model.mode === ModelModifier.Archived)
+    return 'This model is archived, so it cannot be promoted.';
+  if (model.status !== ModelStatus.Published)
+    return 'This model is not published. Publish it first: scheduling or publishing a model moves every pending post on it to the release date, which would undo a spread-out batch.';
+  if (target.model && target.status !== ModelStatus.Published)
+    return 'This version is not published yet. Publish it first: scheduling or publishing a version moves every pending post on it to the release date, which would undo a spread-out batch.';
+  return null;
 }
 
 function Section({
@@ -454,21 +512,31 @@ function ReviewScreen({
   viewScheduledHref,
   calendarHref,
   onSubmitted,
+  onDone,
 }: {
   promotedLabel: string | null;
   viewScheduledHref: string;
   calendarHref: string | null;
   onSubmitted: () => void;
+  onDone: () => void;
 }) {
-  const [reviewPlan, shared, closeReview, updateReviewPost, removeReviewPost, reset] =
-    useBatchComposerStore((state) => [
-      state.reviewPlan,
-      state.shared,
-      state.closeReview,
-      state.updateReviewPost,
-      state.removeReviewPost,
-      state.reset,
-    ]);
+  const [
+    reviewPlan,
+    shared,
+    closeReview,
+    updateReviewPost,
+    removeReviewPost,
+    markSubmitted,
+    reset,
+  ] = useBatchComposerStore((state) => [
+    state.reviewPlan,
+    state.shared,
+    state.closeReview,
+    state.updateReviewPost,
+    state.removeReviewPost,
+    state.markSubmitted,
+    state.reset,
+  ]);
   const posts = useMemo(() => reviewPlan ?? [], [reviewPlan]);
   const dates = useMemo(() => posts.map((post) => post.publishedAt), [posts]);
   const [submitting, setSubmitting] = useState<PlannedPost[] | null>(null);
@@ -597,6 +665,10 @@ function ReviewScreen({
           onHardFailure={(message) => {
             setSubmitting(null);
             setHardFailure(message);
+          }}
+          onDone={() => {
+            markSubmitted();
+            onDone();
           }}
           onScheduleAnother={() => {
             setSubmitting(null);

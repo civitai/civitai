@@ -236,12 +236,12 @@ describe('publishPrivateModelHandler — training moderation gate', () => {
       availability: 'Private',
       meta: UNSTAMPED_META,
     });
-    mockPublishPrivateModel.mockResolvedValue({ versionIds: [] });
+    mockPublishPrivateModel.mockResolvedValue({ versionIds: [], held: false });
   });
 
   it('makes the model public when the run is approved', async () => {
     mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
-    await expect(run()).resolves.toBe(true);
+    await expect(run()).resolves.toEqual({ held: false });
     expect(mockPublishPrivateModel).toHaveBeenCalledTimes(1);
   });
 

@@ -134,6 +134,15 @@ import type {
   OutboxEntity,
   StorylineStatus,
   StorylineWhoCanContinue,
+  ServiceOfferingStatus,
+  ServicePreviewKind,
+  ServiceBuzzType,
+  ServiceDealStatus,
+  ServiceDealEventType,
+  ServiceDealFileKind,
+  ServiceDealFileScanStatus,
+  ServiceDisputeResolution,
+  ServiceDealLeg,
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
@@ -2611,6 +2620,17 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorScoreGrant = {
+  id: Generated<number>;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -3588,6 +3608,18 @@ export type ModelMetricDaily = {
   date: Timestamp;
   count: number;
 };
+export type ModelPermissionSnapshot = {
+  id: Generated<number>;
+  modelId: number;
+  effectiveAt: Generated<Timestamp>;
+  source: string;
+  actorUserId: number | null;
+  actorRole: string | null;
+  allowNoCredit: boolean;
+  allowCommercialUse: CommercialUse[];
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+};
 export type ModelReport = {
   modelId: number;
   reportId: number;
@@ -3610,6 +3642,12 @@ export type ModelReportStat = {
   claimPending: number;
   claimActioned: number;
   claimUnactioned: number;
+};
+export type ModelSelfGeneration = {
+  modelId: number;
+  userId: number;
+  generationCount: Generated<string>;
+  updatedAt: Generated<Timestamp>;
 };
 export type ModelTag = {
   modelId: number;
@@ -3725,6 +3763,16 @@ export type ModerationRule = {
   order: number | null;
   reason: string | null;
   createdById: number;
+};
+export type ModerationRuleVersion = {
+  id: Generated<number>;
+  ruleId: number;
+  definition: unknown;
+  enabled: boolean;
+  action: ModerationRuleAction;
+  reason: string | null;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
 };
 export type NewOrderPlayer = {
   userId: number;
@@ -4351,6 +4399,15 @@ export type ReferralReward = {
   revokedAt: Timestamp | null;
   revokedReason: string | null;
 };
+export type RemovalScoreExemption = {
+  imageId: number;
+  /**
+   * The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+   */
+  reason: string;
+  createdAt: Generated<Timestamp>;
+  createdBy: number | null;
+};
 export type Report = {
   id: Generated<number>;
   userId: number;
@@ -4479,6 +4536,70 @@ export type SavedModel = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ScanLabelClaim = {
+  itemId: number;
+  userId: number;
+  expiresAt: Timestamp;
+};
+export type ScanLabelCopyObject = {
+  key: string;
+  itemId: number;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+  withdrawnAt: Timestamp | null;
+  removedAt: Timestamp | null;
+  withdrawReason: string | null;
+  withdrawError: string | null;
+};
+export type ScanLabelFlag = {
+  id: Generated<number>;
+  itemId: number;
+  source: string;
+  flaggerVersion: string;
+  reason: string | null;
+  workflowId: string;
+  flaggedAt: Timestamp;
+  snapshot: unknown | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelItem = {
+  id: Generated<number>;
+  imageId: number;
+  lane: Generated<string>;
+  firstFlaggedAt: Timestamp;
+  status: Generated<string>;
+  voidReason: string | null;
+  votes: Generated<number>;
+  blockVotes: Generated<number>;
+  outcome: string | null;
+  unanimous: boolean | null;
+  decidedAt: Timestamp | null;
+  actionedAt: Timestamp | null;
+  actionStartedAt: Timestamp | null;
+  actionResult: string | null;
+  actionError: string | null;
+  copyState: string | null;
+  copyKey: string | null;
+  copiedAt: Timestamp | null;
+  copyError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelQuota = {
+  userId: number;
+  dailyVotes: Generated<number>;
+  active: Generated<boolean>;
+  updatedBy: number | null;
+  updatedAt: Generated<Timestamp>;
+};
+export type ScanLabelVote = {
+  itemId: number;
+  userId: number;
+  block: boolean;
+  reason: string | null;
+  reasonComment: string | null;
+  msOnItem: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ScannerContentSnapshot = {
   contentHash: string;
   scanner: string;
@@ -4494,6 +4615,115 @@ export type ScannerLabelReview = {
   reviewedAt: Generated<Timestamp>;
   verdict: ReviewVerdict;
   note: string | null;
+};
+export type ServiceDeal = {
+  id: Generated<number>;
+  offeringId: number;
+  buyerId: number;
+  sellerId: number;
+  price: number;
+  buzzType: ServiceBuzzType;
+  /**
+   * Kept by the platform out of `price` on release; the seller receives the rest.
+   */
+  feeAmount: Generated<number>;
+  revisionsIncluded: number;
+  revisionsUsed: Generated<number>;
+  deliveryDays: number;
+  previewKind: ServicePreviewKind;
+  status: Generated<ServiceDealStatus>;
+  /**
+   * Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
+   * deal without it was never paid for: the migration refuses any worked or payable status
+   * without it. Release and Refund receipts are NOT tied to it in the database, so code must
+   * claim them only against a paid Hold.
+   */
+  heldAt: Timestamp | null;
+  /**
+   * Set once the Release or Refund leg's Buzz call has succeeded.
+   */
+  settledAt: Timestamp | null;
+  chatId: number | null;
+  requestText: string;
+  requestedAt: Generated<Timestamp>;
+  acceptedAt: Timestamp | null;
+  dueAt: Timestamp | null;
+  /**
+   * Latest delivery. Starts the auto-complete window.
+   */
+  deliveredAt: Timestamp | null;
+  completedAt: Timestamp | null;
+  /**
+   * When the release leg may run: the end of the dispute window after completion.
+   * Required once Completed (a CHECK in the migration).
+   */
+  releaseAt: Timestamp | null;
+  cancellationRequestedAt: Timestamp | null;
+  cancellationRequestedById: number | null;
+  cancellationReason: string | null;
+  disputeOpenedAt: Timestamp | null;
+  disputeReason: string | null;
+  disputeResolvedAt: Timestamp | null;
+  disputeResolution: ServiceDisputeResolution | null;
+  disputeResolvedById: number | null;
+  closedAt: Timestamp | null;
+  closeReason: string | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ServiceDealEvent = {
+  id: Generated<number>;
+  dealId: number;
+  actorId: number;
+  type: ServiceDealEventType;
+  round: Generated<number>;
+  comment: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealFile = {
+  id: Generated<number>;
+  dealId: number;
+  round: Generated<number>;
+  kind: ServiceDealFileKind;
+  s3Key: string;
+  watermarkedKey: string | null;
+  /**
+   * The Image row a preview was ingested as, for the normal scanning pipeline.
+   */
+  imageId: number | null;
+  mimeType: string;
+  size: number;
+  scanStatus: Generated<ServiceDealFileScanStatus>;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealTransaction = {
+  id: Generated<number>;
+  dealId: number;
+  leg: ServiceDealLeg;
+  externalTransactionId: string;
+  transactionId: string | null;
+  amount: number;
+  buzzType: ServiceBuzzType;
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
+  lastError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceOffering = {
+  id: Generated<number>;
+  sellerId: number;
+  title: string;
+  description: string;
+  coverImageId: number | null;
+  price: number;
+  acceptsBlue: Generated<boolean>;
+  previewKind: Generated<ServicePreviewKind>;
+  deliveryDays: number;
+  revisionsIncluded: Generated<number>;
+  maxOpenDeals: number | null;
+  status: Generated<ServiceOfferingStatus>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Session = {
   id: Generated<number>;
@@ -5456,6 +5686,7 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5534,8 +5765,10 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
+  ModelSelfGeneration: ModelSelfGeneration;
   ModelTag: ModelTag;
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;
@@ -5546,6 +5779,7 @@ export type DB = {
   ModelVersionSaleItem: ModelVersionSaleItem;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
+  ModerationRuleVersion: ModerationRuleVersion;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;
@@ -5588,6 +5822,7 @@ export type DB = {
   ReferralMilestone: ReferralMilestone;
   ReferralRedemption: ReferralRedemption;
   ReferralReward: ReferralReward;
+  RemovalScoreExemption: RemovalScoreExemption;
   Report: Report;
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
@@ -5602,8 +5837,19 @@ export type DB = {
   Role: Role;
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
+  ScanLabelClaim: ScanLabelClaim;
+  ScanLabelCopyObject: ScanLabelCopyObject;
+  ScanLabelFlag: ScanLabelFlag;
+  ScanLabelItem: ScanLabelItem;
+  ScanLabelQuota: ScanLabelQuota;
+  ScanLabelVote: ScanLabelVote;
   ScannerContentSnapshot: ScannerContentSnapshot;
   ScannerLabelReview: ScannerLabelReview;
+  ServiceDeal: ServiceDeal;
+  ServiceDealEvent: ServiceDealEvent;
+  ServiceDealFile: ServiceDealFile;
+  ServiceDealTransaction: ServiceDealTransaction;
+  ServiceOffering: ServiceOffering;
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;

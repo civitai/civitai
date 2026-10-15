@@ -101,7 +101,7 @@ standard is one link away**. Each of these has cost real time when broken. Full 
 
 - **Derive the promise; never fetch in `$effect` and assign to `$state`.** The single most repeated bug
   in these apps — it gives a stuck spinner, a re-run loop, or a stale response landing on a newer
-  lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : null)`, then `{#await x}`.
+  lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : SSR_PENDING)`, then `{#await x}`. The server half is `SSR_PENDING` (`$lib/ssr-pending`), **never `null`**: null renders `{:then}` on the server while the browser hydrates `pending`, and the browser's content then sits outside its block — when a parent `{#key}`/`{#if}` swaps the panel, it stays on the page and the new one renders under it (the model reports "stuck preview" bug, 2026-10-14). `{#if x}{#await x}` with `: null` is also safe.
 - **Every `{#await}` needs a `{:catch}`.** Without one a rejection is silent and the panel just never
   fills in.
 - **Key every `{#each}` on something unique.** An unkeyed or duplicate-keyed loop reuses the wrong DOM
@@ -124,9 +124,10 @@ standard is one link away**. Each of these has cost real time when broken. Full 
   the dev server's watcher; that collision froze an editor for a full day. Read `svelte-check`'s
   **WARNING** lines too: `state_referenced_locally` is a real bug and appears nowhere else.
 - **`typecheck` stops at `src/`.** It extends `.svelte-kit/tsconfig.json`, so the standalone scripts
-  under `moderator-db/`, `xguard-lab/` and `removal-label-eval/` are invisible to it — including the
-  ones that read and write two production databases at once. Run `pnpm run typecheck:scripts`
-  (`tsconfig.scripts.json`) when you touch any of them.
+  under `moderator-db/`, `xguard-lab/`, `removal-label-eval/`, `automated-text-eval/` and
+  `text-scan-test-sets/` are invisible to it — including the ones that read and write two production
+  databases at once. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch any of
+  them.
 - **Before calling a segment done**, run `svelte-correctness-review`, `svelte-idiom-review` and
   `svelte-abstraction-review` (or the `/svelte-review` skill) — then **look at the page**. Typecheck
   passes on plenty of pages that render blank.

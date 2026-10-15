@@ -1,13 +1,21 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
+import {
+  modelRulesFingerprint,
+  renderModelRulesBlock,
+  type ModelRuleForPrompt,
+} from '~/server/services/text-scan/model-rules';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import {
+  isTextScanWebSearchEntityType,
   parseTextScanRollout,
   readTextScanRollouts,
+  readTextScanWebSearchRollouts,
   resetTextScanRolloutCache,
   type TextScanRollout,
 } from '~/server/services/text-scan/mode';
+import { composeUserText, segmentUserText } from '~/server/services/text-scan/segment';
 import type {
   PromptIds,
   TextScanEntityType,
@@ -15,18 +23,33 @@ import type {
   TextScanSubject,
 } from '~/server/services/text-scan/types';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwConflictError,
+} from '~/server/utils/errorHandling';
 
 export const DEFAULT_TEXT_SCAN_MODEL =
   'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
 const DEFAULT_MAX_INPUT_CHARS = 200000;
+const DEFAULT_MAX_SEGMENTS = 10;
+/** Each segment is a billed call; bounds a bad config override. */
+export const MAX_SEGMENTS_LIMIT = 20;
 
-export type TextScanConfig = { model: string; maxInputChars: number; thinking: boolean };
+export type TextScanConfig = {
+  model: string;
+  /** Per-call budget; longer text is split into segments of this size. */
+  maxInputChars: number;
+  /** The most calls one scan makes; text past them is not scanned and the result says so. */
+  maxSegments: number;
+  thinking: boolean;
+};
 
 function withDefaults(raw: unknown): TextScanConfig {
   const config: TextScanConfig = {
     model: DEFAULT_TEXT_SCAN_MODEL,
     maxInputChars: DEFAULT_MAX_INPUT_CHARS,
+    maxSegments: DEFAULT_MAX_SEGMENTS,
     thinking: false,
   };
   if (!raw || typeof raw !== 'object') return config;
@@ -34,6 +57,9 @@ function withDefaults(raw: unknown): TextScanConfig {
   if (typeof parsed.model === 'string' && parsed.model) config.model = parsed.model;
   if (Number.isInteger(parsed.maxInputChars) && (parsed.maxInputChars as number) > 0)
     config.maxInputChars = parsed.maxInputChars as number;
+  const maxSegments = parsed.maxSegments as number;
+  if (Number.isInteger(maxSegments) && maxSegments >= 1 && maxSegments <= MAX_SEGMENTS_LIMIT)
+    config.maxSegments = maxSegments;
   if (typeof parsed.thinking === 'boolean') config.thinking = parsed.thinking;
   return config;
 }
@@ -109,9 +135,38 @@ export async function setTextScanRollout(
   return readTextScanRollouts();
 }
 
+/** As `setTextScanRollout`, for the web-search pass. Only Model is eligible. */
+export async function setTextScanWebSearchRollout(
+  entityType: TextScanEntityType,
+  rollout: TextScanRollout | null,
+  { moderatorId, allowActive = false }: { moderatorId: number; allowActive?: boolean }
+) {
+  if (!isTextScanWebSearchEntityType(entityType))
+    throw throwBadRequestError(`${entityType}: web search is only available for Model`);
+  await assertActiveModerator(moderatorId);
+  if (rollout && rollout.active > 0 && !allowActive)
+    throw throwBadRequestError(`${entityType}: an active share needs allowActive`);
+  if (rollout) {
+    const value = parseTextScanRollout(JSON.stringify(rollout));
+    await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.WEB_SEARCH, entityType, JSON.stringify(value));
+  } else {
+    await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.WEB_SEARCH, entityType);
+  }
+  resetTextScanRolloutCache();
+  await logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'web-search rollout updated',
+    moderatorId,
+    entityType,
+    rollout,
+  });
+  return readTextScanWebSearchRollouts();
+}
+
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };
 
-export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam))$/;
+export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|modelRules))$/;
 
 export async function getActiveTextScanPrompts(): Promise<Record<string, ActiveTextScanPrompt>> {
   return fetchThroughCache(
@@ -135,18 +190,39 @@ export async function insertTextScanPrompt({
   content,
   note,
   createdById,
+  baseId,
 }: {
   key: string;
   content: string;
   note?: string;
   createdById: number;
+  /** The version the edit started from; null when there was none. Given, the insert happens only
+   *  while it is still the newest version of `key`. */
+  baseId?: number | null;
 }) {
   if (!TEXT_SCAN_PROMPT_KEY.test(key)) throwBadRequestError(`Invalid text-scan prompt key: ${key}`);
   await assertActiveModerator(createdById);
-  const row = await dbWrite.textScanPrompt.create({
-    data: { key, content, note, createdById },
-    select: { id: true, key: true },
-  });
+  const data = { key, content, note, createdById };
+  const select = { id: true, key: true } as const;
+  const row =
+    baseId === undefined
+      ? await dbWrite.textScanPrompt.create({ data, select })
+      : await dbWrite.$transaction(async (tx) => {
+          // Serialises saves of one key, so two saves from the same base cannot both insert as newest.
+          await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${`TextScanPrompt:${key}`}))`;
+          const newest = await tx.textScanPrompt.findFirst({
+            where: { key },
+            orderBy: { id: 'desc' },
+            select: { id: true },
+          });
+          if ((newest?.id ?? null) !== baseId)
+            throwConflictError(
+              `A newer version of ${key}${
+                newest ? ` (#${newest.id})` : ''
+              } was saved after this edit started.`
+            );
+          return tx.textScanPrompt.create({ data, select });
+        });
   await bustFetchThroughCache(REDIS_KEYS.CACHES.TEXT_SCAN_PROMPTS);
   return row;
 }
@@ -161,52 +237,65 @@ export function subjectTextLength(subject: TextScanSubject) {
   return subject.fields.reduce((sum, field) => sum + (field.text?.trim().length ?? 0), 0);
 }
 
-function composeFullText(subject: TextScanSubject) {
-  return subject.fields
-    .filter((field) => field.text?.trim())
-    .map((field) => `## ${field.heading}\n${field.text!.trim()}`)
-    .join('\n\n');
-}
-
-export function composeUserMessage(subject: TextScanSubject, maxInputChars: number) {
-  return composeFullText(subject).slice(0, maxInputChars);
-}
+/** Stands in for the rule set in `MissingTextScanPromptError`: no enabled rule is a missing prompt. */
+export const MODEL_RULES_SET_KEY = 'modelRules:rules';
 
 export function composeTextScanMessages({
   prompts,
   labels,
   subject,
   maxInputChars,
+  modelRules,
+  maxSegments,
 }: {
   prompts: Record<string, ActiveTextScanPrompt>;
   labels: TextScanLabel[];
   subject: TextScanSubject;
   maxInputChars: number;
+  /** Required when `labels` includes `modelRules`. */
+  modelRules?: ModelRuleForPrompt[];
+  maxSegments: number;
 }) {
   const keys = ['base', ...labels.map((label) => `label:${label}`)];
   // A blank row would compose an empty definition and be submitted everywhere; treat it as missing.
   const missing = keys.filter((key) => !prompts[key]?.content?.trim());
+  const scansRules = labels.includes('modelRules');
+  if (scansRules && !modelRules?.length) missing.push(MODEL_RULES_SET_KEY);
   if (missing.length) throw new MissingTextScanPromptError(missing);
 
-  const system = [
-    prompts.base.content,
-    ...labels.map((label) => `## Label: ${label}\n${prompts[`label:${label}`].content}`),
-  ].join('\n\n');
+  const labelSection = (label: TextScanLabel) => {
+    const section = `## Label: ${label}\n${prompts[`label:${label}`].content}`;
+    return label === 'modelRules' && modelRules
+      ? `${section}\n\n${renderModelRulesBlock(modelRules)}`
+      : section;
+  };
+  const system = [prompts.base.content, ...labels.map(labelSection)].join('\n\n');
 
   const promptIds: PromptIds = { base: prompts.base.id };
   for (const label of labels) promptIds[label] = prompts[`label:${label}`].id;
 
-  const full = composeFullText(subject);
+  const { text, segments, inputChars, scannedChars, inputCut } = segmentUserText(subject, {
+    budget: maxInputChars,
+    maxSegments,
+  });
   return {
     system,
-    user: full.slice(0, maxInputChars),
+    text,
+    segments,
     promptIds,
-    inputChars: full.length,
-    inputCut: full.length > maxInputChars,
+    inputChars,
+    scannedChars,
+    inputCut,
+    ...(scansRules && modelRules
+      ? {
+          ruleIds: modelRules.map((rule) => rule.id),
+          rulesFingerprint: modelRulesFingerprint(modelRules),
+        }
+      : {}),
   };
 }
 
 /** Uncapped and prompt-independent, unlike the dedup hash: appeal and re-file gates compare it. */
 export function textScanTextHash(subject: TextScanSubject) {
-  return hashContent(composeUserMessage(subject, Number.MAX_SAFE_INTEGER));
+  return hashContent(composeUserText(subject));
 }

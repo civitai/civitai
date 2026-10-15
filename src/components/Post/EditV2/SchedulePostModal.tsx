@@ -82,7 +82,7 @@ export function SchedulePostModal({
                 valueFormat="lll"
                 minDate={minDate}
                 maxDate={maxDate}
-                popoverProps={{ withinPortal: true }}
+                popoverProps={{ withinPortal: true, middlewares: { shift: { crossAxis: true } } }}
                 withAsterisk
               />
               <Text size="xs" c="dimmed">

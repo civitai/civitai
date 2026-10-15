@@ -223,12 +223,16 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               });
             }
             if (!data) return null;
+            // A generated video's file carries the worker's ComfyUI graph, whose Model path and
+            // engine would override the generator's meta and fail the on-site check.
+            const isOnSiteVideo = data.type === 'video' && !!fileMeta?.civitaiResources;
+            const embeddedMeta = isOnSiteVideo ? undefined : data.meta;
             // Merge civitaiResources arrays by modelVersionId instead of overwriting
             const mergedCivitaiResources = (() => {
               const fileResources = fileMeta?.civitaiResources as
                 | { modelVersionId: number }[]
                 | undefined;
-              const exifResources = data.meta?.civitaiResources as
+              const exifResources = embeddedMeta?.civitaiResources as
                 | { modelVersionId: number }[]
                 | undefined;
               if (!fileResources?.length) return exifResources;
@@ -246,12 +250,12 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               generationWorkflowId,
               meta: {
                 ...fileMeta,
-                ...data.meta,
+                ...embeddedMeta,
                 ...(mergedCivitaiResources ? { civitaiResources: mergedCivitaiResources } : {}),
               },
               file,
             };
-            const { meta } = data;
+            const meta = embeddedMeta;
 
             if (meta) {
               const audit = await auditMetaData(meta, false);

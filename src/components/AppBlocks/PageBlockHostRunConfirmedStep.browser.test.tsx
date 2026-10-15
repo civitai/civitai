@@ -5,6 +5,7 @@ import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -222,7 +223,9 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     await expect.element(confirmBtn, ARMED).toBeEnabled();
     await confirmBtn.click();
 
-    expect(await reply(replies)).toEqual({ requestId: 'rq_1', snapshot: SNAPSHOT });
+    const succeeded = await reply(replies);
+    expect(succeeded).toEqual({ requestId: 'rq_1', snapshot: SNAPSHOT });
+    expectReplyKeys('RUN_CONFIRMED_STEP', 'success', ['snapshot'], succeeded);
     expect(consentMutate).toHaveBeenCalledWith({
       kind: 'step',
       blockToken: 'tok_abc',
@@ -263,7 +266,9 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_3', body: BODY });
     await expect.element(page.getByRole('button', { name: CONFIRM })).toBeInTheDocument();
     await page.getByRole('button', { name: 'Cancel' }).click();
-    expect(await reply(replies)).toEqual({ requestId: 'rq_3', error: 'declined' });
+    const declined = await reply(replies);
+    expect(declined).toEqual({ requestId: 'rq_3', error: 'declined' });
+    expectReplyKeys('RUN_CONFIRMED_STEP', 'error', ['error'], declined);
     expect(consentMutate).not.toHaveBeenCalled();
     expect(submitMutate).not.toHaveBeenCalled();
     replies.stop();

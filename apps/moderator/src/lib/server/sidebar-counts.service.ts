@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
@@ -11,6 +12,7 @@ import { getRatingReviewCounts } from './rating-reviews.service';
 import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
+import { getMinorFlagAppealGroups, getMinorQueueCounts } from './minor-hash.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -33,7 +35,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     stuckIngestion,
     ingestionErrors,
     feedbackNew,
+    feedbackAppsPlatformNew,
     removedAppeals,
+    minorQueue,
+    modelFlagAppealGroups,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -71,7 +76,14 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // `countNewFeedback`). Wrapping it in a 3-second race would add a timer and a nullable to buy
     // nothing.
     countNewFeedback(),
+    countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
     countRemovedAppeals(),
+    // Bounded tighter than the default: every verdict busts this cache, so a cold ~10s fill (see
+    // `getMinorQueueCounts`) is routine. The race does not cancel it, so the fill still lands in its
+    // own cache and the badge returns on a later refresh.
+    bounded(getMinorQueueCounts, 1_000),
+    // The page's own facet query, so the badge always equals the queue's "All" total.
+    getMinorFlagAppealGroups({}),
   ]);
   return {
     ...modes,
@@ -83,7 +95,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     articles,
     ratingReviews: ratingReviews.Pending,
     feedbackNew,
+    feedbackAppsPlatformNew,
     removedAppeals,
+    modelFlagAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
+    ...(minorQueue != null ? { minorHashMatches: minorQueue.pending + minorQueue.auto } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };

@@ -197,6 +197,14 @@ export type AppBlockEndpoint =
   | 'app_storage_delete'
   | 'app_storage_list'
   | 'app_storage_quota'
+  // The DOCUMENT STORE (`/api/v1/blocks/storage/…`, one catch-all route). Four labels by
+  // workload, resolved per request from method + path shape: `info` (declaration + usage),
+  // `read` (list / get / batch get), `write` (document create / put / delete — the only
+  // ones that can run content moderation and charge quota), `tally` (counters and marks).
+  | 'storage_info'
+  | 'storage_read'
+  | 'storage_write'
+  | 'storage_tally'
   // The per-viewer checkpoint override write — the REST twin of the
   // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
   // into a settings-shaped bucket: it is the only REST route that writes
@@ -691,6 +699,9 @@ type Bundle = {
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
   consentMarkerUnavailableTotal: Counter<string>;
+  storageManifestUnparseableTotal: Counter<string>;
+  reviewStorageCleanupTotal: Counter<string>;
+  reviewStorageSweepTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1146,6 +1157,36 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface']
   );
 
+  // The document store could not parse an APPROVED (or pending, for a review token) manifest's
+  // `storage` declaration even with every phased feature switched on, so it answered 503 rather
+  // than declaring nothing. No label: the app is in the log line (written once per app per
+  // process), and a flat zero is the steady state.
+  const storageManifestUnparseableTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_storage_manifest_unparseable_total',
+    'Document-store requests answered 503 service_unavailable because the app manifest storage declaration did not parse (apps/doc-store-access.ts). Non-zero means a reviewed manifest no longer matches the parser; the app id is in the log. A flat zero is the expected steady state',
+    []
+  );
+
+  // One increment per inline review-storage teardown (publish-request.service.ts
+  // `teardownReviewStorageForRequest`, on approve/reject/withdraw), by outcome. A `failed` one is
+  // finished by the sweep, counted below.
+  const reviewStorageCleanupTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_review_storage_cleanup_total',
+    'Inline deletions of a decided publish request review namespaces, by outcome: purged (data deleted), nothing (no review data), disabled (no usable store connection), failed (left to the sweep; logged)',
+    ['outcome']
+  );
+
+  // One increment per request the review-storage sweep (jobs/sweep-review-storage.ts) tried to
+  // purge. A steady `failed` means review data is outliving its request.
+  const reviewStorageSweepTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_review_storage_sweep_total',
+    'Publish requests whose leftover review namespaces the sweep purged, by outcome: purged, failed (retried next run)',
+    ['outcome']
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1384,6 +1425,9 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
     consentMarkerUnavailableTotal,
+    storageManifestUnparseableTotal,
+    reviewStorageCleanupTotal,
+    reviewStorageSweepTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1699,6 +1743,33 @@ export function recordBlockConsentMarkerUnavailable(surface: AppBlockRevocationS
     consentMarkerUnavailableTotal.inc({ surface });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/** One document-store request refused because its manifest's `storage` did not parse. Total. */
+export function recordStorageManifestUnparseable(): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().storageManifestUnparseableTotal.inc();
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+export type ReviewStorageCleanupOutcome = 'purged' | 'nothing' | 'disabled' | 'failed';
+
+export function recordReviewStorageCleanup(outcome: ReviewStorageCleanupOutcome): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().reviewStorageCleanupTotal.inc({ outcome });
+  } catch {
+    /* instrument-only — a metrics error must never fail a moderator decision */
+  }
+}
+
+export function recordReviewStorageSweep(outcome: 'purged' | 'failed'): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().reviewStorageSweepTotal.inc({ outcome });
+  } catch {
+    /* instrument-only — a metrics error must never fail the sweep */
   }
 }
 

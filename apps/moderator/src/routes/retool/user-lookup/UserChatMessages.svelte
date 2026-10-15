@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { chatAuditChatUrl } from '$lib/entity-url';
@@ -16,7 +17,7 @@
     return r.json();
   }
 
-  const messages = $derived(browser ? fetchMessages(userId) : null);
+  const messages = $derived(browser ? fetchMessages(userId) : SSR_PENDING);
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">

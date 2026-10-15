@@ -10,6 +10,8 @@ import {
   appealTrainingCopyJob,
 } from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
+import { scanLabelCopyJob } from '~/server/jobs/scan-label-copy';
+import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
@@ -40,6 +42,7 @@ import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-b
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
+import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
@@ -81,6 +84,7 @@ import { createDisconnectHandler } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
+import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -238,6 +242,7 @@ export const jobs: Job[] = [
   sweepStaleAgentReviewsJob,
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
+  sweepReviewStorageJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
@@ -266,6 +271,7 @@ export const jobs: Job[] = [
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
   ...placementJobs,
+  ...creatorServiceDealJobs,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,
@@ -282,6 +288,8 @@ export const jobs: Job[] = [
   voidOrphanedAppealsJob,
   appealDecisionRecordsJob,
   appealTrainingCopyJob,
+  scanLabelCopyJob,
+  scanLabelCopySweepJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
   ...crucibleJobs,

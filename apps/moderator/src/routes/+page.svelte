@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import {
@@ -127,7 +128,7 @@
           if (!r.ok) throw new Error(`job-queue-health ${r.status}`);
           return r.json();
         })
-      : null
+      : SSR_PENDING
   );
 
   onMount(loadMostReported);
