@@ -12,13 +12,22 @@ const mocks = vi.hoisted(() => ({
   mine: { offerings: [] as unknown[], hiddenOffDomain: 0 },
 }));
 
+// `getMine` is mocked at the tRPC hook, so the real `useQueryMyServices` maps its response.
+vi.mock('~/utils/trpc', () => ({
+  trpc: {
+    creatorService: {
+      getSellEligibility: { useQuery: () => ({ data: { canSell: true }, isLoading: false }) },
+      getMine: {
+        useQuery: () => ({
+          data: { items: mocks.mine.offerings, hiddenOffDomain: mocks.mine.hiddenOffDomain },
+          isLoading: false,
+        }),
+      },
+    },
+  },
+}));
 vi.mock('~/components/CreatorShop/Services/creator-service.util', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useQueryMyServices: () => ({
-    ...mocks.mine,
-    eligibility: { canSell: true },
-    isLoading: false,
-  }),
   useMutateMyServices: () => ({
     setStatus: { mutate: () => undefined },
     remove: { mutate: () => undefined },
