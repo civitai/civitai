@@ -15,6 +15,7 @@ export type FinalScanTarget = {
   size: number;
 };
 
-export async function submitFinalScan(_file: FinalScanTarget): Promise<'Pending'> {
+export async function submitFinalScan(file: FinalScanTarget): Promise<'Pending'> {
+  void file;
   return 'Pending';
 }

@@ -138,9 +138,9 @@ async function prepare(input: Buffer, maxSide: number) {
 }
 
 /**
- * What the scanner sees: the preview downscaled to SERVICE_PREVIEW_SCAN_SIDE and left UNMARKED, so
- * the mark cannot hide what a classifier needs. It goes to the image store only to be scanned and
- * is deleted once the verdict lands. Same checks and caps as the published preview.
+ * What gets scanned: the preview downscaled to SERVICE_PREVIEW_SCAN_SIDE and left unmarked. It goes
+ * to the image store only to be scanned and is deleted once the verdict lands. Same checks and
+ * caps as the published preview.
  */
 export async function buildScanCopy(input: Buffer): Promise<PreviewResult> {
   const { sharp, resized, animated, frames, width, height } = await prepare(

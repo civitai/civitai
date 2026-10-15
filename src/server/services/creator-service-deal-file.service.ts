@@ -449,7 +449,7 @@ export async function getServiceDealFileDownloadUrl(target: ServiceDealFileDownl
 // Preview pipeline (the job)
 // ---------------------------------------------------------------------------------------------
 //
-// A preview is scanned BEFORE it is marked, and the scanner never sees the mark:
+// A preview is scanned BEFORE it is marked:
 //   1. a hidden, downscaled, unwatermarked copy goes to the image store and through the normal
 //      image scan (`startPreviewScans`);
 //   2. the verdict lands on the file (`settlePreviewScans`): clean passes it, anything else fails

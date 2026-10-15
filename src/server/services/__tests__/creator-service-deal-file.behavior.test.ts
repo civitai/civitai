@@ -3,7 +3,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -114,8 +114,23 @@ const MOD = 4;
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
 
+type FileRecord = {
+  dealId: number;
+  round: number;
+  kind: string;
+  s3Key: string;
+  fileName: string;
+  status: string;
+  scanStatus: string;
+  failReason: string | null;
+  imageId: number | null;
+  scanKey: string | null;
+  watermarkedKey: string | null;
+  processingAt: Date | null;
+};
+
 const fileRow = async (id: number) =>
-  (await q<Record<string, any>>(`SELECT * FROM "ServiceDealFile" WHERE id = $1`, [id]))[0];
+  (await q<FileRecord>(`SELECT * FROM "ServiceDealFile" WHERE id = $1`, [id]))[0];
 
 const charged = { transactionIds: [], totalAmount: 500, transactionCount: 1 };
 
