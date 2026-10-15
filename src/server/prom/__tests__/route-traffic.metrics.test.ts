@@ -1,21 +1,16 @@
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type client from 'prom-client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as ServerDomain from '~/server/utils/server-domain';
-
-vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
-  ...(await importOriginal<typeof ServerDomain>()),
-  getAllServerHosts: () => ['civitai.com', 'civitai.green', 'civitai.red', 'localhost:3000'],
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   botClassLabel,
-  hostLabel,
   PAGE_RENDER_METRIC,
   recordPageRender,
   recordTrpcCall,
+  renderAuthedLabel,
   TRPC_CALLS_METRIC,
 } from '~/server/prom/route-traffic.metrics';
+import { usePagesManifestFixture } from '~/server/utils/__tests__/pages-manifest.fixture';
 
 type Row = { value: number; labels: Record<string, string> };
 
@@ -27,12 +22,13 @@ async function rows(name: string): Promise<Row[]> {
 }
 
 beforeEach(() => {
-  (
-    instrumentationRegistry.getSingleMetric(TRPC_CALLS_METRIC) as client.Counter | undefined
-  )?.reset();
-  (
-    instrumentationRegistry.getSingleMetric(PAGE_RENDER_METRIC) as client.Counter | undefined
-  )?.reset();
+  usePagesManifestFixture();
+  for (const name of [TRPC_CALLS_METRIC, PAGE_RENDER_METRIC]) {
+    (instrumentationRegistry.getSingleMetric(name) as client.Counter | undefined)?.reset();
+  }
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe(TRPC_CALLS_METRIC, () => {
@@ -60,84 +56,51 @@ describe(TRPC_CALLS_METRIC, () => {
 });
 
 describe(PAGE_RENDER_METRIC, () => {
-  it('labels a render with route, sign-in state, verified-bot class and configured host', async () => {
-    recordPageRender({
-      route: '/models/[id]/[[...slug]]',
-      authed: false,
+  it('labels a render with the rendered route, sign-in state and verified-bot class only', async () => {
+    recordPageRender('/models/[id]/[[...slug]]', {
       headers: { host: 'civitai.com', 'x-civitai-verified-bot': 'googlebot' },
-      url: '/models/1/slug',
     });
-    recordPageRender({
-      route: '/',
-      authed: true,
-      headers: { host: 'CIVITAI.GREEN:443' },
-      url: '/',
-    });
+    recordPageRender('/', { headers: { host: 'civitai.com' }, session: { user: { id: 1 } } });
     expect(await rows(PAGE_RENDER_METRIC)).toEqual(
       expect.arrayContaining([
         {
           value: 1,
-          labels: {
-            route: '/models/[id]/[[...slug]]',
-            authed: 'false',
-            bot_class: 'googlebot',
-            host: 'civitai.com',
-          },
+          labels: { route: '/models/[id]/[[...slug]]', authed: 'false', bot_class: 'googlebot' },
         },
-        {
-          value: 1,
-          labels: { route: '/', authed: 'true', bot_class: 'none', host: 'civitai.green' },
-        },
+        { value: 1, labels: { route: '/', authed: 'true', bot_class: 'none' } },
       ])
     );
+    expect(await rows(PAGE_RENDER_METRIC)).toHaveLength(2);
   });
 
-  it('buckets unknown hosts, unknown bot values and unknown routes, so label values stay bounded', async () => {
-    for (let i = 0; i < 500; i++) {
-      recordPageRender({
-        route: `/invented/${i}`,
-        authed: false,
-        headers: { host: `attacker-${i}.example`, 'x-civitai-verified-bot': `bot-${i}` },
-        url: `/invented/${i}`,
-      });
-    }
-    expect(await rows(PAGE_RENDER_METRIC)).toEqual([
-      { value: 500, labels: { route: 'other', authed: 'false', bot_class: 'none', host: 'other' } },
+  it('keeps `/404` and `/_error` as their own routes', async () => {
+    recordPageRender('/404', { headers: {} });
+    recordPageRender('/_error', { headers: {} });
+    expect((await rows(PAGE_RENDER_METRIC)).map((r) => r.labels.route).sort()).toEqual([
+      '/404',
+      '/_error',
     ]);
   });
 
-  it('skips /_next/data requests, which run getInitialProps but render no HTML', async () => {
-    const headers = { host: 'civitai.com' };
-    recordPageRender({ route: '/images', authed: false, headers, url: '/images' });
-    recordPageRender({
-      route: '/images',
-      authed: false,
-      headers: { ...headers, 'x-nextjs-data': '1' },
-      url: '/images',
-    });
-    recordPageRender({
-      route: '/images',
-      authed: false,
-      headers,
-      url: '/_next/data/build-id/images.json',
-    });
+  it('buckets unknown routes and bot values, so label values stay bounded', async () => {
+    for (let i = 0; i < 500; i++) {
+      recordPageRender(`/invented/${i}`, {
+        headers: { host: `h-${i}.example`, 'x-civitai-verified-bot': `bot-${i}` },
+      });
+    }
     expect(await rows(PAGE_RENDER_METRIC)).toEqual([
-      {
-        value: 1,
-        labels: { route: '/images', authed: 'false', bot_class: 'none', host: 'civitai.com' },
-      },
+      { value: 500, labels: { route: 'other', authed: 'false', bot_class: 'none' } },
     ]);
   });
 });
 
 describe('label helpers', () => {
-  it('hostLabel accepts only configured hosts', () => {
-    expect(hostLabel('civitai.red')).toBe('civitai.red');
-    expect(hostLabel('civitai.com:3000')).toBe('civitai.com');
-    expect(hostLabel('localhost:3000')).toBe('localhost:3000');
-    expect(hostLabel('localhost:4000')).toBe('other');
-    expect(hostLabel('evil.civitai.com')).toBe('other');
-    expect(hostLabel(undefined)).toBe('other');
+  it('renderAuthedLabel reports an unresolved session as unknown, never as anonymous', () => {
+    expect(renderAuthedLabel({ headers: {}, session: { user: { id: 1 } } })).toBe('true');
+    expect(renderAuthedLabel({ headers: {} })).toBe('false');
+    expect(renderAuthedLabel({ headers: {}, session: null })).toBe('false');
+    expect(renderAuthedLabel({ headers: {}, sessionUnresolved: true })).toBe('unknown');
+    expect(renderAuthedLabel({ headers: {}, sessionUnresolved: false })).toBe('false');
   });
 
   it('botClassLabel only reports the verified-bot classes', () => {

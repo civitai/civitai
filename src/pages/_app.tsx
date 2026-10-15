@@ -13,6 +13,7 @@ import { getCookie, getCookies } from 'cookies-next';
 import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
+import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/page-route.constants';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -610,6 +611,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     chatSettings = resolveChatSettings(settings.chat);
   }
 
+  // Read by the page-render metric: a signed-in-looking render whose session lookup degraded is not
+  // known to be anonymous. Assigned on every run, since a notFound runs this twice on one request.
+  (appContext.ctx.req as any)[SESSION_UNRESOLVED_REQ_KEY] =
+    !session && hasAuthCookie && settingsDegraded;
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie && !settingsDegraded) {
@@ -643,24 +648,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (guardTo && appContext.ctx.res) {
     appContext.ctx.res.writeHead(302, { Location: guardTo });
     appContext.ctx.res.end();
-  }
-
-  // Exactly this `if` form: it is what keeps prom-client out of the client bundle (see the
-  // settings bootstrap above).
-  if (typeof window === 'undefined') {
-    if (!guardTo) {
-      try {
-        const { recordPageRender } = await import('~/server/prom/route-traffic.metrics');
-        recordPageRender({
-          route: appContext.ctx.pathname,
-          authed: !!session?.user,
-          headers: request.headers,
-          url: request.url,
-        });
-      } catch {
-        // A metric must never fail the render.
-      }
-    }
   }
 
   return {

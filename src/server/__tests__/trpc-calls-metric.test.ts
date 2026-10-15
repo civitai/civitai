@@ -1,9 +1,10 @@
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type client from 'prom-client';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPC_CALLS_METRIC } from '~/server/prom/route-traffic.metrics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { createCallerFactory, publicProcedure, router } from '~/server/trpc';
+import { usePagesManifestFixture } from '~/server/utils/__tests__/pages-manifest.fixture';
 
 /** Drives the real `publicProcedure` chain, so the assertion covers the wiring, not just the helper. */
 const createCaller = createCallerFactory(router({ ping: publicProcedure.query(() => 'pong') }));
@@ -30,9 +31,13 @@ async function rows() {
 }
 
 beforeEach(() => {
+  usePagesManifestFixture();
   (
     instrumentationRegistry.getSingleMetric(TRPC_CALLS_METRIC) as client.Counter | undefined
   )?.reset();
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('publicProcedure counts every call by page route and sign-in state', () => {

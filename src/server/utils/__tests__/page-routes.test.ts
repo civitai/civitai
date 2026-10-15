@@ -1,70 +1,86 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PAGE_ROUTES } from '~/server/utils/page-routes.list';
-import { PAGE_ROUTE_NONE, PAGE_ROUTE_OTHER, pageRouteLabel } from '~/server/utils/page-routes';
+import {
+  __resetPageRoutesForTest,
+  PAGE_ROUTE_NONE,
+  PAGE_ROUTE_OTHER,
+  pageRouteLabel,
+  readPageRoutes,
+} from '~/server/utils/page-routes';
+import { usePagesManifestFixture } from './pages-manifest.fixture';
 
-const PAGES_DIR = path.resolve(__dirname, '../../../pages');
-const PAGE_FILE = /\.(tsx|ts|jsx|js)$/;
-const NOT_ROUTES = new Set(['/_app', '/_document']);
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  __resetPageRoutesForTest();
+});
 
-function routesOnDisk(dir = PAGES_DIR): string[] {
-  const routes: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (full === path.join(PAGES_DIR, 'api')) continue;
-      routes.push(...routesOnDisk(full));
-    } else if (PAGE_FILE.test(entry.name)) {
-      const route =
-        '/' +
-        path
-          .relative(PAGES_DIR, full)
-          .replace(PAGE_FILE, '')
-          .replace(/(^|\/)index$/, '');
-      const normalised = route === '/' ? '/' : route.replace(/\/$/, '');
-      if (!NOT_ROUTES.has(normalised)) routes.push(normalised);
-    }
-  }
-  return routes;
-}
+describe('readPageRoutes', () => {
+  it('keeps page routes and drops API and internal `/_*` entries', () => {
+    const distDir = usePagesManifestFixture();
+    expect([...readPageRoutes(path.join(distDir, 'server', 'pages-manifest.json'))].sort()).toEqual(
+      ['/', '/404', '/images', '/models/[id]/[[...slug]]', '/user/[username]'].sort()
+    );
+  });
 
-describe('PAGE_ROUTES', () => {
-  it('matches the pages on disk exactly (a missing page would be counted as "other")', () => {
-    const onDisk = routesOnDisk().sort();
-    expect(onDisk.length).toBeGreaterThan(100);
-    const expected = `[\n${onDisk.map((r) => `  '${r}',`).join('\n')}\n]`;
-    expect(
-      [...PAGE_ROUTES].sort(),
-      `Update src/server/utils/page-routes.list.ts to:\n${expected}`
-    ).toEqual(onDisk);
+  it('returns an empty set, without throwing, for a missing or malformed manifest', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pages-manifest-bad-'));
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{not json');
+    expect(readPageRoutes(path.join(dir, 'absent.json')).size).toBe(0);
+    expect(readPageRoutes(path.join(dir, 'bad.json')).size).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('pageRouteLabel', () => {
-  it('passes known route patterns through unchanged', () => {
+  it('passes route patterns from the build manifest through unchanged', () => {
+    usePagesManifestFixture();
     expect(pageRouteLabel('/')).toBe('/');
     expect(pageRouteLabel('/models/[id]/[[...slug]]')).toBe('/models/[id]/[[...slug]]');
-    expect(pageRouteLabel(['/images', '/models'])).toBe('/images');
+    expect(pageRouteLabel(['/images', '/user/[username]'])).toBe('/images');
   });
 
-  it('buckets a missing header as "none"', () => {
+  it('buckets a missing value as "none"', () => {
+    usePagesManifestFixture();
     expect(pageRouteLabel(undefined)).toBe(PAGE_ROUTE_NONE);
     expect(pageRouteLabel(null)).toBe(PAGE_ROUTE_NONE);
     expect(pageRouteLabel('')).toBe(PAGE_ROUTE_NONE);
   });
 
-  it('buckets concrete URLs and invented patterns as "other"', () => {
+  it('buckets concrete URLs, API and internal entries, and invented patterns as "other"', () => {
+    usePagesManifestFixture();
     for (const raw of [
       '/models/12345/some-slug',
       '/models/[id]/[[...slug]]?x=1',
       '/models/[id]/[[...slug]]/',
+      '/api/trpc/[trpc]',
+      '/_app',
       '/not-a-page/[id]',
-      '/MODELS',
       'x'.repeat(10_000),
     ]) {
       expect(pageRouteLabel(raw)).toBe(PAGE_ROUTE_OTHER);
     }
+  });
+
+  it('labels every route "other", and warns once, when the manifest cannot be read', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubEnv('NEXT_DIST_DIR', path.join(os.tmpdir(), 'no-such-build-dir'));
+    __resetPageRoutesForTest();
+    expect(pageRouteLabel('/')).toBe(PAGE_ROUTE_OTHER);
+    expect(pageRouteLabel('/models/[id]/[[...slug]]')).toBe(PAGE_ROUTE_OTHER);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the manifest once, not per lookup', () => {
+    const distDir = usePagesManifestFixture();
+    const read = vi.spyOn(fs, 'readFileSync');
+    pageRouteLabel('/');
+    pageRouteLabel('/images');
+    pageRouteLabel('/nope');
+    expect(read.mock.calls.filter(([p]) => String(p).startsWith(distDir))).toHaveLength(1);
   });
 });

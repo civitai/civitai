@@ -8,12 +8,11 @@ import {
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { pageRouteLabel } from '~/server/utils/page-routes';
 import { PAGE_ROUTE_HEADER } from '~/shared/constants/page-route.constants';
-import { getAllServerHosts } from '~/server/utils/server-domain';
+import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/page-route.constants';
 
 export const TRPC_CALLS_METRIC = PROM_PREFIX + 'trpc_calls_total';
 export const PAGE_RENDER_METRIC = PROM_PREFIX + 'page_render_total';
 
-const OTHER = 'other';
 const NO_BOT = 'none';
 
 // Registered on the shared registry: tRPC calls and page renders are recorded from different
@@ -31,42 +30,42 @@ function trpcCallsCounter(): Counter<'route' | 'authed'> {
   );
 }
 
-function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class' | 'host'> {
+function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class'> {
   return registerInstrumentationMetric(
     PAGE_RENDER_METRIC,
     () =>
       new client.Counter({
         name: PAGE_RENDER_METRIC,
-        help: 'Server-side HTML page renders (not /_next/data requests) by route pattern, sign-in state, verified-bot class (set only where bot verification runs) and host',
-        labelNames: ['route', 'authed', 'bot_class', 'host'] as const,
+        help:
+          'Server-rendered HTML responses, counted once per document: route is the page actually ' +
+          'rendered (/404 for notFound, /_error for a thrown error); redirects and /_next/data ' +
+          'requests render no document and are not counted. authed is unknown when the session ' +
+          'lookup degraded; bot_class is set only where bot verification runs',
+        labelNames: ['route', 'authed', 'bot_class'] as const,
         registers: [instrumentationRegistry],
       })
   );
 }
 
-export function hostLabel(host: string | undefined): string {
-  if (!host) return OTHER;
-  const hosts = getAllServerHosts();
-  const lower = host.toLowerCase();
-  if (hosts.includes(lower)) return lower;
-  // Configured hosts may carry a port (local dev) or not (production); accept either.
-  const bare = lower.replace(/:\d+$/, '');
-  return hosts.includes(bare) ? bare : OTHER;
-}
-
-/**
- * A client-side navigation to a `getServerSideProps` page runs `_app.getInitialProps` on the
- * server too, but returns JSON without rendering.
- */
-export function isNextDataRequest(headers: HeaderBag, url: string | undefined): boolean {
-  return !!headers['x-nextjs-data'] || !!url?.startsWith('/_next/data/');
-}
+const ERROR_ROUTE = '/_error';
 
 export function botClassLabel(raw: string | string[] | null | undefined): string {
   return parseVerifiedBotHeader(raw) ?? NO_BOT;
 }
 
 type HeaderBag = Record<string, string | string[] | undefined>;
+
+/** The request as `_app.getInitialProps` leaves it: `session` set when signed in. */
+type RenderRequest = {
+  headers: HeaderBag;
+  session?: { user?: unknown } | null;
+  [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
+};
+
+export function renderAuthedLabel(req: RenderRequest): 'true' | 'false' | 'unknown' {
+  if (req[SESSION_UNRESOLVED_REQ_KEY]) return 'unknown';
+  return req.session?.user ? 'true' : 'false';
+}
 
 // Metrics must never fail the request they observe.
 export function recordTrpcCall(headers: HeaderBag | undefined, authed: boolean) {
@@ -80,24 +79,13 @@ export function recordTrpcCall(headers: HeaderBag | undefined, authed: boolean) 
   }
 }
 
-export function recordPageRender({
-  route,
-  authed,
-  headers,
-  url,
-}: {
-  route: string;
-  authed: boolean;
-  headers: HeaderBag;
-  url: string | undefined;
-}) {
+/** Called from `_document.getInitialProps`, which Next runs once per HTML response. */
+export function recordPageRender(route: string, req: RenderRequest) {
   try {
-    if (isNextDataRequest(headers, url)) return;
     pageRenderCounter().inc({
-      route: pageRouteLabel(route),
-      authed: String(authed),
-      bot_class: botClassLabel(headers[VERIFIED_BOT_HEADER]),
-      host: hostLabel(headers.host as string | undefined),
+      route: route === ERROR_ROUTE ? ERROR_ROUTE : pageRouteLabel(route),
+      authed: renderAuthedLabel(req),
+      bot_class: botClassLabel(req.headers[VERIFIED_BOT_HEADER]),
     });
   } catch {
     // Losing one increment is fine.
