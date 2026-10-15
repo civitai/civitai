@@ -176,10 +176,25 @@ const ageHoldLeg = (id: number, minutes: number) =>
 
 const conflict = expect.objectContaining({ code: 'CONFLICT' });
 
+/** A final for the deal's current round (or `round`), as the delivery seat's scanner leaves it. */
+const finals = (id: number, scanStatus = 'Passed', round?: number) =>
+  q(
+    `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, "scanStatus")
+     SELECT $1, COALESCE($3::int, "revisionsUsed"), 'Final', 'k', 'application/zip', 1, $2::"ServiceDealFileScanStatus"
+     FROM "ServiceDeal" WHERE id = $1`,
+    [id, scanStatus, round ?? null]
+  );
+
+/** Delivers with a final that passed scanning, as a completed deal needs. */
+const deliver = async (id: number) => {
+  await finals(id);
+  await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+};
+
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
   `);
@@ -870,7 +885,7 @@ describe('working a deal', () => {
   // Requesting a revision must not turn an on-time delivery into an instant refund.
   it('never offers the late cancel once anything was delivered', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
     await q(`UPDATE "ServiceDeal" SET "dueAt" = now() - interval '5 days' WHERE id = $1`, [id]);
     await expect(deals.cancelLateServiceDeal({ dealId: id, userId: BUYER })).rejects.toEqual(
@@ -881,9 +896,9 @@ describe('working a deal', () => {
 
   it('counts revisions against the snapshot and completes with a 48h dispute window', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'bigger ears' });
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await expect(
       deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'again' })
     ).rejects.toEqual(conflict);
@@ -899,7 +914,7 @@ describe('working a deal', () => {
 
   it('auto-completes 3 days after delivery, and not before', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await age(id, 'deliveredAt', 71);
     expect(await deals.autoCompleteServiceDeals()).toMatchObject({ moved: 0 });
     await age(id, 'deliveredAt', 73);
@@ -909,7 +924,7 @@ describe('working a deal', () => {
 
   it('opens a dispute inside the window only', async () => {
     const id = await accepted();
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
     await q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [
       id,
@@ -930,7 +945,7 @@ describe('timed transitions re-check their own deadline', () => {
     expect(await deals.expireServiceDeal(id)).toBe(false);
 
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     expect(await deals.autoCompleteServiceDeal(id)).toBe(false);
 
     await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
@@ -999,7 +1014,7 @@ describe('releasing to the seller', () => {
   const completed = async (overrides: Parameters<typeof request>[0] = {}) => {
     const { id } = await request(overrides);
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
     return id;
   };
@@ -1302,5 +1317,261 @@ describe('releasing to the seller', () => {
     expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
     expect(await escrow.sweepServiceDealRefunds()).toMatchObject({ exhausted: 1 });
     expect((await deal(id)).settledAt).toBeNull();
+  });
+});
+
+describe('the finals gate and dispute resolution', () => {
+  const delivered = async (overrides: Parameters<typeof request>[0] = {}) => {
+    const { id } = await request(overrides);
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    return id;
+  };
+  const completed = async () => {
+    const id = await delivered();
+    await finals(id);
+    await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+    return id;
+  };
+  const windowClosed = (id: number) =>
+    q(`UPDATE "ServiceDeal" SET "releaseAt" = now() - interval '1 minute' WHERE id = $1`, [id]);
+  const scan = (id: number, status: string) =>
+    q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = $2::"ServiceDealFileScanStatus" WHERE "dealId" = $1`,
+      [id, status]
+    );
+  const resolve = (id: number, resolution: 'Refund' | 'Release') =>
+    deals.resolveServiceDealDispute({ dealId: id, moderatorId: STRANGER, resolution, note: 'n' });
+  const disputeRow = async (id: number) =>
+    (
+      await q<{
+        disputeResolution: string | null;
+        disputeResolvedById: number | null;
+        disputeReason: string | null;
+      }>(
+        `SELECT "disputeResolution"::text, "disputeResolvedById", "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+        [id]
+      )
+    )[0];
+
+  it.each([
+    ['no final at all', async () => undefined],
+    ['a final still being scanned', (id: number) => finals(id, 'Pending')],
+    ['a final that failed scanning', (id: number) => finals(id, 'Failed')],
+    [
+      'a passed final beside a pending one',
+      async (id: number) => {
+        await finals(id);
+        await finals(id, 'Pending');
+      },
+    ],
+    [
+      'a passed final from an earlier round only',
+      async (id: number) => {
+        await finals(id, 'Passed', 0);
+        await q(`UPDATE "ServiceDeal" SET "revisionsUsed" = 1 WHERE id = $1`, [id]);
+      },
+    ],
+  ])('will not complete a delivery with %s', async (_, setUp) => {
+    const id = await delivered();
+    await setUp(id);
+    await expect(deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER })).rejects.toEqual(
+      expect.objectContaining({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/still being checked/),
+      })
+    );
+    await age(id, 'deliveredAt', 24 * 4);
+    expect(await deals.autoCompleteServiceDeal(id)).toBe(false);
+    expect((await deal(id)).status).toBe('Delivered');
+  });
+
+  it('auto-completes on the first sweep after the finals clear, even past three days', async () => {
+    const id = await delivered();
+    await finals(id, 'Pending');
+    await age(id, 'deliveredAt', 24 * 5);
+    expect(await deals.autoCompleteServiceDeals()).toMatchObject({ moved: 0 });
+    await scan(id, 'Passed');
+    expect(await deals.autoCompleteServiceDeals()).toMatchObject({ moved: 1 });
+    const row = await deal(id);
+    expect(row.status).toBe('Completed');
+    expect(row.releaseAt!.getTime() - row.completedAt!.getTime()).toBe(48 * 3_600_000);
+  });
+
+  it('holds a release whose finals stopped passing, and pays nothing', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await scan(id, 'Failed');
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+  });
+
+  it('sends a delivered deal to the moderators, but never one whose payout is claimed', async () => {
+    const id = await delivered();
+    expect(await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED)).toBe(true);
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await events(id)).at(-1)).toBe('Disputed');
+
+    const paid = await completed();
+    await windowClosed(paid);
+    buzz.createBuzzTransaction.mockRejectedValueOnce(buzzError(503));
+    await expect(escrow.releaseDeal(paid)).rejects.toThrow();
+    expect(await escrow.holdServiceDealForReview(paid, escrow.FINAL_SCAN_FAILED)).toBe(false);
+    expect((await deal(paid)).status).toBe('Completed');
+  });
+
+  // Every road into Disputed, each refunded by a moderator exactly once.
+  it.each([
+    [
+      'a buyer dispute',
+      async () => {
+        const id = await completed();
+        await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'broken zip' });
+        return id;
+      },
+    ],
+    [
+      'a declined cancellation',
+      async () => {
+        const id = await delivered();
+        await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+        await deals.respondServiceDealCancellation({ dealId: id, userId: SELLER, agree: false });
+        return id;
+      },
+    ],
+    [
+      'a failed final',
+      async () => {
+        const id = await delivered();
+        await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+        return id;
+      },
+    ],
+    [
+      'an unavailable seller',
+      async () => {
+        const id = await completed();
+        await windowClosed(id);
+        await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
+        await escrow.sweepServiceDealReleases();
+        return id;
+      },
+    ],
+  ])('refunds %s once, and answers a repeat as already resolved', async (_, open) => {
+    const id = await open();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect(await resolve(id, 'Refund')).toEqual({ status: 'resolved', resolution: 'Refund' });
+    const row = await deal(id);
+    expect(row).toMatchObject({ status: 'Cancelled', closeReason: 'dispute_refund' });
+    expect(row.settledAt).not.toBeNull();
+    expect(await disputeRow(id)).toMatchObject({
+      disputeResolution: 'Refund',
+      disputeResolvedById: STRANGER,
+    });
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+
+    expect(await resolve(id, 'Refund')).toEqual({
+      status: 'already-resolved',
+      resolution: 'Refund',
+    });
+    expect(await resolve(id, 'Release')).toEqual({
+      status: 'already-resolved',
+      resolution: 'Refund',
+    });
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('releases a held seller once a moderator decides so, and only once', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    await escrow.sweepServiceDealReleases();
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.SELLER_UNAVAILABLE);
+
+    expect(await resolve(id, 'Release')).toEqual({ status: 'resolved', resolution: 'Release' });
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({
+      toAccountId: SELLER,
+      amount: PRICE,
+    });
+    const row = await deal(id);
+    expect(row.status).toBe('Completed');
+    expect(row.settledAt).not.toBeNull();
+
+    expect(await resolve(id, 'Release')).toEqual({
+      status: 'already-resolved',
+      resolution: 'Release',
+    });
+    await escrow.sweepServiceDealReleases();
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('releases a buyer dispute decided for the seller', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'not as previewed' });
+    expect(await resolve(id, 'Release')).toEqual({ status: 'resolved', resolution: 'Release' });
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect((await deal(id)).settledAt).not.toBeNull();
+  });
+
+  it('refuses to release for finals that did not pass scanning, and moves nothing', async () => {
+    const id = await delivered();
+    await finals(id, 'Failed');
+    await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+    expect(await resolve(id, 'Release')).toEqual({
+      status: 'refused',
+      reason: 'finals_not_passed',
+      message: expect.stringMatching(/not passed scanning/),
+    });
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await disputeRow(id)).disputeResolution).toBeNull();
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(await events(id)).not.toContain('DisputeResolved');
+  });
+
+  it('answers CONFLICT for a deal that is not in dispute', async () => {
+    const id = await delivered();
+    await expect(resolve(id, 'Refund')).rejects.toEqual(conflict);
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator decide again when a released deal is held after the decision', async () => {
+    const id = await completed();
+    await deals.openServiceDealDispute({ dealId: id, userId: BUYER, reason: 'r' });
+    // Released by a moderator, then a final flips before the claim: the backstop holds it again.
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Completed', "releaseAt" = now() - interval '1 minute',
+       "disputeResolution" = 'Release', "disputeResolvedAt" = now(), "disputeResolvedById" = $2 WHERE id = $1`,
+      [id, STRANGER]
+    );
+    await scan(id, 'Failed');
+    await escrow.sweepServiceDealReleases();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect(await disputeRow(id)).toMatchObject({
+      disputeReason: escrow.FINAL_SCAN_FAILED,
+      disputeResolution: null,
+    });
+    expect(await resolve(id, 'Refund')).toEqual({ status: 'resolved', resolution: 'Refund' });
+  });
+
+  it('lists the queue with what a decision needs', async () => {
+    const held = await delivered();
+    await finals(held, 'Failed');
+    await escrow.holdServiceDealForReview(held, escrow.FINAL_SCAN_FAILED);
+    const { items, nextCursor } = await deals.listDisputedServiceDeals({ limit: 20 });
+    expect(nextCursor).toBeUndefined();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: held,
+      disputeReason: escrow.FINAL_SCAN_FAILED,
+      finalsClear: false,
+      price: PRICE,
+      seller: { id: SELLER, unavailable: false },
+    });
+    expect(items[0].events.at(-1)).toMatchObject({ type: 'Disputed' });
   });
 });

@@ -113,8 +113,73 @@ export async function claimRefund(tx: Db, dealId: number) {
   return claimed > 0;
 }
 
-/** Why a release went to the moderators instead of the seller. */
+/** Why a deal went to the moderators instead of being paid out. */
 export const SELLER_UNAVAILABLE = 'seller_unavailable';
+export const FINAL_SCAN_FAILED = 'final_scan_failed';
+
+/**
+ * The deal's current round has at least one final, and every final in it passed scanning. The
+ * buyer downloads the finals only once the deal completes, so completing it and paying the seller
+ * both wait on this. `deal` names the deal row in the surrounding statement.
+ */
+export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) => Prisma.sql`(
+  EXISTS (
+    SELECT 1 FROM "ServiceDealFile" f
+    WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
+      AND f."kind" = 'Final'::"ServiceDealFileKind"
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "ServiceDealFile" f
+    WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
+      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
+  )
+)`;
+
+const noReleaseLeg = Prisma.sql`NOT EXISTS (
+  SELECT 1 FROM "ServiceDealTransaction" t
+  WHERE t."dealId" = d."id" AND t."leg" = 'Release'::"ServiceDealLeg"
+)`;
+
+/**
+ * Moves a deal to Disputed, into the moderators' queue, with its Buzz still in escrow, when it is in
+ * one of `from` and `condition` holds. Clears any earlier resolution, so a moderator can resolve it
+ * again. The caller has locked the deal row. Returns whether it moved.
+ */
+async function holdForReview(
+  tx: Db,
+  dealId: number,
+  reason: string,
+  where: Prisma.Sql
+): Promise<boolean> {
+  const held = await tx.$executeRaw`
+    UPDATE "ServiceDeal" d
+    SET "status" = 'Disputed'::"ServiceDealStatus", "disputeOpenedAt" = now(),
+        "disputeReason" = ${reason}::text, "disputeResolution" = NULL,
+        "disputeResolvedAt" = NULL, "disputeResolvedById" = NULL, "updatedAt" = now()
+    WHERE d."id" = ${dealId}::int AND ${where}`;
+  if (held === 0) return false;
+  await tx.$executeRaw`
+    INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
+    VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${reason}::text)`;
+  return true;
+}
+
+/**
+ * Sends a Delivered or Completed deal to the moderators (e.g. a final that failed scanning), unless
+ * its payout is settled or already claimed: a claimed Release leg always completes.
+ */
+export const holdServiceDealForReview = (dealId: number, reason: string) =>
+  dbWrite.$transaction(async (tx) => {
+    await lockDeal(tx, dealId);
+    return holdForReview(
+      tx,
+      dealId,
+      reason,
+      Prisma.sql`d."status" IN ('Delivered'::"ServiceDealStatus", 'Completed'::"ServiceDealStatus")
+        AND d."settledAt" IS NULL AND ${noReleaseLeg}`
+    );
+  });
 
 /** Banned or deleted sellers are not paid. Mute is not checked: it restricts speech, not money. */
 const sellerCanBePaid = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
@@ -144,22 +209,30 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
   await lockDeal(tx, dealId);
   const releasable = Prisma.sql`"id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
       AND "releaseAt" <= now() AND "settledAt" IS NULL AND "heldAt" IS NOT NULL`;
-  const held = await tx.$executeRaw`
-    UPDATE "ServiceDeal" d
-    SET "status" = 'Disputed'::"ServiceDealStatus", "disputeOpenedAt" = now(),
-        "disputeReason" = ${SELLER_UNAVAILABLE}::text, "updatedAt" = now()
-    WHERE ${releasable}
-      AND NOT ${sellerCanBePaid(Prisma.sql`d."sellerId"`)}
-      AND NOT EXISTS (
-        SELECT 1 FROM "ServiceDealTransaction" t
-        WHERE t."dealId" = d."id" AND t."leg" = 'Release'::"ServiceDealLeg"
-      )`;
-  if (held > 0) {
-    await tx.$executeRaw`
-      INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
-      VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${SELLER_UNAVAILABLE}::text)`;
+  const unclaimed = Prisma.sql`${releasable} AND ${noReleaseLeg}`;
+  // Finals that have not all passed scanning are never paid for, whatever a moderator decided.
+  if (
+    await holdForReview(
+      tx,
+      dealId,
+      FINAL_SCAN_FAILED,
+      Prisma.sql`${unclaimed}
+      AND NOT ${dealFinalsClear(Prisma.sql`d`)}`
+    )
+  )
     return 'held';
-  }
+  // A moderator who resolved the dispute as Release has already weighed the seller's standing.
+  if (
+    await holdForReview(
+      tx,
+      dealId,
+      SELLER_UNAVAILABLE,
+      Prisma.sql`${unclaimed}
+      AND NOT ${sellerCanBePaid(Prisma.sql`d."sellerId"`)}
+      AND d."disputeResolution" IS DISTINCT FROM 'Release'::"ServiceDisputeResolution"`
+    )
+  )
+    return 'held';
 
   const locked = await tx.$executeRaw`
     UPDATE "ServiceDeal" SET "updatedAt" = now() WHERE ${releasable}`;
@@ -183,7 +256,7 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
  * Lock order: every transaction that writes both a deal and its legs locks the deal row FIRST, so
  * release, refund, dispute and receipt paths cannot deadlock against each other.
  */
-async function lockDeal(tx: Db, dealId: number) {
+export async function lockDeal(tx: Db, dealId: number) {
   await tx.$queryRaw`SELECT "id" FROM "ServiceDeal" WHERE "id" = ${dealId}::int FOR UPDATE`;
 }
 
