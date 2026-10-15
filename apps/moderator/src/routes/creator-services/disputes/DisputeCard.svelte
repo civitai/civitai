@@ -122,16 +122,14 @@
         {#each row.files ?? [] as file (file.id)}
           <li>
             <Badge variant="outline">{file.kind} r{file.round}</Badge>
-            {#if file.canDownload}
-              <a
-                href="/creator-services/disputes/files/{file.id}"
-                target="_blank"
-                rel="noreferrer"
-                class={LINK_CLASS}>{file.fileName}</a
-              >
-            {:else}
-              {file.fileName}
-            {/if}
+            <!-- Not gated on canDownload: that is the buyer-and-seller rule (Ready finals only), while the
+                 moderator link serves the original of any file, previews and unscanned finals included. -->
+            <a
+              href="/creator-services/disputes/files/{file.id}"
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}>{file.fileName ?? `file #${file.id}`}</a
+            >
             <span class="text-dark-2">
               {file.status} · scan {file.scanStatus}
               {#if file.failReason}· {file.failReason}{/if}

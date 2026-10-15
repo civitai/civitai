@@ -88,6 +88,15 @@ describe('resolveDispute', () => {
     });
   });
 
+  it('reads held-for-review with no recorded reason as held, not as a bad body', async () => {
+    respond = () => json({ status: 'held-for-review', reason: null });
+    expect(await resolveDispute({ dealId: 41, resolution: 'Release' })).toEqual({
+      ok: true,
+      status: 'held-for-review',
+      reason: null,
+    });
+  });
+
   it('does not read an unrecognised body as a resolution', async () => {
     respond = () => json({ status: 'resolved' });
     const result = await resolveDispute({ dealId: 41, resolution: 'Refund' });

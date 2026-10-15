@@ -41,7 +41,8 @@ export type DealFile = {
   id: number;
   round: number;
   kind: 'Preview' | 'Final';
-  fileName: string;
+  /** Null only for a buyer who has not paid for the file; a moderator always gets the name. */
+  fileName: string | null;
   mimeType: string;
   size: number;
   status: 'Uploading' | 'Processing' | 'Ready' | 'Failed';
@@ -109,7 +110,7 @@ export async function listDisputes(
 
 export type ResolveOutcome =
   | { ok: true; status: 'resolved' | 'already-resolved'; resolution: DisputeResolution }
-  | { ok: true; status: 'held-for-review'; reason: string }
+  | { ok: true; status: 'held-for-review'; reason: string | null }
   | { ok: false; refused: true; message: string }
   | { ok: false; refused?: false; error: string };
 
@@ -149,8 +150,8 @@ export async function resolveDispute(input: {
 
   const { status, resolution, message, reason } = result.body;
   // A Release was recorded but the payout claim held the deal again; it is back in the queue.
-  if (status === 'held-for-review' && typeof reason === 'string')
-    return { ok: true, status, reason };
+  if (status === 'held-for-review')
+    return { ok: true, status, reason: typeof reason === 'string' ? reason : null };
   if (status === 'refused')
     return {
       ok: false,

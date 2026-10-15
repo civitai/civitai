@@ -16,7 +16,7 @@ const LIMIT = 25;
 
 export type DisputeCardRow = DisputeRow & { files: DealFile[] | null; filesError: string | null };
 
-const querySchema = z.object({ cursor: z.string().min(1).max(200).optional().catch(undefined) });
+const querySchema = z.object({ cursor: z.string().min(1).max(64).optional().catch(undefined) });
 
 export const load: PageServerLoad = async ({ url }) => {
   const { cursor } = querySchema.parse(Object.fromEntries(url.searchParams));
@@ -74,7 +74,11 @@ export const actions: Actions = {
 
     const result = await resolveDispute(parsed.data);
     if (result.ok && result.status === 'held-for-review')
-      return { success: true as const, dealId, heldForReview: result.reason };
+      return {
+        success: true as const,
+        dealId,
+        heldForReview: result.reason ?? 'no reason recorded',
+      };
     if (result.ok)
       return {
         success: true as const,

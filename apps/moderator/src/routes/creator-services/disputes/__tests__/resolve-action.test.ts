@@ -125,6 +125,16 @@ describe('resolve action', () => {
     expect(result).toEqual({ success: true, dealId: 41, heldForReview: 'final_scan_failed' });
   });
 
+  it('still says held when the server gave no reason', async () => {
+    resolveDispute.mockResolvedValue({ ok: true, status: 'held-for-review', reason: null });
+
+    const result = await actions.resolve(
+      formEvent(GRANTED, { dealId: '41', resolution: 'Release' })
+    );
+
+    expect(result).toEqual({ success: true, dealId: 41, heldForReview: 'no reason recorded' });
+  });
+
   it('fails a transport error without claiming success', async () => {
     resolveDispute.mockResolvedValue({ ok: false, error: 'Dispute resolution failed.' });
 
