@@ -30,3 +30,13 @@ export const respondServiceDealCancellationSchema = dealId.extend({
   comment: text(1000).optional(),
 });
 export const openServiceDealDisputeSchema = dealId.extend({ reason: text(2000) });
+
+const dealFileDealId = z.object({ dealId: z.number().int().positive() });
+export const requestServiceDealUploadSchema = dealFileDealId.extend({
+  kind: z.enum(['Preview', 'Final']),
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(100),
+  size: z.number().int().positive(),
+});
+export const serviceDealFilesSchema = dealFileDealId;
+export const serviceDealFileActionSchema = z.object({ fileId: z.number().int().positive() });

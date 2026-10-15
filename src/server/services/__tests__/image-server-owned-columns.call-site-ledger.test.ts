@@ -236,6 +236,11 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: [],
     serverColumns: [],
   },
+  'src/server/services/creator-service-deal-file.service.ts#createScanImage': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
   'src/server/services/blocks/listing-meta.service.ts#ingestListingAssetFromUrl': {
     calls: 1,
     spreads: [],

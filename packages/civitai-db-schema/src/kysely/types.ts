@@ -138,6 +138,7 @@ import type {
   ServiceDealStatus,
   ServiceDealEventType,
   ServiceDealFileKind,
+  ServiceDealFileStatus,
   ServiceDealFileScanStatus,
   ServiceDisputeResolution,
   ServiceDealLeg,
@@ -4690,11 +4691,28 @@ export type ServiceDealFile = {
   s3Key: string;
   watermarkedKey: string | null;
   /**
-   * The Image row a preview was ingested as, for the normal scanning pipeline.
+   * The hidden, downscaled, unwatermarked copy a preview is scanned as. Deleted once its verdict
+   * lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
    */
   imageId: number | null;
+  scanKey: string | null;
+  /**
+   * The rating the scan gave the preview, recorded when it passes.
+   */
+  nsfwLevel: number | null;
+  fileName: Generated<string>;
   mimeType: string;
   size: number;
+  /**
+   * Uploading until the seller confirms the object is in the bucket.
+   */
+  status: Generated<ServiceDealFileStatus>;
+  failReason: string | null;
+  uploadedAt: Timestamp | null;
+  /**
+   * Set when preview processing last started, so a crashed worker's file is picked up again.
+   */
+  processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
   createdAt: Generated<Timestamp>;
 };

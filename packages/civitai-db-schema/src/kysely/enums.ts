@@ -1058,6 +1058,14 @@ export const ServiceDealFileKind = {
   Final: 'Final',
 } as const;
 export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];
+export const ServiceDealFileStatus = {
+  Uploading: 'Uploading',
+  Processing: 'Processing',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+export type ServiceDealFileStatus =
+  (typeof ServiceDealFileStatus)[keyof typeof ServiceDealFileStatus];
 export const ServiceDealFileScanStatus = {
   Pending: 'Pending',
   Passed: 'Passed',

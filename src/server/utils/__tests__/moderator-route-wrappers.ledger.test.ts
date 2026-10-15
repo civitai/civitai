@@ -188,6 +188,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'testing/model3d-seed': FULL_CREDENTIAL,
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'service-deals/files/[fileId]/download':
+    'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',

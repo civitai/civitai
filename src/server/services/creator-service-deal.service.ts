@@ -73,11 +73,15 @@ type Transition = {
   set?: Prisma.Sql;
   /** The deal closes with the buyer's Buzz going back. */
   refund?: boolean;
+  /** Take the deal row's lock first, so the preconditions in `where` read what other writers left. */
+  lock?: boolean;
 };
 
 /** Returns whether this call moved the deal. */
 export async function transitionDeal(t: Transition) {
   const moved = await dbWrite.$transaction(async (tx) => {
+    if (t.lock)
+      await tx.$queryRaw`SELECT 1 FROM "ServiceDeal" WHERE "id" = ${t.dealId}::int FOR UPDATE`;
     const updated = await tx.$executeRaw`
       UPDATE "ServiceDeal"
       SET "status" = ${t.to}::"ServiceDealStatus", "updatedAt" = now()
