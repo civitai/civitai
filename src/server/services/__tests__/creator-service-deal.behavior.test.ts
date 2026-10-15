@@ -631,7 +631,7 @@ describe('closing with a refund', () => {
       expect((await deal(id)).settledAt).toBeNull();
       const leg = await refundLeg(id);
       expect(leg).toMatchObject({ transactionId: null, attempts: 1 });
-      expect(leg?.lastError).toMatch(/partly refunded \(leg-b\)$/);
+      expect(leg?.lastError).toMatch(/not fully refunded: unrefunded legs leg-b$/);
     });
 
     it('stays refund-pending when a refund lookup fails', async () => {

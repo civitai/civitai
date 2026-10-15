@@ -280,25 +280,35 @@ export async function holdDeal({
   }
 }
 
-/**
- * The hold's legs the ledger shows no refund for, each as its transaction id. A single refund is
- * keyed `refund-<transactionId>`. Legs that do not add up to the held amount count as unrefunded
- * too (a listing that came back short), so an incomplete ledger read cannot settle the deal.
- */
-async function unrefundedHoldLegs(dealId: number, heldAmount: number) {
-  const legs = await getMultiAccountTransactionsByPrefix(holdPrefix(dealId));
-  const listed = legs.reduce((sum, leg) => sum + leg.amount, 0);
-  if (listed !== heldAmount)
-    return [`${holdPrefix(dealId)}: ledger lists ${listed} of ${heldAmount}`];
+type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
 
-  const unrefunded: string[] = [];
-  for (const leg of legs) {
+/**
+ * Read-only: splits the transactions under a prefix by whether each already has its refund, which
+ * a single refund keys `refund-<transactionId>`. The same shape as `getPrefixRefundState` in the
+ * shared `buzz-prefix-refund.ts`, which replaces this once it lands.
+ */
+async function getPrefixRefundState(externalTransactionIdPrefix: string) {
+  const state = { reversed: [] as PrefixLeg[], missing: [] as PrefixLeg[] };
+  for (const leg of await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix)) {
     const refund = await getTransactionByExternalId(`refund-${leg.transactionId}`, {
       timeoutMs: BUZZ_CALL_TIMEOUT_MS,
     });
-    if (!refund) unrefunded.push(leg.transactionId);
+    (refund ? state.reversed : state.missing).push(leg);
   }
-  return unrefunded;
+  return state;
+}
+
+/**
+ * Why the hold is not fully refunded, or null when it is. The reversed legs must also add up to
+ * what was held, so a listing that came back short cannot settle the deal.
+ */
+async function holdRefundShortfall(dealId: number, heldAmount: number) {
+  const { reversed, missing } = await getPrefixRefundState(holdPrefix(dealId));
+  if (missing.length)
+    return `unrefunded legs ${missing.map((leg) => leg.transactionId).join(', ')}`;
+  const listed = reversed.reduce((sum, leg) => sum + leg.amount, 0);
+  if (listed !== heldAmount) return `ledger lists ${listed} of ${heldAmount}`;
+  return null;
 }
 
 /**
@@ -325,20 +335,20 @@ export async function refundDeal(dealId: number) {
         // and reverses none of the rest. Its body is not a contract, so the ledger decides. 404
         // stays a failure: this hold is confirmed, so "nothing to refund" is for a human.
         if (getBuzzApiStatus(error) === 409) {
-          const unrefunded = await unrefundedHoldLegs(dealId, row.amount);
-          if (!unrefunded.length) return `${holdPrefix(dealId)}:already-refunded`;
+          const shortfall = await holdRefundShortfall(dealId, row.amount);
+          if (!shortfall) return `${holdPrefix(dealId)}:already-refunded`;
           // Paying the missing legs one by one waits on the Buzz owners confirming that a
           // single-leg refund is safe to repeat. Until then the deal stays refund-pending and
           // exhausts onto the gauge for a human.
           logToAxiom({
             name: 'creator-service-escrow',
             type: 'error',
-            message: 'refund answered 409 with hold legs still unrefunded',
+            message: 'refund answered 409 with the hold not fully refunded',
             dealId,
-            unrefunded,
+            shortfall,
           }).catch(() => null);
           throw new Error(
-            `creator service escrow: deal ${dealId} is partly refunded (${unrefunded.join(', ')})`
+            `creator service escrow: deal ${dealId} is not fully refunded: ${shortfall}`
           );
         }
         throw error;
