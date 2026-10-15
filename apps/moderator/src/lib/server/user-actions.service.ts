@@ -96,7 +96,9 @@ async function readError(res: Response): Promise<string | null> {
  *  callers do — everything else about them was identical and drifted independently. */
 async function postJson(opts: {
   path: string;
+  /** Sent as the JSON body, or as the query string when `method` is `GET`. */
   body: Record<string, unknown>;
+  method?: 'GET' | 'POST';
   label: string;
   auth: 'webhook' | 'session';
   timeoutMs: number;
@@ -138,11 +140,21 @@ async function postJson(opts: {
     url += `?token=${encodeURIComponent(token)}`;
   }
 
+  const isGet = opts.method === 'GET';
+  if (isGet) {
+    const query = new URLSearchParams(
+      Object.entries(opts.body)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, String(v)])
+    ).toString();
+    if (query) url += `${url.includes('?') ? '&' : '?'}${query}`;
+  }
+
   try {
     const res = await fetch(url, {
-      method: 'POST',
+      method: isGet ? 'GET' : 'POST',
       headers,
-      body: JSON.stringify(opts.body),
+      ...(isGet ? {} : { body: JSON.stringify(opts.body) }),
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
     if (!res.ok) {
@@ -186,6 +198,7 @@ export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
+  | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
@@ -227,6 +240,28 @@ export const callModEndpoint = (
   timeoutMs = 30_000
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
+
+/** The read-only `/api/mod/*` routes; kept apart from `ModEndpoint` so a read cannot be sent as a write. */
+export type ModReadEndpoint =
+  | 'creator-services/deal-file-url'
+  | 'creator-services/deal-files'
+  | 'creator-services/disputes';
+
+/** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
+export const readModEndpoint = (
+  path: ModReadEndpoint,
+  params: Record<string, string | number | undefined>,
+  label: string,
+  timeoutMs = 15_000
+): Promise<JsonResult> =>
+  postJson({
+    path: `/api/mod/${path}`,
+    body: params,
+    method: 'GET',
+    label,
+    auth: 'session',
+    timeoutMs,
+  });
 
 /** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
 export const callModEndpointAs = (
