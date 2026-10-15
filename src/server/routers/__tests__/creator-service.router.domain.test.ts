@@ -67,6 +67,11 @@ describe('creator service router: what the domain may be sent', () => {
     expect(mockGetForShop.mock.calls[0][0]).toMatchObject({ userId: 9, viewerId: 7, servable });
   });
 
+  it("fills in a signed-in viewer's own level when the client sends none", async () => {
+    await callerOn(false).getForShop({ userId: 9 });
+    expect(mockGetForShop.mock.calls[0][0].browsingLevel).toBe(allBrowsingLevelsFlag);
+  });
+
   it("holds a viewer's own level to the SFW site's cap there, however high it is", async () => {
     await callerOn(true).getForShop({ userId: 9 });
     const { browsingLevel } = mockGetForShop.mock.calls[0][0];
