@@ -65,6 +65,7 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Crucible,
       ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -91,6 +92,7 @@ const reports = [
       ReportEntity.Announcement,
       ReportEntity.Crucible,
       ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -118,6 +120,7 @@ const reports = [
       ReportEntity.Announcement,
       ReportEntity.Crucible,
       ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -177,9 +180,14 @@ const reports = [
       ReportEntity.Announcement,
       ReportEntity.Crucible,
       ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
 ];
+
+/** The reasons offered for an entity, in display order. */
+export const reportKeysFor = (entityType: ReportEntity) =>
+  reports.filter(({ availableFor }) => availableFor.includes(entityType)).map(({ key }) => key);
 
 const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
 const SEND_REPORT_ID = 'sending-report';
