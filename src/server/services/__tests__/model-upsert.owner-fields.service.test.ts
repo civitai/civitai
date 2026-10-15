@@ -515,3 +515,41 @@ describe('flag appeals settled by a moderator save', () => {
     expect(mockSettleAppeals).not.toHaveBeenCalled();
   });
 });
+
+describe('merge permissions on save', () => {
+  it('stores "different permissions" off when the owner saves with merges off', async () => {
+    mockStored({ allowDerivatives: true, allowDifferentLicense: true } as Partial<
+      typeof storedModel
+    >);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      allowDerivatives: false,
+      allowDifferentLicense: true,
+    });
+
+    expect(updateData()).toMatchObject({ allowDerivatives: false, allowDifferentLicense: false });
+  });
+
+  it('does the same on create', async () => {
+    await upsert({ userId: OWNER_ID, allowDerivatives: false, allowDifferentLicense: true });
+
+    expect(createData()).toMatchObject({ allowDerivatives: false, allowDifferentLicense: false });
+  });
+
+  it('control: keeps it on while merges are allowed', async () => {
+    mockStored({ allowDerivatives: false, allowDifferentLicense: false } as Partial<
+      typeof storedModel
+    >);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      allowDerivatives: true,
+      allowDifferentLicense: true,
+    });
+
+    expect(updateData()).toMatchObject({ allowDerivatives: true, allowDifferentLicense: true });
+  });
+});

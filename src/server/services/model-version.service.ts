@@ -14,6 +14,7 @@ import type { LicensingSourceRejection } from '~/server/schema/model-version.sch
 import { clickhouse } from '~/server/clickhouse/client';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
+  allowsDifferentLicenseOnMerges,
   CacheTTL,
   constants,
   isNonCommercialBaseModel,
@@ -116,10 +117,7 @@ import {
 } from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import {
-  scanEntitiesInBackground,
-  scanModelAndRules,
-} from '~/server/services/text-scan/submit';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -2336,9 +2334,9 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (options.allowDifferentLicense) {
+  if (allowsDifferentLicenseOnMerges(options)) {
     license += `
-<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.</b>
+<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.</b>
 `;
   }
 
