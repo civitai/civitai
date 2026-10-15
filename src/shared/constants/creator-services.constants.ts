@@ -114,3 +114,8 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'yml',
   'csv',
 ] as const;
+/**
+ * The highest scan rating a preview may carry (PG-13). Services are SFW-only in v1; a preview above
+ * this fails, and so does one the scan left unrated. Relaxing it is this one number.
+ */
+export const SERVICE_PREVIEW_MAX_NSFW_LEVEL = 2;

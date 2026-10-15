@@ -101,7 +101,7 @@ const { SERVICE_PREVIEW_MAX_FILES, SERVICE_FINAL_MAX_FILES } = await import(
 
 const MIGRATIONS = [
   '20261025120000_creator_services_foundation',
-  '20261027120000_creator_service_deal_file_state',
+  '20261028140000_creator_service_deal_file_state',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -126,6 +126,7 @@ type FileRecord = {
   imageId: number | null;
   scanKey: string | null;
   watermarkedKey: string | null;
+  nsfwLevel: number | null;
   processingAt: Date | null;
 };
 
@@ -202,7 +203,7 @@ beforeAll(async () => {
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false);
+      "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
 });
@@ -980,6 +981,37 @@ describe('preview pipeline', () => {
       expect((await list(1, BUYER)).filter((f) => f.kind === 'Preview')).toEqual([]);
     }
   );
+
+  it('passes a PG or PG-13 preview and records the rating the scan gave it', async () => {
+    for (const level of [1, 2]) {
+      await q(
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "Image" RESTART IDENTITY`
+      );
+      const { fileId } = await waiting();
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await files.settlePreviewScans();
+      expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Passed', nsfwLevel: level });
+    }
+  });
+
+  it.each([4, 8, 16, 32])('rejects a preview the scan rated %i: SFW only in v1', async (level) => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+    await files.settlePreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Failed', scanStatus: 'Failed' });
+    expect(await files.publishPreviews()).toBe(0);
+    expect(preview.build).not.toHaveBeenCalled();
+  });
+
+  it('does not pass a scanned preview the scan left unrated', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 0`);
+    await files.settlePreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Processing', scanStatus: 'Pending' });
+  });
 
   it('fails, without calling the content bad, a scan that could not run', async () => {
     const { fileId } = await waiting();

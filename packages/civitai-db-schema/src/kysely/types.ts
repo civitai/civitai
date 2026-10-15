@@ -4692,6 +4692,10 @@ export type ServiceDealFile = {
    */
   imageId: number | null;
   scanKey: string | null;
+  /**
+   * The rating the scan gave the preview, recorded when it passes.
+   */
+  nsfwLevel: number | null;
   fileName: Generated<string>;
   mimeType: string;
   size: number;

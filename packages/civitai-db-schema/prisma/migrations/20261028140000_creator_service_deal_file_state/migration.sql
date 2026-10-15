@@ -15,6 +15,7 @@ ALTER TABLE "ServiceDealFile" ADD COLUMN IF NOT EXISTS "failReason" TEXT;
 ALTER TABLE "ServiceDealFile" ADD COLUMN IF NOT EXISTS "uploadedAt" TIMESTAMP(3);
 ALTER TABLE "ServiceDealFile" ADD COLUMN IF NOT EXISTS "processingAt" TIMESTAMP(3);
 ALTER TABLE "ServiceDealFile" ADD COLUMN IF NOT EXISTS "scanKey" TEXT;
+ALTER TABLE "ServiceDealFile" ADD COLUMN IF NOT EXISTS "nsfwLevel" INTEGER;
 
 -- An object key is owned by exactly one row.
 CREATE UNIQUE INDEX IF NOT EXISTS "ServiceDealFile_s3Key_key" ON "ServiceDealFile" ("s3Key");

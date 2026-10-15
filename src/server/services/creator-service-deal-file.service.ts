@@ -26,6 +26,7 @@ import {
   SERVICE_PREVIEW_GIVE_UP_MS,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
+  SERVICE_PREVIEW_MAX_NSFW_LEVEL,
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
 } from '~/shared/constants/creator-services.constants';
@@ -649,11 +650,13 @@ export async function settlePreviewScans() {
     AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
   const passed = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
-    SET "scanStatus" = 'Passed'::"ServiceDealFileScanStatus", "processingAt" = NULL
+    SET "scanStatus" = 'Passed'::"ServiceDealFileScanStatus", "processingAt" = NULL,
+      "nsfwLevel" = i."nsfwLevel"
     FROM "Image" i
     WHERE i."id" = f."imageId" AND ${waiting}
       AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
-      AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"`;
+      AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
+      AND i."nsfwLevel" BETWEEN 1 AND ${SERVICE_PREVIEW_MAX_NSFW_LEVEL}::int`;
   const rejected = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
@@ -662,7 +665,8 @@ export async function settlePreviewScans() {
     WHERE i."id" = f."imageId" AND ${waiting}
       AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
-          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor")))`;
+          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor"
+            OR i."nsfwLevel" > ${SERVICE_PREVIEW_MAX_NSFW_LEVEL}::int)))`;
   const unchecked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "status" = 'Failed'::"ServiceDealFileStatus",

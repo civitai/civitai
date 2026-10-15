@@ -9692,6 +9692,8 @@ model ServiceDealFile {
   /// lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
   imageId        Int?
   scanKey        String?
+  /// The rating the scan gave the preview, recorded when it passes.
+  nsfwLevel      Int?
   fileName       String                    @default("")
   mimeType       String
   size           Int

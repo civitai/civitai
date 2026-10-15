@@ -6161,6 +6161,7 @@ export interface ServiceDealFile {
   watermarkedKey: string | null;
   imageId: number | null;
   scanKey: string | null;
+  nsfwLevel: number | null;
   fileName: string;
   mimeType: string;
   size: number;
