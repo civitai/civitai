@@ -307,6 +307,17 @@ describe('publishModelVersionsWithEarlyAccess — endsAt materialization', () =>
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
     expect(mockMaterialize).toHaveBeenCalledWith(1, publishedAt, mockDbWrite);
   });
+
+  it('with a modelId, loads only that model’s versions to publish', async () => {
+    mockDbWrite.modelVersion.findMany.mockResolvedValueOnce([]);
+
+    await publishModelVersionsWithEarlyAccess({ modelVersionIds: [1, 9], modelId: 2 });
+
+    expect(mockDbWrite.modelVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1, 9] }, modelId: 2 } })
+    );
+    expect(mockDbWrite.modelVersion.update).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
