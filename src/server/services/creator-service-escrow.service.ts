@@ -113,6 +113,14 @@ export async function claimRefund(tx: Db, dealId: number) {
   return claimed > 0;
 }
 
+/** Why a release went to the moderators instead of the seller. */
+export const SELLER_UNAVAILABLE = 'seller_unavailable';
+
+/** Banned or deleted sellers are not paid. Mute is not checked: it restricts speech, not money. */
+const sellerCanBePaid = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "User" u WHERE u."id" = ${seller} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+)`;
+
 /**
  * Claims the Release leg for a Completed deal whose dispute window has closed, paid from a
  * CONFIRMED hold (as `claimRefund`): its amount is the receipted hold less the fee.
@@ -122,14 +130,31 @@ export async function claimRefund(tx: Db, dealId: number) {
  * `clock_timestamp()` once this commits, which is past `releaseAt`, so it fails; a dispute that
  * committed first leaves the deal Disputed, and this UPDATE matches nothing.
  *
+ * A seller banned or deleted by then is not paid and the buyer is not refunded: the deal moves to
+ * Disputed, into the moderators' queue, with the Buzz still in escrow (briony, 2026-10-15). A
+ * muted seller is paid; a mute restricts speech, not money.
+ *
  * `ON CONFLICT` names only (dealId, leg), so a Refund already holding the payout slot raises.
  */
 export async function claimRelease(tx: Db, dealId: number) {
-  const releasable = await tx.$executeRaw`
-    UPDATE "ServiceDeal" SET "updatedAt" = now()
-    WHERE "id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
+  const releasable = Prisma.sql`"id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
       AND "releaseAt" <= now() AND "settledAt" IS NULL AND "heldAt" IS NOT NULL`;
-  if (releasable === 0) return false;
+  const held = await tx.$executeRaw`
+    UPDATE "ServiceDeal" d
+    SET "status" = 'Disputed'::"ServiceDealStatus", "disputeOpenedAt" = now(),
+        "disputeReason" = ${SELLER_UNAVAILABLE}::text, "updatedAt" = now()
+    WHERE ${releasable}
+      AND NOT ${sellerCanBePaid(Prisma.sql`d."sellerId"`)}`;
+  if (held > 0) {
+    await tx.$executeRaw`
+      INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
+      VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${SELLER_UNAVAILABLE}::text)`;
+    return false;
+  }
+
+  const locked = await tx.$executeRaw`
+    UPDATE "ServiceDeal" SET "updatedAt" = now() WHERE ${releasable}`;
+  if (locked === 0) return false;
 
   const claimed = await tx.$executeRaw`
     INSERT INTO "ServiceDealTransaction" ("dealId", "leg", "externalTransactionId", "amount", "buzzType")

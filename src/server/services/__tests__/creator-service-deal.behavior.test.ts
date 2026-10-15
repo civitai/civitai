@@ -1043,6 +1043,41 @@ describe('releasing to the seller', () => {
     expect(guard).not.toContain('"releaseAt" > now()');
   });
 
+  it.each([
+    ['banned', `"bannedAt" = now()`],
+    ['deleted', `"deletedAt" = now()`],
+  ])("holds a %s seller's payout for the moderators: no release, no refund", async (_, column) => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "User" SET ${column} WHERE id = $1`, [SELLER]);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(await releaseLeg(id)).toBeUndefined();
+    const held = await deal(id);
+    expect(held).toMatchObject({ status: 'Disputed', settledAt: null });
+    expect(
+      (
+        await q<{ disputeReason: string }>(
+          `SELECT "disputeReason" FROM "ServiceDeal" WHERE id = $1`,
+          [id]
+        )
+      )[0]
+    ).toEqual({ disputeReason: escrow.SELLER_UNAVAILABLE });
+    expect((await events(id)).at(-1)).toBe('Disputed');
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
+  });
+
+  it('pays a muted seller', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    expect(await escrow.releaseDeal(id)).toBe(true);
+    expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({ toAccountId: SELLER });
+    expect((await deal(id)).status).toBe('Completed');
+  });
+
   it('pays a green deal in green, from and to', async () => {
     const id = await completed({ buzzType: 'green' });
     await windowClosed(id);
@@ -1064,13 +1099,15 @@ describe('releasing to the seller', () => {
     );
     const start = source.indexOf('export async function claimRelease');
     const claim = source.slice(start, source.indexOf('\n}\n', start));
-    const lock = claim.indexOf('UPDATE "ServiceDeal"');
+    const gate = claim.indexOf('const releasable = Prisma.sql');
+    const lock = claim.indexOf('UPDATE "ServiceDeal" SET "updatedAt" = now() WHERE ${releasable}');
     const insert = claim.indexOf('INSERT INTO "ServiceDealTransaction"');
-    expect(lock).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(-1);
+    expect(lock).toBeGreaterThan(gate);
     expect(insert).toBeGreaterThan(lock);
-    expect(claim.slice(lock, insert)).toContain(`"status" = 'Completed'`);
-    expect(claim.slice(lock, insert)).toContain('"releaseAt" <= now()');
-    expect(claim.slice(lock, insert)).toContain('if (releasable === 0) return false;');
+    expect(claim.slice(gate, lock)).toContain(`"status" = 'Completed'`);
+    expect(claim.slice(gate, lock)).toContain('"releaseAt" <= now()');
+    expect(claim.slice(lock, insert)).toContain('if (locked === 0) return false;');
   });
 
   it('pays the receipted hold less the fee', async () => {
