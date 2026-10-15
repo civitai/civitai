@@ -16,6 +16,10 @@ const { mockDiscord } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/integrations/discord', () => ({ discord: mockDiscord }));
+vi.mock('~/server/services/metric-excluded-users.service', () => ({
+  getMetricExcludedUserIds: vi.fn(),
+  getMetricExcludedUserIdsOrThrow: vi.fn(),
+}));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
     name,
@@ -31,6 +35,7 @@ import {
 } from '~/server/jobs/apply-discord-roles';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 const mockDbWrite = dbMock.dbWrite;
 dbMock.dbWrite.$executeRaw.mockResolvedValue(undefined);
 
@@ -71,6 +76,7 @@ beforeEach(() => {
   mockDbWrite.$queryRaw.mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockResolvedValueOnce([{ boards: 31 }]);
   mockDbWrite.user.findMany.mockResolvedValue([]);
+  vi.mocked(getMetricExcludedUserIds).mockResolvedValue([]);
 });
 
 describe('applyDiscordLeaderboardRoles — metadata must follow Discord', () => {
@@ -268,5 +274,50 @@ describe('syncUserDiscordLeaderboardRoles', () => {
 
     expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyDiscordLeaderboardRoles — metric-excluded accounts', () => {
+  // Mocked Prisma ignores `where`, so this fake applies the one clause under test.
+  function rankedUsers(users: { id: number; rank: number; providerAccountId: string }[]) {
+    mockDbWrite.user.findMany.mockImplementation((async (args: {
+      where: { id?: { notIn?: number[] } };
+    }) => {
+      const notIn = new Set(args.where.id?.notIn ?? []);
+      return users.filter((u) => !notIn.has(u.id)).map((u) => topUser(u.rank, u.providerAccountId));
+    }) as never);
+  }
+
+  it('revokes both Top roles from an excluded account and keeps a ranked control', async () => {
+    vi.mocked(getMetricExcludedUserIds).mockResolvedValue([7]);
+    rankedUsers([
+      { id: 7, rank: 3, providerAccountId: '777' },
+      { id: 8, rank: 4, providerAccountId: '888' },
+    ]);
+    // clearAllMocks keeps queued once-values, so start this queue clean.
+    mockDbWrite.$queryRaw.mockReset();
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([{ boards: 31 }])
+      .mockResolvedValueOnce([{ providerAccountId: '777' }, { providerAccountId: '888' }])
+      .mockResolvedValueOnce([{ providerAccountId: '777' }, { providerAccountId: '888' }]);
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(idsWritten('revoke', 'Top 100')).toEqual(['777']);
+    expect(idsWritten('revoke', 'Top 10')).toEqual(['777']);
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalledWith('888', expect.anything());
+  });
+
+  it('does not grant a Top role to an excluded account', async () => {
+    vi.mocked(getMetricExcludedUserIds).mockResolvedValue([7]);
+    rankedUsers([
+      { id: 7, rank: 3, providerAccountId: '777' },
+      { id: 8, rank: 4, providerAccountId: '888' },
+    ]);
+
+    await applyDiscordLeaderboardRoles();
+
+    expect(idsWritten('grant', 'Top 100')).toEqual(['888']);
+    expect(idsWritten('grant', 'Top 10')).toEqual(['888']);
   });
 });
