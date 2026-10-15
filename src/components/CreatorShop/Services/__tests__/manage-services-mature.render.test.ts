@@ -38,7 +38,8 @@ vi.mock('~/components/CreatorShop/Services/ServiceOfferingFormModal', () => ({
 vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: () => undefined } }));
 vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'green' }));
 vi.mock('~/providers/AppProvider', () => ({
-  useServerDomains: () => ({ green: 'civitai.com', blue: 'civitai.red', red: 'civitai.red' }),
+  // Distinct hosts, so a link built from the wrong one cannot match.
+  useServerDomains: () => ({ green: 'green.test', blue: 'blue.test', red: 'civitai.red' }),
 }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
 vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/user/seller/shop/manage' }) }));

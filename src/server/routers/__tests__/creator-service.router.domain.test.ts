@@ -74,7 +74,6 @@ describe('creator service router: what the domain may be sent', () => {
 
   it("holds a viewer's own level to the SFW site's cap there, however high it is", async () => {
     await callerOn(true).getForShop({ userId: 9 });
-    const { browsingLevel } = mockGetForShop.mock.calls[0][0];
-    expect(browsingLevel & ~sfwBrowsingLevelsFlag).toBe(0);
+    expect(mockGetForShop.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
   });
 });
