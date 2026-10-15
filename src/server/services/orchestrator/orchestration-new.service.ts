@@ -1868,6 +1868,8 @@ export async function generateFromGraph({
         remixOfId,
         inputImages,
         inputVideo,
+        sourceImageIds,
+        orchestratorToken: token,
         acknowledgedSoftBlock,
         // Observability only — see `~/server/prom/external-moderation.metrics`. Reuses the ONE
         // surface→source mapping that already exists for the submit metric rather than inventing a

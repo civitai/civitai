@@ -25,11 +25,13 @@ const {
   mockAuditPromptEnriched,
   mockModeratePrompt,
   mockApplyPendingReviewMute,
+  mockBuildPromptOrigin,
 } = vi.hoisted(() => ({
   mockStripBenignPhrases: vi.fn(async (text?: string) => text),
   mockAuditPromptEnriched: vi.fn(),
   mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
   mockApplyPendingReviewMute: vi.fn(async () => undefined),
+  mockBuildPromptOrigin: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -49,6 +51,9 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() })
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
+vi.mock('~/server/services/orchestrator/prompt-origin', () => ({
+  buildPromptOrigin: mockBuildPromptOrigin,
+}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
@@ -102,6 +107,8 @@ const expectNoSideEffects = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockBuildPromptOrigin.mockReset();
+  mockBuildPromptOrigin.mockResolvedValue(undefined);
   mockAuditPromptEnriched.mockReturnValue({ blockedFor: [], triggers: [], success: true });
   // `mockReset`, not just the clear above: a `mockResolvedValueOnce` a failing test never consumed
   // would otherwise leak into the next test and fail it for the wrong reason.
@@ -442,5 +449,39 @@ describe('auditPromptServer — still produces today’s side effects', () => {
     await expect(auditPromptServer({ ...base, isGreen: false })).resolves.toBeUndefined();
     expectNoSideEffects();
     expect(track.prohibitedRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('auditPromptServer — prompt origin on a hard block', () => {
+  const base = { prompt: PROMPT, userId: 9, isGreen: false };
+  const storedEntry = () => {
+    const [, entryJson] = sysRedis.lPush.mock.calls[0] as [string, string];
+    return JSON.parse(entryJson);
+  };
+
+  it('stores the origin on the blocked entry', async () => {
+    const origin = { remix: { imageId: 7, verified: true, promptMatch: 'identical' } };
+    mockBuildPromptOrigin.mockResolvedValue(origin);
+    flagWith(HARD);
+    await expect(
+      auditPromptServer({ ...base, sourceImageIds: [7], orchestratorToken: 'tok' })
+    ).rejects.toThrow(/flagged/);
+    expect(mockBuildPromptOrigin).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: PROMPT, sourceImageIds: [7], token: 'tok' })
+    );
+    expect(storedEntry().origin).toEqual(origin);
+  });
+
+  it('still blocks and stores the entry when the origin lookup throws', async () => {
+    mockBuildPromptOrigin.mockRejectedValue(new Error('lookup failed'));
+    flagWith(HARD);
+    await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
+    expect(sysRedis.lPush).toHaveBeenCalledTimes(1);
+    expect(storedEntry().origin).toBeUndefined();
+  });
+
+  it('computes no origin for a prompt that passes', async () => {
+    await auditPromptServer(base);
+    expect(mockBuildPromptOrigin).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import type { ExternalModerationSource } from '~/server/prom/external-moderation
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import { buildPromptOrigin, type PromptOrigin } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
@@ -37,6 +38,7 @@ export interface BlockedPromptEntry {
   // from a transform of AI content.
   inputImages?: string[];
   inputVideo?: string;
+  origin?: PromptOrigin;
   time: string;
 }
 
@@ -225,6 +227,10 @@ export interface AuditPromptOptions {
   remixOfId?: number; // The original image being remixed
   inputImages?: string[]; // Base/source image URLs attached to the job
   inputVideo?: string; // Source video URL (vid2vid)
+  // Server-verified remix sources and the caller's orchestrator token; only used to record the
+  // prompt's origin when a hard block is stored.
+  sourceImageIds?: number[];
+  orchestratorToken?: string;
   // Only honored when every trigger is soft — see `isSoftBlock`.
   acknowledgedSoftBlock?: boolean;
   // OBSERVABILITY ONLY. Selects the `source` label on the external-moderation duration histogram so
@@ -454,6 +460,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     remixOfId,
     inputImages,
     inputVideo,
+    sourceImageIds,
+    orchestratorToken,
     acknowledgedSoftBlock,
     moderationSource,
   } = options;
@@ -567,6 +575,13 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 
+      const origin = await buildPromptOrigin({
+        prompt: prompt ?? '',
+        sourceImageIds,
+        remixOfId,
+        token: orchestratorToken,
+      }).catch(() => undefined);
+
       // Create blocked prompt entry
       const blockedEntry: BlockedPromptEntry = {
         prompt: prompt ?? '',
@@ -578,6 +593,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         remixOfId: remixOfId ?? null,
         inputImages,
         inputVideo,
+        ...(origin ? { origin } : {}),
         time: new Date().toISOString(),
       };
 

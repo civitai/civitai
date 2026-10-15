@@ -259,7 +259,7 @@ export const userRestrictionRouter = router({
 
         const queryResult = await clickhouse.query({
           query: `
-            SELECT prompt, negativePrompt, source, inputImages, inputVideo, createdDate
+            SELECT prompt, negativePrompt, source, remixOfId, inputImages, inputVideo, createdDate
             FROM prohibitedRequests
             WHERE userId = {userId:Int32}
               AND createdDate >= {startDate:DateTime}
@@ -279,6 +279,7 @@ export const userRestrictionRouter = router({
           prompt: string;
           negativePrompt: string;
           source: string;
+          remixOfId: number | null;
           inputImages: string[];
           inputVideo: string | null;
           createdDate: string;
@@ -301,6 +302,17 @@ export const userRestrictionRouter = router({
             remixOfId: null,
             inputImages: row.inputImages?.length ? row.inputImages : undefined,
             inputVideo: row.inputVideo || undefined,
+            ...(row.remixOfId
+              ? {
+                  origin: {
+                    remix: {
+                      imageId: row.remixOfId,
+                      verified: false,
+                      promptMatch: 'unknown' as const,
+                    },
+                  },
+                }
+              : {}),
             time: row.createdDate,
           };
         });
