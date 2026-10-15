@@ -47,9 +47,10 @@ vi.mock('~/providers/AppProvider', () => ({
   useServerDomains: () => ({ green: 'civitai.com', blue: 'civitai.red', red: 'civitai.red' }),
 }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
-vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal: () => undefined }));
-vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
-  LoginRedirect: ({ children }: { children: ReactNode }) => children,
+// Stands in for the button so the test can read which offering it would report.
+vi.mock('~/components/CreatorShop/Services/ReportServiceButton', () => ({
+  ReportServiceButton: ({ offeringId }: { offeringId: number }) =>
+    createElement('span', { 'data-report-offering': offeringId }, 'Report'),
 }));
 
 const { ServiceDealPage } = await import('~/components/CreatorShop/Services/deals/ServiceDealPage');
@@ -108,12 +109,15 @@ describe('deal page gate', () => {
 
 describe('deal page: reporting the service', () => {
   it('lets the buyer report the service, and not the seller or a moderator', () => {
-    const report = /<section data-gate="2">[\s\S]*>Report<\/span>[\s\S]*<\/section>/;
+    // The offering's id (42), never the deal's (7).
+    const report = /<section data-gate="2">[\s\S]*data-report-offering="42"[\s\S]*<\/section>/;
     mocks.deal = deal(2, 'buyer');
     expect(render(createElement(ServiceDealPage, { dealId: 7 }))).toMatch(report);
     for (const role of ['seller', 'moderator']) {
       mocks.deal = deal(2, role);
-      expect(render(createElement(ServiceDealPage, { dealId: 7 }))).not.toMatch(/>Report<\/span>/);
+      expect(render(createElement(ServiceDealPage, { dealId: 7 }))).not.toContain(
+        'data-report-offering'
+      );
     }
   });
 });
