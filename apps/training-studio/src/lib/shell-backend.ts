@@ -132,7 +132,7 @@ export const shellBackend: StudioBackend = {
     });
     for (const currency of currencies) params.append('currencies', currency);
     const res = await fetch(`/api/continue-training?${params}`);
-    if (!res.ok) throw new Error(await res.text().catch(() => 'Could not price the continuation.'));
+    if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
     return (await res.json()) as { cost: number | null; steps?: number };
   },
 
@@ -142,10 +142,7 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies }),
     });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(detail || 'Could not start training.');
-    }
+    if (!res.ok) throw new Error(await messageOf(res, 'Could not start training.'));
     return ((await res.json()) as { workflowId: string }).workflowId;
   },
 
