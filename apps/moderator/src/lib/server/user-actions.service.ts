@@ -204,6 +204,7 @@ export type ModEndpoint =
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
   | 'minor-flag/resolve-appeal'
+  | 'minor-flag/resolve-redetection'
   | 'minor-flag/revert'
   | 'minor-flag/set-minor'
   | 'model/bring-back'

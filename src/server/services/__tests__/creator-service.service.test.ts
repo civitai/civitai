@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
+  getMyServiceOfferings,
   getShopServiceOfferings,
   hasOpenServiceDeal,
   removeServiceOffering,
@@ -389,5 +390,47 @@ describe('storefront ratings', () => {
       expect(upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: bad }).success).toBe(
         false
       );
+  });
+});
+
+describe("a seller's own offerings", () => {
+  const ratingsIn = (call: unknown) =>
+    (call as { where: { maxNsfwLevel: { in?: number[]; notIn?: number[] } } }).where.maxNsfwLevel;
+
+  it('on the SFW domain, lists only PG/PG-13 and counts the mature ones, never listing them', async () => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.serviceOffering.count.mockResolvedValue(3 as never);
+    const mine = await getMyServiceOfferings({ sellerId: SELLER, servable: sfwBrowsingLevelsFlag });
+    expect(ratingsIn(dbMock.dbRead.serviceOffering.findMany.mock.calls[0][0])).toEqual({
+      in: [NsfwLevel.PG, NsfwLevel.PG13],
+    });
+    expect(ratingsIn(dbMock.dbRead.serviceOffering.count.mock.calls[0][0])).toEqual({
+      notIn: [NsfwLevel.PG, NsfwLevel.PG13],
+    });
+    expect(mine.hiddenOffDomain).toBe(3);
+  });
+
+  it('where everything is served, lists every rating and counts nothing', async () => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    const mine = await getMyServiceOfferings({ sellerId: SELLER, servable: allBrowsingLevelsFlag });
+    expect(ratingsIn(dbMock.dbRead.serviceOffering.findMany.mock.calls[0][0])).toEqual({
+      in: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    });
+    expect(dbMock.dbRead.serviceOffering.count).not.toHaveBeenCalled();
+    expect(mine.hiddenOffDomain).toBe(0);
+  });
+
+  it('keeps Removed offerings out of both the list and the count', async () => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.serviceOffering.count.mockResolvedValue(0 as never);
+    await getMyServiceOfferings({ sellerId: SELLER, servable: sfwBrowsingLevelsFlag });
+    for (const call of [
+      dbMock.dbRead.serviceOffering.findMany.mock.calls[0][0],
+      dbMock.dbRead.serviceOffering.count.mock.calls[0][0],
+    ])
+      expect((call as { where: object }).where).toMatchObject({
+        sellerId: SELLER,
+        status: { not: ServiceOfferingStatus.Removed },
+      });
   });
 });

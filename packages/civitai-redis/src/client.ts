@@ -2578,6 +2578,12 @@ export const REDIS_SYS_KEYS = {
       Structure: set of Clavata keys
      */
     CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
+    /*
+      Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
+        (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
+      Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
+     */
+    REDETECTION_LOCK: 'system:text-scan:redetection-lock',
   },
   CONTENT: {
     /*

@@ -16,6 +16,26 @@ export type TextScanFlagDecision = {
   via?: 'appeal' | 'moderator';
 };
 
+export type TextScanFlagRuling = TextScanFlagDecision & {
+  decision: 'appealGranted' | 'appealUpheld';
+};
+
+// The newest rulings a flag write carries forward. Model.meta rides on every feed row, so the
+// history is bounded.
+export const MAX_FLAG_RULINGS = 5;
+
+// A detection on text a human already cleared under a different hash. It sets nothing and tells
+// nobody: a moderator decides whether it stands.
+export type TextScanRedetection = {
+  at?: string;
+  workflowId: string;
+  reason?: string;
+  names?: string[];
+  textHash: string;
+  promptIds?: PromptIds | null;
+  model?: string | null;
+};
+
 export type TextScanFlagEntry = {
   at?: string;
   workflowId?: string;
@@ -33,6 +53,8 @@ export type TextScanFlagEntry = {
   };
   appealGranted?: TextScanFlagDecision;
   appealUpheld?: TextScanFlagDecision;
+  redetected?: TextScanRedetection;
+  rulings?: TextScanFlagRuling[];
 };
 
 export type TextScanFlags = Partial<Record<TextScanFlagLabel, TextScanFlagEntry>>;
@@ -59,6 +81,14 @@ export function hasOpenTextScanFlag(meta: unknown, label: TextScanFlagLabel): bo
 
 export function isTextScanFlagAppealGranted(meta: unknown, label: TextScanFlagLabel): boolean {
   return !!readTextScanFlags(meta)[label]?.appealGranted;
+}
+
+export function getTextScanRedetection(
+  meta: unknown,
+  label: TextScanFlagLabel
+): TextScanRedetection | null {
+  const redetected = readTextScanFlags(meta)[label]?.redetected;
+  return redetected?.workflowId && redetected.textHash ? redetected : null;
 }
 
 export function appealGrantCoversText(

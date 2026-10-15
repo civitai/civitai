@@ -292,6 +292,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
         from: from.toISOString(),
         to: to.toISOString(),
         modelVersionId: loc.modelVersionId,
+        tag: loc.tag,
       });
       if (token !== this.#loadToken) return;
       this._range = range;
@@ -783,6 +784,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
     navigate: (loc) => this.#navigate(loc),
     link: (event, loc) => this.#link(event, loc),
     setFilters: (filters) => (this._filters = { ...this._filters, ...filters }),
+    setTag: (tag) => this.#navigate({ ...this.#loc, tag: tag || undefined }),
     toggleFilters: () => (this._filtersOpen = !this._filtersOpen),
     setShowMature: (value) => this.#setShowMature(value),
     toggleAllHours: () => (this._allHours = !this._allHours),
@@ -945,6 +947,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
     const { prev, next } = neighbours(this.#visiblePosts, post.id);
     return renderDrawer({
       host,
+      activeTag: this.#loc.tag,
       post,
       detail,
       detailLoading: this._detailLoading,

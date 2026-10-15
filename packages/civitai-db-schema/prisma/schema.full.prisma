@@ -1941,6 +1941,21 @@ model ResourceIntentCoocSnapshot {
   @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
 }
 
+// A mined resource-intent v1 tag vocabulary. `vocabVersion` = sha256 hex of `payload` (a DB
+// CHECK). `status` is candidate | frozen | retired; a DB CHECK requires `frozenAt` and `frozenBy`
+// both null for a candidate and both set for a frozen row. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentVocabulary {
+  id           String    @id @default(uuid())
+  vocabVersion String    @unique
+  status       String    @default("candidate")
+  payload      Bytes
+  rulesSummary Json
+  createdAt    DateTime  @default(now())
+  frozenAt     DateTime?
+  frozenBy     String?
+}
+
 enum ReviewReactions {
   Like
   Dislike

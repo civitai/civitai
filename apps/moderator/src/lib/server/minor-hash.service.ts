@@ -9,7 +9,13 @@ import {
   type AppealGroup,
   type AppealSource,
 } from '$lib/minor-flags/appeal-filters';
-import type { FlagLabel, LatestScan, LatestScanSource } from '$lib/minor-flags/text-scan-verdicts';
+import type {
+  FlagLabel,
+  LatestScan,
+  LatestScanSource,
+  PriorClearView,
+  RedetectionView,
+} from '$lib/minor-flags/text-scan-verdicts';
 
 /**
  * The read half of the main app's `/moderator/minor-hash-matches`, ported per
@@ -429,18 +435,21 @@ export async function getMinorFlagAppealsForReview({
     LEFT JOIN LATERAL (
       SELECT jsonb_agg(
                jsonb_build_object('id', c.id, 'url', c.url)
-               ORDER BY c."versionIndex" ASC NULLS LAST, c."postId", c."imageIndex" ASC NULLS LAST, c.id
+               ORDER BY c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
+                        c."imageIndex" ASC NULLS LAST, c.id
              ) AS images
       FROM (
-        SELECT i.id, i.url, mv.index AS "versionIndex", p.id AS "postId",
-               i.index AS "imageIndex"
+        -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
+        -- unpublished or draft model's appeal with no images at all.
+        SELECT i.id, i.url, p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
+               p.id AS "postId", i.index AS "imageIndex"
         FROM "ModelVersion" mv
-        JOIN "Post" p ON p."modelVersionId" = mv.id AND p."publishedAt" IS NOT NULL
+        JOIN "Post" p ON p."modelVersionId" = mv.id
         JOIN "Image" i ON i."postId" = p.id
         WHERE mv."modelId" = pg."modelId"
           AND p."userId" = pg."userId"
           AND i.type::text = 'image'
-        ORDER BY mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
+        ORDER BY unpublished, mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
         LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
       ) c
     ) ci ON TRUE
@@ -498,6 +507,64 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
     GROUP BY 1, 2, 3
   `.execute(dbRead);
   return rows.rows;
+}
+
+export type RedetectedRow = {
+  modelId: number;
+  modelName: string;
+  userId: number;
+  username: string | null;
+  status: string;
+  minor: boolean;
+  poi: boolean;
+  label: FlagLabel;
+  redetected: RedetectionView;
+  granted: PriorClearView | null;
+  grantedByUsername: string | null;
+  hasPendingAppeal: boolean;
+};
+
+/** Labels the text scan detected again after a human had cleared them on other text. Nothing was
+ *  flagged and the owner was not told, so this list is the only place the detection surfaces.
+ *  A row per model and label; oldest detection first so nothing starves.
+ *
+ *  The first WHERE predicate must match the partial index `Model_textScanRedetected_idx` (see its
+ *  migration) character for character, or the planner scans every model. */
+export async function getRedetectedModels({ limit, offset = 0, search }: Page) {
+  const rows = await sql<RedetectedRow>`
+    SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+           m.status::text AS status, m.minor, m.poi, l.label,
+           l.entry->'redetected' AS redetected, l.entry->'appealGranted' AS granted,
+           gu.username AS "grantedByUsername",
+           -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
+           -- a ruling while the model has a Pending appeal.
+           EXISTS (
+             SELECT 1 FROM "Appeal" a
+             WHERE a."entityType" = 'Model' AND a."entityId" = m.id AND a.status::text = 'Pending'
+           ) AS "hasPendingAppeal"
+    FROM "Model" m
+    CROSS JOIN LATERAL (VALUES
+      ('minor', m.meta->'textScanFlags'->'minor'),
+      ('poi', m.meta->'textScanFlags'->'poi')
+    ) AS l(label, entry)
+    LEFT JOIN "User" u ON u.id = m."userId"
+    LEFT JOIN "User" gu ON gu.id = CASE
+      WHEN jsonb_typeof(l.entry->'appealGranted'->'by') = 'number'
+        THEN (l.entry->'appealGranted'->>'by')::int
+    END
+    WHERE (m.meta->'textScanFlags'->'minor' ? 'redetected'
+        OR m.meta->'textScanFlags'->'poi' ? 'redetected')
+      AND l.entry ? 'redetected'
+      AND ${searchPredicate(search, {
+        modelId: 'm.id',
+        userId: 'm.userId',
+        username: 'u.username',
+      })}
+    ORDER BY (l.entry->'redetected'->>'at')::timestamptz NULLS LAST, m.id, l.label
+    LIMIT ${limit + 1} OFFSET ${offset}
+  `.execute(dbRead);
+
+  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
 }
 
 export type ModelMinorState = {

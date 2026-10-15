@@ -1542,6 +1542,17 @@ export interface ResourceIntentCoocSnapshot {
   trainImageIds: Buffer | null;
 }
 
+export interface ResourceIntentVocabulary {
+  id: string;
+  vocabVersion: string;
+  status: string;
+  payload: Buffer;
+  rulesSummary: JsonValue;
+  createdAt: Date;
+  frozenAt: Date | null;
+  frozenBy: string | null;
+}
+
 export interface Post {
   id: number;
   nsfw: boolean;

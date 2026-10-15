@@ -2970,8 +2970,11 @@ export async function getImagesFromFeedServiceForRest(
       )
     );
     if (!enabled) return undefined;
-    // An `offset|sortAt` cursor belongs to a scroll the search path started; it finishes there.
-    if (String(searchInput.cursor ?? '').includes('|')) return fallBack('cursor:legacy');
+    // An `offset|sortAt` cursor is a scroll the search path started. It was left to finish there,
+    // but 4,000 a day never did: clients keep such cursors for weeks. The mapper reads it as the
+    // website does, the offset inside the set frozen at that minute, and the feed answers the
+    // page; the next cursor it hands out is the feed's own. A cursor past the feed's offset cap
+    // is refused by the mapper and finishes on the search path as before.
     // The feed query turns a zero limit into its default page size.
     if (searchInput.limit < 1) return fallBack('limit:0');
   }

@@ -103,6 +103,7 @@ import { createFile } from '../services/model-file.service';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { assertBaseModelAttestations } from '~/server/services/base-model-attestation.service';
 import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
@@ -1363,9 +1364,13 @@ export async function publishPrivateModelVersionHandler({
       id: true,
       status: true,
       uploadType: true,
+      baseModel: true,
+      publishedAt: true,
+      meta: true,
       model: {
         select: {
           id: true,
+          type: true,
           publishedAt: true,
           availability: true,
           userId: true,
@@ -1414,6 +1419,7 @@ export async function publishPrivateModelVersionHandler({
     ownerId: version.model.userId,
     callerId: ctx.user.id,
   });
+  assertBaseModelAttestations({ versions: [version] });
 
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
   const fileIds = version.files.map((f) => f.id);

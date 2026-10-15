@@ -1,6 +1,6 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
 import type { PlannerHost, PlannerPostDetail } from '../host';
-import { mediaUrl, PG_LEVEL } from './media';
+import { isMatureLevel, mediaUrl } from './media';
 import type { PlannerActions } from './props';
 
 export interface LightboxProps {
@@ -39,20 +39,21 @@ export function renderLightbox({
             muted
             loop
             playsinline
+            poster=${mediaUrl(location, media, 1200)}
             src=${videoUrl(location, media.url, 1200)}
           ></video>`
         : media.type === 'audio'
         ? html`<p class="muted">Audio item · open the post to listen.</p>`
         : html`<img
             class=${blurred ? 'blurred' : ''}
-            src=${mediaUrl(location, media.url, 1200)}
+            src=${mediaUrl(location, media, 1200)}
             alt=""
           />`}
       <div class="lightbox-bar">
         <civitai-button variant="subtle" size="sm" ?disabled=${count < 2} @click=${() => step(-1)}
           >‹ Previous</civitai-button
         >
-        ${media.nsfwLevel > PG_LEVEL
+        ${isMatureLevel(media.nsfwLevel)
           ? html`<civitai-button
               variant="outline"
               size="sm"

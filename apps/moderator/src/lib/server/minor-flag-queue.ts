@@ -8,6 +8,7 @@ import {
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview,
   getModelMinorState,
+  getRedetectedModels,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
 import {
@@ -24,6 +25,7 @@ import {
   dismissMinorHashMatch,
   resolveMinorFlagAppeal,
   resolveMinorFlagAppealPerLabel,
+  resolveRedetection,
   revertMinorFlag,
   setModelMinorFlag,
 } from '$lib/server/minor-flag.service';
@@ -35,6 +37,11 @@ const querySchema = z.object({
   page: z.coerce.number().int().min(1).max(500).catch(1),
   q: z.string().trim().max(100).catch(''),
 });
+
+export const FLAG_QUEUE_VIEWS = ['appeals', 'redetected'] as const;
+export type FlagQueueView = (typeof FLAG_QUEUE_VIEWS)[number];
+
+const viewSchema = z.object({ view: z.enum(FLAG_QUEUE_VIEWS).catch('appeals') });
 
 const appealFilterSchema = z.object({
   source: z.enum(APPEAL_SOURCES).catch(DEFAULT_APPEAL_FILTERS.source),
@@ -101,6 +108,25 @@ export async function loadAppealQueue(url: URL) {
 
 export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 
+export async function loadRedetectedQueue(url: URL) {
+  const { limit, page, q, offset, search } = parsePaging(url);
+  const queue = await getRedetectedModels({ limit, offset, search });
+  return { limit, page, offset, q, ...queue, fullBleed: true };
+}
+
+export type RedetectedQueueData = Awaited<ReturnType<typeof loadRedetectedQueue>>;
+
+/** The flag-appeals page serves two queues; `?view=redetected` swaps the appeal triage for the
+ *  re-detected labels. Only the chosen one is queried. */
+export async function loadFlagQueue(url: URL) {
+  const { view } = parseQuery(url, viewSchema);
+  return view === 'redetected'
+    ? { view, ...(await loadRedetectedQueue(url)) }
+    : { view, ...(await loadAppealQueue(url)) };
+}
+
+export type FlagQueueData = Awaited<ReturnType<typeof loadFlagQueue>>;
+
 const modelIdFrom = async (event: RequestEvent) => {
   const form = await event.request.formData();
   const modelId = Number(form.get('modelId'));
@@ -128,7 +154,24 @@ export const minorHashActions: Actions = {
   dismiss: (event) => run(event, dismissMinorHashMatch),
 };
 
+const redetectionAction =
+  (keep: boolean): Actions[string] =>
+  async (event) => {
+    const form = await event.request.formData();
+    const modelId = Number(form.get('modelId'));
+    const label = z.enum(['minor', 'poi']).safeParse(form.get('label'));
+    const textHash = z.string().min(1).max(200).safeParse(form.get('textHash'));
+    if (!(modelId > 0) || !label.success || !textHash.success)
+      return fail(400, { error: 'Missing model id, label or text hash.' });
+
+    const result = await resolveRedetection(modelId, label.data, keep, textHash.data);
+    if (!result.ok) return fail(400, { error: result.error, modelId });
+    return { success: true, modelId, label: label.data, resolved: result.resolved };
+  };
+
 export const appealActions: Actions = {
+  keepRedetected: redetectionAction(true),
+  dismissRedetected: redetectionAction(false),
   upholdAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, true)),
   overturnAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, false)),
   // Reads its own form: `run` consumes the body for the model id alone.

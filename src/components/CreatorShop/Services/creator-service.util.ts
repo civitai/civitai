@@ -2,7 +2,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 
-export type ServiceOffering = RouterOutput['creatorService']['getMine'][number];
+export type ServiceOffering = RouterOutput['creatorService']['getMine']['items'][number];
 
 export const pluralize = (count: number, word: string) =>
   `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -26,7 +26,8 @@ export function useQueryMyServices(enabled: boolean) {
   const mine = trpc.creatorService.getMine.useQuery(undefined, { enabled });
   return {
     eligibility: eligibility.data,
-    offerings: mine.data ?? [],
+    offerings: mine.data?.items ?? [],
+    hiddenOffDomain: mine.data?.hiddenOffDomain ?? 0,
     isLoading: eligibility.isLoading || mine.isLoading,
   };
 }

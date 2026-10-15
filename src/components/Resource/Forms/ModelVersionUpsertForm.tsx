@@ -59,6 +59,11 @@ import {
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
+  BASE_MODEL_ATTESTATION_STATEMENT,
+  hasBaseModelAttestation,
+  requiresBaseModelAttestation as requiresBaseModelAttestationFor,
+} from '~/shared/constants/base-model-attestation.constants';
+import {
   baseModelSupportsClipSkip,
   defaultBaseModel,
   getActiveBaseModels,
@@ -105,6 +110,7 @@ import {
 import {
   Availability,
   LicensingFeeSettlementCurrency,
+  ModelStatus,
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
@@ -426,6 +432,21 @@ export function ModelVersionUpsertForm({
     !!currentUser?.isModerator && modelOwnerId != null && modelOwnerId !== currentUser.id;
   const requiresRightsAffirmation =
     !alreadyAffirmed && !moderatingSomeoneElsesModel && (submittedFee > 0 || gateCharges);
+  // Owner-only, as on the server: a moderator can't give this statement on the creator's behalf.
+  // A version already public on this base model is grandfathered, so its edits don't ask.
+  const attestingOwnerId = modelOwnerId ?? currentUser?.id;
+  const attestationGrandfathered =
+    requiresBaseModelAttestationFor({ baseModel: version?.baseModel, modelType: model?.type }) &&
+    !!version?.status &&
+    version.status !== ModelStatus.Draft &&
+    version.status !== ModelStatus.Scheduled &&
+    version.status !== ModelStatus.Training;
+  const requiresBaseModelAttestation =
+    !attestationGrandfathered &&
+    requiresBaseModelAttestationFor({ baseModel, modelType: model?.type }) &&
+    attestingOwnerId != null &&
+    attestingOwnerId === currentUser?.id &&
+    !hasBaseModelAttestation(version?.meta, { baseModel, ownerId: attestingOwnerId });
   // Step 2 of the disclosure: asked as soon as the creator says they want to charge, so the pricing
   // controls never appear before the affirmation. Distinct from `requiresRightsAffirmation`, which is the
   // submit gate and stays keyed to an actual charge — toggling the switch and changing your mind must not
@@ -638,6 +659,7 @@ export function ModelVersionUpsertForm({
         showClipSkip,
         genMode,
         requiresRightsAffirmation,
+        requiresBaseModelAttestation,
         isDirty,
         versionId: version?.id,
         storedPaidAccessConfig: toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal),
@@ -1015,6 +1037,9 @@ export function ModelVersionUpsertForm({
                   />
                 )}
               </Group>
+              {requiresBaseModelAttestation && (
+                <InputCheckbox name="baseModelAttested" label={BASE_MODEL_ATTESTATION_STATEMENT} />
+              )}
               {showLicensingPicker && (
                 <Stack gap="xs">
                   <Select
