@@ -47,16 +47,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * touched `block_author_fee_accrual`.
  */
 
-const { mockLog, mockCreateMany, mockFlag, mockQuoted, mockCharged } = vi.hoisted(() => ({
-  mockLog: vi.fn(),
-  mockCreateMany: vi.fn(),
-  mockFlag: vi.fn(),
-  mockQuoted: vi.fn(),
-  mockCharged: vi.fn(),
-}));
+const { mockLog, mockCreateMany, mockGetByExternalId, mockFlag, mockQuoted, mockCharged } =
+  vi.hoisted(() => ({
+    mockLog: vi.fn(),
+    mockCreateMany: vi.fn(),
+    mockGetByExternalId: vi.fn(),
+    mockFlag: vi.fn(),
+    mockQuoted: vi.fn(),
+    mockCharged: vi.fn(),
+  }));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => mockCreateMany(...args),
+  getTransactionByExternalId: (...args: unknown[]) => mockGetByExternalId(...args),
 }));
 // The charge rail's Prometheus counters. Mocked LOCALLY and partially, matching
 // `author-fee.test.ts` next door — `~/server/prom/client` is on
@@ -113,6 +116,7 @@ const EXPECTED_FEE = 20;
 /** Every `...Once` queue in this suite, reset explicitly. */
 function resetOnceQueues() {
   mockCreateMany.mockReset();
+  mockGetByExternalId.mockReset().mockResolvedValue(null);
   mockFlag.mockReset();
   mockDbRead.oauthClient.findUnique.mockReset();
   mockDbWrite.blockAuthorFeeAccrual.create.mockReset();
@@ -371,6 +375,50 @@ describe('chargeBlockAuthorFee — the debit', () => {
     mockCreateMany.mockResolvedValue({ transactions: [], conflicts: [{ id: 'dup' }] });
     const result = await chargeBlockAuthorFee(chargeArgs());
     expect(result).toEqual({ charged: true, feeBuzz: EXPECTED_FEE, accrualId: expect.any(String) });
+  });
+
+  describe('a replay of a fee that already moved', () => {
+    it('accrues when Buzz lists it in `transactions` with the existing id (today)', async () => {
+      mockCreateMany.mockResolvedValue({ transactions: [{ id: 'tx_existing' }], conflicts: [] });
+      const result = await chargeBlockAuthorFee(chargeArgs());
+      expect(result).toEqual({
+        charged: true,
+        feeBuzz: EXPECTED_FEE,
+        accrualId: expect.any(String),
+      });
+      expect(mockGetByExternalId).not.toHaveBeenCalled();
+    });
+
+    it('accrues when it lands in neither array but the charge is on the ledger', async () => {
+      // Without its duplicate pre-check, Buzz may refuse the funds check before it spots the
+      // duplicate, so the replay comes back in neither array.
+      mockCreateMany.mockResolvedValue({ transactions: [], conflicts: [] });
+      mockGetByExternalId.mockImplementation(async (id: string) =>
+        id === blockAuthorFeeChargeKey(WORKFLOW_ID) ? { fromAccountId: VIEWER_ID } : null
+      );
+      const result = await chargeBlockAuthorFee(chargeArgs());
+      expect(result).toEqual({
+        charged: true,
+        feeBuzz: EXPECTED_FEE,
+        accrualId: expect.any(String),
+      });
+    });
+
+    it('fails when the ledger row under the key was paid by someone else', async () => {
+      mockCreateMany.mockResolvedValue({ transactions: [], conflicts: [] });
+      mockGetByExternalId.mockResolvedValue({ fromAccountId: VIEWER_ID + 1 });
+      const result = await chargeBlockAuthorFee(chargeArgs());
+      expect(result).toEqual({ charged: false, reason: 'debit-failed' });
+      expect(mockDbWrite.blockAuthorFeeAccrual.create).not.toHaveBeenCalled();
+    });
+
+    it('fails when the ledger lookup itself fails', async () => {
+      mockCreateMany.mockResolvedValue({ transactions: [], conflicts: [] });
+      mockGetByExternalId.mockRejectedValue(new Error('buzz service down'));
+      const result = await chargeBlockAuthorFee(chargeArgs());
+      expect(result).toEqual({ charged: false, reason: 'debit-failed' });
+      expect(mockDbWrite.blockAuthorFeeAccrual.create).not.toHaveBeenCalled();
+    });
   });
 
   it('a throwing debit charges nothing and does not throw out', async () => {

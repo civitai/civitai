@@ -29,7 +29,6 @@ import {
   getCounterPartyBuzzTransactions,
   getTopContributors,
   getUserBuzzAccount,
-  refundTransaction,
 } from '~/server/services/buzz.service';
 import {
   getBankableAmount,
@@ -924,9 +923,11 @@ export async function withdrawCash(userId: number, amount: number) {
     }
 
     if (data.transactionId) {
-      // We failed at creating the Tipalti payment. We should refund the user their buzz:
+      // We failed at creating the Tipalti payment. We should refund the user their buzz.
+      // Loaded here so the refund helper stays out of this service's import cycle.
+      const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
       await withRetries(async () => {
-        await refundTransaction(
+        await refundTransactionOnce(
           data.transactionId,
           'Failed to create Tipalti payment. Please contact support.'
         );

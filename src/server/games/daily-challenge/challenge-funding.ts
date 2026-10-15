@@ -16,11 +16,11 @@
  *
  * Charges use deterministic externalTransactionId values so re-charge attempts are idempotent.
  * CRITICAL INVARIANT: an entry-fee charge is NEVER refunded outside of challenge cancellation.
- * The buzz ledger keeps a refunded transaction's externalTransactionId occupied (a retry gets
- * an idempotency `conflict` for it), so any refunded leg would look "already paid" to a later
+ * The buzz ledger keeps a refunded transaction's externalTransactionId occupied (a retry is
+ * answered as a duplicate of it), so any refunded leg would look "already paid" to a later
  * retry and the entry would commit for free. Instead of refunding on partial failure, we report
  * exactly which images are fully paid and the caller commits only those; a half-paid image
- * self-heals on retry (the paid leg conflicts, the missing leg is charged).
+ * self-heals on retry (the paid leg is found on the ledger, the missing leg is charged).
  *
  * Cancellation reverses the actual charges (never mints a fresh credit): pool parts via a
  * prefix refund over `challenge-entry-fee-${challengeId}-`, the initial prize via a prefix
@@ -86,11 +86,9 @@ export async function chargeInitialPrize({
     description: 'Challenge initial prize pool',
     // Trailing `-creator` keeps prefix matches unambiguous vs other challenge ids (challenge 5 would
     // otherwise prefix-match 50, 51, ...). The currency suffix scopes the id per wallet: a refunded
-    // green charge leaves its id occupied in the ledger, so a later yellow re-charge on a shared id
-    // would be REFUSED — leaving an unfunded pool. (Refused, not silently dropped: the header above
-    // records that a retry gets an idempotency `conflict`, and `CreateTransactionResponse` has no
-    // conflict field to report one in band, so it arrives as a throw. Either way the pool goes
-    // unfunded, which is what the suffix prevents.)
+    // green charge leaves its id occupied in the ledger, and `POST /transaction` answers a duplicate
+    // id with 200 and the existing transaction id, moving nothing. A later yellow re-charge on a
+    // shared id would therefore look escrowed while the pool stayed unfunded, with no error.
     // `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
     externalTransactionId: `challenge-initial-prize-${challengeId}-creator-${fromAccountType}`,
     details: { challengeId },
@@ -138,8 +136,16 @@ export async function chargeEntryFees({
 
   // House legs first: if the payer runs dry mid-submission the orphaned leg is the (small,
   // non-refundable anyway) house cut rather than the pool contribution.
-  const houseResult = await createBuzzTransactionMany(
-    imageIds.map((imageId) => ({
+  //
+  // Only legs missing from the ledger are sent. Buzz reports a replayed leg in `transactions`
+  // (with the existing id) today and in `conflicts` once it stops pre-checking duplicates, so a
+  // batch count alone cannot tell a first charge from a re-validation of the same image.
+  const houseCharged = await filterChargedImageIds(imageIds, (imageId) =>
+    houseFeeExternalId(challengeId, imageId)
+  );
+  const houseResult = await chargeMissingLegs(
+    imageIds.filter((imageId) => !houseCharged.includes(imageId)),
+    (imageId) => ({
       fromAccountId: userId,
       toAccountId: 0,
       fromAccountType,
@@ -148,9 +154,10 @@ export async function chargeEntryFees({
       description: 'Challenge entry fee (house)',
       externalTransactionId: houseFeeExternalId(challengeId, imageId),
       details: { challengeId, imageId },
-    }))
+    })
   );
-  const houseSettled = houseResult.transactions.length + houseResult.conflicts.length;
+  const houseSettled =
+    houseCharged.length + houseResult.transactions.length + houseResult.conflicts.length;
 
   // createBuzzTransactionMany SILENTLY DROPS insufficient-funds results (it does not throw)
   // and successes come back as opaque ids, so when the counts don't reconcile the only
@@ -167,8 +174,12 @@ export async function chargeEntryFees({
   let poolPaidIds = housePaidIds;
   let newPoolCharges = 0;
   if (poolAmount > 0 && housePaidIds.length > 0) {
-    const poolResult = await createBuzzTransactionMany(
-      housePaidIds.map((imageId) => ({
+    const poolCharged = await filterChargedImageIds(housePaidIds, (imageId) =>
+      poolFeeExternalId(challengeId, imageId)
+    );
+    const poolResult = await chargeMissingLegs(
+      housePaidIds.filter((imageId) => !poolCharged.includes(imageId)),
+      (imageId) => ({
         fromAccountId: userId,
         toAccountId: 0,
         fromAccountType,
@@ -177,10 +188,10 @@ export async function chargeEntryFees({
         description: 'Challenge entry fee (prize pool)',
         externalTransactionId: poolFeeExternalId(challengeId, imageId),
         details: { challengeId, imageId },
-      }))
+      })
     );
     newPoolCharges = poolResult.transactions.length;
-    const poolSettled = newPoolCharges + poolResult.conflicts.length;
+    const poolSettled = poolCharged.length + newPoolCharges + poolResult.conflicts.length;
     poolPaidIds =
       poolSettled >= housePaidIds.length
         ? housePaidIds
@@ -240,12 +251,19 @@ async function filterChargedImageIds(
   imageIds: number[],
   toExternalId: (imageId: number) => string
 ) {
-  const charged: number[] = [];
-  for (const imageId of imageIds) {
-    const transaction = await getTransactionByExternalId(toExternalId(imageId));
-    if (transaction != null) charged.push(imageId);
-  }
-  return charged;
+  const transactions = await Promise.all(
+    imageIds.map((imageId) => getTransactionByExternalId(toExternalId(imageId)))
+  );
+  return imageIds.filter((_, i) => transactions[i] != null);
+}
+
+/** One batch for the legs not yet on the ledger; no call when there are none. */
+async function chargeMissingLegs(
+  imageIds: number[],
+  toTransaction: (imageId: number) => Parameters<typeof createBuzzTransactionMany>[0][number]
+) {
+  if (imageIds.length === 0) return { transactions: [], conflicts: [] };
+  return createBuzzTransactionMany(imageIds.map(toTransaction));
 }
 
 /**

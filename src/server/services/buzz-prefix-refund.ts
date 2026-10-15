@@ -42,6 +42,27 @@ export async function refundAllLegsByPrefix(
   return refundMissingLegs(input);
 }
 
+/**
+ * Refunds one transaction, treating "already refunded" as done. A repeat refund answers 200 today
+ * and 409 once Buzz stops pre-checking duplicate external ids; the client's own retry after a lost
+ * response gets the same 409. A 409 counts as done only when `refund-<transactionId>` is on the
+ * ledger, so any other conflict still throws.
+ */
+export async function refundTransactionOnce(
+  transactionId: string,
+  description?: string,
+  details?: MixedObject
+): Promise<{ transactionId: string }> {
+  try {
+    return await refundTransaction(transactionId, description, details);
+  } catch (error) {
+    if (getBuzzApiStatus(error) !== 409) throw error;
+    const refund = await getTransactionByExternalId(`refund-${transactionId}`);
+    if (!refund) throw error;
+    return { transactionId };
+  }
+}
+
 type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
 
 export type PrefixRefundState = { reversed: PrefixLeg[]; missing: PrefixLeg[] };

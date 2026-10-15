@@ -1,3 +1,5 @@
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -70,8 +72,13 @@ const {
   };
 });
 
+const { mockGetTransactionByExternalId } = vi.hoisted(() => ({
+  mockGetTransactionByExternalId: vi.fn(),
+}));
+
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 vi.mock('~/server/services/buzz.service', () => ({
+  getTransactionByExternalId: mockGetTransactionByExternalId,
   createBuzzTransaction: mockCreateBuzzTransaction,
   createMultiAccountBuzzTransaction: vi.fn(),
   getCounterPartyBuzzTransactions: mockGetCounterPartyBuzzTransactions,
@@ -1094,6 +1101,70 @@ describe('withdrawCash', () => {
     });
 
     await expect(withdrawCash(userId, 10000)).rejects.toThrow('not payable');
+  });
+
+  describe('when the Tipalti payment fails after the burn', () => {
+    const readyCash = {
+      [userId]: {
+        id: userId,
+        status: 'ready',
+        ready: 100000,
+        pending: 0,
+        withdrawn: 0,
+        paymentMethod: 'ACH',
+      },
+    };
+    const conflict = () =>
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'conflict',
+        cause: new BuzzApiError(409, 'x'),
+      });
+    const canceled = () =>
+      mockDbWrite.$executeRaw.mock.calls.some(([strings]) =>
+        (strings as unknown as string[]).join('?').includes("status = 'Canceled'")
+      );
+
+    beforeEach(() => {
+      mockCachedObject.fetch.mockResolvedValue(readyCash);
+      mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+        userId,
+        tipaltiPaymentsEnabled: true,
+        tipaltiWithdrawalMethod: 'ACH',
+      });
+      mockCreateBuzzTransaction.mockResolvedValueOnce({ transactionId: 'tx-burn' });
+      mockPayToTipaltiAccount.mockRejectedValueOnce(new Error('tipalti down'));
+      mockRefundTransaction.mockReset();
+      mockGetTransactionByExternalId.mockReset().mockResolvedValue(null);
+    });
+
+    it('cancels the withdrawal when the refund answers 200 (a repeat, as Buzz answers today)', async () => {
+      mockRefundTransaction.mockResolvedValue({ transactionId: 'tx-burn' });
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
+
+      expect(mockRefundTransaction.mock.calls[0]?.[0]).toBe('tx-burn');
+      expect(canceled()).toBe(true);
+    });
+
+    it('cancels the withdrawal when the refund answers 409 and the refund is on the ledger', async () => {
+      mockRefundTransaction.mockRejectedValue(conflict());
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
+        id === 'refund-tx-burn' ? { externalTransactionId: id } : null
+      );
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
+
+      expect(canceled()).toBe(true);
+    });
+
+    it('does not cancel when a 409 has no refund on the ledger behind it', async () => {
+      mockRefundTransaction.mockRejectedValue(conflict());
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('conflict');
+
+      expect(canceled()).toBe(false);
+    });
   });
 });
 
