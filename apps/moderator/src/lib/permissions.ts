@@ -41,6 +41,10 @@ export const PERMISSIONS = [
   { id: 'user.ban', label: 'Ban or unban an account' },
   { id: 'user.purge', label: 'Purge an account’s content (irreversible)' },
   { id: 'user.comments.bulk', label: 'Bulk delete or ToS an account’s comments' },
+  // The main site gates this on the moderator role alone. Narrower here because a take-down answers
+  // an ownership or claim dispute — a legal question, not a content one — and the model reports panel
+  // puts the button one click from every report in the queue.
+  { id: 'model.takeDown', label: 'Take down a model (ownership / claim)' },
 
   // Also destructive, but never behind the page grant: an erasure request, carried out by the
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
@@ -50,6 +54,10 @@ export const PERMISSIONS = [
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.
   { id: 'user.membership.code', label: 'Mint membership codes for a customer' },
+  // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
+  // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
+  // two together.
+  { id: 'user.creatorScore.grant', label: 'Grant or revoke Creator Score' },
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },
@@ -79,6 +87,8 @@ export const PERMISSIONS = [
   { id: 'feedback.status.set', label: 'Set feedback status' },
   { id: 'feedback.bug.promote', label: 'Promote feedback to a Known Issue' },
   { id: 'textScan.prompt.publish', label: 'Publish text-scan prompt versions (production)' },
+  { id: 'textScan.modelRules.edit', label: 'Edit Model rules (production)' },
+  { id: 'textScan.testSets.edit', label: 'Create and edit text-scan test sets and their cases' },
   // `/decisions`: reading the inbox is the page grant; recording a ruling is this. A ruling is
   // labelled data other systems will train and calibrate on, so who may produce it is its own call.
   { id: 'decisions.rule', label: 'Record a ruling on a decision item' },
@@ -88,6 +98,14 @@ export const PERMISSIONS = [
   // Support tickets carry the requester's email, a different class of data from anything moderation
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
+  { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
+  // Moves held Buzz: a Refund returns it to the buyer, a Release pays the seller. Checked again by the
+  // main app's `/api/mod/creator-services/resolve-dispute` by this literal (`ModeratorGrantId`), so
+  // rename the two together. Reading the queue is the page grant.
+  {
+    id: 'creatorServices.resolveDispute',
+    label: 'Resolve a Creator Services dispute (refund or release Buzz)',
+  },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

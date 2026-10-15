@@ -123,7 +123,9 @@ export function useGetTextToImageRequests(
       ascending: filters.sort === GenerationSort.Oldest,
       tags: queryTags,
       fromDate: filters.fromDate,
-      toDate: filters.toDate,
+      // The queue's date filter wins; otherwise the caller's own bound (the picker's, which ignores
+      // the queue's filters).
+      toDate: filters.toDate ?? input?.toDate,
       excludeFailed: filters.excludeFailed,
     },
     {
@@ -251,25 +253,40 @@ export function useBoostWorkflow() {
   });
 }
 
+type CachedWorkflow = InfiniteTextToImageRequests['pages'][number]['items'][number];
+
+/**
+ * Puts a just-submitted workflow into each cached list it belongs in: first in a newest-first list,
+ * last in an oldest-first one whose last page is loaded. A list bounded by `toDate` takes it only
+ * when the bound is not before the workflow's creation time, as the server would list it.
+ */
+export function addSubmittedWorkflowToCaches(workflow: CachedWorkflow) {
+  const createdAt = workflow.createdAt ? new Date(workflow.createdAt) : new Date();
+  const endsBeforeIt = (queryInput?: { toDate?: Date | string }) =>
+    !!queryInput?.toDate && new Date(queryInput.toDate) < createdAt;
+
+  updateTextToImageRequests({
+    input: { ascending: false },
+    cb: (old, queryInput) => {
+      if (endsBeforeIt(queryInput)) return;
+      old.pages[0].items.unshift(workflow);
+    },
+  });
+  updateTextToImageRequests({
+    input: { ascending: true },
+    cb: (old, queryInput) => {
+      if (endsBeforeIt(queryInput)) return;
+      const index = old.pages.length - 1;
+      if (!old.pages[index].nextCursor) {
+        old.pages[index].items.push(workflow);
+      }
+    },
+  });
+}
+
 export function useGenerateFromGraph(args?: { onError?: (e: any) => void }) {
   return trpc.orchestrator.generateFromGraph.useMutation({
-    onSuccess: (data) => {
-      updateTextToImageRequests({
-        input: { ascending: false },
-        cb: (old) => {
-          old.pages[0].items.unshift(data);
-        },
-      });
-      updateTextToImageRequests({
-        input: { ascending: true },
-        cb: (old) => {
-          const index = old.pages.length - 1;
-          if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data);
-          }
-        },
-      });
-    },
+    onSuccess: (data) => addSubmittedWorkflowToCaches(data),
     ...args,
   });
 }

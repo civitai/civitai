@@ -1,6 +1,6 @@
 // Pure post helpers: the derived lists and counts the element renders from its loaded range.
 import type { PlannerPost, PlannerPostDetail, PlannerScope } from '../host';
-import { PG_LEVEL } from '../parts/media';
+import { isMatureLevel } from '../parts/media';
 import { validateBatchSchedule } from '@civitai/shared/post-scheduling';
 import { localDayKey } from './calendar';
 
@@ -75,7 +75,7 @@ export function modelFilterOptions(posts: PlannerPost[]): { value: string; label
 }
 
 export function hasMature(posts: PlannerPost[]): boolean {
-  return posts.some((p) => p.nsfwLevel > PG_LEVEL);
+  return posts.some((p) => isMatureLevel(p.nsfwLevel));
 }
 
 /** A cap of `0` means no cap. */

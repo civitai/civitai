@@ -859,6 +859,8 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   const isActive = bid.auction.startAt <= now && bid.auction.endAt > now;
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
+  // Loaded here so the refund helper stays out of this service's import cycle.
+  const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
   for (const transactionId of bid.transactionIds) {
     await withRetries(async () => {
       if (isAuctionTransactionPrefix(transactionId)) {
@@ -869,7 +871,7 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
 
         return;
       } else {
-        await refundTransaction(transactionId, 'Deleted bid.');
+        await refundTransactionOnce(transactionId, 'Deleted bid.');
         return;
       }
     });

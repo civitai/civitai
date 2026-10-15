@@ -499,13 +499,13 @@ describe('publishPrivateModel', () => {
   it('lets a moderator through both gates', async () => {
     mockPrivateModel({ status: ModelStatus.UnpublishedViolation, meta: { cannotPublish: true } });
 
-    await expect(publish(true)).resolves.toEqual({ versionIds: [1] });
+    await expect(publish(true)).resolves.toEqual({ versionIds: [1], held: false });
     expect(mockDbWrite.model.update).toHaveBeenCalledTimes(1);
   });
 
   it('publishes a clean private model for its owner', async () => {
     mockPrivateModel({});
 
-    await expect(publish(false)).resolves.toEqual({ versionIds: [1] });
+    await expect(publish(false)).resolves.toEqual({ versionIds: [1], held: false });
   });
 });

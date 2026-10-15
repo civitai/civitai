@@ -1,23 +1,32 @@
+import { Flags, sfwBrowsingLevelsFlag } from '@civitai/shared';
 import { html, type TemplateResult } from 'lit';
 import type { PlannerMedia } from '../host';
 
-/** Cloudflare Images delivery URL for a media key at a given width. */
-export function mediaUrl(imageLocation: string, key: string, width: number): string {
+export type MediaRef = Pick<PlannerMedia, 'url' | 'type'>;
+
+/** Image-CDN delivery URL at a given width: the image itself, or a JPEG still of a video (the
+ *  transform the main app's EdgeVideo uses for its poster). */
+export function mediaUrl(imageLocation: string, media: MediaRef, width: number): string {
   const base = imageLocation.replace(/\/$/, '');
-  return `${base}/${key}/width=${width}`;
+  return media.type === 'video'
+    ? `${base}/${media.url}/anim=false,transcode=true,width=${width}/${media.url}.jpeg`
+    : `${base}/${media.url}/width=${width}`;
 }
 
-/** Everything above PG counts as mature for the toggle; the viewer's browsing level still caps what
- *  "Show mature" reveals, so a per-image unblur is the only way past it. */
-export const PG_LEVEL = 1;
+/** Any bit outside PG/PG13 (R and up), matching the site's own mature rule. */
+export function isMatureLevel(nsfwLevel: number): boolean {
+  return !Flags.hasFlag(sfwBrowsingLevelsFlag, nsfwLevel);
+}
 
+/** The viewer's browsing level still caps what "Show mature" reveals, so a per-item unblur is the
+ *  only way past it. */
 export function shouldBlur(
   nsfwLevel: number,
   browsingLevel: number,
   showMature: boolean,
   unblurred: boolean
 ): boolean {
-  if (unblurred || nsfwLevel <= PG_LEVEL) return false;
+  if (unblurred || !isMatureLevel(nsfwLevel)) return false;
   return !showMature || nsfwLevel > browsingLevel;
 }
 
@@ -88,16 +97,15 @@ export const handleIcon = html`<svg
 
 export function thumb(opts: {
   imageLocation: string;
-  media: Pick<PlannerMedia, 'url' | 'type'> | null;
+  media: MediaRef | null;
   blurred: boolean;
   large?: boolean;
 }): TemplateResult {
   const cls = `thumb${opts.large ? ' lg' : ''}${opts.blurred ? ' blurred' : ''}`;
   if (!opts.media || opts.media.type === 'audio') return html`<span class=${cls}></span>`;
-  // Cloudflare serves a poster frame for a video key when asked for a static width.
   return html`<img
     class=${cls}
-    src=${mediaUrl(opts.imageLocation, opts.media.url, opts.large ? 96 : 48)}
+    src=${mediaUrl(opts.imageLocation, opts.media, opts.large ? 96 : 48)}
     alt=""
     loading="lazy"
   />`;

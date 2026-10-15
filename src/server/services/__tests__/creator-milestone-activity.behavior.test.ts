@@ -173,7 +173,8 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int,
+      type text NOT NULL DEFAULT 'Badge', source text, "permanentUnlock" boolean, data jsonb);
     CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "addedById" int);
     CREATE TABLE "UserCosmeticShopPurchases" (
       "buzzTransactionId" text PRIMARY KEY, "cosmeticId" int, "shopItemId" int NOT NULL,
@@ -186,6 +187,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "UserCosmetic" (
       "userId" int NOT NULL, "cosmeticId" int NOT NULL, "claimKey" text NOT NULL DEFAULT 'claimed',
+      "equippedAt" timestamp(3),
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
     CREATE TABLE "Model" (

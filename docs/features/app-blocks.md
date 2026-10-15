@@ -216,7 +216,7 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     raw: string;                       // RS256 JWT
     scopes: string[];                  // from manifest, e.g. ['models:read:self']
     expiresAt: string;                 // ISO-8601
-    buzzBudget?: number;               // only when manifest includes ai:write:budgeted
+    buzzBudget?: number;               // only when the token carries ai:write:budgeted
   };
   context: SlotContext;                // slotId + per-surface fields
   settings: {
@@ -365,7 +365,9 @@ for something the API could serve.
 `src/components/AppBlocks/hostHandlerParity.ts`** — a compile-time-enforced
 inventory of every block→host message, which hosts must handle it, and whether
 it is REQUEST-style (awaits a `*_RESULT`/ack reply — an unhandled one hangs the
-block) or fire-and-forget. Rather than duplicate a list here that will re-drift,
+block) or fire-and-forget. For a request it also records the top-level payload keys
+of the success and error replies (`replyKeys` / `errorKeys`), which the host tests
+check against real replies. Rather than duplicate a list here that will re-drift,
 read that file. As of this writing the families are:
 
 - **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.
@@ -396,6 +398,42 @@ read that file. As of this writing the families are:
   the picked resources in pick order, `[]` on dismiss. `multiple` with a
   Checkpoint, or a `max` that is not a whole number of at least 1, is answered
   with `{ requestId, error }` and the picker does not open.
+- **Image picker** (host chrome over the viewer's own library; page host only, no
+  scope): `OPEN_IMAGE_PICKER` (→ `IMAGE_PICKER_RESULT`) lets the viewer pick from
+  images they posted and images they made with the on-site generator. The app
+  never lists the library; it receives only the pick. Request
+  `{ requestId, sources?, multiple? }`: `sources` is a non-empty list of
+  `'posted'` / `'generated'` (omitted = both), `multiple: { max }` asks for
+  several (`max` above 20 is clamped to 20). A single pick answers
+  `{ requestId, selected? }` (no `selected` on dismiss); a multi pick answers
+  `{ requestId, selectedImages }` (`[]` on dismiss). An invalid `sources` or `max`
+  is answered `{ requestId, error }` and the picker does not open. Each pick is
+  `{ source, url, width, height, nsfwLevel, imageId? }`. `imageId` is present for
+  a posted pick only (a generator output has no `Image` row). `nsfwLevel` is never
+  0 and may be a mature level.
+  What is listed is decided by the host, and the ceiling is the **viewer's own
+  browsing level** on the current domain, not a fixed SFW ceiling (a product
+  decision: the viewer is choosing among their own images). Posted: the viewer's
+  own images in a published post, scan complete, with no `needsReview` /
+  `tosViolation` / `poi` / `minor` flag, rated at a level their browsing level
+  includes; an unrated image (level 0) is not listed. The rule is one query
+  filter (`postedPickableWhere`), and the level is read server-side from the
+  session and request domain (`getRequestBrowsingLevel`), never from the input.
+  Generated: the viewer's succeeded generator image outputs as the generator
+  lists them, whose rating maps to one known level their browsing level
+  includes; an unrated or unrecognised rating is not listed.
+  A posted pick's `url` is an image-CDN rendition and `width`/`height` are the
+  size that rendition is **requested** at. The CDN normally serves exactly that,
+  but can answer with the original while a rendition is not ready. The width is
+  the widest CDN rung at which both sides fit the generation source-image bounds
+  (64..2048); an image no rung fits is not listed. A generated pick's `url` is the
+  generator's own output URL and may be time-limited.
+  The grid loads further pages on scroll, but stops doing so by itself after
+  `MAX_EMPTY_AUTO_PAGES` consecutive pages add nothing pickable, or after a page
+  fails, and offers a button instead. Review mode and a block that is not ready
+  answer as a dismissal, and a signed-out viewer is offered sign-in. Logic:
+  `src/components/AppBlocks/imagePickerLogic.ts` and
+  `src/server/services/blocks/block-image-picker.logic.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
@@ -526,6 +564,33 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
 
+### The per-call budget
+
+Every token carrying `ai:write:budgeted` also carries `buzzBudget`, the most one
+single-step call may cost. A multi-step call (`kind: 'workflow'`, up to 8 steps) is bounded
+as a whole: its total price, author fee included, may not exceed the budget times its step
+count, nor `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` (8,000 Buzz) whatever the budget. That total
+is not divided per step, so one step may use more than the budget. The bound is on the
+quoted price: a chained workflow can bill above its quote, and the settle then corrects the
+cap counters up. A multi-step call the
+orchestrator cannot price is reserved at that ceiling, and each step's timeout is an equal
+share of it. The app declares it in its manifest (`page.buzzBudgetPerGen`); the mint clamps it to
+`BUZZ_BUDGET_CAP` (5,000 Buzz) and uses `BUZZ_BUDGET_DEFAULT` (1,000 Buzz) when the manifest
+declares none. Both live in `src/shared/constants/block-scope.constants.ts` and apply to
+install, hub, dev, review and private-run tokens alike. The viewer consents to the scope,
+not to this number, and is not asked again per call.
+
+The mint response reports the budget the token carries (`buzzBudget`, absent when the token
+carries no spend scope). The model-slot host forwards that value to the block as `token.buzzBudget`
+on `BLOCK_INIT`, `TOKEN_REFRESH` and the `REQUEST_TOKEN` reply; it does not work the number
+out from install settings, which are not all visible to the client. The page host does not
+send `token.buzzBudget`.
+
+It bounds one call only. The aggregate ceilings below and the review, private-run and
+dev-session caps are checked separately on every submit, and some are lower than the
+per-call cap: a call inside its budget is still refused when it would take the running
+total past the aggregate it reserves against.
+
 ### The user's per-app spend limit (consent budget)
 
 A viewer who grants `ai:write:budgeted` may also set a **daily Buzz limit for that
@@ -648,7 +713,9 @@ same page host, so the owner sees the same confirm.
    carries `snapshot.stepQuote: { quoteId, total, stepType, expiresAt }`. `total` is the
    price the viewer will confirm and be charged. No quote, a zero price or a variable price
    is never grantable: the viewer confirms what they are charged. Below the budget the
-   estimate is unchanged and the job runs as before.
+   estimate is unchanged and the job runs as before. An app whose budget is the 5,000
+   cap is therefore never offered a confirm: no price is both above its budget and
+   within the per-job limit.
 
    Three things to know as an author:
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable

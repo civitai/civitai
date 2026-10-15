@@ -2,7 +2,8 @@ import type { PromptIds } from '~/server/services/text-scan/types';
 
 export const TEXT_SCAN_FLAGS_KEY = 'textScanFlags';
 
-export type TextScanFlagLabel = 'poi' | 'minor';
+export const TEXT_SCAN_FLAG_LABELS = ['poi', 'minor'] as const;
+export type TextScanFlagLabel = (typeof TEXT_SCAN_FLAG_LABELS)[number];
 
 export const MAX_FLAG_REASON_CHARS = 300;
 export const MAX_FLAG_NAMES = 10;
@@ -13,6 +14,26 @@ export type TextScanFlagDecision = {
   by: number;
   textHash?: string | null;
   via?: 'appeal' | 'moderator';
+};
+
+export type TextScanFlagRuling = TextScanFlagDecision & {
+  decision: 'appealGranted' | 'appealUpheld';
+};
+
+// The newest rulings a flag write carries forward. Model.meta rides on every feed row, so the
+// history is bounded.
+export const MAX_FLAG_RULINGS = 5;
+
+// A detection on text a human already cleared under a different hash. It sets nothing and tells
+// nobody: a moderator decides whether it stands.
+export type TextScanRedetection = {
+  at?: string;
+  workflowId: string;
+  reason?: string;
+  names?: string[];
+  textHash: string;
+  promptIds?: PromptIds | null;
+  model?: string | null;
 };
 
 export type TextScanFlagEntry = {
@@ -32,6 +53,8 @@ export type TextScanFlagEntry = {
   };
   appealGranted?: TextScanFlagDecision;
   appealUpheld?: TextScanFlagDecision;
+  redetected?: TextScanRedetection;
+  rulings?: TextScanFlagRuling[];
 };
 
 export type TextScanFlags = Partial<Record<TextScanFlagLabel, TextScanFlagEntry>>;
@@ -58,6 +81,14 @@ export function hasOpenTextScanFlag(meta: unknown, label: TextScanFlagLabel): bo
 
 export function isTextScanFlagAppealGranted(meta: unknown, label: TextScanFlagLabel): boolean {
   return !!readTextScanFlags(meta)[label]?.appealGranted;
+}
+
+export function getTextScanRedetection(
+  meta: unknown,
+  label: TextScanFlagLabel
+): TextScanRedetection | null {
+  const redetected = readTextScanFlags(meta)[label]?.redetected;
+  return redetected?.workflowId && redetected.textHash ? redetected : null;
 }
 
 export function appealGrantCoversText(

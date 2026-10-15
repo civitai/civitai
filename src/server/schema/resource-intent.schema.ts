@@ -8,6 +8,7 @@ import * as z from 'zod';
 import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
 import { CHECKPOINT_ARMS } from '~/server/services/resource-intent-checkpoint';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { HOSTED_MODEL_CAPABILITIES } from '~/shared/constants/hosted-model-catalog.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -208,6 +209,11 @@ export const resourceIntentInputSchema = z
     baseModel: z.string().min(1).optional(),
     limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
     kind: z.enum(RESOURCE_INTENT_KINDS).optional(),
+    // Answered by the block route from the hosted-model catalog; never reaches the primitive.
+    needs: z
+      .array(z.enum(HOSTED_MODEL_CAPABILITIES))
+      .max(HOSTED_MODEL_CAPABILITIES.length)
+      .optional(),
   })
   .superRefine((input, ctx) => {
     if (input.kind !== 'checkpoint') return;

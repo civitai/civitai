@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getModelVersionActionLayout } from './model-version-layout';
+import { getModelVersionActionLayout, showRequestReviewFor } from './model-version-layout';
 
 // A downloadable version with visible files — the inputs that decide the branch are varied per test.
 const downloadable = {
@@ -76,5 +76,23 @@ describe('getModelVersionActionLayout', () => {
 
       expect(showDownloadSection).toBe(false);
     });
+  });
+});
+
+describe('showRequestReviewFor', () => {
+  const owner = { isOwner: true, isModerator: false, violation: true, underReview: false };
+
+  it('offers the owner a review of a violation nobody is reviewing yet', () => {
+    expect(showRequestReviewFor(owner)).toBe(true);
+  });
+
+  it('hides it while a review is already pending, such as a Model rules hold', () => {
+    expect(showRequestReviewFor({ ...owner, underReview: true })).toBe(false);
+  });
+
+  it('never shows it to a moderator, a non-owner, or without a violation', () => {
+    expect(showRequestReviewFor({ ...owner, isModerator: true })).toBe(false);
+    expect(showRequestReviewFor({ ...owner, isOwner: false })).toBe(false);
+    expect(showRequestReviewFor({ ...owner, violation: false })).toBe(false);
   });
 });

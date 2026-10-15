@@ -143,6 +143,14 @@ describe('updateCrucible — text scan', () => {
     );
   });
 
+  it('lets a non-moderator rename a PG crucible to a word the profanity dictionary only half-matches', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ name: 'Fukushima', description: null });
+
+    await edit({ name: 'Fukushima' });
+
+    expect(written()).toMatchObject({ name: 'Fukushima', ingestion: 'Pending' });
+  });
+
   it('leaves the verdict alone when the text is unchanged', async () => {
     await edit({ name: 'Old name', description: 'Old description', coverImage: { url: 'x' } });
 

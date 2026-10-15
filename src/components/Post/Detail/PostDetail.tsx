@@ -318,6 +318,7 @@ export function PostDetailContent({ postId }: Props) {
                     postId={post.id}
                     userId={post.user.id}
                     isModelVersionPost={post.modelVersionId}
+                    storylinePost={post}
                   >
                     <LegacyActionIcon
                       variant={colorScheme === 'dark' ? 'filled' : 'light'}

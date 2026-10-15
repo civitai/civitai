@@ -294,7 +294,7 @@ const QUOTE_SITE_LEDGER: Record<
     disclosedBy: 'estimateMultiStepWorkflow',
     reason:
       'multi-step submit. `reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz`, compared ' +
-      'against the per-step budget times the step count and reserved on every cap before the ' +
+      'against the multi-step ceiling and reserved on every cap before the ' +
       'orchestrator submit.',
   },
   estimateMultiStepWorkflow: {

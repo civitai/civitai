@@ -1,3 +1,5 @@
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -70,8 +72,13 @@ const {
   };
 });
 
+const { mockGetTransactionByExternalId } = vi.hoisted(() => ({
+  mockGetTransactionByExternalId: vi.fn(),
+}));
+
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 vi.mock('~/server/services/buzz.service', () => ({
+  getTransactionByExternalId: mockGetTransactionByExternalId,
   createBuzzTransaction: mockCreateBuzzTransaction,
   createMultiAccountBuzzTransaction: vi.fn(),
   getCounterPartyBuzzTransactions: mockGetCounterPartyBuzzTransactions,
@@ -122,6 +129,7 @@ import {
   withdrawCash,
 } from '~/server/services/creator-program.service';
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
+import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
@@ -290,6 +298,32 @@ describe('getCreatorRequirements', () => {
 
     expect(result.membership).toBe('founder');
     expect(result.validMembership).toBe(false);
+  });
+
+  // The sum's arithmetic runs against Postgres in creator-score-grant.behavior.test.ts; this pins
+  // that the statement sent is GREATEST(that sum, the stored total).
+  it('scores the larger of every category summed and the stored total', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ score: 1, membership: 'silver' }]);
+
+    await getCreatorRequirements(userId);
+
+    const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls.at(-1) as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sent = strings
+      .reduce((sql, part, i) => {
+        const value = values[i - 1] as { sql?: string } | undefined;
+        return sql + (typeof value?.sql === 'string' ? value.sql : '?') + part;
+      })
+      .replace(/--[^\n]*/g, '')
+      .replace(/\s+/g, ' ');
+    expect(sent).toContain(
+      `GREATEST( ${creatorScoreCategorySumSql(
+        'u.meta'
+      )}, COALESCE((meta->'scores'->'total')::numeric, 0) ) as score`
+    );
+    expect(sent).toContain(`COALESCE((u.meta->'scores'->>'staffAwarded')::numeric, 0)`);
   });
 });
 
@@ -1067,6 +1101,70 @@ describe('withdrawCash', () => {
     });
 
     await expect(withdrawCash(userId, 10000)).rejects.toThrow('not payable');
+  });
+
+  describe('when the Tipalti payment fails after the burn', () => {
+    const readyCash = {
+      [userId]: {
+        id: userId,
+        status: 'ready',
+        ready: 100000,
+        pending: 0,
+        withdrawn: 0,
+        paymentMethod: 'ACH',
+      },
+    };
+    const conflict = () =>
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'conflict',
+        cause: new BuzzApiError(409, 'x'),
+      });
+    const canceled = () =>
+      mockDbWrite.$executeRaw.mock.calls.some(([strings]) =>
+        (strings as unknown as string[]).join('?').includes("status = 'Canceled'")
+      );
+
+    beforeEach(() => {
+      mockCachedObject.fetch.mockResolvedValue(readyCash);
+      mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+        userId,
+        tipaltiPaymentsEnabled: true,
+        tipaltiWithdrawalMethod: 'ACH',
+      });
+      mockCreateBuzzTransaction.mockResolvedValueOnce({ transactionId: 'tx-burn' });
+      mockPayToTipaltiAccount.mockRejectedValueOnce(new Error('tipalti down'));
+      mockRefundTransaction.mockReset();
+      mockGetTransactionByExternalId.mockReset().mockResolvedValue(null);
+    });
+
+    it('cancels the withdrawal when the refund answers 200 (a repeat, as Buzz answers today)', async () => {
+      mockRefundTransaction.mockResolvedValue({ transactionId: 'tx-burn' });
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
+
+      expect(mockRefundTransaction.mock.calls[0]?.[0]).toBe('tx-burn');
+      expect(canceled()).toBe(true);
+    });
+
+    it('cancels the withdrawal when the refund answers 409 and the refund is on the ledger', async () => {
+      mockRefundTransaction.mockRejectedValue(conflict());
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
+        id === 'refund-tx-burn' ? { externalTransactionId: id } : null
+      );
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
+
+      expect(canceled()).toBe(true);
+    });
+
+    it('does not cancel when a 409 has no refund on the ledger behind it', async () => {
+      mockRefundTransaction.mockRejectedValue(conflict());
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('conflict');
+
+      expect(canceled()).toBe(false);
+    });
   });
 });
 

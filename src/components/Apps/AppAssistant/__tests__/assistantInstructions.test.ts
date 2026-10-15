@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
+import {
+  APP_ASSISTANT_RULES,
+  buildAssistantInstructions,
+  buildAssistantSystemPrompt,
+} from '~/components/Apps/AppAssistant/assistantInstructions';
 
 const running = { name: 'sbx-0123456789ab', app: 'my-app', state: 'running' as const };
 
@@ -26,6 +30,29 @@ describe('buildAssistantInstructions', () => {
     expect(text).toMatch(/No preview is running yet/);
     // Every tool the sandbox exposes is named with its prefix, never bare.
     expect(text).not.toMatch(/(?<!sandbox__)\b(tunnel_key|tunnel_connect|run_command)\b/);
+  });
+
+  it('scaffolds through npx, because a sandbox cannot install the CLI globally', () => {
+    const text = buildAssistantInstructions({
+      sandbox: running,
+      canPreview: true,
+      previewHost: null,
+    });
+    // The whole sentence: a reworded scaffold step must be re-read here.
+    expect(text).toContain(
+      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.'
+    );
+  });
+
+  it('starts the dev server from the project directory, since the tool starts in /workspace', () => {
+    const text = buildAssistantInstructions({
+      sandbox: running,
+      canPreview: true,
+      previewHost: null,
+    });
+    expect(text).toContain(
+      'sandbox__dev_server_start also starts in /workspace, not in the project directory, so give it the command cd <blockId> && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173. CIVITAI_DEV_TUNNEL_HMR=1 is what makes live reload work over the tunnel; any other command must keep it and --host 0.0.0.0 --port 5173.'
+    );
   });
 
   it('names the running preview host', () => {
@@ -58,5 +85,26 @@ describe('buildAssistantInstructions', () => {
       previewHost: null,
     });
     expect(text).toMatch(note);
+  });
+});
+
+describe('buildAssistantSystemPrompt', () => {
+  it('keeps the chat’s built-in rules and adds App Assistant’s after them', () => {
+    expect(buildAssistantSystemPrompt('BUILT-IN RULES')).toBe(
+      `BUILT-IN RULES\n\n${APP_ASSISTANT_RULES}`
+    );
+  });
+
+  it('pins the whole rule text: a reworded rule must be re-read here', () => {
+    expect(APP_ASSISTANT_RULES).toBe(
+      [
+        'App Assistant rules (these come after the rules above and win where they differ):',
+        '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',
+        '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
+        '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
+        '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
+        '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+      ].join('\n')
+    );
   });
 });

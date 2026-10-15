@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
@@ -8,7 +9,10 @@
   import { feedbackRefusal, type FeedbackFormName } from '$lib/feedback-refusal';
   import { feedbackPanelHasUnsavedDraft, makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
   import { feedbackTechnicalSummary } from '$lib/feedback-technical-summary';
+  import { isPlatformFeedbackArea, splitPlatformContext } from '$lib/feedback-platform';
   import FeedbackContextPanel from './FeedbackContextPanel.svelte';
+  import FeedbackPlatformContext from './FeedbackPlatformContext.svelte';
+  import FeedbackPlatformResolution from './FeedbackPlatformResolution.svelte';
   import FeedbackAttachments from './FeedbackAttachments.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
   import type {
@@ -86,6 +90,10 @@
   /** The `<summary>` badge — what the collapsed block holds, without opening it. */
   const technicalSummary = $derived(feedbackTechnicalSummary(context));
 
+  const platform = $derived(
+    isPlatformFeedbackArea(row.area) ? splitPlatformContext(row.context) : null
+  );
+
   /**
    * 🔴 `let`, NOT `const`, AND HANDED DOWN WITH `bind:draft=`. `FeedbackPromote` mutates this object
    * — four bound boxes and the mode toggle — and Svelte's dev ownership validator flags a mutation
@@ -126,8 +134,8 @@
   let lastSubmitted = $state<FeedbackFormName | null>(null);
 
   /**
-   * 🔴 `reset: false` ON BOTH FORMS. Neither carries a box seeded from the server any more, but both
-   * carry HIDDEN inputs — `id` and `expectedStatus` here, `id` and `mode` in the promote form — and
+   * 🔴 `reset: false` ON BOTH FORMS. Both carry HIDDEN inputs — `id` and `expectedStatus` here (and
+   * in the `apps-platform` resolution forms that share this state), `id` and `mode` in the promote form — and
    * Svelte writes `element.value`, never `defaultValue`. `HTMLFormElement.reset()` therefore blanks
    * them, and `set_value` early-returns on an unchanged expression, so nothing ever writes them
    * back: the next submit posts a form with no id and no concurrency guard at all.
@@ -154,7 +162,10 @@
    * `lastSubmitted` is what has to be correct when they are.
    */
   const triageForm = new FormState({
-    onSuccess: null,
+    // The one success that changes nothing on screen, so it is the one that needs saying.
+    onSuccess: (data) => {
+      if (data?.unchanged) toast.info('Nothing to save — that is already the stored resolution.');
+    },
     reload: true,
     reset: false,
     onSubmit: () => {
@@ -191,7 +202,7 @@
   );
 </script>
 
-<!-- `min-w-0` at every level: on the queue this panel lives inside a `<td colspan=9>` of a table
+<!-- `min-w-0` at every level: on the queue this panel lives inside a full-width `<td colspan>` of a table
      whose own container scrolls horizontally, so without it a long unbroken path or session id
      widens the TABLE instead of wrapping inside the panel. -->
 <div class="flex min-w-0 flex-col gap-5 p-5 text-left">
@@ -208,38 +219,46 @@
     <FeedbackAttachments {context} />
   </section>
 
-  <!-- 🔴 NOT `{#if}`. `<details>` hides its content; it does not UNMOUNT it. The tab strip this panel
-       used to carry destroyed the inactive sections' markup — the reason every operator-typed box
-       here is bound to parent-owned state — and the tripwire written against that
-       (`renders every section unconditionally`) matches on `activeTab` by name, so an `{#if}`
-       collapse walks straight past it. Nothing in this block is operator-typed today, so the cost
-       would not surface until something is.
-
-       🔴 `theme.css` styles `summary { cursor: pointer }` already — do NOT add `cursor-pointer`.
-       Several summaries in this app add it anyway.
-
-       The inner wrapper supplies the column and gap `FeedbackContextPanel`'s sibling sections sit
-       in. -->
-  <details class="min-w-0 border-t border-dark-4 pt-5">
-    <!-- 🔴 The badge is the only thing that survives the collapse, so it must not become a second
-         place the counts are spelled: `feedbackTechnicalSummary` owns the wording, and "distinct"
-         in it is load-bearing — see its docstring. -->
-    <summary class="text-xs tracking-wide text-dark-2 uppercase">
-      Technical details
-      {#if technicalSummary}
-        <span class="ml-2 font-normal normal-case">{technicalSummary}</span>
-      {/if}
-    </summary>
-    <div class="mt-4 flex min-w-0 flex-col gap-4">
-      <FeedbackContextPanel
-        area={row.area}
-        {context}
-        createdAt={row.createdAt}
-        {civitaiUrl}
-        {grafanaUrl}
-      />
+  <!-- Chosen by AREA, never by what the context happens to hold. An `apps-platform` row has none of
+       the host-page fields the block below reads; every other area keeps that block, mounted. -->
+  {#if platform}
+    <div class="flex min-w-0 flex-col gap-4 border-t border-dark-4 pt-5">
+      <FeedbackPlatformContext context={platform} />
     </div>
-  </details>
+  {:else}
+    <!-- 🔴 NOT `{#if}`. `<details>` hides its content; it does not UNMOUNT it. The tab strip this panel
+         used to carry destroyed the inactive sections' markup — the reason every operator-typed box
+         here is bound to parent-owned state — and the tripwire written against that
+         (`renders every section unconditionally`) matches on `activeTab` by name, so an `{#if}`
+         collapse walks straight past it. Nothing in this block is operator-typed today, so the cost
+         would not surface until something is.
+
+         🔴 `theme.css` styles `summary { cursor: pointer }` already — do NOT add `cursor-pointer`.
+         Several summaries in this app add it anyway.
+
+         The inner wrapper supplies the column and gap `FeedbackContextPanel`'s sibling sections sit
+         in. -->
+    <details class="min-w-0 border-t border-dark-4 pt-5">
+      <!-- 🔴 The badge is the only thing that survives the collapse, so it must not become a second
+           place the counts are spelled: `feedbackTechnicalSummary` owns the wording, and "distinct"
+           in it is load-bearing — see its docstring. -->
+      <summary class="text-xs tracking-wide text-dark-2 uppercase">
+        Technical details
+        {#if technicalSummary}
+          <span class="ml-2 font-normal normal-case">{technicalSummary}</span>
+        {/if}
+      </summary>
+      <div class="mt-4 flex min-w-0 flex-col gap-4">
+        <FeedbackContextPanel
+          area={row.area}
+          {context}
+          createdAt={row.createdAt}
+          {civitaiUrl}
+          {grafanaUrl}
+        />
+      </div>
+    </details>
+  {/if}
 
   <div class="min-w-0 border-t border-dark-4 pt-5">
     <FeedbackPromote
@@ -295,6 +314,13 @@
           {/each}
         </div>
       </form>
+      {#if platform}
+        <!-- Remounted whenever the STORED resolution changes, which is what re-seeds its boxes; see
+             the component's docstring. -->
+        {#key JSON.stringify(platform.resolution)}
+          <FeedbackPlatformResolution {row} resolution={platform.resolution} form={triageForm} />
+        {/key}
+      {/if}
     {:else}
       <p class="text-sm text-dark-2">
         You can read this queue but not triage it — that needs the “Set feedback status”

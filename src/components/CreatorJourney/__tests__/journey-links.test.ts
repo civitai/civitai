@@ -19,12 +19,17 @@ import {
 } from '~/server/services/creator-score-unlocks.service';
 import { groupCreatorScoreUnlocks } from '~/shared/utils/creator-score-unlocks';
 
-const registry = buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs);
+// Flag-gated unlocks switched on, so every family the ladder can ever show is checked.
+const registry = buildCreatorScoreUnlocks({
+  ...compiledCreatorScoreUnlockInputs,
+  servicesEnabled: true,
+});
 const family = (key: string) => key.split(':')[0];
 
 // Unlocks with no page to send a creator to. Adding an unlock to the registry fails the test below
 // until it is either linked in `unlockLinks` or listed here on purpose.
-const UNLINKED = ['comment-rate-limit', 'reaction-rate-limit'];
+// `creator-services`: its page is per-username and the ladder links are static.
+const UNLINKED = ['comment-rate-limit', 'reaction-rate-limit', 'creator-services'];
 
 // MantineProvider prepends a <style> block; drop it, then the tags, to read what a person sees.
 const visibleText = (html: string) =>
@@ -62,7 +67,7 @@ describe('journey ladder links', () => {
   it('links the Creator Showcase and the profile from the tier rewards', () => {
     const rewards = Object.values(tierRewards).flat() as string[];
     const linked = rewards.flatMap((reward) => hrefs(render(reward, rewardLinks('alice'))));
-    expect(linked.filter((href) => href === '/creators/showcase')).toHaveLength(2);
+    expect(linked.filter((href) => href === '/creators/showcase')).toHaveLength(3);
     expect(linked).toContain('/user/alice');
   });
 

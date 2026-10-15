@@ -121,6 +121,7 @@ export const userUpdateSchema = z.object({
   nameplateId: z.number().nullish(),
   profileDecorationId: z.number().nullish(),
   profileBackgroundId: z.number().nullish(),
+  cardDecorationId: z.number().nullish(),
   autoplayGifs: z.boolean().optional(),
   filePreferences: z
     .object({
@@ -303,6 +304,7 @@ export const navigationSettingsSchema = z
     more: navZone,
     hidden: navZone,
     showLabels: z.boolean().optional(),
+    keepProfileLabels: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
     // A key in both groups makes "the nearest placed sibling" ambiguous during resolution and
@@ -350,6 +352,12 @@ export const userSettingsSchema = z.object({
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
+  // Opt-out: leave me out of every "who reacted" / "who collected" list shown to someone else (image and
+  // comment reactions, Creator Studio). Counts still include me. Filtered in SQL via HIDE_FROM_REACTION_LISTS_KEY.
+  hideFromReactionLists: z.boolean().optional(),
+  // Opt-in: list my image reactions from before "who reacted" lists launched. Read in SQL via
+  // SHOW_PRE_LAUNCH_REACTIONS_KEY; hideFromReactionLists still wins.
+  showPreLaunchReactions: z.boolean().optional(),
   // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
   // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
   eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
@@ -430,6 +438,8 @@ export const setUserSettingsInput = z.object({
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
+  hideFromReactionLists: z.boolean().optional(),
+  showPreLaunchReactions: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
   hideStickerBook: z.boolean().optional(),
   hidePurchasedStickers: z.boolean().optional(),
@@ -502,6 +512,7 @@ export const userScoreMetaSchema = z.object({
   users: z.number().optional(),
   reportsActioned: z.number().optional(),
   reportsAgainst: z.number().optional(),
+  staffAwarded: z.number().optional(),
 });
 
 export const userMeta = z.object({

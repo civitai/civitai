@@ -132,6 +132,18 @@ import type {
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
   OutboxEntity,
+  StorylineStatus,
+  StorylineWhoCanContinue,
+  ServiceOfferingStatus,
+  ServicePreviewKind,
+  ServiceBuzzType,
+  ServiceDealStatus,
+  ServiceDealEventType,
+  ServiceDealFileKind,
+  ServiceDealFileStatus,
+  ServiceDealFileScanStatus,
+  ServiceDisputeResolution,
+  ServiceDealLeg,
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
@@ -754,6 +766,7 @@ export type Article = {
   cover: string | null;
   coverId: number | null;
   publishedAt: Timestamp | null;
+  scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;
   ingestion: Generated<ArticleIngestionStatus>;
   scanRequestedAt: Timestamp | null;
@@ -2608,6 +2621,17 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorScoreGrant = {
+  id: Generated<number>;
+  userId: number;
+  amount: number;
+  reason: string;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  revokeReason: string | null;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -3585,6 +3609,18 @@ export type ModelMetricDaily = {
   date: Timestamp;
   count: number;
 };
+export type ModelPermissionSnapshot = {
+  id: Generated<number>;
+  modelId: number;
+  effectiveAt: Generated<Timestamp>;
+  source: string;
+  actorUserId: number | null;
+  actorRole: string | null;
+  allowNoCredit: boolean;
+  allowCommercialUse: CommercialUse[];
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+};
 export type ModelReport = {
   modelId: number;
   reportId: number;
@@ -3607,6 +3643,12 @@ export type ModelReportStat = {
   claimPending: number;
   claimActioned: number;
   claimUnactioned: number;
+};
+export type ModelSelfGeneration = {
+  modelId: number;
+  userId: number;
+  generationCount: Generated<string>;
+  updatedAt: Generated<Timestamp>;
 };
 export type ModelTag = {
   modelId: number;
@@ -3722,6 +3764,16 @@ export type ModerationRule = {
   order: number | null;
   reason: string | null;
   createdById: number;
+};
+export type ModerationRuleVersion = {
+  id: Generated<number>;
+  ruleId: number;
+  definition: unknown;
+  enabled: boolean;
+  action: ModerationRuleAction;
+  reason: string | null;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
 };
 export type NewOrderPlayer = {
   userId: number;
@@ -4348,6 +4400,15 @@ export type ReferralReward = {
   revokedAt: Timestamp | null;
   revokedReason: string | null;
 };
+export type RemovalScoreExemption = {
+  imageId: number;
+  /**
+   * The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+   */
+  reason: string;
+  createdAt: Generated<Timestamp>;
+  createdBy: number | null;
+};
 export type Report = {
   id: Generated<number>;
   userId: number;
@@ -4399,6 +4460,16 @@ export type ResourceIntentCoocSnapshot = {
   keptPairs: number | null;
   payload: Buffer | null;
   trainImageIds: Buffer | null;
+};
+export type ResourceIntentVocabulary = {
+  id: string;
+  vocabVersion: string;
+  status: Generated<string>;
+  payload: Buffer;
+  rulesSummary: unknown;
+  createdAt: Generated<Timestamp>;
+  frozenAt: Timestamp | null;
+  frozenBy: string | null;
 };
 export type ResourceOverride = {
   hash: string;
@@ -4476,6 +4547,70 @@ export type SavedModel = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ScanLabelClaim = {
+  itemId: number;
+  userId: number;
+  expiresAt: Timestamp;
+};
+export type ScanLabelCopyObject = {
+  key: string;
+  itemId: number;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+  withdrawnAt: Timestamp | null;
+  removedAt: Timestamp | null;
+  withdrawReason: string | null;
+  withdrawError: string | null;
+};
+export type ScanLabelFlag = {
+  id: Generated<number>;
+  itemId: number;
+  source: string;
+  flaggerVersion: string;
+  reason: string | null;
+  workflowId: string;
+  flaggedAt: Timestamp;
+  snapshot: unknown | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelItem = {
+  id: Generated<number>;
+  imageId: number;
+  lane: Generated<string>;
+  firstFlaggedAt: Timestamp;
+  status: Generated<string>;
+  voidReason: string | null;
+  votes: Generated<number>;
+  blockVotes: Generated<number>;
+  outcome: string | null;
+  unanimous: boolean | null;
+  decidedAt: Timestamp | null;
+  actionedAt: Timestamp | null;
+  actionStartedAt: Timestamp | null;
+  actionResult: string | null;
+  actionError: string | null;
+  copyState: string | null;
+  copyKey: string | null;
+  copiedAt: Timestamp | null;
+  copyError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ScanLabelQuota = {
+  userId: number;
+  dailyVotes: Generated<number>;
+  active: Generated<boolean>;
+  updatedBy: number | null;
+  updatedAt: Generated<Timestamp>;
+};
+export type ScanLabelVote = {
+  itemId: number;
+  userId: number;
+  block: boolean;
+  reason: string | null;
+  reasonComment: string | null;
+  msOnItem: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ScannerContentSnapshot = {
   contentHash: string;
   scanner: string;
@@ -4491,6 +4626,177 @@ export type ScannerLabelReview = {
   reviewedAt: Generated<Timestamp>;
   verdict: ReviewVerdict;
   note: string | null;
+};
+export type ServiceDeal = {
+  id: Generated<number>;
+  offeringId: number;
+  buyerId: number;
+  sellerId: number;
+  price: number;
+  buzzType: ServiceBuzzType;
+  /**
+   * Kept by the platform out of `price` on release; the seller receives the rest.
+   */
+  feeAmount: Generated<number>;
+  revisionsIncluded: number;
+  revisionsUsed: Generated<number>;
+  deliveryDays: number;
+  previewKind: ServicePreviewKind;
+  /**
+   * The offering's maxNsfwLevel when requested; never re-read from the offering.
+   */
+  maxNsfwLevel: Generated<number>;
+  status: Generated<ServiceDealStatus>;
+  /**
+   * Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
+   * deal without it was never paid for: the migration refuses any worked or payable status
+   * without it. Release and Refund receipts are NOT tied to it in the database, so code must
+   * claim them only against a paid Hold.
+   */
+  heldAt: Timestamp | null;
+  /**
+   * Set once the Release or Refund leg's Buzz call has succeeded.
+   */
+  settledAt: Timestamp | null;
+  chatId: number | null;
+  requestText: string;
+  requestedAt: Generated<Timestamp>;
+  acceptedAt: Timestamp | null;
+  dueAt: Timestamp | null;
+  /**
+   * Latest delivery. Starts the auto-complete window.
+   */
+  deliveredAt: Timestamp | null;
+  completedAt: Timestamp | null;
+  /**
+   * When the release leg may run: the end of the dispute window after completion.
+   * Required once Completed (a CHECK in the migration).
+   */
+  releaseAt: Timestamp | null;
+  cancellationRequestedAt: Timestamp | null;
+  cancellationRequestedById: number | null;
+  cancellationReason: string | null;
+  disputeOpenedAt: Timestamp | null;
+  disputeReason: string | null;
+  disputeResolvedAt: Timestamp | null;
+  disputeResolution: ServiceDisputeResolution | null;
+  disputeResolvedById: number | null;
+  closedAt: Timestamp | null;
+  closeReason: string | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ServiceDealEvent = {
+  id: Generated<number>;
+  dealId: number;
+  actorId: number;
+  type: ServiceDealEventType;
+  round: Generated<number>;
+  comment: string | null;
+  /**
+   * Validated against the per-action lists in creator-services.constants; no DB CHECK.
+   */
+  reasonCode: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealFile = {
+  id: Generated<number>;
+  dealId: number;
+  round: Generated<number>;
+  kind: ServiceDealFileKind;
+  s3Key: string;
+  watermarkedKey: string | null;
+  /**
+   * The hidden, downscaled, unwatermarked copy a preview is scanned as. Deleted once its verdict
+   * lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
+   */
+  imageId: number | null;
+  scanKey: string | null;
+  /**
+   * The rating the scan gave the preview, recorded when it passes.
+   */
+  nsfwLevel: number | null;
+  fileName: Generated<string>;
+  mimeType: string;
+  size: number;
+  /**
+   * Uploading until the seller confirms the object is in the bucket.
+   */
+  status: Generated<ServiceDealFileStatus>;
+  failReason: string | null;
+  uploadedAt: Timestamp | null;
+  /**
+   * Set when preview processing last started, so a crashed worker's file is picked up again.
+   */
+  processingAt: Timestamp | null;
+  scanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+   */
+  malwareScanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * Set once the file's contents have been listed and checked (a zip unpacked, an image read).
+   */
+  unpackedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealFileEntry = {
+  id: Generated<number>;
+  fileId: number;
+  entryIndex: number;
+  path: string;
+  size: number;
+  imageId: number | null;
+  scanKey: string | null;
+  nsfwLevel: number | null;
+  scanStatus: Generated<ServiceDealFileScanStatus>;
+  failReason: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceDealTransaction = {
+  id: Generated<number>;
+  dealId: number;
+  leg: ServiceDealLeg;
+  externalTransactionId: string;
+  transactionId: string | null;
+  amount: number;
+  buzzType: ServiceBuzzType;
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
+  lastError: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ServiceOffering = {
+  id: Generated<number>;
+  sellerId: number;
+  title: string;
+  description: string;
+  coverImageId: number | null;
+  price: number;
+  acceptsBlue: Generated<boolean>;
+  previewKind: Generated<ServicePreviewKind>;
+  /**
+   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   */
+  maxNsfwLevel: Generated<number>;
+  deliveryDays: number;
+  revisionsIncluded: Generated<number>;
+  maxOpenDeals: number | null;
+  status: Generated<ServiceOfferingStatus>;
+  /**
+   * Set only when a moderator removes the offering: a key of the moderator reason list in code.
+   * Null on a seller's own remove, which is how the two are told apart.
+   */
+  removedReason: string | null;
+  removedDetails: string | null;
+  removedAt: Timestamp | null;
+  removedById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ServiceOfferingReport = {
+  serviceOfferingId: number;
+  reportId: number;
 };
 export type Session = {
   id: Generated<number>;
@@ -4526,6 +4832,141 @@ export type ShopifyMerchOrder = {
   userId: number | null;
   grantedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
+};
+export type Storyline = {
+  id: Generated<number>;
+  userId: number;
+  title: string;
+  status: Generated<StorylineStatus>;
+  whoCanContinue: Generated<StorylineWhoCanContinue>;
+  /**
+   * The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
+   * (CHECK in the migration). Continuations above it cannot be added, and chapters above
+   * it are never shown in this storyline.
+   */
+  maxNsfwLevel: number;
+  /**
+   * Whether the storyline as a whole is taken down: true while the title scan or a moderator
+   * holds a takedown (the two flags below). Every read gates on this. Individual chapters are
+   * taken down through their posts.
+   */
+  tosViolation: Generated<boolean>;
+  /**
+   * The title scan holds a takedown. Cleared on a clean rescan or by a moderator lifting it
+   * for the title they reviewed; neither clears `tosViolation` while a moderator's takedown is
+   * in place.
+   */
+  tosViolationByScan: Generated<boolean>;
+  /**
+   * A moderator holds a takedown. Only a moderator's restore clears it, and that leaves
+   * `tosViolation` set while the scan holds one too.
+   */
+  tosViolationByModerator: Generated<boolean>;
+  /**
+   * The title scan's restricting finding. Not a takedown: every chapter is held to
+   * `storylineCeiling` while it is set, whatever `maxNsfwLevel` says. Set and cleared only
+   * by the scan.
+   */
+  minorByScan: Generated<boolean>;
+  /**
+   * The title text a moderator lifted a scan takedown for, as `textScanTextHash`. A scan of
+   * the same text does not take it down again; an edited title is scanned afresh.
+   */
+  scanFlagLiftedTextHash: string | null;
+  /**
+   * The title's rating from the text scan, a single `NsfwLevel` flag (0 until scanned). A
+   * reader is shown the story only if their browsing level admits the higher of this and
+   * chapter 1's level.
+   */
+  nsfwLevel: Generated<number>;
+  /**
+   * A moderator's ruling on the title's rating; used in place of `nsfwLevel` when set.
+   */
+  moderatorNsfwLevel: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  /**
+   * The feed card's picture and the page banner, chosen by the owner from images in their own
+   * chapters or endorsed collaborators' (checked when chosen). Readers who may not see the
+   * chosen image get chapter 1's first image they may see instead.
+   */
+  coverImageId: number | null;
+  heroImageId: number | null;
+  /**
+   * The banner's vertical focus, as a percentage (0 top to 100 bottom).
+   */
+  heroImagePosition: Generated<number>;
+};
+export type StorylineBranchChoice = {
+  userId: number;
+  parentChapterId: number;
+  chapterId: number;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type StorylineChapter = {
+  id: Generated<number>;
+  storylineId: number;
+  /**
+   * One storyline per post. NULL once the post is deleted.
+   */
+  postId: number | null;
+  /**
+   * The chapter's author when it was added. Not a relation on purpose: a deleted
+   * account must not cascade away a chapter other people's chapters hang from.
+   */
+  userId: number;
+  /**
+   * Distance from the first chapter, which is 0. A storyline has exactly one chapter
+   * at depth 0 (enforced by a partial unique index in the migration).
+   */
+  depth: number;
+  /**
+   * The placement that added this chapter, when one did. Unique so replaying an
+   * approval cannot add the chapter twice.
+   */
+  placementId: number | null;
+  createdAt: Generated<Timestamp>;
+  /**
+   * Set when the placement that added this chapter is removed. The row stays and readers other
+   * than moderators see a removed tombstone.
+   */
+  removedAt: Timestamp | null;
+};
+export type StorylineChapterEdge = {
+  storylineId: number;
+  chapterId: number;
+  parentChapterId: number;
+  /**
+   * The storyline owner's main route out of the parent. At most one per parent (partial
+   * unique index in the migration). Whether a non-canon child is "endorsed" or
+   * "community" is not stored: it follows the current collaborator list, so endorsing
+   * someone reorders their existing chapters too.
+   */
+  canon: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineCollaborator = {
+  storylineId: number;
+  userId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineCreateClick = {
+  userId: number;
+  parentChapterId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineEarlyAccessSignup = {
+  userId: number;
+  /**
+   * Where they signed up from, for context only.
+   */
+  storylineId: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type StorylineReport = {
+  storylineId: number;
+  reportId: number;
 };
 export type Tag = {
   id: Generated<number>;
@@ -5318,6 +5759,7 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5396,8 +5838,10 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
+  ModelSelfGeneration: ModelSelfGeneration;
   ModelTag: ModelTag;
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;
@@ -5408,6 +5852,7 @@ export type DB = {
   ModelVersionSaleItem: ModelVersionSaleItem;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
+  ModerationRuleVersion: ModerationRuleVersion;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;
@@ -5450,10 +5895,12 @@ export type DB = {
   ReferralMilestone: ReferralMilestone;
   ReferralRedemption: ReferralRedemption;
   ReferralReward: ReferralReward;
+  RemovalScoreExemption: RemovalScoreExemption;
   Report: Report;
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
   ResourceIntentCoocSnapshot: ResourceIntentCoocSnapshot;
+  ResourceIntentVocabulary: ResourceIntentVocabulary;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;
@@ -5464,13 +5911,34 @@ export type DB = {
   Role: Role;
   RunStrategy: RunStrategy;
   SavedModel: SavedModel;
+  ScanLabelClaim: ScanLabelClaim;
+  ScanLabelCopyObject: ScanLabelCopyObject;
+  ScanLabelFlag: ScanLabelFlag;
+  ScanLabelItem: ScanLabelItem;
+  ScanLabelQuota: ScanLabelQuota;
+  ScanLabelVote: ScanLabelVote;
   ScannerContentSnapshot: ScannerContentSnapshot;
   ScannerLabelReview: ScannerLabelReview;
+  ServiceDeal: ServiceDeal;
+  ServiceDealEvent: ServiceDealEvent;
+  ServiceDealFile: ServiceDealFile;
+  ServiceDealFileEntry: ServiceDealFileEntry;
+  ServiceDealTransaction: ServiceDealTransaction;
+  ServiceOffering: ServiceOffering;
+  ServiceOfferingReport: ServiceOfferingReport;
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;
   ShopifyCustomerLink: ShopifyCustomerLink;
   ShopifyMerchOrder: ShopifyMerchOrder;
+  Storyline: Storyline;
+  StorylineBranchChoice: StorylineBranchChoice;
+  StorylineChapter: StorylineChapter;
+  StorylineChapterEdge: StorylineChapterEdge;
+  StorylineCollaborator: StorylineCollaborator;
+  StorylineCreateClick: StorylineCreateClick;
+  StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylineReport: StorylineReport;
   Tag: Tag;
   TagEngagement: TagEngagement;
   TagMetric: TagMetric;

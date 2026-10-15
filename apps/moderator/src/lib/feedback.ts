@@ -1,4 +1,8 @@
-import { APP_BLOCK_FEEDBACK_AREA, FEEDBACK_AREAS } from '@civitai/shared/feedback.constants';
+import {
+  APP_BLOCK_FEEDBACK_AREA,
+  APPS_PLATFORM_FEEDBACK_AREA,
+  FEEDBACK_AREAS,
+} from '@civitai/shared/feedback.constants';
 import type { LightboxItem } from './lightbox';
 
 export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
@@ -52,13 +56,20 @@ export function feedbackAreaOptions(
 }
 
 /**
- * Areas the queue and the sidebar badge leave out unless the area is picked explicitly. App feedback
- * is monitored on the main app's App review page; its rows still open at `/feedback/<id>`.
+ * Areas the queue and the general sidebar badge leave out unless the area is picked explicitly. App
+ * feedback is monitored on the main app's App review page; developer-platform feedback has its own
+ * badge and nav link. Both still open at `/feedback/<id>`.
  */
-export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [APP_BLOCK_FEEDBACK_AREA];
+export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [
+  APP_BLOCK_FEEDBACK_AREA,
+  APPS_PLATFORM_FEEDBACK_AREA,
+];
 
 // A Map, not an object literal: `area` is a stored string, and `{}['constructor']` is not undefined.
-const FEEDBACK_AREA_LABELS = new Map<string, string>([[APP_BLOCK_FEEDBACK_AREA, 'App feedback']]);
+const FEEDBACK_AREA_LABELS = new Map<string, string>([
+  [APP_BLOCK_FEEDBACK_AREA, 'App feedback'],
+  [APPS_PLATFORM_FEEDBACK_AREA, 'Apps platform (developers)'],
+]);
 
 /** The display name for an area slug; unlabelled slugs render as themselves. */
 export const feedbackAreaLabel = (area: string): string => FEEDBACK_AREA_LABELS.get(area) ?? area;
@@ -151,13 +162,13 @@ export type FeedbackContext = {
   other: Record<string, unknown> | null;
 };
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const isFilterValue = (value: unknown): value is string | number | boolean =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 
-const isString = (value: unknown): value is string => typeof value === 'string';
+export const isString = (value: unknown): value is string => typeof value === 'string';
 
 /** The fields the renderer draws. An entry carrying anything else is not one of these. */
 const NETWORK_ERROR_FIELDS = ['url', 'status', 'initiatorType'] as const;

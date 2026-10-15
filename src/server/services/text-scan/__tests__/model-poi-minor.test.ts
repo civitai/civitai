@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { TextScanOutcome } from '~/server/services/text-scan/types';
@@ -41,7 +42,12 @@ const { bustPublicModelResponseCache } = await import('~/server/services/model-v
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 
 const MODEL_ID = 7;
-const sqlOf = (call: unknown[]) => Array.from(call[0] as TemplateStringsArray).join('?');
+// Nested fragments arrive as Sql values; flattening shows the statement Postgres receives.
+const flat = (call: unknown[]): unknown[] => {
+  const query = Prisma.sql(call[0] as TemplateStringsArray, ...(call.slice(1) as never[]));
+  return [query.strings, ...query.values];
+};
+const sqlOf = (call: unknown[]) => (flat(call)[0] as string[]).join('?');
 
 const poi = (over = {}) => ({
   detected: true,
@@ -114,13 +120,37 @@ beforeEach(() => {
 });
 
 describe('applyModelPoiMinor — nothing to do', () => {
-  it('reads nothing when no label is newly detected, and never writes a false', async () => {
+  it('reads nothing when no label is newly detected, and never writes a flag', async () => {
     await run(
       outcome({
         poi: poi({ detected: false, newlyDetected: false, names: [] }),
         minor: minor({ detected: true, declared: true, newlyDetected: false }),
       })
     );
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  it('a clean verdict costs one guarded update per label, with no read', async () => {
+    await run(outcome({ poi: poi({ detected: false, newlyDetected: false, names: [] }) }));
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    const text = sqlOf(call);
+    expect(text).toContain(`- 'redetected'`);
+    expect(text).toContain(`? 'redetected'`);
+    expect(text).toContain(`IS DISTINCT FROM`);
+    expect(call.slice(1)).toContain(textScanTextHash(SUBJECT));
+  });
+
+  it('a detection the owner already declared leaves a pending re-detection alone', async () => {
+    await run(outcome({ minor: minor({ detected: true, declared: true, newlyDetected: false }) }));
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('never touches poi or minor for an outcome that did not ask for them', async () => {
+    await run(outcome({ triggeredLabels: ['nsfw'], nsfwLevel: 16 }));
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -134,11 +164,30 @@ describe('applyModelPoiMinor — nothing to do', () => {
   });
 });
 
+describe('applyModelPoiMinor — the verdict row', () => {
+  it('stamps promptIds and model from the row whose workflow produced the verdict', async () => {
+    await run(outcome({ poi: poi(), minor: minor() }));
+    for (const call of [
+      flat(dbMock.dbWrite.$queryRaw.mock.calls[0]),
+      flat(dbMock.dbWrite.$executeRaw.mock.calls[0]),
+    ]) {
+      const text = sqlOf(call);
+      expect(text).toContain('em."entityType" = ANY(');
+      expect(text).toContain('ORDER BY em."workflowId" = ');
+      // A row with a NULL workflowId must not outrank the matching row.
+      expect(text).toContain(' DESC NULLS LAST, em."entityType"');
+      const values = call.slice(1);
+      expect(values).toContainEqual(['Model', 'Model:search']);
+      expect(values).toContain('wf-1');
+    }
+  });
+});
+
 describe('applyModelPoiMinor — poi', () => {
   it('sets, restricts and locks in one guarded write that snapshots the pre-flag state', async () => {
     await run(outcome({ poi: poi() }));
 
-    const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    const call = flat(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     const text = sqlOf(call);
     expect(text).toContain('poi = TRUE');
     expect(text).toContain('nsfw = FALSE');
@@ -148,7 +197,6 @@ describe('applyModelPoiMinor — poi', () => {
     expect(text).toContain('NOT m.poi');
     expect(text).toContain(`NOT ('poi' = ANY(`);
     expect(text).toContain(`->'appealGranted' IS NULL`);
-    expect(text).toContain(`->'appealGranted'->>'textHash' IS DISTINCT FROM `);
     expect(text).toContain('RETURNING');
 
     const values = call.slice(1);
@@ -242,7 +290,7 @@ describe('applyModelPoiMinor — poi', () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
-  it('re-flags a grant that carries no text hash — it covers nothing', async () => {
+  it('treats a grant that carries no text hash as covering nothing: a re-detection, not a flag', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       storedModel({
         lockedProperties: ['poi'],
@@ -254,7 +302,8 @@ describe('applyModelPoiMinor — poi', () => {
       })
     );
     await run(outcome({ poi: poi() }));
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('still skips when only the prompts or model changed (same text)', async () => {
@@ -276,16 +325,31 @@ describe('applyModelPoiMinor — poi', () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
-  it('re-flags and notifies once the text changed after a granted appeal', async () => {
+  it('records a re-detection and flags nothing once the text changed after a granted appeal', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       storedModel({ lockedProperties: ['poi'], meta: granted('poi', textScanTextHash(SUBJECT)) })
     );
-    await run(outcome({ poi: poi() }), EDITED);
-    const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
-    expect(call.slice(1)).toContain(textScanTextHash(EDITED));
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: `model-text-scan-flagged:${MODEL_ID}:poi:wf-1` })
+    expect(await run(outcome({ poi: poi() }), EDITED)).toEqual({ notified: false });
+
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    const write = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    const text = sqlOf(write);
+    expect(text).toContain(`'redetected', `);
+    expect(text).toContain(`->'appealGranted'->>'textHash' IS DISTINCT FROM `);
+    expect(text).not.toContain('poi = TRUE');
+    const detection = JSON.parse(
+      write.slice(1).find((v) => typeof v === 'string' && v.includes('wf-1')) as string
     );
+    expect(detection).toMatchObject({ workflowId: 'wf-1', textHash: textScanTextHash(EDITED) });
+    expect(mockSideEffects).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it('carries the earlier decisions into the history when a flag replaces the entry', async () => {
+    await run(outcome({ poi: poi() }));
+    const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(text).toContain(`'rulings'`);
+    expect(text).toContain(`->'appealGranted' || '{"decision":"appealGranted"}'`);
   });
 
   it('does not notify a model owned by the system/deleted-user account', async () => {
@@ -299,7 +363,7 @@ describe('applyModelPoiMinor — minor', () => {
   it('records the verdict, then flags through setModelMinor as text-scan, then notifies', async () => {
     await run(outcome({ minor: minor() }));
 
-    const write = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    const write = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
     const text = sqlOf(write);
     expect(text).toContain(`'minor', `);
     expect(text).toContain('NOT m.minor');
@@ -310,6 +374,7 @@ describe('applyModelPoiMinor — minor', () => {
       userId: -1,
       activity: 'setMinorTextScan',
     });
+    expect(text).toContain(`->'appealGranted' IS NULL`);
     expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mockSetModelMinor.mock.invocationCallOrder[0]
     );
@@ -344,23 +409,19 @@ describe('applyModelPoiMinor — minor', () => {
     expect(mockSetModelMinor).not.toHaveBeenCalled();
   });
 
-  it('re-flags minor and notifies once the text changed after a granted appeal', async () => {
+  it('records a minor re-detection and flags nothing once the text changed after a granted appeal', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       storedModel({
         lockedProperties: ['minor'],
         meta: granted('minor', textScanTextHash(SUBJECT)),
       })
     );
-    await run(outcome({ minor: minor() }), EDITED);
-    const write = dbMock.dbWrite.$executeRaw.mock.calls[0];
-    expect(sqlOf(write)).toContain(`->'appealGranted'->>'textHash' IS DISTINCT FROM `);
+    expect(await run(outcome({ minor: minor() }), EDITED)).toEqual({ notified: false });
+    const write = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    expect(sqlOf(write)).toContain(`'redetected', `);
     expect(write.slice(1)).toContain(textScanTextHash(EDITED));
-    expect(mockSetModelMinor).toHaveBeenCalledWith(
-      expect.objectContaining({ minor: true, activity: 'setMinorTextScan' })
-    );
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: `model-text-scan-flagged:${MODEL_ID}:minor:wf-1` })
-    );
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 });
 
@@ -390,7 +451,7 @@ describe('grantModelTextScanPoi', () => {
   // Review Focus 2.
   it('clears poi and keeps the poi lock so a rescan of the same text cannot put it back', async () => {
     expect(
-      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' })
+      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' })
     ).toBe(true);
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain('poi = FALSE');
@@ -404,20 +465,19 @@ describe('grantModelTextScanPoi', () => {
   // A grant recorded apart from the lift would outlive a failed lift, and a recorded grant reads as
   // lifted, so nothing could retry it.
   it('records the appeal grant in the statement that lifts poi', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
-    const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
+    const call = flat(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     const text = sqlOf(call);
-    expect(text).toMatch(
-      /meta = jsonb_set\(\s+m\.meta,\s+ARRAY\[\?::text, 'poi', 'appealGranted'\]/
-    );
-    expect(text).toContain(`'textHash', COALESCE(m.meta->?->'poi'->>'textHash', ?::text)`);
+    expect(text).toMatch(/meta = jsonb_set\(\s+m\.meta,\s+ARRAY\[\?::text, 'poi'\],/);
+    expect(text).toContain(`- 'redetected'`);
+    expect(text).toContain(`'textHash', ?::text,`);
     expect(text).toContain(`'via', 'appeal'`);
     expect(call.slice(1)).toEqual(expect.arrayContaining([3, 'h-current', MODEL_ID]));
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('restores the pre-poi nsfw and sfwOnly from the snapshot', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain(
       `ELSE COALESCE((m.meta->?->'poi'->'prev'->>'nsfw')::boolean, m.nsfw) END`
@@ -429,7 +489,7 @@ describe('grantModelTextScanPoi', () => {
 
   // Review Focus 4.
   it('never re-opens NSFW on a model that is still minor', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain('nsfw = CASE WHEN m.minor THEN m.nsfw');
     expect(text).toContain(`"sfwOnly" = CASE WHEN m.minor THEN m."sfwOnly"`);
@@ -437,14 +497,14 @@ describe('grantModelTextScanPoi', () => {
   });
 
   it('runs side effects and levels only when a row changed', async () => {
-    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' });
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     expect(mockSideEffects).toHaveBeenCalledTimes(1);
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
 
     vi.clearAllMocks();
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
     expect(
-      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' })
+      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' })
     ).toBe(false);
     expect(mockSideEffects).not.toHaveBeenCalled();
   });
@@ -452,31 +512,67 @@ describe('grantModelTextScanPoi', () => {
   it('does nothing for a model that is not poi', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel({ poi: false }));
     expect(
-      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, currentHash: 'h-current' })
+      await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' })
     ).toBe(false);
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
 describe('stampModelTextScanAppeal', () => {
-  it('stamps only the named labels, with the flagged text hash and the current one as fallback', async () => {
+  it('grants each label against its own hash, not the flagged one, so a verdict for that text cannot re-flag', async () => {
     await stampModelTextScanAppeal({
       modelId: MODEL_ID,
       userId: 3,
       decision: 'appealGranted',
-      labels: ['poi'],
-      currentHash: 'h-current',
+      labels: ['poi', 'minor'],
+      grantHashes: { poi: 'h-main', minor: 'h-search' },
     });
-    const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
     const text = sqlOf(call);
     expect(text).toContain('unnest(');
-    expect(text).toContain(`'textHash', COALESCE(m.meta->?->l.label->>'textHash', ?::text)`);
-    expect(text).toContain(`'via', 'appeal'`);
-    expect(call.slice(1)).toContainEqual(['poi']);
-    expect(call.slice(1)).toEqual(
-      expect.arrayContaining(['appealGranted', 3, MODEL_ID, 'h-current'])
+    expect(text).toContain(
+      `'textHash', COALESCE((?::jsonb)->>l.label, m.meta->?->l.label->>'textHash')`
+    );
+    expect(text).toContain(`'via', ?::text`);
+    expect(call.slice(1)).toContain('appeal');
+    expect(call.slice(1)).toContainEqual(['poi', 'minor']);
+    expect(call.slice(1).map((v) => (typeof v === 'string' ? v : ''))).toContain(
+      JSON.stringify({ poi: 'h-main', minor: 'h-search' })
     );
   });
+
+  it('keeps an upheld ruling on the flagged text', async () => {
+    await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealUpheld',
+      labels: ['poi'],
+      grantHashes: { poi: 'h-main' },
+    });
+    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    // The hash map is empty for an upheld ruling, so the flagged hash wins.
+    expect(call.slice(1)).toContain('{}');
+    expect(call.slice(1)).not.toContain(JSON.stringify({ poi: 'h-main' }));
+  });
+
+  it.each([
+    ['no hashes', undefined],
+    ['a hash for only one label', { poi: 'h-main' }],
+  ])(
+    'refuses a grant with %s instead of falling back to the flagged hash',
+    async (_n, grantHashes) => {
+      await expect(
+        stampModelTextScanAppeal({
+          modelId: MODEL_ID,
+          userId: 3,
+          decision: 'appealGranted',
+          labels: ['poi', 'minor'],
+          grantHashes,
+        })
+      ).rejects.toThrow(/grant hash/i);
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    }
+  );
 
   it('writes nothing for an empty label list', async () => {
     await stampModelTextScanAppeal({
@@ -496,7 +592,7 @@ describe('reassertModelPoiRestrictions', () => {
 
   it('puts a poi model back to SFW with the poi locks in one guarded write', async () => {
     expect(await reassertModelPoiRestrictions(MODEL_ID)).toBe(true);
-    const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    const call = flat(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     const text = sqlOf(call);
     expect(text).toContain('nsfw = FALSE');
     expect(text).toContain('"sfwOnly" = TRUE');

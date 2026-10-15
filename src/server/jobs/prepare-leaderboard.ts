@@ -11,6 +11,7 @@ import {
   getUnpopulatedLeaderboards,
   isLeaderboardPopulated,
 } from '~/server/services/leaderboard.service';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
@@ -26,13 +27,47 @@ const log = createLogger('leaderboard', 'blue');
 // Accounts that must never appear on any leaderboard, regardless of the board's query.
 // Applied uniformly across every population path so exclusion lives at the system level, not per-query.
 // Mutes only count once confirmed by a moderator (mutedAt set); an unconfirmed `muted` flag does not exclude.
-const eligibleAccountSql = (alias = 'u') =>
-  `${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL AND ${alias}."mutedAt" IS NULL`;
+// Unlike `excludeFromLeaderboards`, metric exclusion has no non-public-board waiver.
+const eligibleAccountSql = (excludedUserIds: number[], alias = 'u') =>
+  `${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL AND ${alias}."mutedAt" IS NULL
+    AND ${alias}.id <> ALL(${intArrayLiteral(excludedUserIds)})`;
+
+function intArrayLiteral(ids: number[]) {
+  if (!ids.every(Number.isSafeInteger)) throw new Error('excluded user ids must be integers');
+  return `'{${ids.join(',')}}'::int[]`;
+}
+
+/** Must run before the board is sliced, or an excluded account costs the board a slot. */
+function withoutExcluded<T extends { userId: number }>(rows: T[], excludedUserIds: number[]) {
+  const excluded = new Set(excludedUserIds);
+  return rows.filter((row) => !excluded.has(row.userId));
+}
+
+const EXCLUSION_RETRY_MS = 30_000;
+
+/**
+ * Fails open after retries: readers serve today's date only, so failing closed would leave every board empty
+ * until the next run, a bigger break than listed accounts ranking for one more day.
+ */
+async function getExcludedUserIdsOrUnfiltered() {
+  try {
+    return await withRetries(getMetricExcludedUserIdsOrThrow, 3, EXCLUSION_RETRY_MS);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'leaderboard-metric-exclusion-unavailable',
+      message: (e as Error).message,
+    }).catch();
+    return [];
+  }
+}
 
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
   log('Leaderboard job start');
+
+  const excludedUserIds = await getExcludedUserIdsOrUnfiltered();
 
   await setCoverImageNsfwLevel();
 
@@ -69,7 +104,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
           }
 
           const includesCTE = query.includes('WITH ');
-          const context = { jobContext, id, query, includesCTE, addDays };
+          const context = { jobContext, id, query, includesCTE, addDays, excludedUserIds };
 
           const start = Date.now();
           log(`Leaderboard ${id} - Starting`);
@@ -95,7 +130,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   try {
     await limitConcurrency(tasks, 3);
     log('Leaderboards - Done');
-    await updateLegendsBoardResults();
+    await updateLegendsBoardResults(excludedUserIds);
     await setLastRun();
   } catch (e) {
     const error = e as Error;
@@ -182,7 +217,7 @@ type LegendsBoardResult = {
   metrics: Record<string, number>;
   position: number; // 1-1000
 };
-async function updateLegendsBoardResults() {
+async function updateLegendsBoardResults(excludedUserIds: number[]) {
   log('Legacy Board - Fetching');
   const legendsBoardDataRes = await pgDbReadLong.cancellableQuery<LegendsBoardResult>(`
     WITH scores AS (
@@ -209,7 +244,7 @@ async function updateLegendsBoardResults() {
           NOT u."excludeFromLeaderboards"
           OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
         )
-        AND ${eligibleAccountSql()}
+        AND ${eligibleAccountSql(excludedUserIds)}
       GROUP BY "userId", "leaderboardId"
     ), positions AS (
       SELECT
@@ -244,6 +279,7 @@ type LeaderboardContext = {
   query: string;
   includesCTE: boolean;
   addDays?: number;
+  excludedUserIds: number[];
 };
 
 const updateUserLeaderboardRank = createJob(
@@ -294,7 +330,7 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
       NOT u."excludeFromLeaderboards"
       OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = '${ctx.id}' AND NOT l.public)
     )
-      AND ${eligibleAccountSql()}
+      AND ${eligibleAccountSql(ctx.excludedUserIds)}
     ORDER BY score DESC
     LIMIT 1000
   `);
@@ -431,11 +467,13 @@ async function imageLeaderboardPopulation(
   }
 
   // Rank
-  const userScoresArray = Object.entries(userScores)
-    .map(([userId, score]) => ({
+  const userScoresArray = withoutExcluded(
+    Object.entries(userScores).map(([userId, score]) => ({
       userId: parseInt(userId),
       ...score,
-    }))
+    })),
+    ctx.excludedUserIds
+  )
     .sort((a, b) => b.score - a.score)
     .slice(0, 1100); // Overfetch to account for deleted users
 
@@ -453,7 +491,7 @@ async function imageLeaderboardPopulation(
       row_number() OVER (ORDER BY (s->>'score')::int DESC) as position
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
     JOIN "User" u ON u.id = (s->>'userId')::int
-    WHERE ${eligibleAccountSql()} AND u.id > 0
+    WHERE ${eligibleAccountSql(ctx.excludedUserIds)} AND u.id > 0
       AND NOT u."excludeFromLeaderboards"
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
@@ -554,8 +592,11 @@ const CLICKHOUSE_INSERT_BATCH_SIZE = 500;
 export async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext): Promise<boolean> {
   if (!clickhouse) return false;
   log('Leaderboard', ctx.id, 'Clickhouse');
-  const scores = (await clickhouse.$query<ClickhouseScores>(ctx.query))
-    ?.slice(0, 1000)
+  const scores = withoutExcluded(
+    (await clickhouse.$query<ClickhouseScores>(ctx.query)) ?? [],
+    ctx.excludedUserIds
+  )
+    .slice(0, 1000)
     .map((s) => ({
       ...s,
       metrics: JSON.parse(s.metrics),
@@ -573,7 +614,9 @@ export async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext): 
         s.*,
         (${positionStart} + row_number() OVER (ORDER BY score DESC)) as position
       FROM scores s
-      JOIN "User" u ON u.id = s."userId" AND NOT u."isModerator" AND ${eligibleAccountSql()}
+      JOIN "User" u ON u.id = s."userId" AND NOT u."isModerator" AND ${eligibleAccountSql(
+        ctx.excludedUserIds
+      )}
       WHERE NOT u."excludeFromLeaderboards"
     `);
     ctx.jobContext.on('cancel', query.cancel);

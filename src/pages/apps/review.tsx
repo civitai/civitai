@@ -2,6 +2,7 @@ import { Badge, Tabs } from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
 import {
   IconCheck,
+  IconDatabase,
   IconClipboardList,
   IconClock,
   IconFlag,
@@ -13,6 +14,7 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ActivePreviewsPanel } from '~/components/Apps/ActivePreviewsPanel';
+import { AppDocStoreReportsQueue } from '~/components/Apps/AppDocStoreReportsQueue';
 import { AppFeedbackModQueue } from '~/components/Apps/AppFeedbackModQueue';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
 import { SubListingReviewQueue } from '~/components/Apps/SubListingReviewQueue';
@@ -60,7 +62,7 @@ import { trpc } from '~/utils/trpc';
  * /apps/review — Moderator review queue + history for Apps (on-site App Blocks AND
  * off-site external listings), UNIFIED into one list per tab.
  *
- * Seven tabs:
+ * Eight tabs:
  *  - Pending  — ONE oldest-first FIFO list interleaving on-site publish requests
  *               (`blocks.listPendingRequests`) + off-site requests
  *               (`appListings.listPendingRequests`). Each row carries a kind badge
@@ -71,6 +73,8 @@ import { trpc } from '~/utils/trpc';
  *  - Manage listings — the full all-status lifecycle table (reset/relist/claim/purge).
  *  - Sub-listings — store items inside apps, and staged edits to them.
  *  - App feedback — users' private feedback to app developers, with hide/unhide.
+ *  - Storage reports — viewer-reported shared documents in the App Blocks document store,
+ *               across apps, with hide/unhide/delete (`apps.mod.docStore.*`).
  *
  * Both review modals are PAGE-OWNED (lifted here): the on-site `OnsiteReviewModal`
  * and the off-site `OffsiteReviewModal`. The unified list + the management table
@@ -110,6 +114,7 @@ const TAB_VALUES = [
   'manage',
   'sub-listings',
   'app-feedback',
+  'storage-reports',
 ] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
@@ -393,6 +398,9 @@ export default function ReviewQueuePage() {
             >
               App feedback
             </Tabs.Tab>
+            <Tabs.Tab value="storage-reports" leftSection={<IconDatabase size={14} />}>
+              Storage reports
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
@@ -441,6 +449,10 @@ export default function ReviewQueuePage() {
 
           <Tabs.Panel value="app-feedback" pt="md">
             <AppFeedbackModQueue />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="storage-reports" pt="md">
+            <AppDocStoreReportsQueue />
           </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>

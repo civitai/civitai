@@ -1,6 +1,6 @@
 import type { Actions, PageServerLoad } from './$types';
-import { appealActions, loadMinorQueue } from '$lib/server/minor-flag-queue';
+import { appealActions, loadFlagQueue } from '$lib/server/minor-flag-queue';
 
-export const load: PageServerLoad = ({ url }) => loadMinorQueue(url, 'appeals', null);
+export const load: PageServerLoad = ({ url }) => loadFlagQueue(url);
 
 export const actions: Actions = appealActions;

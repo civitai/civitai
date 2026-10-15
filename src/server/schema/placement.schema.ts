@@ -379,3 +379,50 @@ export const getPendingStickerPlacementsSchema = z.object({
 export const getMyStickerPlacementsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
+
+// ---------------------------------------------------------------------------
+// Storyline continuations
+// ---------------------------------------------------------------------------
+
+const storylineSpaceModeSchema = z.enum(['off', 'review']);
+
+export const storylineIdSchema = z.object({ storylineId: z.number().int().positive() });
+
+/**
+ * `price`: `undefined` keeps, `null` inherits the creator's default, a number
+ * sets it. Zero is a real price here; the creator's score/tier cap is applied
+ * at read.
+ */
+export const setStorylineSpaceSchema = z.object({
+  storylineId: z.number().int().positive(),
+  mode: storylineSpaceModeSchema,
+  price: z.number().int().min(0).nullable().optional(),
+});
+
+export const storylineContinuePriceSchema = z.object({
+  parentPostId: z.number().int().positive(),
+});
+
+export const storylineContinuationCursorSchema = z.object({
+  cursor: z.string().nullish(),
+});
+
+export const actOnStorylineContinuationSchema = z.object({
+  placementId: z.number().int().positive(),
+  action: z.enum(['approve', 'decline']),
+});
+
+/**
+ * 🔴 `expectedPrice` is required, unlike the remix gallery's. A storyline is
+ * free by default, so without it an owner who starts charging while someone
+ * is deciding would charge a contributor who was shown "free".
+ */
+export const submitStorylineContinuationSchema = z.object({
+  parentPostId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+  expectedPrice: z.number().int().min(0),
+});
+
+export const storylinePlacementIdSchema = z.object({
+  placementId: z.number().int().positive(),
+});

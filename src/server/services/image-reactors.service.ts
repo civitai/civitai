@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { getBasicDataForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { imageReactionListedToViewer } from '~/server/services/reaction-privacy.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -47,6 +48,7 @@ export async function getImageReactors({ imageId, userId }: { imageId: number; u
     SELECT "userId", reaction FROM "ImageReaction"
     WHERE "imageId" = ${imageId}
       AND reaction::text IN (${Prisma.join([...IMAGE_REACTOR_TYPES])})
+      AND ${imageReactionListedToViewer(userId)}
     ORDER BY "userId" DESC
     LIMIT ${IMAGE_REACTORS_LIMIT * IMAGE_REACTOR_TYPES.length}
   `;

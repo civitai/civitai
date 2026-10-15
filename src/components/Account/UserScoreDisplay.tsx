@@ -1,7 +1,11 @@
 import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
-import { IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
+import { IconAward, IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import { creatorScorePenalty, creatorScoreSources } from '~/components/Account/creator-score-copy';
+import {
+  creatorScorePenalty,
+  creatorScoreSources,
+  creatorScoreStaffAwarded,
+} from '~/components/Account/creator-score-copy';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Scores = {
@@ -12,6 +16,7 @@ type Scores = {
   users?: number;
   reportsActioned?: number;
   reportsAgainst?: number;
+  staffAwarded?: number;
 };
 
 export const scoreCategories = [
@@ -83,6 +88,7 @@ export function UserScoreDisplay({
   const total = scores.total ?? 0;
   const reportsAgainstScore = scores.reportsAgainst ?? 0;
   const reportsActionedScore = scores.reportsActioned ?? 0;
+  const staffAwardedScore = scores.staffAwarded ?? 0;
 
   return (
     <Paper withBorder={!flat} p={flat ? 0 : 'md'} radius="md">
@@ -209,6 +215,23 @@ export function UserScoreDisplay({
           />
         )}
 
+        {staffAwardedScore > 0 && (
+          <ScoreCallout
+            color="yellow"
+            icon={
+              <IconAward
+                size={16}
+                color="var(--mantine-color-yellow-6)"
+                style={{ flexShrink: 0 }}
+              />
+            }
+            label={creatorScoreStaffAwarded.label}
+            tooltip={creatorScoreStaffAwarded.earnedBy}
+            value={staffAwardedScore}
+            abbreviate={abbreviate}
+          />
+        )}
+
         {showReports && (
           <>
             <Divider label="Reports" labelPosition="left" />
@@ -281,7 +304,7 @@ function ScoreCallout({
   value,
   abbreviate,
 }: {
-  color: 'red' | 'green';
+  color: 'red' | 'green' | 'yellow';
   icon: ReactNode;
   label: string;
   tooltip: string;

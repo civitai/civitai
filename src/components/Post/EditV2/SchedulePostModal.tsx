@@ -5,7 +5,7 @@ import { IconCalendar, IconClock } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
 import { useController } from 'react-hook-form';
 import * as z from 'zod';
-import { Form, InputDateTimePicker, useForm } from '~/libs/form';
+import { Form, useForm } from '~/libs/form';
 import {
   POST_MAXIMUM_SCHEDULE_MONTHS,
   POST_MINIMUM_SCHEDULE_MINUTES,
@@ -47,11 +47,14 @@ export function SchedulePostModal({
   onSubmit,
   publishedAt,
   publishingModel,
+  entity = 'post',
 }: {
   onSubmit: (date: Date) => void;
   publishedAt?: Date | null;
   publishingModel?: boolean;
+  entity?: 'post' | 'article';
 }) {
+  const noun = publishingModel ? 'model' : entity;
   const dialog = useDialogContext();
   const today = new Date();
   const minDate = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
@@ -70,19 +73,13 @@ export function SchedulePostModal({
   return (
     <Modal
       {...dialog}
-      title={
-        <Text className="font-semibold">
-          {publishingModel ? 'Schedule your model' : 'Schedule your post'}
-        </Text>
-      }
+      title={<Text className="font-semibold">Schedule your {noun}</Text>}
       size="md"
       centered
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          {publishingModel
-            ? 'Select the date and time you want to publish this model.'
-            : 'Select the date and time you want to publish this post.'}
+          Select the date and time you want to publish this {noun}.
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
           <Stack gap="xl">
@@ -124,7 +121,7 @@ function PublishDateTimeInput({ minDate, maxDate }: { minDate: Date; maxDate: Da
           onChange={(day) => day && field.onChange(withScheduleDay(field.value, day))}
           minDate={minDate}
           maxDate={maxDate}
-          popoverProps={{ withinPortal: true }}
+          popoverProps={{ withinPortal: true, middlewares: { shift: { crossAxis: true } } }}
           error={!!fieldState.error}
           withAsterisk
         />

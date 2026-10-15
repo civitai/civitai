@@ -74,13 +74,31 @@ const MODELS = row({
   cosmeticId: 2900,
 });
 
+// Distinctive values, so a leak of any of them into the payload is findable as text.
+const SCORES = {
+  total: 1_234_567,
+  models: 700_001,
+  images: 300_007,
+  articles: 0,
+  users: 234_559,
+  reportsActioned: 50_050,
+  reportsAgainst: -50_050,
+  staffAwarded: 1_003,
+};
+
 function given(
   rows: ReturnType<typeof row>[],
-  user: { bannedAt?: Date | null; deletedAt?: Date | null; privacySettings?: unknown } = {}
+  user: {
+    bannedAt?: Date | null;
+    deletedAt?: Date | null;
+    privacySettings?: unknown;
+    meta?: unknown;
+  } = {}
 ) {
   dbMock.dbRead.user.findUnique.mockResolvedValue({
     bannedAt: user.bannedAt ?? null,
     deletedAt: user.deletedAt ?? null,
+    meta: user.meta ?? { scores: SCORES },
     profile: { privacySettings: user.privacySettings ?? null },
   } as never);
   dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue(rows as never);
@@ -207,14 +225,25 @@ describe('getProfileAchievements', () => {
   });
 
   // The exact score is self-only (brief): the payload has no score and no thresholds to infer one from.
-  it('carries no score and no thresholds', async () => {
+  it('carries no score points and no thresholds', async () => {
     const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
     expect(dbMock.dbRead.user.findUnique.mock.calls[0][0]).toEqual({
       where: { id: OWNER },
-      select: { bannedAt: true, deletedAt: true, profile: { select: { privacySettings: true } } },
+      select: {
+        bannedAt: true,
+        deletedAt: true,
+        meta: true,
+        profile: { select: { privacySettings: true } },
+      },
     });
     // Exact shapes, so any field added to the public payload has to be added here on purpose.
-    expect(Object.keys(result).sort()).toEqual(['achievements', 'tiers']);
+    expect(Object.keys(result).sort()).toEqual(['achievements', 'scoreSplit', 'tiers']);
+    expect(Object.keys(result.scoreSplit ?? {}).sort()).toEqual([
+      'articles',
+      'images',
+      'models',
+      'users',
+    ]);
     for (const tier of result.tiers)
       expect(Object.keys(tier).sort()).toEqual(['achievedAt', 'badgeUrl', 'key', 'name']);
     for (const achievement of result.achievements)
@@ -314,6 +343,98 @@ describe('getProfileAchievements', () => {
     expect(await getProfileAchievements({ userId: OWNER, viewerId: VISITOR })).toEqual({
       tiers: [],
       achievements: [],
+      scoreSplit: null,
+    });
+  });
+
+  describe('score split', () => {
+    it('gives a visitor whole-percent shares of the positive categories', async () => {
+      const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+      expect(result.scoreSplit).toEqual({ models: 57, images: 24, articles: 0, users: 19 });
+    });
+
+    it('never sends a visitor a point value, total, penalty, report or staff award', async () => {
+      const payload = JSON.stringify(
+        await getProfileAchievements({ userId: OWNER, viewerId: VISITOR })
+      );
+      for (const value of Object.values(SCORES).filter((v) => v !== 0))
+        expect(payload).not.toContain(String(Math.abs(value)));
+      expect(payload).not.toMatch(/reports|staffAwarded|total/);
+    });
+
+    it('sends the owner the same shares, not their points', async () => {
+      const owner = await getProfileAchievements({ userId: OWNER, viewerId: OWNER });
+      expect(owner.scoreSplit).toEqual({ models: 57, images: 24, articles: 0, users: 19 });
+      expect(JSON.stringify(owner)).not.toContain('700001');
+    });
+
+    it('is left out when the owner turns it off', async () => {
+      given([SUPERNOVA, MODELS], { privacySettings: { showScoreSplit: false } });
+      const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+      expect(result.tiers).not.toEqual([]);
+      expect(result.scoreSplit).toBeNull();
+    });
+
+    it('is left out for the owner too when they turn it off', async () => {
+      given([SUPERNOVA], { privacySettings: { showScoreSplit: false } });
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: OWNER })).scoreSplit
+      ).toBeNull();
+    });
+
+    it('goes with a hidden tier only for the owner, who alone sees that tier', async () => {
+      const hiddenTier = row({
+        key: 'score:mythic',
+        track: 'score',
+        threshold: 5000000,
+        hidden: true,
+        name: 'Mythic',
+        cosmeticId: 4000,
+      });
+      given([hiddenTier, MODELS]);
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: VISITOR })).scoreSplit
+      ).toBeNull();
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: OWNER })).scoreSplit
+      ).not.toBeNull();
+    });
+
+    it('is shown while any tier badge still shows', async () => {
+      given([SUPERNOVA, SPARK], { privacySettings: { hiddenBadgeIds: [2864] } });
+      const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+      expect(result.tiers.map((t) => t.key)).toEqual(['score:spark']);
+      expect(result.scoreSplit).not.toBeNull();
+    });
+
+    it('is shown when the owner never chose', async () => {
+      given([SUPERNOVA], { privacySettings: { showBadges: true } });
+      const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+      expect(result.scoreSplit).not.toBeNull();
+    });
+
+    it.each([
+      ['hides every badge', { privacySettings: { showBadges: false } }],
+      ['hides their tier badges', { privacySettings: { hiddenBadgeIds: [2864, 2865] } }],
+    ])('is left out when the owner %s', async (_, user) => {
+      given([SUPERNOVA, SPARK, MODELS], user);
+      const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+      expect(result.tiers).toEqual([]);
+      expect(result.scoreSplit).toBeNull();
+    });
+
+    it('is left out for a creator with no tier', async () => {
+      given([MODELS]);
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: VISITOR })).scoreSplit
+      ).toBeNull();
+    });
+
+    it('is left out when no category is positive', async () => {
+      given([SUPERNOVA], { meta: { scores: { total: -5000, reportsAgainst: -5000, models: 0 } } });
+      expect(
+        (await getProfileAchievements({ userId: OWNER, viewerId: VISITOR })).scoreSplit
+      ).toBeNull();
     });
   });
 

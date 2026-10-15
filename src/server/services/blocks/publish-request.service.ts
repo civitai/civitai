@@ -44,7 +44,7 @@ import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/a
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
 // appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
-import { sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { newBlockIdHyphenRunError, sanitizeAppSlug } from '~/server/utils/apps-slug';
 // Pure const (no env/Prisma). THE SAME threshold the owner-facing UI uses to call
 // a deploy "stalled" — shared so the mod retrigger gate and the badge can never
 // disagree about whether a build is stuck.
@@ -59,6 +59,7 @@ import {
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
+import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -1162,6 +1163,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // treated as TAKEN, exactly like any other foreign listing on the slug.
   let createDraftListing = false;
   if (existingApp == null) {
+    const hyphenRunError = newBlockIdHyphenRunError(slug);
+    if (hyphenRunError) throw new Error(hyphenRunError);
+
     const existingSlugListing = await dbRead.appListing.findFirst({
       where: { slug },
       select: { id: true, kind: true, status: true, appBlockId: true, userId: true },
@@ -1627,6 +1631,8 @@ export async function withdrawRequest(opts: {
     // an agent can run without a sandbox preview, so this must not be gated on
     // hadReviewPreview. Idempotent no-op when no agent was dispatched.
     void teardownAgentReviewForRequest(publishRequestId);
+    // Review document-store data — unconditional for the same reason (no preview needed).
+    void teardownReviewStorageForRequest(publishRequestId);
     return;
   }
   if (count === 0) {
@@ -1645,6 +1651,7 @@ export async function withdrawRequest(opts: {
       if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
       // AGENTIC REVIEW (P1, audit #1) — unconditional agent teardown (idempotent).
       void teardownAgentReviewForRequest(publishRequestId);
+      void teardownReviewStorageForRequest(publishRequestId);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under
@@ -2659,6 +2666,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   let repoUrl: string;
 
   if (isFirstVersion) {
+    const hyphenRunError = newBlockIdHyphenRunError(request.slug);
+    if (hyphenRunError) throw new Error(`Cannot approve: ${hyphenRunError}`);
+
     // (1) Auto-create OauthClient — public client scoped to the per-app
     // subdomain so the existing git-push manifest validator passes the
     // H8 origin binding check.
@@ -3474,6 +3484,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appBlockId,
     },
   });
+
+  // Review document-store data of this request, started the moment the decision is durable:
+  // the supersede below and the build trigger after it can each throw past every later teardown
+  // (a build-trigger failure leaves the request approved). Never rejects. The requests this
+  // approve supersedes are left to the sweep (`jobs/sweep-review-storage.ts`).
+  void teardownReviewStorageForRequest(request.id);
 
   // (6b) Supersede any OTHER request still 'pending' for this slug. If the
   // git-push webhook raced ahead of (6) it may have parked a duplicate
@@ -5099,6 +5115,46 @@ export async function teardownAgentReviewForRequest(publishRequestId: string): P
 }
 
 /**
+ * Delete the DOCUMENT-STORE data moderators wrote while running a request for real — every
+ * `rev:<publishRequestId>:<moderatorUid>` namespace (`DocStoreMaintenance.purgeReview`), called right after
+ * approve, reject and withdraw. Unconditional: an on-site run-for-real review needs no sandbox
+ * preview, so gating on `hadReviewPreview` would leak exactly the data this exists to delete.
+ * Requests superseded rather than decided, a purge that fails here, and a write that lands after
+ * it are all finished by the sweep (`jobs/sweep-review-storage.ts`).
+ *
+ * NEVER throws into the decision path. Every outcome is counted
+ * (`civitai_app_block_review_storage_cleanup_total`); a failure is also logged.
+ */
+export async function teardownReviewStorageForRequest(publishRequestId: string): Promise<void> {
+  const recordReviewStorageCleanup = (outcome: ReviewStorageCleanupOutcome) =>
+    import('~/server/metrics/app-block-runtime.metrics')
+      .then((m) => m.recordReviewStorageCleanup(outcome))
+      .catch(() => undefined);
+  try {
+    const { getDocStoreMaintenance } = await import(
+      '~/server/services/apps/doc-store-maintenance.instance'
+    );
+    const { rows } = await getDocStoreMaintenance().purgeReview(publishRequestId);
+    await recordReviewStorageCleanup(rows > 0 ? 'purged' : 'nothing');
+  } catch (err) {
+    const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
+    if (isDocStoreError(err, 'storage_disabled')) {
+      // No store connection (or one the store refuses): nothing can have been written
+      // through it, and nothing can be deleted through it either. Counted, not logged.
+      await recordReviewStorageCleanup('disabled');
+      return;
+    }
+    await recordReviewStorageCleanup('failed');
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownReviewStorageForRequest] review storage cleanup failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+/**
  * MANUAL teardown of a single review preview (the mod-facing "Tear down"
  * action + the way to free a slot when the concurrency cap is hit). Distinct
  * from teardownReviewForRequest (fired from approve/reject) in that it ALSO
@@ -5537,6 +5593,8 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
   // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
   void teardownAgentReviewForRequest(row.id);
+  // Review document-store data — unconditional too (an on-site run needs no preview).
+  void teardownReviewStorageForRequest(row.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
   // approved, carrying the (already-trimmed) moderator reason so it shows inline on

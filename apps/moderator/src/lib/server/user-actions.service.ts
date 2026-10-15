@@ -74,6 +74,8 @@ export type JsonResult =
       ok: false;
       error: string;
       requestNeverSent?: boolean;
+      /** No session to forward — no cookie, or no request in scope; the request was never sent. */
+      noSession?: true;
       status?: number;
       /** The recovered text alone, without the action label, so a caller that overrides the message
        *  can still carry what the far side said. */
@@ -94,10 +96,14 @@ async function readError(res: Response): Promise<string | null> {
  *  callers do — everything else about them was identical and drifted independently. */
 async function postJson(opts: {
   path: string;
+  /** Sent as the JSON body, or as the query string when `method` is `GET`. */
   body: Record<string, unknown>;
+  method?: 'GET' | 'POST';
   label: string;
   auth: 'webhook' | 'session';
   timeoutMs: number;
+  /** `'session'` only: forward this cookie instead of the current request's. */
+  cookie?: string;
 }): Promise<JsonResult> {
   const base = civitaiAppUrl();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -107,20 +113,24 @@ async function postJson(opts: {
     // Throws when there is no request in scope (a job, a script). That is a programming error rather
     // than a runtime condition, but it must not surface to the operator as a bare 500.
     let cookie: string | null;
-    try {
-      cookie = getRequestEvent().request.headers.get('cookie');
-    } catch {
-      return {
-        ok: false,
-        error: `${opts.label} must be called while handling a request.`,
-        requestNeverSent: true,
-      };
-    }
+    if (opts.cookie !== undefined) cookie = opts.cookie;
+    else
+      try {
+        cookie = getRequestEvent().request.headers.get('cookie');
+      } catch {
+        return {
+          ok: false,
+          error: `${opts.label} must be called while handling a request.`,
+          requestNeverSent: true,
+          noSession: true,
+        };
+      }
     if (!cookie)
       return {
         ok: false,
         error: `${opts.label} failed: no session to forward.`,
         requestNeverSent: true,
+        noSession: true,
       };
     headers.cookie = cookie;
   } else {
@@ -130,11 +140,21 @@ async function postJson(opts: {
     url += `?token=${encodeURIComponent(token)}`;
   }
 
+  const isGet = opts.method === 'GET';
+  if (isGet) {
+    const query = new URLSearchParams(
+      Object.entries(opts.body)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, String(v)])
+    ).toString();
+    if (query) url += `${url.includes('?') ? '&' : '?'}${query}`;
+  }
+
   try {
     const res = await fetch(url, {
-      method: 'POST',
+      method: isGet ? 'GET' : 'POST',
       headers,
-      body: JSON.stringify(opts.body),
+      ...(isGet ? {} : { body: JSON.stringify(opts.body) }),
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
     if (!res.ok) {
@@ -178,19 +198,28 @@ export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
+  | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
   | 'minor-flag/resolve-appeal'
+  | 'minor-flag/resolve-redetection'
   | 'minor-flag/revert'
   | 'minor-flag/set-minor'
+  | 'model/bring-back'
+  | 'model/set-sfw-only'
+  | 'model/set-poi'
+  | 'model/take-down'
+  | 'model/unpublish'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
   | 'strike/create'
   | 'text-scan'
   | 'training-data/resolve'
+  | 'user/creator-score-grant'
+  | 'user/creator-score-grant-revoke'
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
@@ -212,6 +241,50 @@ export const callModEndpoint = (
   timeoutMs = 30_000
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
+
+/** The read-only `/api/mod/*` routes; kept apart from `ModEndpoint` so a read cannot be sent as a write. */
+export type ModReadEndpoint =
+  | 'creator-services/deal-file-url'
+  | 'creator-services/deal-files'
+  | 'creator-services/disputes';
+
+/** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
+export const readModEndpoint = (
+  path: ModReadEndpoint,
+  params: Record<string, string | number | undefined>,
+  label: string,
+  timeoutMs = 15_000
+): Promise<JsonResult> =>
+  postJson({
+    path: `/api/mod/${path}`,
+    body: params,
+    method: 'GET',
+    label,
+    auth: 'session',
+    timeoutMs,
+  });
+
+/** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
+export const callModEndpointAs = (
+  cookie: string,
+  path: ModEndpoint,
+  body: Record<string, unknown>,
+  label: string,
+  timeoutMs = 30_000
+): Promise<JsonResult> =>
+  postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs, cookie });
+
+/**
+ * The session cookie of the request being handled; null outside a request or without one.
+ * It is the moderator's session: keep it in memory only, never log or store it.
+ */
+export function requestCookie(): string | null {
+  try {
+    return getRequestEvent().request.headers.get('cookie') || null;
+  } catch {
+    return null;
+  }
+}
 
 // Best-effort: the resolve already committed, and a missed bust is a stale read that expires with the cache.
 export const bustModelVersionCache = (versionIds: number[]): Promise<JsonResult> =>
@@ -651,6 +724,7 @@ export const BUZZ_TRANSACTION_TYPES = {
   Bid: 26,
   LicenseFee: 27,
   AppAuthorFee: 28,
+  ServiceEscrow: 29,
 } as const;
 
 export type BuzzTransactionType = keyof typeof BUZZ_TRANSACTION_TYPES;
@@ -1172,6 +1246,20 @@ const MAY_HAVE_COMPLETED =
 const MINT_MAY_HAVE_COMPLETED =
   'Could not confirm the code was minted. Wait a minute, then check this account’s code list before minting again.';
 
+/**
+ * Operator-facing error for a failed non-idempotent write. A lost response (5xx, 408, or no answer after
+ * the request left) may have written, and a blind retry writes twice, so it gets `mayHaveCompleted`.
+ */
+function writeFailureError(
+  result: Extract<JsonResult, { ok: false }>,
+  mayHaveCompleted: string
+): string {
+  if (result.status !== undefined && (result.status >= 500 || result.status === 408))
+    return mayHaveCompleted;
+  if (result.status !== undefined || result.requestNeverSent) return result.error;
+  return mayHaveCompleted;
+}
+
 // MEMBERSHIP CODE (support make-good). The endpoint records the ModActivity row inside the same
 // transaction as the code, and its daily cap counts those rows — so no `logAction` here.
 export async function mintMembershipCode(input: {
@@ -1185,15 +1273,7 @@ export async function mintMembershipCode(input: {
     { userId: input.userId, tier: input.tier, months: input.months, reason: input.reason },
     'Mint membership code'
   );
-  if (!result.ok) {
-    // Not idempotent: a lost response (5xx, 408, or no answer after the request left) may have
-    // minted a code, and a blind retry mints a second one.
-    if (result.status !== undefined && (result.status >= 500 || result.status === 408))
-      return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
-    if (result.status !== undefined || result.requestNeverSent)
-      return { ok: false, error: result.error };
-    return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
-  }
+  if (!result.ok) return { ok: false, error: writeFailureError(result, MINT_MAY_HAVE_COMPLETED) };
   const { code, expiresAt } = result.body;
   if (typeof code !== 'string' || !code || typeof expiresAt !== 'string')
     return { ok: false, error: MINT_MAY_HAVE_COMPLETED };
@@ -1213,11 +1293,48 @@ export async function revokeMembershipCode(input: {
     'Revoke membership code'
   );
   if (result.ok) return { ok: true };
-  if (result.status !== undefined && (result.status >= 500 || result.status === 408))
-    return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
-  if (result.status !== undefined || result.requestNeverSent)
-    return { ok: false, error: result.error };
-  return { ok: false, error: REVOKE_MAY_HAVE_COMPLETED };
+  return { ok: false, error: writeFailureError(result, REVOKE_MAY_HAVE_COMPLETED) };
+}
+
+const GRANT_MAY_HAVE_COMPLETED =
+  'Could not confirm the grant. Wait a minute, then check this account’s grant list before granting again.';
+
+// The endpoint records the ModActivity row in the grant's transaction, so no `logAction` here.
+export async function grantCreatorScore(input: {
+  userId: number;
+  amount: number;
+  reason: string;
+}): Promise<{ ok: true; total: number } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/creator-score-grant',
+    { userId: input.userId, amount: input.amount, reason: input.reason },
+    'Grant Creator Score'
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, GRANT_MAY_HAVE_COMPLETED) };
+  const { total } = result.body;
+  if (typeof total !== 'number') return { ok: false, error: GRANT_MAY_HAVE_COMPLETED };
+  return { ok: true, total };
+}
+
+const GRANT_REVOKE_MAY_HAVE_COMPLETED =
+  'Could not confirm the revoke. Refresh the grant list before trying again.';
+
+export async function revokeCreatorScoreGrant(input: {
+  userId: number;
+  grantId: number;
+  reason: string;
+}): Promise<{ ok: true; total: number } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/creator-score-grant-revoke',
+    { userId: input.userId, grantId: input.grantId, reason: input.reason },
+    'Revoke Creator Score grant'
+  );
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, GRANT_REVOKE_MAY_HAVE_COMPLETED) };
+  // The endpoint's total, not a re-read: the page reloads its scores from a replica that can lag.
+  const { total } = result.body;
+  if (typeof total !== 'number') return { ok: false, error: GRANT_REVOKE_MAY_HAVE_COMPLETED };
+  return { ok: true, total };
 }
 
 export async function deleteAccount(input: {

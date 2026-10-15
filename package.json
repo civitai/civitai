@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.261",
+  "version": "5.1.289",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -135,7 +135,7 @@
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/client": "0.2.0-beta.98",
-    "@civitai/components-chat": "^0.4.0",
+    "@civitai/components-chat": "^0.7.0",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
@@ -144,7 +144,7 @@
     "@civitai/mod-utils": "workspace:*",
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
-    "@civitai/orchestration-client": "0.2.0-beta.120",
+    "@civitai/orchestration-client": "0.2.0-beta.121",
     "@civitai/sdk": "^0.11.0",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
@@ -346,6 +346,7 @@
     "viem": "^2.30.6",
     "xml2js": "^0.6.2",
     "yaml": "^2.8.1",
+    "yauzl": "3.4.0",
     "zod": "^4.0.17",
     "zustand": "^4.3.7"
   },
@@ -385,6 +386,7 @@
     "@types/uuid": "^9.0.0",
     "@types/vimeo__player": "^2.18.3",
     "@types/xml2js": "^0.4.14",
+    "@types/yauzl": "3.4.0",
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
     "@vitest/browser": "^4.1.11",
@@ -457,7 +459,8 @@
       "utf-8-validate"
     ],
     "patchedDependencies": {
-      "@mantine/hooks": "patches/@mantine__hooks.patch"
+      "@mantine/hooks": "patches/@mantine__hooks.patch",
+      "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch"
     }
   }
 }

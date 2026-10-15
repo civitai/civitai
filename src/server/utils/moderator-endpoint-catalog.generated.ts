@@ -15,6 +15,13 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/cosmetic/delete': () => import('~/pages/api/mod/cosmetic/delete'),
   '/api/mod/cosmetic/unassign': () => import('~/pages/api/mod/cosmetic/unassign'),
   '/api/mod/cosmetic/update': () => import('~/pages/api/mod/cosmetic/update'),
+  '/api/mod/creator-services/deal-file-url': () =>
+    import('~/pages/api/mod/creator-services/deal-file-url'),
+  '/api/mod/creator-services/deal-files': () =>
+    import('~/pages/api/mod/creator-services/deal-files'),
+  '/api/mod/creator-services/disputes': () => import('~/pages/api/mod/creator-services/disputes'),
+  '/api/mod/creator-services/resolve-dispute': () =>
+    import('~/pages/api/mod/creator-services/resolve-dispute'),
   '/api/mod/csam/training-data-report': () => import('~/pages/api/mod/csam/training-data-report'),
   '/api/mod/homeblock/create': () => import('~/pages/api/mod/homeblock/create'),
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
@@ -25,9 +32,16 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/minor-flag/confirm': () => import('~/pages/api/mod/minor-flag/confirm'),
   '/api/mod/minor-flag/dismiss': () => import('~/pages/api/mod/minor-flag/dismiss'),
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),
+  '/api/mod/minor-flag/resolve-redetection': () =>
+    import('~/pages/api/mod/minor-flag/resolve-redetection'),
   '/api/mod/minor-flag/revert': () => import('~/pages/api/mod/minor-flag/revert'),
   '/api/mod/minor-flag/set-minor': () => import('~/pages/api/mod/minor-flag/set-minor'),
+  '/api/mod/model/bring-back': () => import('~/pages/api/mod/model/bring-back'),
   '/api/mod/model/bump': () => import('~/pages/api/mod/model/bump'),
+  '/api/mod/model/set-poi': () => import('~/pages/api/mod/model/set-poi'),
+  '/api/mod/model/set-sfw-only': () => import('~/pages/api/mod/model/set-sfw-only'),
+  '/api/mod/model/take-down': () => import('~/pages/api/mod/model/take-down'),
+  '/api/mod/model/unpublish': () => import('~/pages/api/mod/model/unpublish'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),
@@ -37,6 +51,9 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/text-scan': () => import('~/pages/api/mod/text-scan'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
+  '/api/mod/user/creator-score-grant': () => import('~/pages/api/mod/user/creator-score-grant'),
+  '/api/mod/user/creator-score-grant-revoke': () =>
+    import('~/pages/api/mod/user/creator-score-grant-revoke'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),

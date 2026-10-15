@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { findBlockedUserContent, stripBenignPhrases } from '~/server/services/blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
@@ -299,7 +299,7 @@ export async function scanCounterKey(
 
 /**
  * The hit a rejection is attributed to: the highest-priority category present. A `pattern` hit
- * counts only when `enforcePatterns` — see `sharedTextBlockingHit` in the router for why.
+ * counts only when `enforcePatterns` — see `enforcedBlockingHit` below for why.
  */
 export function blockingHit(
   scan: SharedTextScan,
@@ -311,6 +311,53 @@ export function blockingHit(
     if (hit) return hit;
   }
   return null;
+}
+
+/**
+ * The hit an ENFORCE scan is refused for, or `null` to let the write through.
+ *
+ * 🔴 A PATTERN-list hit counts only while `user-content-pattern-enforce` is on — the same rule the
+ * title/body belt follows inside `throwOnBlockedUserContent`, where a pattern hit is recorded but not
+ * enforced until that flag flips. Otherwise enforcing a `data` scan would enforce the pattern list on
+ * `data` while the same row's title is only recorded. The flag is read only when a pattern hit exists.
+ * Shared by the legacy shared-storage router and the document store, so the two cannot diverge.
+ */
+export async function enforcedBlockingHit(scan: SharedTextScan): Promise<SharedTextHit | null> {
+  const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
+    ? await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE)
+    : false;
+  return blockingHit(scan, { enforcePatterns });
+}
+
+/**
+ * The alert a blocked shared write raises, by policy: minor/POI → the legal-block channel
+ * (`type:error`), a general audit block → the content-block channel (`type:warning`), anything
+ * else (link, pattern, size, overflow) → none. METADATA ONLY, never the text; fire-and-forget.
+ * Shared by the legacy shared-storage router and the document store.
+ */
+export function emitSharedBlockAlert(
+  ctx: { appBlockId: string; uid: number; slug?: string },
+  block: { policy: string; category: string; field?: string }
+): void {
+  const { policy } = block;
+  const alert =
+    policy === 'minor' || policy === 'poi'
+      ? { name: 'app-blocks-shared-storage-legal-block', type: 'error' }
+      : policy === 'audit'
+      ? { name: 'app-blocks-shared-storage-content-block', type: 'warning' }
+      : null;
+  if (!alert) return;
+  logToAxiom(
+    {
+      ...alert,
+      category: block.category,
+      ...(block.field ? { field: block.field } : {}),
+      userId: ctx.uid,
+      ...(ctx.slug !== undefined ? { slug: ctx.slug } : {}),
+      appBlockId: ctx.appBlockId,
+    },
+    'block-audit'
+  ).catch(() => undefined);
 }
 
 // ── Recording ─────────────────────────────────────────────────────────────────
@@ -528,9 +575,7 @@ export async function recordSharedDataScan(
     }
   };
   await Promise.all([
-    scan.hits.length
-      ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx))
-      : null,
+    scan.hits.length ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx)) : null,
     insert(SHARED_DATA_SCANS_TABLE, () => [sharedDataScanRow(scan, ctx)]),
   ]);
 }

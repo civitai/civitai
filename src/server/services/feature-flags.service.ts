@@ -380,6 +380,9 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
+  // the Flipt flag is the only on-switch, including for moderators.
+  creatorServices: { availability: [], fliptKey: 'creator-services' },
   // One flag drives both halves of creator announcements: these surfaces and the
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
@@ -393,6 +396,11 @@ const featureFlags = createFeatureFlags({
     displayName: 'Batch post scheduling',
   },
   postPresets: { availability: ['mod'], fliptKey: 'post-presets', displayName: 'Post presets' },
+  articleScheduling: {
+    availability: ['mod'],
+    fliptKey: 'article-scheduling',
+    displayName: 'Article scheduling',
+  },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
@@ -766,6 +774,12 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_CRUCIBLE=public` in `.env`, which bypasses Flipt entirely.
   crucible: { availability: ['mod', 'granted'], fliptKey: 'crucible' },
+  // Flipt decides who sees Storylines while it answers; `['mod', 'granted']` is the fallback when
+  // Flipt is down or the key is missing, so an outage never widens the audience. Every gate reads
+  // `getFeatureFlags` (`isFlagProtected`, the page resolvers, the nav registry), as crucible's do.
+  //
+  // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
+  storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
   // Jev resource-intent primitive (POST /api/v1/blocks/resource-intent).
   // DARK by construction: Flipt owns it entirely and the flag must be created
   // default-OFF in flipt-state (separate, human-reviewed change) before any

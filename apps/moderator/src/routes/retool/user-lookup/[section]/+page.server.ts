@@ -3,7 +3,6 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
 import { parseForm, userIdSchema } from '$lib/server/query';
-import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -13,7 +12,6 @@ import {
 } from '$lib/server/moderation-memory.service';
 import {
   addSocial,
-  addTimedMute,
   BUZZ_TRANSACTION_TYPE_KEYS,
   BUZZ_TYPES,
   bulkCommentAction,
@@ -25,8 +23,9 @@ import {
   sendBuzz,
   mintMembershipCode,
   revokeMembershipCode,
+  grantCreatorScore,
+  revokeCreatorScoreGrant,
   setRewardsEligibility,
-  clearProfileText,
   deleteAccount,
   purgeAllContent,
   removeSocial,
@@ -36,15 +35,18 @@ import {
   refreshSessionCache,
   resetSubscriptionCaches,
   revokeTimedMute,
-  setBanned,
   toggleModerator,
   updateUserIdentity,
-  setMuted,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import { accountEnforcementActions } from '$lib/server/account-actions';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
+import {
+  CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  CREATOR_SCORE_GRANT_REASON_MAX,
+  type CreatorScoreGrantResult,
+} from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
-import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
@@ -67,11 +69,12 @@ const identityFail = (message: string) => fail(400, { scope: 'identity' as const
 const noteFail = (status: number, message: string) =>
   fail(status, { scope: 'notes' as const, error: message });
 const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, error: message });
-const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
 const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
+const creatorScoreFail = (message: string) =>
+  fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
@@ -111,22 +114,8 @@ export const actions: Actions = {
 
   // ENFORCEMENT. Every action below is gated on `/users` or on a named grant, never on this page: reaching User Lookup
   // is an investigation permission, acting on an account is a different one.
-  setMuted: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
-    const input = parseForm(
-      userIdSchema.extend({ muted: z.enum(['true', 'false']) }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return accountFail(input);
-
-    const result = await setMuted({
-      userId: input.userId,
-      muted: input.muted === 'true',
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return accountFail(result.error);
-    return { success: true };
-  },
+  // Ban, mute, timed mute and clearing profile text are shared with the user report queue.
+  ...accountEnforcementActions,
 
   // Ruling on a Pending system restriction, which the mute toggle above cannot do: it clears `muted`
   // and leaves the row Pending, the subscription cancelled and the user untold.
@@ -209,28 +198,6 @@ export const actions: Actions = {
 
     const result = await forceLogout({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
-    return { success: true };
-  },
-
-  clearProfileText: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return profileFail('Not permitted.');
-    const form = await request.formData();
-    const input = parseForm(userIdSchema, form);
-    if (typeof input === 'string') return profileFail(input);
-
-    // Checkboxes: absent when unticked, so they are read off the raw FormData rather than the parsed
-    // object, which only carries the last value for a repeated name.
-    const fields = form
-      .getAll('fields')
-      .map(String)
-      .filter((f): f is ProfileField => (PROFILE_FIELD_KEYS as string[]).includes(f));
-
-    const result = await clearProfileText({
-      userId: input.userId,
-      fields,
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return profileFail(result.error);
     return { success: true };
   },
 
@@ -541,6 +508,42 @@ export const actions: Actions = {
     return { success: true, revoked: input.code };
   }),
 
+  grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        amount: z.coerce.number().int().min(1).max(CREATOR_SCORE_GRANT_MAX_AMOUNT),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await grantCreatorScore(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    const outcome: CreatorScoreGrantResult = {
+      kind: 'granted',
+      amount: input.amount,
+      total: result.total,
+    };
+    return { success: true, outcome };
+  }),
+
+  revokeCreatorScoreGrant: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        grantId: z.coerce.number().int().positive(),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await revokeCreatorScoreGrant(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    const outcome: CreatorScoreGrantResult = { kind: 'revoked', total: result.total };
+    return { success: true, outcome };
+  }),
+
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a
   // failure scoped elsewhere renders on no section the moderator is looking at.
   setRewardsEligibility: async ({ request, locals }) => {
@@ -659,63 +662,6 @@ export const actions: Actions = {
     if (!result.ok) return accountFail(result.error);
     return { success: true };
   }),
-
-  setBanned: requiresGrant('user.ban', async ({ request, locals }) => {
-    // reasonCode is validated against the SAME list the main app's endpoint parses. It rejects anything
-    // else with a 500 before the ban happens, so an unchecked value here is a ban that silently does not
-    // occur.
-    const input = parseForm(
-      banFieldsSchema.extend({ ...userIdSchema.shape, ban: z.enum(['true', 'false']) }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return accountFail(input);
-    const unexplained = input.ban === 'true' ? rejectUnexplainedOther(input) : null;
-    if (unexplained) return accountFail(unexplained);
-
-    const result = await setBanned({
-      userId: input.userId,
-      ban: input.ban === 'true',
-      reasonCode: input.reasonCode,
-      detailsInternal: input.detailsInternal || undefined,
-      detailsExternal: input.detailsExternal || undefined,
-      ...banRemovalArgs(input, input.ban === 'true'),
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return accountFail(result.error);
-    return { success: true };
-  }),
-
-  addTimedMute: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
-
-    // Either a preset duration or an explicit end (Retool's `muteEnd`); the panel submits one or the
-    // other. `until` arrives as an ISO instant, not the raw `datetime-local` value — see the panel.
-    const input = parseForm(
-      userIdSchema.extend({
-        hours: z.coerce.number().positive().max(8760).optional(),
-        until: z.coerce.date().optional(),
-        reason: z.string().trim().min(1).max(500),
-      }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return accountFail(input);
-
-    const until =
-      input.until ?? (input.hours ? new Date(Date.now() + input.hours * 3_600_000) : null);
-    if (!until) return accountFail('Pick a duration or an end date.');
-    // A past end time would lift the mute the instant it is applied and read as a silent failure.
-    if (until.getTime() <= Date.now()) return accountFail('That end time has already passed.');
-    if (until.getTime() > Date.now() + 8760 * 3_600_000)
-      return accountFail('A timed mute cannot run more than a year.');
-    const result = await addTimedMute({
-      userId: input.userId,
-      until,
-      reason: input.reason,
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return accountFail(result.error);
-    return { success: true };
-  },
 
   // No mute id any more: the mute lives on the account, so the account id is the whole scope. The old
   // id + userId pair existed to stop one account's side-table row unmuting another.

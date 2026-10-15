@@ -30,16 +30,19 @@
     if (!view || !anchor || !VIEWS.has(view as PlannerView) || !isCalendarDay(anchor))
       return undefined;
     const mv = params.get('mv');
+    const tag = (params.get('tag') ?? '').trim().slice(0, 100);
     return {
       view: view as PlannerView,
       anchor,
       modelVersionId: mv && /^\d{1,12}$/.test(mv) ? Number(mv) : undefined,
+      tag: tag || undefined,
     };
   }
 
   function hrefFor(loc: PlannerLocation): string {
     const params = new URLSearchParams({ view: loc.view, anchor: loc.anchor });
     if (loc.modelVersionId) params.set('mv', String(loc.modelVersionId));
+    if (loc.tag) params.set('tag', loc.tag);
     return `/calendar?${params}`;
   }
 

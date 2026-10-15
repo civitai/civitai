@@ -68,7 +68,16 @@ const {
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
+  // For the REST handler case: the scope middleware is a pass-through that supplies claims.
+  withBlockScope:
+    (handler: (req: { blockClaims?: unknown }, res: unknown) => unknown) =>
+    (req: { blockClaims?: unknown }, res: unknown) => {
+      req.blockClaims = {};
+      return handler(req, res);
+    },
+  stashBlockActionDetail: vi.fn(),
 }));
+vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksSharedStorageEnabled: mockIsSharedEnabled,
@@ -126,7 +135,9 @@ import {
   getTopSharedCounters,
   incrementSharedCounter,
 } from '../apps-shared.router';
+import incrementHandler from '~/pages/api/v1/blocks/shared-storage/increment';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { newUlid } from '~/server/utils/app-block-ids';
 import { OnboardingSteps } from '~/server/common/enums';
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
@@ -186,6 +197,21 @@ beforeEach(() => {
   mockFindBlocked.mockResolvedValue([]);
 });
 
+// Near misses are cut from a real generated key, so each differs from it in one property.
+function appChosenKeys(): Array<[label: string, key: string]> {
+  const rowKey = newUlid();
+  return [
+    ['prefixed', 'playcount:123'],
+    ['short, no colon', 'plays'],
+    ['64 chars', 'k'.repeat(64)],
+    ['row-key length, with a colon', `playcount:${'7'.repeat(16)}`],
+    ['one char short of a row key', rowKey.slice(0, 25)],
+    ['one char longer than a row key', `${rowKey}0`],
+    ['row-key length, lower case', `${rowKey.slice(0, 25)}a`],
+    ['row-key length, a letter the generator omits', `${rowKey.slice(0, 25)}U`],
+  ];
+}
+
 describe('assertValidCounterKey', () => {
   it('accepts a bounded key', () => {
     expect(assertValidCounterKey('playcount:123')).toBe('playcount:123');
@@ -194,6 +220,14 @@ describe('assertValidCounterKey', () => {
     expect(() => assertValidCounterKey('')).toThrow();
     expect(() => assertValidCounterKey('x'.repeat(65))).toThrow();
     expect(() => assertValidCounterKey(123 as unknown)).toThrow();
+  });
+  it('refuses a key in the shape `append` generates for a feed row', () => {
+    expect(() => assertValidCounterKey(newUlid())).toThrow(
+      expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
+    );
+  });
+  it.each(appChosenKeys())('still accepts an app-chosen key: %s', (_label, key) => {
+    expect(assertValidCounterKey(key)).toBe(key);
   });
 });
 
@@ -206,6 +240,53 @@ describe('incrementSharedCounter', () => {
     const sql = allClientSql();
     expect(sql).toContain(`${schemaFor('app-voting')}.counters`);
     expect(sql).toContain(`${schemaFor('app-voting')}.shared_kv`);
+  });
+
+  it('refuses a feed-row-shaped key and writes nothing', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    await expect(incrementSharedCounter('tok', newUlid())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'invalid counter key',
+    });
+    expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+    expect(mockGetSessionUser).not.toHaveBeenCalled();
+    expect(mockCheckVoteRl).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('still increments a key one character short of a row key', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    const key = newUlid().slice(0, 25);
+    await expect(incrementSharedCounter('tok', key)).resolves.toEqual({ key, count: 3 });
+    expect(allClientSql()).toContain(`${schemaFor('app-voting')}.counters`);
+  });
+
+  it('REST handler: a feed-row-shaped key → 400, nothing written', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    const sent: { status?: number; body?: unknown } = {};
+    const res = {
+      status(code: number) {
+        sent.status = code;
+        return res;
+      },
+      json(body: unknown) {
+        sent.body = body;
+        return res;
+      },
+      setHeader() {
+        return res;
+      },
+    };
+    const req = {
+      method: 'POST',
+      body: { key: newUlid() },
+      headers: { authorization: 'Bearer tok' },
+    };
+    await incrementHandler(req as never, res as never);
+    expect(sent).toEqual({ status: 400, body: { error: 'invalid counter key' } });
+    expect(mockClient.query).not.toHaveBeenCalled();
   });
 
   it('sub-trust caller (account too new) → FORBIDDEN (anti-inflation min-trust gate)', async () => {

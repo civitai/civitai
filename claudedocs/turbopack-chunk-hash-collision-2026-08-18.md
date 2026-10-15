@@ -192,6 +192,54 @@ deterministic per tree and a retry burns a second and third full build to fail i
 flag off, and the module graph grows every week. Ordinary graph growth reaching the ceiling will
 bite before the collision does.
 
+## Playbook: unblock a colliding `main` deterministically
+
+_Added 2026-10-13, after `main` collided on `[root-of-the-server]__10xu9k0._.js` for three
+consecutive builds._
+
+Any import-graph change re-rolls the hashes, but a blind re-roll can land on a new collision.
+Instead, find the colliding chunk and change that chunk's module set. Total time is about 15
+minutes.
+
+1. **Reproduce on Linux, not natively on Windows.** A native Windows `next build` of a commit that
+   failed in CI compiled cleanly: its module graph differs, so it emits different chunk names.
+   Building the `Dockerfile` `builder` stage in Docker reproduced the CI path exactly. Build from a
+   clean export, which must include the pinned `event-engine-common` submodule:
+
+   ```bash
+   git archive <sha> | tar -x -C ctx
+   git -C event-engine-common archive $(git ls-tree <sha> event-engine-common | awk '{print $3}') \
+     | tar -x -C ctx/event-engine-common
+   cd ctx && docker build --target builder \
+     --build-arg NODE_BUILD_MEM=16384 --build-arg CIVITAI_SKIP_BUILD_TYPECHECK=1 .
+   ```
+
+   Skipping the typecheck does not change the graph. The compile takes about 6 minutes.
+
+2. **Print the collision dumps.** A failed `RUN` discards its layer, so the dumps cannot be copied
+   out of the image. Print them to the log instead: in a copy of the Dockerfile, append this to
+   the `pnpm run build` line of the build `RUN`:
+
+   ```sh
+   || (for f in $(ls .next | grep -E "^[0-9a-f]{16}"); do echo "==DUMP $f"; head -c 2500 .next/$f; echo; done; exit 1)
+   ```
+
+   The `.js` dumps use numeric module ids and carry no paths. The `.map` dumps list the chunk's
+   source files in `"sources"`. Usually one chunk is project code and the other is a small
+   externals loader.
+
+3. **Change the project chunk's module set.** Add, remove or move an import in one of its source
+   files, without changing behaviour. A comment or content-only edit does not rename the chunk:
+   the name hashes module identities, not content. Rebuild in Docker. "Compiled successfully" with
+   no "same output path" error is the pass. A later failure on missing `NEXT_PUBLIC_*` env vars
+   comes from the bare local context and does not matter.
+
+Worked example: civitai#5874 moved the screenshot-autogen kill-switch out of
+`autogenerate-screenshot.service.ts` into its own module. That service's async chunk was half of
+the `10xu9k0` pair. Before and after on the same base commit: a collision, then a clean compile.
+`main` moved off that graph on its own before the PR merged, so the PR was parked. A
+perturbation only helps on the graph it was made for.
+
 ## Not verified
 
 - Whether output produced with `nestedAsyncChunking: true` is correct beyond compiling. Still

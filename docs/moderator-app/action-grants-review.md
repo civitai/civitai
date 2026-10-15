@@ -70,10 +70,9 @@ Two shapes on the `/admin` page tree, and they behave differently:
 
 - [ ] `/retool/user-lookup` for the **staff** role. This is the whole of the open P1 "User Lookup
       unavailable for the staff role" — nothing to build.
-- [ ] **`/retool/post-reports`** — shipped 2026-08-21 and reachable by `moderator:admin` alone until
-      ticked. It is NOT covered by the `/reports` `sharedAccess` grant: that one covers the generic
-      `/reports/*` queues, and this is a separate page under the `Retool` group. Whoever holds
-      `/retool/user-reports` is the group to match.
+- [x] ~~`/retool/post-reports`~~ — moved to `/reports/post` (2026-10-15), under the Reports section's
+      `sharedAccess` grant like `/reports/user`, so there is nothing to tick. Ruling, removing images and
+      striking still need `/users`.
 - [ ] **`/users/newest`** — new 2026-08-24, admin-only until ticked. Grant it on its own merits: it
       reads emails and profile text. 🔴 Do **not** reach for `/users` instead — that grant is also what
       User Lookup's ban, purge and bulk-comment actions check, so granting it hands over enforcement.

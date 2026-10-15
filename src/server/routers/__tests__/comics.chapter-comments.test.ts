@@ -19,6 +19,13 @@ describe('comic chapter comments', () => {
     expect(router()).toContain(`{ hidden: false, tosViolation: false }`);
   });
 
+  it('returns every reaction row but only the viewer’s own reaction identity', () => {
+    // Anchored on the return, so a call moved to some other value no longer satisfies it.
+    expect(router()).toContain(
+      'if (!ctx.user?.isModerator) keepOwnReactorIds(thread, ctx.user?.id);\n      return thread;'
+    );
+  });
+
   it('runs the content guard every other comment surface has, before the thread upsert', () => {
     expect(router()).toContain(
       'await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator })'

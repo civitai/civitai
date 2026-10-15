@@ -1,6 +1,9 @@
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import { isAppBlocksAuthorFeeEnabled } from '~/server/services/app-blocks-flag';
 import { APP_AUTHOR_FEE_DESCRIPTION, TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
@@ -605,6 +608,11 @@ async function chargeBlockAuthorFeeUncounted(
     return { charged: false, reason: 'debit-failed' };
   }
 
+  // A replay of a fee that already moved can also come back in neither array: Buzz may refuse
+  // the funds check before it spots the duplicate. Only the ledger tells that apart from a real
+  // drop. A failed lookup reports the drop.
+  if (!landed) landed = await feeChargeIsOnLedger(workflowId, viewerUserId).catch(() => false);
+
   if (!landed) {
     logToAxiom(
       {
@@ -1059,6 +1067,12 @@ async function refundBlockAuthorFee(args: {
     'civitai-prod'
   ).catch(() => undefined);
   return false;
+}
+
+/** Whether this workflow's fee debit from `viewerUserId` is already on the ledger. */
+async function feeChargeIsOnLedger(workflowId: string, viewerUserId: number) {
+  const existing = await getTransactionByExternalId(blockAuthorFeeChargeKey(workflowId));
+  return existing?.fromAccountId === viewerUserId;
 }
 
 /**

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as RouteModule from '~/server/services/text-scan/route';
 
 vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
@@ -20,8 +21,12 @@ const { submitTextModerationOrScan } = await import('~/server/services/text-scan
 const { applyRatingFloor } = await import('~/server/services/text-scan/rated-entities');
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { recomputeArticleIngestion } = await import('~/server/services/article.service');
+const { TEXT_SCAN_ENTITY_NOT_PUBLIC } = await import('~/server/services/text-scan/route');
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  dbMock.dbWrite.article.findUnique.mockResolvedValue({ status: 'Published', scheduledAt: null });
+});
 
 describe('articleModerationAdapter — text scan', () => {
   it('routes submit, keeping the XGuard call as the off/shadow path', async () => {
@@ -31,7 +36,7 @@ describe('articleModerationAdapter — text scan', () => {
       id: 'xg',
     });
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: 'Article', entityId: 4 })
+      expect.objectContaining({ entityType: 'Article', entityId: 4, fromRetry: true })
     );
     expect(submitTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -40,6 +45,35 @@ describe('articleModerationAdapter — text scan', () => {
         content: 'T body',
         labels: ['nsfw'],
       })
+    );
+    // A retry must count against the cap, not reset it.
+    expect(vi.mocked(submitTextModeration).mock.calls[0][0]).not.toHaveProperty('rearmRetries');
+  });
+
+  it('parks a draft on retry without scanning it on either path', async () => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ status: 'Draft', scheduledAt: null });
+
+    expect(await articleModerationAdapter.submit({ entityId: 4, content: 'T body' })).toBe(
+      TEXT_SCAN_ENTITY_NOT_PUBLIC
+    );
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['processing', { status: 'Processing', scheduledAt: null }],
+    ['scheduled', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
+    // A deleted article is left to the route, which reports it gone so the cron drops the row.
+    ['missing', null],
+  ])('submits a %s article on retry', async (_name, row) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(row);
+    vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
+
+    expect(await articleModerationAdapter.submit({ entityId: 4, content: 'T body' })).toEqual({
+      id: 'wf',
+    });
+    expect(submitTextModerationOrScan).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: 4, fromRetry: true })
     );
   });
 

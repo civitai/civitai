@@ -28,6 +28,7 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -35,6 +36,7 @@ import type {
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
+import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
@@ -83,7 +85,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
-import { postgresSlugify, removeTags } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
@@ -92,6 +94,10 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import {
+  articleAwaitsTextVerdict,
+  isPublicArticle,
+} from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
   computeArticleDerivedNsfwLevel,
@@ -205,9 +211,7 @@ export const getArticles = async ({
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
-    const isOwnerRequest =
-      !!sessionUser?.username &&
-      postgresSlugify(sessionUser.username) === postgresSlugify(username);
+    let isOwnerRequest = false;
     const hidePrivateArticles =
       forceHidePrivate ||
       (!ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds);
@@ -267,6 +271,7 @@ export const getArticles = async ({
 
       if (!targetUser) throw throwNotFoundError('User not found');
 
+      isOwnerRequest = !!userId && targetUser.id === userId;
       AND.push(Prisma.sql`u.id = ${targetUser.id}`);
     }
 
@@ -765,7 +770,12 @@ export const getArticleById = async ({
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the
       // field doesn't flow into external webhook / search-index payloads.
-      select: { ...articleDetailSelect, moderatorNsfwLevel: true },
+      select: {
+        ...articleDetailSelect,
+        moderatorNsfwLevel: true,
+        scheduledAt: true,
+        reactions: viewerReactionsSelect(userId),
+      },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
@@ -842,6 +852,7 @@ export const upsertArticle = async ({
   coverImage,
   isModerator,
   scanContent,
+  scheduledAt,
   ...data
 }: UpsertArticleInput & {
   userId: number;
@@ -849,6 +860,8 @@ export const upsertArticle = async ({
   metadata?: ArticleMetadata;
   scanContent?: boolean;
 }) => {
+  // Set only while the guarded draft write below is in flight, so its P2025 is told apart.
+  let writingNeverPublishedDraft = false;
   try {
     await throwOnBlockedUserContent([data.title, data.content], {
       isModerator,
@@ -901,6 +914,23 @@ export const upsertArticle = async ({
       storedLockedProperties: article?.lockedProperties,
       isModerator,
     });
+
+    // Scheduling stays a plain Draft (publishedAt NULL). Publishing now, or an explicit null, clears
+    // the schedule.
+    const scheduling = !!scheduledAt;
+    let scheduledAtWrite: Date | null | undefined;
+    if (scheduledAt) {
+      const scheduleError = getArticleScheduleError(article, scheduledAt, new Date());
+      if (scheduleError) throw throwBadRequestError(scheduleError);
+      data.status = ArticleStatus.Draft;
+      scheduledAtWrite = scheduledAt;
+    } else if (
+      scheduledAt === null ||
+      data.status === ArticleStatus.Published ||
+      data.status === ArticleStatus.Processing
+    ) {
+      scheduledAtWrite = null;
+    }
     if (!isModerator) {
       // moderatorNsfwLevel is a mod-only field. Silently strip it from
       // non-moderator payloads rather than throwing: the form never exposes
@@ -972,6 +1002,7 @@ export const upsertArticle = async ({
           data: {
             ...data,
             publishedAt,
+            scheduledAt: scheduledAtWrite,
             coverId,
             userId,
             tags: tags
@@ -1049,7 +1080,7 @@ export const upsertArticle = async ({
       }
 
       // Submit for text moderation (non-blocking, fire-and-forget)
-      if (result.content) {
+      if (result.content && isPublicArticle(result)) {
         const textForModeration = [data.title, removeTags(result.content)]
           .filter(Boolean)
           .join(' ');
@@ -1063,6 +1094,7 @@ export const upsertArticle = async ({
               content: textForModeration,
               labels: ['nsfw'],
               recordForReview: true,
+              rearmRetries: true,
             }),
         }).catch((e) => {
           logToAxiom({
@@ -1103,7 +1135,8 @@ export const upsertArticle = async ({
     // SECURITY: Validate image scan status before allowing publish
     // Prevent publishing articles with blocked or failed images
     // Note: Pending images are allowed - article will remain in Processing status until scan completes
-    if (!isModerator && data.status === ArticleStatus.Published && scanContent) {
+    // Scheduling is a publish decided now, so it is refused on the same images.
+    if (!isModerator && (data.status === ArticleStatus.Published || scheduling) && scanContent) {
       const scanStatus = await getArticleScanStatus({ id });
       const hasProblematicImages = scanStatus.blocked > 0 || scanStatus.error > 0;
 
@@ -1199,14 +1232,21 @@ export const upsertArticle = async ({
       publishedAt = article.publishedAt;
     }
 
+    // Guarded: the job may have taken this draft live since the read, and an unguarded write would
+    // revert it to Draft and re-fire the go-live side effects on the next publish.
+    writingNeverPublishedDraft = article.status === ArticleStatus.Draft && !article.publishedAt;
+    const updateWhere: Prisma.ArticleWhereUniqueInput = writingNeverPublishedDraft
+      ? { id, status: ArticleStatus.Draft, publishedAt: null }
+      : { id };
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
-        where: { id },
+        where: updateWhere,
         data: {
           ...data,
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           metadata: { ...prevMetadata, ...data.metadata },
           publishedAt,
+          scheduledAt: scheduledAtWrite,
           coverId,
           tags: tags
             ? {
@@ -1268,6 +1308,7 @@ export const upsertArticle = async ({
 
       return updated;
     });
+    writingNeverPublishedDraft = false;
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -1292,6 +1333,7 @@ export const upsertArticle = async ({
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
         coverId: coverId ?? article.coverId,
+        publication: { status: result.status, scheduledAt: result.scheduledAt },
       },
     });
 
@@ -1315,6 +1357,14 @@ export const upsertArticle = async ({
     return { ...result, hasModeratorOverride };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (
+      writingNeverPublishedDraft &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    )
+      throw throwBadRequestError(
+        'This article was published while you were editing it. Reload it and save again.'
+      );
     throw throwDbError(error);
   }
 };
@@ -1324,6 +1374,7 @@ type ArticleContentChangeContext = {
   title: string | null;
   previousContent: string | null;
   coverId: number | null;
+  publication: { status: ArticleStatus; scheduledAt: Date | null };
 };
 
 /**
@@ -1368,7 +1419,14 @@ export async function applyArticleContentChange({
   if (!resolved) {
     const stored = await dbWrite.article.findUnique({
       where: { id },
-      select: { userId: true, title: true, content: true, coverId: true },
+      select: {
+        userId: true,
+        title: true,
+        content: true,
+        coverId: true,
+        status: true,
+        scheduledAt: true,
+      },
     });
     if (!stored) throw throwNotFoundError(`No article with id ${id}`);
     resolved = {
@@ -1376,9 +1434,10 @@ export async function applyArticleContentChange({
       title: stored.title,
       previousContent: stored.content,
       coverId: stored.coverId,
+      publication: { status: stored.status, scheduledAt: stored.scheduledAt },
     };
   }
-  const { ownerId, title, previousContent, coverId } = resolved;
+  const { ownerId, title, previousContent, coverId, publication } = resolved;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1452,7 +1511,8 @@ export async function applyArticleContentChange({
   // orchestrator-wise. If the article's text was emptied out entirely,
   // drop any stale EntityModeration row — otherwise the retry cron would
   // keep re-submitting and `recomputeArticleIngestion` could still read
-  // the old blocked/error state.
+  // the old blocked/error state. A draft waits for the save that makes it public: the
+  // author may still edit it.
   {
     const currentTitle = title ?? '';
     const hasText = articleHasText(currentTitle, content);
@@ -1461,10 +1521,10 @@ export async function applyArticleContentChange({
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
-    } else {
+    } else if (isPublicArticle(publication)) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
-      submitTextModerationOrScan({
+      const submitted = submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
         xguard: () =>
@@ -1474,6 +1534,7 @@ export async function applyArticleContentChange({
             content: textForModeration,
             labels: ['nsfw'],
             recordForReview: true,
+            rearmRetries: true,
           }),
       }).catch((e) => {
         logToAxiom({
@@ -1483,6 +1544,8 @@ export async function applyArticleContentChange({
           articleId: id,
         }).catch();
       });
+      // Otherwise the recompute below can count a verdict for older text and take it live.
+      if (articleAwaitsTextVerdict(publication)) await submitted;
     }
   }
 
@@ -1608,6 +1671,7 @@ export const getDraftArticlesByUserId = async ({
         createdAt: true,
         updatedAt: true,
         status: true,
+        scheduledAt: true,
         tags: {
           where: { tag: { isCategory: true } },
           select: { tag: { select: { id: true, name: true } } },
@@ -2439,7 +2503,15 @@ export async function rescanArticle({
   const db = await getDbWithoutLag('article', id);
   const article = await db.article.findUnique({
     where: { id },
-    select: { id: true, userId: true, content: true, title: true, coverId: true },
+    select: {
+      id: true,
+      userId: true,
+      content: true,
+      title: true,
+      coverId: true,
+      status: true,
+      scheduledAt: true,
+    },
   });
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -2520,7 +2592,7 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  if (article.content) {
+  if (article.content && isPublicArticle(article)) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');
@@ -2537,6 +2609,7 @@ export async function rescanArticle({
           labels: ['nsfw'],
           recordForReview: true,
           forceRescan: true,
+          rearmRetries: true,
         }),
     }).catch((e) => {
       logToAxiom({

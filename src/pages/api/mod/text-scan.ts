@@ -13,13 +13,16 @@ export default defineModeratorEndpoint('textScan.harness', {
     'Text-scan operator actions: prompts, config, rollout modes, dry-run scans, shadow samples, quotes.',
   returns: "the action's JSON; a CSV sample as { csv }",
   notes: [
-    'putPrompt/putConfig/putModes are attributed to the signed-in moderator; ids in the body are ignored.',
+    'putPrompt/putConfig/putModes/putWebSearchModes are attributed to the signed-in moderator; ids in the body are ignored.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
+    'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
+    "scanEntity/batchEntities/scanTexts/quoteEntities/quoteTexts take pass: 'main' (default; every profile label, no tools) or 'web-search' (only poi/minor, with the civitai:web_search tool, as production's Model web-search pass runs them; other entity types are refused). Run both passes for a full picture: results carry pass, labels and, for scans, costTotal.",
+    'scanEntity/scanTexts take ruleOverrides (lab only): a positive id replaces that Model rule, a negative id adds an unsaved one, enabled:false drops it.',
   ],
   rateLimit: { max: 120, windowSeconds: 60 },
   input: textScanHarnessSchema,
-  auditExclude: ['content', 'promptOverrides', 'texts'],
+  auditExclude: ['content', 'promptOverrides', 'ruleOverrides', 'texts'],
   async handler(input, ctx) {
     const result = await runTextScanHarnessAction(input, { moderatorId: ctx.actor.id });
     return result.kind === 'csv' ? { csv: result.body } : (result.body as Record<string, unknown>);

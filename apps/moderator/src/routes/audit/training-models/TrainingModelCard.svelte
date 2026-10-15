@@ -4,7 +4,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import BanConfirmForm from '$lib/components/BanConfirmForm.svelte';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
-  import TrainingDataSheet from './TrainingDataSheet.svelte';
+  import TrainingDataSheet from '$lib/components/TrainingDataSheet.svelte';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, bytes, dateTime } from '$lib/format';

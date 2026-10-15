@@ -18,6 +18,7 @@ export enum ReportEntity {
   Announcement = 'announcement',
   Crucible = 'crucible',
   GameFrameGame = 'gameFrameGame',
+  Storyline = 'storyline',
 }
 
 /**
@@ -50,4 +51,5 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.Announcement]: 'Announcement',
   [ReportEntity.Crucible]: 'Crucible',
   [ReportEntity.GameFrameGame]: 'Game',
+  [ReportEntity.Storyline]: 'Storyline',
 };

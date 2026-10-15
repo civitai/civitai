@@ -425,6 +425,26 @@ describe('ESTIMATE — grants a confirmable quote only for a fixed price above t
     expect((await estimate()).snapshot.stepQuote?.total).toBe(5000);
   });
 
+  // The per-job limit equals the per-call cap (both 5000), so a token at the cap has
+  // no price that is both above its budget and within the limit.
+  it.each([[1040], [4999], [5000], [5001], [6301]])(
+    'a token at the 5000 per-call cap is never offered a confirm (price %i) [INV]',
+    async (total) => {
+      h.authorize.mockImplementation(async () => claims({ buzzBudget: 5000 }));
+      whatifPrice = { total };
+      const { snapshot } = await estimate();
+      expect(snapshot.cost.total).toBe(total);
+      expect(snapshot.stepQuote).toBeUndefined();
+      expect(keysWith(QUOTE_PREFIX)).toEqual([]);
+    }
+  );
+
+  it('one Buzz under the cap, the top price is still confirmable [INV]', async () => {
+    h.authorize.mockImplementation(async () => claims({ buzzBudget: 4999 }));
+    whatifPrice = { total: 5000 };
+    expect((await estimate()).snapshot.stepQuote?.total).toBe(5000);
+  });
+
   it.each([
     ['the flag is off', claims(), false],
     ['a dev token', claims({ dev: true }), true],

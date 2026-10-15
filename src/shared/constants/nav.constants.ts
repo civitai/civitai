@@ -32,6 +32,7 @@ export const NAV_KEYS = [
   'posts',
   'articles',
   'comics',
+  'storylines',
   'bounties',
   'challenges',
   'crucibles',

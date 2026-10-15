@@ -2420,6 +2420,57 @@ describe('blocks.submitWorkflow', () => {
       expect(incrKey).not.toContain('system:blocks:buzz-cap');
     });
 
+    // The per-call cap equals this aggregate (both 5000): one call at the full per-call
+    // budget fits an untouched session exactly, and a second such call does not.
+    it('one call at the full 5000 per-call budget fits a fresh session; a second does not [INV]', async () => {
+      mockVerifyBlockToken.mockResolvedValue({ ...runForRealClaims(), buzzBudget: 5000 });
+      happyVersionLookup();
+      happyUser();
+      const totals = new Map<string, number>();
+      mockSysRedis.incrBy.mockImplementation(async (key: string, n: number) => {
+        const next = (totals.get(String(key)) ?? 0) + n;
+        totals.set(String(key), next);
+        return next;
+      });
+      mockSysRedis.decrBy.mockImplementation(async (key: string, n: number) => {
+        const next = (totals.get(String(key)) ?? 0) - n;
+        totals.set(String(key), next);
+        return next;
+      });
+      const quoteAndRun = { id: 'wf_real', status: 'unassigned', cost: { total: 5000 }, steps: [] };
+      mockSubmitWorkflow.mockResolvedValue(quoteAndRun);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+
+      const first = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(first.snapshot.error).toBeUndefined();
+      expect(first.snapshot.workflowId).toBe('wf_real');
+
+      const second = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(second.snapshot.status).toBe('failed');
+      expect(second.snapshot.error).toBe(
+        'review run-for-real Buzz cap reached: 5000 already spent this review session, ' +
+          'this generation costs 5000, session cap is 5000'
+      );
+    });
+
+    it('a call one Buzz over the 5000 per-call budget is refused by the budget, before any reservation [INV]', async () => {
+      mockVerifyBlockToken.mockResolvedValue({ ...runForRealClaims(), buzzBudget: 5000 });
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 5001 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.error).toBe(
+        'insufficient buzz budget: estimate 5001 exceeds budget 5000'
+      );
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
     it('REJECTS a run-for-real submit that tops the 5000 session cap even FAR under the 50k daily cap', async () => {
       mockVerifyBlockToken.mockResolvedValue(runForRealClaims());
       happyVersionLookup();
@@ -9824,7 +9875,7 @@ describe('blocks — #3520 model substitution observability', () => {
    * an arm-swap mutant visible rather than merely possible.
    */
   describe('🔴 the PRIVATE-RUN Buzz cap reply names the right window and scope [INV]', () => {
-    function reachesTheCapAsPrivateRun(extra: Record<string, unknown> = {}) {
+    function reachesTheCapAsPrivateRun(extra: Record<string, unknown> = {}, quoted = 25) {
       mockVerifyBlockToken.mockResolvedValue(
         validClaims({
           buzzBudget: 1000,
@@ -9849,10 +9900,58 @@ describe('blocks — #3520 model substitution observability', () => {
       mockSubmitWorkflow.mockResolvedValueOnce({
         id: '',
         status: 'succeeded',
-        cost: { total: 25 },
+        cost: { total: quoted },
         steps: [],
       });
     }
+
+    // The per-call cap (5000) is above this aggregate (2500), so one call can fit its
+    // budget and still breach the cap from an untouched counter. `incrBy` answers with
+    // real arithmetic here, so the total is the call's own cost and nothing else.
+    function freshCounters() {
+      const totals = new Map<string, number>();
+      mockSysRedis.incrBy.mockImplementation(async (key: string, n: number) => {
+        const next = (totals.get(String(key)) ?? 0) + n;
+        totals.set(String(key), next);
+        return next;
+      });
+    }
+
+    it('🔴 ONE call inside a 5000 per-call budget but above the cap is refused by the cap [INV]', async () => {
+      reachesTheCapAsPrivateRun({ buzzBudget: 5000 }, 2501);
+      freshCounters();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toBe(
+        "private-run Buzz cap reached: 0 already spent on this app's private run, " +
+          'this generation costs 2501, cap is 2500 per app'
+      );
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only, no submit
+      expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1); // the reservation was refunded
+    });
+
+    it.each([[2499], [2500]])(
+      '…and the same call at %i, at or under the cap, runs [INV]',
+      async (price) => {
+        reachesTheCapAsPrivateRun({ buzzBudget: 5000 }, price);
+        freshCounters();
+        mockSubmitWorkflow.mockResolvedValue({
+          id: 'wf_1',
+          status: 'succeeded',
+          cost: { total: price },
+          steps: [],
+        });
+
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+        expect(result.snapshot.error).toBeUndefined();
+        expect(result.snapshot.status).not.toBe('failed');
+      }
+    );
 
     it('quotes the per-app private-run cap, NOT the daily one', async () => {
       reachesTheCapAsPrivateRun();
@@ -11157,9 +11256,9 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
   // tokens are exercised here, and this gate is where that number meets a real price. A 3D step is quoted at ~390, so a budget below that
   // means such an app can run in production but can never be developed or reviewed.
   // The budget is minted by the REAL clamp rather than restated, so the test follows
-  // the cap; 1300 is a manifest ask above it that is not a multiple of it.
+  // the cap; 6301 is a manifest ask above it that is not a multiple of it.
   describe('a pre-approval token can afford a 3D-priced step [REG]', () => {
-    const MANIFEST_BUDGET = 1300;
+    const MANIFEST_BUDGET = 6301;
     const mintedBudget = () =>
       resolveDevBuzzBudget(['ai:write:budgeted'], undefined, MANIFEST_BUDGET);
     // The explicit `step: undefined` is what the wire type's pass-through arm requires.
@@ -11185,16 +11284,36 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(mockSysRedis.incrBy).toHaveBeenCalledWith(expect.stringMatching(key), 390);
     });
 
-    it.each(TOKENS)('a %s token is still refused a step quoted above 1000', async (_name, over) => {
+    it.each(TOKENS)('a %s token is still refused a step quoted above 5000', async (_name, over) => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: mintedBudget(), ...over }));
       happyUser();
-      ptQuoting(1037, 1037);
+      ptQuoting(5037, 5037);
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(result.snapshot).toMatchObject({
         workflowId: 'failed',
         status: 'failed',
-        error: 'insufficient buzz budget: step ceiling 1037 exceeds budget 1000',
+        error: 'insufficient buzz budget: step ceiling 5037 exceeds budget 5000',
       });
+      expect(ptRealSubmits()).toHaveLength(0);
+    });
+
+    // The per-call cap is above the private-run aggregate, so one step can fit the
+    // budget and still be refused by the aggregate from an untouched counter.
+    it('a private-run step inside the budget but above the private-run cap is refused by that cap', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        ptClaims({ buzzBudget: mintedBudget(), privateRun: true, privateRunAudience: 'owner' })
+      );
+      happyUser();
+      ptQuoting(2501, 2501);
+      mockSysRedis.incrBy.mockImplementation(async (_key: string, n: number) => n);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      expect(result.snapshot.error).toContain('this step may cost up to 2501');
+      expect(result.snapshot.error).toContain('cap is 2500');
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:private-run-buzz-cap:42:/),
+        2501
+      );
       expect(ptRealSubmits()).toHaveLength(0);
     });
   });

@@ -595,6 +595,13 @@ model User {
   comicProjectEngagements    ComicProjectEngagement[]
   comicChapterReads          ComicChapterRead[]
 
+  // Storylines
+  storylines                 Storyline[]
+  storylineCollaborations    StorylineCollaborator[]
+  storylineEarlyAccess       StorylineEarlyAccessSignup?
+  storylineBranchChoices     StorylineBranchChoice[]
+  storylineCreateClicks      StorylineCreateClick[]
+
   // App Blocks back-relations
   blockUserSettings          BlockUserSettings[]
   promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
@@ -649,6 +656,9 @@ model User {
   crucibleEntries                    CrucibleEntry[]
   crucibleEngagements                CrucibleEngagement[]
   prizes                             Prize[]
+  serviceOfferings                   ServiceOffering[]
+  serviceDealsBought                 ServiceDeal[]              @relation("ServiceDealBuyer")
+  serviceDealsSold                   ServiceDeal[]              @relation("ServiceDealSeller")
 
   gameFrameGames          GameFrameGame[]
 
@@ -1111,9 +1121,34 @@ model Model {
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
   coveredCheckpoints CoveredCheckpoint[]
+  permissionSnapshots ModelPermissionSnapshot[]
 
   @@index([name])
   @@index([status, nsfw])
+}
+
+/// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
+/// be judged by the permission in effect when it was made rather than by today's. Before a model's
+/// first row nothing is known; a model with no rows has held its current permissions since
+/// `max(createdAt, MODEL_PERMISSION_LOG_START)`.
+///
+/// `source`: 'live' (written by upsertModel in the same transaction as the change), 'baseline' (the
+/// state just before a model's first recorded change, dated to the start of what is known) or
+/// 'backfill' (rebuilt from the ClickHouse entity-change log, which begins 2026-07-30).
+model ModelPermissionSnapshot {
+  id                    Int             @id @default(autoincrement())
+  modelId               Int
+  model                 Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  effectiveAt           DateTime        @default(now())
+  source                String
+  actorUserId           Int?
+  actorRole             String?
+  allowNoCredit         Boolean
+  allowCommercialUse    CommercialUse[]
+  allowDerivatives      Boolean
+  allowDifferentLicense Boolean
+
+  @@index([modelId, effectiveAt])
 }
 
 enum ModelFlagStatus {
@@ -1508,6 +1543,18 @@ model ModelVersionMetric {
   @@id(modelVersionId)
 }
 
+/// Images a model's owner generated with it, which the Creator Score's `models` category leaves out.
+/// Written by the nightly score job for owners who generated with their own models.
+model ModelSelfGeneration {
+  modelId         Int
+  userId          Int
+  generationCount BigInt   @default(0)
+  updatedAt       DateTime @default(now())
+
+  @@id([modelId, userId])
+  @@index([userId])
+}
+
 model ModelBaseModelMetric {
   model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId      Int
@@ -1660,12 +1707,14 @@ model Report {
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
   comicProject   ComicProjectReport?
+  storyline      StorylineReport?
   automated      ReportAutomated?
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
   announcement   AnnouncementReport?
   crucible       CrucibleReport?
   gameFrameGame  GameFrameGameReport?
+  serviceOffering ServiceOfferingReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -1892,6 +1941,21 @@ model ResourceIntentCoocSnapshot {
   @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
 }
 
+// A mined resource-intent v1 tag vocabulary. `vocabVersion` = sha256 hex of `payload` (a DB
+// CHECK). `status` is candidate | frozen | retired; a DB CHECK requires `frozenAt` and `frozenBy`
+// both null for a candidate and both set for a frozen row. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentVocabulary {
+  id           String    @id @default(uuid())
+  vocabVersion String    @unique
+  status       String    @default("candidate")
+  payload      Bytes
+  rulesSummary Json
+  createdAt    DateTime  @default(now())
+  frozenAt     DateTime?
+  frozenBy     String?
+}
+
 enum ReviewReactions {
   Like
   Dislike
@@ -1943,6 +2007,7 @@ model Post {
   tagVotes        TagsOnPostVote[]
   reports         PostReport[]
   collectionItems CollectionItem[]
+  storylineChapter StorylineChapter?
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -2086,6 +2151,8 @@ model Image {
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
   crucibleEntries        CrucibleEntry[]
+  storylineCovers        Storyline[]            @relation("StorylineCoverImage")
+  storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -5112,6 +5179,8 @@ enum CosmeticType {
   // theme is the shape a later pass would want, and an enum value cannot be
   // dropped without recreating the type.
   ChatTheme
+  // A glow around the creator card; its own slot, so it stacks with a badge.
+  CardDecoration
 }
 
 enum CosmeticSource {
@@ -5263,6 +5332,24 @@ model CreatorMilestoneCosmetic {
 
   @@id([milestoneKey, cosmeticId])
   @@index([cosmeticId])
+}
+
+/// Creator Score a moderator awarded by hand. `User.meta.scores.staffAwarded` is the sum of the
+/// unrevoked rows, rewritten on every grant and revoke; the nightly job carries it forward but never
+/// recomputes it.
+model CreatorScoreGrant {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  amount       Int
+  reason       String
+  grantedById  Int?
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  revokedById  Int?
+  revokeReason String?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([grantedById, createdAt])
 }
 
 /// Badges are permanent by product decision: no revocation columns.
@@ -5492,6 +5579,8 @@ model Article {
   coverId          Int?          @unique
   coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
+  // Go-live time for a never-published Draft; publishedAt stays NULL until then.
+  scheduledAt      DateTime?
   contentScannedAt DateTime?              // Set when both image + text scans complete successfully
   ingestion        ArticleIngestionStatus @default(Pending)
   scanRequestedAt  DateTime?
@@ -6809,6 +6898,19 @@ model Appeal {
   @@index([status])
 }
 
+/// An image whose removal no longer counts against its owner's Creator Score, because it was removed
+/// under a rule added after upload. Covers removals up to and including `createdAt`; a later one counts.
+/// No FK: a removed image's row is deleted.
+model RemovalScoreExemption {
+  imageId   Int      @id
+  /// The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+  reason    String
+  createdAt DateTime @default(now())
+  createdBy Int?
+
+  @@index([createdAt])
+}
+
 /// Written only by the `appeal_decision_record` trigger on "Appeal"; never insert from app code.
 /// Enriched and pruned by the `appeal-decision-records` job.
 model AppealDecisionRecord {
@@ -6841,6 +6943,86 @@ model AppealDecisionRecord {
 model AppealTrainingObjectDeletion {
   key       String   @id
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+// Upload scan label queue. FKs and CHECK constraints live in migration 20261022130000_scan_label_queue.
+model ScanLabelItem {
+  id             Int       @id @default(autoincrement())
+  imageId        Int       @unique
+  lane           String    @default("flagged")
+  firstFlaggedAt DateTime  @db.Timestamptz(3)
+  status         String    @default("open")
+  voidReason     String?
+  votes          Int       @default(0) @db.SmallInt
+  blockVotes     Int       @default(0) @db.SmallInt
+  outcome        String?
+  unanimous      Boolean?
+  decidedAt      DateTime? @db.Timestamptz(3)
+  actionedAt      DateTime? @db.Timestamptz(3)
+  actionStartedAt DateTime? @db.Timestamptz(3)
+  actionResult    String?
+  actionError     String?
+  copyState       String?
+  copyKey         String?
+  copiedAt        DateTime? @db.Timestamptz(3)
+  copyError       String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+}
+
+model ScanLabelFlag {
+  id             Int      @id @default(autoincrement())
+  itemId         Int
+  source         String
+  flaggerVersion String
+  reason         String?
+  workflowId     String   @unique
+  flaggedAt      DateTime @db.Timestamptz(3)
+  snapshot       Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([itemId])
+}
+
+model ScanLabelVote {
+  itemId    Int
+  userId    Int
+  block         Boolean
+  reason        String?
+  reasonComment String?
+  msOnItem      Int?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([itemId, userId])
+  @@index([userId, createdAt])
+}
+
+model ScanLabelClaim {
+  itemId    Int
+  userId    Int
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@id([itemId, userId])
+  @@index([userId])
+}
+
+// Every object the scan label copy job wrote; no FK so a copy stays tracked after its item is deleted.
+model ScanLabelCopyObject {
+  key            String    @id
+  itemId         Int
+  imageId        Int
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  withdrawnAt    DateTime? @db.Timestamptz(3)
+  removedAt      DateTime? @db.Timestamptz(3)
+  withdrawReason String?
+  withdrawError  String?
+}
+
+model ScanLabelQuota {
+  userId     Int      @id
+  dailyVotes Int      @default(50)
+  active     Boolean  @default(true)
+  updatedBy  Int?
+  updatedAt  DateTime @default(now()) @db.Timestamptz(3)
 }
 
 enum AuctionType {
@@ -6963,6 +7145,22 @@ model ModerationRule {
 
   createdById Int
   createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  versions    ModerationRuleVersion[]
+}
+
+model ModerationRuleVersion {
+  id          Int                  @id @default(autoincrement())
+  ruleId      Int
+  definition  Json
+  enabled     Boolean
+  action      ModerationRuleAction
+  reason      String?
+  createdById Int
+  createdAt   DateTime             @default(now())
+
+  rule ModerationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, id(sort: Desc)])
 }
 
 enum ChangelogType {
@@ -9307,6 +9505,520 @@ model PlacementSuspension {
   createdAt   DateTime @default(now())
   createdById Int?
 
+  @@index([createdAt])
+}
+
+// =============================================================================
+// STORYLINES - branching stories where every chapter is a post
+// =============================================================================
+
+enum StorylineStatus {
+  Ongoing
+  Complete
+}
+
+/// Who may add continuations. Closing a storyline to everyone is the placement layer's mode.
+enum StorylineWhoCanContinue {
+  Anyone
+  Collaborators
+}
+
+/// A branching story. Every chapter is a post; readers choose how to continue at the end
+/// of a chapter, and other creators can add continuations.
+model Storyline {
+  id           Int             @id @default(autoincrement())
+  userId       Int
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String          @db.VarChar(255)
+  status       StorylineStatus @default(Ongoing)
+  whoCanContinue StorylineWhoCanContinue @default(Anyone)
+  /// The highest rating a chapter may carry, as a single `NsfwLevel` flag from PG to XXX
+  /// (CHECK in the migration). Continuations above it cannot be added, and chapters above
+  /// it are never shown in this storyline.
+  maxNsfwLevel Int
+  /// Whether the storyline as a whole is taken down: true while the title scan or a moderator
+  /// holds a takedown (the two flags below). Every read gates on this. Individual chapters are
+  /// taken down through their posts.
+  tosViolation Boolean         @default(false)
+  /// The title scan holds a takedown. Cleared on a clean rescan or by a moderator lifting it
+  /// for the title they reviewed; neither clears `tosViolation` while a moderator's takedown is
+  /// in place.
+  tosViolationByScan     Boolean @default(false)
+  /// A moderator holds a takedown. Only a moderator's restore clears it, and that leaves
+  /// `tosViolation` set while the scan holds one too.
+  tosViolationByModerator Boolean @default(false)
+  /// The title scan's restricting finding. Not a takedown: every chapter is held to
+  /// `storylineCeiling` while it is set, whatever `maxNsfwLevel` says. Set and cleared only
+  /// by the scan.
+  minorByScan Boolean @default(false)
+  /// The title text a moderator lifted a scan takedown for, as `textScanTextHash`. A scan of
+  /// the same text does not take it down again; an edited title is scanned afresh.
+  scanFlagLiftedTextHash String?
+  /// The title's rating from the text scan, a single `NsfwLevel` flag (0 until scanned). A
+  /// reader is shown the story only if their browsing level admits the higher of this and
+  /// chapter 1's level.
+  nsfwLevel              Int     @default(0)
+  /// A moderator's ruling on the title's rating; used in place of `nsfwLevel` when set.
+  moderatorNsfwLevel     Int?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  /// The feed card's picture and the page banner, chosen by the owner from images in their own
+  /// chapters or endorsed collaborators' (checked when chosen). Readers who may not see the
+  /// chosen image get chapter 1's first image they may see instead.
+  coverImageId      Int?
+  coverImage        Image? @relation("StorylineCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
+  heroImageId       Int?
+  heroImage         Image? @relation("StorylineHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
+  /// The banner's vertical focus, as a percentage (0 top to 100 bottom).
+  heroImagePosition Int    @default(50)
+
+  chapters      StorylineChapter[]
+  collaborators StorylineCollaborator[]
+  reports       StorylineReport[]
+
+  @@index([userId])
+  @@index([coverImageId])
+  @@index([heroImageId])
+}
+
+/// A chapter of a storyline: one post. The tree lives in `StorylineChapterEdge`, not
+/// here, so a chapter can gain a second parent (stories coming back together) without a
+/// change to this table.
+///
+/// The row outlives its post. Deleting the post nulls `postId` and the chapter becomes a
+/// tombstone: its children keep their edge to it and stay reachable.
+model StorylineChapter {
+  id          Int       @id @default(autoincrement())
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  /// One storyline per post. NULL once the post is deleted.
+  postId      Int?      @unique
+  post        Post?     @relation(fields: [postId], references: [id], onDelete: SetNull)
+  /// The chapter's author when it was added. Not a relation on purpose: a deleted
+  /// account must not cascade away a chapter other people's chapters hang from.
+  userId      Int
+  /// Distance from the first chapter, which is 0. A storyline has exactly one chapter
+  /// at depth 0 (enforced by a partial unique index in the migration).
+  depth       Int
+  /// The placement that added this chapter, when one did. Unique so replaying an
+  /// approval cannot add the chapter twice.
+  placementId Int?      @unique
+  createdAt   DateTime  @default(now())
+  /// Set when the placement that added this chapter is removed. The row stays and readers other
+  /// than moderators see a removed tombstone.
+  removedAt   DateTime?
+
+  parents  StorylineChapterEdge[] @relation("StorylineChapterEdgeChild")
+  children StorylineChapterEdge[] @relation("StorylineChapterEdgeParent")
+
+  branchChoicesFrom StorylineBranchChoice[] @relation("StorylineBranchChoiceFrom")
+  branchChoicesTo   StorylineBranchChoice[] @relation("StorylineBranchChoiceTo")
+  createClicks      StorylineCreateClick[]
+
+  /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
+  /// join chapters from two storylines.
+  @@unique([id, storylineId])
+  @@index([storylineId])
+  @@index([userId])
+}
+
+/// Parent to child link between chapters. Forks happen only at the end of a chapter, so
+/// the edge carries no position within the parent.
+///
+/// v1 allows one parent per chapter: a unique index on `chapterId` in the migration.
+/// Dropping that index is the whole change needed for a chapter with several parents.
+model StorylineChapterEdge {
+  storylineId     Int
+  chapterId       Int
+  chapter         StorylineChapter @relation("StorylineChapterEdgeChild", fields: [chapterId, storylineId], references: [id, storylineId], onDelete: Cascade)
+  parentChapterId Int
+  /// NoAction, not Cascade: deleting a chapter row that still has children is refused
+  /// rather than silently cutting its subtree off from the root. Take a chapter down by
+  /// its post instead, which leaves a tombstone. The constraint is DEFERRABLE INITIALLY
+  /// DEFERRED in the migration (not expressible here), so it is checked at commit: deleting
+  /// the whole storyline works because the child-side cascade has removed these edges by
+  /// then. A violating write therefore fails at commit, not at the statement.
+  parentChapter   StorylineChapter @relation("StorylineChapterEdgeParent", fields: [parentChapterId, storylineId], references: [id, storylineId], onDelete: NoAction)
+  /// The storyline owner's main route out of the parent. At most one per parent (partial
+  /// unique index in the migration). Whether a non-canon child is "endorsed" or
+  /// "community" is not stored: it follows the current collaborator list, so endorsing
+  /// someone reorders their existing chapters too.
+  canon           Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+
+  @@id([chapterId, parentChapterId])
+  /// Children of a chapter, oldest first, without a sort.
+  @@index([parentChapterId, createdAt])
+}
+
+/// Collaborators the storyline owner has endorsed. Their continuations skip review and
+/// are listed before everyone else's.
+model StorylineCollaborator {
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([storylineId, userId])
+  @@index([userId])
+}
+
+/// A signed-in reader's choice of how to continue at the end of a chapter. One row per reader
+/// per fork point, overwritten when they choose again, so a fork's share of readers counts each
+/// reader once, by their latest choice. Signed-out readers are not counted.
+model StorylineBranchChoice {
+  userId          Int
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentChapterId Int
+  parentChapter   StorylineChapter @relation("StorylineBranchChoiceFrom", fields: [parentChapterId], references: [id], onDelete: Cascade)
+  chapterId       Int
+  chapter         StorylineChapter @relation("StorylineBranchChoiceTo", fields: [chapterId], references: [id], onDelete: Cascade)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
+
+  @@id([userId, parentChapterId])
+  @@index([parentChapterId, chapterId])
+}
+
+/// A signed-in reader asking for the "Create next section" tool at the end of a chapter. One row
+/// per reader per chapter: this counts how many people want it, not how many times they clicked.
+/// Signed-out clicks are not counted.
+model StorylineCreateClick {
+  userId          Int
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentChapterId Int
+  parentChapter   StorylineChapter @relation(fields: [parentChapterId], references: [id], onDelete: Cascade)
+  createdAt       DateTime         @default(now())
+
+  @@id([userId, parentChapterId])
+  @@index([createdAt])
+}
+
+/// Early-access list for the "Create next section" tool, one row per user.
+model StorylineEarlyAccessSignup {
+  userId      Int      @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Where they signed up from, for context only.
+  storylineId Int?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model StorylineReport {
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, storylineId])
+  @@index([storylineId], type: Hash)
+}
+
+enum ServiceOfferingStatus {
+  Draft
+  Active
+  Paused
+  Removed
+}
+
+/// What the seller shows before the buyer accepts. `None` skips the preview: the
+/// buyer accepts the delivery on trust.
+enum ServicePreviewKind {
+  Image
+  Video
+  SampleOutputs
+  None
+}
+
+/// The Buzz a deal is paid in. One per deal, fixed at request time, so every leg
+/// draws from and returns to the same account type.
+enum ServiceBuzzType {
+  yellow
+  blue
+  green
+}
+
+/// Open: Requested, Accepted, Delivered, InRevision, CancellationRequested, Disputed.
+/// Completed takes the release leg at `releaseAt`, unless a dispute opens first.
+/// Declined, Expired and Cancelled take the refund leg. A dispute resolves to
+/// Completed or Cancelled.
+enum ServiceDealStatus {
+  Requested
+  Accepted
+  Delivered
+  InRevision
+  Completed
+  Declined
+  Expired
+  CancellationRequested
+  Cancelled
+  Disputed
+}
+
+enum ServiceDealEventType {
+  Requested
+  Accepted
+  Declined
+  Expired
+  Delivered
+  RevisionRequested
+  Completed
+  CancellationRequested
+  CancellationAccepted
+  CancellationDeclined
+  Cancelled
+  Disputed
+  DisputeResolved
+  DeadlineExtended
+  Held
+  Released
+  Refunded
+}
+
+enum ServiceDealFileKind {
+  Preview
+  Final
+}
+
+/// Where a file is on its way to being usable. A Preview is Ready once its watermarked derivative
+/// exists; a Final is Ready once the upload is confirmed. Scanning is tracked apart, in scanStatus.
+enum ServiceDealFileStatus {
+  Uploading
+  Processing
+  Ready
+  Failed
+}
+
+enum ServiceDealFileScanStatus {
+  Pending
+  Passed
+  Failed
+  NotScanned
+}
+
+enum ServiceDisputeResolution {
+  Refund
+  Release
+}
+
+enum ServiceDealLeg {
+  Hold
+  Release
+  Fee
+  Refund
+}
+
+model ServiceOffering {
+  id                Int                   @id @default(autoincrement())
+  sellerId          Int
+  seller            User                  @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  title             String
+  description       String
+  coverImageId      Int?
+  price             Int
+  acceptsBlue       Boolean               @default(false)
+  previewKind       ServicePreviewKind    @default(Image)
+  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  maxNsfwLevel      Int                   @default(2)
+  deliveryDays      Int
+  revisionsIncluded Int                   @default(0)
+  maxOpenDeals      Int?
+  status            ServiceOfferingStatus @default(Draft)
+  /// Set only when a moderator removes the offering: a key of the moderator reason list in code.
+  /// Null on a seller's own remove, which is how the two are told apart.
+  removedReason     String?
+  removedDetails    String?
+  removedAt         DateTime?
+  removedById       Int?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  deals             ServiceDeal[]
+  reports           ServiceOfferingReport[]
+
+  /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
+  @@unique([id, sellerId])
+  @@index([sellerId, status])
+  @@index([status, createdAt])
+}
+
+model ServiceOfferingReport {
+  serviceOfferingId Int
+  serviceOffering   ServiceOffering @relation(fields: [serviceOfferingId], references: [id], onDelete: Cascade)
+  reportId          Int             @unique
+  report            Report          @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, serviceOfferingId])
+  @@index([serviceOfferingId], type: Hash)
+}
+
+/// A purchase of an offering. Price, Buzz type, fee, revisions, delivery days and
+/// preview kind are copied from the offering at request time and never re-read from
+/// it: the offering can change while the deal is open, and every leg pays from these.
+model ServiceDeal {
+  id                        Int                     @id @default(autoincrement())
+  offeringId                Int
+  offering                  ServiceOffering         @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  buyerId                   Int
+  buyer                     User                    @relation("ServiceDealBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  sellerId                  Int
+  seller                    User                    @relation("ServiceDealSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  price                     Int
+  buzzType                  ServiceBuzzType
+  /// Kept by the platform out of `price` on release; the seller receives the rest.
+  feeAmount                 Int                     @default(0)
+  revisionsIncluded         Int
+  revisionsUsed             Int                     @default(0)
+  deliveryDays              Int
+  previewKind               ServicePreviewKind
+  /// The offering's maxNsfwLevel when requested; never re-read from the offering.
+  maxNsfwLevel              Int                     @default(2)
+  status                    ServiceDealStatus       @default(Requested)
+  /// Set once the Hold leg's Buzz call has succeeded, whatever the deal's status by then. A
+  /// deal without it was never paid for: the migration refuses any worked or payable status
+  /// without it. Release and Refund receipts are NOT tied to it in the database, so code must
+  /// claim them only against a paid Hold.
+  heldAt                    DateTime?
+  /// Set once the Release or Refund leg's Buzz call has succeeded.
+  settledAt                 DateTime?
+  chatId                    Int?
+  requestText               String
+  requestedAt               DateTime                @default(now())
+  acceptedAt                DateTime?
+  dueAt                     DateTime?
+  /// Latest delivery. Starts the auto-complete window.
+  deliveredAt               DateTime?
+  completedAt               DateTime?
+  /// When the release leg may run: the end of the dispute window after completion.
+  /// Required once Completed (a CHECK in the migration).
+  releaseAt                 DateTime?
+  cancellationRequestedAt   DateTime?
+  cancellationRequestedById Int?
+  cancellationReason        String?
+  disputeOpenedAt           DateTime?
+  disputeReason             String?
+  disputeResolvedAt         DateTime?
+  disputeResolution         ServiceDisputeResolution?
+  disputeResolvedById       Int?
+  closedAt                  DateTime?
+  closeReason               String?
+  createdAt                 DateTime                @default(now())
+  updatedAt                 DateTime                @updatedAt
+  events                    ServiceDealEvent[]
+  files                     ServiceDealFile[]
+  transactions              ServiceDealTransaction[]
+
+  /// Target of the receipt's composite FK that pins each leg to the deal's Buzz type.
+  @@unique([id, buzzType])
+  @@index([buyerId, status])
+  @@index([sellerId, status])
+  @@index([offeringId, status])
+  /// The sweeps. Each is a PARTIAL index over the status it selects (see the migration),
+  /// so it holds only open deals rather than every deal ever made.
+  @@index([status, requestedAt])
+  @@index([status, deliveredAt])
+  @@index([status, cancellationRequestedAt])
+  @@index([status, dueAt])
+  @@index([status, releaseAt])
+  @@index([status, closedAt])
+}
+
+/// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
+model ServiceDealEvent {
+  id        Int                  @id @default(autoincrement())
+  dealId    Int
+  deal      ServiceDeal          @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  actorId   Int
+  type      ServiceDealEventType
+  round      Int                  @default(0)
+  comment    String?
+  /// Validated against the per-action lists in creator-services.constants; no DB CHECK.
+  reasonCode String?
+  createdAt  DateTime             @default(now())
+
+  @@index([dealId, createdAt, id])
+}
+
+model ServiceDealFile {
+  id             Int                       @id @default(autoincrement())
+  dealId         Int
+  deal           ServiceDeal               @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  round          Int                       @default(0)
+  kind           ServiceDealFileKind
+  s3Key          String                    @unique
+  watermarkedKey String?
+  /// The hidden, downscaled, unwatermarked copy a preview is scanned as. Deleted once its verdict
+  /// lands; `scanKey` is its object key, recorded before the Image row exists so a retry reuses it.
+  imageId        Int?
+  scanKey        String?
+  /// The rating the scan gave the preview, recorded when it passes.
+  nsfwLevel      Int?
+  fileName       String                    @default("")
+  mimeType       String
+  size           Int
+  /// Uploading until the seller confirms the object is in the bucket.
+  status         ServiceDealFileStatus     @default(Uploading)
+  failReason     String?
+  uploadedAt     DateTime?
+  /// Set when preview processing last started, so a crashed worker's file is picked up again.
+  processingAt   DateTime?
+  scanStatus     ServiceDealFileScanStatus @default(Pending)
+  /// The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+  malwareScanStatus ServiceDealFileScanStatus @default(Pending)
+  /// Set once the file's contents have been listed and checked (a zip unpacked, an image read).
+  unpackedAt     DateTime?
+  createdAt      DateTime                  @default(now())
+  entries        ServiceDealFileEntry[]
+
+  @@index([dealId, round, kind])
+}
+
+/// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip
+/// are judged by the malware scan alone. `scanKey` is recorded before the hidden copy's Image row
+/// exists, so a retry after a crash reuses the object.
+model ServiceDealFileEntry {
+  id         Int                       @id @default(autoincrement())
+  fileId     Int
+  file       ServiceDealFile           @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  entryIndex Int
+  path       String
+  size       Int
+  imageId    Int?
+  scanKey    String?
+  nsfwLevel  Int?
+  scanStatus ServiceDealFileScanStatus @default(Pending)
+  failReason String?
+  createdAt  DateTime                  @default(now())
+
+  @@unique([fileId, entryIndex])
+}
+
+/// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK
+/// in the migration pins each row's `buzzType` to its deal's.
+/// `UNIQUE (dealId, leg)` makes the claim atomic, and `externalTransactionId` is
+/// derived from the row so the Buzz service's dedupe is a second line. A null
+/// `transactionId` is a claimed leg not yet paid, which the recovery job finishes.
+///
+/// The migration adds two PARTIAL unique indexes on `dealId`, over Release+Refund and
+/// Fee+Refund: a refunded deal can hold neither a release nor a fee. Prisma cannot
+/// express them.
+model ServiceDealTransaction {
+  id                    Int             @id @default(autoincrement())
+  dealId                Int
+  deal                  ServiceDeal     @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  leg                   ServiceDealLeg
+  externalTransactionId String          @unique
+  transactionId         String?
+  amount                Int
+  buzzType              ServiceBuzzType
+  attempts              Int             @default(0)
+  lastAttemptAt         DateTime?
+  lastError             String?
+  createdAt             DateTime        @default(now())
+
+  @@unique([dealId, leg])
+  /// PARTIAL over unpaid legs (`transactionId IS NULL`), for the recovery sweep.
   @@index([createdAt])
 }
 

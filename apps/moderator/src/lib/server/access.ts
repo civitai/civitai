@@ -1,5 +1,6 @@
 import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
 import { FLAG_APPEALS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
@@ -37,6 +38,8 @@ export type NavLink = {
   // The section is granted as one page and its children are neither granted nor checked individually. Making
   // these children grantable would drop the grants already stored against the parent path.
   sharedAccess?: boolean;
+  // Hover-preloading runs the page's `load`; for a page whose load takes a lease, that is a write.
+  noPreload?: boolean;
   children?: NavLink[];
 };
 
@@ -85,6 +88,8 @@ export const NAVIGATION: NavLink[] = [
         countKey: 'removedAppeals',
       },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
+      { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
@@ -105,11 +110,8 @@ export const NAVIGATION: NavLink[] = [
     label: 'Models',
     path: '/models',
     children: [
-      // No `countKey`: the Pending count costs ~10s, and `sidebar-counts.service.ts` is one Promise.all
-      // that every navigation in the app waits on. The counts live on the page's own tabs instead,
-      // fetched separately. A countKey nothing produces renders as a silently missing badge.
-      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches' },
-      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals' },
+      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches', countKey: 'minorHashMatches' },
+      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals', countKey: 'modelFlagAppeals' },
     ],
   },
   {
@@ -132,6 +134,7 @@ export const NAVIGATION: NavLink[] = [
   // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
+  { path: '/creator-services/disputes', label: 'Service Disputes' },
   {
     label: 'Audit',
     path: '/audit',
@@ -150,8 +153,8 @@ export const NAVIGATION: NavLink[] = [
     label: 'Text Scan',
     path: '/text-scan',
     children: [
-      { path: '/text-scan/check', label: 'Check' },
-      { path: '/text-scan/prompts', label: 'Versions' },
+      { path: '/text-scan/prompts', label: 'Prompts' },
+      { path: '/text-scan/model-rules', label: 'Model rules' },
     ],
   },
   {
@@ -166,8 +169,6 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/reactor-lookup', label: 'Reactor Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
       { path: '/retool/model-lookup', label: 'Model Lookup' },
-      { path: '/retool/user-reports', label: 'User Reports' },
-      { path: '/retool/post-reports', label: 'Post Reports' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
@@ -188,7 +189,22 @@ export const NAVIGATION: NavLink[] = [
   // One grant covers the queue and its per-report page (`/feedback/<id>`), which resolves here by
   // prefix rather than being listed — the same shape as `/abuse` below. A report is a row of this
   // queue, and granting the list without the rows would show a moderator a count they cannot open.
-  { path: '/feedback', label: 'Feedback', countKey: 'feedbackNew' },
+  //
+  // `sharedAccess`, like `/reports`: both children are views of one page, so the grant stays on
+  // `/feedback`.
+  {
+    path: '/feedback',
+    label: 'Feedback',
+    sharedAccess: true,
+    children: [
+      { path: '/feedback', label: 'General queue', countKey: 'feedbackNew' },
+      {
+        path: `/feedback?area=${APPS_PLATFORM_FEEDBACK_AREA}&status=new`,
+        label: 'Apps platform (developers)',
+        countKey: 'feedbackAppsPlatformNew',
+      },
+    ],
+  },
   // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
   // than being listed: a run and its findings are one thing, and granting the list without the rows
   // would show a moderator a count they cannot open.

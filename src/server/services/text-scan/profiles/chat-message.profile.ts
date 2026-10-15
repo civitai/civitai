@@ -67,7 +67,6 @@ async function loadChatWindow(newestId: number): Promise<TextScanSubject | undef
 
   return scamSubject(
     newest.userId,
-    // Newest first: `maxInputChars` keeps the start of the composed message and cuts the end.
     [{ heading: 'Messages, newest first', text: kept.map((m) => m.text).join('\n') }],
     {
       chatId: newest.chatId,
