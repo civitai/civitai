@@ -1531,6 +1531,42 @@ export interface ResourceIntentCoocSnapshot {
   trainImageIds: Buffer | null;
 }
 
+export interface ResourceIntentVocabulary {
+  id: string;
+  vocabVersion: string;
+  status: string;
+  payload: Buffer;
+  rulesSummary: JsonValue;
+  createdAt: Date;
+  frozenAt: Date | null;
+  frozenBy: string | null;
+  tagIndexSnapshots?: ResourceIntentTagIndexSnapshot[];
+}
+
+export interface ResourceIntentTagIndexSnapshot {
+  id: string;
+  kind: string;
+  status: string;
+  contentHash: string | null;
+  specHash: string;
+  trainStart: Date;
+  trainEnd: Date;
+  seed: number;
+  pinnedUntil: Date | null;
+  builtAt: Date;
+  trainCreatedAtMin: Date | null;
+  trainCreatedAtMax: Date | null;
+  idsTried: number | null;
+  trainRows: number | null;
+  vocab: number | null;
+  models: number | null;
+  keptPairs: number | null;
+  payload: Buffer | null;
+  trainImageIds: Buffer | null;
+  vocabVersion: string;
+  vocabulary?: ResourceIntentVocabulary;
+}
+
 export interface Post {
   id: number;
   nsfw: boolean;
