@@ -5,6 +5,7 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -1067,6 +1068,41 @@ describe('releasing to the seller', () => {
     ).toEqual({ disputeReason: escrow.SELLER_UNAVAILABLE });
     expect((await events(id)).at(-1)).toBe('Disputed');
     expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 0, released: 0 });
+    expect(await escrow.releaseDeal(id)).toBe(false);
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // Decision (briony, 2026-10-15): a claimed Release leg retries to completion, even for a seller
+  // banned after the claim. It may already have landed; un-claiming it could pay twice. The hold
+  // applies only before a claim exists. A moderator is told through the log.
+  it('decision: a release claimed before the seller was banned still pays, and is logged', async () => {
+    const id = await completed();
+    await windowClosed(id);
+    buzz.createBuzzTransaction.mockRejectedValueOnce(buzzError(503));
+    await expect(escrow.releaseDeal(id)).rejects.toThrow();
+    expect(await releaseLeg(id)).toMatchObject({ transactionId: null, attempts: 1 });
+
+    await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    // Inside the backoff: nothing is paid, and the deal is not moved under its claimed leg.
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+    expect((await deal(id)).status).toBe('Completed');
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(1);
+
+    await q(
+      `UPDATE "ServiceDealTransaction" SET "lastAttemptAt" = now() - interval '1 day' WHERE leg = 'Release'`
+    );
+    expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledTimes(2);
+    expect(buzz.createBuzzTransaction.mock.calls[1][0]).toMatchObject({ toAccountId: SELLER });
+    const paid = await deal(id);
+    expect(paid.status).toBe('Completed');
+    expect(paid.settledAt).not.toBeNull();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'claimed release paying a seller who is now banned or deleted',
+        dealId: id,
+      })
+    );
   });
 
   it('pays a muted seller', async () => {
@@ -1074,6 +1110,9 @@ describe('releasing to the seller', () => {
     await windowClosed(id);
     await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
     expect(await escrow.releaseDeal(id)).toBe(true);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ dealId: id, type: 'warning' })
+    );
     expect(buzz.createBuzzTransaction.mock.calls[0][0]).toMatchObject({ toAccountId: SELLER });
     expect((await deal(id)).status).toBe('Completed');
   });
@@ -1099,7 +1138,10 @@ describe('releasing to the seller', () => {
     );
     const start = source.indexOf('export async function claimRelease');
     const claim = source.slice(start, source.indexOf('\n}\n', start));
+    const first = claim.indexOf('await lockDeal(tx, dealId);');
     const gate = claim.indexOf('const releasable = Prisma.sql');
+    expect(first).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(first);
     const lock = claim.indexOf('UPDATE "ServiceDeal" SET "updatedAt" = now() WHERE ${releasable}');
     const insert = claim.indexOf('INSERT INTO "ServiceDealTransaction"');
     expect(gate).toBeGreaterThan(-1);

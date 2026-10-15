@@ -130,13 +130,18 @@ const sellerCanBePaid = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
  * `clock_timestamp()` once this commits, which is past `releaseAt`, so it fails; a dispute that
  * committed first leaves the deal Disputed, and this UPDATE matches nothing.
  *
- * A seller banned or deleted by then is not paid and the buyer is not refunded: the deal moves to
- * Disputed, into the moderators' queue, with the Buzz still in escrow (briony, 2026-10-15). A
- * muted seller is paid; a mute restricts speech, not money.
+ * A seller banned or deleted before the leg is claimed is not paid and the buyer is not refunded:
+ * the deal moves to Disputed, into the moderators' queue, with the Buzz still in escrow. Once the
+ * leg is claimed it retries to completion whatever happens to the seller, because a claimed leg
+ * may already have landed, and un-claiming it could pay out twice (briony, 2026-10-15). A muted
+ * seller is paid; a mute restricts speech, not money.
  *
  * `ON CONFLICT` names only (dealId, leg), so a Refund already holding the payout slot raises.
  */
-export async function claimRelease(tx: Db, dealId: number) {
+export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boolean> {
+  // Locked before anything is read, so each statement below sees whatever a concurrent claim
+  // committed, including its Release leg.
+  await lockDeal(tx, dealId);
   const releasable = Prisma.sql`"id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
       AND "releaseAt" <= now() AND "settledAt" IS NULL AND "heldAt" IS NOT NULL`;
   const held = await tx.$executeRaw`
@@ -144,12 +149,16 @@ export async function claimRelease(tx: Db, dealId: number) {
     SET "status" = 'Disputed'::"ServiceDealStatus", "disputeOpenedAt" = now(),
         "disputeReason" = ${SELLER_UNAVAILABLE}::text, "updatedAt" = now()
     WHERE ${releasable}
-      AND NOT ${sellerCanBePaid(Prisma.sql`d."sellerId"`)}`;
+      AND NOT ${sellerCanBePaid(Prisma.sql`d."sellerId"`)}
+      AND NOT EXISTS (
+        SELECT 1 FROM "ServiceDealTransaction" t
+        WHERE t."dealId" = d."id" AND t."leg" = 'Release'::"ServiceDealLeg"
+      )`;
   if (held > 0) {
     await tx.$executeRaw`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
       VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${SELLER_UNAVAILABLE}::text)`;
-    return false;
+    return 'held';
   }
 
   const locked = await tx.$executeRaw`
@@ -564,13 +573,25 @@ export async function sweepServiceDealRefunds({ limit = 100 }: { limit?: number 
  * is backing off; `sweepServiceDealReleases` drives it again.
  */
 export async function releaseDeal(dealId: number) {
-  await dbWrite.$transaction((tx) => claimRelease(tx, dealId));
+  if ((await dbWrite.$transaction((tx) => claimRelease(tx, dealId))) === 'held') return false;
   const paid = await runDealLeg(
     dealId,
     'Release',
     async (row) => {
-      const [{ sellerId }] = await dbWrite.$queryRaw<{ sellerId: number }[]>`
-        SELECT "sellerId" FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+      const [{ sellerId, payable }] = await dbWrite.$queryRaw<
+        { sellerId: number; payable: boolean }[]
+      >`
+        SELECT d."sellerId", ${sellerCanBePaid(Prisma.sql`d."sellerId"`)} AS "payable"
+        FROM "ServiceDeal" d WHERE d."id" = ${dealId}::int`;
+      // A claimed leg is paid regardless; this only tells a moderator it happened.
+      if (!payable)
+        logToAxiom({
+          name: 'creator-service-escrow',
+          type: 'warning',
+          message: 'claimed release paying a seller who is now banned or deleted',
+          dealId,
+          sellerId,
+        }).catch(() => null);
       let transactionId: string | null = null;
       try {
         ({ transactionId } = await createBuzzTransaction(
