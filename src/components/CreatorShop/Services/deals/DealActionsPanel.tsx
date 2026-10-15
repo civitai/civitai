@@ -6,6 +6,10 @@ import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/de
 import { useServiceDealMutations } from '~/components/CreatorShop/Services/deals/deal.util';
 import { DealTextActionModal } from '~/components/CreatorShop/Services/deals/DealTextActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { DealAction } from '~/shared/utils/creator-service-deal-view';
+import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
+
+const DISPUTE_WINDOW_HOURS = SERVICE_DEAL_DISPUTE_WINDOW_MS / 3_600_000;
 
 export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
   const features = useFeatureFlags();
@@ -23,7 +27,46 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
       onConfirm,
     });
 
-  const run: Record<string, () => void> = {
+  const revisionsLeft = deal.revisionsIncluded - deal.revisionsUsed;
+
+  // Every action, so a new one fails to compile here rather than render a dead button.
+  const run: Record<DealAction, () => void> = {
+    acceptDelivery: () =>
+      confirm(
+        'Accept delivery',
+        `This completes the deal and unlocks the final files. You then have ${DISPUTE_WINDOW_HOURS} hours to report a problem; after that the Buzz is paid to the seller.`,
+        () => mutations.acceptDelivery.mutate({ id })
+      ),
+    requestRevision: () =>
+      dialogStore.trigger({
+        component: DealTextActionModal,
+        props: {
+          title: 'Request a revision',
+          description: `Tell the seller what to change. This uses 1 of your ${revisionsLeft} remaining ${
+            revisionsLeft === 1 ? 'revision' : 'revisions'
+          }.`,
+          required: true,
+          label: 'What should change',
+          maxLength: 2000,
+          choices: [{ label: 'Send revision request', value: 'send' }],
+          onSubmit: (_: string, comment?: string) =>
+            mutations.requestRevision.mutateAsync({ id, comment: comment ?? '' }),
+        },
+      }),
+    openDispute: () =>
+      dialogStore.trigger({
+        component: DealTextActionModal,
+        props: {
+          title: 'Report a problem',
+          description:
+            'Use this if the final files are missing, broken or not what the preview showed. The Buzz stays held and our moderators review the deal, then decide whether it goes to the seller or back to you.',
+          required: true,
+          maxLength: 2000,
+          choices: [{ label: 'Report to moderators', color: 'red', value: 'send' }],
+          onSubmit: (_: string, reason?: string) =>
+            mutations.openDispute.mutateAsync({ id, reason: reason ?? '' }),
+        },
+      }),
     accept: () =>
       confirm(
         'Accept request',

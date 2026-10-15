@@ -1,32 +1,26 @@
 import type { DealAction } from '~/shared/utils/creator-service-deal-view';
 import type { ServiceDealStatus } from '~/shared/utils/prisma/enums';
 
-/** The actions this phase renders. Delivery, acceptance and disputes arrive with file delivery. */
-const P2_ACTIONS: readonly DealAction[] = [
-  'accept',
-  'decline',
-  'withdraw',
-  'cancelLate',
-  'requestCancellation',
-  'respondCancellation',
-];
-
-/** Ways out of a deal. These stay usable when `creatorServices` is off, so held Buzz is never trapped. */
+/**
+ * Ways out of a deal. These stay usable when `creatorServices` is off, so held Buzz is never
+ * trapped. Accepting a delivery finishes the deal, and a dispute is the buyer's only way to stop
+ * the release on bad files. A revision asks the seller for new work, so it is an entry.
+ */
 const EXIT_ACTIONS: readonly DealAction[] = [
   'decline',
   'withdraw',
   'cancelLate',
   'requestCancellation',
   'respondCancellation',
+  'acceptDelivery',
+  'openDispute',
 ];
 
 export function visibleDealActions(
   actions: DealAction[],
   { servicesEnabled }: { servicesEnabled: boolean }
 ) {
-  return actions.filter(
-    (action) => P2_ACTIONS.includes(action) && (servicesEnabled || EXIT_ACTIONS.includes(action))
-  );
+  return actions.filter((action) => servicesEnabled || EXIT_ACTIONS.includes(action));
 }
 
 /** The buttons the deal page shows, in order. The primary is dropped if the filter removed it. */
@@ -67,6 +61,9 @@ export function dealPageState({
 export type EscrowState =
   | 'confirming'
   | 'held'
+  | 'awaitingRelease'
+  | 'disputed'
+  | 'disputeSettled'
   | 'closedUncharged'
   | 'refundPending'
   | 'refunded'
@@ -87,8 +84,11 @@ export function dealEscrowState(deal: {
     if (deal.settled) return 'refunded';
     return deal.held ? 'refundPending' : 'closedUncharged';
   }
-  if (deal.status === 'Completed') return deal.settled ? 'released' : 'held';
-  return deal.held ? 'held' : 'confirming';
+  if (!deal.held) return 'confirming';
+  if (deal.status === 'Completed') return deal.settled ? 'released' : 'awaitingRelease';
+  // Which way a moderator settled it is on the sheet, not in these flags.
+  if (deal.status === 'Disputed') return deal.settled ? 'disputeSettled' : 'disputed';
+  return 'held';
 }
 
 export const escrowCopy: Record<EscrowState, { title: string; body: string; color: string }> = {
@@ -101,6 +101,21 @@ export const escrowCopy: Record<EscrowState, { title: string; body: string; colo
     title: 'Held in escrow',
     body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is cancelled.',
     color: 'yellow',
+  },
+  awaitingRelease: {
+    title: 'Held in escrow',
+    body: 'The deal is complete. The Buzz is still held, not paid, and is released to the seller when the dispute window closes.',
+    color: 'yellow',
+  },
+  disputed: {
+    title: 'Held in escrow',
+    body: 'The Buzz stays held while our moderators review this deal. They decide whether it goes to the seller or back to the buyer.',
+    color: 'orange',
+  },
+  disputeSettled: {
+    title: 'Settled by moderators',
+    body: 'Our moderators resolved this deal. The accountability sheet shows where the Buzz went.',
+    color: 'gray',
   },
   closedUncharged: {
     title: 'Closed, nothing charged',
@@ -148,3 +163,65 @@ export const dealActionLabel: Record<DealAction, string> = {
   requestRevision: 'Request a revision',
   openDispute: 'Report a problem',
 };
+
+/**
+ * The accountability sheet in rounds. An event's round is the deal's `revisionsUsed` when it was
+ * written, so round 0 is the original order and round N follows the Nth revision request. Some
+ * system events (escrow legs, holds) are written with the column default 0 after a revision, so a
+ * round never goes backwards: such an event joins the round in progress.
+ */
+export function groupEventsByRound<T extends { round: number }>(events: T[]) {
+  const groups: { round: number; events: T[] }[] = [];
+  for (const event of events) {
+    const last = groups[groups.length - 1];
+    if (last && event.round <= last.round) last.events.push(event);
+    else groups.push({ round: event.round, events: [event] });
+  }
+  return groups;
+}
+
+export const roundLabel = (round: number) => (round === 0 ? 'Original order' : `Revision ${round}`);
+
+type SheetEvent = { type: string; actorRole: string; comment: string | null };
+
+/**
+ * A dispute Civitai opened rather than the buyer: a payout held for moderators, or a final file
+ * that failed its check. Its comment is an internal reason code for moderators: the sheet never
+ * shows it to a party, whatever the response carries.
+ */
+export const isSystemDispute = (event: { type: string; actorRole: string }) =>
+  event.type === 'Disputed' && event.actorRole === 'system';
+
+/** Events that move a deal into Disputed. A refused cancellation escalates too. */
+const DISPUTE_OPENERS = ['Disputed', 'CancellationDeclined'];
+
+/** Whether the deal's current dispute is a system hold: the latest event that opened one decides. */
+export const isModeratorHold = (events: { type: string; actorRole: string }[]) => {
+  const latest = events.filter((event) => DISPUTE_OPENERS.includes(event.type)).at(-1);
+  return !!latest && isSystemDispute(latest);
+};
+
+/** What the accountability sheet prints for one event. */
+export function sheetEventText<T extends SheetEvent>(
+  event: T,
+  viewerRole: 'buyer' | 'seller' | 'moderator',
+  label: string
+) {
+  if (!isSystemDispute(event)) return { label, comment: event.comment };
+  return {
+    label: 'Held the deal for moderator review',
+    comment: viewerRole === 'moderator' ? event.comment : null,
+  };
+}
+
+/** The notice on a Disputed deal; none once it has settled, when the Buzz is no longer held. */
+export function disputeNotice(deal: {
+  status: ServiceDealStatus;
+  settled: boolean;
+  events: { type: string; actorRole: string }[];
+}) {
+  if (deal.status !== 'Disputed' || deal.settled) return null;
+  return isModeratorHold(deal.events)
+    ? 'This deal is held for moderator review. The Buzz stays held until they resolve it.'
+    : 'This deal is in dispute and with our moderators. The Buzz stays held until they resolve it.';
+}

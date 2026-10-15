@@ -10,6 +10,7 @@ export function DealTextActionModal({
   description,
   placeholder,
   required = false,
+  label,
   maxLength,
   choices,
   onSubmit,
@@ -18,6 +19,8 @@ export function DealTextActionModal({
   description?: string;
   placeholder?: string;
   required?: boolean;
+  /** Defaults to "Reason" when required, "Comment (optional)" otherwise. */
+  label?: string;
   maxLength: number;
   choices: DealTextActionChoice[];
   onSubmit: (value: string, text: string | undefined) => Promise<unknown>;
@@ -55,7 +58,7 @@ export function DealTextActionModal({
           minRows={3}
           maxLength={maxLength}
           withAsterisk={required}
-          label={required ? 'Reason' : 'Comment (optional)'}
+          label={label ?? (required ? 'Reason' : 'Comment (optional)')}
         />
         <Group justify="flex-end">
           <Button variant="default" onClick={dialog.onClose}>
