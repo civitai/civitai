@@ -10,7 +10,7 @@ import {
   saveSuspiciousMatchSchema,
   submitRestrictionContextSchema,
 } from '~/server/schema/user-restriction.schema';
-import { backfilledPromptOrigin } from '~/server/services/orchestrator/prompt-origin';
+import { prohibitedRowToTrigger } from '~/server/services/orchestrator/prompt-origin';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
 import { resolveUserRestriction } from '~/server/services/user-restriction-resolve.service';
@@ -292,20 +292,7 @@ export const userRestrictionRouter = router({
           const auditResult = debugAuditPrompt(row.prompt, row.negativePrompt || undefined);
           const firstMatch = auditResult.matches.find((m) => m.matched);
 
-          return {
-            prompt: row.prompt,
-            negativePrompt: row.negativePrompt ?? '',
-            source: row.source,
-            category: firstMatch?.check as BlockedPromptEntry['category'],
-            matchedWord: firstMatch?.matchedText,
-            matchedRegex: firstMatch?.regex,
-            imageId: null,
-            remixOfId: null,
-            inputImages: row.inputImages?.length ? row.inputImages : undefined,
-            inputVideo: row.inputVideo || undefined,
-            origin: backfilledPromptOrigin(row.remixOfId),
-            time: row.createdDate,
-          };
+          return prohibitedRowToTrigger(row, firstMatch);
         });
 
         // Merge with existing triggers (avoid duplicates by checking prompt + time)

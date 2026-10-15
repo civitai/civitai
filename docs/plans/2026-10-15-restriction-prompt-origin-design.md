@@ -1,6 +1,6 @@
 # Generator restrictions: prompt origin and triage review
 
-Status: design approved, implementation not started.
+Status: implemented; in review.
 
 ## Problem
 
@@ -43,7 +43,9 @@ origin?: {
   enhancer?: {
     workflowId: string;
     promptMatch: 'identical' | 'edited';
+    verified: false; // read from the user's own workflows, which they can modify
   };
+  incomplete?: true; // a lookup failed or timed out; absence of evidence is not evidence of absence
 };
 ```
 
@@ -68,8 +70,10 @@ field means the row predates origin tracking (shown as "Origin not recorded").
 ### Constraints
 
 - The origin is computed only on the block path. A generation that is not blocked pays nothing.
-- Every lookup is bounded and wrapped. A failed or timed-out lookup records `unknown` or omits the
-  field, and never fails or delays the audit decision.
+- Every lookup is bounded at 800ms and wrapped. A failed or timed-out lookup keeps whatever evidence
+  was found, sets `incomplete`, and never fails or delays the audit decision. A present `null` is
+  never written for `remix` or `enhancer`.
+- `origin` is moderator-only evidence. It must never be rendered on any user-facing surface.
 - The ClickHouse backfill (`backfillTriggers` in `user-restriction.router.ts`) copies the
   `remixOfId` it currently discards, as `origin.remix` with `verified: false` and
   `promptMatch: 'unknown'`.

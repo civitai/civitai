@@ -349,6 +349,7 @@ describe('auditPromptServer — still produces today’s side effects', () => {
   };
 
   it('non-green hard regex: counter write, prohibited-request report, plain message', async () => {
+    mockBuildPromptOrigin.mockResolvedValue({});
     flagWith(HARD);
     await expect(auditPromptServer({ ...base, isGreen: false })).rejects.toThrow(
       /^Your prompt was flagged: Prompt cannot include celebrity names$/
@@ -465,10 +466,21 @@ describe('auditPromptServer — prompt origin on a hard block', () => {
     mockBuildPromptOrigin.mockResolvedValue(origin);
     flagWith(HARD);
     await expect(
-      auditPromptServer({ ...base, sourceImageIds: [7], orchestratorToken: 'tok' })
+      auditPromptServer({
+        ...base,
+        sourceImageIds: [7],
+        remixOfId: 11,
+        orchestratorToken: 'tok',
+      })
     ).rejects.toThrow(/flagged/);
+    expect(mockBuildPromptOrigin).toHaveBeenCalledTimes(1);
     expect(mockBuildPromptOrigin).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: PROMPT, sourceImageIds: [7], token: 'tok' })
+      expect.objectContaining({
+        prompt: PROMPT,
+        sourceImageIds: [7],
+        remixOfId: 11,
+        token: 'tok',
+      })
     );
     expect(storedEntry().origin).toEqual(origin);
   });
@@ -478,7 +490,7 @@ describe('auditPromptServer — prompt origin on a hard block', () => {
     flagWith(HARD);
     await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
     expect(sysRedis.lPush).toHaveBeenCalledTimes(1);
-    expect(storedEntry().origin).toEqual({});
+    expect(storedEntry().origin).toEqual({ incomplete: true });
   });
 
   it('stores an empty origin when nothing was found, so absence means not recorded', async () => {
