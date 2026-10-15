@@ -2353,10 +2353,50 @@ describe('an offering taken down mid-deal', () => {
       expect(items[0].actions).toEqual(['decline']);
       expect(items[0].offeringTakenDown).toBe(true);
       expect(JSON.stringify(items)).not.toContain('misleading');
+
+      // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
+      const buyerView = await deals.getServiceDealView({
+        dealId: id,
+        userId: BUYER,
+        servicesEnabled: true,
+      });
+      expect(buyerView.offeringTakenDown).toBe(false);
+      expect(buyerView.actions).toEqual(['withdraw']);
+      const buyerList = await deals.listMyServiceDeals({
+        userId: BUYER,
+        role: 'buyer',
+        limit: 20,
+        servicesEnabled: true,
+        servableLevels: ALL_LEVELS,
+      });
+      expect(buyerList.items[0].offeringTakenDown).toBe(false);
+      const modView = await deals.getServiceDealView({
+        dealId: id,
+        userId: STRANGER,
+        isModerator: true,
+        servicesEnabled: true,
+      });
+      expect(modView.offeringTakenDown).toBe(true);
     });
 
-    // Decision (briony, 2026-10-15): removing first does not dodge a takedown.
-    it('refuses accept when the seller removed it first and a moderator took it down after', async () => {
+    // Only the seller's own pending request learns why: anyone else, or a deal that has moved on,
+    // gets the same "moved on" conflict as any other refused accept.
+    it('says why only to the seller of a request still pending', async () => {
+      const { id: pending } = await request();
+      await moderatorTakeDown();
+      await expect(deals.acceptServiceDeal({ dealId: pending, userId: STRANGER })).rejects.toEqual(
+        conflict
+      );
+      await deals.withdrawServiceDeal({ dealId: pending, userId: BUYER });
+      await expect(deals.acceptServiceDeal({ dealId: pending, userId: SELLER })).rejects.toEqual(
+        conflict
+      );
+    });
+
+    // State set by SQL: this suite has no Prisma model fakes, so it cannot call the takedown itself.
+    // That a seller-removed offering can be taken down is pinned on `takedownServiceOffering`'s
+    // scope in creator-service-takedown.service.test.ts; this pins what accept does in that state.
+    it('refuses accept on an offering the seller removed and a moderator then took down', async () => {
       const { id } = await request();
       await takeDown();
       await moderatorTakeDown();

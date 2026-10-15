@@ -439,10 +439,12 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
     set: Prisma.sql`, "acceptedAt" = now(), "dueAt" = now() + make_interval(days => "deliveryDays")`,
   }).catch(async (error) => {
     // The claim above is what refuses it; this only says why, instead of "moved on", which would
-    // send the seller back to the same Accept button.
+    // send the seller back to the same Accept button. Scoped to the seller's own pending request,
+    // so it reveals nothing to anyone else and a deal that has moved on still gets "moved on".
     const [takenDown] = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT o."id" FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
-      WHERE d."id" = ${dealId}::int AND o."removedReason" IS NOT NULL`;
+      WHERE d."id" = ${dealId}::int AND d."sellerId" = ${userId}::int
+        AND d."status" = 'Requested'::"ServiceDealStatus" AND o."removedReason" IS NOT NULL`;
     if (takenDown)
       throw throwBadRequestError(
         'A moderator removed this service, so this request can only be declined.'
@@ -813,6 +815,8 @@ export async function getServiceDealView({
     gatedAllowed: servicesEnabled && !viewer?.muted,
     offeringTakenDown,
   });
+  // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
+  const seesTakedown = isModerator || deal.sellerId === userId;
   return {
     id: deal.id,
     status: deal.status,
@@ -823,8 +827,8 @@ export async function getServiceDealView({
     /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
     viewerMuted: !!viewer?.muted,
     offering,
-    /** Never the reason: that is the seller's, and reaches them by notification. */
-    offeringTakenDown,
+    /** Seller and moderators only, and never the reason, which reaches the seller by notification. */
+    offeringTakenDown: seesTakedown && offeringTakenDown,
     buyer: deal.buyer,
     seller: deal.seller,
     price: deal.price,
@@ -929,7 +933,7 @@ export async function listMyServiceDeals({
       status: deal.status,
       maxNsfwLevel: deal.maxNsfwLevel,
       offering,
-      offeringTakenDown: removedReason != null,
+      offeringTakenDown: role === 'seller' && removedReason != null,
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
