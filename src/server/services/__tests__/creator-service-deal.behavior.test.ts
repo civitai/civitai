@@ -91,7 +91,7 @@ const MIGRATION = join(
 );
 const REASON_CODE_MIGRATION = join(
   process.cwd(),
-  'packages/civitai-db-schema/prisma/migrations/20261028120000_service_deal_event_reason_code/migration.sql'
+  'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
 );
 
 const SELLER = 1;
