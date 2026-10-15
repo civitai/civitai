@@ -828,7 +828,7 @@ function requireModeratorId(id: number | undefined) {
   return id;
 }
 
-/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body. */
+/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body; `putLabelModes` accepts only the session id. */
 export async function runTextScanHarnessAction(
   input: TextScanHarnessInput,
   actor: { moderatorId?: number }
@@ -897,7 +897,6 @@ export async function runTextScanHarnessAction(
     }
 
     case 'putLabelModes': {
-      // Session-attributed only: a moderator id asserted in the body is never accepted here.
       const id = requireModeratorId(actor.moderatorId);
       const labelModes = await setTextScanLabelMode(input.label, input.mode, { moderatorId: id });
       return { kind: 'json', body: { labelModes } };

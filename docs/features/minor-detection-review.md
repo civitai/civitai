@@ -1,11 +1,11 @@
 # Minor detection review mode
 
 Lets moderators decide whether a text-scan `minor` detection on a model becomes a flag, instead of the
-scan applying it automatically. Built on the re-detection hold from #6062 and the triage UI from #6073.
+scan applying it automatically.
 
 ## Why
 
-The web-search pass decides `minor` (and `poi`) on models and, today, applies the flag immediately:
+The web-search pass decides `minor` and `poi` on models and today applies the flag immediately:
 `minor` is set, the property is locked and the owner is notified. Wrong flags reach owners before any
 human looks at them. Review mode puts a moderator between the verdict and the flag, and every decision
 is recorded so the scan's precision can be measured per prompt version.
@@ -24,7 +24,7 @@ system:text-scan:label-modes
   rollout still records verdicts and does nothing else.
 - Read through the same short TTL memo as the rollouts; written only through a guarded setter that
   checks the moderator and logs the change.
-- `poi` keeps no field, so it stays `auto`.
+- `poi` is switchable the same way (`label: "poi"`); it has no field today, so it stays `auto`.
 - Set with the harness action `putLabelModes` (`{ "action": "putLabelModes", "label": "minor", "mode": "review" }`;
   `"auto"` removes the field); `getPrompts` returns the current value as `labelModes`.
 
@@ -40,15 +40,13 @@ system:text-scan:label-modes
 | No moderator ruling                                | flag          | **hold, first detection** |
 
 A first-detection hold writes the same `meta.textScanFlags.minor.redetected` marker a re-detection
-does, with `kind: 'first'`. Using the same key keeps the queue's partial index valid unchanged.
-
-The marker is `{ kind: 'first' | 'redetected', at, workflowId, reason, textHash, promptIds, model }`.
-A marker with no `kind` predates it and is a re-detection. The same text detected again keeps its
-original `at`, so a held item does not slide down the queue.
+does (so the queue's partial index is unchanged), shaped `{ kind: 'first' | 'redetected', at,
+workflowId, reason, textHash, promptIds, model }`. A marker with no `kind` predates it and is a
+re-detection. The same text detected again keeps its original `at`, so a held item does not slide
+down the queue.
 
 While a detection is held the model is **visible as-is** — no restriction, no lock, no owner notice.
-Moderators aim to work the queue within a day; nothing expires automatically, because an expiry would
-let an owner wait a detection out.
+Held items do not expire automatically.
 
 If the owner edits the model and the new text scans clean, the held marker for the old text is
 dropped; if the new text is detected, the marker moves to it. A clean verdict on the very text that
@@ -65,7 +63,8 @@ locked per model and label, refused while an appeal is pending, resumable keep).
   never held again. A later detection on different text becomes an ordinary re-detection.
 
 Each decision is logged (`held detection resolved`) with the label, the hold kind, the decision
-(`kept` or `dismissed`) and the prompt ids that produced the verdict. Precision is computed from those logs, outside the repository.
+(`kept`, `dismissed`, or `closed` when the item was already resolved) and the prompt ids that
+produced the verdict.
 
 ## Moderator app
 
@@ -76,7 +75,7 @@ re-detections together, each badged with its kind, in the shared triage layout: 
 
 ## Rollout
 
-1. Deploy main app and moderator app (switch absent → `auto`).
+1. Deploy main app and moderator app.
 2. A moderator sets `minor → review`.
 3. Rollback: remove the field. Held items stay in the queue for moderators to finish; new detections
    flag automatically again.

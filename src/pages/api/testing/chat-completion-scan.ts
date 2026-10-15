@@ -395,7 +395,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     return res.status(403).json({
       error: `${action} is only served by /api/mod/text-scan, which records who read what.`,
     });
-  // Changes live moderation behaviour and needs a signed-in moderator to attribute it to.
   if (action === 'putLabelModes')
     return res.status(403).json({
       error: 'putLabelModes is only served by /api/mod/text-scan, which attributes the change.',

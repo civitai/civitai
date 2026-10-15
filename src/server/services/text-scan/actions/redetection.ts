@@ -91,14 +91,14 @@ async function withResolutionLock<T>(
  * A moderator's call on a detection the scan held: a re-detection after a human had cleared the
  * label, or a first detection while the label is in review mode. Keeping applies
  * the flag exactly as the scan would have (restrictions, snapshot, owner notice) and records the
- * moderator's upheld ruling; dismissing stamps a fresh clear on the re-detected text and tells no one.
+ * moderator's upheld ruling; dismissing records a clear on the held text and tells no one.
  * An appeal the owner still has open is resolved by its own flow, not here.
  */
 export function resolveTextScanRedetection(args: {
   modelId: number;
   label: TextScanFlagLabel;
   keep: boolean;
-  /** The re-detected text the moderator was shown; the ruling applies to that and nothing newer. */
+  /** The held text the moderator was shown; the ruling applies to that and nothing newer. */
   textHash: string;
   userId: number;
 }): Promise<RedetectionOutcome> {
@@ -125,8 +125,7 @@ async function resolve({
   const detection = model ? getTextScanRedetection(model.meta, label) : null;
   if (!model || !detection || detection.textHash !== textHash) throw stale();
 
-  // The prompts that produced the verdict ride on the marker, so precision per prompt version can be
-  // computed from these logs alone.
+  // promptIds are logged so a decision can be joined to the prompt versions that produced the verdict.
   const logDecision = (decision: 'kept' | 'dismissed' | 'closed') =>
     logToAxiom({
       name: 'text-scan',

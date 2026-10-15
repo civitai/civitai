@@ -188,8 +188,7 @@ export type KeptRedetection = {
   resume?: boolean;
 };
 
-// The same `redetected` key for both kinds: the moderator queue's partial index is keyed on it.
-// `first` waits on a label nobody has ruled on; `redetected` on one a human cleared on other text.
+// Both kinds are stored under `redetected`: the moderator queue's partial index is keyed on it.
 async function recordHold({
   modelId,
   label,

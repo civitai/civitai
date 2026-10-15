@@ -173,7 +173,7 @@ export async function getTextScanWebSearchMode(
 export type TextScanLabelMode = 'auto' | 'review';
 export type TextScanLabelModes = Partial<Record<TextScanFlagLabel, 'review'>>;
 
-/** Uncached read, for writers and the harness. Only `review` is stored; anything else is `auto`. */
+/** Uncached read. Only `review` is stored; anything else reads as `auto`. */
 export async function readTextScanLabelModes(): Promise<TextScanLabelModes> {
   const raw = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES));
   const modes: TextScanLabelModes = {};

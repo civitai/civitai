@@ -224,18 +224,19 @@ the plain unset path instead. A grant covers the text it was about: if the owner
 the appeal was open, the model is rescanned (`rescanQueued`). The hash-match detail renders only for
 hash-origin rows.
 
-**Re-detections** — a clear stays a clear when the owner edits the text. If a label already carries a
-human `appealGranted` and a later scan detects it on text with a *different* hash, the scan flags
-nothing, notifies nobody and changes no restrictions: it writes `meta.textScanFlags[label].redetected`
-(workflow, reason, names, hash) and leaves the grant in place. The same hash stays blocked as before.
-The moderator app lists these on `/models/minor-detections` (badged Re-detected, beside first
-detections held by review mode — see `minor-detection-review.md`), with the prior clear (who, when,
-via). Keep flagged calls
+**Re-detections** — a clear stays a clear when the owner edits the text. If a label already carries
+a human `appealGranted` and a later scan detects it on text with a *different* hash, the scan flags
+nothing, notifies nobody and changes no restrictions: it writes
+`meta.textScanFlags[label].redetected` (workflow, reason, names, hash) and leaves the grant in
+place. A first-detection hold from review mode writes the same marker with `kind: 'first'`. The same
+hash stays blocked as before. The moderator app lists these on `/models/minor-detections` (badged
+Re-detected, beside first detections held by review mode — see `minor-detection-review.md`), with
+the prior clear (who, when, via). **Flag** (the API's keep) calls
 `/api/mod/minor-flag/resolve-redetection` and applies the flag exactly as the scan would have (owner
-notice included) and records `appealUpheld`; Dismiss stamps a new moderator `appealGranted` on the
-re-detected text and clears the marker. Flagging replaces the label entry, so the decisions it replaces
-move into a capped `rulings` history (newest 5) rather than being lost. Bounty real-person flags keep
-the old behaviour: a changed text re-flags.
+notice included) and records `appealUpheld`; **Don't flag** (the API's dismiss) stamps a new
+moderator `appealGranted` on the re-detected text and clears the marker. Flagging replaces the label
+entry, so the decisions it replaces move into a capped `rulings` history (newest 5) rather than
+being lost. Bounty real-person flags keep the old behaviour: a changed text re-flags.
 
 Neither queue is paginated (`limit` default 1000, max 2000, plus a `truncated` flag). This is
 deliberate: rows *leave* these queues as they're actioned, so any server-side window — OFFSET or keyset
