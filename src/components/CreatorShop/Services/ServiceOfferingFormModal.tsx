@@ -14,8 +14,12 @@ import {
   SERVICE_PRICE_MAX,
   SERVICE_PRICE_MIN,
   SERVICE_REVISIONS_MAX,
+  SERVICE_OFFERING_DEFAULT_RATING,
+  SERVICE_OFFERING_RATINGS,
   SERVICE_TITLE_MAX,
+  isMatureServiceRating,
 } from '~/shared/constants/creator-service.constants';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ServiceOfferingStatus, ServicePreviewKind } from '~/shared/utils/prisma/enums';
 
 const formSchema = upsertServiceOfferingSchema.omit({ id: true, publish: true });
@@ -27,6 +31,13 @@ const previewKindOptions = [
   { value: ServicePreviewKind.SampleOutputs, label: 'Sample outputs' },
   { value: ServicePreviewKind.None, label: 'No preview' },
 ];
+
+const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
+  value: rating,
+  label: isMatureServiceRating(rating)
+    ? `${browsingLevelLabels[rating]} (shown on civitai.red only)`
+    : browsingLevelLabels[rating],
+}));
 
 export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffering }) {
   const dialog = useDialogContext();
@@ -42,6 +53,7 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
       revisionsIncluded: offering?.revisionsIncluded ?? 2,
       maxOpenDeals: offering?.maxOpenDeals ?? 3,
       previewKind: offering?.previewKind ?? ServicePreviewKind.Image,
+      maxNsfwLevel: offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
     },
   });
 
@@ -105,6 +117,13 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
               withAsterisk
             />
           </SimpleGrid>
+          <InputSelect
+            name="maxNsfwLevel"
+            label="Highest rating you deliver"
+            description="Buyers only see this service where that rating is allowed. Changing it later applies to new requests only."
+            data={ratingOptions}
+            withAsterisk
+          />
           <Group justify="flex-end">
             <Button variant="default" onClick={dialog.onClose}>
               Cancel

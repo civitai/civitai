@@ -19,6 +19,7 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
+import { domainServableLevels, resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 
 // Services live inside the Creator Shop, so every procedure needs both flags.
 const servicesProcedure = protectedProcedure
@@ -47,11 +48,14 @@ export const creatorServiceRouter = router({
     .use(isFlagProtected('creatorShop'))
     .use(isFlagProtected('creatorServices'))
     .input(getShopServiceOfferingsSchema)
-    .query(({ input, ctx }) =>
-      getShopServiceOfferings({
+    .query(({ input, ctx }) => {
+      // Fills a signed-in viewer's own level when none was sent, then holds it to the domain cap.
+      resolveRequestBrowsingLevels(input, ctx);
+      return getShopServiceOfferings({
         ...input,
+        servable: domainServableLevels(ctx),
         viewerId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
-      })
-    ),
+      });
+    }),
 });

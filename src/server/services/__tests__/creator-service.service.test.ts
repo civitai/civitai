@@ -14,6 +14,16 @@ import {
 import { upsertServiceOfferingSchema } from '~/server/schema/creator-service.schema';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import {
+  isMatureServiceRating,
+  visibleMatureServiceRatings,
+} from '~/shared/constants/creator-service.constants';
 
 const SELLER = 7;
 const fields = {
@@ -162,6 +172,7 @@ describe('writes', () => {
 
 describe('storefront read', () => {
   const VISITOR = 99;
+  const ALL = allBrowsingLevelsFlag;
   const shopEnabled = (enabled: boolean) =>
     dbMock.dbRead.user.findUnique.mockResolvedValue({
       settings: { creatorShop: { enabled } },
@@ -170,13 +181,14 @@ describe('storefront read', () => {
   it('shows only Active offerings of a seller in good standing', async () => {
     shopEnabled(true);
     dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
-    await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR });
+    await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR, servable: ALL });
     expect(dbMock.dbRead.serviceOffering.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           sellerId: SELLER,
           status: ServiceOfferingStatus.Active,
           seller: { bannedAt: null, deletedAt: null, muted: false },
+          maxNsfwLevel: { lte: NsfwLevel.PG13 },
         },
       })
     );
@@ -193,7 +205,11 @@ describe('storefront read', () => {
       { offeringId: 1, open: 2 },
       { offeringId: 3, open: 4 },
     ] as never);
-    const offerings = await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR });
+    const offerings = await getShopServiceOfferings({
+      userId: SELLER,
+      viewerId: VISITOR,
+      servable: ALL,
+    });
     expect(offerings.map((o) => [o.id, o.slotsOpen])).toEqual([
       [1, 1],
       [2, null],
@@ -203,12 +219,12 @@ describe('storefront read', () => {
 
   it("hides a private shop's offerings from visitors, not from its owner", async () => {
     shopEnabled(false);
-    expect(await rejects(getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR }))).toBe(
-      'Shop not found'
-    );
+    expect(
+      await rejects(getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR, servable: ALL }))
+    ).toBe('Shop not found');
     expect(dbMock.dbRead.serviceOffering.findMany).not.toHaveBeenCalled();
 
-    await getShopServiceOfferings({ userId: SELLER, viewerId: SELLER });
+    await getShopServiceOfferings({ userId: SELLER, viewerId: SELLER, servable: ALL });
     expect(dbMock.dbRead.serviceOffering.findMany).toHaveBeenCalledTimes(1);
   });
 });
@@ -237,4 +253,77 @@ it('finds only OPEN deals on either side when deciding whether the dark list ser
   );
   dbMock.dbRead.serviceDeal.findFirst.mockResolvedValue({ id: 1 } as never);
   expect(await hasOpenServiceDeal(SELLER)).toBe(true);
+});
+
+// Decision (Creator Services, briony 2026-10-15): SFW-always. An offering rated PG or PG-13 shows
+// to everyone, everywhere, as before ratings existed; only a mature one (R and up) is held to the
+// viewer's browsing level and the domain. Signed-out viewers browse at PG, so filtering every
+// offering by level would hide every default (PG-13) offering from them.
+describe('storefront ratings', () => {
+  const VISITOR = 99;
+  const shown = (browsingLevel: number | undefined, servable: number) =>
+    visibleMatureServiceRatings({ browsingLevel, servable });
+  const where = async (browsingLevel: number | undefined, servable: number) => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR, browsingLevel, servable });
+    return dbMock.dbRead.serviceOffering.findMany.mock.calls.at(-1)?.[0]?.where;
+  };
+  // A row passes the read's rating filter as Prisma would apply it.
+  const passes = (filter: Record<string, unknown>, rating: number) => {
+    const test = (clause: { maxNsfwLevel: { lte?: number; in?: number[] } }) =>
+      clause.maxNsfwLevel.lte !== undefined
+        ? rating <= clause.maxNsfwLevel.lte
+        : !!clause.maxNsfwLevel.in?.includes(rating);
+    return 'OR' in filter
+      ? (filter.OR as never[]).some(test)
+      : test(filter as { maxNsfwLevel: { lte?: number } });
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      settings: { creatorShop: { enabled: true } },
+    } as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+  });
+
+  it('shows a PG-13 offering and hides an R one from a signed-out (PG-only) viewer', async () => {
+    const filter = (await where(publicBrowsingLevelsFlag, allBrowsingLevelsFlag)) as never;
+    expect(passes(filter, NsfwLevel.PG13)).toBe(true);
+    expect(passes(filter, NsfwLevel.PG)).toBe(true);
+    expect(passes(filter, NsfwLevel.R)).toBe(false);
+  });
+
+  it('shows mature offerings only at levels the viewer browses and the domain serves', async () => {
+    const red = (await where(NsfwLevel.PG | NsfwLevel.R, allBrowsingLevelsFlag)) as never;
+    expect(passes(red, NsfwLevel.R)).toBe(true);
+    expect(passes(red, NsfwLevel.XXX)).toBe(false);
+    expect(passes(red, NsfwLevel.PG13)).toBe(true);
+    // Green serves nothing mature, whatever the viewer browses at.
+    const green = (await where(allBrowsingLevelsFlag, sfwBrowsingLevelsFlag)) as never;
+    expect(passes(green, NsfwLevel.R)).toBe(false);
+    expect(passes(green, NsfwLevel.PG13)).toBe(true);
+  });
+
+  it('treats no level as nothing mature, never as everything', () => {
+    expect(shown(undefined, allBrowsingLevelsFlag)).toEqual([]);
+    expect(shown(allBrowsingLevelsFlag, allBrowsingLevelsFlag)).toEqual([
+      NsfwLevel.R,
+      NsfwLevel.X,
+      NsfwLevel.XXX,
+    ]);
+    expect(isMatureServiceRating(NsfwLevel.PG13)).toBe(false);
+    expect(isMatureServiceRating(NsfwLevel.R)).toBe(true);
+  });
+
+  it('accepts one rating bit and refuses Blocked or a mask with a 400', () => {
+    const base = { ...fields };
+    expect(upsertServiceOfferingSchema.parse(base).maxNsfwLevel).toBe(NsfwLevel.PG13);
+    expect(
+      upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: NsfwLevel.X }).success
+    ).toBe(true);
+    for (const bad of [NsfwLevel.Blocked, NsfwLevel.PG | NsfwLevel.R, 0, 3])
+      expect(upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: bad }).success).toBe(
+        false
+      );
+  });
 });
