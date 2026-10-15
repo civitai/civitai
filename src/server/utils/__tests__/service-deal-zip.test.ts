@@ -2,6 +2,8 @@ import { Readable } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
   bufferZipSource,
+  deliveryName,
+  openEntryStream,
   openZip,
   pathRefusal,
   readEntry,
@@ -189,6 +191,13 @@ describe('what an archive says about itself', () => {
     );
   });
 
+  it('refuses an archive with extra trailing data', async () => {
+    const zip = buildZip([{ name: 'a.txt', data: Buffer.from('x'.repeat(100)) }], {
+      trailing: Buffer.from('trailing'),
+    });
+    await rejects(openZip(bufferZipSource(zip)), /not a valid/);
+  });
+
   it('refuses what is not a zip, and a zip cut short', async () => {
     await rejects(
       openZip(bufferZipSource(Buffer.from('definitely not a zip file'))),
@@ -254,6 +263,21 @@ describe('what an archive says about itself', () => {
       )
     );
     ok.zipfile.close();
+  });
+
+  it('can leave the ratio unasked, for an archive the server built itself', async () => {
+    const entries = [
+      {
+        name: 'a.txt',
+        data: Buffer.from('x'),
+        declaredSize: 30 * 1024 * 1024,
+        declaredCompressedSize: 1000,
+      },
+    ];
+    await rejects(openZip(bufferZipSource(buildZip(entries))), /compressed beyond/);
+    const opened = await openZip(bufferZipSource(buildZip(entries)), { checkRatio: false });
+    expect(opened.entries).toHaveLength(1);
+    opened.zipfile.close();
   });
 
   it('refuses a declared total over the limit', async () => {
@@ -413,5 +437,130 @@ describe('reading from the bucket', () => {
         for await (const chunk of source.readRange(0, 10)) void chunk;
       })()
     ).rejects.toThrow('down');
+  });
+});
+
+describe('the name a file has in the archive the server builds', () => {
+  it.each([
+    ['a plain path', 'a/b.txt', 'a/b.txt'],
+    ['a leading dot-slash', './a.txt', 'a.txt'],
+    ['repeated leading dot-slashes', './././a.txt', 'a.txt'],
+    ['doubled separators', 'a//b///c.txt', 'a/b/c.txt'],
+    ['backslashes', 'a\\b.txt', 'a/b.txt'],
+    ['a decomposed accent', 'cafe\u0301.txt', 'caf\u00e9.txt'],
+  ])('tidies %s', (_label, path, expected) => {
+    expect(deliveryName(path)).toBe(expected);
+  });
+
+  it.each([
+    ['nothing', ''],
+    ['only a dot-slash', './'],
+    ['a directory', 'a/b/'],
+    ['a parent path', '../a.txt'],
+    ['a parent path after tidying', './../a.txt'],
+    ['an absolute path', '/a.txt'],
+  ])('refuses %s', (_label, path) => {
+    expect(() => deliveryName(path)).toThrow(ZipRejectedError);
+  });
+});
+
+describe('copying an entry out', () => {
+  const drain = async (stream: AsyncIterable<unknown>) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks);
+  };
+  const open = async (entries: FixtureEntry[]) => {
+    const opened = await openZip(bufferZipSource(buildZip(entries)));
+    return opened;
+  };
+
+  it('hands over exactly the bytes of the entry', async () => {
+    const data = Buffer.from('some bytes worth copying '.repeat(50));
+    const opened = await open([{ name: 'a.txt', data }]);
+    const copied = await drain(
+      await openEntryStream(opened.zipfile, opened.entries[0], { used: 0 })
+    );
+    expect(copied.equals(data)).toBe(true);
+    opened.zipfile.close();
+  });
+
+  it('stops an entry that exceeds its compression ratio as it is read', async () => {
+    const opened = await open([
+      { name: 'a.txt', data: Buffer.alloc(60 * 1024 * 1024), declaredSize: 500 },
+    ]);
+    await rejects(
+      drain(await openEntryStream(opened.zipfile, opened.entries[0], { used: 0 })),
+      /compressed beyond/
+    );
+    opened.zipfile.close();
+  });
+
+  it('stops an entry past the size cap for its kind as it is read', async () => {
+    const image = await open([
+      {
+        name: 'a.png',
+        data: Buffer.alloc(SERVICE_ZIP_MAX_IMAGE_BYTES + 1, 3),
+        method: 'store',
+        declaredSize: 1000,
+      },
+    ]);
+    await rejects(
+      drain(await openEntryStream(image.zipfile, image.entries[0], { used: 0 })),
+      /too large/
+    );
+    image.zipfile.close();
+    // The same size is within the general cap for a file that is not an image.
+    const other = await open([
+      {
+        name: 'a.dat',
+        data: Buffer.alloc(SERVICE_ZIP_MAX_IMAGE_BYTES + 1, 3),
+        method: 'store',
+        declaredSize: 1000,
+      },
+    ]);
+    const copied = await drain(await openEntryStream(other.zipfile, other.entries[0], { used: 0 }));
+    expect(copied.byteLength).toBe(SERVICE_ZIP_MAX_IMAGE_BYTES + 1);
+    other.zipfile.close();
+  });
+
+  it('fails when the source of the archive fails part-way, rather than waiting for ever', async () => {
+    const whole = bufferZipSource(
+      buildZip([{ name: 'a.txt', data: Buffer.from('some bytes '.repeat(2000)), method: 'store' }])
+    );
+    let failing = false;
+    const flaky = {
+      size: whole.size,
+      readRange: (start: number, end: number) => {
+        const stream = whole.readRange(start, end);
+        // Small reads (headers) pass; the read of the entry's bytes breaks.
+        if (!failing || end - start < 1000) return stream;
+        return Readable.from(
+          (async function* () {
+            yield Buffer.from('partial');
+            throw new Error('connection reset');
+          })()
+        );
+      },
+    };
+    const opened = await openZip(flaky);
+    failing = true;
+    await expect(
+      drain(await openEntryStream(opened.zipfile, opened.entries[0], { used: 0 }))
+    ).rejects.toThrow('connection reset');
+    opened.zipfile.close();
+  });
+
+  it('counts against the archive-wide budget', async () => {
+    const opened = await open([{ name: 'a.txt', data: Buffer.alloc(100, 1), method: 'store' }]);
+    await rejects(
+      drain(
+        await openEntryStream(opened.zipfile, opened.entries[0], {
+          used: SERVICE_ZIP_MAX_TOTAL_BYTES - 10,
+        })
+      ),
+      /too large once unpacked/
+    );
+    opened.zipfile.close();
   });
 });

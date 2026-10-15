@@ -212,8 +212,6 @@ export const SERVICE_UNPACK_STALE_MS = 60 * 60_000;
 export const SERVICE_UNPACK_RETRY_MS = 5 * 60_000;
 /** An image still Pending this long after its row was created is failed, so a round never hangs. */
 export const SERVICE_FINAL_SCAN_GIVE_UP_MS = 6 * HOUR;
-/** A copy still Pending after its file settled some other way is deleted once this old, so its scan can finish. */
-export const SERVICE_SCAN_COPY_SWEEP_MS = 60 * 60_000;
 
 /**
  * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about

@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  submitFinalScan,
+  type FinalScanTarget,
+} from '~/server/services/creator-service-deal-file-scan';
+import {
   createScanImage,
   fileExtension,
   readObject,
@@ -20,7 +24,6 @@ import {
 } from '~/server/utils/service-deal-zip';
 import {
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
-  SERVICE_SCAN_COPY_SWEEP_MS,
   SERVICE_UNPACK_RETRY_MS,
   SERVICE_UNPACK_STALE_MS,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
@@ -51,6 +54,7 @@ const MAX_LEVEL = Prisma.sql`d."maxNsfwLevel"`;
 
 type ClaimedFinal = {
   id: number;
+  dealId: number;
   s3Key: string;
   fileName: string;
   size: number;
@@ -74,11 +78,11 @@ function claimFinal() {
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_UNPACK_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT 1 FOR UPDATE SKIP LOCKED)
-    RETURNING f."id", f."s3Key", f."fileName", f."size", d."sellerId"`;
+    RETURNING f."id", f."dealId", f."s3Key", f."fileName", f."size", d."sellerId"`;
 }
 
 /** Keeps the file out of the next runs for a while, so one file that keeps failing cannot hold up the rest. */
-const retryLater = (fileId: number) =>
+export const retryLater = (fileId: number) =>
   dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "processingAt" = now() - ((${
@@ -93,7 +97,7 @@ const release = (fileId: number) =>
  * A Final that cannot be accepted as it is. The reason is what the seller reads; the file fails its
  * scan, which blocks delivery and sends an already delivered deal to the moderators.
  */
-async function refuseFinal(fileId: number, reason: string) {
+export async function refuseFinal(fileId: number, reason: string) {
   await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile"
     SET "failReason" = ${reason}::text, "unpackedAt" = now(), "processingAt" = NULL
@@ -101,13 +105,28 @@ async function refuseFinal(fileId: number, reason: string) {
   await recordFinalScanResult({ fileId, verdict: 'Failed' });
 }
 
-const markUnpacked = (fileId: number) =>
+/** `repacked`: there is nothing to rebuild (not a zip), so the file is ready for its scan as it is. */
+const markUnpacked = (fileId: number, repacked: boolean) =>
   dbWrite.$executeRaw`
-    UPDATE "ServiceDealFile" SET "unpackedAt" = now(), "processingAt" = NULL
+    UPDATE "ServiceDealFile"
+    SET "unpackedAt" = now(), "processingAt" = NULL,
+      "repackedAt" = CASE WHEN ${repacked} THEN now() ELSE NULL END
     WHERE "id" = ${fileId}::int`;
+
+/** Hands a file to the malware scan once it is ready, naming the object a buyer would download. */
+export async function handOffToScan(fileId: number) {
+  const [target] = await dbWrite.$queryRaw<FinalScanTarget[]>`
+    SELECT "id", "dealId", "mimeType",
+      COALESCE("deliveryKey", "s3Key") AS "s3Key", COALESCE("deliverySize", "size") AS "size"
+    FROM "ServiceDealFile" WHERE "id" = ${fileId}::int`;
+  if (target) await submitFinalScan(target);
+}
 
 type EntryRow = {
   id: number;
+  dealId: number;
+  path: string;
+  size: number;
   imageId: number | null;
   scanKey: string | null;
   scanStatus: string;
@@ -124,7 +143,8 @@ async function submitEntryImage(
   sellerId: number
 ) {
   const [row] = await dbWrite.$queryRaw<EntryRow[]>`
-    SELECT "id", "imageId", "scanKey", "scanStatus"::text AS "scanStatus" FROM "ServiceDealFileEntry"
+    SELECT "id", "dealId", "path", "size", "imageId", "scanKey", "scanStatus"::text AS "scanStatus"
+    FROM "ServiceDealFileEntry"
     WHERE "fileId" = ${fileId}::int AND "entryIndex" = ${entryIndex}::int`;
   // An image already submitted, or already judged and its copy deleted, is never ingested again.
   if (!row || row.imageId || row.scanStatus !== 'Pending') return;
@@ -151,9 +171,12 @@ async function submitEntryImage(
   const attached = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" SET "imageId" = ${imageId}::int WHERE "id" = ${row.id}::int`;
   if (attached === 0) {
-    // The file was deleted while this ran: nothing points at the copy any more.
-    const { deleteImageById } = await import('~/server/services/image.service');
-    await deleteImageById({ id: imageId, updatePost: false }).catch(() => null);
+    // The file was deleted while this ran. The copy's scan has not finished, so it is kept, with a
+    // row of its own that no file owns, like any other copy left when its file is deleted.
+    await dbWrite.$executeRaw`
+      INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanKey")
+      VALUES (NULL, ${row.dealId}::int, ${entryIndex}::int, ${row.path}::text, ${row.size}::int,
+        ${imageId}::int, (SELECT "url" FROM "Image" WHERE "id" = ${imageId}::int))`;
   }
 }
 
@@ -185,8 +208,9 @@ async function unpackZip(file: ClaimedFinal, shouldStop: () => boolean) {
     // The rows exist before any image is submitted, so the file cannot pass with one unjudged.
     for (const entry of images)
       await dbWrite.$executeRaw`
-        INSERT INTO "ServiceDealFileEntry" ("fileId", "entryIndex", "path", "size")
-        VALUES (${file.id}::int, ${entry.index}::int, ${entry.path}::text, ${entry.size}::int)
+        INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size")
+        VALUES (${file.id}::int, ${file.dealId}::int, ${entry.index}::int, ${entry.path}::text,
+          ${entry.size}::int)
         ON CONFLICT ("fileId", "entryIndex") DO NOTHING`;
 
     // Pass 2: one image in memory at a time. Each is read again, so a crash resumes at the next.
@@ -236,8 +260,8 @@ async function unpackImage(file: ClaimedFinal) {
   if (file.size > SERVICE_ZIP_MAX_IMAGE_BYTES)
     throw new ZipRejectedError('That image is too large to deliver.');
   await dbWrite.$executeRaw`
-    INSERT INTO "ServiceDealFileEntry" ("fileId", "entryIndex", "path", "size")
-    VALUES (${file.id}::int, 0, ${file.fileName}::text, ${file.size}::int)
+    INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size")
+    VALUES (${file.id}::int, ${file.dealId}::int, 0, ${file.fileName}::text, ${file.size}::int)
     ON CONFLICT ("fileId", "entryIndex") DO NOTHING`;
   const original = await readObject(await getBucket(), file.s3Key);
   try {
@@ -272,7 +296,8 @@ export async function unpackFinals({
     } else if (!isModelName(file.fileName) && (await isImageByContent(file))) {
       await unpackImage(file);
     }
-    await markUnpacked(file.id);
+    await markUnpacked(file.id, extension !== 'zip');
+    if (extension !== 'zip') await handOffToScan(file.id);
     logUnpack('final unpacked', { fileId: file.id, ms: Date.now() - began });
     return 1;
   } catch (error) {
@@ -300,8 +325,8 @@ export async function settleEntryScans() {
   const passed = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" e
     SET "scanStatus" = 'Passed'::"ServiceDealFileScanStatus", "nsfwLevel" = i."nsfwLevel"
-    FROM "Image" i, "ServiceDealFile" f, "ServiceDeal" d
-    WHERE i."id" = e."imageId" AND f."id" = e."fileId" AND d."id" = f."dealId" AND ${waiting}
+    FROM "Image" i, "ServiceDeal" d
+    WHERE i."id" = e."imageId" AND d."id" = e."dealId" AND ${waiting}
       AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
       AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
       AND i."nsfwLevel" BETWEEN 1 AND ${MAX_LEVEL}`;
@@ -309,8 +334,8 @@ export async function settleEntryScans() {
     UPDATE "ServiceDealFileEntry" e
     SET "scanStatus" = 'Failed'::"ServiceDealFileScanStatus", "nsfwLevel" = i."nsfwLevel",
       "failReason" = 'An image in this file was rejected when it was checked.'
-    FROM "Image" i, "ServiceDealFile" f, "ServiceDeal" d
-    WHERE i."id" = e."imageId" AND f."id" = e."fileId" AND d."id" = f."dealId" AND ${waiting}
+    FROM "Image" i, "ServiceDeal" d
+    WHERE i."id" = e."imageId" AND d."id" = e."dealId" AND ${waiting}
       AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
           AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor"
@@ -341,6 +366,8 @@ export async function settleFinals() {
     WHERE f."kind" = 'Final'::"ServiceDealFileKind"
       AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND (f."failReason" IS NOT NULL
+        OR (f."unpackedAt" < now() - (${SERVICE_FINAL_SCAN_GIVE_UP_MS}::int * interval '1 millisecond')
+          AND f."repackedAt" IS NULL)
         OR f."malwareScanStatus" = 'Failed'::"ServiceDealFileScanStatus"
         OR EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = f."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"))
@@ -360,6 +387,7 @@ export async function settleFinals() {
     WHERE f."kind" = 'Final'::"ServiceDealFileKind"
       AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND f."unpackedAt" IS NOT NULL
+      AND f."repackedAt" IS NOT NULL
       AND f."malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
       AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
@@ -373,21 +401,16 @@ export async function settleFinals() {
 }
 
 /**
- * Step 4: a copy has done its job once its image passed, or once the file it belongs to has been
- * settled some other way (another image failed, the malware scan did) and the copy has had time to
- * finish scanning. The copy of a REJECTED image is kept: its Image row is what the moderation
- * tooling reads, and deleting it would take the evidence with it. A delete that fails stays
- * pointed at and is retried.
+ * Step 4: the copy of an image that passed has done its job. The copy of an image whose scan has not
+ * finished, or that was rejected, is KEPT, even after its file was deleted: its Image row is what
+ * the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
+ * is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
+ * passes. A delete that fails stays pointed at and is retried.
  */
 export async function deleteEntryScanCopies({ limit = 50 } = {}) {
-  const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
-    SELECT e."id", e."imageId" FROM "ServiceDealFileEntry" e
-    JOIN "ServiceDealFile" f ON f."id" = e."fileId"
-    WHERE e."imageId" IS NOT NULL
-      AND (e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-        OR (e."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
-          AND f."scanStatus" <> 'Pending'::"ServiceDealFileScanStatus"
-          AND e."createdAt" < now() - (${SERVICE_SCAN_COPY_SWEEP_MS}::int * interval '1 millisecond')))
+  const rows = await dbWrite.$queryRaw<{ id: number; imageId: number; fileId: number | null }[]>`
+    SELECT e."id", e."imageId", e."fileId" FROM "ServiceDealFileEntry" e
+    WHERE e."imageId" IS NOT NULL AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
     ORDER BY e."id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
   const { deleteImageById } = await import('~/server/services/image.service');
@@ -395,8 +418,11 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   for (const row of rows) {
     try {
       await deleteImageById({ id: row.imageId, updatePost: false });
-      await dbWrite.$executeRaw`
-        UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
+      if (row.fileId === null)
+        await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
+      else
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
       deleted++;
     } catch (error) {
       logUnpack(

@@ -4738,11 +4738,24 @@ export type ServiceDealFile = {
    * Set once the file's contents have been listed and checked (a zip unpacked, an image read).
    */
   unpackedAt: Timestamp | null;
+  /**
+   * What a buyer downloads: for a zip, an archive the server built from the entries it checked
+   * (`deliveryKey`); for any other file the upload itself, with `deliveryKey` null. `repackedAt`
+   * is set when the file is ready for its malware scan.
+   */
+  deliveryKey: string | null;
+  deliverySize: number | null;
+  repackedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealFileEntry = {
   id: Generated<number>;
-  fileId: number;
+  /**
+   * Null once the file was deleted: an image whose scan has not finished, or that was rejected,
+   * outlives its file so the evidence stays with the moderators.
+   */
+  fileId: number | null;
+  dealId: number;
   entryIndex: number;
   path: string;
   size: number;

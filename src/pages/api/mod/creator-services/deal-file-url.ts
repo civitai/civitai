@@ -12,17 +12,23 @@ export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
   summary: 'A short-lived signed download URL for one Creator Services delivery file.',
   returns: '{ url, expiresAt }',
   notes: [
-    'The original file, whatever its status or scan result: this is for dispute review.',
+    'The original file, whatever its status or scan result: this is for dispute review. With delivered=true, the file as the buyer receives it.',
     'The URL is an attachment download and stops working after about five minutes. Do not store it; ask again.',
   ],
   input: z.object({
     fileId: z.coerce.number().int().positive().describe('The delivery file id.'),
+    delivered: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((value) => value === 'true')
+      .describe('Ask for the file as the buyer receives it instead of the original.'),
   }),
-  async handler({ fileId }, { actor }) {
+  async handler({ fileId, delivered }, { actor }) {
     const target = await resolveServiceDealFileDownload({
       fileId,
       userId: actor.id,
       isModerator: true,
+      delivered,
     });
     if (!target) throw throwNotFoundError('File not found');
     const url = await getServiceDealFileDownloadUrl(target);

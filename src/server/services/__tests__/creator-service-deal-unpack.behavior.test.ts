@@ -127,7 +127,6 @@ const unpack = await import('~/server/services/creator-service-deal-unpack.servi
 const scan = await import('~/server/services/creator-service-deal-file-scan');
 const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
 const {
-  SERVICE_SCAN_COPY_SWEEP_MS,
   SERVICE_UNPACK_STALE_MS,
   SERVICE_ZIP_MAX_ENTRIES,
   SERVICE_ZIP_MAX_ENTRY_BYTES,
@@ -141,6 +140,7 @@ const MIGRATIONS = [
   '20261028150000_creator_service_max_nsfw_level',
   '20261028160000_creator_service_deal_file_entries',
   '20261028170000_creator_service_offering_takedown',
+  '20261029140000_creator_service_deal_file_delivery',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -160,6 +160,9 @@ type FileRecord = {
   unpackedAt: Date | null;
   processingAt: Date | null;
   malwareScanStatus: string;
+  repackedAt: Date | null;
+  deliveryKey: string | null;
+  deliverySize: number | null;
 };
 type EntryRecord = {
   id: number;
@@ -750,7 +753,7 @@ describe('resuming', () => {
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     // A previous run created the row and died before recording it.
     await q(
-      `INSERT INTO "ServiceDealFileEntry" ("fileId", "entryIndex", "path", "size", "scanKey") VALUES ($1, 0, 'a.png', 1, 'left-key')`,
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "scanKey") VALUES ($1, 1, 0, 'a.png', 1, 'left-key')`,
       [fileId]
     );
     await q(`INSERT INTO "Image" (url) VALUES ('left-key')`);
@@ -764,7 +767,7 @@ describe('resuming', () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     await q(
-      `INSERT INTO "ServiceDealFileEntry" ("fileId", "entryIndex", "path", "size", "scanStatus") VALUES ($1, 0, 'a.png', 1, 'Passed')`,
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "scanStatus") VALUES ($1, 1, 0, 'a.png', 1, 'Passed')`,
       [fileId]
     );
     expect(await unpack.unpackFinals()).toBe(1);
@@ -772,7 +775,7 @@ describe('resuming', () => {
     expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
   });
 
-  it('removes the copy it just made when the file was deleted underneath it', async () => {
+  it('keeps the copy it just made when the file was deleted underneath it, as an orphan to judge', async () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     images.createImage.mockImplementationOnce(async ({ url }: { url: string }) => {
@@ -783,8 +786,20 @@ describe('resuming', () => {
       return { id: row.id };
     });
     await unpack.unpackFinals();
-    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
-    expect(await q(`SELECT 1 FROM "Image"`)).toEqual([]);
+    // Its scan has not finished, so nothing is deleted.
+    expect(images.deleteImageById).not.toHaveBeenCalled();
+    const rows = await q<{
+      fileId: number | null;
+      dealId: number;
+      imageId: number;
+      scanKey: string;
+    }>(`SELECT "fileId", "dealId", "imageId", "scanKey" FROM "ServiceDealFileEntry"`);
+    expect(rows).toEqual([{ fileId: null, dealId, imageId: 1, scanKey: 'scan-key-1' }]);
+    // And the verdict, when it comes, is taken like any other.
+    await q(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 1`);
+    await unpack.settleEntryScans();
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 1 }]);
   });
 });
 
@@ -893,7 +908,10 @@ describe('the verdict on the whole Final', () => {
     return { dealId, fileId };
   }
   const malwarePasses = (fileId: number) =>
-    q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed' WHERE id = $1`, [fileId]);
+    q(
+      `UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed', "repackedAt" = now() WHERE id = $1`,
+      [fileId]
+    );
 
   it('does NOT pass on its images alone: with no malware verdict it stays Pending', async () => {
     const { fileId } = await unpacked(2);
@@ -974,7 +992,10 @@ describe('the single verdict entry point', () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     await unpack.unpackFinals();
-    await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed' WHERE id = $1`, [fileId]);
+    await q(
+      `UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed', "repackedAt" = now() WHERE id = $1`,
+      [fileId]
+    );
     await q(`UPDATE "ServiceDealFileEntry" SET "scanStatus" = 'Passed' WHERE "fileId" = $1`, [
       fileId,
     ]);
@@ -986,6 +1007,7 @@ describe('the single verdict entry point', () => {
     const fileId = await ready();
     const breaks: [string, string][] = [
       ['not unpacked', `UPDATE "ServiceDealFile" SET "unpackedAt" = NULL WHERE id = ${fileId}`],
+      ['not repacked', `UPDATE "ServiceDealFile" SET "repackedAt" = NULL WHERE id = ${fileId}`],
       [
         'malware pending',
         `UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Pending' WHERE id = ${fileId}`,
@@ -1011,8 +1033,8 @@ describe('the single verdict entry point', () => {
       expect((await fileRow(fileId)).scanStatus, label).toBe('Pending');
       // Restore for the next condition.
       await q(
-        `UPDATE "ServiceDealFile" SET "unpackedAt" = $2, "malwareScanStatus" = $3::"ServiceDealFileScanStatus" WHERE id = $1`,
-        [fileId, snapshot.unpackedAt, snapshot.malwareScanStatus]
+        `UPDATE "ServiceDealFile" SET "unpackedAt" = $2, "malwareScanStatus" = $3::"ServiceDealFileScanStatus", "repackedAt" = $4 WHERE id = $1`,
+        [fileId, snapshot.unpackedAt, snapshot.malwareScanStatus, snapshot.repackedAt]
       );
       await q(
         `UPDATE "ServiceDealFileEntry" SET "scanStatus" = $2::"ServiceDealFileScanStatus" WHERE "fileId" = $1`,
@@ -1076,36 +1098,83 @@ describe('copies of scanned images', () => {
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
   });
 
-  it('sweeps the copy of an image still pending once its file is settled and the copy is old', async () => {
+  it('keeps the copy of an image still being scanned, however old and whatever becomes of its file', async () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     await unpack.unpackFinals();
     await files.recordFinalScanResult({ fileId, verdict: 'Failed' });
-    // Fresh: its scan may still be running, so it is left.
-    expect(await unpack.deleteEntryScanCopies()).toBe(0);
-    await q(
-      `UPDATE "ServiceDealFileEntry" SET "createdAt" = now() - ($1::int * interval '1 millisecond')`,
-      [SERVICE_SCAN_COPY_SWEEP_MS + 60_000]
-    );
-    expect(await unpack.deleteEntryScanCopies()).toBe(1);
-    expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
-  });
-
-  it('leaves the copy of a pending image alone while its file is still pending, however old', async () => {
-    const dealId = await accepted();
-    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
-    await unpack.unpackFinals();
     await q(`UPDATE "ServiceDealFileEntry" SET "createdAt" = now() - interval '3 hours'`);
     expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    expect((await entries(fileId))[0]).toMatchObject({
+      scanStatus: 'Pending',
+      scanKey: 'scan-key-1',
+    });
     expect((await entries(fileId))[0].imageId).not.toBeNull();
   });
 
-  it("removes the copies of a deleted file, except a rejected image's", async () => {
-    const { fileId } = await settled();
-    await files.deleteServiceDealFile({ fileId, userId: SELLER });
-    expect(await q(`SELECT 1 FROM "ServiceDealFileEntry"`)).toEqual([]);
-    expect(images.deleteImageById).toHaveBeenCalledTimes(1);
-    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
-    expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 2 }]);
+  describe('when the seller deletes the file', () => {
+    async function threeImages() {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [
+        { name: 'ok.png', data: IMAGE_A },
+        { name: 'bad.png', data: IMAGE_B },
+        { name: 'slow.png', data: IMAGE_A },
+      ]);
+      await unpack.unpackFinals();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 1`);
+      await q(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 2`);
+      // The third is still being scanned.
+      await unpack.settleEntryScans();
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      return { dealId, fileId };
+    }
+    const orphans = () =>
+      q<EntryRecord & { dealId: number }>(
+        `SELECT * FROM "ServiceDealFileEntry" ORDER BY "entryIndex"`
+      );
+
+    it('removes the copy of a passed image only: a rejected one and one still being scanned stay', async () => {
+      await threeImages();
+      expect(images.deleteImageById).toHaveBeenCalledTimes(1);
+      expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
+      expect(await q(`SELECT id FROM "Image" ORDER BY id`)).toEqual([{ id: 2 }, { id: 3 }]);
+      const rows = await orphans();
+      expect(rows.map((r) => [r.scanStatus, r.imageId, r.fileId, r.dealId])).toEqual([
+        ['Failed', 2, null, 1],
+        ['Pending', 3, null, 1],
+      ]);
+    });
+
+    it('removes the rows of images that were never submitted', async () => {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size") VALUES ($1, $2, 0, 'a.png', 1)`,
+        [fileId, dealId]
+      );
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      expect(await q(`SELECT 1 FROM "ServiceDealFileEntry"`)).toEqual([]);
+    });
+
+    it('still judges the image whose scan finishes later, and drops it once it passes', async () => {
+      await threeImages();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = 3`);
+      expect((await unpack.settleEntryScans()).passed).toBe(1);
+      expect(await unpack.deleteEntryScanCopies()).toBe(1);
+      expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 2 }]);
+      // Its row goes with its copy; the rejected image's stays.
+      expect((await orphans()).map((r) => r.imageId)).toEqual([2]);
+    });
+
+    it("rejects the image that comes back above the deal's limit, and keeps its copy", async () => {
+      await threeImages();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4 WHERE id = 3`);
+      await unpack.settleEntryScans();
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await orphans()).map((r) => [r.scanStatus, r.imageId])).toEqual([
+        ['Failed', 2],
+        ['Failed', 3],
+      ]);
+    });
   });
 });
