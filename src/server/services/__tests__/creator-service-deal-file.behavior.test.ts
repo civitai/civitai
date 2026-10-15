@@ -103,6 +103,8 @@ const MIGRATIONS = [
   '20261025120000_creator_services_foundation',
   '20261028130000_service_deal_event_reason_code',
   '20261028140000_creator_service_deal_file_state',
+  '20261028150000_creator_service_max_nsfw_level',
+  '20261028160000_creator_service_deal_file_entries',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -152,6 +154,8 @@ async function accepted(previewKind = 'Image') {
     buyerId: BUYER,
     requestText: 'please',
     buzzType: 'yellow',
+    servableLevels: 31,
+    consentLevels: 1,
   });
   await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
   return id;
@@ -174,6 +178,9 @@ async function uploaded(dealId: number, over: Record<string, unknown> = {}) {
   s3.headObject.mockResolvedValue({ status: 'present', size: (over.size as number) ?? 1000 });
   s3.send.mockResolvedValue(body(ZIP));
   await files.completeServiceDealUpload({ fileId, userId: SELLER });
+  // The unpack job's mark, set by hand: a delivery waits for it (see the unpack behaviour tests).
+  if (over.kind !== 'Preview' && over.unpacked !== false)
+    await q(`UPDATE "ServiceDealFile" SET "unpackedAt" = now() WHERE id = $1`, [fileId]);
   return fileId;
 }
 
@@ -220,7 +227,7 @@ beforeEach(async () => {
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER}), (${MOD});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -271,6 +278,8 @@ describe('requesting an upload', () => {
           buyerId: BUYER,
           requestText: 'please',
           buzzType: 'yellow',
+          servableLevels: 31,
+          consentLevels: 1,
         });
         return id;
       },
@@ -296,7 +305,7 @@ describe('requesting an upload', () => {
     };
     for (const [status, reach] of Object.entries(states)) {
       await q(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
       );
       const dealId = await reach();
       const [row] = await q<{ status: string }>(
@@ -336,7 +345,7 @@ describe('requesting an upload', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     await q(
-      `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
+      `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
     );
     const dealId = await accepted('Image');
     const p = { kind: 'Preview', fileName: 'p.mp4' };
@@ -378,6 +387,58 @@ describe('requesting an upload', () => {
 });
 
 describe('completing an upload', () => {
+  /** The other call finishes while this one is mid-check: Ready, at its own held key. */
+  const WINNER_KEY = 'service-deals/files/winner-copy';
+  const otherCallFinishes = (fileId: number) =>
+    q(`UPDATE "ServiceDealFile" SET status = 'Ready', "s3Key" = $2 WHERE id = $1`, [
+      fileId,
+      WINNER_KEY,
+    ]);
+
+  it('does not fail a file that another call already moved on, nor delete anything', async () => {
+    const dealId = await accepted('None');
+    const { fileId } = await upload(dealId, { size: 1000 });
+    // The first measurement is fine; while this call measures its copy, the other call finishes.
+    s3.headObject.mockResolvedValueOnce({ status: 'present', size: 1000 });
+    s3.headObject.mockImplementationOnce(async () => {
+      await otherCallFinishes(fileId);
+      return { status: 'present', size: 999_999 };
+    });
+    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).resolves.toEqual({
+      id: fileId,
+      status: 'Ready',
+    });
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Ready',
+      failReason: null,
+      s3Key: WINNER_KEY,
+    });
+    // The delivered file's bytes are not touched, and neither is anything else.
+    expect(s3.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it('does the same when the losing call is the one that refuses a zip', async () => {
+    const dealId = await accepted('None');
+    const { fileId } = await upload(dealId, { size: 1000 });
+    s3.headObject.mockResolvedValue({ status: 'present', size: 1000 });
+    // The held copy's first bytes are not a zip; meanwhile the other call finishes.
+    s3.send.mockImplementation(async (command: { input: { Range?: string } }) => {
+      if (!command.input.Range) return {};
+      await otherCallFinishes(fileId);
+      return body(Buffer.from('definitely not a zip file at all'));
+    });
+    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).resolves.toEqual({
+      id: fileId,
+      status: 'Ready',
+    });
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Ready',
+      failReason: null,
+      s3Key: WINNER_KEY,
+    });
+    expect(s3.deleteObject).not.toHaveBeenCalled();
+  });
+
   it('measures the object: a size that is not the declared one fails and removes it', async () => {
     const dealId = await accepted();
     const { fileId } = await upload(dealId, { size: 1000 });
@@ -1017,7 +1078,7 @@ describe('preview pipeline', () => {
   it('passes a PG or PG-13 preview and records the rating the scan gave it', async () => {
     for (const level of [1, 2]) {
       await q(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFile", "ServiceDeal", "Image" RESTART IDENTITY`
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "Image" RESTART IDENTITY`
       );
       const { fileId } = await waiting();
       await files.startPreviewScans();
@@ -1179,6 +1240,13 @@ describe('a scanner verdict on a final', () => {
       )
     )[0];
 
+  /** What a passing Final has: unpacked, and its malware scan passed (the stub never does this). */
+  const clearForPass = (fileId: number) =>
+    q(
+      `UPDATE "ServiceDealFile" SET "unpackedAt" = now(), "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [fileId]
+    );
+
   async function deliveredWithFinal() {
     const dealId = await accepted('None');
     const finalId = await uploaded(dealId);
@@ -1188,6 +1256,7 @@ describe('a scanner verdict on a final', () => {
 
   it('records a pass, and nothing else changes', async () => {
     const { dealId, finalId } = await deliveredWithFinal();
+    await clearForPass(finalId);
     expect(await files.recordFinalScanResult({ fileId: finalId, verdict: 'Passed' })).toEqual({
       recorded: true,
       held: false,

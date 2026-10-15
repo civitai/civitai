@@ -293,6 +293,41 @@ describe('<civitai-post-planner>', () => {
     expect(el.shadowRoot!.activeElement).toBe(control('Close'));
   });
 
+  it('filters by a tag clicked in the drawer, shows it in the toolbar and clears it', async () => {
+    const { el, host, backend } = await mount({ view: 'month', anchor: '2026-10-01' });
+    backend.getPostDetail.mockImplementationOnce(async (id: number) => ({
+      ...(await backend.getPostDetail.getMockImplementation()!(id)),
+      tags: ['landscape', 'night'],
+    }));
+
+    await userEvent.click(chipA());
+    await userEvent.click(page.getByRole('button', { name: '#landscape' }));
+    expect(host.navigate).toHaveBeenCalledWith({
+      view: 'month',
+      anchor: '2026-10-01',
+      modelVersionId: undefined,
+      tag: 'landscape',
+    });
+
+    el.location = { view: 'month', anchor: '2026-10-01', tag: 'landscape' };
+    await expect
+      .element(page.getByLabelText('Tag filter', { exact: true }))
+      .toHaveTextContent('#landscape');
+    await vi.waitFor(() =>
+      expect(backend.getScheduled).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag: 'landscape' })
+      )
+    );
+
+    await userEvent.click(page.getByRole('button', { name: 'Clear tag filter' }));
+    expect(host.navigate).toHaveBeenLastCalledWith({
+      view: 'month',
+      anchor: '2026-10-01',
+      modelVersionId: undefined,
+      tag: undefined,
+    });
+  });
+
   it('shows a still for a video cover in the calendar and the drawer strip', async () => {
     const video = post(1, POST_A, { cover: { url: 'vid-1', type: 'video' } });
     const { backend } = await mount({ view: 'month', anchor: '2026-10-01' }, [video]);

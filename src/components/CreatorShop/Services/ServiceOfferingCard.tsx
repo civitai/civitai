@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { Currency } from '~/shared/utils/prisma/enums';
 
@@ -12,7 +13,7 @@ export function ServiceOfferingCard({
 }: {
   offering: Pick<
     ServiceOffering,
-    'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded'
+    'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded' | 'maxNsfwLevel'
   >;
   footer?: ReactNode;
 }) {
@@ -20,9 +21,12 @@ export function ServiceOfferingCard({
   return (
     <Paper withBorder radius="md" p="md" className="flex h-full flex-col">
       <Stack gap={6} className="flex-1">
-        <Text fw={700} lineClamp={2}>
-          {offering.title}
-        </Text>
+        <Group justify="space-between" align="flex-start" gap="xs" wrap="nowrap">
+          <Text fw={700} lineClamp={2}>
+            {offering.title}
+          </Text>
+          <ServiceRatingBadge rating={offering.maxNsfwLevel} />
+        </Group>
         <Text size="sm" c="dimmed">
           {serviceTermsLine(offering)}
         </Text>

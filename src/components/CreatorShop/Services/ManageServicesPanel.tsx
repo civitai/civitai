@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Center,
@@ -24,6 +25,10 @@ import {
 } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
+import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useServerDomains } from '~/providers/AppProvider';
+import { useRouter } from 'next/router';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
@@ -38,7 +43,10 @@ const openForm = (offering?: ServiceOffering) =>
   dialogStore.trigger({ component: ServiceOfferingFormModal, props: { offering } });
 
 export function ManageServicesPanel() {
-  const { eligibility, offerings, isLoading } = useQueryMyServices(true);
+  const { eligibility, offerings, hiddenOffDomain, isLoading } = useQueryMyServices(true);
+  const router = useRouter();
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
 
   if (isLoading)
     return (
@@ -78,20 +86,26 @@ export function ManageServicesPanel() {
 
       <Title order={3}>Your services</Title>
 
-      {offerings.length > 0 ? (
+      {offerings.length > 0 && (
         <Stack gap="sm">
           {offerings.map((offering) => (
             <OfferingRow key={offering.id} offering={offering} canSell={canSell} />
           ))}
         </Stack>
-      ) : (
-        canSell && (
-          <Paper withBorder radius="md" p="xl">
-            <Text ta="center" c="dimmed">
-              No services yet. Create one to show it in your shop.
-            </Text>
-          </Paper>
-        )
+      )}
+      {hiddenOffDomain > 0 && (
+        <Text size="sm" c="dimmed">
+          <Anchor href={syncAccount(`//${redDomain}${router.asPath}`)} inherit>
+            {pluralize(hiddenOffDomain, 'mature service')}: manage on civitai.red
+          </Anchor>
+        </Text>
+      )}
+      {offerings.length === 0 && hiddenOffDomain === 0 && canSell && (
+        <Paper withBorder radius="md" p="xl">
+          <Text ta="center" c="dimmed">
+            No services yet. Create one to show it in your shop.
+          </Text>
+        </Paper>
       )}
     </Stack>
   );
@@ -160,6 +174,7 @@ function OfferingRow({ offering, canSell }: { offering: ServiceOffering; canSell
             <Badge color={badge.color} variant="light" radius="sm">
               {badge.label}
             </Badge>
+            <ServiceRatingBadge rating={offering.maxNsfwLevel} />
           </Group>
           <Text size="sm" c="dimmed">
             ~{pluralize(offering.deliveryDays, 'day')} ·{' '}

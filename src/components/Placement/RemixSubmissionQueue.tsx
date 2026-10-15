@@ -24,7 +24,7 @@ import { SubmissionPair } from '~/components/RemixGallery/SubmissionPair';
 import { useWithheldHref } from '~/components/Placement/useWithheldHref';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
-import { daysFromNow, formatDate } from '~/utils/date-helpers';
+import { formatDate, recentOrDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { REMIX_GALLERY_QUEUE_LIMIT } from '~/shared/utils/remix-gallery';
 import { trpc } from '~/utils/trpc';
@@ -33,20 +33,6 @@ const TABS = ['received', 'sent'] as const;
 type TabValue = (typeof TABS)[number];
 
 const isTabValue = (value: unknown): value is TabValue => TABS.includes(value as TabValue);
-
-const A_DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * "2 hours ago" while it is still news, the date once it is history.
- *
- * Both queues turn on how long something has been sitting in them, and an
- * absolute date answers that worst in exactly the window where people care.
- * Same split the manage modal and the sticker hover card make.
- */
-const agedLabel = (at: Date | string) => {
-  const value = new Date(at);
-  return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDate(value);
-};
 
 /**
  * Both directions of a remix gallery submission: what is waiting on your
@@ -279,7 +265,7 @@ function ReceivedTab({
                   </Group>
                 )}
                 <Text size="xs" c="dimmed">
-                  Sent {agedLabel(row.createdAt)}
+                  Sent {recentOrDate(row.createdAt)}
                   {row.expiresAt ? ` — expires ${formatDate(row.expiresAt)}` : ''}
                 </Text>
               </Stack>
@@ -424,7 +410,7 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                 </Group>
                 <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
                 <Text size="xs" c="dimmed">
-                  Submitted {agedLabel(row.createdAt)}
+                  Submitted {recentOrDate(row.createdAt)}
                   {row.status === 'pending' && row.expiresAt
                     ? ` — expires ${formatDate(row.expiresAt)}`
                     : ''}

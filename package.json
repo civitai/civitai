@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.282",
+  "version": "5.1.288",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -346,6 +346,7 @@
     "viem": "^2.30.6",
     "xml2js": "^0.6.2",
     "yaml": "^2.8.1",
+    "yauzl": "3.4.0",
     "zod": "^4.0.17",
     "zustand": "^4.3.7"
   },
@@ -385,6 +386,7 @@
     "@types/uuid": "^9.0.0",
     "@types/vimeo__player": "^2.18.3",
     "@types/xml2js": "^0.4.14",
+    "@types/yauzl": "3.4.0",
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
     "@vitest/browser": "^4.1.11",

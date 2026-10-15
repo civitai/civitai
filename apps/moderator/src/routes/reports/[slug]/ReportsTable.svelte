@@ -40,10 +40,9 @@
   } from '$lib/reports';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
-  import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
-  import type { ActionData, PageData } from './$types';
+  import type { PageData } from './$types';
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data }: { data: PageData } = $props();
 
   /**
    * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
@@ -74,7 +73,6 @@
   });
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
   const placementForm = new FormState({ onSuccess: null, reload: true });
-  const sweepForm = new FormState({ onSuccess: null, reload: true });
   const delistForm = new FormState({
     onSuccess: (result) => {
       confirmingDelist = null;
@@ -92,6 +90,15 @@
   // destructive button pointed at the previous one.
   let confirmingPlacement = $state<number | null>(null);
   let confirmingDelist = $state<number | null>(null);
+  const storylineForm = new FormState({
+    onSuccess: (result) => {
+      confirmingTakedown = null;
+      toast.success(String(result?.storylineTakedown ?? 'Done'));
+    },
+    reload: true,
+    onSettled: reloadIfGone,
+  });
+  let confirmingTakedown = $state<number | null>(null);
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
   const reportComment = (r: { details: unknown }) =>
@@ -109,10 +116,6 @@
       data.items[Math.min(selectedIndex, data.items.length - 1)] ??
       null
   );
-
-  const ownerFlaggedMinor = $derived(new Set(data.ownerFlaggedMinor));
-  const isOwnerFlaggedMinor = (entityId: number | null) =>
-    entityId != null && ownerFlaggedMinor.has(entityId);
 
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
   const fmtDate = dateTime;
@@ -167,6 +170,8 @@
     placementForm.error = null;
     delistForm.error = null;
     confirmingDelist = null;
+    storylineForm.error = null;
+    confirmingTakedown = null;
   }
 
   // The row is the target, but it also holds links (the item, the reporter) that must keep doing
@@ -190,26 +195,6 @@
   <p>{data.totalItems} reports</p>
 </header>
 
-<!-- Retool's `ActionAllPostReports`. Only meaningful here: the query keys on every image in the post
-     already being blocked, which is a post-shaped question. -->
-{#if data.type === 'post'}
-  <form method="POST" action="?/actionResolvedPosts" use:enhance={sweepForm.enhance} class="mb-4">
-    <Button type="submit" variant="outline" size="sm">Action reports already resolved by content</Button>
-    <span class="ml-2 text-xs text-muted-foreground">
-      Pending reports whose post is entirely blocked already.
-    </span>
-  </form>
-  <!-- A bulk action that reports nothing is indistinguishable from one that did nothing. -->
-  {#if form && 'actioned' in form && form.actioned != null}
-    <p class="mb-4 text-sm text-green-300" role="status">
-      Actioned {form.actioned} of {form.found}{form.skipped ? `, ${form.skipped} already handled` : ''}{form.more ? ' — more remain, run it again.' : ''}
-    </p>
-  {/if}
-{/if}
-
-{#if sweepForm.error}
-  <p class="mb-4 text-sm text-red-300" role="alert">{sweepForm.error}</p>
-{/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
   <div class="flex flex-col gap-1">
@@ -270,7 +255,7 @@
         <TableBody>
           {#each data.items as report (report.id)}
             {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId, report.contextUrl)}
-            <!-- Striped, and the open row marked with the same blue as post-reports' queue. The stripe is
+            <!-- Striped, and the open row marked with the same blue as the report queues. The stripe is
                  dropped on the open row rather than layered under it, so which one wins never depends
                  on Tailwind's variant order. -->
             <TableRow
@@ -290,9 +275,6 @@
                   <a href={itemUrl} target="_blank" rel="noreferrer" class="link">#{report.entityId}</a>
                 {:else}
                   #{report.entityId}
-                {/if}
-                {#if isOwnerFlaggedMinor(report.entityId)}
-                  <OwnerFlaggedMinorBadge />
                 {/if}
               </TableCell>
               <TableCell>{report.reason}</TableCell>
@@ -393,10 +375,6 @@
               #{selected.entityId}{/if}
             <IconExternalLink size={14} />
           </a>
-        {/if}
-
-        {#if isOwnerFlaggedMinor(selected.entityId)}
-          <div><OwnerFlaggedMinorBadge /></div>
         {/if}
 
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
@@ -509,6 +487,64 @@
             {/if}
             {#if delistForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{delistForm.error}</p>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'storyline'}
+          {@const storyline = data.storylines.find((st) => st.id === selected.entityId)}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            {#if storyline}
+              <p class="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-medium">{storyline.title}</span>
+                {#if storyline.tosViolationByModerator}
+                  <Badge variant="outline">taken down by a moderator</Badge>
+                {/if}
+                {#if storyline.tosViolationByScan}
+                  <Badge variant="outline">taken down by title scan</Badge>
+                {/if}
+              </p>
+            {:else}
+              <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+            {/if}
+            {#if storyline && !storyline.tosViolationByModerator}
+              <p class="mb-2 text-sm">
+                Taking it down hides the storyline from everyone but its owner and moderators, then sets this report
+                Actioned. A later clean scan of its title does not bring it back.
+                {#if storyline.tosViolationByScan}
+                  Its title scan already keeps it down; this holds it down after the scan lifts.
+                {/if}
+              </p>
+              {#if confirmingTakedown === selected.id}
+                <form method="POST" action="?/takeDownStoryline" use:enhance={storylineForm.enhance} class="flex flex-wrap gap-2">
+                  <input type="hidden" name="id" value={selected.id} />
+                  <Button type="submit" size="sm" variant="destructive" disabled={storylineForm.submitting}>
+                    Yes, take it down
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onclick={() => (confirmingTakedown = null)}>
+                    Cancel
+                  </Button>
+                </form>
+              {:else}
+                <Button size="sm" variant="destructive" onclick={() => (confirmingTakedown = selected.id)}>
+                  Take down storyline
+                </Button>
+              {/if}
+            {:else if storyline}
+              {#if storyline.tosViolationByScan}
+                <p class="mb-2 text-sm">
+                  Restoring lifts the moderator takedown only. Its title scan still keeps it down.
+                </p>
+              {/if}
+              <form method="POST" action="?/restoreStoryline" use:enhance={storylineForm.enhance}>
+                <input type="hidden" name="id" value={selected.id} />
+                <Button type="submit" size="sm" variant="outline" disabled={storylineForm.submitting}>
+                  Restore storyline
+                </Button>
+              </form>
+            {/if}
+            {#if storylineForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{storylineForm.error}</p>
             {/if}
           </div>
         {/if}

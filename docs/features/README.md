@@ -28,3 +28,4 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Batch post scheduling and the post planner                   | [docs/features/batch-post-scheduling.md](batch-post-scheduling.md)           |
 | Article scheduling                                           | [docs/features/article-scheduling.md](article-scheduling.md)                 |
 | Account settings deep links (`?setting=`)                    | [docs/features/account-settings-links.md](account-settings-links.md)         |
+| Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |

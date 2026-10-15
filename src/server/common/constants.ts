@@ -23,8 +23,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 
 /**
  * Comment surfaces laid out full-width, so a conversation can render open and deeply nested
- * without the indentation running out of room. Everything else gets the shallower defaults —
- * `image` and `bountyEntry` sit in narrow columns and are shallower still.
+ * without the indentation running out of room. Everything else gets the shallower defaults.
  *
  * Deep threads reach the end of an article's ceiling for 99.5% of article threads (prod,
  * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
@@ -33,28 +32,23 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
 
 function getCommentMaxDepth(entityType: string) {
-  if (wideCommentSurfaces.has(entityType)) return 10;
-  switch (entityType) {
-    case 'image':
-    case 'bountyEntry':
-      return 3;
-    default:
-      return 5;
-  }
+  return wideCommentSurfaces.has(entityType) ? 10 : 5;
 }
 
 /**
- * Surfaces that open fewer reply levels than they can hold, because something below the section
- * has to stay reachable. A challenge puts its entry gallery *underneath* the discussion, and
- * opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
- * one level costs 4.2. Bounty and article have nothing below their discussion to scroll to.
+ * Reply levels a surface opens up front, where it differs from "as deep as it holds" on a wide
+ * surface or "none" elsewhere. A challenge puts its entry gallery *underneath* the discussion,
+ * and opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
+ * one level costs 4.2. `image` and `bountyEntry` sit in narrow detail columns, so they open part
+ * of their depth rather than all of it.
  */
-const autoExpandDepthOverrides: Record<string, number> = { challenge: 1 };
+const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
 function getCommentAutoExpandDepth(entityType: string) {
-  if (!wideCommentSurfaces.has(entityType)) return 0;
+  const override = autoExpandDepthOverrides[entityType];
+  if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
   const ceiling = getCommentMaxDepth(entityType) - 1;
-  return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
+  return Math.min(override ?? ceiling, ceiling);
 }
 
 /**
@@ -844,6 +838,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
     name: 'Krea 2 Community License Agreement',
   },
+  'flux kommunity': {
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md',
+    name: 'FLUX Kommunity License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -887,6 +885,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
   'Flux.3': baseLicenses['bfl tos'],
+  'Flux.3 Klein': baseLicenses['flux kommunity'],
+  'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
   'Flux.2 Klein 9B': baseLicenses['flux1D'],

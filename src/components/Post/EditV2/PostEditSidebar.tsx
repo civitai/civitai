@@ -30,6 +30,7 @@ import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages'
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { StorylinePostEditorSwitch } from '~/components/Storyline/StorylinePostEditorSwitch';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -518,6 +519,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       )}
 
       <PlacementSpaceToggle level="post" entityId={post.id} />
+
+      {features.storylines && post.user.id === currentUser?.id && (
+        <StorylinePostEditorSwitch post={post} />
+      )}
 
       <DeletePostButton postId={post.id}>
         {({ onClick, isLoading }) => (

@@ -30,6 +30,7 @@ export type TextScanEntityType =
   | 'UserProfile'
   | 'Crucible'
   | 'Collection'
+  | 'Storyline'
   | 'ModelRules';
 
 export type TextScanField = { heading: string; text: string | null | undefined };

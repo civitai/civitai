@@ -26,11 +26,15 @@ import {
   SERVICE_DEAL_DISPUTE_WINDOW_MS,
   SERVICE_DEAL_LATE_CANCEL_AFTER_MS,
   SERVICE_DEAL_OPEN_STATUSES,
+  SERVICE_SFW_MAX_NSFW_LEVEL,
+  isMatureServiceLevel,
+  serviceRequestAllowed,
   type ServiceDealCancellationReasonCode,
   type ServiceDealDeclineReasonCode,
   type ServiceDealDisputeReasonCode,
   type ServiceDealReasonCode,
 } from '~/shared/constants/creator-services.constants';
+import { Flags } from '~/shared/utils/flags';
 import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/prisma/enums';
 import {
   dealActions,
@@ -236,6 +240,7 @@ type OfferingRow = {
   deliveryDays: number;
   blocked: boolean;
   sellerOk: boolean;
+  maxNsfwLevel: number;
 };
 
 const termsChanged = () =>
@@ -257,6 +262,8 @@ export async function requestServiceDeal({
   buyerId,
   requestText,
   buzzType,
+  servableLevels,
+  consentLevels,
 }: {
   offeringId: number;
   /** The terms the buyer was shown. The deal never takes different ones. */
@@ -266,6 +273,10 @@ export async function requestServiceDeal({
   buyerId: number;
   requestText: string;
   buzzType: string;
+  /** What the request's domain may be served (`domainServableLevels`). */
+  servableLevels: number;
+  /** The buyer's own browsing level (`getRequestBrowsingLevel`): their consent to mature levels. */
+  consentLevels: number;
 }) {
   if (!isServiceDealBuzzType(buzzType))
     throw throwBadRequestError(`Services cannot be paid in ${buzzType} Buzz`);
@@ -278,14 +289,27 @@ export async function requestServiceDeal({
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
-      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk"
+      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk", o."maxNsfwLevel"
     FROM "ServiceOffering" o WHERE o."id" = ${offeringId}::int`;
-  if (!offering || offering.status !== 'Active' || !offering.sellerOk)
+  // A mature service on a domain that does not serve it is hidden there, so it is not found.
+  if (
+    !offering ||
+    offering.status !== 'Active' ||
+    !offering.sellerOk ||
+    !(offering.maxNsfwLevel & servableLevels)
+  )
     throw throwNotFoundError('Service not found');
   // The same visibility the storefront applies: an off or private shop takes no requests.
   await assertCreatorShopVisible({ userId: offering.sellerId, viewerId: buyerId });
   if (offering.sellerId === buyerId) throw throwBadRequestError('You cannot buy your own service');
   if (offering.blocked) throw throwBadRequestError('You cannot request this service');
+  // After the visibility and block checks, which answer as if the service did not exist: a hidden
+  // service must not be revealed as mature.
+  if (!serviceRequestAllowed({ ...offering, servableLevels, consentLevels }))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This service delivers mature content. Turn it on in your browsing settings first.',
+    });
   if (offering.maxOpenDeals !== null && offering.open >= offering.maxOpenDeals)
     throw throwBadRequestError('This service is not taking new requests right now');
   if (
@@ -302,10 +326,10 @@ export async function requestServiceDeal({
     const [created] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", "price", "buzzType",
         "feeAmount", "revisionsIncluded", "deliveryDays", "previewKind", "status", "requestText",
-        "updatedAt")
+        "updatedAt", "maxNsfwLevel")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
-        ${requestText}::text, now()
+        ${requestText}::text, now(), o."maxNsfwLevel"
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
@@ -313,6 +337,11 @@ export async function requestServiceDeal({
         AND o."revisionsIncluded" = ${expectedRevisionsIncluded}::int
         AND o."deliveryDays" = ${expectedDeliveryDays}::int
         AND o."sellerId" <> ${buyerId}::int
+        -- serviceRequestAllowed: SFW always; mature only where served, to a buyer who opted in.
+        AND (o."maxNsfwLevel" <= ${SERVICE_SFW_MAX_NSFW_LEVEL}::int OR (
+          (o."maxNsfwLevel" & ${servableLevels}::int) <> 0
+          AND (o."maxNsfwLevel" & ${consentLevels}::int) <> 0
+        ))
         -- One unanswered request per buyer per offering: a retried or doubled submit must not
         -- become a second deal and a second hold. Race-free under the offering lock above.
         AND NOT EXISTS (
@@ -439,18 +468,6 @@ async function openDealChat(dealId: number) {
     )}**. [Open the deal](/services/deals/${dealId})`,
   });
 }
-
-/** Called by the delivery upload (P3). */
-export const markServiceDealDelivered = ({ dealId, userId }: { dealId: number; userId: number }) =>
-  requireTransition({
-    dealId,
-    from: ['Accepted', 'InRevision'],
-    to: 'Delivered',
-    actorId: userId,
-    event: 'Delivered',
-    where: Prisma.sql`"sellerId" = ${userId}::int`,
-    set: Prisma.sql`, "deliveredAt" = now()`,
-  });
 
 export const requestServiceDealRevision = ({
   dealId,
@@ -783,6 +800,9 @@ export async function getServiceDealView({
     id: deal.id,
     status: deal.status,
     viewerRole: dealViewerRole(deal, userId),
+    /** The client gates the page on this, as it does any mature content (`<Gated>`). */
+    maxNsfwLevel: deal.maxNsfwLevel,
+    mature: isMatureServiceLevel(deal.maxNsfwLevel),
     /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
     viewerMuted: !!viewer?.muted,
     offering: deal.offering,
@@ -842,6 +862,7 @@ export async function listMyServiceDeals({
   cursor,
   limit,
   servicesEnabled,
+  servableLevels,
 }: {
   userId: number;
   role: 'buyer' | 'seller';
@@ -849,13 +870,20 @@ export async function listMyServiceDeals({
   cursor?: number;
   limit: number;
   servicesEnabled: boolean;
+  /** What the request's domain may be served: a mature deal is left out where it is not. */
+  servableLevels: number;
 }) {
   const open = [...SERVICE_DEAL_OPEN_STATUSES] as ServiceDealStatus[];
+  const mine = {
+    ...(role === 'buyer' ? { buyerId: userId } : { sellerId: userId }),
+    ...(status === 'open' ? { status: { in: open } } : {}),
+    ...(status === 'closed' ? { status: { notIn: open } } : {}),
+  };
+  const servable = Flags.instanceToArray(servableLevels);
   const deals = await dbWrite.serviceDeal.findMany({
     where: {
-      ...(role === 'buyer' ? { buyerId: userId } : { sellerId: userId }),
-      ...(status === 'open' ? { status: { in: open } } : {}),
-      ...(status === 'closed' ? { status: { notIn: open } } : {}),
+      ...mine,
+      maxNsfwLevel: { in: servable },
       ...(cursor ? { id: { lt: cursor } } : {}),
     },
     orderBy: { id: 'desc' },
@@ -871,10 +899,16 @@ export async function listMyServiceDeals({
   const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
     SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
   const gatedAllowed = servicesEnabled && !viewer?.muted;
+  // So the list can say the rest are on the domain that serves them, rather than look empty.
+  const hiddenOffDomain = await dbWrite.serviceDeal.count({
+    where: { ...mine, maxNsfwLevel: { notIn: servable } },
+  });
   return {
+    hiddenOffDomain,
     items: page.map((deal) => ({
       id: deal.id,
       status: deal.status,
+      maxNsfwLevel: deal.maxNsfwLevel,
       offering: deal.offering,
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
@@ -898,7 +932,7 @@ export type ResolveServiceDealDisputeResult =
   | { status: 'refused'; reason: 'finals_not_passed'; message: string };
 
 const FINALS_NOT_PASSED =
-  'The final files have not passed scanning. Refund, or clear the file in moderation first.';
+  'Not every final file has finished uploading and passed scanning. Refund, or clear a failed scan in moderation first.';
 
 /**
  * A moderator settles a Disputed deal, whatever sent it there: the buyer, a declined

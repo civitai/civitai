@@ -16,7 +16,7 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   refundTransaction,
 }));
 
-const { getPrefixRefundState, refundAllLegsByPrefix } = await import(
+const { getPrefixRefundState, refundAllLegsByPrefix, refundTransactionOnce } = await import(
   '~/server/services/buzz-prefix-refund'
 );
 
@@ -196,5 +196,45 @@ describe('getPrefixRefundState', () => {
 
     await expect(refundAllLegsByPrefix(input)).rejects.toThrow(/503/);
     expect(refundTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('refundTransactionOnce', () => {
+  it('returns what Buzz returned for a refund it made (or a repeat it answers 200, as today)', async () => {
+    refundTransaction.mockResolvedValue({ transactionId: 'tx-a' });
+
+    await expect(refundTransactionOnce('tx-a', 'why', { k: 1 })).resolves.toEqual({
+      transactionId: 'tx-a',
+    });
+    expect(refundTransaction).toHaveBeenCalledWith('tx-a', 'why', { k: 1 });
+    expect(getTransactionByExternalId).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['mapped', () => mapped(409)],
+    ['raw', () => new BuzzApiError(409, 'Conflict')],
+  ])('treats a 409 (%s) as done when the refund is on the ledger', async (_, error) => {
+    refundTransaction.mockRejectedValue(error());
+    refundsExistFor('tx-a');
+
+    await expect(refundTransactionOnce('tx-a')).resolves.toEqual({ transactionId: 'tx-a' });
+    expect(getTransactionByExternalId).toHaveBeenCalledWith('refund-tx-a');
+  });
+
+  it('rethrows a 409 when no refund of this transaction is on the ledger', async () => {
+    const error = mapped(409);
+    refundTransaction.mockRejectedValue(error);
+    refundsExistFor('tx-other');
+
+    await expect(refundTransactionOnce('tx-a')).rejects.toBe(error);
+  });
+
+  it.each([400, 404, 500])('rethrows a %s without reading the ledger', async (status) => {
+    const error = mapped(status);
+    refundTransaction.mockRejectedValue(error);
+    refundsExistFor('tx-a');
+
+    await expect(refundTransactionOnce('tx-a')).rejects.toBe(error);
+    expect(getTransactionByExternalId).not.toHaveBeenCalled();
   });
 });

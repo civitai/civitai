@@ -8,6 +8,8 @@ export interface PlannerActions {
   /** An anchor click that stays in the host unless a modifier asks for a new tab. */
   link(event: Event, loc: PlannerLocation): void;
   setFilters(filters: Partial<Filters>): void;
+  /** Filters the calendar to posts carrying `tag`; `undefined` clears it. Rides in the location. */
+  setTag(tag: string | undefined): void;
   toggleFilters(): void;
   setShowMature(value: boolean): void;
   toggleAllHours(): void;

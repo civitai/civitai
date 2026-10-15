@@ -11,9 +11,10 @@ import {
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
+// Never scanned by Clavata, so there is nothing to cut over.
 export type CutoverEntityType = Exclude<
   TextScanEntityType,
-  'Challenge' | 'Crucible' | 'ModelRules'
+  'Challenge' | 'Crucible' | 'Storyline' | 'ModelRules'
 >;
 
 type ClavataTarget = {

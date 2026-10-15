@@ -53,7 +53,7 @@ describe('rated-entity profiles', () => {
     );
   });
 
-  it('Model: every version, tags stripped, boolean nsfw declared as a level', async () => {
+  it('Model: public versions, tags stripped, boolean nsfw declared as a level', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([
       {
         id: 1,
@@ -133,6 +133,23 @@ describe('rated-entity profiles', () => {
     expect(subject.declared).toEqual({ nsfwLevel: 2 });
     expect(subject.text).toEqual({ Title: 'T', Content: 'Body' });
   });
+
+  it.each([
+    ['Published', null, false],
+    ['Processing', null, false],
+    ['Draft', new Date('2099-01-01'), false],
+    ['Draft', null, true],
+    ['Unpublished', null, true],
+    ['UnpublishedViolation', null, true],
+  ])(
+    'Article: a %s article scheduled at %s loads, marked notPublic=%s',
+    async (status, scheduledAt, notPublic) => {
+      dbMock.dbWrite.article.findMany.mockResolvedValue([
+        { id: 1, userId: 9, title: 'T', content: null, userNsfwLevel: 1, status, scheduledAt },
+      ]);
+      expect(Boolean((await load('Article')).notPublic)).toBe(notPublic);
+    }
+  );
 
   it('Post, BountyEntry: declared is the stored level', async () => {
     dbMock.dbWrite.post.findMany.mockResolvedValue([

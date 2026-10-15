@@ -34,6 +34,7 @@ export function useMyServiceDeals({
     );
   return {
     deals: data?.pages.flatMap((page) => page.items) ?? [],
+    hiddenOffDomain: data?.pages[0]?.hiddenOffDomain ?? 0,
     isLoading,
     fetchNextPage,
     hasNextPage: !!hasNextPage,

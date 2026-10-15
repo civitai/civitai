@@ -8,7 +8,7 @@ import { sendModNotification } from './moderation-memory.service';
 import { setReportStatus } from './reports.service';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4 } from './users.service';
-import { ReportStatus } from '$lib/reports';
+import { REPORT_RULINGS } from '$lib/reports';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 
 /**
@@ -43,7 +43,7 @@ export function reportModerationActions(pagePath: string) {
           id: z.coerce.number().int().positive().max(MAX_INT4),
           // Claiming was removed at the team's request, so `Processing` is no longer reachable from a
           // queue. It is still a status they FILTER on — reports carrying it predate the removal.
-          status: z.enum([ReportStatus.Actioned, ReportStatus.Unactioned]),
+          status: z.enum(REPORT_RULINGS),
         }),
         await request.formData()
       );

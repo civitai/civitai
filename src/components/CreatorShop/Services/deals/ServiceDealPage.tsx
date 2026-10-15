@@ -19,6 +19,8 @@ import { DealAccountabilitySheet } from '~/components/CreatorShop/Services/deals
 import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealActionsPanel';
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
+import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
+import { Gated } from '~/components/Gated/Gated';
 import {
   dealPageState,
   dealStatusLabel,
@@ -117,85 +119,89 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
   const lines = deadlineLines(deal);
   const notice = disputeNotice(deal);
 
+  // A mature deal opened on green redirects to red. Exits stay open on the server either way.
   return (
-    <Stack gap="lg" py="md">
-      <Stack gap={4}>
-        <Text size="sm" c="dimmed">
-          Deal #{deal.id} ·{' '}
-          <Anchor component={NextLink} href={`/user/${deal.seller.username}/shop`} inherit>
-            {deal.seller.username}&apos;s shop
-          </Anchor>
-        </Text>
-        <Group gap="sm" wrap="wrap">
-          <Title order={1} size="h2">
-            {deal.offering.title}
-          </Title>
-          <Badge variant="light" color="violet">
-            {dealStatusLabel[deal.status]}
-          </Badge>
-        </Group>
-        <Text size="sm" c="dimmed">
-          {deal.viewerRole === 'seller' ? 'Requested by' : 'With'}{' '}
-          <Anchor component={NextLink} href={`/user/${counterparty.username}`} inherit>
-            {counterparty.username}
-          </Anchor>{' '}
-          · requested {formatDate(deal.requestedAt, DATE)} · ~{deal.deliveryDays} days ·{' '}
-          {deal.revisionsUsed}/{deal.revisionsIncluded} revisions used
-        </Text>
-      </Stack>
+    <Gated contentNsfwLevel={deal.maxNsfwLevel} meta={{ title: 'Service deal', deIndex: true }}>
+      <Stack gap="lg" py="md">
+        <Stack gap={4}>
+          <Text size="sm" c="dimmed">
+            Deal #{deal.id} ·{' '}
+            <Anchor component={NextLink} href={`/user/${deal.seller.username}/shop`} inherit>
+              {deal.seller.username}&apos;s shop
+            </Anchor>
+          </Text>
+          <Group gap="sm" wrap="wrap">
+            <Title order={1} size="h2">
+              {deal.offering.title}
+            </Title>
+            <Badge variant="light" color="violet">
+              {dealStatusLabel[deal.status]}
+            </Badge>
+            <ServiceRatingBadge rating={deal.maxNsfwLevel} />
+          </Group>
+          <Text size="sm" c="dimmed">
+            {deal.viewerRole === 'seller' ? 'Requested by' : 'With'}{' '}
+            <Anchor component={NextLink} href={`/user/${counterparty.username}`} inherit>
+              {counterparty.username}
+            </Anchor>{' '}
+            · requested {formatDate(deal.requestedAt, DATE)} · ~{deal.deliveryDays} days ·{' '}
+            {deal.revisionsUsed}/{deal.revisionsIncluded} revisions used
+          </Text>
+        </Stack>
 
-      <Grid gutter="lg">
-        <Grid.Col span={{ base: 12, md: 7 }}>
-          <Stack gap="lg">
-            <DealEscrowPanel deal={deal} />
-            {deal.deadlines.disputeUntil && (
-              <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
-            )}
-            {lines.length > 0 && (
+        <Grid gutter="lg">
+          <Grid.Col span={{ base: 12, md: 7 }}>
+            <Stack gap="lg">
+              <DealEscrowPanel deal={deal} />
+              {deal.deadlines.disputeUntil && (
+                <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+              )}
+              {lines.length > 0 && (
+                <Paper withBorder radius="md" p="md">
+                  <Stack gap={4}>
+                    {lines.map((line) => (
+                      <Text key={line} size="sm">
+                        {line}
+                      </Text>
+                    ))}
+                  </Stack>
+                </Paper>
+              )}
+              <DealActionsPanel deal={deal} />
+              <DealFilesPanel deal={deal} />
               <Paper withBorder radius="md" p="md">
-                <Stack gap={4}>
-                  {lines.map((line) => (
-                    <Text key={line} size="sm">
-                      {line}
-                    </Text>
-                  ))}
+                <Stack gap={6}>
+                  <Text fw={600}>The request</Text>
+                  <Text size="sm" className="whitespace-pre-line break-words">
+                    {deal.requestText}
+                  </Text>
                 </Stack>
               </Paper>
-            )}
-            <DealActionsPanel deal={deal} />
-            <DealFilesPanel deal={deal} />
-            <Paper withBorder radius="md" p="md">
-              <Stack gap={6}>
-                <Text fw={600}>The request</Text>
-                <Text size="sm" className="whitespace-pre-line break-words">
-                  {deal.requestText}
-                </Text>
-              </Stack>
-            </Paper>
-            {notice && (
-              <Paper withBorder radius="md" p="md">
-                <Text size="sm">{notice}</Text>
-              </Paper>
-            )}
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 5 }}>
-          <Stack gap="lg">
-            {deal.chatId && (
-              <Button
-                onClick={() =>
-                  useChatStore.setState({ open: true, existingChatId: deal.chatId ?? undefined })
-                }
-                variant="light"
-                leftSection={<IconMessage size={16} />}
-              >
-                Open the deal chat
-              </Button>
-            )}
-            <DealAccountabilitySheet deal={deal} />
-          </Stack>
-        </Grid.Col>
-      </Grid>
-    </Stack>
+              {notice && (
+                <Paper withBorder radius="md" p="md">
+                  <Text size="sm">{notice}</Text>
+                </Paper>
+              )}
+            </Stack>
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, md: 5 }}>
+            <Stack gap="lg">
+              {deal.chatId && (
+                <Button
+                  onClick={() =>
+                    useChatStore.setState({ open: true, existingChatId: deal.chatId ?? undefined })
+                  }
+                  variant="light"
+                  leftSection={<IconMessage size={16} />}
+                >
+                  Open the deal chat
+                </Button>
+              )}
+              <DealAccountabilitySheet deal={deal} />
+            </Stack>
+          </Grid.Col>
+        </Grid>
+      </Stack>
+    </Gated>
   );
 }

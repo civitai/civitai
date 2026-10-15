@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
+  getMyServiceOfferings,
   getShopServiceOfferings,
   hasOpenServiceDeal,
   removeServiceOffering,
@@ -14,6 +15,19 @@ import {
 import { upsertServiceOfferingSchema } from '~/server/schema/creator-service.schema';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { visibleMatureServiceRatings } from '~/shared/constants/creator-service.constants';
+import { isMatureServiceLevel } from '~/shared/constants/creator-services.constants';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
 
 const SELLER = 7;
 const fields = {
@@ -160,8 +174,53 @@ describe('writes', () => {
   });
 });
 
+// Launch blocker (briony, 2026-10-15): offering text goes through the same blocklist guard as
+// bounties, articles, posts and models, and a block refuses the write.
+describe('text check', () => {
+  const blocked = () =>
+    vi.mocked(throwOnBlockedUserContent).mockImplementationOnce(async () => {
+      throw new Error('Content blocked by content filter');
+    });
+
+  it('checks the title and description of a new offering under its own surface', async () => {
+    seller();
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith([fields.title, fields.description], {
+      surface: 'creator-service-offering',
+    });
+  });
+
+  it('refuses a blocked new offering and creates nothing', async () => {
+    seller();
+    blocked();
+    expect(
+      await rejects(
+        upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: true } })
+      )
+    ).toBe('Content blocked by content filter');
+    expect(dbMock.dbWrite.serviceOffering.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a blocked edit and updates nothing', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Active,
+    } as never);
+    blocked();
+    const edit = { ...fields, title: 'Edited title', description: 'Edited body', id: 5 };
+    expect(
+      await rejects(upsertServiceOffering({ sellerId: SELLER, input: { ...edit, publish: false } }))
+    ).toBe('Content blocked by content filter');
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(['Edited title', 'Edited body'], {
+      surface: 'creator-service-offering',
+    });
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+});
+
 describe('storefront read', () => {
   const VISITOR = 99;
+  const ALL = allBrowsingLevelsFlag;
   const shopEnabled = (enabled: boolean) =>
     dbMock.dbRead.user.findUnique.mockResolvedValue({
       settings: { creatorShop: { enabled } },
@@ -170,13 +229,14 @@ describe('storefront read', () => {
   it('shows only Active offerings of a seller in good standing', async () => {
     shopEnabled(true);
     dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
-    await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR });
+    await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR, servable: ALL });
     expect(dbMock.dbRead.serviceOffering.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           sellerId: SELLER,
           status: ServiceOfferingStatus.Active,
           seller: { bannedAt: null, deletedAt: null, muted: false },
+          maxNsfwLevel: { lte: NsfwLevel.PG13 },
         },
       })
     );
@@ -193,7 +253,11 @@ describe('storefront read', () => {
       { offeringId: 1, open: 2 },
       { offeringId: 3, open: 4 },
     ] as never);
-    const offerings = await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR });
+    const offerings = await getShopServiceOfferings({
+      userId: SELLER,
+      viewerId: VISITOR,
+      servable: ALL,
+    });
     expect(offerings.map((o) => [o.id, o.slotsOpen])).toEqual([
       [1, 1],
       [2, null],
@@ -203,12 +267,12 @@ describe('storefront read', () => {
 
   it("hides a private shop's offerings from visitors, not from its owner", async () => {
     shopEnabled(false);
-    expect(await rejects(getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR }))).toBe(
-      'Shop not found'
-    );
+    expect(
+      await rejects(getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR, servable: ALL }))
+    ).toBe('Shop not found');
     expect(dbMock.dbRead.serviceOffering.findMany).not.toHaveBeenCalled();
 
-    await getShopServiceOfferings({ userId: SELLER, viewerId: SELLER });
+    await getShopServiceOfferings({ userId: SELLER, viewerId: SELLER, servable: ALL });
     expect(dbMock.dbRead.serviceOffering.findMany).toHaveBeenCalledTimes(1);
   });
 });
@@ -237,4 +301,136 @@ it('finds only OPEN deals on either side when deciding whether the dark list ser
   );
   dbMock.dbRead.serviceDeal.findFirst.mockResolvedValue({ id: 1 } as never);
   expect(await hasOpenServiceDeal(SELLER)).toBe(true);
+});
+
+// Decision (Creator Services, briony 2026-10-15): SFW-always. An offering rated PG or PG-13 shows
+// to everyone, everywhere, as before ratings existed; only a mature one (R and up) is held to the
+// viewer's browsing level and the domain. Signed-out viewers browse at PG, so filtering every
+// offering by level would hide every default (PG-13) offering from them.
+describe('storefront ratings', () => {
+  const VISITOR = 99;
+  const shown = (browsingLevel: number | undefined, servable: number) =>
+    visibleMatureServiceRatings({ browsingLevel, servable });
+  const where = async (browsingLevel: number | undefined, servable: number) => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR, browsingLevel, servable });
+    return dbMock.dbRead.serviceOffering.findMany.mock.calls.at(-1)?.[0]?.where;
+  };
+  // A row passes the read's rating filter as Prisma would apply it.
+  const passes = (filter: Record<string, unknown>, rating: number) => {
+    const test = (clause: { maxNsfwLevel: { lte?: number; in?: number[] } }) =>
+      clause.maxNsfwLevel.lte !== undefined
+        ? rating <= clause.maxNsfwLevel.lte
+        : !!clause.maxNsfwLevel.in?.includes(rating);
+    return 'OR' in filter
+      ? (filter.OR as never[]).some(test)
+      : test(filter as { maxNsfwLevel: { lte?: number } });
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      settings: { creatorShop: { enabled: true } },
+    } as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+  });
+
+  it('shows a PG-13 offering and hides an R one from a signed-out (PG-only) viewer', async () => {
+    const filter = (await where(publicBrowsingLevelsFlag, allBrowsingLevelsFlag)) as never;
+    expect(passes(filter, NsfwLevel.PG13)).toBe(true);
+    expect(passes(filter, NsfwLevel.PG)).toBe(true);
+    expect(passes(filter, NsfwLevel.R)).toBe(false);
+  });
+
+  it('shows mature offerings only at levels the viewer browses and the domain serves', async () => {
+    const red = (await where(NsfwLevel.PG | NsfwLevel.R, allBrowsingLevelsFlag)) as never;
+    expect(passes(red, NsfwLevel.R)).toBe(true);
+    expect(passes(red, NsfwLevel.XXX)).toBe(false);
+    expect(passes(red, NsfwLevel.PG13)).toBe(true);
+    // Green serves nothing mature, whatever the viewer browses at.
+    const green = (await where(allBrowsingLevelsFlag, sfwBrowsingLevelsFlag)) as never;
+    expect(passes(green, NsfwLevel.R)).toBe(false);
+    expect(passes(green, NsfwLevel.PG13)).toBe(true);
+  });
+
+  it('treats no level as nothing mature, never as everything', () => {
+    expect(shown(undefined, allBrowsingLevelsFlag)).toEqual([]);
+    expect(shown(allBrowsingLevelsFlag, allBrowsingLevelsFlag)).toEqual([
+      NsfwLevel.R,
+      NsfwLevel.X,
+      NsfwLevel.XXX,
+    ]);
+    expect(isMatureServiceLevel(NsfwLevel.PG13)).toBe(false);
+    expect(isMatureServiceLevel(NsfwLevel.R)).toBe(true);
+  });
+
+  it('rates a new offering PG-13 by default, and leaves the rating alone on an update without one', async () => {
+    seller();
+    const input = upsertServiceOfferingSchema.parse({ ...fields });
+    await upsertServiceOffering({ sellerId: SELLER, input });
+    expect(dbMock.dbWrite.serviceOffering.create.mock.calls.at(-1)?.[0]?.data).toMatchObject({
+      maxNsfwLevel: NsfwLevel.PG13,
+    });
+
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Active,
+    } as never);
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...input, id: 3 } });
+    const data = dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0]?.data;
+    expect(data?.maxNsfwLevel).toBeUndefined();
+  });
+
+  it('accepts one rating bit and refuses Blocked or a mask with a 400', () => {
+    const base = { ...fields };
+    // Omitted stays omitted: an update must not reset a mature offering to PG-13.
+    expect(upsertServiceOfferingSchema.parse(base).maxNsfwLevel).toBeUndefined();
+    expect(
+      upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: NsfwLevel.X }).success
+    ).toBe(true);
+    for (const bad of [NsfwLevel.Blocked, NsfwLevel.PG | NsfwLevel.R, 0, 3])
+      expect(upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: bad }).success).toBe(
+        false
+      );
+  });
+});
+
+describe("a seller's own offerings", () => {
+  const ratingsIn = (call: unknown) =>
+    (call as { where: { maxNsfwLevel: { in?: number[]; notIn?: number[] } } }).where.maxNsfwLevel;
+
+  it('on the SFW domain, lists only PG/PG-13 and counts the mature ones, never listing them', async () => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.serviceOffering.count.mockResolvedValue(3 as never);
+    const mine = await getMyServiceOfferings({ sellerId: SELLER, servable: sfwBrowsingLevelsFlag });
+    expect(ratingsIn(dbMock.dbRead.serviceOffering.findMany.mock.calls[0][0])).toEqual({
+      in: [NsfwLevel.PG, NsfwLevel.PG13],
+    });
+    expect(ratingsIn(dbMock.dbRead.serviceOffering.count.mock.calls[0][0])).toEqual({
+      notIn: [NsfwLevel.PG, NsfwLevel.PG13],
+    });
+    expect(mine.hiddenOffDomain).toBe(3);
+  });
+
+  it('where everything is served, lists every rating and counts nothing', async () => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    const mine = await getMyServiceOfferings({ sellerId: SELLER, servable: allBrowsingLevelsFlag });
+    expect(ratingsIn(dbMock.dbRead.serviceOffering.findMany.mock.calls[0][0])).toEqual({
+      in: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    });
+    expect(dbMock.dbRead.serviceOffering.count).not.toHaveBeenCalled();
+    expect(mine.hiddenOffDomain).toBe(0);
+  });
+
+  it('keeps Removed offerings out of both the list and the count', async () => {
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.serviceOffering.count.mockResolvedValue(0 as never);
+    await getMyServiceOfferings({ sellerId: SELLER, servable: sfwBrowsingLevelsFlag });
+    for (const call of [
+      dbMock.dbRead.serviceOffering.findMany.mock.calls[0][0],
+      dbMock.dbRead.serviceOffering.count.mock.calls[0][0],
+    ])
+      expect((call as { where: object }).where).toMatchObject({
+        sellerId: SELLER,
+        status: { not: ServiceOfferingStatus.Removed },
+      });
+  });
 });

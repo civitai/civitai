@@ -1,4 +1,4 @@
-import { Badge, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
+import { Anchor, Badge, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import {
   dealStatusLabel,
@@ -6,6 +6,9 @@ import {
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useServerDomains } from '~/providers/AppProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 
@@ -26,11 +29,18 @@ export function ServiceDealsList({
   status?: 'open' | 'closed';
   emptyText: string;
 }) {
-  const { deals, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMyServiceDeals({
-    role,
-    status,
-    enabled: true,
-  });
+  const { deals, hiddenOffDomain, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useMyServiceDeals({ role, status, enabled: true });
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
+  // Mature deals are left out off red; say where they went so a party doesn't think one vanished.
+  const offDomainLine = hiddenOffDomain > 0 && (
+    <Text size="sm" c="dimmed">
+      <Anchor href={syncAccount(`//${redDomain}/services/deals`)} inherit>
+        {pluralize(hiddenOffDomain, 'deal')} on civitai.red
+      </Anchor>
+    </Text>
+  );
 
   if (isLoading)
     return (
@@ -40,9 +50,11 @@ export function ServiceDealsList({
     );
   if (deals.length === 0)
     return (
-      <Text size="sm" c="dimmed">
-        {emptyText}
-      </Text>
+      offDomainLine || (
+        <Text size="sm" c="dimmed">
+          {emptyText}
+        </Text>
+      )
     );
 
   return (
@@ -98,6 +110,7 @@ export function ServiceDealsList({
           Load more
         </Button>
       )}
+      {offDomainLine}
     </Stack>
   );
 }

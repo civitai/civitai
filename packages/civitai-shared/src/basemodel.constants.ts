@@ -202,6 +202,8 @@ export const ECO = {
   // `Flux3` is the Image release, not the family root; the Dev backbone needs its own key.
   Flux3Video: 79,
   Flux3: 92,
+  Flux3Klein: 94,
+  Flux3Klein_base: 95,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -344,11 +346,25 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 8,
   },
   {
+    id: ECO.Flux3Klein,
+    key: 'Flux3Klein',
+    displayName: 'Flux.3 Klein',
+    familyId: 1,
+    sortOrder: 9,
+  },
+  {
+    id: ECO.Flux3Klein_base,
+    key: 'Flux3Klein_base',
+    displayName: 'Flux.3 Klein Base',
+    familyId: 1,
+    sortOrder: 10,
+  },
+  {
     id: ECO.Flux3Video,
     key: 'Flux3Video',
     displayName: 'Flux 3 Video',
     familyId: 1,
-    sortOrder: 9,
+    sortOrder: 11,
   },
 
   // Stable Diffusion Family (familyId: 2)
@@ -1221,9 +1237,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
 
-  // Sora2 - checkpoint only
-  { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
-
   // Mochi - checkpoint only
   // { ecosystemId: ECO.Mochi, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1712,13 +1725,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.PonyV7,
     defaults: {
       model: { id: 2152373 },
-      modelLocked: true,
-    },
-  },
-  {
-    ecosystemId: ECO.Sora2,
-    defaults: {
-      model: { id: 2320065 },
       modelLocked: true,
     },
   },
@@ -2359,6 +2365,8 @@ export const BM = {
   Flux3: 112,
   Krea2Turbo: 113,
   Krea3: 114,
+  Flux3Klein: 115,
+  Flux3Klein_base: 116,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2701,6 +2709,11 @@ export const licenses: LicenseRecord[] = [
     // The licence link on the Hugging Face model cards, pinned to a commit.
     url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
   },
+  {
+    id: 49,
+    name: 'FLUX Kommunity License',
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2991,6 +3004,22 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Flux3,
     licenseId: 39,
+  },
+  {
+    id: BM.Flux3Klein,
+    name: 'Flux.3 Klein',
+    description: 'Flux.3 Klein 5.6 billion parameter distilled model',
+    type: 'image',
+    ecosystemId: ECO.Flux3Klein,
+    licenseId: 49,
+  },
+  {
+    id: BM.Flux3Klein_base,
+    name: 'Flux.3 Klein-base',
+    description: 'Flux.3 Klein 5.6 billion parameter base model',
+    type: 'image',
+    ecosystemId: ECO.Flux3Klein_base,
+    licenseId: 49,
   },
   {
     id: BM.Flux3Video,

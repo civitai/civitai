@@ -308,6 +308,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Announcement]: 'announcement',
   [ReportEntity.Crucible]: 'crucible',
   [ReportEntity.GameFrameGame]: 'gameFrameGame',
+  [ReportEntity.Storyline]: 'storyline',
 };
 
 const reportTypeConnectionMap = {
@@ -330,6 +331,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Announcement]: 'announcementId',
   [ReportEntity.Crucible]: 'crucibleId',
   [ReportEntity.GameFrameGame]: 'gameFrameGameId',
+  [ReportEntity.Storyline]: 'storylineId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -428,11 +430,23 @@ export const createReport = async ({
       );
   }
 
+  // Anyone may report a storyline, flag or not, so an id that is not one is a 404 here rather than
+  // a failed connect on the join row below.
+  if (
+    type === ReportEntity.Storyline &&
+    !(await dbRead.storyline.findUnique({ where: { id }, select: { id: true } }))
+  )
+    throw throwNotFoundError('That storyline no longer exists.');
+
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
-  // Nothing automated acts on a crucible's mature-content report, unlike an image's or a model's
-  // tag votes, so it goes to a moderator like any other reason: deduped, and left Pending.
-  const awaitsModerator = type === ReportEntity.Crucible || type === ReportEntity.GameFrameGame;
+  // Nothing automated acts on a crucible's, game's or storyline's mature-content report, unlike an
+  // image's or a model's tag votes, so it goes to a moderator like any other reason: deduped, and
+  // left Pending.
+  const awaitsModerator =
+    type === ReportEntity.Crucible ||
+    type === ReportEntity.GameFrameGame ||
+    type === ReportEntity.Storyline;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({

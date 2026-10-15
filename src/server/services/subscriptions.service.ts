@@ -226,71 +226,79 @@ export const getUserSubscription = async ({
 
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
 
+const activeSubscriptionStatuses = {
+  notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'],
+};
+
+const userSubscriptionSelect = {
+  id: true,
+  status: true,
+  cancelAtPeriodEnd: true,
+  cancelAt: true,
+  canceledAt: true,
+  currentPeriodStart: true,
+  currentPeriodEnd: true,
+  createdAt: true,
+  endedAt: true,
+  metadata: true,
+  buzzType: true,
+  product: {
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      metadata: true,
+      provider: true,
+      active: true,
+    },
+  },
+  price: {
+    select: {
+      id: true,
+      unitAmount: true,
+      interval: true,
+      intervalCount: true,
+      currency: true,
+      active: true,
+    },
+  },
+} satisfies Prisma.CustomerSubscriptionSelect;
+
+type UserSubscriptionRow = Prisma.CustomerSubscriptionGetPayload<{
+  select: typeof userSubscriptionSelect;
+}>;
+
+/** One subscription row as every reader sees it; null for one that no longer counts. */
+const toUserSubscription = (subscription: UserSubscriptionRow) => {
+  const productMeta = subscriptionProductMetadataSchema.parse(subscription.product.metadata);
+  const subscriptionMeta = (subscription.metadata ?? {}) as SubscriptionMetadata;
+
+  // Filter out renewalEmailSent subscriptions
+  if (subscriptionMeta.renewalEmailSent) return null;
+
+  return {
+    ...subscription,
+    price: {
+      ...subscription.price,
+      unitAmount: subscription.price.unitAmount ?? 0,
+      interval: subscription.price.interval as 'month' | 'year',
+    },
+    isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
+      subscription.status
+    ),
+    tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
+    productMeta,
+  };
+};
+
 // Get all active subscriptions for a user
 export const getAllUserSubscriptions = async (userId: number) => {
   const subscriptions = await dbWrite.customerSubscription.findMany({
-    where: {
-      userId,
-      status: { notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'] },
-    },
-    select: {
-      id: true,
-      status: true,
-      cancelAtPeriodEnd: true,
-      cancelAt: true,
-      canceledAt: true,
-      currentPeriodStart: true,
-      currentPeriodEnd: true,
-      createdAt: true,
-      endedAt: true,
-      metadata: true,
-      buzzType: true,
-      product: {
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          metadata: true,
-          provider: true,
-          active: true,
-        },
-      },
-      price: {
-        select: {
-          id: true,
-          unitAmount: true,
-          interval: true,
-          intervalCount: true,
-          currency: true,
-          active: true,
-        },
-      },
-    },
+    where: { userId, status: activeSubscriptionStatuses },
+    select: userSubscriptionSelect,
   });
 
-  return subscriptions
-    .map((subscription) => {
-      const productMeta = subscriptionProductMetadataSchema.parse(subscription.product.metadata);
-      const subscriptionMeta = (subscription.metadata ?? {}) as SubscriptionMetadata;
-
-      // Filter out renewalEmailSent subscriptions
-      if (subscriptionMeta.renewalEmailSent) return null;
-
-      return {
-        ...subscription,
-        price: {
-          ...subscription.price,
-          unitAmount: subscription.price.unitAmount ?? 0,
-          interval: subscription.price.interval as 'month' | 'year',
-        },
-        isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
-          subscription.status
-        ),
-        tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
-        productMeta,
-      };
-    })
-    .filter((sub) => sub !== null);
+  return subscriptions.map(toUserSubscription).filter((sub) => sub !== null);
 };
 
 export type AllUserSubscriptions = Awaited<ReturnType<typeof getAllUserSubscriptions>>;
@@ -333,6 +341,29 @@ export const getHighestPaidTierSubscription = async (userId: number) =>
 export const getCapTier = async (userId: number): Promise<string | null> => {
   const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
   return pickHighestTier(subscriptions)?.tier ?? null;
+};
+
+/**
+ * `getCapTier` for many users in one query, keyed by user id: the same rows, the same mapping and
+ * the same bad-state exclusion. A user with no good-standing subscription maps to null.
+ */
+export const getCapTiers = async (userIds: number[]): Promise<Map<number, string | null>> => {
+  const ids = [...new Set(userIds)];
+  const tiers = new Map<number, string | null>(ids.map((id) => [id, null]));
+  if (!ids.length) return tiers;
+  const rows = await dbWrite.customerSubscription.findMany({
+    where: { userId: { in: ids }, status: activeSubscriptionStatuses },
+    select: { ...userSubscriptionSelect, userId: true },
+  });
+  const byUser = new Map<number, NonNullable<ReturnType<typeof toUserSubscription>>[]>();
+  for (const { userId, ...row } of rows) {
+    const subscription = toUserSubscription(row);
+    if (!subscription || subscription.isBadState) continue;
+    byUser.set(userId, [...(byUser.get(userId) ?? []), subscription]);
+  }
+  for (const [userId, subscriptions] of byUser)
+    tiers.set(userId, pickHighestTier(subscriptions)?.tier ?? null);
+  return tiers;
 };
 
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {

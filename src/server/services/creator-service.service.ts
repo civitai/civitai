@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
@@ -13,9 +14,14 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   SERVICE_MAX_ACTIVE_OFFERINGS,
+  SERVICE_OFFERING_DEFAULT_RATING,
+  SERVICE_OFFERING_RATINGS,
   SERVICES_MIN_CREATOR_SCORE,
+  servableServiceRatings,
+  visibleMatureServiceRatings,
 } from '~/shared/constants/creator-service.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { creatorAggregateScoreFromMeta } from '~/shared/utils/creator-score';
@@ -30,6 +36,7 @@ export const serviceOfferingSelect = {
   deliveryDays: true,
   revisionsIncluded: true,
   maxOpenDeals: true,
+  maxNsfwLevel: true,
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -115,25 +122,60 @@ async function assertUnderActiveOfferingCap(sellerId: number) {
     );
 }
 
-export function getMyServiceOfferings(sellerId: number) {
-  return dbRead.serviceOffering.findMany({
-    where: { sellerId, status: { not: ServiceOfferingStatus.Removed } },
-    select: serviceOfferingSelect,
-    orderBy: { createdAt: 'desc' },
-  });
+/** A seller's own offerings. Ones this domain may not show are counted, never listed. */
+export async function getMyServiceOfferings({
+  sellerId,
+  servable,
+}: {
+  sellerId: number;
+  /** What this domain may be sent: `domainServableLevels(ctx)`. */
+  servable: number;
+}) {
+  const shown = servableServiceRatings(servable);
+  const where = { sellerId, status: { not: ServiceOfferingStatus.Removed } };
+  const [items, hiddenOffDomain] = await Promise.all([
+    dbRead.serviceOffering.findMany({
+      where: { ...where, maxNsfwLevel: { in: shown } },
+      select: serviceOfferingSelect,
+      orderBy: { createdAt: 'desc' },
+    }),
+    shown.length === SERVICE_OFFERING_RATINGS.length
+      ? 0
+      : dbRead.serviceOffering.count({ where: { ...where, maxNsfwLevel: { notIn: shown } } }),
+  ]);
+  return { items, hiddenOffDomain };
 }
+
+/** Offerings rated PG/PG-13, plus the mature ratings this viewer may see (see `visibleMatureServiceRatings`). */
+export const shopRatingFilter = (matureRatings: readonly number[]) =>
+  matureRatings.length
+    ? {
+        OR: [
+          { maxNsfwLevel: { lte: NsfwLevel.PG13 } },
+          { maxNsfwLevel: { in: [...matureRatings] } },
+        ],
+      }
+    : { maxNsfwLevel: { lte: NsfwLevel.PG13 } };
 
 export async function getShopServiceOfferings({
   userId,
+  browsingLevel,
+  servable,
   viewerId,
   isModerator,
-}: GetShopServiceOfferingsInput & { viewerId?: number; isModerator?: boolean }) {
+}: GetShopServiceOfferingsInput & {
+  /** What this domain may be sent: `domainServableLevels(ctx)`. */
+  servable: number;
+  viewerId?: number;
+  isModerator?: boolean;
+}) {
   await assertCreatorShopVisible({ userId, viewerId, isModerator });
   const offerings = await dbRead.serviceOffering.findMany({
     where: {
       sellerId: userId,
       status: ServiceOfferingStatus.Active,
       seller: { bannedAt: null, deletedAt: null, muted: false },
+      ...shopRatingFilter(visibleMatureServiceRatings({ browsingLevel, servable })),
     },
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
@@ -158,12 +200,16 @@ export async function upsertServiceOffering({
 }) {
   const { id, publish, ...fields } = input;
   await assertCanSellServices(sellerId);
+  await throwOnBlockedUserContent([fields.title, fields.description], {
+    surface: 'creator-service-offering',
+  });
 
   if (!id) {
     if (publish) await assertUnderActiveOfferingCap(sellerId);
     return dbWrite.serviceOffering.create({
       data: {
         ...fields,
+        maxNsfwLevel: fields.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
         sellerId,
         status: publish ? ServiceOfferingStatus.Active : ServiceOfferingStatus.Draft,
       },

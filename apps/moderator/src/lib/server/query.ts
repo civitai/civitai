@@ -84,5 +84,24 @@ export function parseQuery<T extends z.ZodType>(
   return schema.parse(obj);
 }
 
+/**
+ * `parseQuery` for a load that must NOT rerun on params it does not use — a layout under a page with
+ * its own params. SvelteKit tracks `searchParams.get`/`getAll`/`has` per key, but `keys()`, which
+ * `parseQuery` walks, counts as reading the whole query string: every param change anywhere on the
+ * page reruns the load. This reads the schema's own keys and nothing else.
+ */
+export function parseQueryKeys<T extends z.ZodObject>(
+  url: URL,
+  schema: T,
+  multiKeys: string[] = []
+): z.infer<T> {
+  const obj: Record<string, string | string[]> = {};
+  for (const key of Object.keys(schema.shape)) {
+    if (!url.searchParams.has(key)) continue;
+    obj[key] = multiKeys.includes(key) ? url.searchParams.getAll(key) : url.searchParams.get(key)!;
+  }
+  return schema.parse(obj);
+}
+
 /** A `%term%` operand with LIKE's own wildcards escaped. */
 export const containsLike = (term: string) => `%${escapeLike(term)}%`;

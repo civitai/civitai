@@ -214,6 +214,26 @@ describe('createFreePlacement — the refusals the paid path makes', () => {
   });
 });
 
+describe('createFreePlacement — a surface with no free tier', () => {
+  // A storyline may be priced at zero, and its zero-priced continuations are
+  // ordinary rows that spend nothing. A `free` row there would spend the
+  // placer's daily allowance, which is shared with stickers and remix galleries.
+  it('refuses a storyline before resolving anything', async () => {
+    await expect(
+      createFreePlacement({
+        surface: 'storyline',
+        targetType: 'image',
+        targetId: TARGET,
+        placerId: PLACER,
+        data: {},
+      })
+    ).rejects.toThrow(/storylines have no free tier/);
+
+    expect(resolveSpace).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe('createFreePlacement — the free-tier refusals', () => {
   it('refuses once the slots on this image are taken', async () => {
     givenCounts({ reserved: 4 });
@@ -433,6 +453,9 @@ describe('the advisory locks have exactly one call site', () => {
   // One-arg form on hashtextextended of a prefixed sha256, never nested inside another lock.
   // text-scan/prompt takes one per prompt key (single-arg hashtext form) so two saves from the same
   // base version cannot both insert as newest; never nested inside another lock.
+  // storyline-placement takes one per placer (0x74ee0003) for the pending cap's
+  // count-then-insert, since a zero-priced continuation costs nothing to race. It is
+  // the only lock in its transaction and is never taken alongside the free path's.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
@@ -441,6 +464,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/platform-feedback.service.ts',
+    'services/storyline-placement.service.ts',
     'services/support-membership-code.service.ts',
     'services/text-scan/prompt.ts',
   ];

@@ -1,6 +1,7 @@
 import { QS } from '~/utils/qs';
 
 export const loginRedirectReasons = {
+  'storyline-early-access': 'You need to be logged in to get early access',
   'download-auth': 'The creator of this asset requires you to be logged in to download it',
   'report-content': 'You need to be logged in to report this content',
   'report-model': 'You need to be logged in to report this model',

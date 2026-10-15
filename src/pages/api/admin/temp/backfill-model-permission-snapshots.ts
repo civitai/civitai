@@ -2,6 +2,11 @@ import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import {
+  PERMISSION_FIELDS as FIELDS,
+  modelEventsQuery,
+  modelIdsQuery,
+} from '~/server/utils/model-permission-backfill-queries';
 import type {
   ModelPermissions,
   PermissionChangeEvent,
@@ -31,13 +36,6 @@ import { booleanString } from '~/utils/zod-helpers';
  *   &afterId=0           resume from the previous response's `lastId`
  *   &before=<ISO date>   override the cutover
  */
-
-const FIELDS = [
-  'allowNoCredit',
-  'allowCommercialUse',
-  'allowDerivatives',
-  'allowDifferentLicense',
-] as const;
 
 const schema = z.object({
   dryRun: booleanString().default(true),
@@ -70,25 +68,20 @@ export default WebhookEndpoint(async (req, res) => {
   const before = params.before ?? firstLive?.effectiveAt ?? new Date();
 
   const ids = (
-    await clickhouse.$query<{ entityId: number }>`
-      SELECT DISTINCT entityId
-      FROM entityChangeEvents
-      WHERE entityType = 'Model' AND field IN (${[...FIELDS]})
-        AND createdAt < ${before} AND entityId > ${params.afterId}
-      ORDER BY entityId
-      LIMIT ${params.batchSize}
-    `
+    await (
+      await clickhouse.query({
+        ...modelIdsQuery({ before, afterId: params.afterId, batchSize: params.batchSize }),
+        format: 'JSONEachRow',
+      })
+    ).json<{ entityId: number }>()
   ).map((r) => Number(r.entityId));
   if (!ids.length) return res.status(200).json({ done: true, before });
 
   // Every event, not only those before the cutover: a field's first change AFTER it says, through its
   // oldValue, what the field held at the cutover, which today's value cannot once it has moved again.
-  const events = await clickhouse.$query<EventRow>`
-    SELECT entityId, createdAt, field, oldValue, newValue, userId, actorRole
-    FROM entityChangeEvents
-    WHERE entityType = 'Model' AND entityId IN (${ids}) AND field IN (${[...FIELDS]})
-    ORDER BY entityId, createdAt
-  `;
+  const events = await (
+    await clickhouse.query({ ...modelEventsQuery(ids), format: 'JSONEachRow' })
+  ).json<EventRow>();
 
   const models = (await dbRead.model.findMany({
     where: { id: { in: ids } },

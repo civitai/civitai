@@ -122,7 +122,8 @@ type ServiceDealHoldReason =
   (typeof SERVICE_DEAL_HOLD_REASONS)[keyof typeof SERVICE_DEAL_HOLD_REASONS];
 
 /**
- * The deal's current round has at least one final, and every final in it passed scanning. The
+ * The deal's current round has at least one final, and every final in it is Ready and passed
+ * scanning: a final not yet Ready blocks, as it blocks delivery (`dealReadyToDeliver`). The
  * buyer downloads the finals only once the deal completes, so completing it and paying the seller
  * both wait on this. `deal` names the deal row in the surrounding statement.
  */
@@ -136,7 +137,8 @@ export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) =>
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
       AND f."kind" = 'Final'::"ServiceDealFileKind"
-      AND f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
+      AND (f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
+        OR f."status" <> 'Ready'::"ServiceDealFileStatus")
   )
 )`;
 

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -89,6 +90,14 @@ const MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261025120000_creator_services_foundation/migration.sql'
 );
+const FILE_STATE_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028140000_creator_service_deal_file_state/migration.sql'
+);
+const NSFW_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261028150000_creator_service_max_nsfw_level/migration.sql'
+);
 const REASON_CODE_MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20261028130000_service_deal_event_reason_code/migration.sql'
@@ -98,6 +107,11 @@ const SELLER = 1;
 const BUYER = 2;
 const STRANGER = 3;
 const PRICE = 500;
+const PG = 1;
+const PG13 = 2;
+const R = 4;
+const SFW_LEVELS = PG | PG13;
+const ALL_LEVELS = 31;
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
@@ -161,7 +175,24 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
     buyerId: BUYER,
     requestText: 'please draw my cat',
     buzzType: 'yellow',
+    // A buyer on the mature-capable domain who browses at PG only, as most do.
+    servableLevels: ALL_LEVELS,
+    consentLevels: PG,
     ...overrides,
+  });
+
+/**
+ * Delivery without the file checks, which this suite does not exercise: production delivers through
+ * `deliverServiceDeal` (the files suite), and nothing else may move a deal to Delivered.
+ */
+const markDelivered = (dealId: number) =>
+  deals.transitionDeal({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Delivered',
+    actorId: SELLER,
+    event: 'Delivered',
+    set: Prisma.sql`, "deliveredAt" = now()`,
   });
 
 /** Moves a deal's clock instead of the test's: time is an input. */
@@ -181,18 +212,19 @@ const ageHoldLeg = (id: number, minutes: number) =>
 const conflict = expect.objectContaining({ code: 'CONFLICT' });
 
 /** A final for the deal's current round (or `round`), as the delivery seat's scanner leaves it. */
-const finals = (id: number, scanStatus = 'Passed', round?: number) =>
+const finals = (id: number, scanStatus = 'Passed', round?: number, status = 'Ready') =>
   q(
-    `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, "scanStatus")
-     SELECT $1, COALESCE($3::int, "revisionsUsed"), 'Final', 'k', 'application/zip', 1, $2::"ServiceDealFileScanStatus"
+    `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, "scanStatus", status)
+     SELECT $1, COALESCE($3::int, "revisionsUsed"), 'Final', md5(random()::text), 'application/zip', 1,
+       $2::"ServiceDealFileScanStatus", $4::"ServiceDealFileStatus"
      FROM "ServiceDeal" WHERE id = $1`,
-    [id, scanStatus, round ?? null]
+    [id, scanStatus, round ?? null, status]
   );
 
 /** Delivers with a final that passed scanning, as a completed deal needs. */
 const deliver = async (id: number) => {
   await finals(id);
-  await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+  await markDelivered(id);
 };
 
 beforeAll(async () => {
@@ -204,12 +236,15 @@ beforeAll(async () => {
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(FILE_STATE_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(NSFW_MIGRATION, 'utf8'));
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   // clearAllMocks keeps a queued *Once; a test that fails early would leak it into the next.
   for (const fn of Object.values(buzz)) fn.mockReset();
+  shop.assertCreatorShopVisible.mockReset();
   locks.available = true;
   locks.held.clear();
   buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged());
@@ -1329,7 +1364,7 @@ describe('the finals gate and dispute resolution', () => {
   const delivered = async (overrides: Parameters<typeof request>[0] = {}) => {
     const { id } = await request(overrides);
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
-    await deals.markServiceDealDelivered({ dealId: id, userId: SELLER });
+    await markDelivered(id);
     return id;
   };
   const completed = async () => {
@@ -1368,6 +1403,21 @@ describe('the finals gate and dispute resolution', () => {
       async (id: number) => {
         await finals(id);
         await finals(id, 'Pending');
+      },
+    ],
+    // Only a Ready final counts, and one that is not Ready blocks, as delivery treats them.
+    ...(['Uploading', 'Failed'] as const).map(
+      (status) =>
+        [
+          `a passed final that is ${status}`,
+          (id: number) => finals(id, 'Passed', undefined, status),
+        ] as const
+    ),
+    [
+      'a passed Ready final beside a passed one still uploading',
+      async (id: number) => {
+        await finals(id);
+        await finals(id, 'Passed', undefined, 'Uploading');
       },
     ],
     [
@@ -1530,12 +1580,24 @@ describe('the finals gate and dispute resolution', () => {
     expect(await resolve(id, 'Release')).toEqual({
       status: 'refused',
       reason: 'finals_not_passed',
-      message: expect.stringMatching(/not passed scanning/),
+      message: expect.stringMatching(/passed scanning/),
     });
     expect((await deal(id)).status).toBe('Disputed');
     expect((await disputeRow(id)).disputeResolution).toBeNull();
     expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     expect(await events(id)).not.toContain('DisputeResolved');
+  });
+
+  it('refuses to release for a final that passed scanning but is not Ready', async () => {
+    const id = await delivered();
+    await finals(id, 'Passed', undefined, 'Failed');
+    await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+    expect(await resolve(id, 'Release')).toMatchObject({
+      status: 'refused',
+      reason: 'finals_not_passed',
+    });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
   });
 
   // A crash between the resolution and the payment must leave the refund claimed for the sweep.
@@ -1995,6 +2057,7 @@ describe('reasons and reason codes', () => {
         requestedAt: at,
         deliveredAt: at,
         heldAt: at,
+        maxNsfwLevel: R,
         events: [
           {
             id: 1,
@@ -2018,6 +2081,11 @@ describe('reasons and reason codes', () => {
 
     it("returns each event's code", async () => {
       expect((await view(true)).events[0].reasonCode).toBe('too_busy');
+    });
+
+    // The page gates itself on these, as it does any mature content.
+    it("returns the deal's rating, and whether it is mature", async () => {
+      expect(await view(true)).toMatchObject({ maxNsfwLevel: R, mature: true });
     });
 
     it('offers the flag-gated actions only while the flag is on', async () => {
@@ -2051,6 +2119,140 @@ describe('reasons and reason codes', () => {
       expect(await listed(false)).toEqual(['acceptDelivery', 'requestCancellation']);
       await mute(BUYER);
       expect(await listed()).toEqual(['acceptDelivery', 'requestCancellation']);
+    });
+  });
+});
+
+// Mature services (decision, briony 2026-10-15): SFW is always requestable; a mature service only on a
+// domain that serves its level, by a buyer whose own browsing level includes it.
+describe('mature services', () => {
+  const rate = (level: number) => q(`UPDATE "ServiceOffering" SET "maxNsfwLevel" = $1`, [level]);
+  const dealLevel = async (id: number) =>
+    (
+      await q<{ maxNsfwLevel: number }>(`SELECT "maxNsfwLevel" FROM "ServiceDeal" WHERE id = $1`, [
+        id,
+      ])
+    )[0].maxNsfwLevel;
+  const dealCount = async () =>
+    (await q<{ n: number }>(`SELECT count(*)::int n FROM "ServiceDeal"`))[0].n;
+
+  it('lets a PG-only buyer request a PG-13 service, on either domain', async () => {
+    await rate(PG13);
+    const { id } = await request({ consentLevels: PG, servableLevels: SFW_LEVELS });
+    expect(await dealLevel(id)).toBe(PG13);
+  });
+
+  it('refuses a PG-only buyer an R service, and holds nothing', async () => {
+    await rate(R);
+    await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await dealCount()).toBe(0);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('takes an R service from a buyer who opted into R, and snapshots its rating', async () => {
+    await rate(R);
+    const { id } = await request({ consentLevels: PG | R });
+    expect(await dealLevel(id)).toBe(R);
+    // The deal keeps its rating whatever the offering does later.
+    await rate(PG13);
+    expect(await dealLevel(id)).toBe(R);
+  });
+
+  it('answers a hidden mature service as not found, never as mature', async () => {
+    await rate(R);
+    shop.assertCreatorShopVisible.mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Shop not found' })
+    );
+    await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('answers a blocked buyer as blocked, never as mature', async () => {
+    await rate(R);
+    await q(`INSERT INTO "UserEngagement" VALUES ($1, $2, 'Block')`, [SELLER, BUYER]);
+    await expect(request({ consentLevels: PG })).rejects.toThrow(/cannot request this service/);
+  });
+
+  it('does not find a mature service on the SFW domain, even for a buyer who opted in', async () => {
+    await rate(R);
+    await expect(
+      request({ servableLevels: SFW_LEVELS, consentLevels: ALL_LEVELS })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await dealCount()).toBe(0);
+  });
+
+  // The checks before the INSERT are for the message; the INSERT repeats the rule itself.
+  it('refuses at the insert a service made mature after the checks, and holds nothing', async () => {
+    await rate(PG13);
+    shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+      await rate(R);
+      return [];
+    });
+    await expect(request({ consentLevels: PG })).rejects.toEqual(conflict);
+    expect(await dealCount()).toBe(0);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses at the insert a mature service on the SFW domain, past the checks', async () => {
+    await rate(PG13);
+    shop.assertCreatorShopVisible.mockImplementationOnce(async () => {
+      await rate(R);
+      return [];
+    });
+    await expect(
+      request({ servableLevels: SFW_LEVELS, consentLevels: ALL_LEVELS })
+    ).rejects.toEqual(conflict);
+    expect(await dealCount()).toBe(0);
+  });
+
+  describe('listing my deals', () => {
+    // The Prisma model calls are mocked in this suite; these run them against the real rows.
+    const fakePrisma = () => {
+      type Where = { buyerId?: number; maxNsfwLevel?: { in?: number[]; notIn?: number[] } };
+      type Row = { buyerId: number; maxNsfwLevel: number };
+      const matches = (row: Row, where: Where) =>
+        (where.buyerId === undefined || row.buyerId === where.buyerId) &&
+        (where.maxNsfwLevel?.in === undefined ||
+          where.maxNsfwLevel.in.includes(row.maxNsfwLevel)) &&
+        (where.maxNsfwLevel?.notIn === undefined ||
+          !where.maxNsfwLevel.notIn.includes(row.maxNsfwLevel));
+      const rows = () => q<Row>(`SELECT * FROM "ServiceDeal" ORDER BY id DESC`);
+      const model = dbMock.dbWrite as unknown as {
+        serviceDeal: { findMany: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
+      };
+      model.serviceDeal.findMany = vi.fn(async ({ where }) =>
+        (await rows()).filter((row) => matches(row, where))
+      );
+      model.serviceDeal.count = vi.fn(
+        async ({ where }) => (await rows()).filter((row) => matches(row, where)).length
+      );
+    };
+    const list = (servableLevels: number) =>
+      deals.listMyServiceDeals({
+        userId: BUYER,
+        role: 'buyer',
+        limit: 20,
+        servicesEnabled: true,
+        servableLevels,
+      });
+
+    it('leaves mature deals out on the SFW domain and says how many', async () => {
+      const { id: sfw } = await request();
+      // One unanswered request per buyer per offering: answer the first.
+      await deals.declineServiceDeal({ dealId: sfw, userId: SELLER });
+      await rate(R);
+      const { id: mature } = await request({ consentLevels: PG | R });
+      // Another buyer's mature deal: never in this buyer's list, nor in their count.
+      await request({ buyerId: STRANGER, consentLevels: PG | R });
+      fakePrisma();
+
+      const green = await list(SFW_LEVELS);
+      expect(green.items.map((item) => item.id)).toEqual([sfw]);
+      expect(green.hiddenOffDomain).toBe(1);
+
+      const red = await list(ALL_LEVELS);
+      expect(red.items.map((item) => item.id)).toEqual([mature, sfw]);
+      expect(red.items[0].maxNsfwLevel).toBe(R);
+      expect(red.hiddenOffDomain).toBe(0);
     });
   });
 });

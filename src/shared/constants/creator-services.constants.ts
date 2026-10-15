@@ -154,10 +154,99 @@ export type ServiceDealReasonCode =
   | ServiceDealDisputeReasonCode;
 
 /**
+ * What a zip Final may hold. Every limit is checked against the bytes actually read, never only
+ * against the sizes the archive declares about itself.
+ */
+export const SERVICE_ZIP_MAX_ENTRIES = 500;
+export const SERVICE_ZIP_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+export const SERVICE_ZIP_MAX_ENTRY_BYTES = 100 * 1024 * 1024;
+export const SERVICE_ZIP_MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+export const SERVICE_ZIP_MAX_RATIO = 100;
+/** Entries are inflated one at a time; a ratio is only meaningful above this many bytes. */
+export const SERVICE_ZIP_RATIO_FLOOR_BYTES = 1024 * 1024;
+/** Image extensions inside a final. Anything else is judged by content, not by its name. */
+export const SERVICE_ZIP_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'] as const;
+/** Weights files. Refused inside a zip (deliver each as its own Final); a top-level one is not content-sniffed. */
+export const SERVICE_ZIP_MODEL_EXTENSIONS = [
+  'safetensors',
+  'ckpt',
+  'pt',
+  'pth',
+  'gguf',
+  'bin',
+  'onnx',
+] as const;
+export const SERVICE_ZIP_ARCHIVE_EXTENSIONS = [
+  'zip',
+  'rar',
+  '7z',
+  'tar',
+  'gz',
+  'tgz',
+  'bz2',
+  'xz',
+  'zst',
+  'lz',
+  'lzma',
+  'cab',
+  'iso',
+  'jar',
+] as const;
+export const SERVICE_ZIP_VIDEO_EXTENSIONS = [
+  'mp4',
+  'mov',
+  'webm',
+  'mkv',
+  'avi',
+  'm4v',
+  'wmv',
+  'flv',
+  'mpg',
+  'mpeg',
+  'ogv',
+  '3gp',
+] as const;
+/** A file being unpacked that has not finished in this long is taken up again by the next run. */
+export const SERVICE_UNPACK_STALE_MS = 60 * 60_000;
+/** After a failure that is not the file's fault, the file is tried again this long later; others go first. */
+export const SERVICE_UNPACK_RETRY_MS = 5 * 60_000;
+/** An image still Pending this long after its row was created is failed, so a round never hangs. */
+export const SERVICE_FINAL_SCAN_GIVE_UP_MS = 6 * HOUR;
+/** A copy still Pending after its file settled some other way is deleted once this old, so its scan can finish. */
+export const SERVICE_SCAN_COPY_SWEEP_MS = 60 * 60_000;
+
+/**
  * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about
  * the other party or the files, so the parties never see it (see `dealVisibleReason`).
  */
 export const SERVICE_DEAL_HOLD_REASONS = {
   sellerUnavailable: 'seller_unavailable',
   finalScanFailed: 'final_scan_failed',
+  finalAboveRating: 'final_above_rating',
 } as const;
+
+/**
+ * The highest rating a service may carry and still be safe for work (PG-13). A service at or below it
+ * is open to everyone everywhere; one above it is mature, and only requested where mature content is
+ * served, by a buyer whose own browsing level includes it.
+ */
+export const SERVICE_SFW_MAX_NSFW_LEVEL = 2;
+export const isMatureServiceLevel = (maxNsfwLevel: number) =>
+  maxNsfwLevel > SERVICE_SFW_MAX_NSFW_LEVEL;
+
+/**
+ * Whether a buyer may request a service rated `maxNsfwLevel`: always for a SFW one; for a mature one
+ * only where the domain serves that level and the buyer has opted into it. `requestServiceDeal`
+ * repeats this rule in its INSERT.
+ */
+export const serviceRequestAllowed = ({
+  maxNsfwLevel,
+  servableLevels,
+  consentLevels,
+}: {
+  maxNsfwLevel: number;
+  servableLevels: number;
+  consentLevels: number;
+}) =>
+  !isMatureServiceLevel(maxNsfwLevel) ||
+  ((maxNsfwLevel & servableLevels) !== 0 && (maxNsfwLevel & consentLevels) !== 0);

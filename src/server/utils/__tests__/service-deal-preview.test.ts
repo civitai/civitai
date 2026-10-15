@@ -3,6 +3,8 @@ import { join } from 'path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 import {
+  buildEntryScanCopy,
+  buildScanCopy,
   buildWatermarkedPreview,
   PreviewRejectedError,
   watermarkSvg,
@@ -10,6 +12,7 @@ import {
 import {
   SERVICE_PREVIEW_ANIMATED_MAX_FRAMES,
   SERVICE_PREVIEW_MAX_SIDE,
+  SERVICE_PREVIEW_SCAN_SIDE,
 } from '~/shared/constants/creator-services.constants';
 
 /**
@@ -141,5 +144,39 @@ describe('buildWatermarkedPreview', () => {
     const svg = watermarkSvg(512, 512).toString();
     expect(svg).toContain('<rect');
     expect(svg).not.toContain('<text');
+  });
+});
+
+describe('the scan copies', () => {
+  it('downscales to the scan side and leaves the picture unmarked', async () => {
+    const source = await still(2400, 1200);
+    for (const build of [buildScanCopy, buildEntryScanCopy]) {
+      const result = await build(source);
+      expect(Math.max(result.width, result.height)).toBe(SERVICE_PREVIEW_SCAN_SIDE);
+      expect(result.mimeType).toBe('image/webp');
+      const [marked] = await markedPixelsPerFrame(source, result.data);
+      // The mark covers well over this share of a preview; a scan copy has none.
+      expect(marked).toBeLessThan(0.005);
+    }
+  });
+
+  it('keeps every frame of an animation, and refuses one over the frame cap', async () => {
+    const result = await buildEntryScanCopy(await animated(20));
+    expect(result.frames).toBe(20);
+    await expect(buildEntryScanCopy(readFileSync(ANIMATED))).rejects.toThrow(/at most 60 frames/);
+  });
+
+  it('applies the preview byte cap to a preview and not to an image inside a delivery', async () => {
+    // Trailing bytes after the image data are ignored by the decoder, so this is a valid 11 MB PNG.
+    const big = Buffer.concat([await still(300, 300), Buffer.alloc(11 * 1024 * 1024)]);
+    await expect(buildScanCopy(big)).rejects.toThrow(/too large/);
+    const result = await buildEntryScanCopy(big);
+    expect([result.width, result.height]).toEqual([300, 300]);
+  });
+
+  it('decides by the bytes', async () => {
+    await expect(buildEntryScanCopy(Buffer.from('not an image at all'))).rejects.toThrow(
+      PreviewRejectedError
+    );
   });
 });

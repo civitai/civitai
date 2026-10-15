@@ -9,6 +9,7 @@ import {
   SERVICE_PRICE_MIN,
   SERVICE_REVISIONS_MAX,
   SERVICE_TITLE_MAX,
+  SERVICE_OFFERING_RATINGS,
   SERVICE_TITLE_MIN,
 } from '~/shared/constants/creator-service.constants';
 import { ServicePreviewKind } from '~/shared/utils/prisma/enums';
@@ -23,6 +24,15 @@ export const upsertServiceOfferingSchema = z.object({
   revisionsIncluded: z.number().int().min(0).max(SERVICE_REVISIONS_MAX),
   maxOpenDeals: z.number().int().min(SERVICE_OPEN_DEALS_MIN).max(SERVICE_OPEN_DEALS_MAX),
   previewKind: z.enum(ServicePreviewKind),
+  maxNsfwLevel: z
+    .number()
+    .int()
+    .refine((value) => (SERVICE_OFFERING_RATINGS as readonly number[]).includes(value), {
+      message: 'Pick one rating',
+    })
+    // No schema default: an update that omits it must leave the rating alone, never reset a
+    // mature offering to PG-13 (which shows everywhere). A new offering gets the default on create.
+    .optional(),
   // Saves as a draft unless set; publishing goes through the same sell gate as activating.
   publish: z.boolean().default(false),
 });
@@ -36,4 +46,7 @@ export const setServiceOfferingStatusSchema = z.object({
 });
 
 export type GetShopServiceOfferingsInput = z.infer<typeof getShopServiceOfferingsSchema>;
-export const getShopServiceOfferingsSchema = z.object({ userId: z.number().int().positive() });
+export const getShopServiceOfferingsSchema = z.object({
+  userId: z.number().int().positive(),
+  browsingLevel: z.number().int().optional(),
+});

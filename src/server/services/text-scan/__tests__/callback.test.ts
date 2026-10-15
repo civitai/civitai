@@ -130,6 +130,38 @@ describe('handleTextScanCallback', () => {
     });
   });
 
+  it.each(['active', 'shadow'])(
+    '%s: drops the verdict for a subject no longer public, leaving the row Failed',
+    async (mode) => {
+      load.mockResolvedValue(
+        new Map([[7, { fields: [], declared: { nsfwLevel: 1 }, notPublic: true }]])
+      );
+      vi.mocked(getWorkflow).mockResolvedValue(
+        workflow(
+          { nsfw: { level: 'x', reason: 'Explicit.' } },
+          undefined,
+          mode === 'active' ? metadata : shadowMetadata
+        ) as any
+      );
+      await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+      expect(updateMany).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(updateMany).mock.calls[0][0]).toEqual({
+        where: {
+          entityType: mode === 'active' ? 'Post' : 'Post:shadow',
+          entityId: 7,
+          workflowId: { in: ['wf-1', mode === 'active' ? MARKER : shadowMetadata.externalId] },
+        },
+        data: { workflowId: 'wf-1', status: 'Failed', retryCount: { increment: 1 } },
+      });
+      expect(adapter.applyTextScan).not.toHaveBeenCalled();
+      expect(adapter.applyFailure).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'subject not public; verdict dropped', entityId: 7 })
+      );
+    }
+  );
+
   // An edit between submit and callback must not move the hash a flag and its appeal grant compare.
   it('hands the action the text hash of the subject as submitted', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
@@ -798,6 +830,23 @@ describe('handleTextScanCallback with some segments unusable', () => {
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
     expect(adapter.applyFailure).toHaveBeenCalled();
+  });
+
+  it('raises nothing for a subject no longer public, keeping the stored verdict', async () => {
+    const row = fakeRow(stored());
+    load.mockResolvedValue(
+      new Map([[7, { fields: [], declared: { nsfwLevel: 1 }, notPublic: true }]])
+    );
+    vi.mocked(getWorkflow).mockResolvedValue(segmented([MINOR, 'TRUNCATED'], LABELS) as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(row).toMatchObject({
+      status: 'Failed',
+      nsfwLevel: stored().nsfwLevel,
+      triggeredLabels: stored().triggeredLabels,
+      result: stored().result,
+    });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
   });
 
   it('starts a text-scan result, stamped with the submitted textHash, on a row that had none', async () => {
