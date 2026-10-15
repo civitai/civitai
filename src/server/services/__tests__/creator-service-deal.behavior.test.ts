@@ -1870,6 +1870,42 @@ describe('reasons and reason codes', () => {
     expect(await lastEvent(spoke)).toMatchObject({ comment: null, reasonCode: 'other' });
   });
 
+  it("scans and keeps an unmuted buyer's dispute text, on the event and the deal", async () => {
+    const id = await completed();
+    scan.mockClear();
+    await deals.openServiceDealDispute({
+      dealId: id,
+      userId: BUYER,
+      reason: 'zip is empty',
+      reasonCode: 'files_missing_or_broken',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'Disputed',
+      comment: 'zip is empty',
+      reasonCode: 'files_missing_or_broken',
+    });
+    expect((await reasons(id)).disputeReason).toBe('zip is empty');
+    expect(scan).toHaveBeenCalledWith('zip is empty', expect.anything());
+  });
+
+  it("scans and keeps an unmuted party's answer to a cancellation", async () => {
+    const id = await accepted();
+    await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
+    scan.mockClear();
+    await deals.respondServiceDealCancellation({
+      dealId: id,
+      userId: SELLER,
+      agree: true,
+      comment: 'fair enough',
+    });
+    expect(await lastEvent(id)).toEqual({
+      type: 'CancellationAccepted',
+      comment: 'fair enough',
+      reasonCode: null,
+    });
+    expect(scan).toHaveBeenCalledWith('fair enough', expect.anything());
+  });
+
   it("drops a muted party's answer to a cancellation, with no code", async () => {
     const id = await accepted();
     await deals.requestServiceDealCancellation({ dealId: id, userId: BUYER, reason: 'r' });
