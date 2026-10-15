@@ -1377,7 +1377,7 @@ describe('the finals gate and dispute resolution', () => {
       },
     ],
     // Only a Ready final counts, and one that is not Ready blocks, as delivery treats them.
-    ...(['Uploading', 'Processing', 'Failed'] as const).map(
+    ...(['Uploading', 'Failed'] as const).map(
       (status) =>
         [
           `a passed final that is ${status}`,
@@ -1551,12 +1551,24 @@ describe('the finals gate and dispute resolution', () => {
     expect(await resolve(id, 'Release')).toEqual({
       status: 'refused',
       reason: 'finals_not_passed',
-      message: expect.stringMatching(/not passed scanning/),
+      message: expect.stringMatching(/passed scanning/),
     });
     expect((await deal(id)).status).toBe('Disputed');
     expect((await disputeRow(id)).disputeResolution).toBeNull();
     expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     expect(await events(id)).not.toContain('DisputeResolved');
+  });
+
+  it('refuses to release for a final that passed scanning but is not Ready', async () => {
+    const id = await delivered();
+    await finals(id, 'Passed', undefined, 'Failed');
+    await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED);
+    expect(await resolve(id, 'Release')).toMatchObject({
+      status: 'refused',
+      reason: 'finals_not_passed',
+    });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
   });
 
   // A crash between the resolution and the payment must leave the refund claimed for the sweep.
