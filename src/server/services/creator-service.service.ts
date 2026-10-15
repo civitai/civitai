@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
+import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
 import type {
   GetShopServiceOfferingsInput,
   SetServiceOfferingStatusInput,
@@ -115,7 +116,7 @@ export async function getShopServiceOfferings({
   isModerator,
 }: GetShopServiceOfferingsInput & { viewerId?: number; isModerator?: boolean }) {
   await assertCreatorShopVisible({ userId, viewerId, isModerator });
-  return dbRead.serviceOffering.findMany({
+  const offerings = await dbRead.serviceOffering.findMany({
     where: {
       sellerId: userId,
       status: ServiceOfferingStatus.Active,
@@ -124,6 +125,15 @@ export async function getShopServiceOfferings({
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
   });
+  // Display only: `requestServiceDeal` enforces the cap against the same count.
+  const open = await countOpenDealsByOffering(offerings.map((o) => o.id));
+  return offerings.map((offering) => ({
+    ...offering,
+    slotsOpen:
+      offering.maxOpenDeals == null
+        ? null
+        : Math.max(0, offering.maxOpenDeals - (open.get(offering.id) ?? 0)),
+  }));
 }
 
 export async function upsertServiceOffering({
