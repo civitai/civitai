@@ -94,7 +94,10 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { isPublicArticle } from '~/server/services/text-scan/public-content';
+import {
+  articleAwaitsTextVerdict,
+  isPublicArticle,
+} from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
   computeArticleDerivedNsfwLevel,
@@ -1329,7 +1332,7 @@ export const upsertArticle = async ({
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
         coverId: coverId ?? article.coverId,
-        isPublic: isPublicArticle(result),
+        publication: { status: result.status, scheduledAt: result.scheduledAt },
       },
     });
 
@@ -1370,7 +1373,7 @@ type ArticleContentChangeContext = {
   title: string | null;
   previousContent: string | null;
   coverId: number | null;
-  isPublic: boolean;
+  publication: { status: ArticleStatus; scheduledAt: Date | null };
 };
 
 /**
@@ -1430,10 +1433,10 @@ export async function applyArticleContentChange({
       title: stored.title,
       previousContent: stored.content,
       coverId: stored.coverId,
-      isPublic: isPublicArticle(stored),
+      publication: { status: stored.status, scheduledAt: stored.scheduledAt },
     };
   }
-  const { ownerId, title, previousContent, coverId, isPublic } = resolved;
+  const { ownerId, title, previousContent, coverId, publication } = resolved;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1517,10 +1520,10 @@ export async function applyArticleContentChange({
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
-    } else if (isPublic) {
+    } else if (isPublicArticle(publication)) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
-      submitTextModerationOrScan({
+      const submitted = submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
         xguard: () =>
@@ -1539,6 +1542,8 @@ export async function applyArticleContentChange({
           articleId: id,
         }).catch();
       });
+      // Otherwise the recompute below can count a verdict for older text and take it live.
+      if (articleAwaitsTextVerdict(publication)) await submitted;
     }
   }
 

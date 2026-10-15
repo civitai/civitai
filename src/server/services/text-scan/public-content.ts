@@ -16,16 +16,19 @@ export function isPublicModel(model: { status: ModelStatus; availability: Availa
   );
 }
 
-// Processing and a scheduled Draft both wait on the verdict to go live, so they must be scanned.
-// Private availability still counts for the same reason: its ingestion waits on the verdict too.
-const PUBLIC_ARTICLE_STATUSES: ArticleStatus[] = [
-  ArticleStatus.Published,
-  ArticleStatus.Processing,
-];
-
+// Availability is deliberately not read: a Private article's ingestion waits on the verdict too.
+// Keep in step with `article-schedule.helpers.ts`, which decides when a scheduled Draft goes live.
 export function isPublicArticle(article: { status: ArticleStatus; scheduledAt: Date | null }) {
+  return article.status === ArticleStatus.Published || articleAwaitsTextVerdict(article);
+}
+
+// Processing and a scheduled Draft go live only once the text verdict is in.
+export function articleAwaitsTextVerdict(article: {
+  status: ArticleStatus;
+  scheduledAt: Date | null;
+}) {
   return (
-    PUBLIC_ARTICLE_STATUSES.includes(article.status) ||
+    article.status === ArticleStatus.Processing ||
     (article.status === ArticleStatus.Draft && !!article.scheduledAt)
   );
 }

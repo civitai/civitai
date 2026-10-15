@@ -425,6 +425,63 @@ describe('article text scan — public content only', () => {
     );
   });
 
+  describe('ordering against the ingestion recompute', () => {
+    let events: string[];
+
+    beforeEach(() => {
+      // Captured per test: an unawaited submit settles after its own test has ended.
+      const log: string[] = [];
+      events = log;
+      submitTextModeration.mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        log.push('submitted');
+      });
+      dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: string[]) => {
+        // The lock is taken twice per recompute; the first marks when it starts.
+        const locks = strings.join('?').includes('pg_advisory_xact_lock');
+        if (locks && !log.includes('recompute')) log.push('recompute');
+        return 0;
+      });
+    });
+
+    const storeAs = (state: { status: string; scheduledAt: Date | null }) =>
+      dbMock.dbWrite.article.findUnique.mockResolvedValue({
+        userId: OWNER_ID,
+        title: 'Stored title',
+        content: 'stored content',
+        coverId: null,
+        ...state,
+      });
+
+    // A verdict for the text before this save would otherwise count, and take the article live.
+    it.each([
+      ['processing', { status: 'Processing', scheduledAt: null }],
+      ['scheduled', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
+    ])('records the submit before recomputing a %s article', async (_name, state) => {
+      storeAs(state);
+
+      await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
+
+      expect(events).toEqual(['submitted', 'recompute']);
+    });
+
+    it('does not hold a published article save on the submit', async () => {
+      storeAs({ status: 'Published', scheduledAt: null });
+
+      await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
+
+      expect(events).toEqual(['recompute']);
+    });
+
+    it('records the submit before recomputing on the save that submits for processing', async () => {
+      dbMock.dbWrite.article.update.mockResolvedValue({ ...savedArticle, status: 'Processing' });
+
+      await upsert({ status: 'Processing' });
+
+      expect(events).toEqual(['submitted', 'recompute']);
+    });
+  });
+
   it('does not scan a draft whose blurb was re-materialized', async () => {
     dbMock.dbWrite.article.findUnique.mockResolvedValue({
       userId: OWNER_ID,
