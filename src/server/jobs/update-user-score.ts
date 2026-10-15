@@ -378,8 +378,10 @@ export async function writeSelfGenerations(
     .then((q) => q.result());
   await pg
     .cancellableQuery(
-      `DELETE FROM "ModelSelfGeneration" WHERE "userId" = ANY($1::int[]) AND "updatedAt" < $2::timestamp`,
-      [ownerIds, stampedAt]
+      `DELETE FROM "ModelSelfGeneration"
+       WHERE "userId" = ANY($1::int[])
+         AND ("modelId", "userId") NOT IN (SELECT * FROM unnest($2::int[], $3::int[]))`,
+      [ownerIds, rows.map((r) => r.modelId), rows.map((r) => r.userId)]
     )
     .then((q) => q.result());
 }
