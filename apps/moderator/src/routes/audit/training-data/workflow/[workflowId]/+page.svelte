@@ -2,7 +2,7 @@
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import { gateExpiresSoon, hasViewableItem, workflowOriginLabel } from '$lib/training-workflow';
-  import WorkflowDataset from './WorkflowDataset.svelte';
+  import WorkflowDataset from '$lib/components/WorkflowDataset.svelte';
   import WorkflowReviewActions from './WorkflowReviewActions.svelte';
   import type { PageData } from './$types';
 
