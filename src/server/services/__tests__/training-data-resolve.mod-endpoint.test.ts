@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** A Training Studio publish leaves a `Training Data` row whose URL is the trained model;
  *  resolving it would serve weights labelled as training data. */
 
-const findMany = vi.hoisted(() => vi.fn());
 const resolveDownloadUrl = vi.hoisted(() => vi.fn());
-vi.mock('~/server/db/client', () => ({ dbRead: { modelFile: { findMany } } }));
 vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/utils/moderator-endpoint', () => ({
   defineModeratorEndpoint: (_name: string, def: unknown) => def,
 }));
@@ -15,6 +13,7 @@ vi.mock('~/server/utils/moderator-endpoint', () => ({
 type Handler = {
   handler: (input: { modelVersionId: number }, ctx: { actor: { id: number } }) => Promise<unknown>;
 };
+const findMany = dbMock.dbRead.modelFile.findMany;
 const resolve = (await import('../../../pages/api/mod/training-data/resolve'))
   .default as unknown as Handler;
 const actor = { actor: { id: 99 } };

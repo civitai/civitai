@@ -45,6 +45,11 @@ describe('triageKeyAction', () => {
     expect(key('j', { canUphold: false })).toBe('next');
   });
 
+  it('makes overturn a no-op when canOverturn is false', () => {
+    expect(key('2', { canOverturn: false })).toBeNull();
+    expect(key('1', { canOverturn: false })).toBe('uphold');
+  });
+
   it('ignores handled and composing events', () => {
     expect(key('j', { defaultPrevented: true })).toBeNull();
     expect(key('j', { isComposing: true })).toBeNull();
@@ -71,6 +76,15 @@ describe('step', () => {
   });
   it('returns null for an empty queue', () => {
     expect(step([], null, 1)).toBeNull();
+  });
+});
+
+describe('string keys (re-detected rows)', () => {
+  const ids = ['1:minor', '1:poi', '2:minor'];
+  it('steps and skips decided rows the same way', () => {
+    expect(step(ids, '1:minor', 1)).toBe('1:poi');
+    expect(step(ids, '2:minor', 1)).toBe('2:minor');
+    expect(nextUndecided(ids, '1:poi', (id) => id === '1:poi')).toBe('2:minor');
   });
 });
 

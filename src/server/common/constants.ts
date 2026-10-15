@@ -839,8 +839,19 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Krea 2 Community License Agreement',
   },
   'flux kommunity': {
-    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md',
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/55d9cc2b0d33255ccd4fe1c9724bc3754de0ae96/LICENSE.md',
     name: 'FLUX Kommunity License',
+    // Section 3(b) Attribution Notice, split like the other BFL licences.
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    // Section 2(b): the model and its derivatives are non-commercial; only a Qualifying
+    // User's outputs may be used commercially.
+    nonCommercial: true,
+    // Section 2(a) applies every restriction to derivatives, and 3(a) makes them carry it.
+    requiresSameLicense: true,
   },
 };
 
