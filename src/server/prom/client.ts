@@ -580,6 +580,27 @@ if (!global.pgGaugeInitialized) {
  * last attempt — reporting for a while and then going permanently silent with
  * the money still parked.
  */
+export const serviceDealExhaustedLegsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'service_deal_exhausted_legs',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'service_deal_exhausted_legs',
+      help: 'Creator Services payout legs that have exhausted their retries and still hold Buzz in escrow',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/** Deals whose hold outcome is still unknown past the reconcile delay: "confirming payment". */
+export const serviceDealUnconfirmedHoldsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'service_deal_unconfirmed_holds',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'service_deal_unconfirmed_holds',
+      help: 'Creator Services deals still confirming payment past the reconcile delay',
+      registers: [instrumentationRegistry],
+    })
+);
+
 export const placementExhaustedLegsGauge = registerInstrumentationMetric(
   PROM_PREFIX + 'placement_exhausted_legs',
   () =>
