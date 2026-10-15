@@ -103,7 +103,7 @@ describe('buildAssistantSystemPrompt', () => {
         '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
         '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
         '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
-        '- Before you tell the user the app is ready, call report_ready. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other run_command and every checklist item is done; do what a refusal says. Never say the app is ready, or describe what the browser shows, without it.',
+        '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
       ].join('\n')
     );
   });

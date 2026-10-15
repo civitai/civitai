@@ -23,7 +23,23 @@ const CHECKLIST_LABEL_MAX = 200;
 
 export const TURN_LIMIT_REFUSAL = `This reply has made ${APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls, the most one reply may make, so nothing more runs in it. Stop now: tell the user what is done and what is left, and that they can say "continue" to carry on.`;
 
-const FILE_CHANGES = new Set(['write_file', 'edit_file', 'delete_path'].map(sandboxTool));
+// Every other sandbox tool clears the checks: write_file, edit_file and delete_path change files, and
+// dev_server_start/_restart run a command (the dev script, or one the assistant passes). A tool the
+// sandbox adds later clears them too until it is listed here.
+const KEEPS_CHECKS = new Set(
+  [
+    'read_file',
+    'list_dir',
+    'dev_server_status',
+    'dev_server_logs',
+    'dev_server_stop',
+    'tunnel_key',
+    'tunnel_connect',
+    'tunnel_status',
+    'tunnel_disconnect',
+  ].map(sandboxTool)
+);
+const SANDBOX_PREFIX = sandboxTool('');
 const PREVIEW_CHECK = sandboxTool('preview_check');
 const RUN_COMMAND = sandboxTool('run_command');
 
@@ -121,6 +137,9 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
   let limitReached = false;
   let verification = unverified();
   let checklist: ChecklistItem[] | null = null;
+  // Calls other than report_ready that were allowed and have not returned. The chat starts every call of
+  // a step together, so a write in the same step as report_ready could land after it said ready.
+  let running = 0;
 
   const reset = () => {
     verification = unverified();
@@ -131,7 +150,7 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
     const out: string[] = [];
     if (verification.preview === null)
       out.push(
-        'Run sandbox__preview_check: it has not run since your last file change or other command (write_file, edit_file, delete_path, or a run_command other than the test or typecheck run).'
+        'Run sandbox__preview_check: it has not run since your last file change or other command (write_file, edit_file, delete_path, dev_server_start, dev_server_restart, or a run_command other than the test or typecheck run).'
       );
     else if (verification.preview !== 'ok')
       out.push(
@@ -159,6 +178,13 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
     return out;
   };
 
+  const notReady = (): string | null => {
+    const reasons = missing();
+    return reasons.length
+      ? `Not ready yet. ${reasons.join(' ')} Then call report_ready again.`
+      : null;
+  };
+
   const beforeToolCall: ChatToolGate = (name, _input, context) => {
     if (context.conversationId !== conversationId) {
       conversationId = context.conversationId;
@@ -173,23 +199,24 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
     }
     turnCalls++;
     if (name === REPORT_READY) {
-      const reasons = missing();
-      if (reasons.length) return { refuse: `Not ready yet. ${reasons.join(' ')}` };
-    }
+      const refusal = notReady();
+      if (refusal) return { refuse: refusal };
+    } else running++;
     return { allow: true };
   };
 
   const onToolResult = ({ name, input, output, isError, refused }: ChatToolResult) => {
     if (refused !== undefined) return;
-    if (FILE_CHANGES.has(name)) verification = unverified();
-    else if (name === PREVIEW_CHECK)
+    if (name !== REPORT_READY) running = Math.max(0, running - 1);
+    if (name === PREVIEW_CHECK)
       verification.preview = isError ? 'error' : previewVerdictOf(output) ?? 'unreadable';
     else if (name === RUN_COMMAND) {
       const kind = checkKindOf((input as { command?: unknown } | null)?.command);
       // Any other command may have changed files (sed, a scaffold, npm install).
       if (kind) verification[kind] = !isError && exitCodeOf(output) === 0;
       else verification = unverified();
-    }
+    } else if (name.startsWith(SANDBOX_PREFIX) && !KEEPS_CHECKS.has(name))
+      verification = unverified();
   };
 
   const set_checklist: ChatTool = {
@@ -238,18 +265,30 @@ export function createAssistantGate(deps: AssistantGateDeps = {}): AssistantGate
 
   const report_ready: ChatTool = {
     description:
-      'Call this before you tell the user the app is ready, every time. It is refused until, since your last file change or other run_command, sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. When it is refused, do what it says; never tell the user the app is ready without it.',
+      'Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. When it is refused, do what it says; never tell the user the app is ready without it.',
     activity: 'Checking the app is ready…',
     inputSchema: { properties: {} },
-    execute: () => ({
-      ready: true,
-      note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item.',
-    }),
+    async execute() {
+      // Let the rest of this step's calls reach the gate first.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (running > 0)
+        throw new Error(
+          'Call report_ready on its own, once your other tool calls have returned: they can still change the app.'
+        );
+      const refusal = notReady();
+      if (refusal) throw new Error(refusal);
+      return {
+        ready: true,
+        note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
+      };
+    },
+    render: renderReady,
   };
 
   return {
     startTurn() {
       turnCalls = 0;
+      running = 0;
       if (limitReached) {
         limitReached = false;
         deps.onTurnLimit?.(false);
@@ -282,5 +321,18 @@ export function renderChecklist(call: ChatToolCall): HTMLElement | undefined {
     list.append(row);
   }
   card.append(title, list);
+  return card;
+}
+
+/** The card a passing report_ready shows: the user's sign that the checks ran. The default card otherwise. */
+export function renderReady(call: ChatToolCall): HTMLElement | undefined {
+  if (call.state !== 'done' || (call.output as { ready?: unknown } | null)?.ready !== true)
+    return undefined;
+  const card = document.createElement('div');
+  card.setAttribute('role', 'status');
+  card.style.cssText =
+    'border:1px solid var(--civitai-color-border, #8884);border-radius:8px;padding:8px 12px;margin:4px 0';
+  card.textContent =
+    '✓ Checked: the preview renders, the tests and the typecheck pass, and every checklist item is done.';
   return card;
 }

@@ -109,7 +109,7 @@ describe('report_ready', () => {
       await allPassing(gate);
       gate.onToolResult(preview(verdict));
       expect(readyDecision(gate)).toEqual({
-        refuse: `Not ready yet. The last sandbox__preview_check said render: ${verdict}. Fix that, then run it again.`,
+        refuse: `Not ready yet. The last sandbox__preview_check said render: ${verdict}. Fix that, then run it again. Then call report_ready again.`,
       });
     }
   );
@@ -120,7 +120,7 @@ describe('report_ready', () => {
     gate.onToolResult(run('cd my-app && npm test', 1));
     expect(readyDecision(gate)).toEqual({
       refuse:
-        'Not ready yet. The last test run failed. Fix it, then run cd <blockId> && npm test again.',
+        'Not ready yet. The last test run failed. Fix it, then run cd <blockId> && npm test again. Then call report_ready again.',
     });
   });
 
@@ -130,7 +130,7 @@ describe('report_ready', () => {
     gate.onToolResult(run('cd my-app && npx tsc --noEmit', 2));
     expect(readyDecision(gate)).toEqual({
       refuse:
-        'Not ready yet. The last typecheck failed. Fix it, then run cd <blockId> && npx tsc --noEmit again.',
+        'Not ready yet. The last typecheck failed. Fix it, then run cd <blockId> && npx tsc --noEmit again. Then call report_ready again.',
     });
   });
 
@@ -185,7 +185,8 @@ describe('report_ready', () => {
     await allPassing(gate);
     await setChecklist(gate, [{ label: 'Type a description', done: false }]);
     expect(readyDecision(gate)).toEqual({
-      refuse: 'Not ready yet. These checklist items are not done: Type a description.',
+      refuse:
+        'Not ready yet. These checklist items are not done: Type a description. Then call report_ready again.',
     });
   });
 
@@ -290,5 +291,113 @@ describe('reading tool results', () => {
     expect(previewVerdictOf({ error: 'x' })).toBeNull();
     expect(previewVerdictOf('page_errors: 0\nrender: ok')).toBeNull();
     expect(previewVerdictOf('ok')).toBeNull();
+  });
+});
+
+describe('what clears the checks', () => {
+  const sandboxCall = (tool: string, input: unknown = {}): ChatToolResult => ({
+    name: `sandbox__${tool}`,
+    input,
+    output: 'running: true',
+    isError: false,
+  });
+
+  it.each([
+    ['dev_server_start', { command: "sed -i 's/ok/broken/' my-app/src/App.tsx; npm run dev" }],
+    ['dev_server_start', {}],
+    ['dev_server_restart', { command: 'npm run dev' }],
+    ['a_tool_added_later', {}],
+  ])(
+    'a %s call clears them, since it can run a command that changes files',
+    async (tool, input) => {
+      const gate = gateInConversation();
+      await allPassing(gate);
+      gate.onToolResult(sandboxCall(tool, input));
+      const refusal = (readyDecision(gate) as { refuse: string }).refuse;
+      expect(refusal).toMatch(/Run sandbox__preview_check/);
+      expect(refusal).toMatch(/Run the tests/);
+      expect(refusal).toMatch(/Run the typecheck/);
+    }
+  );
+
+  it.each(['read_file', 'list_dir', 'dev_server_status', 'dev_server_logs', 'tunnel_status'])(
+    'a %s call keeps them: it reads and changes nothing',
+    async (tool) => {
+      const gate = gateInConversation();
+      await allPassing(gate);
+      gate.onToolResult(sandboxCall(tool));
+      expect(readyDecision(gate)).toEqual({ allow: true });
+    }
+  );
+
+  it('a call outside the sandbox keeps them', async () => {
+    const gate = gateInConversation();
+    await allPassing(gate);
+    gate.onToolResult({ name: 'start_preview', input: {}, output: { ok: true }, isError: false });
+    gate.onToolResult({ name: 'fetch_page', input: {}, output: '# Docs', isError: false });
+    expect(readyDecision(gate)).toEqual({ allow: true });
+  });
+});
+
+describe('report_ready alongside other calls', () => {
+  const readyResult = (gate: ReturnType<typeof createAssistantGate>) =>
+    Promise.resolve(gate.tools[REPORT_READY].execute({}, toolCtx));
+
+  /** A gate with every check passing and no call left running. */
+  async function settledAndPassing() {
+    const gate = gateInConversation();
+    gate.onToolResult({ name: 'sandbox__list_dir', input: {}, output: 'a', isError: false });
+    await allPassing(gate);
+    return gate;
+  }
+
+  it('says the app is ready when it is the only call running', async () => {
+    const gate = await settledAndPassing();
+    expect(readyDecision(gate)).toEqual({ allow: true });
+    await expect(readyResult(gate)).resolves.toMatchObject({ ready: true });
+  });
+
+  it('fails when a call started before it in the same step is still running', async () => {
+    const gate = await settledAndPassing();
+    expect(gate.beforeToolCall('sandbox__write_file', {}, ctx)).toEqual({ allow: true });
+    expect(readyDecision(gate)).toEqual({ allow: true });
+    await expect(readyResult(gate)).rejects.toThrow(
+      'Call report_ready on its own, once your other tool calls have returned: they can still change the app.'
+    );
+  });
+
+  it('fails when a call of the same step starts just after it', async () => {
+    const gate = await settledAndPassing();
+    expect(readyDecision(gate)).toEqual({ allow: true });
+    const result = readyResult(gate);
+    expect(gate.beforeToolCall('sandbox__write_file', {}, ctx)).toEqual({ allow: true });
+    await expect(result).rejects.toThrow(/Call report_ready on its own/);
+  });
+
+  it('says ready again once that call has returned and the app is checked again', async () => {
+    const gate = await settledAndPassing();
+    gate.beforeToolCall('sandbox__write_file', {}, ctx);
+    gate.onToolResult(write);
+    await allPassing(gate);
+    await expect(readyResult(gate)).resolves.toMatchObject({ ready: true });
+  });
+
+  it('forgets calls left running by an earlier reply', async () => {
+    const gate = await settledAndPassing();
+    gate.beforeToolCall('sandbox__read_file', {}, ctx);
+    gate.startTurn();
+    await expect(readyResult(gate)).resolves.toMatchObject({ ready: true });
+  });
+
+  it('fails when the checks no longer pass by the time it runs', async () => {
+    const gate = await settledAndPassing();
+    expect(readyDecision(gate)).toEqual({ allow: true });
+    gate.onToolResult(write);
+    await expect(readyResult(gate)).rejects.toThrow(/^Not ready yet\. Run sandbox__preview_check/);
+  });
+
+  it('asks to be called again once a refusal is dealt with', () => {
+    const decision = readyDecision(gateInConversation()) as { refuse: string };
+    expect(decision.refuse).toMatch(/ Then call report_ready again\.$/);
   });
 });
