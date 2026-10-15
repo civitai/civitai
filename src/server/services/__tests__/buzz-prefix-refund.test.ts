@@ -178,6 +178,15 @@ describe('getPrefixRefundState', () => {
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
+  // A caller reading inside an auto-renewing lock (creator services) needs both reads to end.
+  it('passes read options to the listing and to every refund lookup', async () => {
+    const opts = { timeoutMs: 1234 };
+    await getPrefixRefundState(PREFIX, opts);
+    expect(getMultiAccountTransactionsByPrefix).toHaveBeenCalledWith(PREFIX, opts);
+    expect(getTransactionByExternalId).toHaveBeenCalledTimes(LEGS.length);
+    for (const call of getTransactionByExternalId.mock.calls) expect(call[1]).toBe(opts);
+  });
+
   it('pays no leg when a refund lookup fails', async () => {
     refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
     getTransactionByExternalId.mockImplementation(async (externalId: string) => {

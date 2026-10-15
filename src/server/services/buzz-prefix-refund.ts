@@ -1,3 +1,4 @@
+import type { BuzzReadOptions } from '@civitai/buzz';
 import type { RefundMultiAccountTransactionInput } from '~/server/schema/buzz.schema';
 import {
   getMultiAccountTransactionsByPrefix,
@@ -45,13 +46,24 @@ type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>
 
 export type PrefixRefundState = { reversed: PrefixLeg[]; missing: PrefixLeg[] };
 
-/** Read-only: splits the transactions under a prefix by whether each already has its refund. */
+/**
+ * Read-only: splits the transactions under a prefix by whether each already has its refund.
+ * `opts` bounds both reads; a caller holding a lock while it waits needs them to end.
+ */
 export async function getPrefixRefundState(
-  externalTransactionIdPrefix: string
+  externalTransactionIdPrefix: string,
+  opts?: BuzzReadOptions
 ): Promise<PrefixRefundState> {
+  // Without opts each call is exactly as before, so existing callers see no change.
   const state: PrefixRefundState = { reversed: [], missing: [] };
-  for (const leg of await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix)) {
-    const refund = await getTransactionByExternalId(`refund-${leg.transactionId}`);
+  const legs = opts
+    ? await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix, opts)
+    : await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix);
+  for (const leg of legs) {
+    const refundId = `refund-${leg.transactionId}`;
+    const refund = opts
+      ? await getTransactionByExternalId(refundId, opts)
+      : await getTransactionByExternalId(refundId);
     (refund ? state.reversed : state.missing).push(leg);
   }
   return state;
