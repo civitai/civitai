@@ -364,8 +364,8 @@ findings are done — see the parity checklist.
 Recorded so nobody ports them by reflex:
 
 - 🎥 **Model reports** — *"No, we don't need this one, actually."*
-- 🎥 **Moderation rules UI** — *"Moderation rules live here. We don't really use them though."* Retool
-      has the UI; the team does not use it. Confirm before porting.
+- 🎥 **Moderation rules UI** — superseded for Model rules, which are managed on
+      `/text-scan/model-rules`. Image rules stay in Retool; confirm before porting them.
 - 🎥 **Front Page Audit may be obsolete** — *"I'm not sure if we need to do this anymore… only a few
       videos per day get flagged."* Ask before investing further. (Listed in parity too, because it is
       built and half-finished — the decision governs both.)

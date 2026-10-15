@@ -27,6 +27,7 @@ import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { getSimilarFiles } from '~/components/Resource/file-conflicts';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -318,10 +319,14 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   };
 
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess(_, variables) {
+    async onSuccess(result, variables) {
       hideNotification('publishing-version');
       const modelId = variables.id;
       const modelVersionId = variables.versionIds?.[0];
+      if (notifyIfPublishHeld(result)) {
+        await queryUtils.model.getById.invalidate({ id: modelId });
+        return;
+      }
       showPublishedNotification(modelId, modelVersionId);
     },
     onError(error) {
@@ -335,7 +340,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation({
     async onSuccess(results) {
       hideNotification('publishing-version');
-      if (results) showPublishedNotification(results.modelId, results.id);
+      if (!results) return;
+      if (notifyIfPublishHeld(results)) {
+        await queryUtils.model.getById.invalidate({ id: results.modelId });
+        return;
+      }
+      showPublishedNotification(results.modelId, results.id);
     },
     onError(error) {
       hideNotification('publishing-version');

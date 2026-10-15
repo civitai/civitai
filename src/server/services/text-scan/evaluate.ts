@@ -62,6 +62,12 @@ export function evaluateTextScan(
         if (output.scam.detected) outcome.triggeredLabels.push('scam');
         break;
       }
+      case 'modelRules': {
+        if (!output.modelRules) break;
+        outcome.modelRules = { matched: output.modelRules.matched };
+        if (output.modelRules.matched.length) outcome.triggeredLabels.push('modelRules');
+        break;
+      }
     }
   }
   return outcome;

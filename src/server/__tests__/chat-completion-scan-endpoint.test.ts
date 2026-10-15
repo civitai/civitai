@@ -130,7 +130,7 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(res._body()).toMatchObject({ active: PROMPTS, config: CONFIG });
   });
 
-  it('putPrompt rejects an unknown key, a missing note and a missing createdById', async () => {
+  it('putPrompt rejects an unknown key and a missing createdById', async () => {
     expect(
       (
         await call({
@@ -143,12 +143,18 @@ describe('chat-completion-scan text-scan actions', () => {
       )._status()
     ).toBe(400);
     expect(
-      (await call({ action: 'putPrompt', key: 'base', content: 'x', createdById: 5 }))._status()
-    ).toBe(400);
-    expect(
       (await call({ action: 'putPrompt', key: 'base', content: 'x', note: 'n' }))._status()
     ).toBe(400);
     expect(insertTextScanPrompt).not.toHaveBeenCalled();
+  });
+
+  it('putPrompt saves without a note', async () => {
+    vi.mocked(insertTextScanPrompt).mockResolvedValue({ id: 5, key: 'base' });
+    const res = await call({ action: 'putPrompt', key: 'base', content: 'x', createdById: 5 });
+    expect(res._status()).toBe(200);
+    expect(insertTextScanPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'base', content: 'x', note: undefined })
+    );
   });
 
   it.each(['   ', '\n\t'])('putPrompt rejects whitespace-only content %j', async (content) => {

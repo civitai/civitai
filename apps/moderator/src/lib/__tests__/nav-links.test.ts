@@ -124,13 +124,30 @@ describe('/admin grantable pages', () => {
 describe('the text-scan lab', () => {
   it('declares the text-scan lab permissions and pages', () => {
     const ids = PERMISSIONS.map((p) => p.id);
-    expect(ids).toContain('textScan.prompt.publish');
-    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual(['textScan.prompt.publish']);
+    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual([
+      'textScan.prompt.publish',
+      'textScan.modelRules.edit',
+      'textScan.testSets.edit',
+    ]);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
-      ['/text-scan/check', 'Check'],
-      ['/text-scan/prompts', 'Versions'],
+      ['/text-scan/prompts', 'Prompts'],
+      ['/text-scan/model-rules', 'Model rules'],
     ]);
+  });
+
+  it('does not offer the retired Check page on /admin', () => {
+    expect(pageAccessState().paths).not.toContain('/text-scan/check');
+  });
+});
+
+describe('the Model rules history endpoint', () => {
+  it('is gated with the Model rules page', () => {
+    applyGrants({ '/text-scan/model-rules': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(true);
+
+    applyGrants({ '/text-scan/prompts': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(false);
   });
 });
 

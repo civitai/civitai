@@ -1,10 +1,12 @@
-import type { LabEntityType, LabLabel, NsfwLevelName, PromptKey } from './types';
+import { mergeRuleMatches, type RuleMatch } from '$lib/model-rules';
+import type { LabEntityType, LabLabel, LabRule, NsfwLevelName, PromptKey } from './types';
 
 export const LABEL_NAMES: Record<LabLabel, string> = {
   nsfw: 'Rating',
   poi: 'Real person',
   minor: 'Minor',
   scam: 'Scam / phishing',
+  modelRules: 'Model rules',
 };
 
 export const promptKeyName = (key: PromptKey): string =>
@@ -25,6 +27,7 @@ export const describeBlankPrompts = (keys: readonly PromptKey[]): string =>
 
 export const ENTITY_TYPE_NAMES: Record<LabEntityType, string> = {
   Model: 'Model',
+  ModelRules: 'Model (rules)',
   Article: 'Article',
   Post: 'Post',
   Bounty: 'Bounty',
@@ -48,7 +51,10 @@ export const RATING_NAMES: Record<NsfwLevelName, string> = {
   xxx: 'XXX',
 };
 
-const FLAG_PHRASES: Record<Exclude<LabLabel, 'nsfw'>, { yes: string; no: string }> = {
+const FLAG_PHRASES: Record<
+  Exclude<LabLabel, 'nsfw' | 'modelRules'>,
+  { yes: string; no: string }
+> = {
   poi: { yes: 'Names a real person', no: 'No real person' },
   minor: { yes: 'Involves a minor', no: 'No minor' },
   scam: { yes: 'Scam', no: 'Not a scam' },
@@ -59,7 +65,12 @@ export type VerdictTone = 'clear' | 'neutral' | 'flagged' | 'unknown';
 export type Verdict = { headline: string; tone: VerdictTone; reason?: string };
 
 export type VerdictSource =
-  | { ok: true; output: Record<string, unknown> | null; parseError?: string }
+  | {
+      ok: true;
+      output: Record<string, unknown> | null;
+      parseError?: string;
+      literalRuleIds?: number[];
+    }
   | { ok: false; error: string };
 
 const couldNotJudge = (why: string): Verdict => ({
@@ -67,8 +78,55 @@ const couldNotJudge = (why: string): Verdict => ({
   tone: 'unknown',
 });
 
-export function describeVerdict(label: LabLabel, source: VerdictSource): Verdict {
+const matchedList = (output: Record<string, unknown> | null): unknown[] | null => {
+  const matched = (output?.modelRules as { matched?: unknown } | undefined)?.matched;
+  return Array.isArray(matched) ? matched : null;
+};
+
+/** Every rule the model matched or the text names literally, by subject when the run listed it. */
+export function labRuleMatches(
+  source: VerdictSource,
+  rules: readonly LabRule[] | null
+): RuleMatch[] {
+  if (!source.ok) return [];
+  const subjects = new Map((rules ?? []).map((rule) => [rule.id, rule.subject] as const));
+  return mergeRuleMatches(matchedList(source.output) ?? [], source.literalRuleIds ?? [], subjects);
+}
+
+function describeModelRules(
+  source: VerdictSource & { ok: true },
+  rules: readonly LabRule[] | null
+): Verdict {
+  const name = (m: RuleMatch) => m.subject ?? `#${m.ruleId}`;
+  if (!matchedList(source.output)) {
+    const literal = labRuleMatches(source, rules);
+    if (!literal.length)
+      return couldNotJudge(
+        source.output ? `no ${LABEL_NAMES.modelRules} answer` : source.parseError ?? 'no answer'
+      );
+    return {
+      headline: `Literal match: ${literal.map(name).join(', ')}`,
+      tone: 'flagged',
+      reason: `The model gave no ${LABEL_NAMES.modelRules} answer; these rules are named in the text.`,
+    };
+  }
+  const matches = labRuleMatches(source, rules);
+  if (!matches.length) return { headline: 'No rule matched', tone: 'clear' };
+  const reason = matches.flatMap((m) => (m.reason ? [`${name(m)}: ${m.reason}`] : [])).join('\n');
+  return {
+    headline: `Matched ${matches.map(name).join(', ')}`,
+    tone: 'flagged',
+    reason: reason || undefined,
+  };
+}
+
+export function describeVerdict(
+  label: LabLabel,
+  source: VerdictSource,
+  rules: readonly LabRule[] | null = null
+): Verdict {
   if (!source.ok) return couldNotJudge(source.error);
+  if (label === 'modelRules') return describeModelRules(source, rules);
   if (!source.output) return couldNotJudge(source.parseError ?? 'no answer');
   const v = source.output[label] as
     | { level?: unknown; detected?: unknown; names?: unknown; reason?: unknown }
@@ -91,12 +149,22 @@ export function describeVerdict(label: LabLabel, source: VerdictSource): Verdict
   return { headline: `${phrase.yes}${names}`, tone: 'flagged', reason };
 }
 
+/** Keyed by rule id, not the headline: the model lists its matches in no fixed order. */
+function modelRulesSignature(source: VerdictSource): string {
+  const answered = source.ok && matchedList(source.output) ? 'answered' : 'unanswered';
+  const rules = labRuleMatches(source, null)
+    .map((m) => `${m.ruleId}:${m.llm ? 'llm' : ''}:${m.literal ? 'literal' : ''}`)
+    .sort();
+  return [answered, ...rules].join('|');
+}
+
 /** Whether two results give a different verdict on `label`: the rating, or the yes or no — never the
  *  reason or poi's names. Two results without a verdict do not differ. */
 export function verdictsDiffer(label: LabLabel, a: VerdictSource, b: VerdictSource): boolean {
   const verdictOf = (source: VerdictSource) => {
     const v = describeVerdict(label, source);
     if (v.tone === 'unknown') return null;
+    if (label === 'modelRules') return modelRulesSignature(source);
     return label === 'nsfw' ? v.headline : v.tone;
   };
   return verdictOf(a) !== verdictOf(b);
