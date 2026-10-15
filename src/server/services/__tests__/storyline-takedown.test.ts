@@ -12,6 +12,10 @@ const { setStorylineTakedown, moderateStorylineTitle } = await import(
   '~/server/services/storyline.service'
 );
 const { applyStorylineTextScan } = await import('~/server/services/text-scan/actions/storyline');
+const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { storylineTextScanSubject } = await import(
+  '~/server/services/text-scan/profiles/storyline.profile'
+);
 
 /**
  * A moderator's takedown and the title scan's are held apart (`tosViolationByModerator`,
@@ -27,6 +31,8 @@ type Where = Record<string, unknown>;
 const matches = (row: Row, where: Where): boolean =>
   Object.entries(where).every(([key, value]) => {
     if (key === 'OR') return (value as Where[]).some((w) => matches(row, w));
+    if (value && typeof value === 'object' && 'lt' in value)
+      return (row[key] as number) < (value as { lt: number }).lt;
     if (value && typeof value === 'object' && 'not' in value)
       return row[key] !== (value as { not: unknown }).not;
     return row[key] === value;
@@ -49,6 +55,7 @@ beforeEach(() => {
     tosViolation: false,
     tosViolationByScan: false,
     tosViolationByModerator: false,
+    minorByScan: false,
     scanFlagLiftedTextHash: null,
   };
   w.storyline.updateMany.mockReset().mockImplementation((async ({ where, data }: never) => {
@@ -62,15 +69,19 @@ beforeEach(() => {
   w.storyline.findUniqueOrThrow.mockReset().mockImplementation(read);
 });
 
-const scan = (verdict: { poi: boolean; minor: boolean }) =>
+/** A verdict on `title`, by default the one the storyline has now. */
+const scan = (verdict: { poi: boolean; minor: boolean; nsfw?: number }, title = TITLE) =>
   applyStorylineTextScan({
     entityId: ID,
     workflowId: 'wf-1',
-    textHash: 'hash-of-this-title',
+    textHash: textScanTextHash(storylineTextScanSubject({ userId: 3, title })),
     subject: { fields: [], declared: {} },
     outcome: {
       triggeredLabels: [],
       nsfwLevel: NsfwLevel.PG,
+      ...(verdict.nsfw !== undefined && {
+        nsfw: { detectedLevel: verdict.nsfw, declaredLevel: 0, raised: false, reason: 'r' },
+      }),
       poi: {
         detected: verdict.poi,
         declared: false,
@@ -165,5 +176,72 @@ describe('a moderator takedown and the title scan', () => {
     await expect(setStorylineTakedown({ id: 999, takenDown: true })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
+  });
+
+  // The owner edits the title while a scan of the old one is in flight. That verdict is about text
+  // the title no longer has: it may still restrict, but only a verdict on the current title lifts.
+  describe('a verdict on a title the storyline no longer has', () => {
+    const OLD = 'An old title';
+
+    it('a clean verdict on the old title lifts nothing; one on the current title does', async () => {
+      await flaggingScan();
+      await scan({ poi: false, minor: false }, OLD);
+      expect(state()).toEqual({ down: true, byScan: true, byModerator: false });
+      await cleanScan();
+      expect(state()).toEqual(UP);
+    });
+
+    it('does not clear the minor flag or lower the rating', async () => {
+      row.minorByScan = true;
+      row.nsfwLevel = NsfwLevel.R;
+      await scan({ poi: false, minor: false, nsfw: NsfwLevel.PG }, OLD);
+      expect(row).toMatchObject({ minorByScan: true, nsfwLevel: NsfwLevel.R });
+      await scan({ poi: false, minor: false, nsfw: NsfwLevel.PG });
+      expect(row).toMatchObject({ minorByScan: false, nsfwLevel: NsfwLevel.PG });
+    });
+
+    it('still takes it down, marks a minor and raises the rating: it fails closed', async () => {
+      await scan({ poi: false, minor: true, nsfw: NsfwLevel.X }, OLD);
+      expect(row).toMatchObject({
+        tosViolation: true,
+        tosViolationByScan: true,
+        minorByScan: true,
+        nsfwLevel: NsfwLevel.X,
+      });
+    });
+  });
+
+  // The title is renamed while a clean verdict on the old one is being applied, and the new
+  // title's verdict lands first. The old verdict's permissive writes must not undo it.
+  it('a clean verdict renamed under mid-apply lifts, clears and lowers nothing', async () => {
+    row.nsfwLevel = NsfwLevel.R;
+    const realFind = w.storyline.findUnique.getMockImplementation()!;
+    w.storyline.findUnique.mockImplementationOnce((async (args: never) => {
+      const read = await realFind(args);
+      // After the verdict has read the title: the rename, and the new title's own verdict.
+      row.title = 'A new title';
+      row.tosViolation = true;
+      row.tosViolationByScan = true;
+      row.minorByScan = true;
+      return read;
+    }) as never);
+    await scan({ poi: false, minor: false, nsfw: NsfwLevel.PG });
+    expect(row).toMatchObject({
+      tosViolation: true,
+      tosViolationByScan: true,
+      minorByScan: true,
+      nsfwLevel: NsfwLevel.R,
+    });
+  });
+
+  it('a raise never lowers a higher rating written after the verdict read', async () => {
+    const realFind = w.storyline.findUnique.getMockImplementation()!;
+    w.storyline.findUnique.mockImplementationOnce((async (args: never) => {
+      const read = await realFind(args);
+      row.nsfwLevel = NsfwLevel.X; // a fresher verdict's raise, landing mid-apply
+      return read;
+    }) as never);
+    await scan({ poi: false, minor: false, nsfw: NsfwLevel.R });
+    expect(row.nsfwLevel).toBe(NsfwLevel.X);
   });
 });
