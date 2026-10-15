@@ -2,8 +2,8 @@ import type { ChatConfig, CivitaiChat } from '@civitai/components-chat/civitai-c
 
 /**
  * Each step is one paid model request. The tool-call limit in `assistantGate` ends a reply first when its
- * calls reach the page's gate. A call to a tool that does not exist never does, so a reply making only
- * those runs to this.
+ * calls reach the page's gate. A call the chat cannot run as written (to a tool that does not exist, or
+ * with arguments that do not parse) never does, so a reply making only those runs to this.
  */
 export const APP_ASSISTANT_MAX_STEPS = 1000;
 
