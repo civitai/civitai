@@ -19,6 +19,7 @@ import {
   assertNotCrossOwnerDuplicate,
   checkDuplicateHashOnScan,
   DUPLICATE_HASH_MIN_SIZE_KB,
+  DUPLICATE_HASH_SHARED_OWNER_THRESHOLD,
 } from '~/server/services/duplicate-model-hash.service';
 
 const queryRaw = dbMock.dbWrite.$queryRaw;
@@ -28,12 +29,22 @@ const ORIGINAL_OWNER_ID = 99;
 const MODEL_ID = 42;
 const MATCH = {
   fileId: 500,
+  modelId: MODEL_ID,
+  sha256: 'ABCDEF',
   originalModelId: 1000,
   originalVersionId: 2000,
   originalUserId: ORIGINAL_OWNER_ID,
+  originalFileId: 400,
+  ownerCount: 2,
+  earliestHolderUserId: ORIGINAL_OWNER_ID,
+  earliestHolderFileId: 400,
 };
 // The other owner's file was uploaded before the uploader's first copy of the bytes.
-const ROW = { ...MATCH, originalFileId: 400, ownerFirstFileId: 500 };
+const ROW = { ...MATCH, ownerFirstFileId: 500 };
+// The same bytes re-hosted by enough owners to count as a commonly shared file.
+const SHARED_ROW = { ...ROW, ownerCount: DUPLICATE_HASH_SHARED_OWNER_THRESHOLD };
+// An earlier holder (88) has an unpublished or deleted copy, so the live original may itself be a copy.
+const UNSURE_ORIGINAL_ROW = { ...ROW, earliestHolderUserId: 88, earliestHolderFileId: 300 };
 // A copy of the uploader's own work: the other owner's file came after the uploader's first one.
 const LATER_COPY_ROW = { ...MATCH, originalFileId: 600, ownerFirstFileId: 500 };
 
@@ -76,21 +87,103 @@ describe('checkDuplicateHashOnScan', () => {
     );
   });
 
-  it('only logs the match while the kill switch is off', async () => {
+  it('only logs the match, with every field the review needs, while the kill switch is off', async () => {
     mockIsFlipt.mockResolvedValue(false);
 
-    await expect(scan()).resolves.toBe('suppressed');
+    await expect(scan()).resolves.toBe('would-block');
 
     expect(mockUnpublishModelById).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
+    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
+      {
+        type: 'info',
         name: 'duplicate-model-hash',
-        message: 'suppressed',
+        message: 'would-block',
         path: 'scan',
+        decision: 'block',
+        reason: 'cross-owner-copy',
+        fileId: 500,
+        modelId: MODEL_ID,
+        sha256: 'ABCDEF',
+        ownerId: OWNER_ID,
+        ownerCount: 2,
         originalModelId: 1000,
-      }),
+        originalVersionId: 2000,
+        originalUserId: ORIGINAL_OWNER_ID,
+        originalFileId: 400,
+        earliestHolderUserId: ORIGINAL_OWNER_ID,
+        earliestHolderFileId: 400,
+        flagEnabled: false,
+      },
       'webhooks'
     );
+  });
+
+  // Positive control: one uploader re-hosting another creator's file, the original still live and
+  // uploaded first, and nobody else holding the bytes. This is the case the check exists for.
+  it('still unpublishes a copy of a single original that only its creator and the copier hold', async () => {
+    queryRaw.mockResolvedValue([{ ...ROW, ownerCount: DUPLICATE_HASH_SHARED_OWNER_THRESHOLD - 1 }]);
+
+    await expect(scan()).resolves.toBe('unpublished');
+    expect(mockUnpublishModelById).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])(
+    'never acts on a file held by enough owners to be commonly shared (flag on: %s)',
+    async (enabled) => {
+      mockIsFlipt.mockResolvedValue(enabled);
+      queryRaw.mockResolvedValue([SHARED_ROW]);
+
+      await expect(scan()).resolves.toBe('exempt');
+
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          name: 'duplicate-model-hash',
+          message: 'exempt',
+          decision: 'exempt',
+          reason: 'shared-file',
+          ownerCount: DUPLICATE_HASH_SHARED_OWNER_THRESHOLD,
+          flagEnabled: enabled,
+        }),
+        'webhooks'
+      );
+    }
+  );
+
+  it('holds the shared-file threshold at three owners', () => {
+    expect(DUPLICATE_HASH_SHARED_OWNER_THRESHOLD).toBe(3);
+  });
+
+  it.each([true, false])(
+    'routes a match to review instead of acting when an earlier holder is not the chosen original (flag on: %s)',
+    async (enabled) => {
+      mockIsFlipt.mockResolvedValue(enabled);
+      queryRaw.mockResolvedValue([UNSURE_ORIGINAL_ROW]);
+
+      await expect(scan()).resolves.toBe('review');
+
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          name: 'duplicate-model-hash',
+          message: 'review-needed',
+          decision: 'review',
+          reason: 'original-not-earliest-holder',
+          originalUserId: ORIGINAL_OWNER_ID,
+          earliestHolderUserId: 88,
+          earliestHolderFileId: 300,
+          flagEnabled: enabled,
+        }),
+        'webhooks'
+      );
+    }
+  );
+
+  it('exempts a shared file even when its earliest holder is not the chosen original', async () => {
+    queryRaw.mockResolvedValue([{ ...UNSURE_ORIGINAL_ROW, ownerCount: 5 }]);
+
+    await expect(scan()).resolves.toBe('exempt');
+    expect(mockUnpublishModelById).not.toHaveBeenCalled();
   });
 
   it('does nothing when no other creator has the file', async () => {
@@ -106,12 +199,13 @@ describe('checkDuplicateHashOnScan', () => {
     await scan();
 
     // Copies uploaded as 'Model' of originals stored as 'Diffusion Model' are the case that
-    // prompted this check, so both the copy's and the original's type filter take the full list.
+    // prompted this check, so every type filter (the copy, the original, the owner count and the
+    // earliest holder) takes the full list.
     const [strings, ...values] = queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
     const typeSlots = strings
       .map((s, i) => (/\.type IN \($/.test(s.trimEnd()) ? i : -1))
       .filter((i) => i >= 0);
-    expect(typeSlots).toHaveLength(2);
+    expect(typeSlots).toHaveLength(4);
     for (const i of typeSlots) {
       expect((values[i] as { values: unknown[] }).values).toEqual([...primaryModelFileTypes]);
     }
@@ -129,7 +223,7 @@ describe('checkDuplicateHashOnScan', () => {
   it('dates the uploader by their FIRST copy, so re-uploading their own weights is not a match', async () => {
     // The scanned file (500) is newer than the other owner's (400), but the uploader already had
     // these bytes in an older file (300): the other owner's file is the copy.
-    queryRaw.mockResolvedValue([{ ...MATCH, originalFileId: 400, ownerFirstFileId: 300 }]);
+    queryRaw.mockResolvedValue([{ ...ROW, ownerFirstFileId: 300 }]);
 
     await expect(scan()).resolves.toBe('none');
     expect(mockUnpublishModelById).not.toHaveBeenCalled();
@@ -157,10 +251,12 @@ describe('checkDuplicateHashOnScan', () => {
     expect(ownerSlot).toBeGreaterThanOrEqual(0);
     expect(values[ownerSlot]).toBe(OWNER_ID);
 
-    // ...and as the owner whose first copy of the bytes dates the comparison.
-    const firstCopySlot = strings.findIndex((s) => s.trimEnd().endsWith('m."userId" ='));
-    expect(firstCopySlot).toBeGreaterThanOrEqual(0);
-    expect(values[firstCopySlot]).toBe(OWNER_ID);
+    // ...and as the owner whose first copy of the bytes dates the comparison, who always counts
+    // towards the owner count, and who is never the earliest other holder.
+    const slots = (suffix: string) =>
+      strings.flatMap((s, i) => (s.trimEnd().endsWith(suffix) ? [i] : []));
+    expect(slots('m."userId" =').map((i) => values[i])).toEqual([OWNER_ID, OWNER_ID]);
+    expect(slots('m."userId" <>').map((i) => values[i])).toEqual([OWNER_ID, OWNER_ID]);
   });
 
   it.each([
@@ -202,7 +298,31 @@ describe('assertNotCrossOwnerDuplicate', () => {
 
     await expect(assertPublish()).resolves.toBeUndefined();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'suppressed', path: 'publish', versionId: 100 }),
+      expect.objectContaining({
+        message: 'would-block',
+        path: 'publish',
+        versionId: 100,
+        modelId: MODEL_ID,
+        sha256: 'ABCDEF',
+        ownerCount: 2,
+        originalModelId: 1000,
+        decision: 'block',
+        reason: 'cross-owner-copy',
+        flagEnabled: false,
+      }),
+      'webhooks'
+    );
+  });
+
+  it.each([
+    ['a commonly shared file', SHARED_ROW, 'exempt'],
+    ['a match whose original is in doubt', UNSURE_ORIGINAL_ROW, 'review-needed'],
+  ])('lets %s publish with the flag on, logging why', async (_, row, message) => {
+    queryRaw.mockResolvedValue([row]);
+
+    await expect(assertPublish()).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message, path: 'publish', flagEnabled: true }),
       'webhooks'
     );
   });
