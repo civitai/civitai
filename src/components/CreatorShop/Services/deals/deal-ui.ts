@@ -272,6 +272,47 @@ export const cancellationCodeOptions = (role: 'buyer' | 'seller') =>
     )
   );
 
+/**
+ * What a reason form sends. A muted viewer's text is never sent: the server would drop it, and the
+ * form never shows them a box. Empty values are left out rather than sent as "".
+ */
+export function reasonFormValues({
+  muted,
+  text,
+  code,
+}: {
+  muted: boolean;
+  text: string;
+  code: string | null;
+}) {
+  const trimmed = muted ? '' : text.trim();
+  return { text: trimmed || undefined, code: code ?? undefined };
+}
+
+/** How a reason form marks what it needs: one asterisk on whichever field can meet it. */
+export function reasonFormLabels({
+  required,
+  hasCodes,
+  muted,
+}: {
+  required: boolean;
+  hasCodes: boolean;
+  muted: boolean;
+}) {
+  return {
+    // With a picker, a required reason is met by the code, so the picker carries the asterisk.
+    codeRequired: required && hasCodes,
+    codeClearable: !(required && hasCodes && muted),
+    textRequired: required && !hasCodes,
+    textLabel: !required
+      ? 'Comment (optional)'
+      : hasCodes
+      ? 'Details (optional if you picked a reason)'
+      : 'Reason',
+    hint: required && hasCodes && !muted ? 'Pick a reason, add details, or both.' : undefined,
+  };
+}
+
 /** A reason form can be sent when nothing is required, or the text or a picked code gives one. */
 export function textActionReady({
   required,
@@ -290,7 +331,9 @@ export function textActionReady({
 
 /** The label for a stored reason code, or null for none or one this client doesn't know. */
 export const reasonLabel = (code: string | null | undefined) =>
-  code && code in reasonCodeLabel ? reasonCodeLabel[code as ServiceDealReasonCode] : null;
+  code && Object.hasOwn(reasonCodeLabel, code)
+    ? reasonCodeLabel[code as ServiceDealReasonCode]
+    : null;
 
 /**
  * What the other side gave as their reason for asking to cancel: the code of the latest request
@@ -308,3 +351,32 @@ export function cancellationReasonLine(deal: {
   if (text) return `Their reason: "${text}"`;
   return undefined;
 }
+
+const inList = <T extends string>(list: readonly T[], code: string | undefined) =>
+  code !== undefined && (list as readonly string[]).includes(code) ? (code as T) : undefined;
+
+/**
+ * The inputs each exit sends. A code is sent only if it belongs to that action's list, so a code
+ * picked for one action can never reach another's schema.
+ */
+export const exitInputs = {
+  decline: (id: number, text: string | undefined, code: string | undefined) => ({
+    id,
+    reason: text,
+    reasonCode: inList(SERVICE_DEAL_DECLINE_REASON_CODES, code),
+  }),
+  requestCancellation: (id: number, text: string | undefined, code: string | undefined) => ({
+    id,
+    reason: text,
+    reasonCode: inList(SERVICE_DEAL_CANCELLATION_REASON_CODES, code),
+  }),
+  openDispute: (id: number, text: string | undefined, code: string | undefined) => ({
+    id,
+    reason: text,
+    reasonCode: inList(SERVICE_DEAL_DISPUTE_REASON_CODES, code),
+  }),
+};
+
+/** Which side's cancellation reasons a viewer is offered. */
+export const cancellationSide = (viewerRole: 'buyer' | 'seller' | 'moderator') =>
+  viewerRole === 'seller' ? ('seller' as const) : ('buyer' as const);

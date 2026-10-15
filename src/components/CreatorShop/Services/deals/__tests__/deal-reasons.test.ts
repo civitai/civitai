@@ -2,23 +2,38 @@ import { describe, expect, it } from 'vitest';
 import {
   cancellationCodeOptions,
   cancellationReasonLine,
+  cancellationSide,
   declineCodeOptions,
   disputeCodeOptions,
+  exitInputs,
+  reasonFormLabels,
+  reasonFormValues,
   reasonLabel,
   textActionReady,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
-import {
-  SERVICE_DEAL_CANCELLATION_REASON_CODES,
-  SERVICE_DEAL_DECLINE_REASON_CODES,
-  SERVICE_DEAL_DISPUTE_REASON_CODES,
-} from '~/shared/constants/creator-services.constants';
+import { SERVICE_DEAL_CANCELLATION_REASON_CODES } from '~/shared/constants/creator-services.constants';
 
 const values = (options: { value: string }[]) => options.map((option) => option.value);
 
 describe('reason pickers', () => {
-  it('offer every decline and dispute code the server takes', () => {
-    expect(values(declineCodeOptions)).toEqual([...SERVICE_DEAL_DECLINE_REASON_CODES]);
-    expect(values(disputeCodeOptions)).toEqual([...SERVICE_DEAL_DISPUTE_REASON_CODES]);
+  it('offer the agreed decline and dispute reasons, labelled', () => {
+    expect(declineCodeOptions).toEqual([
+      { value: 'too_busy', label: 'Too busy right now' },
+      { value: 'out_of_scope', label: 'Outside what I offer' },
+      { value: 'price_or_terms', label: 'Price or terms' },
+      { value: 'other', label: 'Other' },
+    ]);
+    expect(values(disputeCodeOptions)).toEqual([
+      'files_missing_or_broken',
+      'not_as_previewed',
+      'other',
+    ]);
+  });
+
+  it('gives sellers the seller list and everyone else the buyer list', () => {
+    expect(cancellationSide('seller')).toBe('seller');
+    expect(cancellationSide('buyer')).toBe('buyer');
+    expect(cancellationSide('moderator')).toBe('buyer');
   });
 
   it('offer each side only the cancellation reasons it could mean, all of them server codes', () => {
@@ -86,7 +101,66 @@ describe('the reason shown to the other side', () => {
 
   it('shows no label for a code this client does not know', () => {
     expect(reasonLabel('something_new')).toBeNull();
+    expect(reasonLabel('constructor')).toBeNull();
     expect(reasonLabel(null)).toBeNull();
     expect(reasonLabel('too_busy')).toBe('Too busy right now');
+  });
+});
+
+describe('what a reason form sends', () => {
+  it("never sends a muted viewer's text, and leaves empty values out", () => {
+    expect(reasonFormValues({ muted: true, text: 'typed before the mute', code: 'other' })).toEqual(
+      {
+        text: undefined,
+        code: 'other',
+      }
+    );
+    expect(reasonFormValues({ muted: false, text: '  late  ', code: null })).toEqual({
+      text: 'late',
+      code: undefined,
+    });
+    expect(reasonFormValues({ muted: false, text: '   ', code: null })).toEqual({
+      text: undefined,
+      code: undefined,
+    });
+  });
+
+  it("sends each exit its own fields, and drops a code from another action's list", () => {
+    expect(exitInputs.decline(7, 'busy', 'too_busy')).toEqual({
+      id: 7,
+      reason: 'busy',
+      reasonCode: 'too_busy',
+    });
+    expect(exitInputs.requestCancellation(7, undefined, 'quality')).toEqual({
+      id: 7,
+      reason: undefined,
+      reasonCode: 'quality',
+    });
+    expect(exitInputs.openDispute(7, 'x', 'not_as_previewed').reasonCode).toBe('not_as_previewed');
+    expect(exitInputs.openDispute(7, 'x', 'quality').reasonCode).toBeUndefined();
+    expect(exitInputs.decline(7, undefined, 'not_delivered').reasonCode).toBeUndefined();
+  });
+
+  it('marks the one field that can meet a required reason, and nothing when optional', () => {
+    expect(reasonFormLabels({ required: true, hasCodes: true, muted: false })).toMatchObject({
+      codeRequired: true,
+      codeClearable: true,
+      textRequired: false,
+      textLabel: 'Details (optional if you picked a reason)',
+    });
+    expect(reasonFormLabels({ required: true, hasCodes: true, muted: true })).toMatchObject({
+      codeRequired: true,
+      codeClearable: false,
+    });
+    expect(reasonFormLabels({ required: true, hasCodes: false, muted: false })).toMatchObject({
+      codeRequired: false,
+      textRequired: true,
+      textLabel: 'Reason',
+    });
+    expect(reasonFormLabels({ required: false, hasCodes: true, muted: false })).toMatchObject({
+      codeRequired: false,
+      textRequired: false,
+      textLabel: 'Comment (optional)',
+    });
   });
 });

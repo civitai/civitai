@@ -1,7 +1,11 @@
 import { Button, Group, Modal, Select, Stack, Text, Textarea } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { textActionReady } from '~/components/CreatorShop/Services/deals/deal-ui';
+import {
+  reasonFormLabels,
+  reasonFormValues,
+  textActionReady,
+} from '~/components/CreatorShop/Services/deals/deal-ui';
 
 export type DealTextActionChoice = { label: string; color?: string; value: string };
 
@@ -39,13 +43,15 @@ export function DealTextActionModal({
   const [text, setText] = useState('');
   const [code, setCode] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const trimmed = muted ? '' : text.trim();
-  const ready = textActionReady({ required, text: trimmed, code, hasCodes: !!codes?.length });
+  const hasCodes = !!codes?.length;
+  const values = reasonFormValues({ muted, text, code });
+  const ready = textActionReady({ required, text: values.text ?? '', code, hasCodes });
+  const labels = reasonFormLabels({ required, hasCodes, muted });
 
   const submit = async (value: string) => {
     setPending(value);
     try {
-      await onSubmit(value, trimmed || undefined, code ?? undefined);
+      await onSubmit(value, values.text, values.code);
       dialog.onClose();
     } catch {
       // The mutation's own onError has already told the viewer.
@@ -69,8 +75,9 @@ export function DealTextActionModal({
             data={codes}
             value={code}
             onChange={setCode}
-            clearable={!required || !muted}
-            withAsterisk={required && muted}
+            description={labels.hint}
+            clearable={labels.codeClearable}
+            withAsterisk={labels.codeRequired}
           />
         )}
         {muted ? (
@@ -86,15 +93,8 @@ export function DealTextActionModal({
             autosize
             minRows={3}
             maxLength={maxLength}
-            withAsterisk={required && !codes?.length}
-            label={
-              label ??
-              (required && !codes?.length
-                ? 'Reason'
-                : codes?.length
-                ? 'Details (optional if you picked a reason)'
-                : 'Comment (optional)')
-            }
+            withAsterisk={labels.textRequired}
+            label={label ?? labels.textLabel}
           />
         )}
         <Group justify="flex-end">

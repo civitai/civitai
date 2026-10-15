@@ -4,16 +4,14 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   cancellationCodeOptions,
   cancellationReasonLine,
+  cancellationSide,
   dealActionLabel,
   dealButtons,
   declineCodeOptions,
   disputeCodeOptions,
+  exitInputs,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
-import type {
-  ServiceDealCancellationReasonCode,
-  ServiceDealDeclineReasonCode,
-  ServiceDealDisputeReasonCode,
-} from '~/shared/constants/creator-services.constants';
+
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDealMutations } from '~/components/CreatorShop/Services/deals/deal.util';
 import { DealTextActionModal } from '~/components/CreatorShop/Services/deals/DealTextActionModal';
@@ -83,11 +81,7 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
           muted: deal.viewerMuted,
           choices: [{ label: 'Report to moderators', color: 'red', value: 'send' }],
           onSubmit: (_: string, reason?: string, code?: string) =>
-            mutations.openDispute.mutateAsync({
-              id,
-              reason,
-              reasonCode: code as ServiceDealDisputeReasonCode | undefined,
-            }),
+            mutations.openDispute.mutateAsync(exitInputs.openDispute(id, reason, code)),
         },
       }),
     accept: () =>
@@ -121,11 +115,7 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
           muted: deal.viewerMuted,
           choices: [{ label: 'Decline', color: 'red', value: 'decline' }],
           onSubmit: (_: string, reason?: string, code?: string) =>
-            mutations.decline.mutateAsync({
-              id,
-              reason,
-              reasonCode: code as ServiceDealDeclineReasonCode | undefined,
-            }),
+            mutations.decline.mutateAsync(exitInputs.decline(id, reason, code)),
         },
       }),
     requestCancellation: () =>
@@ -137,15 +127,13 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
             'The other side can agree or refuse. If they do not answer in time, the cancellation goes through and the buyer is refunded.',
           required: true,
           maxLength: 1000,
-          codes: cancellationCodeOptions(deal.viewerRole === 'seller' ? 'seller' : 'buyer'),
+          codes: cancellationCodeOptions(cancellationSide(deal.viewerRole)),
           muted: deal.viewerMuted,
           choices: [{ label: 'Send request', color: 'red', value: 'send' }],
           onSubmit: (_: string, reason?: string, code?: string) =>
-            mutations.requestCancellation.mutateAsync({
-              id,
-              reason,
-              reasonCode: code as ServiceDealCancellationReasonCode | undefined,
-            }),
+            mutations.requestCancellation.mutateAsync(
+              exitInputs.requestCancellation(id, reason, code)
+            ),
         },
       }),
     respondCancellation: () =>
