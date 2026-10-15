@@ -311,9 +311,12 @@ describe('who is re-scored', () => {
 });
 
 describe("the owner's own generations", () => {
+  // Stamped a day ahead so a stale row is never older than the write stamp: the replace must
+  // not depend on the clock.
   const selfRow = (modelId: number, userId: number, generationCount: number) =>
     q(
-      `INSERT INTO "ModelSelfGeneration" ("modelId", "userId", "generationCount") VALUES ($1, $2, $3)`,
+      `INSERT INTO "ModelSelfGeneration" ("modelId", "userId", "generationCount", "updatedAt")
+       VALUES ($1, $2, $3, now() + interval '1 day')`,
       [modelId, userId, generationCount]
     );
 
@@ -376,6 +379,18 @@ describe("the owner's own generations", () => {
       { modelId: 10, userId: 1, n: 7 },
       { modelId: 12, userId: 2, n: 5 },
     ]);
+  });
+
+  it('writeSelfGenerations clears an owner left with none while rewriting another in the same call', async () => {
+    await selfRow(10, 1, 5);
+    await selfRow(11, 1, 5);
+    await selfRow(20, 2, 5);
+    await selfRow(21, 2, 5);
+    await writeSelfGenerations(pg, [1, 2], [{ modelId: 20, userId: 2, generationCount: 9 }]);
+    const { rows } = await q(
+      `SELECT "modelId", "userId", "generationCount"::int AS n FROM "ModelSelfGeneration" ORDER BY 1`
+    );
+    expect(rows).toEqual([{ modelId: 20, userId: 2, n: 9 }]);
   });
 });
 
