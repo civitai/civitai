@@ -4375,6 +4375,15 @@ export type ReferralReward = {
   revokedAt: Timestamp | null;
   revokedReason: string | null;
 };
+export type RemovalScoreExemption = {
+  imageId: number;
+  /**
+   * The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+   */
+  reason: string;
+  createdAt: Generated<Timestamp>;
+  createdBy: number | null;
+};
 export type Report = {
   id: Generated<number>;
   userId: number;
@@ -5652,6 +5661,7 @@ export type DB = {
   ReferralMilestone: ReferralMilestone;
   ReferralRedemption: ReferralRedemption;
   ReferralReward: ReferralReward;
+  RemovalScoreExemption: RemovalScoreExemption;
   Report: Report;
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;

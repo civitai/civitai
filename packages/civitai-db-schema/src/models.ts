@@ -4253,6 +4253,13 @@ export interface Appeal {
   entityRemovedAt: Date | null;
 }
 
+export interface RemovalScoreExemption {
+  imageId: number;
+  reason: string;
+  createdAt: Date;
+  createdBy: number | null;
+}
+
 export interface AppealDecisionRecord {
   id: bigint;
   appealId: number;

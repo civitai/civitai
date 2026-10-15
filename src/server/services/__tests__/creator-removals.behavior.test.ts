@@ -23,11 +23,15 @@ const { getMyRemovedImages, REMOVED_IMAGES_LIMIT } = await import(
 );
 const { getReportAgainstScore } = await import('~/server/jobs/update-user-score');
 const { removalsQuery } = await import('~/server/services/creator-removals.service');
+const { findPolicyChangeRemovals } = await import(
+  '~/server/services/removal-score-exemption.service'
+);
 
 const OWNER = 42;
 const OTHER = 43; // whose only removal was reversed on appeal since the last run
 const RESTORED_OWNER = 44; // whose only removal a restore event reversed since the last run
 const SETTLED = 45; // whose removal was reversed on appeal before the last run, nothing since
+const EXEMPT_OWNER = 46; // one removal exempted since the last run, one made after its exemption
 const REMOVED_AT = 1_700_000_000;
 const LAST_RUN = REMOVED_AT + 86_400;
 const at = (seconds: number) =>
@@ -38,6 +42,8 @@ const RESTORED = 1; // removal reversed by an approved appeal
 const STILL_REMOVED = 2; // no appeal
 const REJECTED = 3; // appeal rejected
 const REMOVED_AGAIN = 4; // approved, then removed again later
+const EXEMPT = 7; // exempted after its removal
+const REMOVED_AFTER_EXEMPTION = 8; // exempted, then removed again later
 const removals = [
   { ownerId: OWNER, imageId: REMOVED_AGAIN, removedAt: REMOVED_AT + 7200 },
   { ownerId: OWNER, imageId: RESTORED, removedAt: REMOVED_AT },
@@ -45,6 +51,8 @@ const removals = [
   { ownerId: OWNER, imageId: REJECTED, removedAt: REMOVED_AT },
   { ownerId: OTHER, imageId: 5, removedAt: REMOVED_AT },
   { ownerId: SETTLED, imageId: 6, removedAt: REMOVED_AT },
+  { ownerId: EXEMPT_OWNER, imageId: EXEMPT, removedAt: REMOVED_AT },
+  { ownerId: EXEMPT_OWNER, imageId: REMOVED_AFTER_EXEMPTION, removedAt: LAST_RUN + 120 },
 ];
 const ownRemovals = removals.filter((r) => r.ownerId === OWNER);
 
@@ -62,6 +70,10 @@ beforeAll(async () => {
       "entityId" integer NOT NULL, "status" "AppealStatus" NOT NULL DEFAULT 'Pending',
       "resolvedAt" timestamp(3)
     );
+    CREATE TABLE "RemovalScoreExemption" (
+      "imageId" integer PRIMARY KEY, "reason" text NOT NULL,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(), "createdBy" integer
+    );
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" ("id" serial PRIMARY KEY, "reason" text NOT NULL);
     CREATE TABLE "UserReport" ("userId" integer NOT NULL, "reportId" integer NOT NULL);
@@ -69,7 +81,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "Appeal"`);
+  await holder.db.exec(`TRUNCATE "Image", "Appeal", "RemovalScoreExemption"`);
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (${RESTORED}, ${OWNER}, NULL),
@@ -77,13 +89,18 @@ beforeEach(async () => {
       (${REJECTED}, ${OWNER}, 'moderated'),
       (${REMOVED_AGAIN}, ${OWNER}, 'moderated'),
       (5, ${OTHER}, NULL),
-      (6, ${SETTLED}, NULL);
+      (6, ${SETTLED}, NULL),
+      (${EXEMPT}, ${EXEMPT_OWNER}, NULL),
+      (${REMOVED_AFTER_EXEMPTION}, ${EXEMPT_OWNER}, NULL);
     INSERT INTO "Appeal" ("userId", "entityType", "entityId", status, "resolvedAt") VALUES
       (${OWNER}, 'Image', ${RESTORED}, 'Approved', '${at(REMOVED_AT + 3600)}'),
       (${OWNER}, 'Image', ${REJECTED}, 'Rejected', '${at(REMOVED_AT + 3600)}'),
       (${OWNER}, 'Image', ${REMOVED_AGAIN}, 'Approved', '${at(REMOVED_AT + 3600)}'),
       (${OTHER}, 'Image', 5, 'Approved', '${at(LAST_RUN + 60)}'),
       (${SETTLED}, 'Image', 6, 'Approved', '${at(REMOVED_AT + 3600)}');
+    INSERT INTO "RemovalScoreExemption" ("imageId", reason, "createdAt") VALUES
+      (${EXEMPT}, 'test', '${at(LAST_RUN + 60)}'),
+      (${REMOVED_AFTER_EXEMPTION}, 'test', '${at(REMOVED_AT + 3600)}');
   `);
   holder.chQuery.mockReset();
   holder.chQuery.mockResolvedValue({ json: async () => ownRemovals });
@@ -178,6 +195,43 @@ async function scoreRun() {
   return scores;
 }
 
+describe('a removal score exemption', () => {
+  it('leaves an exempted removal off the list, and keeps one made after the exemption', async () => {
+    const own = removals.filter((r) => r.ownerId === EXEMPT_OWNER);
+    holder.chQuery.mockResolvedValue({ json: async () => own });
+
+    const result = await getMyRemovedImages(EXEMPT_OWNER);
+
+    expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AFTER_EXEMPTION]);
+  });
+
+  it('does not propose a removal its exemption already covers', async () => {
+    const policy = { cutoff: new Date(0), maxImageId: 100, ratings: ['None' as const] };
+    const history = (imageId: number, removedAt: number) => ({
+      ownerId: EXEMPT_OWNER,
+      imageId,
+      removedAt,
+      firstRemovedAt: removedAt,
+      firstNsfw: 'None',
+      firstReason: 'poi',
+      lastReason: 'poi',
+      resourceIds: [],
+    });
+    const ch = {
+      $query: vi.fn(async () => [
+        history(EXEMPT, REMOVED_AT),
+        history(REMOVED_AFTER_EXEMPTION, LAST_RUN + 120),
+        history(9, REMOVED_AT),
+      ]),
+    };
+    const pg = { cancellableQuery: async () => ({ result: async () => [] }) };
+
+    const found = await findPolicyChangeRemovals(ch as never, pg as never, policy);
+
+    expect(found.map((r) => r.imageId)).toEqual([REMOVED_AFTER_EXEMPTION, 9]);
+  });
+});
+
 describe('the Removed content score', () => {
   it('counts every removal but the one an approved appeal reversed', async () => {
     // Still removed, appeal rejected, and removed again after an approval: three of the four.
@@ -193,7 +247,16 @@ describe('the Removed content score', () => {
   });
 
   it('re-scores only owners with a removal or a reversal since the last run', async () => {
-    expect([...(await scoreRun()).keys()].sort()).toEqual([OWNER, OTHER, RESTORED_OWNER]);
+    expect([...(await scoreRun()).keys()].sort()).toEqual([
+      OWNER,
+      OTHER,
+      RESTORED_OWNER,
+      EXEMPT_OWNER,
+    ]);
+  });
+
+  it('re-scores an owner exempted since the last run, counting only the removal made after its exemption', async () => {
+    expect((await scoreRun()).get(EXEMPT_OWNER)).toBe(-1000);
   });
 
   it('reads approvals from the primary, not a lagging replica, to pick owners and to count', async () => {

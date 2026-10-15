@@ -6844,6 +6844,19 @@ model Appeal {
   @@index([status])
 }
 
+/// An image whose removal no longer counts against its owner's Creator Score, because it was removed
+/// under a rule added after upload. Covers removals made before `createdAt`; a later one counts.
+/// No FK: a removed image's row is deleted.
+model RemovalScoreExemption {
+  imageId   Int      @id
+  /// The rule and its inputs that created the row, so a later run with other inputs can be told apart.
+  reason    String
+  createdAt DateTime @default(now())
+  createdBy Int?
+
+  @@index([createdAt])
+}
+
 /// Written only by the `appeal_decision_record` trigger on "Appeal"; never insert from app code.
 /// Enriched and pruned by the `appeal-decision-records` job.
 model AppealDecisionRecord {
