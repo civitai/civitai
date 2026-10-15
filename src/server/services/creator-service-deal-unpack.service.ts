@@ -46,7 +46,7 @@ import { getBucket, getS3Client, uploadImageBufferToStore } from '~/utils/s3-uti
 const logUnpack = (message: string, fields: Record<string, unknown>, type = 'info') =>
   logToAxiom({ name: 'creator-service-unpack', type, message, ...fields }).catch(() => null);
 
-/** The highest rating an image in a Final may carry: the deal's own, copied from its offering. */
+/** The highest rating an image in a Final may carry: the deal's own. */
 const MAX_LEVEL = Prisma.sql`d."maxNsfwLevel"`;
 
 type ClaimedFinal = {
@@ -292,9 +292,8 @@ export async function unpackFinals({
 }
 
 /**
- * Step 2: the scan's verdict on each image. Clean and within the rating passes it; a block, any
- * flag that sends an image to review, or a rating above the limit fails it. A scan that could not
- * run, or that never settles, fails it without calling its content bad.
+ * Step 2: the scan's verdict on each image. A scan that could not run, or that never settles,
+ * fails it without calling its content bad.
  */
 export async function settleEntryScans() {
   const waiting = Prisma.sql`e."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
@@ -334,8 +333,7 @@ export async function settleEntryScans() {
 
 /**
  * Step 3: a Final's verdict from its parts. One failed image, or a failed malware scan, fails it.
- * It passes only when it is unpacked, every image passed and the malware scan passed; until a
- * malware scanner is wired that last condition never holds, so no Final passes on its images alone.
+ * It passes only when it is unpacked and every image and the malware scan passed.
  */
 export async function settleFinals() {
   const failing = await dbWrite.$queryRaw<{ id: number }[]>`

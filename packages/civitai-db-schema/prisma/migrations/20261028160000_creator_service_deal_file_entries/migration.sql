@@ -1,8 +1,7 @@
 -- Idempotent: applied by hand, possibly more than once.
 --
--- Per-image results for the contents of a delivered file. The tables hold nothing until the
--- creatorServices flag goes on, so the NOT NULL default rewrites nothing. Apply BEFORE deploying:
--- the unpack job reads these columns unconditionally.
+-- Per-image results for the contents of a delivered file. Apply BEFORE deploying: the unpack job
+-- reads these columns unconditionally.
 
 ALTER TABLE "ServiceDealFile" ADD COLUMN IF NOT EXISTS "malwareScanStatus" "ServiceDealFileScanStatus" NOT NULL DEFAULT 'Pending';
 ALTER TABLE "ServiceDealFile" ADD COLUMN IF NOT EXISTS "unpackedAt" TIMESTAMP(3);

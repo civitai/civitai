@@ -4719,8 +4719,7 @@ export type ServiceDealFile = {
   processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
   /**
-   * The malware scanner's own verdict. `scanStatus` becomes Passed only when this and every media
-   * entry have passed. Nothing sets it yet: with no scanner wired a Final never passes.
+   * The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
    */
   malwareScanStatus: Generated<ServiceDealFileScanStatus>;
   /**

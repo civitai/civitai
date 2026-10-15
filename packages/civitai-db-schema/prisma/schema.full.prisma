@@ -9712,8 +9712,7 @@ model ServiceDealFile {
   /// Set when preview processing last started, so a crashed worker's file is picked up again.
   processingAt   DateTime?
   scanStatus     ServiceDealFileScanStatus @default(Pending)
-  /// The malware scanner's own verdict. `scanStatus` becomes Passed only when this and every media
-  /// entry have passed. Nothing sets it yet: with no scanner wired a Final never passes.
+  /// The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
   malwareScanStatus ServiceDealFileScanStatus @default(Pending)
   /// Set once the file's contents have been listed and checked (a zip unpacked, an image read).
   unpackedAt     DateTime?

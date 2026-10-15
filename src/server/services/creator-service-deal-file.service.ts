@@ -366,11 +366,10 @@ export async function deleteServiceDealFile({
 }
 
 /**
- * A scanner's verdict on a Final. Only a Pending Final takes it, so a repeat or late result cannot
- * overturn an earlier one. Passed is taken only from a file that has been unpacked, whose malware
- * scan passed and whose every image passed: a Final with a part still unjudged cannot pass. A Failed Final sends a delivered deal to the moderators; one not yet
- * delivered cannot be delivered while it stands (see `dealReadyToDeliver`). The real scanner
- * reports through this; nothing else sets a Final's scanStatus.
+ * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
+ * overturn an earlier one. Passed also needs the file unpacked, never refused, its malware scan
+ * passed and every image passed. A Failed Final sends a delivered deal to the moderators; one not
+ * yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
  */
 export async function recordFinalScanResult({
   fileId,

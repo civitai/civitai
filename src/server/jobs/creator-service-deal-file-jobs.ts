@@ -38,8 +38,7 @@ export const creatorServiceDealFilesJob = createJob(
 
 /**
  * Unpacks delivered Finals and settles their scans (see the notes in the unpack service). One
- * archive at a time: it is streamed through memory, and web pods and these share a memory budget
- * that is close to its ceiling, so concurrency here is raised only deliberately.
+ * archive per run: it is streamed through memory.
  *
  * Not behind the `creatorServices` flag, for the same reason as the preview job.
  */

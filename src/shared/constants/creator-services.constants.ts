@@ -166,7 +166,7 @@ export const SERVICE_ZIP_MAX_RATIO = 100;
 export const SERVICE_ZIP_RATIO_FLOOR_BYTES = 1024 * 1024;
 /** Image extensions inside a final. Anything else is judged by content, not by its name. */
 export const SERVICE_ZIP_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'] as const;
-/** Refused inside a zip: they must be delivered as top-level finals so they are scanned as themselves. */
+/** Weights files. Refused inside a zip (deliver each as its own Final); a top-level one is not content-sniffed. */
 export const SERVICE_ZIP_MODEL_EXTENSIONS = [
   'safetensors',
   'ckpt',
@@ -210,9 +210,9 @@ export const SERVICE_ZIP_VIDEO_EXTENSIONS = [
 export const SERVICE_UNPACK_STALE_MS = 60 * 60_000;
 /** After a failure that is not the file's fault, the file is tried again this long later; others go first. */
 export const SERVICE_UNPACK_RETRY_MS = 5 * 60_000;
-/** A scan copy still Pending this long after it was submitted is failed, so a round never hangs. */
+/** An image still Pending this long after its row was created is failed, so a round never hangs. */
 export const SERVICE_FINAL_SCAN_GIVE_UP_MS = 6 * HOUR;
-/** A copy left behind by a run that died is removed once it is this old. */
+/** A copy still Pending after its file settled some other way is deleted once this old, so its scan can finish. */
 export const SERVICE_SCAN_COPY_SWEEP_MS = 60 * 60_000;
 
 /**
