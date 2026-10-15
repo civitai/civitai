@@ -38,6 +38,7 @@
     gameFrameReportImage,
   } from '$lib/reports';
   import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
+  import { browsingLevelLabels } from '@civitai/shared';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
@@ -528,7 +529,10 @@
               <p class="mb-1 flex flex-wrap items-center gap-2 text-sm">
                 <span class="font-medium">{offering.title}</span>
                 <Badge variant="outline">{offering.status}</Badge>
-                <Badge variant="outline">rating {offering.maxNsfwLevel}</Badge>
+                <Badge variant="outline">
+                  {(browsingLevelLabels as Record<number, string | undefined>)[offering.maxNsfwLevel] ??
+                    `rating ${offering.maxNsfwLevel}`}
+                </Badge>
                 {#if offering.removedReason}
                   <Badge variant="outline">taken down by a moderator</Badge>
                 {/if}
@@ -579,7 +583,7 @@
                     required={offeringReason === 'other'}
                     placeholder={offeringReason === 'other'
                       ? 'What is wrong (sent to the seller)'
-                      : 'Details for the seller (optional)'}
+                      : 'Note for moderators (optional, not sent to the seller)'}
                   />
                   <div class="flex flex-wrap gap-2">
                     <Button type="submit" size="sm" variant="destructive" disabled={offeringForm.submitting}>
@@ -589,14 +593,25 @@
                       type="button"
                       size="sm"
                       variant="outline"
-                      onclick={() => (confirmingOfferingTakedown = null)}
+                      onclick={() => {
+                        confirmingOfferingTakedown = null;
+                        offeringReason = '';
+                      }}
                     >
                       Cancel
                     </Button>
                   </div>
                 </form>
               {:else}
-                <Button size="sm" variant="destructive" onclick={() => (confirmingOfferingTakedown = selected.id)}>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onclick={() => {
+                    // A reason is picked per report, never carried over from the last one.
+                    offeringReason = '';
+                    confirmingOfferingTakedown = selected.id;
+                  }}
+                >
                   Take down service
                 </Button>
               {/if}

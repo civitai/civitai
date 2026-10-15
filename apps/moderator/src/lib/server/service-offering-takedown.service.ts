@@ -87,6 +87,8 @@ export async function takedownServiceOffering({
       removedDetails: details,
       removedAt: new Date(),
       removedById: moderatorId,
+      // Prisma's @updatedAt sets this on the main app's write; Kysely does not.
+      updatedAt: new Date(),
     })
     .where('id', '=', offeringId)
     .where('removedReason', 'is', null)
@@ -118,8 +120,13 @@ export async function takedownServiceOffering({
           details,
         },
       });
-    } catch {
-      // onFailure already logged; best-effort, as the takedown itself has landed.
+    } catch (error) {
+      // Best-effort: the takedown has landed. Logged here because a payload the client rejects
+      // throws before its own failure logging runs.
+      console.error('service-offering-takedown: seller notification failed', {
+        offeringId,
+        error: (error as Error)?.message,
+      });
     }
   }
   return { ...offering, changed };

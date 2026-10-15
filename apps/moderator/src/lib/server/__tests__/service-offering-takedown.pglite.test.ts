@@ -111,7 +111,16 @@ describe('service offering takedown from the report queue', () => {
   });
 
   it('removes it with the reason, details and moderator, and tells the seller once', async () => {
+    await pg.query(`UPDATE "ServiceOffering" SET "updatedAt" = '2026-01-01' WHERE id = $1`, [
+      OFFERING,
+    ]);
     const result = await takeDown();
+    // As Prisma's @updatedAt does on the main app's write.
+    const { rows } = await pg.query<{ updatedAt: Date }>(
+      `SELECT "updatedAt" FROM "ServiceOffering" WHERE id = $1`,
+      [OFFERING]
+    );
+    expect(rows[0].updatedAt.getTime()).toBeGreaterThan(new Date('2026-01-02').getTime());
     expect(result).toMatchObject({ changed: true, status: 'Removed', removedReason: 'misleading' });
     expect(await offering()).toEqual({
       status: 'Removed',
