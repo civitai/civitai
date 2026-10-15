@@ -446,11 +446,13 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
       })
     );
 
-  const listMultiTransactions = (query: ListMultiTransactionsQuery) =>
+  const listMultiTransactions = (query: ListMultiTransactionsQuery, opts?: BuzzReadOptions) =>
     request<ListMultiTransactionsResponse>(
       withQuery('/multi-transactions', {
         externalTransactionIdPrefix: query.externalTransactionIdPrefix,
-      })
+      }),
+      undefined,
+      opts
     );
 
   // ---- Transaction writes --------------------------------------------------

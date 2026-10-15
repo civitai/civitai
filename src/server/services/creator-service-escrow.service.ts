@@ -9,6 +9,7 @@ import {
 import {
   createMultiAccountBuzzTransaction,
   getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import {
@@ -44,6 +45,8 @@ const ESCROW_ACCOUNT_ID = 0;
 const ms = (value: number) => Prisma.sql`(${value}::int * interval '1 millisecond')`;
 
 const BUZZ_CALL_OPTIONS = { timeoutMs: BUZZ_CALL_TIMEOUT_MS, shouldRetry: isSafeToRetry };
+/** Reads made while holding a leg's auto-renewing lock must end, or the lock never does. */
+const BUZZ_READ_OPTIONS = { timeoutMs: BUZZ_CALL_TIMEOUT_MS };
 
 /** Marks a hold the Buzz service refused outright, so reconcile never looks it up. */
 const REFUSED_PREFIX = 'refused:';
@@ -279,6 +282,42 @@ export async function holdDeal({
   }
 }
 
+type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
+
+/**
+ * Read-only: splits the transactions under a prefix by whether each already has its refund, which
+ * a single refund keys `refund-<transactionId>`. The same shape as `getPrefixRefundState` in the
+ * shared `buzz-prefix-refund.ts`, which replaces this once it lands.
+ */
+async function getPrefixRefundState(externalTransactionIdPrefix: string) {
+  const state = { reversed: [] as PrefixLeg[], missing: [] as PrefixLeg[] };
+  const legs = await getMultiAccountTransactionsByPrefix(
+    externalTransactionIdPrefix,
+    BUZZ_READ_OPTIONS
+  );
+  for (const leg of legs) {
+    const refund = await getTransactionByExternalId(
+      `refund-${leg.transactionId}`,
+      BUZZ_READ_OPTIONS
+    );
+    (refund ? state.reversed : state.missing).push(leg);
+  }
+  return state;
+}
+
+/**
+ * Why the hold is not fully refunded, or null when it is. The reversed legs must also add up to
+ * what was held, so a listing that came back short cannot settle the deal.
+ */
+async function holdRefundShortfall(dealId: number, heldAmount: number) {
+  const { reversed, missing } = await getPrefixRefundState(holdPrefix(dealId));
+  if (missing.length)
+    return `unrefunded legs ${missing.map((leg) => leg.transactionId).join(', ')}`;
+  const listed = reversed.reduce((sum, leg) => sum + leg.amount, 0);
+  if (listed !== heldAmount) return `ledger lists ${listed} of ${heldAmount}`;
+  return null;
+}
+
 /**
  * Claims (if needed) and pays the refund. Returns false while the hold is unconfirmed or the leg
  * is backing off; `sweepServiceDealRefunds` drives it again.
@@ -288,7 +327,7 @@ export async function refundDeal(dealId: number) {
   const paid = await runDealLeg(
     dealId,
     'Refund',
-    async () => {
+    async (row) => {
       let result;
       try {
         result = await refundMultiAccountTransaction(
@@ -299,20 +338,25 @@ export async function refundDeal(dealId: number) {
           BUZZ_CALL_OPTIONS
         );
       } catch (error) {
-        // Buzz keys refunds on the prefix and answers a second one with 409: the money is already
-        // back (an earlier attempt landed and its receipt did not). As crucible and challenge
-        // refunds treat it. 404 stays a failure: this hold is confirmed, so "nothing to refund"
-        // is a discrepancy for a human.
+        // A 409 means at least one leg under the prefix already has a refund, not all of them,
+        // and reverses none of the rest. Its body is not a contract, so the ledger decides. 404
+        // stays a failure: this hold is confirmed, so "nothing to refund" is for a human.
         if (getBuzzApiStatus(error) === 409) {
-          // Unconfirmed with the Buzz service owners: that 409 means EVERY leg under the prefix
-          // was reversed. Logged so a partial reversal would at least be visible.
+          const shortfall = await holdRefundShortfall(dealId, row.amount);
+          if (!shortfall) return `${holdPrefix(dealId)}:already-refunded`;
+          // Paying the missing legs one by one waits on the Buzz owners confirming that a
+          // single-leg refund is safe to repeat. Until then the deal stays refund-pending and
+          // exhausts onto the gauge for a human.
           logToAxiom({
             name: 'creator-service-escrow',
-            type: 'warning',
-            message: 'refund answered 409; recorded as already refunded',
+            type: 'error',
+            message: 'refund answered 409 with the hold not fully refunded',
             dealId,
+            shortfall,
           }).catch(() => null);
-          return `${holdPrefix(dealId)}:already-refunded`;
+          throw new Error(
+            `creator service escrow: deal ${dealId} is not fully refunded: ${shortfall}`
+          );
         }
         throw error;
       }
