@@ -24,7 +24,7 @@
     canViewTrainingData,
   }: {
     modelId: number;
-    reportId: number;
+    reportId: number | null;
     civitaiUrl: string;
     /** Holds a training page grant — the same test `/api/training-data` applies to the viewer's fetch. */
     canViewTrainingData: boolean;

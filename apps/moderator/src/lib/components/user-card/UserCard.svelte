@@ -11,7 +11,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { LINK_CLASS, dateTime, type Jsonified } from '$lib/format';
-  import { chatAuditChatUrl, userLookupUrl, userUrl } from '$lib/entity-url';
+  import { chatAuditChatUrl, userLookupUrl, userReportUrl, userUrl } from '$lib/entity-url';
   import { ReportEntity, reportActionPath } from '$lib/reports';
   import type { UserCard } from '$lib/server/user-lookup.service';
   import type { CsamReportRow } from '$lib/server/user-account.service';
@@ -188,7 +188,7 @@
           <Badge variant="outline">filed by {identity.openReportModerators}</Badge>
         {/if}
       </span>
-      <a href="/retool/user-reports?user={identity.id}" class={LINK_CLASS}>
+      <a href={userReportUrl(identity.id)} class={LINK_CLASS}>
         Work this account's reports
       </a>
     </div>

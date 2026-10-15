@@ -40,7 +40,6 @@
   } from '$lib/reports';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
-  import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -109,10 +108,6 @@
       data.items[Math.min(selectedIndex, data.items.length - 1)] ??
       null
   );
-
-  const ownerFlaggedMinor = $derived(new Set(data.ownerFlaggedMinor));
-  const isOwnerFlaggedMinor = (entityId: number | null) =>
-    entityId != null && ownerFlaggedMinor.has(entityId);
 
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
   const fmtDate = dateTime;
@@ -291,9 +286,6 @@
                 {:else}
                   #{report.entityId}
                 {/if}
-                {#if isOwnerFlaggedMinor(report.entityId)}
-                  <OwnerFlaggedMinorBadge />
-                {/if}
               </TableCell>
               <TableCell>{report.reason}</TableCell>
               <TableCell>
@@ -393,10 +385,6 @@
               #{selected.entityId}{/if}
             <IconExternalLink size={14} />
           </a>
-        {/if}
-
-        {#if isOwnerFlaggedMinor(selected.entityId)}
-          <div><OwnerFlaggedMinorBadge /></div>
         {/if}
 
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">

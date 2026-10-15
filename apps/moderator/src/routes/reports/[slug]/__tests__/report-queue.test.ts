@@ -19,22 +19,19 @@ const getReports = vi.fn(async (_params: unknown) => ({
   page: 1,
   limit: 20,
 }));
-const getOwnerFlaggedMinorModelIds = vi.fn(async (_ids: number[]) => [7]);
 
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
+  getReportStatusCounts: vi.fn(async () => ({})),
   setReportStatus: vi.fn(),
   updateReportNotes: vi.fn(),
   getReportedGame: vi.fn(),
   getGameMirrors: vi.fn(async () => []),
-  getOwnerFlaggedMinorModelIds,
-  getReportedModelId: vi.fn(),
-  getReportedModelStates: vi.fn(async () => []),
 }));
-vi.mock('$lib/server/model-moderation.service', () => ({}));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() }));
 vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
 
 const { load } = await import('../+page.server');
@@ -117,32 +114,6 @@ describe('report queue load', () => {
     await run('image', '?status=Pending&page=-4&reportedBy=%20alice%20');
 
     expect(asked()).toMatchObject({ page: 1, reportedBy: 'alice', type: 'image' });
-  });
-});
-
-describe('owner-flagged minor models', () => {
-  const page = (...ids: (number | null)[]) =>
-    getReports.mockResolvedValueOnce({
-      items: ids.map((entityId) => ({ entityId })),
-      totalItems: ids.length,
-      page: 1,
-      limit: 20,
-    });
-
-  it("looks up the page's model ids and hands the answer to the page", async () => {
-    page(7, null, 8);
-    const data = await run('model');
-
-    expect(getOwnerFlaggedMinorModelIds).toHaveBeenCalledExactlyOnceWith([7, 8]);
-    expect(data).toMatchObject({ ownerFlaggedMinor: [7] });
-  });
-
-  it('does not look anything up for another report type', async () => {
-    page(7);
-    const data = await run('image');
-
-    expect(getOwnerFlaggedMinorModelIds).not.toHaveBeenCalled();
-    expect(data).toMatchObject({ ownerFlaggedMinor: [] });
   });
 });
 

@@ -7,7 +7,7 @@ import { getImageCountsForUsers } from '$lib/server/report-triage.service';
 // covering index and takes seconds over 50 accounts — in `load` it blanks the whole page behind it.
 export const GET: RequestHandler = async ({ url, locals }) => {
   if (!locals.user) error(403, 'Not signed in.');
-  requireAccess(locals.user, '/retool/user-reports');
+  requireAccess(locals.user, '/reports/user');
 
   const ids = (url.searchParams.get('userIds') ?? '')
     .split(',')

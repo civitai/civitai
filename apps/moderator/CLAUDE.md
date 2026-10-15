@@ -70,6 +70,10 @@ provenance is the only reason it differs from the standard at all.
   instead of connecting to whatever that URL is (do not "fix" such a failure by adding the variable);
   and the report queries are the reason the tier exists — most of `reports.service.ts` is raw `sql`
   assembled from `REPORT_ENTITIES`, where not one identifier is typechecked.
+- **A report queue that is not a table follows [`docs/moderator-app/report-queue-pattern.md`](../../docs/moderator-app/report-queue-pattern.md)**
+  — the queue as a layout, the open item in the path, the shared `$lib/components/report-queue/`
+  pieces. 🔴 The layout's load must read the URL key by key (`loadReportQueue`, `parseQueryKeys`):
+  `parseQuery` iterates the query string, which makes SvelteKit rerun the whole queue on every click.
 - **When porting, classify every source query before writing code**, and add the fourth
   export-vs-build review the standard describes. Three code reviews pass cleanly over a faithful
   implementation of the wrong thing — that is how four capabilities were missed on one page after

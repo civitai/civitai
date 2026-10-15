@@ -78,6 +78,11 @@ export const imageLookupUrl = moderatorImageLookupPath;
 export const modelLookupUrl = moderatorModelLookupPath;
 export const modelVersionLookupUrl = moderatorModelVersionLookupPath;
 
+/** The user report queue opened on one account. The account and its tab are the PATH so the queue — a
+ *  layout — keeps its data while a moderator moves between them; `details` is the bare path. */
+export const userReportUrl = (userId: number, tab?: string) =>
+  `/reports/user/${userId}${tab && tab !== 'details' ? `/${tab}` : ''}`;
+
 export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
 
 /**
