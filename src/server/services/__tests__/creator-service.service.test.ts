@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   getShopServiceOfferings,
+  hasOpenServiceDeal,
   removeServiceOffering,
   setServiceOfferingStatus,
   upsertServiceOffering,
@@ -181,6 +182,25 @@ describe('storefront read', () => {
     );
   });
 
+  it('shows open slots as the cap minus open deals, and none for an uncapped offering', async () => {
+    shopEnabled(true);
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([
+      { id: 1, maxOpenDeals: 3 },
+      { id: 2, maxOpenDeals: null },
+      { id: 3, maxOpenDeals: 1 },
+    ] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { offeringId: 1, open: 2 },
+      { offeringId: 3, open: 4 },
+    ] as never);
+    const offerings = await getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR });
+    expect(offerings.map((o) => [o.id, o.slotsOpen])).toEqual([
+      [1, 1],
+      [2, null],
+      [3, 0],
+    ]);
+  });
+
   it("hides a private shop's offerings from visitors, not from its owner", async () => {
     shopEnabled(false);
     expect(await rejects(getShopServiceOfferings({ userId: SELLER, viewerId: VISITOR }))).toBe(
@@ -202,4 +222,19 @@ it('drops a client-sent acceptsBlue before it reaches the write', async () => {
   await upsertServiceOffering({ sellerId: SELLER, input });
   const [args] = dbMock.dbWrite.serviceOffering.create.mock.calls[0] as [{ data: object }];
   expect(args.data).not.toHaveProperty('acceptsBlue');
+});
+
+// A user whose deals are all closed has nothing to get back to, so the dark list 404s for them.
+it('finds only OPEN deals on either side when deciding whether the dark list serves a user', async () => {
+  dbMock.dbRead.serviceDeal.findFirst.mockResolvedValue(null as never);
+  expect(await hasOpenServiceDeal(SELLER)).toBe(false);
+  const [args] = dbMock.dbRead.serviceDeal.findFirst.mock.calls[0] as [
+    { where: { OR: unknown; status: { in: string[] } } }
+  ];
+  expect(args.where.OR).toEqual([{ buyerId: SELLER }, { sellerId: SELLER }]);
+  expect([...args.where.status.in].sort()).toEqual(
+    ['Accepted', 'CancellationRequested', 'Delivered', 'Disputed', 'InRevision', 'Requested'].sort()
+  );
+  dbMock.dbRead.serviceDeal.findFirst.mockResolvedValue({ id: 1 } as never);
+  expect(await hasOpenServiceDeal(SELLER)).toBe(true);
 });

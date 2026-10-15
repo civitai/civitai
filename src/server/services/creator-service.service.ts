@@ -1,6 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
+import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
+import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
   GetShopServiceOfferingsInput,
   SetServiceOfferingStatusInput,
@@ -82,6 +84,18 @@ export async function getServiceSellEligibility(userId: number): Promise<Service
   };
 }
 
+/** Whether the user is buyer or seller on any open deal: their way back to a deal when the flag is off. */
+export async function hasOpenServiceDeal(userId: number) {
+  const deal = await dbRead.serviceDeal.findFirst({
+    where: {
+      OR: [{ buyerId: userId }, { sellerId: userId }],
+      status: { in: [...SERVICE_DEAL_OPEN_STATUSES] },
+    },
+    select: { id: true },
+  });
+  return !!deal;
+}
+
 export async function assertCanSellServices(userId: number) {
   const eligibility = await getServiceSellEligibility(userId);
   if (eligibility.standingIssue) throw throwAuthorizationError(eligibility.standingIssue);
@@ -115,7 +129,7 @@ export async function getShopServiceOfferings({
   isModerator,
 }: GetShopServiceOfferingsInput & { viewerId?: number; isModerator?: boolean }) {
   await assertCreatorShopVisible({ userId, viewerId, isModerator });
-  return dbRead.serviceOffering.findMany({
+  const offerings = await dbRead.serviceOffering.findMany({
     where: {
       sellerId: userId,
       status: ServiceOfferingStatus.Active,
@@ -124,6 +138,15 @@ export async function getShopServiceOfferings({
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
   });
+  // Display only: `requestServiceDeal` enforces the cap against the same count.
+  const open = await countOpenDealsByOffering(offerings.map((o) => o.id));
+  return offerings.map((offering) => ({
+    ...offering,
+    slotsOpen:
+      offering.maxOpenDeals == null
+        ? null
+        : Math.max(0, offering.maxOpenDeals - (open.get(offering.id) ?? 0)),
+  }));
 }
 
 export async function upsertServiceOffering({

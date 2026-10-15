@@ -23,6 +23,7 @@ import {
   useQueryMyServices,
 } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
+import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
@@ -65,6 +66,17 @@ export function ManageServicesPanel() {
       </Group>
 
       {eligibility && !canSell && <SellGate eligibility={eligibility} />}
+
+      <Stack gap="xs">
+        <Title order={3}>Incoming requests</Title>
+        <ServiceDealsList
+          role="seller"
+          status="open"
+          emptyText="No open requests. They show up here when a buyer requests one of your services."
+        />
+      </Stack>
+
+      <Title order={3}>Your services</Title>
 
       {offerings.length > 0 ? (
         <Stack gap="sm">
