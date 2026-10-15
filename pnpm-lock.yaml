@@ -807,7 +807,7 @@ importers:
         specifier: 3.4.0
         version: 3.4.0
       '@types/yazl':
-        specifier: ^3.3.1
+        specifier: 3.3.1
         version: 3.3.1
       '@typescript-eslint/eslint-plugin':
         specifier: ^5.33.0
