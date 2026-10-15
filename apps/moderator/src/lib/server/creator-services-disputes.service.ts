@@ -9,6 +9,8 @@ export type DisputeEvent = {
   actorId: number;
   round: number | null;
   comment: string | null;
+  /** Set when the party chose a code; `comment` is then null if they were muted or sent a code only. */
+  reasonCode?: string | null;
   createdAt: string;
 };
 

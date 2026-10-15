@@ -77,6 +77,12 @@
     · disputed {dateTime(row.disputeOpenedAt)} · {row.revisionsUsed} revisions used
   </p>
 
+  {#if !origin.text && origin.code}
+    <p class="mt-2 text-sm text-dark-0">
+      Reason code: <code>{origin.code}</code>
+      <span class="text-xs text-dark-2">(no text: the party chose a code only, or was muted)</span>
+    </p>
+  {/if}
   {#if origin.text}
     <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0 whitespace-pre-wrap">
       {origin.text}
@@ -96,6 +102,7 @@
             by {event.actorId === -1 ? 'system' : `#${event.actorId}`}
             {#if event.round}· round {event.round}{/if}
           </span>
+          {#if event.reasonCode}<code class="text-dark-2">{event.reasonCode}</code>{/if}
           {#if event.comment}<span class="block whitespace-pre-wrap">{event.comment}</span>{/if}
         </li>
       {/each}
