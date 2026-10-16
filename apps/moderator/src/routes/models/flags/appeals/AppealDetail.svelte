@@ -133,10 +133,10 @@
       </div>
     </header>
 
-    <PreviewImagesCard images={row.coverImages} modelHref={modelHref(row.modelId)} />
+    <PreviewImagesCard images={row.coverImages} />
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <WhyFlaggedCard {row} {civitaiUrl} />
+      <WhyFlaggedCard {row} {civitaiUrl} {canUphold} />
       <OwnerSaysCard message={row.appealMessage} appealedAt={row.appealCreatedAt} />
     </div>
 

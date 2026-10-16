@@ -14,12 +14,14 @@
     grantedByUsername,
     rulings,
     showPriorClear,
+    showRulings,
   }: {
     granted: PriorClearView | null;
     grantedByUsername: string | null;
     rulings: FlagRulingView[] | null;
     /** A first detection has no human clear behind it; its earlier rulings still show. */
     showPriorClear: boolean;
+    showRulings: boolean;
   } = $props();
 </script>
 
@@ -47,7 +49,7 @@
   </TriageCard>
 {/if}
 
-{#if rulings?.length}
+{#if showRulings && rulings?.length}
   <TriageCard title="Earlier rulings">
     <div class="space-y-1 text-sm text-dark-0">
       {#each rulings as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}

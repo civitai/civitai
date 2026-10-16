@@ -89,10 +89,7 @@
       </div>
     </header>
 
-    <PreviewImagesCard
-      images={row.coverImages}
-      modelHref="{civitaiUrl}/models/{row.modelId}?view=basic"
-    />
+    <PreviewImagesCard images={row.coverImages} />
 
     <div class="grid gap-4 lg:grid-cols-2">
       <ScannedTextCard
@@ -107,6 +104,7 @@
         grantedByUsername={row.grantedByUsername}
         rulings={row.rulings}
         showPriorClear={sections.priorClear}
+        showRulings={sections.rulings}
       />
     </div>
 

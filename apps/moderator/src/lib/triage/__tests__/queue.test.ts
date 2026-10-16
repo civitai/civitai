@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { failureMessage, formActionHref, nextUndecided, step } from '../queue';
+import { failureBanner, failureMessage, formActionHref, nextUndecided, step } from '../queue';
 
 describe('step', () => {
   const ids = [10, 20, 30];
@@ -61,5 +61,18 @@ describe('failureMessage', () => {
     expect(failureMessage({ type: 'failure', data: { error: 'Nope.' } })).toBe('Nope.');
     expect(failureMessage({ type: 'failure', data: {} })).toBe('Action failed.');
     expect(failureMessage({ type: 'error' })).toBe('Action failed.');
+  });
+});
+
+describe('failureBanner', () => {
+  it('prefixes the subject when the action named one', () => {
+    expect(failureBanner({ error: 'Nope.', subject: 'Model #5' })).toBe('Model #5: Nope.');
+  });
+  it('shows the bare error without a subject', () => {
+    expect(failureBanner({ error: 'Nope.' })).toBe('Nope.');
+  });
+  it('is null when there is no error', () => {
+    expect(failureBanner({ subject: 'Model #5' })).toBeNull();
+    expect(failureBanner(null)).toBeNull();
   });
 });

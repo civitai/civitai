@@ -9,7 +9,7 @@
   import { LINK_CLASS, num } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
   import { isTypingTarget, triageKeyAction } from '$lib/triage/keys';
-  import { failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
+  import { failureBanner, failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
 
   type QueueForm = { error?: string; subject?: string } | null;
@@ -225,14 +225,15 @@
   const selectPrompt = $derived(
     `Select ${/^[aeiou]/i.test(itemLabel) ? 'an' : 'a'} ${itemLabel.toLowerCase()} from the queue.`
   );
+  const banner = $derived(failureBanner(form));
   const firstShown = $derived(offset + 1);
   const lastShown = $derived(offset + rows.length);
 </script>
 
 <svelte:window {onkeydown} />
 
-{#if form?.error && errors.size === 0}
-  <ErrorAlert message={form.subject ? `${form.subject}: ${form.error}` : form.error} />
+{#if banner && errors.size === 0}
+  <ErrorAlert message={banner} />
 {/if}
 {@render notice?.({ unpicked: selectedKey === null })}
 

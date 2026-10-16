@@ -25,6 +25,7 @@ export const clipList = <T>(
 };
 
 export const ago = (value: Date | string) => `${shortAge(value)} ago`;
+export const waiting = (value: Date | string) => shortAge(value);
 
 /** Version-specific and `view=basic`, matching the href the main app builds. */
 export const modelUrl = (civitaiUrl: string, modelId: number, versionId: number | null = null) =>

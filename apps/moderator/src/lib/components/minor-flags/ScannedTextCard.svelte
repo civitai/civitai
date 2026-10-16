@@ -3,6 +3,7 @@
   import { dateTime } from '$lib/format';
   import { ago } from '$lib/minor-flags/appeal-row';
   import type { FlagLabel } from '$lib/minor-flags/text-scan-verdicts';
+  import type { RedetectedRow } from '$lib/server/minor-hash.service';
 
   let {
     title,
@@ -13,7 +14,7 @@
   }: {
     title: string;
     label: FlagLabel;
-    detection: { at?: string; reason?: string; names?: string[] };
+    detection: RedetectedRow['redetected'];
     /** Whether the model carries this label's flag right now. */
     flagged: boolean;
     explanation: string;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import { dateTime, shortAge } from '$lib/format';
-  import { ago } from '$lib/minor-flags/appeal-row';
+  import { dateTime } from '$lib/format';
+  import { ago, waiting } from '$lib/minor-flags/appeal-row';
 
   let {
     message,
@@ -16,6 +16,6 @@
     <p class="m-0 text-base text-dark-0">The owner left no message.</p>
   {/if}
   <p class="m-0 mt-3 text-sm text-dark-2" title={dateTime(appealedAt)}>
-    Appealed {ago(appealedAt)}, waiting {shortAge(appealedAt)}
+    Appealed {ago(appealedAt)}, waiting {waiting(appealedAt)}
   </p>
 </TriageCard>

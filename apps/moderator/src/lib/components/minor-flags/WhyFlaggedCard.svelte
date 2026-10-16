@@ -6,7 +6,6 @@
   import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
   import { fetchHashDetail } from '$lib/minor-flags/hash-detail';
   import {
-    flagInForce,
     latestScanDisagrees,
     openVerdicts,
     scanVerdictProvenance,
@@ -15,7 +14,11 @@
   } from '$lib/minor-flags/text-scan-verdicts';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
 
-  let { row, civitaiUrl }: { row: MinorFlagAppealRow; civitaiUrl: string } = $props();
+  let {
+    row,
+    civitaiUrl,
+    canUphold,
+  }: { row: MinorFlagAppealRow; civitaiUrl: string; canUphold: boolean } = $props();
 
   const verdicts = $derived(openVerdicts(row.textScanFlags));
   const scan = $derived(row.latestScan);
@@ -26,7 +29,6 @@
     })
   );
   const labelName = (label: FlagLabel) => (label === 'poi' ? 'real person' : 'minor');
-  const canUphold = $derived(flagInForce(row));
 
   // Primitives first, so a reload that hands back an equal row doesn't rebuild the promise.
   const modelId = $derived(row.modelId);
