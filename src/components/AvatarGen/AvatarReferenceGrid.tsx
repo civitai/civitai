@@ -10,16 +10,6 @@ import {
   avatarStyleByKey,
 } from '~/shared/constants/avatar-styles.constants';
 
-type Tile = { value: string; src: string; label: string };
-
-function starterTiles(styleKey: string): Tile[] {
-  return avatarStartersFor(styleKey).map((starter) => ({
-    value: starter.character,
-    src: avatarStarterSrc(starter),
-    label: capitalize(starter.character),
-  }));
-}
-
 export function AvatarReferenceGrid({ store }: { store: GenerationStore }) {
   const styleKey = useField<string>(store, 'avatarStyle')?.value;
   const reference = useField<string>(store, 'avatarReference')?.value;
@@ -38,8 +28,6 @@ export function AvatarReferenceGrid({ store }: { store: GenerationStore }) {
       />
     );
 
-  const tiles = starterTiles(style.key);
-
   return (
     <Input.Wrapper label="Reference">
       <Text size="sm" className="mb-2 rounded-md bg-gray-1 px-3 py-2 dark:bg-dark-5">
@@ -47,16 +35,17 @@ export function AvatarReferenceGrid({ store }: { store: GenerationStore }) {
         who appears.
       </Text>
       <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Reference">
-        {tiles.map((tile) => {
-          const selected = tile.value === reference;
+        {avatarStartersFor(style.key).map((starter) => {
+          const selected = starter.character === reference;
+          const label = capitalize(starter.character);
           return (
             <UnstyledButton
-              key={tile.value}
+              key={starter.character}
               role="radio"
               aria-checked={selected}
               onClick={() =>
                 store.set({
-                  avatarReference: tile.value,
+                  avatarReference: starter.character,
                   avatarParentImage: '',
                 })
               }
@@ -68,7 +57,11 @@ export function AvatarReferenceGrid({ store }: { store: GenerationStore }) {
               )}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={tile.src} alt={tile.label} className="aspect-square w-full object-cover" />
+              <img
+                src={avatarStarterSrc(starter)}
+                alt={label}
+                className="aspect-square w-full object-cover"
+              />
               {selected && (
                 <span className="absolute right-1 top-1 rounded-full bg-blue-6 p-0.5 text-white">
                   <IconCheck size={14} />
@@ -78,7 +71,7 @@ export function AvatarReferenceGrid({ store }: { store: GenerationStore }) {
                 size="xs"
                 className="absolute inset-x-0 bottom-0 bg-black/60 text-center text-white"
               >
-                {tile.label}
+                {label}
               </Text>
             </UnstyledButton>
           );

@@ -28,7 +28,7 @@ const avatarModelVersions = {
 // span several families.
 const avatarModelBaseModels = [
   ...new Set(
-    ['NanoBanana', 'OpenAI', 'Krea2'].flatMap(
+    ['NanoBanana', 'OpenAI', 'Krea2', 'Krea3', 'Flux3Klein'].flatMap(
       (ecosystem) =>
         getResourceSelectOptions(ecosystem, ['Checkpoint'] as ModelType[])[0]?.baseModels ?? []
     )

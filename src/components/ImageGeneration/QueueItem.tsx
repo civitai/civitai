@@ -62,6 +62,12 @@ import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import {
+  GenerationSummaryStrip,
+  OutputActions,
+  workflowDisplays,
+  type OutputAction,
+} from '~/components/ImageGeneration/workflow-display';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -114,16 +120,10 @@ export function QueueItem({
   request,
   id,
   markerTags,
-  beforeOutputs,
-  renderOutputFooter,
 }: {
   request: WorkflowData;
   id: string;
   markerTags?: string[];
-  /** Workflow-specific context shown above the outputs (e.g. the reference an avatar was made from). */
-  beforeOutputs?: React.ReactNode;
-  /** Workflow-specific actions shown under each output. */
-  renderOutputFooter?: (image: BlobData) => React.ReactNode;
 }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -242,6 +242,8 @@ export function QueueItem({
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
   const hideDetails = !!workflowDefinition?.hideDetails;
+  const display = workflowDisplays[params.workflow as string];
+  const summary = inView ? display?.summary?.(request) : undefined;
 
   // PolyGen workflows don't always carry `params.workflow` consistently
   // (the orchestrator-side step is the source of truth), so derive the
@@ -414,7 +416,7 @@ export function QueueItem({
               </div>
             )}
 
-            {beforeOutputs}
+            {summary && <GenerationSummaryStrip summary={summary} />}
 
             {waitingOnDownloads && <DownloadBoostPanel request={request} downloads={downloads} />}
 
@@ -442,7 +444,7 @@ export function QueueItem({
                         queuePosition={queuePosition}
                         waitingOnDownloads={waitingOnDownloads}
                         markerTags={markerTags}
-                        renderOutputFooter={renderOutputFooter}
+                        outputActions={display?.outputActions}
                       />
                     </div>
                   );
@@ -457,7 +459,7 @@ export function QueueItem({
                 queuePosition={queuePosition}
                 waitingOnDownloads={waitingOnDownloads}
                 markerTags={markerTags}
-                renderOutputFooter={renderOutputFooter}
+                outputActions={display?.outputActions}
               />
             )}
           </div>
@@ -602,7 +604,7 @@ function StepOutputs({
   queuePosition,
   waitingOnDownloads,
   markerTags,
-  renderOutputFooter,
+  outputActions,
 }: {
   step: StepData | null;
   request: WorkflowData;
@@ -613,7 +615,7 @@ function StepOutputs({
   /** The download panel stands in for the pending tile. */
   waitingOnDownloads?: boolean;
   markerTags?: string[];
-  renderOutputFooter?: (image: BlobData) => React.ReactNode;
+  outputActions?: readonly OutputAction[];
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
   const allDisplayImages = step ? step.displayOutput : request.displayOutput;
@@ -646,10 +648,10 @@ function StepOutputs({
         {displayImages.map((image) =>
           image.blockedReason === 'siteRestricted' ? (
             <SiteRestrictedBlock key={image.id} image={image} />
-          ) : renderOutputFooter && image.available ? (
+          ) : outputActions && image.type === 'image' && image.available && !image.blockedReason ? (
             <div key={image.id} className="flex flex-col gap-1.5">
               <GeneratedOutput image={image} />
-              {renderOutputFooter(image)}
+              <OutputActions output={image} actions={outputActions} />
             </div>
           ) : (
             <GeneratedOutput key={image.id} image={image} />

@@ -5,7 +5,6 @@ import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { avatarQueueItemProps } from '~/components/AvatarGen/AvatarQueueItem';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 
 export function Queue() {
@@ -98,7 +97,6 @@ export function Queue() {
               id={request.id.toString()}
               request={request}
               markerTags={markerTags}
-              {...avatarQueueItemProps(request)}
             />
           );
         })}

@@ -9,6 +9,8 @@ import {
 import { nanoBananaVersionIds } from '~/shared/form-graph/generation/image/nano-banana.graph';
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
 import { krea2VersionIds } from '~/shared/form-graph/generation/image/krea2.graph';
+import { krea3VersionId } from '~/shared/form-graph/generation/image/krea3.graph';
+import { flux3KleinVersionIds } from '~/shared/form-graph/generation/image/flux3-klein.graph';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { createAvatarSteps, expandAvatarData } from '../avatar.handler';
@@ -37,7 +39,7 @@ function parse(input: Record<string, unknown>) {
     {
       workflow: 'img2img:avatar',
       images: [PORTRAIT],
-      // Most cases cover the reference recipe; Krea 2, the default, is tested on its own.
+      // Most cases cover the reference recipe on Nano Banana; Krea 3, the default, is tested on its own.
       model: { id: nanoBananaVersionIds.v2, model: { type: 'Checkpoint' } },
       ...input,
     },
@@ -87,9 +89,9 @@ describe('expandAvatarData', () => {
     expect(input.images).toEqual([PORTRAIT.url, starterUrl('c64', 'mara', 'colour')]);
   });
 
-  it('defaults to Krea 2 and builds the request for the selected model version', async () => {
+  it('defaults to Krea 3 and builds the request for the selected model version', async () => {
     expect(expand({ avatarStyle: 'art-nouveau', model: undefined }).model).toMatchObject({
-      id: krea2VersionIds.raw,
+      id: krea3VersionId,
     });
     const pro = { id: nanoBananaVersionIds.pro, model: { type: 'Checkpoint' } };
     const gpt = { id: openaiVersionIds['v2.5-flare'], model: { type: 'Checkpoint' } };
@@ -102,7 +104,7 @@ describe('expandAvatarData', () => {
 
   it('keeps the model to the avatar versions', async () => {
     const other = { id: nanoBananaVersionIds.standard, model: { type: 'Checkpoint' } };
-    expect(expand({ model: other }).model).toMatchObject({ id: krea2VersionIds.raw });
+    expect(expand({ model: other }).model).toMatchObject({ id: krea3VersionId });
   });
 
   it('builds the prompt from the style and the palette', async () => {
@@ -199,6 +201,51 @@ describe('Krea 2', () => {
   it('sends a style without a LoRA on its description alone', async () => {
     const input = await editInput({ avatarStyle: 'stained-glass', model: krea });
     expect(input.loras).toBeUndefined();
+  });
+});
+
+describe('Krea 3', () => {
+  it('sends the portrait and the starter reference with the edit prompt', async () => {
+    const style = avatarStyleByKey.get('art-nouveau')!;
+    const input = await editInput({
+      avatarStyle: style.key,
+      model: { id: krea3VersionId, model: { type: 'Checkpoint' } },
+    });
+    expect(input).toMatchObject({
+      engine: 'krea3',
+      images: [PORTRAIT.url, starterUrl('art-nouveau', 'mara', 'grey')],
+      thinkingMode: 'instant',
+    });
+    expect(input.prompt).toContain('The second image is only a sample of the art style.');
+  });
+});
+
+describe('Flux 3 Klein', () => {
+  const klein = { id: flux3KleinVersionIds.distilled, model: { type: 'Checkpoint' } };
+
+  // Given a reference, Klein draws the reference's person.
+  it('restyles the portrait alone, without the Krea 2 LoRA', async () => {
+    const style = avatarStyleByKey.get('art-nouveau')!;
+    const data = expand({ avatarStyle: style.key, model: klein });
+    expect(data.resources).toEqual([]);
+    const input = await editInput({ avatarStyle: style.key, model: klein });
+    expect(input).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'flux3Klein',
+      model: 'distilled',
+      images: [PORTRAIT.url],
+      prompt: buildAvatarRestylePrompt(style),
+    });
+    expect(input.loras).toBeUndefined();
+  });
+
+  it('refines from an earlier result, sent as the second image', async () => {
+    const input = await editInput({
+      avatarStyle: 'art-nouveau',
+      model: klein,
+      avatarParentImage: RESULT,
+    });
+    expect(input.images).toEqual([PORTRAIT.url, RESULT]);
   });
 });
 

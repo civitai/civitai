@@ -92,11 +92,9 @@ const faq = [
   },
   {
     q: 'Which AI models make the avatars?',
-    a: `${avatarEditModels
-      .map((model) => model.label)
-      .join(
-        ', '
-      )}. Krea 2 is selected by default, and you can switch models in the generator before you generate.`,
+    a: `${avatarEditModels.map((model) => model.label).join(', ')}. ${
+      avatarEditModels[0].label
+    } is selected by default, and you can switch models in the generator before you generate.`,
   },
   {
     q: 'How much does it cost?',
@@ -104,7 +102,7 @@ const faq = [
   },
   {
     q: 'Can I change an avatar after it is made?',
-    a: 'Yes. Press Refine under any result to use it as the starting point for the next round, in the same style or a new one.',
+    a: 'Yes. Press Refine under any result to use it as the starting point for the next round in the same style.',
   },
   {
     q: 'Can I use it as my Civitai profile picture?',

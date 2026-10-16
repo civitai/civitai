@@ -1,17 +1,32 @@
 import { nanoBananaVersionIds } from '~/shared/form-graph/generation/image/nano-banana.graph';
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
 import { krea2VersionIds } from '~/shared/form-graph/generation/image/krea2.graph';
+import { krea3VersionId } from '~/shared/form-graph/generation/image/krea3.graph';
+import { flux3KleinVersionIds } from '~/shared/form-graph/generation/image/flux3-klein.graph';
 
 export const AVATAR_WORKFLOW = 'img2img:avatar';
 export const AVATAR_SIZE = 1024;
 
 /**
- * Edit models offered for avatars, as model versions; the first is the default. Krea 2 restyles the
- * photo with the style's LoRA instead of a reference: given a character reference, it tends to
- * draw the reference's person.
+ * Edit models offered for avatars, as model versions; the first is the default. Krea 2 and Flux 3
+ * Klein restyle the photo alone (Krea 2 with the style's LoRA): given a character reference, they
+ * tend to draw the reference's person.
  */
 export const avatarEditModels = [
-  { key: 'krea2-raw', label: 'Krea 2', versionId: krea2VersionIds.raw, usesReference: false },
+  { key: 'krea3', label: 'Krea 3', versionId: krea3VersionId, usesReference: true },
+  {
+    key: 'krea2-raw',
+    label: 'Krea 2',
+    versionId: krea2VersionIds.raw,
+    usesReference: false,
+    styleLoras: true,
+  },
+  {
+    key: 'flux3-klein',
+    label: 'Flux 3 Klein',
+    versionId: flux3KleinVersionIds.distilled,
+    usesReference: false,
+  },
   {
     key: 'nano-banana-2',
     label: 'Nano Banana 2',
@@ -32,7 +47,8 @@ export const avatarEditModels = [
   },
 ] as const;
 export type AvatarEditModel = (typeof avatarEditModels)[number]['key'];
-export const avatarEditModelByVersionId = new Map<number, (typeof avatarEditModels)[number]>(
+export type AvatarEditModelConfig = (typeof avatarEditModels)[number] & { styleLoras?: true };
+export const avatarEditModelByVersionId = new Map<number, AvatarEditModelConfig>(
   avatarEditModels.map((model) => [model.versionId, model])
 );
 
@@ -895,8 +911,8 @@ export function buildAvatarEditPrompt(
 }
 
 /**
- * Krea 2 takes no style reference. The style's LoRA and description carry the look; the only second
- * image is the earlier avatar when refining.
+ * For the models that take no style reference (Krea 2, Flux 3 Klein). The style's description, and on
+ * Krea 2 its LoRA, carry the look; the only second image is the earlier avatar when refining.
  */
 export function buildAvatarRestylePrompt(
   style: AvatarStyle,

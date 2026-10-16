@@ -85,7 +85,10 @@ export function expandAvatarData(data: GenerationData): GenerationData {
     return {
       ...data,
       ...(refining ? { avatarReferenceUrl: parent } : {}),
-      resources: style.lora ? [{ id: style.lora, strength: 1, model: { type: 'LORA' } }] : [],
+      resources:
+        model.styleLoras && style.lora
+          ? [{ id: style.lora, strength: 1, model: { type: 'LORA' } }]
+          : [],
       prompt: buildAvatarRestylePrompt(style, options),
       negativePrompt: AVATAR_RESTYLE_NEGATIVE_PROMPT,
     } as unknown as GenerationData;
@@ -123,6 +126,26 @@ export function createAvatarSteps(
   const inputs: Record<AvatarEditModel, () => Record<string, unknown>> = {
     'nano-banana-2': nanoBanana,
     'nano-banana-pro': nanoBanana,
+    krea3: () => ({
+      engine: 'krea3',
+      images,
+      prompt,
+      quantity,
+      resolution: '1k',
+      thinkingMode: 'instant',
+    }),
+    'flux3-klein': () => ({
+      engine: 'comfy',
+      ecosystem: 'flux3Klein',
+      model: 'distilled',
+      operation: 'editImage',
+      images,
+      prompt,
+      width: AVATAR_SIZE,
+      height: AVATAR_SIZE,
+      seed: data.seed,
+      quantity,
+    }),
     'gpt-image-2.5-flare': () => ({
       engine: 'openai',
       model: 'gpt-image-2.5-flare',

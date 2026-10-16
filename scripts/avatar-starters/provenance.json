@@ -1144,48 +1144,48 @@
     "workflowId": "0-01a11853-690a-7f37-93ff-8ccc865347c0"
   },
   "line-drawing-mara": {
-    "colourImageId": 144995093,
-    "greyImageId": 144995097,
-    "prompt": "Clean continuous line drawing: head-and-shoulders portrait of a woman in her late twenties with long wavy auburn hair, green eyes and a few freckles, wearing a cream knit sweater. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
+    "colourImageId": 145861003,
+    "greyImageId": 145861005,
+    "prompt": "Clean continuous line drawing in black ink on plain white paper, no colour and no shading, elegant contour lines: head-and-shoulders portrait of a woman in her late twenties with long wavy hair and a few freckles, wearing a knit sweater. No text.",
+    "negativePrompt": "colour, color, painted, coloured fill, shading, gradient, text, letters, watermark, signature, caption",
+    "seed": 11,
     "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
     "lora": "880102@3249577",
     "loraStrength": 0.8,
-    "workflowId": "0-01a11853-6b5f-759f-8107-27a4c50b3cab"
+    "workflowId": "0-20261016180054262-smul"
   },
   "line-drawing-dev": {
-    "colourImageId": 144995099,
-    "greyImageId": 144995102,
-    "prompt": "Clean continuous line drawing: head-and-shoulders portrait of a man in his thirties with dark brown skin, short black hair and a neat short beard, wearing an olive green jacket. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
+    "colourImageId": 145861008,
+    "greyImageId": 145861009,
+    "prompt": "Clean continuous line drawing in black ink on plain white paper, no colour and no shading, elegant contour lines: head-and-shoulders portrait of a man of African descent in his thirties with short tightly coiled hair, full lips and a neat short beard, wearing a jacket. No text.",
+    "negativePrompt": "colour, color, painted, coloured fill, shading, gradient, text, letters, watermark, signature, caption",
+    "seed": 22,
     "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
     "lora": "880102@3249577",
     "loraStrength": 0.8,
-    "workflowId": "0-01a11853-6de8-73f4-8f0b-fb70fadb899f"
+    "workflowId": "0-20261016180335147-3bz4"
   },
   "line-drawing-ines": {
-    "colourImageId": 144995103,
-    "greyImageId": 144995105,
-    "prompt": "Clean continuous line drawing: head-and-shoulders portrait of a woman in her sixties with East Asian features, silver hair in a low bun and round tortoiseshell glasses, wearing a navy cardigan. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
+    "colourImageId": 145861010,
+    "greyImageId": 145861011,
+    "prompt": "Clean continuous line drawing in black ink on plain white paper, no colour and no shading, elegant contour lines: head-and-shoulders portrait of a woman in her sixties with East Asian features, hair in a low bun and round glasses, wearing a cardigan. No text.",
+    "negativePrompt": "colour, color, painted, coloured fill, shading, gradient, text, letters, watermark, signature, caption",
+    "seed": 22,
     "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
     "lora": "880102@3249577",
     "loraStrength": 0.8,
-    "workflowId": "0-01a11853-7055-78a3-b0ff-74fb8b3c5abe"
+    "workflowId": "0-20261016180055753-m1ri"
   },
   "line-drawing-theo": {
-    "colourImageId": 144995107,
-    "greyImageId": 144995108,
-    "prompt": "Clean continuous line drawing: head-and-shoulders portrait of a man in his twenties with light skin, short curly ginger hair and a friendly grin, wearing a mustard yellow hoodie. No text.",
-    "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
+    "colourImageId": 145861013,
+    "greyImageId": 145861016,
+    "prompt": "Clean continuous line drawing in black ink on plain white paper, no colour and no shading, elegant contour lines: head-and-shoulders portrait of a man in his twenties with short curly hair and a friendly grin, wearing a hoodie. No text.",
+    "negativePrompt": "colour, color, painted, coloured fill, shading, gradient, text, letters, watermark, signature, caption",
+    "seed": 22,
     "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
     "lora": "880102@3249577",
     "loraStrength": 0.8,
-    "workflowId": "0-01a11853-7300-7329-8dbd-a719e38822fc"
+    "workflowId": "0-20261016180056287-22ap"
   },
   "friendly-sketch-mara": {
     "colourImageId": 144995110,
@@ -2992,15 +2992,15 @@
     "workflowId": "0-01a11855-5977-7a2a-8bdf-5e9463a47023"
   },
   "vaporwave-mara": {
-    "colourImageId": 144995507,
-    "greyImageId": 144995508,
-    "prompt": "Vaporwave aesthetic: head-and-shoulders portrait of a woman in her late twenties with long wavy auburn hair, green eyes and a few freckles, wearing a cream knit sweater. No text.",
+    "colourImageId": 145861019,
+    "greyImageId": 145861021,
+    "prompt": "Vaporwave aesthetic: pink and cyan neon grid, setting sun with stripes, glitch artefacts, retro 80s computer graphics. Head-and-shoulders portrait of a woman in her late twenties with long wavy auburn hair, green eyes and a few freckles, wearing a cream knit sweater. No text.",
     "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
+    "seed": 22,
     "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
     "lora": "1989095@3215746",
     "loraStrength": 0.8,
-    "workflowId": "0-01a11855-5c7b-7c81-8c9e-831efde0ebbc"
+    "workflowId": "0-20261016175044514-f5i7"
   },
   "vaporwave-dev": {
     "colourImageId": 144995509,
@@ -3014,26 +3014,26 @@
     "workflowId": "0-01a1185f-ffd7-7c2a-8b18-d64c7a2b94b4"
   },
   "vaporwave-ines": {
-    "colourImageId": 144995512,
-    "greyImageId": 144995513,
-    "prompt": "Vaporwave aesthetic: head-and-shoulders portrait of a woman in her sixties with East Asian features, silver hair in a low bun and round tortoiseshell glasses, wearing a navy cardigan. No text.",
+    "colourImageId": 145861022,
+    "greyImageId": 145861024,
+    "prompt": "Vaporwave aesthetic: pink and cyan neon grid, setting sun with stripes, glitch artefacts, retro 80s computer graphics. Head-and-shoulders portrait of a woman in her sixties with East Asian features, silver hair in a low bun and round tortoiseshell glasses, wearing a navy cardigan. No text.",
     "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
+    "seed": 22,
     "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
     "lora": "1989095@3215746",
     "loraStrength": 0.8,
-    "workflowId": "0-01a11855-61a4-79eb-9010-e5f31180767e"
+    "workflowId": "0-20261016175045204-dwzq"
   },
   "vaporwave-theo": {
-    "colourImageId": 144995515,
-    "greyImageId": 144995516,
-    "prompt": "Vaporwave aesthetic: head-and-shoulders portrait of a man in his twenties with light skin, short curly ginger hair and a friendly grin, wearing a mustard yellow hoodie. No text.",
+    "colourImageId": 145861025,
+    "greyImageId": 145861027,
+    "prompt": "Vaporwave aesthetic: pink and cyan neon grid, setting sun with stripes, glitch artefacts, retro 80s computer graphics. Head-and-shoulders portrait of a man in his twenties with light skin, short curly ginger hair and a friendly grin, wearing a mustard yellow hoodie. No text.",
     "negativePrompt": "text, letters, watermark, signature, caption",
-    "seed": 20261009,
+    "seed": 22,
     "model": "urn:air:krea2:diffusionmodel:civitai:2732654@3072329",
     "lora": "1989095@3215746",
     "loraStrength": 0.8,
-    "workflowId": "0-01a11855-64ce-72ff-8981-b95af8e49859"
+    "workflowId": "0-20261016175046187-os5y"
   },
   "neon-cyberpunk-mara": {
     "colourImageId": 144995517,

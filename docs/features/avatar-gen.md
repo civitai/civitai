@@ -6,12 +6,13 @@ from the queue. It is open to everyone; there is no feature flag.
 
 ## How a generation is built
 
-| Model                                               | Images sent                                                                    | Style comes from                                                 |
-| --------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| Krea 2 (default)                                    | the portrait; when refining, the earlier result as a second image              | the style's LoRA (strength 1) and `stylePrompt`, 30 steps, CFG 3 |
-| Nano Banana 2, Nano Banana Pro, GPT Image 2.5 Flare | the portrait, then a starter reference (or, when refining, the earlier result) | the reference, plus the style's `stylePrompt`                    |
+| Model                                                                 | Images sent                                                                    | Style comes from                                                 |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Krea 3 (default), Nano Banana 2, Nano Banana Pro, GPT Image 2.5 Flare | the portrait, then a starter reference (or, when refining, the earlier result) | the reference, plus the style's `stylePrompt`                    |
+| Krea 2                                                                | the portrait; when refining, the earlier result as a second image              | the style's LoRA (strength 1) and `stylePrompt`, 30 steps, CFG 3 |
+| Flux 3 Klein                                                          | the portrait; when refining, the earlier result as a second image              | the style's `stylePrompt` alone                                  |
 
-- **The form** is the normal generator form. The model selector offers only the four models above
+- **The form** is the normal generator form. The model selector offers only the models above
   (`avatarEditModels`). The avatar fields (style, reference, palette, character) are rendered by
   `src/components/AvatarGen/AvatarFormFields.tsx`. There is no seed field; `generateFromGraph` draws a
   random seed for every submit.
@@ -73,17 +74,23 @@ An avatar depicts a real person. Generating that likeness is allowed; posting it
   - Generate its four starters with Krea 2 raw and the style's LoRA at 0.8, seed 20261009. Use the
     template `{style phrase}: head-and-shoulders portrait of {person}. No text.`, with each person
     described as in the provenance file.
+  - For a monochrome style (line art, ink, pencil), leave colour words out of the person's
+    description. Krea 2 fills in any hair or clothing given a colour, even with the LoRA.
+  - Check each starter against the `stylePrompt` before upload. A fixed-palette style sends the
+    colour copy, so a starter drawn in the wrong colours teaches every reference model those colours.
   - Upload them as CivitaiOfficial Image rows with a greyscale copy each.
   - Add them to the manifest and the provenance file.
 
 ## Queue and landing page
 
 - **The queue**: avatar jobs appear in the normal queue, unfiltered, alongside everything else.
-  Each is a standard `QueueItem` (prompt and details hidden, see Rules), plus what
-  `avatarQueueItemProps` (`AvatarQueueItem.tsx`) adds:
-  - a strip showing the style, reference and colours used;
-  - under each result, **Refine** and **Use as profile picture**. Use as profile picture copies the
-    result to our image storage first, because generation outputs expire.
+  Each is a standard `QueueItem` (prompt and details hidden, see Rules). What differs is described,
+  not coded into the card: `workflowDisplays` (`ImageGeneration/workflow-display.tsx`) maps a
+  workflow to a `summary` and `outputActions`, and the avatar's entry is `AvatarGen/avatar-display.ts`:
+  - the summary: the style, reference and colours used;
+  - under each result, **Refine** (a `fillForm` action: it switches the form to this workflow and sets
+    `avatarParentImage`) and **Use as profile picture**, which copies the result to our image storage
+    first, because generation outputs expire.
 - **The landing page**: `src/pages/avatar-generator.tsx` (`/avatar-generator`) links into the
   generator with `/generate?workflow=img2img:avatar&avatarStyle=<key>&avatarReference=<character>`.
   `avatarDeepLinkFields` accepts only a known style and a starter character.
@@ -93,8 +100,11 @@ An avatar depicts a real person. Generating that likeness is allowed; posting it
 - **Edit models, not ControlNet.** Qwen Edit, Seedream, Flux 2 Pro, Flux Kontext, Reve and
   HiDream-O1 were tried and dropped. GPT Image 2.5 Flare gave results indistinguishable from GPT
   Image 2 at about a quarter of the price.
-- **Krea 2 copies the person in a reference.** It therefore restyles from the LoRA alone, and its
-  only second image is an earlier result of the same person.
+- **Krea 2 and Flux 3 Klein copy the person in a reference.** They therefore restyle the photo alone
+  (Krea 2 with the style's LoRA), and their only second image is an earlier result of the same
+  person. For Klein, prompts that name the images by number made the copying worse, and putting the
+  reference first returned the reference every time. Krea 3 kept the photo's person with a reference
+  in every test.
 - **References must be people drawn in the style.** Scenes and objects give a weak, half-photographic
   result. Several different starters per style keep results from all looking alike.
 - **Colour comes from the prompt.** A greyscale reference plus a palette in the prompt controls colour
@@ -110,13 +120,6 @@ An avatar depicts a real person. Generating that likeness is allowed; posting it
 
 ## Later
 
-- **Composable queue.** The generation composability plan (`docs/generation-composability-plan.md`,
-  on `feat/generation-composability`) splits the queue card into parts. For avatar gen:
-  - **The card becomes a composition.** `QueueItem`'s `beforeOutputs` and `renderOutputFooter`
-    props exist only for avatar gen. With the parts, the avatar card is assembled
-    without `Prompt` and `Details`, with Refine under each output.
-  - **Refine and Use as profile picture become injected actions.** They are site-only actions, so
-    they should be passed in through the card's actions rather than imported.
 - **A dedicated page** would be an App Block: it submits `img2img:avatar` through the generation graph
   and reuses this handler. Its submit must go through `generateFromGraph`, which applies the PG-13 cap
   and the random seed.
