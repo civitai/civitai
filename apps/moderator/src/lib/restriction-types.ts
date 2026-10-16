@@ -36,6 +36,19 @@ export const RESTRICTION_TYPE_LABELS: Record<RestrictionType, string> = {
   scam: 'Scam',
 };
 
+export const SORT_ORDERS = ['oldest', 'newest'] as const;
+export type SortOrder = (typeof SORT_ORDERS)[number];
+
+export const SORT_LABELS: Record<SortOrder, string> = {
+  oldest: 'Oldest first',
+  newest: 'Newest first',
+};
+
+// The account is muted while its row is Pending, so that queue is worked oldest first: newest first
+// left month-old mutes on the last page. A history view reads newest first.
+export const defaultSortFor = (status: string | undefined): SortOrder =>
+  status === 'Pending' ? 'oldest' : 'newest';
+
 /**
  * The types a VERDICT can be handed to — narrower than `RESTRICTION_TYPES`, which is what may be
  * filed and reviewed.

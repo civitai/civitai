@@ -4,19 +4,28 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getSysRedis } from './redis';
 
-import { RESTRICTION_TYPE, type RestrictionType } from '$lib/restriction-types';
+import {
+  defaultSortFor,
+  RESTRICTION_TYPE,
+  type RestrictionType,
+  type SortOrder,
+} from '$lib/restriction-types';
 import type { MediaType } from '../media/edge-url';
 import type { TriggerOrigin } from '$lib/restrictions/origin';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
 // live in a client-safe module because the filter component needs them as values — see the note there.
 export {
+  defaultSortFor,
   RESTRICTION_TYPE,
   RESTRICTION_TYPES,
   RESTRICTION_TYPE_LABELS,
   RULINGS_WIRED_FOR,
+  SORT_LABELS,
+  SORT_ORDERS,
   unwiredRulingReason,
   type RestrictionType,
+  type SortOrder,
 } from '$lib/restriction-types';
 
 /** One prohibited request recorded against a restriction. Every field is optional: the shape is
@@ -85,14 +94,6 @@ export type RestrictionQuery = {
 
 export const ORIGIN_FILTERS = ['remix', 'typed', 'unchanged-remix'] as const;
 export type OriginFilter = (typeof ORIGIN_FILTERS)[number];
-
-export const SORT_ORDERS = ['oldest', 'newest'] as const;
-export type SortOrder = (typeof SORT_ORDERS)[number];
-
-// The account is muted while its row is Pending, so that queue is worked oldest first: newest first
-// left month-old mutes on the last page. A history view reads newest first.
-export const defaultSortFor = (status: UserRestrictionStatus | undefined): SortOrder =>
-  status === 'Pending' ? 'oldest' : 'newest';
 
 // `triggers` is an array, or a single object on rows from before the backfill. jsonpath's default lax
 // mode unwraps an array when a member is accessed on it, so one path covers both shapes.

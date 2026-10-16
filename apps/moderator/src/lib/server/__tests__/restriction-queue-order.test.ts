@@ -8,7 +8,8 @@ vi.mock('$lib/server/db', async () => {
   return { dbRead: db, dbWrite: db };
 });
 
-const { defaultSortFor, getGenerationRestrictions } = await import('../user-restriction.service');
+const { getGenerationRestrictions } = await import('../user-restriction.service');
+const { defaultSortFor } = await import('$lib/restriction-types');
 
 const orderBy = async (
   status?: 'Pending' | 'Upheld' | 'Overturned',
@@ -53,8 +54,6 @@ describe('generation restriction queue order', () => {
   });
 });
 
-// The filter bar marks this chip active when the URL names no order, so it must match what the query
-// above does with no `sort`.
 describe('defaultSortFor', () => {
   it('pending is oldest first', () => {
     expect(defaultSortFor('Pending')).toBe('oldest');

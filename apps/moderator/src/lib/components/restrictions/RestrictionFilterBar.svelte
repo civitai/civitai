@@ -4,7 +4,14 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
-  import { RESTRICTION_TYPE_LABELS, type RestrictionType } from '$lib/restriction-types';
+  import {
+    defaultSortFor,
+    RESTRICTION_TYPE_LABELS,
+    SORT_LABELS,
+    SORT_ORDERS,
+    type RestrictionType,
+    type SortOrder,
+  } from '$lib/restriction-types';
   import type { RestrictionFacets } from '$lib/server/user-restriction.service';
   import { urlWith } from '$lib/url';
 
@@ -15,7 +22,6 @@
     status,
     origin,
     sort,
-    defaultSort,
     facets,
     q,
   }: {
@@ -24,9 +30,7 @@
     fallbackType: RestrictionType;
     status: string;
     origin: string | null;
-    /** The order the URL names; null means `defaultSort`. */
-    sort: string | null;
-    defaultSort: string;
+    sort: SortOrder | null;
     facets: RestrictionFacets;
     q: string;
   } = $props();
@@ -44,15 +48,15 @@
     { value: 'typed', label: 'Typed', count: facets.origin.typed },
     { value: 'unchanged-remix', label: 'Unchanged remix', count: facets.origin['unchanged-remix'] },
   ]);
-  const sorts: Chip[] = [
-    { value: 'oldest', label: 'Oldest first' },
-    { value: 'newest', label: 'Newest first' },
-  ];
+  const sorts: Chip[] = SORT_ORDERS.map((s) => ({ value: s, label: SORT_LABELS[s] }));
+  const defaultSort = $derived(defaultSortFor(status === 'any' ? undefined : status));
   const typeChips = $derived<Chip[]>(types.map((t) => ({ value: t, label: RESTRICTION_TYPE_LABELS[t] })));
 
   // Page and selection index into the result set being replaced.
   const hrefFor = (key: string, value: string, fallback: string | null) =>
     urlWith(page.url, {
+      // Each status opens at its own default order.
+      ...(key === 'status' && { sort: null }),
       [key]: value === (fallback ?? '') ? null : value,
       page: null,
       selected: null,

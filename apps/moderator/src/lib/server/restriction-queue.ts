@@ -9,7 +9,6 @@ import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-ac
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { planRemixSources } from '$lib/restrictions/origin';
 import {
-  defaultSortFor,
   getGenerationRestrictions,
   getRemixSources,
   ORIGIN_FILTERS,
@@ -96,9 +95,8 @@ export async function restrictionQueueLoad(url: URL, queue: QueueConfig) {
 }
 
 /**
- * The two-pane triage read. Same filters as `restrictionQueueLoad` plus the origin facet and a chosen
- * order, but the whole page ships at once: selection is client state, so the remix sources for every
- * row have to be on it.
+ * The two-pane triage read. Same filters as `restrictionQueueLoad` plus the origin facet, but the whole
+ * page ships at once: selection is client state, so the remix sources for every row have to be on it.
  */
 export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
   const { type, status, origin, sort, q, page, selected, username, userId } = parseQueueQuery(
@@ -160,8 +158,6 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
     status,
     origin: origin ?? null,
     sort: sort ?? null,
-    // Sent rather than recomputed: the filter bar cannot import the server module that owns the rule.
-    defaultSort: defaultSortFor(filters.status),
     q,
     wide: true,
   };

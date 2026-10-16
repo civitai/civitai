@@ -7,7 +7,11 @@
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { originSummary } from '$lib/restrictions/origin';
-  import { unwiredRulingReason, type RestrictionType } from '$lib/restriction-types';
+  import {
+    unwiredRulingReason,
+    type RestrictionType,
+    type SortOrder,
+  } from '$lib/restriction-types';
   import type {
     RemixSource,
     RestrictionFacets,
@@ -36,8 +40,7 @@
     type: RestrictionType;
     status: string;
     origin: string | null;
-    sort: string | null;
-    defaultSort: string;
+    sort: SortOrder | null;
     q: string;
     civitaiUrl: string;
     grants: Record<string, boolean | undefined>;
@@ -98,9 +101,7 @@
       selected: null,
     })
   );
-  const filtersActive = $derived(
-    data.status !== 'Pending' || !!data.origin || !!data.sort || !!data.q
-  );
+  const filtersActive = $derived(data.status !== 'Pending' || !!data.origin || !!data.q);
 </script>
 
 <RestrictionFilterBar
@@ -110,7 +111,6 @@
   status={data.status}
   origin={data.origin}
   sort={data.sort}
-  defaultSort={data.defaultSort}
   facets={data.facets}
   q={data.q}
 />
