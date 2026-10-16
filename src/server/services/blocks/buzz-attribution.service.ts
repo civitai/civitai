@@ -493,8 +493,9 @@ export type RecordSpendAttributionResult = {
  * SERVER-SIDE, from the opaque `sharedContentKey` the app supplied.
  *
  * FORGE-SAFETY: the author is NEVER taken from client input. It is looked up
- * from the calling app's OWN shared data — the App Blocks document store or
- * the legacy per-app `app_<slug>.shared_kv` (`resolveSharedItem`) — addressed
+ * from the calling app's OWN shared data — the App Blocks document store when
+ * its approved manifest declares a shared collection, else the legacy per-app
+ * `app_<slug>.shared_kv` (`resolveSharedItem`) — addressed
  * by the SERVER-derived `appBlockId` (itself from the verified block token),
  * so app A can only ever resolve keys in app A's data. A forged/bogus key at
  * worst points at a non-existent item → NULL (no attribution).
@@ -505,8 +506,7 @@ export type RecordSpendAttributionResult = {
  * the item has no user author, or the resolved author is the spender (self)
  * or the app owner. Any error is swallowed → NULL. A resolution failure must
  * NEVER throw into the (fire-and-forget) attribution path. A document-store
- * failure does not fall back to the legacy store: it cannot prove the key is
- * absent there.
+ * failure does not fall back to the legacy store.
  *
  * FULLY GENERIC: this works for ANY app whose users publish cross-user shared
  * content that drives generation spend — not tied to any one app kind.

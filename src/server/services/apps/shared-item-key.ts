@@ -1,9 +1,15 @@
 // Resolve an app-supplied shared item KEY to the published item it names, for server code that
 // checks one by key: App Store sub-listings (author + hidden) and spend attribution (author).
-// An app's shared items live in the App Blocks document store, in its legacy per-app shared
-// storage (`app_<slug>.shared_kv`), or — while it moves between them — in both under one key.
-// A move copies each item with its key, author and hidden state, so a document-store hit is read
-// alone and the legacy row is never consulted for it.
+// An app's shared items live in the App Blocks document store or in its legacy per-app shared
+// storage (`app_<slug>.shared_kv`). Which one is decided by the app's APPROVED manifest: an app
+// that declares at least one shared collection has moved, and the document store alone is
+// authoritative for it (a miss is no item; the legacy store is never read, so a legacy copy left
+// behind by the move cannot bring back an item deleted from the document store). An app that
+// declares none — or an environment without a document store — resolves from the legacy store,
+// exactly as before the document store existed.
+//
+// Accepted trade-off: between a version that declares shared collections going live and the
+// copy of its legacy rows finishing (run right after go-live), an old key does not resolve.
 //
 // Document store: production namespace only, so a dev or review document never resolves; only
 // the collections the APPROVED manifest declares shared are probed, so an app with none costs
@@ -20,14 +26,10 @@ export type SharedItem =
   | { kind: 'none' };
 
 /**
- * The item `key` names, hidden included. A document-store hit decides on its own (the legacy
- * store is not read); the legacy store is the fallback only when the document store has none.
- *
- * A document deleted from the document store is not remembered: a legacy copy of it, if one
- * remains, resolves again (the store's tombstones are short-lived and carry no author).
+ * The item `key` names, hidden included, from the store the app's manifest makes authoritative.
  *
  * Throws when a store or the manifest cannot be read: the caller then cannot tell found from
- * missing. A document store that is not configured counts as empty.
+ * missing.
  */
 export async function resolveSharedItem(args: {
   /** Server-derived AppBlock id. */
@@ -39,15 +41,15 @@ export async function resolveSharedItem(args: {
   key: string;
 }): Promise<SharedItem> {
   const doc = await findInDocStore(args);
-  if (doc.kind !== 'absent') return doc;
+  if (doc.kind !== 'not_authoritative') return doc;
   const legacy = await readLegacySharedItem(args.blockId, args.key);
   return legacy ? { kind: 'found', ...legacy } : { kind: 'none' };
 }
 
 type DocStoreResult =
-  | { kind: 'found'; authorUid: number | null; hidden: boolean }
-  | { kind: 'ambiguous' }
-  | { kind: 'absent' };
+  | SharedItem
+  /** The app declares no shared collection, or there is no document store here: use legacy. */
+  | { kind: 'not_authoritative' };
 
 async function findInDocStore(args: {
   appBlockId: string;
@@ -58,7 +60,7 @@ async function findInDocStore(args: {
   const shared = [...declaredCollections(args.appBlockId, args.manifest)]
     .filter(([, decl]) => decl.visibility === 'shared')
     .map(([name]) => name);
-  if (shared.length === 0) return { kind: 'absent' };
+  if (shared.length === 0) return { kind: 'not_authoritative' };
 
   const { getDocStoreLookup } = await import('~/server/services/apps/doc-store-lookup.instance');
   let matches;
@@ -66,12 +68,12 @@ async function findInDocStore(args: {
     matches = await getDocStoreLookup().findSharedByKey(args.appBlockId, shared, args.key);
   } catch (err) {
     // No store here (unconfigured, or a role that bypasses RLS): fall back to the legacy store.
-    if (isDocStoreError(err, 'storage_disabled')) return { kind: 'absent' };
+    if (isDocStoreError(err, 'storage_disabled')) return { kind: 'not_authoritative' };
     throw err;
   }
   if (matches.length > 1) return { kind: 'ambiguous' };
   if (matches.length === 1) return { kind: 'found', ...matches[0] };
-  return { kind: 'absent' };
+  return { kind: 'none' };
 }
 
 type LegacyItem = { authorUid: number; hidden: boolean };

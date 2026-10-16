@@ -261,8 +261,9 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
 export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | null;
 
 /**
- * The app's shared item stored under `key`, hidden included, from the document store or the
- * legacy shared storage (`resolveSharedItem`). A key that does not name one item reads as not
+ * The app's shared item stored under `key`, hidden included, from the document store when the
+ * app's approved manifest declares a shared collection, else from the legacy shared storage
+ * (`resolveSharedItem`). A key that does not name one item reads as not
  * found. A document with no user author has `authorUserId: null`, which matches no publisher.
  * A store that cannot be read is a 503, never "not found".
  */

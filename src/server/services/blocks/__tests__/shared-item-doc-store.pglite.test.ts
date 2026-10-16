@@ -82,6 +82,8 @@ const MANIFEST = {
 
 /** A storage declaration the parser refuses. */
 const BROKEN_MANIFEST = { storage: { collections: { posts: { visibility: 'bogus' } } } };
+/** Storage declared, but no shared collection: the app's shared items are legacy. */
+const LEGACY_ONLY_MANIFEST = { storage: { collections: { prefs: { visibility: 'private' } } } };
 const BOARD_ONLY_MANIFEST = {
   storage: { collections: { board: { visibility: 'shared', write: 'own' } } },
 };
@@ -165,8 +167,17 @@ function defineSuite(rls: boolean) {
         expect(h.legacyCalls).toBe(0);
       });
 
-      it('no document: the legacy row resolves, hidden state included (unchanged behaviour)', async () => {
+      it('after the move, an item deleted from the document store stays gone: its legacy copy is never read', async () => {
         const app = freshApp();
+        await put(app, POSTS, 'moved', DOC_AUTHOR);
+        legacyRow(app, 'moved', DOC_AUTHOR);
+        await store.delete(ctx(app, NS_PROD, DOC_AUTHOR), POSTS, 'moved');
+        expect(await subListing(app, 'moved')).toBeNull();
+        expect(h.legacyCalls).toBe(0);
+      });
+
+      it('an app that declares no shared collection resolves from the legacy store, hidden state included (unchanged behaviour)', async () => {
+        const app = freshApp(LEGACY_ONLY_MANIFEST);
         legacyRow(app, 'old-1', LEGACY_AUTHOR);
         legacyRow(app, 'old-2', LEGACY_AUTHOR, true);
         expect(await subListing(app, 'old-1')).toEqual({
@@ -285,8 +296,17 @@ function defineSuite(rls: boolean) {
         expect(h.legacyCalls).toBe(0);
       });
 
-      it('no document: a visible legacy row resolves, a hidden one does not (unchanged behaviour)', async () => {
+      it('after the move, an item deleted from the document store attributes nobody: its legacy copy is never read', async () => {
         const app = freshApp();
+        await put(app, POSTS, 'moved', DOC_AUTHOR);
+        legacyRow(app, 'moved', DOC_AUTHOR);
+        await store.delete(ctx(app, NS_PROD, DOC_AUTHOR), POSTS, 'moved');
+        expect(await attribution(app, 'moved')).toBeNull();
+        expect(h.legacyCalls).toBe(0);
+      });
+
+      it('an app that declares no shared collection resolves from the legacy store: visible attributes, hidden does not (unchanged behaviour)', async () => {
+        const app = freshApp(LEGACY_ONLY_MANIFEST);
         legacyRow(app, 'old-1', LEGACY_AUTHOR);
         legacyRow(app, 'old-2', LEGACY_AUTHOR, true);
         expect(await attribution(app, 'old-1')).toBe(LEGACY_AUTHOR);
