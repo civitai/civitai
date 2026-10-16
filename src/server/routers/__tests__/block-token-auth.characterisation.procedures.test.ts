@@ -1069,7 +1069,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   },
   'blocks.persistAppUploadImage': {
     'valid token': PASSED(
-      ['checkBlockUploadRateLimit("bki_char", 42)', 'checkBlockUploadAppRateLimit("app_char")'],
+      ['checkBlockUploadAppRateLimit("app_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
@@ -1090,8 +1090,8 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
-      'Rate limit exceeded, please retry shortly.',
-      ['checkBlockUploadRateLimit("bki_char", 42)'],
+      'This app is handling too many uploads right now, please retry shortly.',
+      ['checkBlockUploadAppRateLimit("app_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     "session user is not the token subject (session user's run flag off)": E(

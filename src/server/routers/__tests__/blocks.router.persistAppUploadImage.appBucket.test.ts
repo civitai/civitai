@@ -6,17 +6,20 @@ import type * as SessionClient from '~/server/auth/session-client';
 import type * as BlockImageUpload from '~/server/services/blocks/block-image-upload.service';
 
 /**
- * `blocks.persistAppUploadImage` through the REAL limiter: an upload's allowance belongs to one
- * viewer of one app, and an app's uploads are bounded across all of its viewers.
+ * `blocks.persistAppUploadImage` through the REAL limiter: an upload charges ONE bucket, the
+ * app-wide upload bucket keyed on `appId`, shared by every viewer and every install of the app,
+ * and takes nothing from the per-install publish bucket.
  *
- * A page app's install id is `page_<appBlockId>`, one string for every viewer of the app. The
- * sibling suite mocks the limiter, so it can only see which function was called with which
- * arguments. Here `~/server/utils/block-catalog-rate-limit` is not mocked: the procedure runs the
- * real key-building code against a counter per Redis key, which is what lets these cases say
- * what one viewer's uploads do to another's.
+ * A page app's install id is `page_<appBlockId>`, one string for every viewer of the app, so the
+ * publish bucket it used to charge is shared by all of them. The sibling suite mocks the limiter,
+ * so it can only see which function was called with which arguments. Here
+ * `~/server/utils/block-catalog-rate-limit` is not mocked: the procedure runs the real
+ * key-building code against a counter per Redis key, which is what lets these cases say what one
+ * viewer's uploads do to another's, and to the publish allowance.
  *
  * The 60/hour per-account `rateLimit` middleware is shimmed out, as in the sibling suites, so
- * every refusal below is one of the two upload buckets'.
+ * every refusal below is the app bucket's. In prod that middleware is what bounds one
+ * non-moderator viewer; there is no per-viewer upload bucket.
  */
 
 const {
@@ -64,10 +67,11 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import { checkBlockPublishRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-// Pairwise distinct, and distinct from the ceiling (60), the window (300) and every other
+// Pairwise distinct, and distinct from the ceilings (60, 600), the window (300) and every other
 // constant in the limiter module, so a key built from a constant cannot spell a viewer.
 const VIEWER_A = 8123;
 const VIEWER_B = 9417;
@@ -81,20 +85,19 @@ const APP_ID_BY_INSTALL: Record<string, string> = {
   [APP_ALPHA_SECOND_INSTALL]: 'appblk-alpha',
   [APP_BETA]: 'appblk-beta',
 };
-/** The upload allowance, as a literal: 60 per window per viewer of an app. */
-const ALLOWANCE = 60;
 /** The app-wide upload allowance, as a literal: 600 per window per app. */
 const APP_ALLOWANCE = 600;
+/** The per-install publish allowance, as a literal: 60 images per window. */
+const PUBLISH_ALLOWANCE = 60;
 /** How far the app-wide cases overshoot. 607 is not a multiple of 600, 60 or the crowd size. */
 const OVERSHOOT = 7;
-/** Enough viewers that none reaches their own 60 while the app passes 600 (607 / 17 < 36). */
+/** Several distinct viewers, taking turns. */
 const CROWD = Array.from({ length: 17 }, (_, i) => 20001 + i);
 const KEY = '33333333-3333-4333-8333-333333333333';
+const APP_KEY = 'blocks:token-rate-limit:upload-app:appblk-alpha';
 
-const VIEWER_REFUSAL_MESSAGE = 'Rate limit exceeded, please retry shortly.';
 const APP_REFUSAL_MESSAGE =
   'This app is handling too many uploads right now, please retry shortly.';
-const REFUSAL = { code: 'TOO_MANY_REQUESTS', message: VIEWER_REFUSAL_MESSAGE };
 
 /** One integer per Redis key, as Redis keeps them. */
 let counters: Map<string, number>;
@@ -118,12 +121,12 @@ function upload(viewer: number, install: string) {
     .persistAppUploadImage({ blockToken: `${viewer}|${install}`, url: KEY, name: 'a.png' });
 }
 
-/** `times` uploads on `installs`, taking turns through `CROWD`. Each outcome is 'ok' or the refusal's message. */
-async function crowdUploads(times: number, installs: string[]) {
+/** `times` uploads, each by `viewers[i % n]` on `installs[i % m]`. Each outcome is 'ok' or the refusal's message. */
+async function uploads(times: number, viewers: number[], installs: string[]) {
   const outcomes: string[] = [];
   for (let i = 0; i < times; i++) {
     outcomes.push(
-      await upload(CROWD[i % CROWD.length], installs[i % installs.length]).then(
+      await upload(viewers[i % viewers.length], installs[i % installs.length]).then(
         () => 'ok',
         (err: { message?: string }) => err.message ?? 'threw'
       )
@@ -132,22 +135,8 @@ async function crowdUploads(times: number, installs: string[]) {
   return outcomes;
 }
 
-const appRefused = (times: number) => Array.from({ length: times }, () => APP_REFUSAL_MESSAGE);
-
-async function uploadTimes(times: number, viewer: number, install: string) {
-  const outcomes: string[] = [];
-  for (let i = 0; i < times; i++) {
-    outcomes.push(
-      await upload(viewer, install).then(
-        () => 'ok',
-        (err: { code?: string }) => err.code ?? 'threw'
-      )
-    );
-  }
-  return outcomes;
-}
-
 const allOk = (times: number) => Array.from({ length: times }, () => 'ok');
+const appRefused = (times: number) => Array.from({ length: times }, () => APP_REFUSAL_MESSAGE);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -177,74 +166,35 @@ beforeEach(() => {
     counters.set(key, next);
     return next;
   });
-  redisMock.redis.decrBy.mockImplementation(async (key: string, by: number) => {
-    const next = (counters.get(key) ?? 0) - by;
-    counters.set(key, next);
-    return next;
-  });
-  redisMock.redis.del.mockImplementation(async (key: string) => (counters.delete(key) ? 1 : 0));
   redisMock.redis.expire.mockResolvedValue(true);
   // 177: distinct from the window and every other constant in the module.
   redisMock.redis.ttl.mockResolvedValue(177);
 });
 
-describe('blocks.persistAppUploadImage — one allowance per viewer per app', () => {
-  it('viewer B is not refused after viewer A used their whole allowance on the same app', async () => {
-    expect(await uploadTimes(ALLOWANCE, VIEWER_A, APP_ALPHA)).toEqual(allOk(ALLOWANCE));
+describe('blocks.persistAppUploadImage — the per-install publish bucket is not charged', () => {
+  it('an upload takes nothing from the install’s shared publish allowance', async () => {
+    expect(await uploads(5, [VIEWER_A], [APP_ALPHA])).toEqual(allOk(5));
 
-    // B has uploaded nothing. Same app, same install id, a different person.
-    expect(await uploadTimes(ALLOWANCE, VIEWER_B, APP_ALPHA)).toEqual(allOk(ALLOWANCE));
-    expect(mockPersistUpload).toHaveBeenCalledTimes(2 * ALLOWANCE);
-  });
-
-  it('viewer A is still refused past their own allowance, with the same refusal, and no Image row', async () => {
-    expect(await uploadTimes(ALLOWANCE, VIEWER_A, APP_ALPHA)).toEqual(allOk(ALLOWANCE));
-    expect(mockPersistUpload).toHaveBeenCalledTimes(ALLOWANCE);
-
-    await expect(upload(VIEWER_A, APP_ALPHA)).rejects.toMatchObject(REFUSAL);
-    // `persistBlockUploadImage` is what creates the row; the refused upload never reached it.
-    expect(mockPersistUpload).toHaveBeenCalledTimes(ALLOWANCE);
-  });
-
-  it('the same viewer has a separate allowance on a different app', async () => {
-    expect(await uploadTimes(ALLOWANCE, VIEWER_A, APP_ALPHA)).toEqual(allOk(ALLOWANCE));
-    await expect(upload(VIEWER_A, APP_ALPHA)).rejects.toMatchObject(REFUSAL);
-
-    expect(await uploadTimes(ALLOWANCE, VIEWER_A, APP_BETA)).toEqual(allOk(ALLOWANCE));
-  });
-
-  it('counts each (app, viewer) on its own key', async () => {
-    await uploadTimes(3, VIEWER_A, APP_ALPHA);
-    await uploadTimes(2, VIEWER_B, APP_ALPHA);
-    await uploadTimes(1, VIEWER_A, APP_BETA);
-
-    expect([...counters.entries()].sort()).toEqual([
-      ['blocks:token-rate-limit:upload-app:appblk-alpha', 5],
-      ['blocks:token-rate-limit:upload-app:appblk-beta', 1],
-      ['blocks:token-rate-limit:upload:page_apb_alpha:8123', 3],
-      ['blocks:token-rate-limit:upload:page_apb_alpha:9417', 2],
-      ['blocks:token-rate-limit:upload:page_apb_beta:8123', 1],
-    ]);
-  });
-
-  it('an upload takes nothing from the app’s shared publish allowance', async () => {
-    await uploadTimes(ALLOWANCE, VIEWER_A, APP_ALPHA);
     // The publish bucket is per install: what `publishGenerationOutputs` and a post's images
     // draw on, for every viewer of the app together.
     expect([...counters.keys()].filter((key) => key.includes(':publish:'))).toEqual([]);
-    // Positive control for the filter above: the uploads did count somewhere.
-    expect([...counters.keys()].sort()).toEqual([
-      'blocks:token-rate-limit:upload-app:appblk-alpha',
-      'blocks:token-rate-limit:upload:page_apb_alpha:8123',
-    ]);
+    // Positive control for the filter above: the uploads did count, on the app's key.
+    expect([...counters.entries()]).toEqual([[APP_KEY, 5]]);
+  });
+
+  it('after the app’s whole upload allowance, the install can still publish its full allowance', async () => {
+    expect(await uploads(APP_ALLOWANCE, CROWD, [APP_ALPHA])).toEqual(allOk(APP_ALLOWANCE));
+
+    await expect(checkBlockPublishRateLimit(APP_ALPHA, PUBLISH_ALLOWANCE)).resolves.toEqual({
+      allowed: true,
+    });
+    expect(counters.get(`blocks:token-rate-limit:publish:${APP_ALPHA}`)).toBe(PUBLISH_ALLOWANCE);
   });
 });
 
-describe('blocks.persistAppUploadImage — one allowance per app across its viewers', () => {
-  const APP_KEY = 'blocks:token-rate-limit:upload-app:appblk-alpha';
-
-  it('refuses the 601st upload on an app in a window, with the app’s own refusal, and leaves another app alone', async () => {
-    const outcomes = await crowdUploads(APP_ALLOWANCE + OVERSHOOT, [APP_ALPHA]);
+describe('blocks.persistAppUploadImage — one allowance per app across its viewers and installs', () => {
+  it('refuses the 601st upload on an app in a window, with the app’s refusal, and leaves another app alone', async () => {
+    const outcomes = await uploads(APP_ALLOWANCE + OVERSHOOT, CROWD, [APP_ALPHA]);
 
     expect(outcomes.slice(0, APP_ALLOWANCE)).toEqual(allOk(APP_ALLOWANCE));
     expect(outcomes.slice(APP_ALLOWANCE)).toEqual(appRefused(OVERSHOOT));
@@ -257,55 +207,38 @@ describe('blocks.persistAppUploadImage — one allowance per app across its view
     });
   });
 
+  it('two different viewers of one install draw on the same allowance', async () => {
+    // Half each, so neither alone is near 600.
+    expect(await uploads(APP_ALLOWANCE / 2, [VIEWER_A], [APP_ALPHA])).toEqual(
+      allOk(APP_ALLOWANCE / 2)
+    );
+    expect(await uploads(APP_ALLOWANCE / 2, [VIEWER_B], [APP_ALPHA])).toEqual(
+      allOk(APP_ALLOWANCE / 2)
+    );
+
+    // A, who has made only 300 uploads, is refused because of B's.
+    await expect(upload(VIEWER_A, APP_ALPHA)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: APP_REFUSAL_MESSAGE,
+    });
+    expect([...counters.entries()]).toEqual([[APP_KEY, APP_ALLOWANCE + 1]]);
+  });
+
   it('counts every install of an app against the one app allowance', async () => {
-    const outcomes = await crowdUploads(APP_ALLOWANCE + OVERSHOOT, [
+    const outcomes = await uploads(APP_ALLOWANCE + OVERSHOOT, CROWD, [
       APP_ALPHA,
       APP_ALPHA_SECOND_INSTALL,
     ]);
 
     expect(outcomes.slice(0, APP_ALLOWANCE)).toEqual(allOk(APP_ALLOWANCE));
     expect(outcomes.slice(APP_ALLOWANCE)).toEqual(appRefused(OVERSHOOT));
+    expect([...counters.keys()]).toEqual([APP_KEY]);
   });
 
-  it('a single viewer reaches their own 60 first, and their refusals take nothing from the app', async () => {
-    const outcomes: string[] = [];
-    for (let i = 0; i < ALLOWANCE + OVERSHOOT; i++) {
-      outcomes.push(
-        await upload(VIEWER_A, APP_ALPHA).then(
-          () => 'ok',
-          (err: { message?: string }) => err.message ?? 'threw'
-        )
-      );
-    }
-
-    expect(outcomes.slice(0, ALLOWANCE)).toEqual(allOk(ALLOWANCE));
-    expect(outcomes.slice(ALLOWANCE)).toEqual(
-      Array.from({ length: OVERSHOOT }, () => VIEWER_REFUSAL_MESSAGE)
-    );
-    // 60 admitted uploads, 60 app tokens: the 7 refused ones spent none.
-    expect(counters.get(APP_KEY)).toBe(ALLOWANCE);
-  });
-
-  it('an upload the app refuses is not charged to the viewer', async () => {
-    // B uploads 3, then the rest of the app's allowance is used by others.
-    const admitted = 3;
-    expect(await uploadTimes(admitted, VIEWER_B, APP_ALPHA)).toEqual(allOk(admitted));
-    await crowdUploads(APP_ALLOWANCE - admitted, [APP_ALPHA]);
-    const viewerKey = `blocks:token-rate-limit:upload:${APP_ALPHA}:${VIEWER_B}`;
-
-    for (let i = 0; i < OVERSHOOT; i++) {
-      await expect(upload(VIEWER_B, APP_ALPHA)).rejects.toMatchObject({
-        code: 'TOO_MANY_REQUESTS',
-        message: APP_REFUSAL_MESSAGE,
-      });
-    }
-    // Still exactly the uploads B really made: the 7 refused ones were given back.
-    expect(counters.get(viewerKey)).toBe(admitted);
-
-    // The app's window rolls over; the rest of B's own allowance is whole.
-    counters.delete(APP_KEY);
-    const rest = ALLOWANCE - admitted;
-    expect(await uploadTimes(rest, VIEWER_B, APP_ALPHA)).toEqual(allOk(rest));
-    await expect(upload(VIEWER_B, APP_ALPHA)).rejects.toMatchObject(REFUSAL);
+  it('has no per-viewer upload bucket: one viewer past 60 is still admitted (the per-user middleware bounds them in prod)', async () => {
+    // Overshoots the publish (60) ceiling a per-viewer upload bucket would have mirrored.
+    const times = PUBLISH_ALLOWANCE + OVERSHOOT;
+    expect(await uploads(times, [VIEWER_A], [APP_ALPHA])).toEqual(allOk(times));
+    expect([...counters.entries()]).toEqual([[APP_KEY, times]]);
   });
 });

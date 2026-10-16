@@ -51,9 +51,9 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      it is `'pdb_' || app_block_id` — one string shared by EVERY concurrent viewer
 //      of that app, platform-wide. So for those surfaces "120 per 10 s" is an
 //      app-wide ceiling, not a per-user one, and one viewer can be refused because
-//      of strangers' traffic. The `:poll:`, `:post:`, `:training-dataset:` and
-//      `:upload:` buckets below do NOT inherit this: each puts the viewer in the
-//      key, and the poll bucket says why.
+//      of strangers' traffic. The `:poll:`, `:post:` and `:training-dataset:`
+//      buckets below do NOT inherit this: each puts the viewer in the key, and the
+//      poll bucket says why.
 //   2. ITS TENANCY GREW, SO THE CEILING MOVED WITH IT — clawgate #569 plus its round-0
 //      audit. #569 first added FIVE bridge procedures to this bucket against an
 //      UNCHANGED ceiling sized for "a model/image selector" alone. That is a tightening
@@ -194,8 +194,7 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //
 // 🔴 KEYED ON THE INSTALL **AND THE VIEWER**, WHICH IS WHERE THIS BUCKET DEPARTS
 // FROM THE CATALOG, PUBLISH, APP-AGGREGATE POST AND LLM BUCKETS (the per-viewer post
-// bucket, the training-dataset bucket and the upload bucket follow this one instead).
-// The catalog,
+// bucket and the training-dataset bucket follow this one instead). The catalog,
 // publish and LLM buckets key on `blockInstanceId` alone. That id names an install,
 // not a person — a MODEL-SLOT install is served to every visitor of its model page —
 // and for a PAGE app the sharing is widest:
@@ -599,70 +598,26 @@ export async function checkBlockTrainingDatasetRateLimit(
 
 // UPLOAD bucket (blocks.persistAppUploadImage, the server half of an app's upload
 // from bytes). One token per upload: each one creates a real, scanned Image row.
+// It is the ONLY bucket an upload charges.
 //
-// KEYED ON THE INSTALL **AND THE VIEWER**, for the reason the poll bucket argues: a
-// page app's `blockInstanceId` is one string shared by every viewer of that app, so
-// an install-only key would let one viewer's uploads use up everyone else's
-// allowance. `userId` is the self-bound token subject, never client input. An app's
-// total across its viewers is bounded by the app-aggregate upload bucket below.
+// KEYED ON `claims.appId`, like the app-aggregate post bucket: the app's identity
+// across every install and surface, and the id an uploaded image is stamped with. So
+// it bounds an app's uploads across all of its viewers and installs, and keeps one
+// app within a share of the capacity every app's uploads draw on.
 //
-// The ceiling mirrors the publish bucket's; it was not sized for one viewer.
-// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file.
-export const BLOCK_UPLOAD_RATE_LIMIT_MAX = 60;
-export const BLOCK_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 300;
-
-/**
- * Records ONE upload from bytes against this (install, viewer)'s upload window. Own
- * `:upload:` sub-namespace, so it never contends with the publish bucket or any
- * other; fail-open like every sibling limiter.
- *
- * @param blockInstanceId the stable per-install identity from the verified token —
- *   for a page app, shared by every viewer of it, which is why the viewer is keyed too.
- * @param userId the SELF-BOUND token subject — never client input.
- */
-export async function checkBlockUploadRateLimit(
-  blockInstanceId: string,
-  userId: number
-): Promise<BlockCatalogRateLimitResult> {
-  return checkFixedWindow(
-    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload:${blockInstanceId}:${userId}`,
-    BLOCK_UPLOAD_RATE_LIMIT_MAX,
-    BLOCK_UPLOAD_RATE_LIMIT_WINDOW_SECONDS
-  );
-}
-
-/**
- * Gives back the one token `checkBlockUploadRateLimit` took, for an upload the
- * app-aggregate bucket then refused.
- *
- * Best-effort: a Redis error is swallowed and the viewer stays one token short for
- * the window. A refund landing after the window expired recreates the key negative
- * with no TTL, so a negative counter is deleted. The decrement and the delete are
- * separate commands: a charge landing between them is deleted with it.
- */
-export async function releaseBlockUploadRateLimit(
-  blockInstanceId: string,
-  userId: number
-): Promise<void> {
-  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload:${blockInstanceId}:${userId}`;
-  try {
-    const count = await redis.decrBy(key as never, 1);
-    if (typeof count === 'number' && count < 0) await redis.del(key as never);
-  } catch {
-    /* best-effort */
-  }
-}
-
-// APP-AGGREGATE upload bucket, keyed on `claims.appId` like the app-aggregate post
-// bucket. The bucket above bounds ONE VIEWER of one install, so on its own an app's
-// uploads grow with its number of viewers; this is the total, and it is what keeps
-// one app's uploads within a share of the capacity every app's uploads draw on.
+// NOT the per-install publish bucket, which an upload used to charge: a page app's
+// `blockInstanceId` is one string shared by every viewer of that app, so one
+// viewer's uploads used up the allowance `publishGenerationOutputs` and post
+// creation draw on for everyone.
 //
-// `appId` and not `blockInstanceId`: it is the app's identity across every install
-// and surface, and it is the id an uploaded image is stamped with.
+// NO PER-VIEWER UPLOAD BUCKET, deliberately. The procedure's 60/h per-user
+// `rateLimit` middleware is strictly tighter than a 60-per-300-s viewer bucket for
+// every prod non-moderator, and the host's 8-per-60-s bytes window
+// (`src/components/AppBlocks/imageUploadBytes.ts`) holds a single-page moderator to
+// 40 per 300 s. Accepted cost: a moderator calling the procedure directly, or with
+// many pages open, is bounded only by this bucket.
 //
-// 600 per 300 s: ten viewers each at their own maximum in one window. Not
-// data-derived; a starting value.
+// 600 per 300 s. Not data-derived; a starting value.
 //
 // FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A
 // refused call still counts toward this window.
@@ -670,9 +625,9 @@ export const BLOCK_UPLOAD_APP_RATE_LIMIT_MAX = 600;
 export const BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS = 300;
 
 /**
- * Records ONE upload from bytes against `appId`'s aggregate upload window. Own
- * `:upload-app:` sub-namespace, so it never contends with the per-viewer `:upload:`
- * bucket or any other; fail-open like every sibling limiter.
+ * Records ONE upload from bytes against `appId`'s upload window. Own `:upload-app:`
+ * sub-namespace, so it never contends with the publish bucket or any other; fail-open
+ * like every sibling limiter.
  */
 export async function checkBlockUploadAppRateLimit(
   appId: string
@@ -695,10 +650,9 @@ export async function checkBlockUploadAppRateLimit(
 // COUNT, before any cell runs.
 //
 // 🔴 KEYED ON THE INSTALL ALONE, LIKE THE CATALOG BUCKET, AND NOT ON THE VIEWER —
-// THE OPPOSITE OF THE VIEWER-KEYED BUCKETS (POLL, POST, TRAINING-DATASET, UPLOAD),
-// DELIBERATELY. Those put the viewer in the key so a page app's strangers cannot
-// throttle each other; poll and training-dataset accept that the app-wide total
-// then scales with the number of viewers. Here that
+// THE OPPOSITE OF THE POLL AND TRAINING-DATASET BUCKETS, DELIBERATELY. Those two put
+// the viewer in the key so a page app's strangers cannot throttle each other, and
+// accept that the app-wide total then scales with the number of viewers. Here that
 // trade is the wrong one: the quantity being bounded is upstream cost quotes, which
 // the catalog bucket already bounds PER INSTALL, and a per-viewer key would let an
 // app with V concurrent viewers reach V × this ceiling — a batch would become
