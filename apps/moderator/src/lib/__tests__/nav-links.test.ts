@@ -120,6 +120,27 @@ describe('the Models section', () => {
   });
 });
 
+describe('CSAM text holds', () => {
+  it('sits under Images with its own grant and badge, apart from the image CSAM queue', () => {
+    applyGrants({ '/csam/text-holds': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/csam/text-holds')).toBe(true);
+    expect(canAccess(reviewer, '/images/csam')).toBe(false);
+    expect(
+      navForUser(reviewer)
+        .find((l) => l.label === 'Images')
+        ?.children?.map((c) => [c.path, c.label, c.countKey])
+    ).toEqual([['/csam/text-holds', 'Text holds', 'csamTextHolds']]);
+
+    applyGrants({ '/images/csam': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/csam/text-holds')).toBe(false);
+  });
+
+  it('is grantable on /admin', () => {
+    const images = pageAccessState().tree.find((n) => n.key === '/images');
+    expect(images?.children.map((c) => c.key)).toContain('/csam/text-holds');
+  });
+});
+
 describe('/admin grantable pages', () => {
   const tree = pageAccessState().tree;
   const keys = (node: { children: { key: string }[] } | undefined) =>

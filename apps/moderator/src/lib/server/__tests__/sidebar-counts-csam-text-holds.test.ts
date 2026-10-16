@@ -1,0 +1,55 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { countCsamHolds } = vi.hoisted(() => ({ countCsamHolds: vi.fn() }));
+
+vi.mock('../cache', () => ({
+  createCache: ({ fetch }: { fetch: () => Promise<unknown> }) => ({ get: () => fetch() }),
+}));
+vi.mock('../db', () => ({
+  dbRead: {
+    selectFrom: (table: string) => {
+      const chain: Record<string, unknown> = {};
+      for (const m of ['innerJoin', 'select', 'where']) chain[m] = () => chain;
+      chain.executeTakeFirst = async () =>
+        table === 'TextScanHold' ? { count: await countCsamHolds() } : { count: 0 };
+      return chain;
+    },
+  },
+}));
+vi.mock('../image-review.service', () => ({ getImageReviewCounts: async () => ({}) }));
+vi.mock('../ingestion.service', () => ({
+  countStuckIngestion: async () => 0,
+  countIngestionErrorImages: async () => 0,
+}));
+vi.mock('../image-rating-review.service', () => ({ getImageRatingReviewCount: async () => 0 }));
+vi.mock('../articles.service', () => ({ countModeratorArticles: async () => 0 }));
+vi.mock('../rating-reviews.service', () => ({
+  getRatingReviewCounts: async () => ({ Pending: 0 }),
+}));
+vi.mock('../reports.service', () => ({ getReportCounts: async () => ({}) }));
+vi.mock('../feedback.service', () => ({ countNewFeedback: async () => 0 }));
+vi.mock('../removed-appeals.service', () => ({ countRemovedAppeals: async () => 0 }));
+vi.mock('../minor-hash.service', () => ({
+  getMinorFlagAppealGroups: async () => [{ count: 4 }],
+  getMinorQueueCounts: async () => ({ pending: 1, auto: 2 }),
+  getRedetectedCount: async () => 5,
+}));
+vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 }));
+
+const { getSidebarCounts } = await import('../sidebar-counts.service');
+
+beforeEach(() => vi.clearAllMocks());
+
+describe('sidebar count csamTextHolds', () => {
+  it('is the pending csam hold total', async () => {
+    countCsamHolds.mockResolvedValue('3');
+    expect(await getSidebarCounts()).toMatchObject({ csamTextHolds: 3, heldDetections: 5 });
+  });
+
+  it('is dropped, without blanking the other badges, when its query fails', async () => {
+    countCsamHolds.mockRejectedValue(new Error('db down'));
+    const counts = await getSidebarCounts();
+    expect(counts).not.toHaveProperty('csamTextHolds');
+    expect(counts).toMatchObject({ heldDetections: 5, modelFlagAppeals: 4 });
+  });
+});

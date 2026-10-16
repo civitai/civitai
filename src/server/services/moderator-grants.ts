@@ -13,7 +13,8 @@ export type ModeratorGrantId =
   | 'user.membership.code'
   | 'user.creatorScore.grant'
   | 'creatorServices.resolveDispute'
-  | 'image.removal.confirm';
+  | 'image.removal.confirm'
+  | 'csam.report.file';
 
 export async function hasModeratorGrant(
   user: { roles?: string[] },

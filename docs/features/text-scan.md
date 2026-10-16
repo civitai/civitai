@@ -120,8 +120,8 @@ the model for review. Disputes, appeals and mute reviews go through the existing
 and scanned text, and nothing else (no report, mute, strike, hide or notification). A rescan of the
 same text adds nothing; changed text adds a new row. The scam, Post and Model adapters write the hold
 before their own action. A failed hold write is logged as an error and does not fail the callback,
-so the adapter's action is never repeated by a retry. Moderators work the holds on a separate
-moderator-app page.
+so the adapter's action is never repeated by a retry. Moderators work the holds on the moderator
+app's CSAM text holds queue; see [text-scan-csam-holds.md](text-scan-csam-holds.md).
 
 ## Modes
 

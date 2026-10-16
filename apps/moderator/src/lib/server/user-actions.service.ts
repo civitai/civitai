@@ -221,6 +221,7 @@ export type ModEndpoint =
   | 'strike/create'
   | 'strike/void'
   | 'text-scan'
+  | 'text-scan/csam-hold/resolve'
   | 'training-data/resolve'
   | 'user/creator-score-grant'
   | 'user/creator-score-grant-revoke'
