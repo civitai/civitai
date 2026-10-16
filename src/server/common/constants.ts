@@ -1606,8 +1606,8 @@ export const generationConfig = {
       { label: 'Portrait', width: 1024, height: 1536 },
     ],
     checkpoint: {
-      id: 1733399,
-      name: '4o Image Gen 1',
+      id: 2880272,
+      name: 'v2.0',
       trainedWords: [],
       baseModel: 'OpenAI',
       strength: 1,
@@ -1616,8 +1616,8 @@ export const generationConfig = {
       canGenerate: true,
       hasAccess: true,
       model: {
-        id: 1532032,
-        name: `OpenAI's GPT-image-1`,
+        id: 2563220,
+        name: 'ChatGPT Images',
         type: 'Checkpoint',
       },
     } as GenerationResource,

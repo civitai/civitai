@@ -1690,7 +1690,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.OpenAI,
     defaults: {
-      model: { id: 1733399 },
+      model: { id: 2880272 },
       modelLocked: true,
     },
   },

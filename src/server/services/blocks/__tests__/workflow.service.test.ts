@@ -1353,7 +1353,7 @@ describe('block input yields populated workflow metadata params (real graph path
   // flux-kontext-graph / qwen-graph). `checkpointVersionId` uses each ecosystem's
   // real locked version id so the modelLocked graph doesn't remap it.
   it.each([
-    ['OpenAI', 'OpenAI', 1733399],
+    ['OpenAI', 'OpenAI', 2880272],
     ['Qwen', 'Qwen', 2558804],
     ['Flux.1 Kontext', 'Flux1Kontext', 1892509],
   ])(
@@ -1810,7 +1810,7 @@ describe('edit-only checkpoint version + no sourceImage', () => {
   // not workflow-scoped at all — both modes must keep working on one version.
   it.each([
     ['Flux.2 D', 'Flux2', 2439067],
-    ['OpenAI', 'OpenAI', 1733399],
+    ['OpenAI', 'OpenAI', 2880272],
   ])(
     'keeps BOTH modes working for the dual-capable ecosystem %s',
     (baseModel, ecoKey, versionId) => {

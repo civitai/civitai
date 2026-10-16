@@ -22,7 +22,6 @@ const openAISizes = [
 
 type OpenaiModel = (typeof openaiModels)[number];
 export const openaiModels = [
-  'gpt-image-1',
   'gpt-image-1.5',
   'gpt-image-2',
   'gpt-image-2.5-flare',
@@ -30,7 +29,8 @@ export const openaiModels = [
 ] as const;
 
 export const openaiModelVersionToModelMap = new Map<number, { model: OpenaiModel; name: string }>([
-  [1733399, { model: 'gpt-image-1', name: 'v1' }],
+  // v1 (gpt-image-1) is retired by OpenAI; its id stays mapped so old requests run on 1.5.
+  [1733399, { model: 'gpt-image-1.5', name: 'v1' }],
   [2512167, { model: 'gpt-image-1.5', name: 'v1.5' }],
   [2880272, { model: 'gpt-image-2', name: 'v2' }],
   [3311434, { model: 'gpt-image-2.5-flare', name: 'v2.5 Flare' }],
@@ -113,7 +113,7 @@ export const openaiConfig = ImageGenConfig({
 
     const baseData = {
       engine: params.engine,
-      model: model ?? 'gpt-image-1',
+      model: model ?? 'gpt-image-1.5',
       prompt: params.prompt,
       background: params.background,
       quantity: params.quantity,
