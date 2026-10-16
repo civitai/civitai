@@ -213,23 +213,6 @@ describe('the viewport meta opts into the full display area', () => {
     ).toBe('initial-scale=1, width=device-width, viewport-fit=cover');
   });
 
-  it('parses to exactly the expected directive set, with viewport-fit=cover', () => {
-    // The string assertion above is order- and whitespace-sensitive by design.
-    // This one restates the claim as SEMANTICS, so a reviewer reading a failure
-    // can tell "reformatted" from "a directive changed meaning".
-    const directives = Object.fromEntries(
-      VIEWPORT_META_CONTENT.split(',').map((part) => {
-        const [key, value] = part.split('=');
-        return [key.trim(), (value ?? '').trim()];
-      })
-    );
-    expect(directives).toEqual({
-      'initial-scale': '1',
-      width: 'device-width',
-      'viewport-fit': 'cover',
-    });
-  });
-
   it('MetaPWA renders the viewport meta from the constant, not a copy of the string', () => {
     // The seam, not either side of it. A constant with the right value and a tag
     // carrying a hardcoded literal would satisfy the value assertion above while

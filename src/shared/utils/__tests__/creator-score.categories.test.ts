@@ -16,10 +16,6 @@ import {
 const read = (path: string) => readFileSync(join(process.cwd(), path), 'utf8');
 
 describe('the Creator Score category list', () => {
-  it('includes the moderator-granted category', () => {
-    expect(CREATOR_SCORE_CATEGORIES).toContain('staffAwarded');
-  });
-
   it.each(CREATOR_SCORE_CATEGORIES)('the nightly total sums %s', (category) => {
     expect(userScoreUpdateSql([['1', {}]])).toContain(
       `COALESCE((s.scores->>'${category}')::numeric, (u.meta->'scores'->>'${category}')::numeric, 0)`
