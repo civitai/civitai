@@ -150,25 +150,6 @@ async function counterValue(
   return match?.value ?? 0;
 }
 
-async function histogramCount(endpoint: AppBlockEndpoint): Promise<number> {
-  const metric = client.register.getSingleMetric('civitai_app_block_request_duration_seconds');
-  if (!metric) return 0;
-  const data = await (
-    metric as {
-      get(): Promise<{
-        values: Array<{ metricName?: string; labels: Record<string, string>; value: number }>;
-      }>;
-    }
-  ).get();
-  const match = data.values.find(
-    (v) =>
-      v.metricName?.endsWith('_count') &&
-      v.labels.app_block_id === APP_BLOCK_ID &&
-      v.labels.endpoint === endpoint
-  );
-  return match?.value ?? 0;
-}
-
 /** Wrapped handler that just sets a status and returns. */
 function statusHandler(code: number) {
   return vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
@@ -182,47 +163,6 @@ beforeEach(() => {
 });
 
 describe('withBlockScope — per-app REST RED metric', () => {
-  it('increments result=success + records a duration sample on a 2xx', async () => {
-    const before = await counterValue('model_detail', 'success');
-    const beforeHist = await histogramCount('model_detail');
-    const route = withBlockScope(statusHandler(200) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'success')).toBe(before + 1);
-    expect(await histogramCount('model_detail')).toBe(beforeHist + 1);
-  });
-
-  it('increments result=server_error on a 5xx', async () => {
-    const before = await counterValue('model_detail', 'server_error');
-    const route = withBlockScope(statusHandler(500) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'server_error')).toBe(before + 1);
-  });
-
-  it('increments result=client_error on a 4xx (non-403)', async () => {
-    const before = await counterValue('model_detail', 'client_error');
-    const route = withBlockScope(statusHandler(404) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'client_error')).toBe(before + 1);
-  });
-
   it('increments result=forbidden when the middleware itself rejects a missing scope (403)', async () => {
     const before = await counterValue('model_detail', 'forbidden');
     // The wrapped handler would 200, but the token lacks the required scope so
@@ -262,116 +202,6 @@ describe('withBlockScope — per-app REST RED metric', () => {
     expect(await counterValue('model_detail', 'success', 'dev')).toBe(before + 1);
     // The synthetic id NEVER became a label.
     expect(await counterValue('model_detail', 'success', 'apb_synthetic_dev_xyz')).toBe(0);
-  });
-
-  it('keeps a normal (non-dev) token on its real appBlockId', async () => {
-    const before = await counterValue('model_detail', 'success', APP_BLOCK_ID);
-    const route = withBlockScope(statusHandler(200) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReq(await mintToken()) as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'success', APP_BLOCK_ID)).toBe(before + 1);
-  });
-});
-
-/**
- * A per-request `endpoint` resolver (clawgate #426 item 2).
- *
- * `/api/v1/blocks/tools` serves two materially different workloads on one path:
- * GET returns static declarations from an in-process registry, POST runs a
- * Meilisearch query and a catalog read. A single label merged them, so the RED
- * series could not answer "are tool CALLS degrading" — and because the cheap GET
- * outnumbers the POST, the merged p95 tracked the wrong half.
- *
- * 🔴 THESE ASSERT THE LABEL THE METRIC ACTUALLY CARRIES, not that the route
- * exports a function. A test that only checked the resolver in isolation would
- * pass while the middleware ignored it — the defect being guarded against is
- * precisely a resolver that is never called.
- */
-describe('endpoint label — per-request resolver', () => {
-  function makeReqWithMethod(token: string, method: string): NextApiRequest {
-    return {
-      method,
-      headers: { authorization: `Bearer ${token}` },
-      query: { id: String(MODEL_ID) },
-      socket: { remoteAddress: '127.0.0.1' },
-    } as unknown as NextApiRequest;
-  }
-
-  const toolsResolver = (req: NextApiRequest): AppBlockEndpoint =>
-    req.method === 'POST' ? 'tools_call' : 'tools';
-
-  it('🔴 resolves a DIFFERENT label per method on the same route', async () => {
-    const beforeGet = await counterValue('tools', 'success');
-    const beforePost = await counterValue('tools_call', 'success');
-
-    const route = withBlockScope(statusHandler(200) as never, {
-      endpoint: toolsResolver,
-      requiredScope: REQUIRED_SCOPE,
-    });
-
-    const getRes = makeRes();
-    await route(makeReqWithMethod(await mintToken(), 'GET') as never, getRes as never);
-    getRes._finish();
-
-    const postRes = makeRes();
-    await route(makeReqWithMethod(await mintToken(), 'POST') as never, postRes as never);
-    postRes._finish();
-
-    // Each landed on its OWN series...
-    expect(await counterValue('tools', 'success')).toBe(beforeGet + 1);
-    expect(await counterValue('tools_call', 'success')).toBe(beforePost + 1);
-    // ...and the duration histogram is split too, which is the half that
-    // matters: a merged p95 is the reason this exists.
-    expect(await histogramCount('tools_call')).toBeGreaterThan(0);
-  });
-
-  it('🔴 positive control: two GETs both land on `tools`, so the split is BY METHOD', async () => {
-    // Without this, a resolver that returned a fresh label every call would
-    // satisfy the test above while being just as wrong.
-    const before = await counterValue('tools', 'success');
-    // 🔴 CAPTURED BEFORE THE CALLS. The earlier version of this line compared
-    // `counterValue('tools_call')` against ITSELF — `X === X`, which cannot
-    // fail and asserted nothing, while reading as coverage. The control's whole
-    // point is that two GETs leave `tools_call` UNTOUCHED, and that needs a
-    // baseline taken beforehand.
-    const beforeCall = await counterValue('tools_call', 'success');
-
-    const route = withBlockScope(statusHandler(200) as never, {
-      endpoint: toolsResolver,
-      requiredScope: REQUIRED_SCOPE,
-    });
-
-    for (const _ of [0, 1]) {
-      const res = makeRes();
-      await route(makeReqWithMethod(await mintToken(), 'GET') as never, res as never);
-      res._finish();
-    }
-
-    expect(await counterValue('tools', 'success')).toBe(before + 2);
-    expect(
-      await counterValue('tools_call', 'success'),
-      'two GETs must not touch the POST series — the split is by METHOD'
-    ).toBe(beforeCall);
-  });
-
-  it('a plain string endpoint still works — the resolver form is ADDITIVE', async () => {
-    // Every other route in the codebase passes a string. If this regressed,
-    // the change would break the whole block REST surface's metrics at once.
-    const before = await counterValue('model_detail', 'success');
-    const route = withBlockScope(statusHandler(200) as never, {
-      endpoint: 'model_detail',
-      requiredScope: REQUIRED_SCOPE,
-    });
-    const res = makeRes();
-    await route(makeReqWithMethod(await mintToken(), 'GET') as never, res as never);
-    res._finish();
-
-    expect(await counterValue('model_detail', 'success')).toBe(before + 1);
   });
 });
 

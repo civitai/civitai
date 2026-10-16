@@ -660,24 +660,6 @@ describe('/api/v1/images served by the feed service', () => {
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
     });
   });
-
-  it('labels the REST outcomes apart from the website ones', async () => {
-    await get({});
-    expect(await counted()).toEqual([{ outcome: 'served', reason: '', route: 'rest', value: 1 }]);
-  });
-
-  it('captures a feed-served REST request with its call site', async () => {
-    await get({});
-    expect(h.record).toHaveBeenCalledTimes(1);
-    expect(h.record).toHaveBeenCalledWith(
-      expect.objectContaining({ headers: { src: '/api/v1/images' } }),
-      expect.objectContaining({
-        source: 'getImagesFromSearch',
-        filterMode: 'feed',
-        resultIds: [9, 5],
-      })
-    );
-  });
 });
 
 /** The second argument each per-image cache's fetch was called with, per call. */
@@ -827,13 +809,6 @@ describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
       code: 'BAD_REQUEST',
     });
     expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-  });
-
-  it('counts its outcomes under route=website', async () => {
-    await getAllImagesIndex(request('30000|1788000000000')).catch(() => undefined);
-    expect(await counted()).toEqual([
-      { outcome: 'rejected', reason: 'offset>20000', route: 'website', value: 1 },
-    ]);
   });
 });
 

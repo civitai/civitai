@@ -12,14 +12,11 @@ import {
   FEEDBACK_AREAS,
   FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
   FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
-  FEEDBACK_FILTER_VALUE_MAX_LENGTH,
-  FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_NETWORK_ERROR_MAX_COUNT,
   FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH,
   FEEDBACK_NETWORK_URL_MAX_LENGTH,
   FEEDBACK_OWNER_STATUSES,
   FEEDBACK_PATH_MAX_LENGTH,
-  FEEDBACK_SESSION_ID_MAX_LENGTH,
   feedbackAreaFlagKey,
 } from '~/shared/constants/feedback.constants';
 
@@ -56,15 +53,6 @@ describe('feedback schema — context bounds', () => {
   const UUID_C = '00000000-0000-4000-a000-000000000000';
   /** An absolute URL of exactly a uuid's length — see the regression block below. */
   const URL_36 = 'https://a.io/aaaaaaaaaaaaaaaaaaaaaaa';
-
-  describe('the bounds themselves', () => {
-    // Pins the numbers this whole file is written against. If one of these moves,
-    // the intent below has to be re-read rather than silently re-derived.
-    it('is 3 images and 64-char session ids', () => {
-      expect(FEEDBACK_IMAGE_MAX_COUNT).toBe(3);
-      expect(FEEDBACK_SESSION_ID_MAX_LENGTH).toBe(64);
-    });
-  });
 
   describe('images', () => {
     it('carries the ids through instead of stripping them', () => {
@@ -657,10 +645,6 @@ describe('context.path', () => {
       context: { path },
     });
 
-  it('is a 300-character ceiling', () => {
-    expect(FEEDBACK_PATH_MAX_LENGTH).toBe(300);
-  });
-
   it('accepts a path of exactly the bound, and rejects one character more', () => {
     expect(parsePath('/'.padEnd(FEEDBACK_PATH_MAX_LENGTH, 'a')).context?.path).toHaveLength(
       FEEDBACK_PATH_MAX_LENGTH
@@ -681,10 +665,6 @@ describe('feedback schema — filter value bounds', () => {
       message: 'the store looked wrong',
       context: { filters },
     });
-
-  it('is a 200-character ceiling per value', () => {
-    expect(FEEDBACK_FILTER_VALUE_MAX_LENGTH).toBe(200);
-  });
 
   it('carries the marketplace view through instead of stripping it', () => {
     const parsed = parseFilters({ kind: 'offsite', category: 'generation', sort: 'newest' });

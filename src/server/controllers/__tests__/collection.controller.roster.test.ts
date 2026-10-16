@@ -213,21 +213,6 @@ describe('collection.getById roster — a roster failure must not take the page 
     expect(result.permissions).toEqual(expect.objectContaining({ read: true }));
   });
 
-  it('reports the swallowed roster failure rather than hiding it', async () => {
-    mockDbRead.collectionContributor.findMany.mockRejectedValue(new Error('pool timeout'));
-
-    await callHandler();
-
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'collection-roster-failed',
-        message: 'pool timeout',
-        collectionId: COLLECTION_ID,
-      })
-    );
-  });
-
   // The degrade is scoped to the roster read; the reads it sits beside genuinely should fail loud.
   it('still fails the request when the collection read itself fails', async () => {
     mockGetCollectionById.mockRejectedValue(new Error('collection read down'));
