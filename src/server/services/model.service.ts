@@ -388,6 +388,8 @@ export const getModelsRaw = async ({
   user: sessionUser,
   domain,
   ignoreBrowsingAddons,
+  ownerUserId,
+  publicVersionsOnly,
   _forceBaseModelMetrics,
   eventDecorationViewer,
 }: {
@@ -406,6 +408,16 @@ export const getModelsRaw = async ({
    * from parsed query params.
    */
   ignoreBrowsingAddons?: boolean;
+  /**
+   * Restrict to models owned by this user id — the block catalog's `owner=mine`, taken from a
+   * verified token. A sibling of `input` for the same reason as `ignoreBrowsingAddons`, and kept
+   * apart from the `username` filter, which serves profile views: that one throws NotFound for an
+   * unknown name and changes `hidePrivateModels` below. This is a filter only; it grants the owner
+   * nothing a stranger would not see.
+   */
+  ownerUserId?: number;
+  /** Keep only Public-availability versions, whatever `hidePrivateModels` resolves to. */
+  publicVersionsOnly?: boolean;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
@@ -682,6 +694,8 @@ export const getModelsRaw = async ({
 
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
+
+  if (ownerUserId !== undefined) AND.push(Prisma.sql`mm."userId" = ${ownerUserId}`);
 
   if (types?.length) {
     AND.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types)}]::"ModelType"[])`);
@@ -1243,7 +1257,7 @@ export const getModelsRaw = async ({
             );
           }
 
-          if (hidePrivateModels) {
+          if (hidePrivateModels || publicVersionsOnly) {
             modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
           }
 
@@ -4889,6 +4903,8 @@ export async function getModelsWithVersions({
   input,
   user,
   ignoreBrowsingAddons,
+  ownerUserId,
+  publicVersionsOnly,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -4899,12 +4915,18 @@ export async function getModelsWithVersions({
   };
   /** See `getModelsRaw` — by-id lookups opt out of the addon discovery gates. */
   ignoreBrowsingAddons?: boolean;
+  /** See `getModelsRaw`. */
+  ownerUserId?: number;
+  /** See `getModelsRaw`. */
+  publicVersionsOnly?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
     user,
     include: ['details'],
     ignoreBrowsingAddons,
+    ownerUserId,
+    publicVersionsOnly,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
