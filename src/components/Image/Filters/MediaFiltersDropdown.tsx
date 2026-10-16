@@ -171,6 +171,9 @@ export function MediaFiltersDropdown({
     onClear: handleClear,
   });
 
+  // Only the URL-backed callers carry it; the store's filter shape has no jump.
+  const jumpTo = 'jumpTo' in mergedFilters ? mergedFilters.jumpTo : undefined;
+
   // maybe have individual filter length with labels next to them
 
   // Every term is gated on `shows` as well: a count that includes a control the
@@ -201,7 +204,7 @@ export function MediaFiltersDropdown({
     (isModerator && shows('disablePoi') && mergedFilters.disablePoi ? 1 : 0) +
     (isModerator && shows('disableMinor') && mergedFilters.disableMinor ? 1 : 0) +
     (showPG13Toggle && shows('includePG13') && mergedFilters.includePG13 ? 1 : 0) +
-    (showJumpTo && mergedFilters.jumpTo ? 1 : 0);
+    (showJumpTo && jumpTo ? 1 : 0);
 
   const handleChange: Props['onChange'] = (value) => {
     patchPending(value);
@@ -241,7 +244,7 @@ export function MediaFiltersDropdown({
           />
           {showJumpTo && (
             <JumpToMonthFilter
-              value={mergedFilters.jumpTo}
+              value={jumpTo}
               sort={jumpToSort}
               onChange={(jumpTo) =>
                 handleChange(jumpTo ? { jumpTo, period: undefined } : { jumpTo })

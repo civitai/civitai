@@ -65,10 +65,13 @@ export function PostFiltersDropdown({
     onClear: handleClear,
   });
 
+  // Only the URL-backed callers carry it; the store's filter shape has no jump.
+  const jumpTo = 'jumpTo' in mergedFilters ? mergedFilters.jumpTo : undefined;
+
   const filterLength =
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (showScheduled && mergedFilters.scheduled ? 1 : 0) +
-    (showJumpTo && mergedFilters.jumpTo ? 1 : 0);
+    (showJumpTo && jumpTo ? 1 : 0);
 
   const target = (
     <Indicator
@@ -103,7 +106,7 @@ export function PostFiltersDropdown({
         />
         {showJumpTo && (
           <JumpToMonthFilter
-            value={mergedFilters.jumpTo}
+            value={jumpTo}
             sort={jumpToSort}
             onChange={(jumpTo) =>
               patchPending(jumpTo ? { jumpTo, period: MetricTimeframe.AllTime } : { jumpTo })
