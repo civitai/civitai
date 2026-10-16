@@ -107,6 +107,9 @@ const DERIVED_BASES: Record<string, string> = {
   promotionProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
+  storylineMemberProcedure: 'protectedProcedure',
+  storylineReadProcedure: 'publicProcedure',
+  storylineWriteProcedure: 'guardedProcedure',
 };
 
 const stripComments = (s: string) =>

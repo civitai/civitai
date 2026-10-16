@@ -329,11 +329,30 @@ describe('row context', () => {
     expect((await rowFor(2)).tags).toEqual([]);
   });
 
-  it('serves up to four owner-posted published images, in version then post then image order', async () => {
+  it('serves up to four owner-posted images, published posts first, in version then post then image order', async () => {
     const row = await rowFor(1);
     expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-c', 'u-d']);
     expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b' });
     expect((await rowFor(2)).coverImages).toEqual([]);
+  });
+
+  it('serves images from unpublished posts, after any published ones', async () => {
+    await db.exec(`
+      INSERT INTO "ModelVersion" ("id","modelId","index","baseModel","trainedWords","status","createdAt") VALUES
+        (103, 3, 1, 'Illustrious', '{}', 'Unpublished', '2026-05-01'),
+        (104, 4, 1, 'Illustrious', '{}', 'Unpublished', '2026-05-01'),
+        (105, 4, 2, 'Illustrious', '{}', 'Published', '2026-05-02');
+      INSERT INTO "Post" ("id","userId","modelVersionId","publishedAt") VALUES
+        (204, 12, 103, NULL), (205, 13, 104, NULL), (206, 13, 105, '2026-05-03');
+      INSERT INTO "Image" ("id","url","nsfwLevel","postId","index","type") VALUES
+        (9, 'u-unpub', 1, 204, 0, 'image'), (10, 'u-early-unpub', 1, 205, 0, 'image'),
+        (11, 'u-late-pub', 1, 206, 0, 'image');
+    `);
+    expect((await rowFor(3)).coverImages).toEqual([{ id: 9, url: 'u-unpub' }]);
+    expect((await rowFor(4)).coverImages.map((i) => i.url)).toEqual([
+      'u-late-pub',
+      'u-early-unpub',
+    ]);
   });
 
   it('names the latest moderator to set minor, for manual flags only', async () => {

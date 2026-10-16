@@ -51,6 +51,9 @@ export const appRouter = router({
   creatorServiceDeal: lazy(() =>
     import('./creator-service-deal.router').then((m) => m.creatorServiceDealRouter)
   ),
+  creatorServiceDealFile: lazy(() =>
+    import('./creator-service-deal-file.router').then((m) => m.creatorServiceDealFileRouter)
+  ),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
@@ -60,6 +63,7 @@ export const appRouter = router({
   notification: lazy(() => import('./notification.router').then((m) => m.notificationRouter)),
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
+  storyline: lazy(() => import('./storyline.router').then((m) => m.storylineRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   postPreset: lazy(() => import('./post-preset.router').then((m) => m.postPresetRouter)),
   promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),

@@ -2573,11 +2573,23 @@ export const REDIS_SYS_KEYS = {
      */
     WEB_SEARCH: 'system:text-scan:web-search',
     /*
+      Use: per-label switch for what a poi/minor detection does once the scan can act. A field set to
+        "review" holds the detection for a moderator; a missing field is auto (flag immediately).
+      Structure: hset, field = label ("minor" | "poi"), value = "review" (auto = field deleted)
+     */
+    LABEL_MODES: 'system:text-scan:label-modes',
+    /*
       Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
         Clavata job skips them only while the `text-scan` Flipt kill switch is on.
       Structure: set of Clavata keys
      */
     CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
+    /*
+      Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
+        (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
+      Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
+     */
+    REDETECTION_LOCK: 'system:text-scan:redetection-lock',
   },
   CONTENT: {
     /*
@@ -2730,6 +2742,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // suggestions — omitting it let one prompt's entry be reused across limits.
     JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
+    // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
+    // download routes check. See download-blocklist.service.ts.
+    DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -2776,7 +2791,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
-      MODELS: 'packed:caches:mod-rules:models',
+      MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',
     },
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
@@ -2816,6 +2831,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only (bid submission re-validates the true minimum server-side). See
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
+    // Readers' latest choice per way on from one storyline chapter: `<prefix>:<chapterId>`.
+    // Cleared when a reader chooses at that chapter. See storyline.service.
+    STORYLINE_FORK_COUNTS: 'packed:caches:storyline-fork-counts',
     // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
     // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
     // `Image WHERE url = $1` single-row read is the highest-volume DB query in the

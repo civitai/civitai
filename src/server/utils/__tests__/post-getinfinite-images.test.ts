@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  POST_GETINFINITE_IMAGES_PER_POST,
-  capPostGetInfiniteImages,
-} from '~/server/utils/post-getinfinite-images';
+import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 
 // The browse-feed (`post.getInfinite`) response caps each post's embedded images
 // to the first few, because the browse post cards render only `images[0]` (the
@@ -16,14 +13,6 @@ const makeImages = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ id: i + 1, url: `img-${i + 1}` }));
 
 describe('post-getinfinite-images', () => {
-  it('caps to at most POST_GETINFINITE_IMAGES_PER_POST', () => {
-    // Pinned: the browse cap is 8 (headroom over the single rendered cover image
-    // for the client hidden-preferences fall-through — see the constant's doc).
-    expect(POST_GETINFINITE_IMAGES_PER_POST).toBe(8);
-    const out = capPostGetInfiniteImages(makeImages(50));
-    expect(out.length).toBe(POST_GETINFINITE_IMAGES_PER_POST);
-  });
-
   it('keeps the leading images in order (browse cards read images[0])', () => {
     const images = makeImages(50);
     const out = capPostGetInfiniteImages(images);

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -20,6 +21,8 @@ const {
   parseTextScanEmEntityType,
   getTextScanWebSearchMode,
   readTextScanWebSearchRollouts,
+  getTextScanLabelMode,
+  readTextScanLabelModes,
 } = await import('~/server/services/text-scan/mode');
 const { isTextScanEntityType } = await import('~/server/services/text-scan/profiles');
 
@@ -124,13 +127,14 @@ describe('rollout percentages', () => {
 });
 
 describe('isTextScanEntityType', () => {
-  it('covers 14 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(14));
+  it('covers 16 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(16));
 
   it.each([
     ['Post', true],
     ['UserProfile', true],
     ['Collection', true],
     ['Crucible', true],
+    ['Storyline', true],
     ['Tag', false],
     ['Post:shadow', false],
     ['constructor', false],
@@ -225,5 +229,70 @@ describe('web-search row keys', () => {
       shadow: true,
       variant: 'web-search',
     });
+  });
+});
+
+describe('label modes', () => {
+  beforeEach(() => {
+    redisMock.sysRedis.hGetAll.mockReset();
+    // Also clears the failed-read log throttle, so the tests do not depend on their order.
+    resetTextScanRolloutCache();
+    loggingMock.logToAxiom.mockReset().mockResolvedValue(undefined as never);
+  });
+
+  it('stays auto when the failed-read log itself throws', async () => {
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+    loggingMock.logToAxiom.mockImplementation(() => {
+      throw new Error('logger broke');
+    });
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+  });
+
+  it('reads its own hash and keeps only known labels with a valid value', async () => {
+    hash({ minor: 'review', poi: 'bogus', nsfw: 'review' });
+    expect(await readTextScanLabelModes()).toEqual({ minor: 'review' });
+    expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledWith('system:text-scan:label-modes');
+  });
+
+  it('is auto for a missing field, an empty hash and an unreadable hash', async () => {
+    hash({});
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+  });
+
+  it('logs a failed read, once per window rather than once per scan', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
+      redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+      await getTextScanLabelMode('minor');
+      await getTextScanLabelMode('poi');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'text-scan',
+          type: 'error',
+          message: 'label mode read failed, falling back to auto',
+        })
+      );
+      vi.setSystemTime(new Date('2030-01-01T00:10:00Z'));
+      await getTextScanLabelMode('minor');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('serves review from the cache until it is reset', async () => {
+    hash({ minor: 'review' });
+    expect(await getTextScanLabelMode('minor')).toBe('review');
+    expect(await getTextScanLabelMode('poi')).toBe('auto');
+    expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledTimes(1);
+    hash({});
+    expect(await getTextScanLabelMode('minor')).toBe('review');
+    resetTextScanRolloutCache();
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
   });
 });

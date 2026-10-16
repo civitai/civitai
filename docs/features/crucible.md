@@ -25,21 +25,21 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 
 ## Setup options
 
-| Option | What it does | Cost |
-|---|---|---|
-| Duration | 24 hours, 3 days or 7 days | Free, Free, 1,000 Buzz |
-| Start date | Schedule the start instead of opening immediately | Free |
-| Content type | Image or video entries | Free |
-| Content rating | Which content levels entries may have | Free |
-| Entry fee | Paid by each entry; feeds the prize pool | Free |
-| Entry limits | Entries per user, and an optional cap on total entries | Free |
-| Free entries | The first N entries per user cost nothing | Free |
-| Seeded prize pool | Buzz the creator adds to the pool up front | The seeded amount |
-| Prize distribution | Custom split across positions (default 50 / 30 / 20) | 500 Buzz |
-| Resource requirements | Entries must be made with one of up to 10 chosen models. If a chosen model is limited to PG and PG-13, so are the crucible and every entry | 500 Buzz |
-| Base models | Entries must be made with a checkpoint of one of up to 10 base models; applies on top of any resource requirement | Free |
-| Minimum view time *(video only)* | Judges must watch this long of both clips before voting | Free |
-| Maximum clip length *(video only)* | Longer clips are refused at submission | Free |
+| Option                             | What it does                                                                                                                               | Cost                   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
+| Duration                           | 24 hours, 3 days or 7 days                                                                                                                 | Free, Free, 1,000 Buzz |
+| Start date                         | Schedule the start instead of opening immediately                                                                                          | Free                   |
+| Content type                       | Image or video entries                                                                                                                     | Free                   |
+| Content rating                     | Which content levels entries may have                                                                                                      | Free                   |
+| Entry fee                          | Paid by each entry; feeds the prize pool                                                                                                   | Free                   |
+| Entry limits                       | Entries per user, and an optional cap on total entries                                                                                     | Free                   |
+| Free entries                       | The first N entries per user cost nothing                                                                                                  | Free                   |
+| Seeded prize pool                  | Buzz the creator adds to the pool up front                                                                                                 | The seeded amount      |
+| Prize distribution                 | Custom split across positions (default 50 / 30 / 20)                                                                                       | 500 Buzz               |
+| Resource requirements              | Entries must be made with one of up to 10 chosen models. If a chosen model is limited to PG and PG-13, so are the crucible and every entry | 500 Buzz               |
+| Base models                        | Entries must be made with a checkpoint of one of up to 10 base models; applies on top of any resource requirement                          | Free                   |
+| Minimum view time _(video only)_   | Judges must watch this long of both clips before voting                                                                                    | Free                   |
+| Maximum clip length _(video only)_ | Longer clips are refused at submission                                                                                                     | Free                   |
 
 Settings can change only before the crucible starts; after that only the name, description and images can, until it ends.
 
@@ -51,7 +51,7 @@ At the end, entries need a minimum number of votes to place; ties go to the earl
 
 The discovery page's Prize Pool sort uses the same pool. Whenever upcoming crucibles are listed alongside running ones, every running crucible comes first, whatever the sort.
 
-Prizes are plain Buzz. A winner claims theirs from the link in their results notification (or the banner on the crucible page): on civitai.com it is paid in green, and on civitai.red the winner picks green or yellow. A prize nobody claims is paid in green after 30 days. A banned winner's prize is held, neither claimable nor auto-paid, until the ban is lifted. Claiming is shared with challenge winner prizes; see `src/server/services/prize.service.ts`.
+Prizes are plain Buzz. A winner claims theirs from the link in their results notification (or the banner on the crucible page): on civitai.com it is paid in green, and on civitai.red the winner picks green or yellow. A prize nobody claims is paid in green after 30 days. A banned winner's prize is held, neither claimable nor auto-paid, until the ban is lifted. Claiming is shared with challenge winner prizes; see `src/server/services/prize.service.ts`. A place whose share rounds to 0 Buzz is not a prize: it is not listed on the crucible page, not awarded at finalize, and not counted in Crucibles Won.
 
 ## Your crucible stats
 

@@ -12,6 +12,13 @@ import { getRatingReviewCounts } from './rating-reviews.service';
 import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
+import { countStrikeReview } from './strike-review.service';
+import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
+import {
+  getMinorFlagAppealGroups,
+  getMinorQueueCounts,
+  getRedetectedCount,
+} from './minor-hash.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -27,7 +34,6 @@ async function fetchCounts(): Promise<SidebarCounts> {
     imageTags,
     imageRatings,
     appeals,
-    reported,
     articles,
     ratingReviews,
     reports,
@@ -36,6 +42,11 @@ async function fetchCounts(): Promise<SidebarCounts> {
     feedbackNew,
     feedbackAppsPlatformNew,
     removedAppeals,
+    reRemovals,
+    minorQueue,
+    modelFlagAppealGroups,
+    heldDetections,
+    strikeReview,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -55,13 +66,6 @@ async function fetchCounts(): Promise<SidebarCounts> {
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .where('needsReview', '=', 'appeal')
       .executeTakeFirst(),
-    // Count per image, not per report. Rides Report_pending_id_idx (~270ms, streamed off render).
-    dbRead
-      .selectFrom('Report as r')
-      .innerJoin('ImageReport as ir', 'ir.reportId', 'r.id')
-      .select((eb) => eb.fn.count('ir.imageId').distinct().as('count'))
-      .where('r.status', '=', 'Pending')
-      .executeTakeFirst(),
     countModeratorArticles(),
     getRatingReviewCounts(),
     getReportCounts(),
@@ -75,6 +79,17 @@ async function fetchCounts(): Promise<SidebarCounts> {
     countNewFeedback(),
     countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
     countRemovedAppeals(),
+    countPendingRemovalConfirmations(),
+    // Bounded tighter than the default: every verdict busts this cache, so a cold ~10s fill (see
+    // `getMinorQueueCounts`) is routine. The race does not cancel it, so the fill still lands in its
+    // own cache and the badge returns on a later refresh.
+    bounded(getMinorQueueCounts, 1_000),
+    // The page's own facet query, so the badge always equals the queue's "All" total.
+    getMinorFlagAppealGroups({}),
+    // Index-served (see `redetectedIndexPredicate`), but a failure must not blank the other badges.
+    bounded(getRedetectedCount),
+    // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
+    bounded(countStrikeReview),
   ]);
   return {
     ...modes,
@@ -82,12 +97,16 @@ async function fetchCounts(): Promise<SidebarCounts> {
     imageTags: Number(imageTags?.count ?? 0),
     imageRatings,
     appeals: Number(appeals?.count ?? 0),
-    reported: Number(reported?.count ?? 0),
     articles,
     ratingReviews: ratingReviews.Pending,
     feedbackNew,
     feedbackAppsPlatformNew,
     removedAppeals,
+    reRemovals,
+    modelFlagAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
+    ...(heldDetections != null ? { heldDetections } : {}),
+    ...(strikeReview != null ? { strikeReview } : {}),
+    ...(minorQueue != null ? { minorHashMatches: minorQueue.pending + minorQueue.auto } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };

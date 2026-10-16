@@ -1,6 +1,8 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { createSessionClient } from '@civitai/auth';
 import { dbRead, dbWrite } from './db';
+import { logAxiomError, logToAxiom } from './axiom';
 import {
   BLOCK_MAJORITY,
   DAY_MS,
@@ -236,31 +238,128 @@ export async function getActionHealth(db: Kysely<DB> = dbRead) {
   };
 }
 
-/** False when the user does not exist. */
-export async function setQuota({
-  userId,
-  dailyVotes,
-  active,
-  updatedBy,
-}: {
-  userId: number;
-  dailyVotes: number;
-  active: boolean;
-  updatedBy: number;
-}): Promise<boolean> {
-  const user = await dbWrite
-    .selectFrom('User')
-    .select('id')
-    .where('id', '=', userId)
+/** The role that opens /images/scan-labels. Being on the roster is what grants it. */
+export const SCAN_LABEL_ROLE = 'moderator:scan-labels';
+const ROSTER_NOTE = 'Scan Labels roster';
+
+export type RosterDeps = {
+  /** Busts the member's cached session so the role change reaches their next request. */
+  invalidateSession: (userId: number) => Promise<void>;
+};
+
+let sessions: ReturnType<typeof createSessionClient> | undefined;
+const defaultDeps: RosterDeps = {
+  invalidateSession: (userId) => (sessions ??= createSessionClient()).invalidate(userId),
+};
+
+export type RosterResult =
+  | { ok: true; username: string | null; sessionBusted: boolean }
+  | { ok: false; reason: 'no-user' | 'not-moderator' | 'not-on-roster' | 'no-role' };
+
+/**
+ * Puts a user on the roster (or takes them off) and grants or revokes `SCAN_LABEL_ROLE` in the same
+ * transaction. The app's front gate admits only `User.isModerator`, so adding anyone else would grant a
+ * role that opens nothing.
+ */
+export async function setQuota(
+  {
+    userId,
+    dailyVotes,
+    active,
+    updatedBy,
+  }: { userId: number; dailyVotes: number; active: boolean; updatedBy: number },
+  deps: RosterDeps = defaultDeps
+): Promise<RosterResult> {
+  const result = await dbWrite.transaction().execute(async (trx): Promise<RosterResult> => {
+    const user = await trx
+      .selectFrom('User')
+      .select(['id', 'username', 'isModerator'])
+      .where('id', '=', userId)
+      .executeTakeFirst();
+    if (!user) return { ok: false, reason: 'no-user' };
+    if (active && !user.isModerator) return { ok: false, reason: 'not-moderator' };
+    // `UserRole.role` references `Role`, which the auth hub owns; without the row the grant would throw.
+    if (active) {
+      const role = await trx
+        .selectFrom('Role')
+        .select('id')
+        .where('id', '=', SCAN_LABEL_ROLE)
+        .executeTakeFirst();
+      if (!role) return { ok: false, reason: 'no-role' };
+    }
+    const now = new Date();
+    await trx
+      .insertInto('ScanLabelQuota')
+      .values({ userId, dailyVotes, active, updatedBy, updatedAt: now })
+      .onConflict((oc) =>
+        oc.column('userId').doUpdateSet({ dailyVotes, active, updatedBy, updatedAt: now })
+      )
+      .execute();
+    await syncRole(trx, userId, active, updatedBy);
+    return { ok: true, username: user.username, sessionBusted: false };
+  });
+  return result.ok ? { ...result, sessionBusted: await bustSession(userId, deps) } : result;
+}
+
+/** Takes a user off the roster, keeping their quota for when they return. */
+export async function removeFromRoster(
+  { userId, updatedBy }: { userId: number; updatedBy: number },
+  deps: RosterDeps = defaultDeps
+): Promise<RosterResult> {
+  const result = await dbWrite.transaction().execute(async (trx): Promise<RosterResult> => {
+    const row = await trx
+      .updateTable('ScanLabelQuota')
+      .set({ active: false, updatedBy, updatedAt: new Date() })
+      .where('userId', '=', userId)
+      .returning('userId')
+      .executeTakeFirst();
+    if (!row) return { ok: false, reason: 'not-on-roster' };
+    await syncRole(trx, userId, false, updatedBy);
+    const user = await trx
+      .selectFrom('User')
+      .select('username')
+      .where('id', '=', userId)
+      .executeTakeFirst();
+    return { ok: true, username: user?.username ?? null, sessionBusted: false };
+  });
+  return result.ok ? { ...result, sessionBusted: await bustSession(userId, deps) } : result;
+}
+
+async function syncRole(trx: Kysely<DB>, userId: number, active: boolean, actor: number) {
+  if (active) {
+    await trx
+      .insertInto('UserRole')
+      .values({ userId, role: SCAN_LABEL_ROLE, note: ROSTER_NOTE, addedById: actor })
+      .onConflict((oc) => oc.columns(['userId', 'role']).doNothing())
+      .execute();
+    return;
+  }
+  // The role exists only for this page, so it goes even when someone granted it from the auth hub.
+  const removed = await trx
+    .deleteFrom('UserRole')
+    .where('userId', '=', userId)
+    .where('role', '=', SCAN_LABEL_ROLE)
+    .returning(['note', 'addedById'])
     .executeTakeFirst();
-  if (!user) return false;
-  const now = new Date();
-  const res = await dbWrite
-    .insertInto('ScanLabelQuota')
-    .values({ userId, dailyVotes, active, updatedBy, updatedAt: now })
-    .onConflict((oc) =>
-      oc.column('userId').doUpdateSet({ dailyVotes, active, updatedBy, updatedAt: now })
-    )
-    .executeTakeFirst();
-  return !!res.numInsertedOrUpdatedRows;
+  if (removed && removed.note !== ROSTER_NOTE)
+    void logToAxiom({
+      type: 'info',
+      event: 'scan label role revoked from a grant made elsewhere',
+      userId,
+      actor,
+      note: removed.note,
+      addedById: removed.addedById,
+    }).catch(() => {});
+}
+
+// After commit, never inside the transaction. A failed bust leaves the write in place: the change then
+// lands when the cached session expires.
+async function bustSession(userId: number, deps: RosterDeps): Promise<boolean> {
+  try {
+    await deps.invalidateSession(userId);
+    return true;
+  } catch (error) {
+    void logAxiomError(error, { event: 'scan label roster session bust failed', userId });
+    return false;
+  }
 }

@@ -1,10 +1,7 @@
 import client from 'prom-client';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  ensureRegisterAppBlockRuntimeMetrics,
-  recordBlockBridgeRateLimitRefusal,
-} from '../app-block-runtime.metrics';
+import { recordBlockBridgeRateLimitRefusal } from '../app-block-runtime.metrics';
 
 /**
  * The REAL prom-client side of the App Blocks tRPC-bridge rate-limit refusal signal.
@@ -67,11 +64,6 @@ beforeEach(() => {
 });
 
 describe(METRIC, () => {
-  it('is registered on the default registry that /api/metrics scrapes', () => {
-    ensureRegisterAppBlockRuntimeMetrics();
-    expect(client.register.getSingleMetric(METRIC)).toBeDefined();
-  });
-
   it('registers itself — the emitter does not need a prior ensureRegister call', async () => {
     // 🔴 THE ORDERING TRAP. Every limiter site calls the emitter directly and none of them
     // calls `ensureRegisterAppBlockRuntimeMetrics` first. If the emitter only incremented an

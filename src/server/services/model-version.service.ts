@@ -14,6 +14,7 @@ import type { LicensingSourceRejection } from '~/server/schema/model-version.sch
 import { clickhouse } from '~/server/clickhouse/client';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
+  allowsDifferentLicenseOnMerges,
   CacheTTL,
   constants,
   isNonCommercialBaseModel,
@@ -40,6 +41,11 @@ import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  assertBaseModelAttestations,
+  assertNoUnattestedScopeEntry,
+  resolveBaseModelAttestation,
+} from '~/server/services/base-model-attestation.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -116,10 +122,7 @@ import {
 } from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import {
-  scanEntitiesInBackground,
-  scanEntityInBackground,
-} from '~/server/services/text-scan/submit';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -532,6 +535,7 @@ export const upsertModelVersion = async ({
   paidAccess,
   donationGoal,
   rightsAffirmed,
+  baseModelAttested,
   meta: metaInput,
   tracker,
   actorUserId,
@@ -588,7 +592,7 @@ export const upsertModelVersion = async ({
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true },
+    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
@@ -722,6 +726,23 @@ export const upsertModelVersion = async ({
   });
 
   if (createsNewVersion) {
+    const baseModelAttestation = resolveBaseModelAttestation({
+      actorId,
+      ownerId: model.userId,
+      attested: baseModelAttested,
+      baseModel: data.baseModel,
+      modelType: model.type,
+    });
+    assertNoUnattestedScopeEntry({
+      after: {
+        baseModel: data.baseModel,
+        modelType: model.type,
+        status: data.status,
+        meta: { baseModelAttestation },
+      },
+      ownerId: model.userId,
+    });
+
     const existingVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: {
@@ -747,8 +768,12 @@ export const upsertModelVersion = async ({
           data: {
             ...data,
             meta:
-              ((rightsAffirmation
-                ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
+              ((rightsAffirmation || baseModelAttestation
+                ? {
+                    ...((metaInput as Record<string, unknown> | null) ?? {}),
+                    ...(rightsAffirmation ? { rightsAffirmation } : {}),
+                    ...(baseModelAttestation ? { baseModelAttestation } : {}),
+                  }
                 : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
             availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
               (s) => s === data?.status
@@ -810,7 +835,7 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    if (!isModerator) scanEntityInBackground({ entityType: 'Model', entityId: version.modelId });
+    if (!isModerator) scanModelAndRules(version.modelId);
     return version;
   } else {
     const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
@@ -836,6 +861,7 @@ export const upsertModelVersion = async ({
             id: true,
             availability: true,
             meta: true,
+            type: true,
           },
         },
         monetization: {
@@ -901,12 +927,37 @@ export const upsertModelVersion = async ({
       assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
     }
 
+    const baseModel = data.baseModel ?? existingVersion.baseModel;
+    const baseModelAttestation = resolveBaseModelAttestation({
+      actorId,
+      ownerId: model.userId,
+      attested: baseModelAttested,
+      baseModel,
+      modelType: model.type,
+      existingMeta: existingVersion.meta,
+    });
+    assertNoUnattestedScopeEntry({
+      before: {
+        baseModel: existingVersion.baseModel,
+        modelType: existingVersion.model.type,
+        publishedAt: existingVersion.publishedAt,
+      },
+      after: {
+        baseModel,
+        modelType: model.type,
+        status: data.status ?? existingVersion.status,
+        meta: baseModelAttestation ? { baseModelAttestation } : existingVersion.meta,
+      },
+      ownerId: model.userId,
+    });
+
     const mergedMeta =
-      metaInput || rightsAffirmation
+      metaInput || rightsAffirmation || baseModelAttestation
         ? {
             ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
             ...((metaInput as Record<string, unknown> | null) ?? {}),
             ...(rightsAffirmation ? { rightsAffirmation } : {}),
+            ...(baseModelAttestation ? { baseModelAttestation } : {}),
           }
         : undefined;
 
@@ -1063,7 +1114,10 @@ export const upsertModelVersion = async ({
       !isModerator &&
       (data.name !== undefined || data.description !== undefined || data.trainedWords !== undefined)
     )
-      scanEntityInBackground({ entityType: 'Model', entityId: version.modelId });
+      scanModelAndRules(version.modelId);
+    // The publish handler reads this meta back and rewrites it; a replica read missing the new
+    // attestation would refuse the publish, or erase the record.
+    if (baseModelAttestation) await preventReplicationLag('modelVersion', version.id);
     return version;
   }
 };
@@ -1133,7 +1187,7 @@ export async function applyModelVersionContentChange({
   // pre-rewrite text until they are dropped.
   await bustModelLevelVersionCaches(modelId);
   // With a context, the caller is upsertModelVersion, which starts its own scan.
-  if (!context) scanEntityInBackground({ entityType: 'Model', entityId: modelId });
+  if (!context) scanModelAndRules(modelId);
 
   return true;
 }
@@ -1513,12 +1567,15 @@ export const updateModelVersionById = async ({
 
 export const publishModelVersionsWithEarlyAccess = async ({
   modelVersionIds,
+  modelId,
   publishedAt,
   meta,
   tx,
   continueOnError = false,
 }: {
   modelVersionIds: number[];
+  /** Restricts the publish to versions of this model. */
+  modelId?: number;
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
@@ -1528,7 +1585,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
   const dbClient = tx ?? dbWrite;
 
   const versions = await dbClient.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
+    where: { id: { in: modelVersionIds }, ...(modelId !== undefined ? { modelId } : {}) },
     select: {
       id: true,
       name: true,
@@ -1677,9 +1734,12 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       baseModel: true,
+      publishedAt: true,
+      meta: true,
       model: {
         select: {
           userId: true,
+          type: true,
           name: true,
           availability: true,
           publishedAt: true,
@@ -1716,6 +1776,11 @@ export const publishModelVersionById = async ({
       'This model version cannot be published due to moderation restrictions.'
     );
   }
+
+  // `meta` is what the write below stores, so it is the record that has to carry the attestation.
+  assertBaseModelAttestations({
+    versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
+  });
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.
@@ -2336,9 +2401,9 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (options.allowDifferentLicense) {
+  if (allowsDifferentLicenseOnMerges(options)) {
     license += `
-<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.</b>
+<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.</b>
 `;
   }
 
@@ -3573,7 +3638,7 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
-  scanEntityInBackground({ entityType: 'Model', entityId: modelId });
+  scanModelAndRules(modelId);
 
   // Post-commit S3 cleanup for any stragglers the move missed.
   if (sourceFileUrls.length > 0) {

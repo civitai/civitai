@@ -28,6 +28,8 @@ import {
 import {
   HIDE_FROM_REACTION_LISTS_DESCRIPTION,
   HIDE_FROM_REACTION_LISTS_LABEL,
+  SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION,
+  SHOW_PRE_LAUNCH_REACTIONS_LABEL,
 } from '~/shared/constants/reaction-privacy.constants';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -263,19 +265,30 @@ export function StickerMotionToggle() {
 }
 
 export function HideFromReactionListsToggle() {
-  const { hideFromReactionLists } = useCurrentUserSettings();
+  const { hideFromReactionLists, showPreLaunchReactions } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
 
   return (
-    <Switch
-      name="hideFromReactionLists"
-      label={HIDE_FROM_REACTION_LISTS_LABEL}
-      description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
-      checked={hideFromReactionLists ?? false}
-      disabled={isPending}
-      onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
-      styles={{ track: { flex: '0 0 1em' } }}
-    />
+    <Stack id="hide-reaction-lists" gap="sm">
+      <Switch
+        name="hideFromReactionLists"
+        label={HIDE_FROM_REACTION_LISTS_LABEL}
+        description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
+        checked={hideFromReactionLists ?? false}
+        disabled={isPending}
+        onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+      <Switch
+        name="showPreLaunchReactions"
+        label={SHOW_PRE_LAUNCH_REACTIONS_LABEL}
+        description={SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION}
+        checked={showPreLaunchReactions ?? false}
+        disabled={isPending || !!hideFromReactionLists}
+        onChange={(e) => mutate({ showPreLaunchReactions: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+    </Stack>
   );
 }
 

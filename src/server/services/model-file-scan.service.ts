@@ -16,6 +16,7 @@ import {
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
+import { checkDuplicateHashOnScan } from '~/server/services/duplicate-model-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -141,7 +142,13 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
       headerData: true,
-      modelVersion: { select: { modelId: true, model: { select: { userId: true } } } },
+      sizeKB: true,
+      modelVersion: {
+        select: {
+          modelId: true,
+          model: { select: { userId: true, status: true, meta: true } },
+        },
+      },
     },
   });
   if (!file) {
@@ -171,8 +178,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     return;
   }
 
-  // Capture pre-existing AutoV2 BEFORE any hash deletion. Used for hash-fix
-  // notification (D3). SHA256 capture goes here too if we ever re-enable D2.
+  // Capture pre-existing hashes BEFORE any hash deletion: AutoV2 for the hash-fix
+  // notification (D3), SHA256 so the duplicate-hash check skips unchanged rescans.
   const existingHashes = outcome.hashes
     ? await dbWrite.modelFileHash.findMany({
         where: { fileId, type: { in: [ModelHashType.SHA256, ModelHashType.AutoV2] } },
@@ -268,6 +275,31 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         userId: scannedUserId,
         sha256: scannedSha256,
       });
+    }
+
+    const scannedModel = file.modelVersion?.model;
+    if (scannedSha256 && scannedModelId && scannedModel) {
+      await checkDuplicateHashOnScan({
+        fileId,
+        fileType: file.type,
+        sizeKB: file.sizeKB,
+        sha256: scannedSha256,
+        previousSha256: existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash,
+        modelId: scannedModelId,
+        ownerId: scannedModel.userId,
+        modelStatus: scannedModel.status,
+        modelMeta: scannedModel.meta as ModelMeta | null,
+      }).catch((e) =>
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'duplicate-model-hash',
+            message: (e as Error).message,
+            fileId,
+          },
+          'webhooks'
+        ).catch(() => null)
+      );
     }
   }
 

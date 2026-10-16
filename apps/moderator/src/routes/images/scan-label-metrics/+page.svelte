@@ -20,7 +20,9 @@
   const quotaError = $derived(
     form && 'error' in form && (form.scope === 'quota' || form.scope === 'denied') ? form.error ?? null : null
   );
-  const quotaSaved = $derived(form && 'saved' in form ? form.saved ?? null : null);
+  const quotaNotice = $derived(
+    form && 'notice' in form && typeof form.notice === 'string' ? form.notice : null
+  );
 </script>
 
 <div class="flex flex-col gap-4">
@@ -60,7 +62,7 @@
     rows={data.quota}
     canEdit={!!data.grants['scan-label.quota.edit']}
     error={quotaError}
-    saved={quotaSaved}
+    notice={quotaNotice}
   />
 
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">

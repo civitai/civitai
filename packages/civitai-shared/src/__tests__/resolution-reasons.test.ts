@@ -23,7 +23,7 @@ describe('RESOLUTION_REASONS', () => {
   });
 
   // This is the list moderation agreed to. Changing it is a moderation decision, not a code cleanup:
-  // there is no remix/template/enhancer reason because moderators cannot see a prompt's origin, no
+  // there is no template/enhancer reason, no
   // "nothing new" reject reason because moderation found it meaningless, and minor-age misreads are
   // split from keyword hits because they are most of the overturns.
   it('offers exactly the reasons moderation agreed to', () => {
@@ -35,6 +35,7 @@ describe('RESOLUTION_REASONS', () => {
     );
     expect(offered).toEqual({
       'restriction/Overturned': [
+        'remix-source',
         'minor-term-misread',
         'word-match',
         'art-context',

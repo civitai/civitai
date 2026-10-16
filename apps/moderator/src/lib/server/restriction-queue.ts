@@ -7,14 +7,53 @@ import type { RestrictionType } from '$lib/restriction-types';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
+import { planRemixSources } from '$lib/restrictions/origin';
 import {
   getGenerationRestrictions,
+  getRemixSources,
+  ORIGIN_FILTERS,
+  SORT_ORDERS,
+  getRestrictionFacets,
   saveSuspiciousMatches,
+  type RemixSource,
   unwiredRulingReason,
   type RestrictionRow,
 } from '$lib/server/user-restriction.service';
 
 const PAGE_SIZE = 20;
+const TRIAGE_PAGE_SIZE = 50;
+
+type QueueConfig = {
+  types: readonly [RestrictionType, ...RestrictionType[]];
+  fallback: RestrictionType;
+};
+
+/**
+ * The query both queue reads share. `.catch()` on every field sends a stale or hostile URL back to the
+ * default view instead of a 500.
+ *
+ * A bare number in `q` is a user id, not a username: usernames are free text and an account named
+ * "12345" would otherwise be the only way to reach user 12345.
+ */
+function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, extra: S) {
+  const base = z.object({
+    type: z.enum(queue.types).catch(queue.fallback),
+    status: z.enum(['Pending', 'Upheld', 'Overturned', 'any']).catch('Pending'),
+    q: z.string().trim().max(100).catch(''),
+    page: z.coerce.number().int().min(1).max(500).catch(1),
+  });
+  const parsed = parseQuery(url, base.extend(extra)) as z.output<typeof base> &
+    z.output<z.ZodObject<S>>;
+  const asId = Number(parsed.q);
+  const isUserId = parsed.q !== '' && Number.isInteger(asId) && asId > 0;
+  return {
+    ...parsed,
+    username: !isUserId && parsed.q ? parsed.q : undefined,
+    userId: isUserId ? asId : undefined,
+  };
+}
+
+const selectedSchema = z.coerce.number().int().positive().optional().catch(undefined);
 
 /**
  * The list read shared by every restriction queue. Defaults to Pending, as the main app's page did:
@@ -26,31 +65,18 @@ const PAGE_SIZE = 20;
  * ruling copy differs per type — so each queue names the types it offers and `.catch()` sends an
  * unknown or absent value back to its default.
  */
-export async function restrictionQueueLoad(
-  url: URL,
-  queue: { types: readonly [RestrictionType, ...RestrictionType[]]; fallback: RestrictionType }
-) {
-  const querySchema = z.object({
-    type: z.enum(queue.types).catch(queue.fallback),
-    status: z.enum(['Pending', 'Upheld', 'Overturned', 'any']).catch('Pending'),
-    q: z.string().trim().max(100).catch(''),
-    page: z.coerce.number().int().min(1).max(500).catch(1),
-    selected: z.coerce.number().int().positive().optional().catch(undefined),
+export async function restrictionQueueLoad(url: URL, queue: QueueConfig) {
+  const { type, status, q, page, selected, username, userId } = parseQueueQuery(url, queue, {
+    selected: selectedSchema,
   });
-  const { type, status, q, page, selected } = parseQuery(url, querySchema);
-
-  // A bare number is a user id, not a username: usernames are free text and an account named "12345"
-  // would otherwise be the only way to reach user 12345.
-  const asId = Number(q);
-  const isUserId = q !== '' && Number.isInteger(asId) && asId > 0;
 
   const { items, totalCount } = await getGenerationRestrictions({
     page,
     limit: PAGE_SIZE,
     type,
     status: status === 'any' ? undefined : status,
-    username: !isUserId && q ? q : undefined,
-    userId: isUserId ? asId : undefined,
+    username,
+    userId,
   });
 
   const current: RestrictionRow | null = items.find((i) => i.id === selected) ?? null;
@@ -63,6 +89,75 @@ export async function restrictionQueueLoad(
     pageCount: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
     type,
     status,
+    q,
+    wide: true,
+  };
+}
+
+/**
+ * The two-pane triage read. Same filters as `restrictionQueueLoad` plus the origin facet, but the whole
+ * page ships at once: selection is client state, so the remix sources for every row have to be on it.
+ */
+export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
+  const { type, status, origin, sort, q, page, selected, username, userId } = parseQueueQuery(
+    url,
+    queue,
+    {
+      origin: z.enum(ORIGIN_FILTERS).optional().catch(undefined),
+      sort: z.enum(SORT_ORDERS).optional().catch(undefined),
+      selected: selectedSchema,
+    }
+  );
+  const filters = {
+    type,
+    status: status === 'any' ? undefined : status,
+    origin,
+    username,
+    userId,
+  };
+
+  const [{ items, totalCount }, facets] = await Promise.all([
+    getGenerationRestrictions({ page, limit: TRIAGE_PAGE_SIZE, ...filters, sort }),
+    getRestrictionFacets(filters),
+  ]);
+
+  // A deep link may name a restriction the filters or paging leave off this page; it opens regardless
+  // rather than the pane silently showing another row. Held to this page's own types, and to the type
+  // it is filtered to: a row of the other type would contradict the filter the moderator chose.
+  let pinned: RestrictionRow | null = null;
+  let selectedMissing: number | null = null;
+  if (selected && !items.some((i) => i.id === selected)) {
+    pinned = await restrictionById(selected, queue.types);
+    if (pinned && pinned.type !== type) pinned = null;
+    if (!pinned) selectedMissing = selected;
+  }
+
+  // A failed source lookup must not take the queue down, but it must not read as "no source" either.
+  const plan = planRemixSources(pinned ? [...items, pinned] : items);
+  let sources: Record<number, RemixSource> = {};
+  let sourcesFailed = false;
+  try {
+    sources = Object.fromEntries((await getRemixSources(plan.lookup)).map((s) => [s.id, s]));
+  } catch {
+    sourcesFailed = true;
+  }
+
+  return {
+    items,
+    pinned,
+    selectedMissing,
+    sources,
+    sourcesFailed,
+    sourcesNotLoaded: plan.notLoaded,
+    facets,
+    totalCount,
+    page,
+    hasMore: page * TRIAGE_PAGE_SIZE < totalCount,
+    offset: (page - 1) * TRIAGE_PAGE_SIZE,
+    type,
+    status,
+    origin: origin ?? null,
+    sort: sort ?? null,
     q,
     wide: true,
   };

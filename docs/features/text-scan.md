@@ -7,16 +7,17 @@ entity's moderation adapter, which applies the action.
 
 ## Pieces
 
-| piece                                                                       | where                                                       |
-| --------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Scan profiles (which fields, which labels, the entity's declared state)     | `src/server/services/text-scan/profiles/`                   |
-| Prompt storage (append-only table, cached; content is never in the repo)    | `TextScanPrompt`, `text-scan/prompt.ts`                     |
-| Model, per-call size (maxInputChars) and segment-count (maxSegments) config | sysRedis `system:text-scan:config`                          |
-| Submit, dedup (`contentHash`), external id                                  | `text-scan/submit.ts`                                       |
-| Callback                                                                    | `/api/webhooks/text-scan-result`                            |
-| Retry of failed scans                                                       | the `retry-failed-text-moderation` job (shared with XGuard) |
-| Row retention                                                               | the `text-scan-retention` job                               |
-| Actions per label                                                           | `text-scan/actions/` and each entity's moderation adapter   |
+| piece                                                                                 | where                                                       |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Scan profiles (which fields, which labels, the entity's declared state)               | `src/server/services/text-scan/profiles/`                   |
+| Prompt storage (append-only table, cached; content is never in the repo)              | `TextScanPrompt`, `text-scan/prompt.ts`                     |
+| Model, per-call size (maxInputChars) and segment-count (maxSegments) config           | sysRedis `system:text-scan:config`                          |
+| Submit, dedup (`contentHash`), external id                                            | `text-scan/submit.ts`                                       |
+| Callback                                                                              | `/api/webhooks/text-scan-result`                            |
+| Retry of failed scans                                                                 | the `retry-failed-text-moderation` job (shared with XGuard) |
+| Row retention                                                                         | the `text-scan-retention` job                               |
+| Actions per label                                                                     | `text-scan/actions/` and each entity's moderation adapter   |
+| Model-rule storage and history (append-only versions, written with every rule change) | `ModerationRule`, `ModerationRuleVersion`                   |
 
 **Long input.** An entity's fields are composed into one text. Text up to `maxInputChars` (default
 200,000 characters) is scanned whole in one call. Longer text is split into segments of at most that
@@ -42,12 +43,73 @@ The scanned entities, and the fields and labels each scans, are the profiles in
 `nsfw`) replaces XGuard; off or in shadow, XGuard still runs. Collection's (name, description of
 Public collections readable as Public or Unlisted → `nsfw`, a floor on the collection's rating)
 replaces Clavata only once Collection is cut over with `disableClavataFor`.
+Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
+`text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
+
+### Model rules
+
+`ModelRules` is a second scan of a model, separate from `Model`, so it has its own rollout and its
+prompt changes never move the `Model` verdicts. It reads the same text as `Model` (name,
+description, version names and descriptions, trained words), but only what the public can see: a
+Published or Scheduled, non-Private model and its public versions. It runs on publish and on every
+edit of a public model. Its one label, `modelRules`, asks which of the moderators' rules the model
+matches.
+
+The rules are the enabled `ModerationRule` rows with `entityType = Model` and a `semantic`
+definition (`subject`, `description`, `aliases`). They are appended to the `label:modelRules` prompt
+as a numbered list at scan time, so the rule text lives only in the database. Moderators manage both
+the rules and that prompt on the moderator app's `/text-scan/model-rules` page: edits are drafts in
+the moderator's browser until saved, and every create, edit, enable/disable and restore of a rule
+writes a row to `ModerationRuleVersion` in the same transaction, so each rule has a history that can
+be compared and restored. A rule saved before that table existed gets its earlier state recorded on
+its next save. The `ModerationRuleVersion` table is created by a hand-applied migration; apply it
+before deploying the moderator app, since a rule save writes its version row in the same
+transaction. The page's Try panel judges a pasted link, id or text as `ModelRules` with the saved
+rules and, side by side, with the drafts (new rules carry negative ids that exist only in the lab);
+literal hits show there even when the model gives no answer. A literal hold at publish also writes
+the model's `ModelRules` scan row (no content hash, so the scan after a moderator's republish still
+runs); Matches marks it "held at publish", and the model page's moderator panel names the matched
+rules. The owner sees "being reviewed" without a review request. Rules written
+before the scan are regex; a one-off endpoint, `/api/admin/temp/convert-model-rules` (`count`, then
+`apply`), converts them in place once per environment. A rule that does not reduce to plain text, or
+was an Approve rule, ends disabled and flagged until a moderator rewrites it, and nothing in the
+response or its log carries rule text. A verdict can
+only name rules the prompt listed, and it stores the matched rules as they read when the scan ran.
+When it is active, a match unpublishes the model for review (`needsReview`) with a notice that does
+not name the rule, and a match on a rule disabled since the scan began is dropped. A moderator who
+republishes the model approves those matches for the text they reviewed; edited text is judged
+again.
+
+Beside the model, a deterministic literal check compares the same text with each rule's `subject` and
+`aliases`. Both sides are normalized the same way (case, accents, look-alike and invisible
+characters, punctuation and separators), and a term matches only as a whole word or phrase; very
+short terms are ignored. Each field (name, description, each version's name, description and trained
+words) is matched on its own, so a phrase never matches across two fields. It follows the `ModelRules` mode and never runs for moderators:
+
+- **active** — a publish, schedule or Private to Public change by a non-moderator whose text
+  matches is held instead of going live: the model ends `UnpublishedViolation` with `needsReview`
+  and the same notice, and is never published first. A new version published on an already public
+  model that matches takes the model down the same way. The held text is the text the post-publish
+  scan will read, so a moderator's republish clears those rules for it and edited text is checked
+  again. If the check or the hold itself fails, it is logged, the publish goes through and the model
+  scan is the backstop. The owner sees a neutral "Submitted for review" message instead of
+  "published". A model held while Private stays private; a moderator republishes it first, then makes it public.
+- **shadow** — nothing is held. Each scan stores the rules the text names literally next to the
+  model's verdict, so the two can be compared. The same record is kept in active mode.
+- **off**, or the Flipt switch off — the check does not run and no rules are loaded for it.
+
+The `/text-scan/model-rules` Matches tab marks each rule as matched by the model, literally, or both,
+and lists literal-only hits the model did not match.
+
+Image moderation rules are separate and stay in Retool; `/api/mod/mod-rules` now accepts Image rules
+only, so a Model rule can only be managed on `/text-scan/model-rules`.
 
 ## Actions
 
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
-(the owner can appeal), or mute the account pending moderator review. Disputes, appeals and mute
-reviews go through the existing moderator queues; text scan adds no queue of its own.
+(the owner can appeal), mute the account pending moderator review, or, for `modelRules`, unpublish
+the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
+(a storyline title appeal is on Storylines > Title Appeals); text scan adds no queue of its own.
 
 ## Modes
 
@@ -109,6 +171,11 @@ Any entity type other than Model is refused, any `active` share needs `allowActi
 change is attributed to the signed-in moderator. `getPrompts` returns the current value as
 `webSearchModes`.
 
+A `poi` or `minor` detection can be held for a moderator instead of flagging immediately. The switch
+is a per-label field, set with `putLabelModes` (`{ "action": "putLabelModes", "label": "minor", "mode": "review" }`;
+`"auto"` removes it) and returned by `getPrompts` as `labelModes`. See
+[minor-detection-review.md](minor-detection-review.md).
+
 ## Comparing with the existing systems
 
 Every finished verdict is logged to Axiom as `name: 'scan-verdict'`, with `system` = `text-scan`
@@ -139,19 +206,46 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   scans it synchronously without recording it (`scanEntity`, `batchEntities`), does the same for free
   text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
   returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
-  (`sampleShadow`). `scanEntity`, `batchEntities` and `scanTexts` refuse a request whose worst case,
-  `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
+  (`sampleShadow`). `scanEntity` and `scanTexts` also take lab-only `ruleOverrides` (a positive id
+  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it). A scan
+  returns the `system` prompt it sent and, for `ModelRules`, the `rules` listed and the
+  `literalRuleIds`; `batchEntities` and `scanTexts` return `{ results, system, rules, ... }`, carrying
+  `system` and `rules` once for all results. `scanEntity`, `batchEntities` and `scanTexts` refuse a
+  request whose worst case, `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
   scan and quote actions are reached through `/api/testing/chat-completion-scan`. `composeEntities`
   and `sampleShadow` read any entity's text and author, so they are refused there (403) and only the
   attributed, audited moderator endpoint `/api/mod/text-scan` serves them. Like every moderator
   endpoint it takes a moderator's session or full-access personal API key. That endpoint also
   attributes prompt and config writes to the signed-in moderator.
-- The moderator app's text-scan lab drives those actions: Check (`/text-scan/check`) judges links, ids
-  or text with the current prompts and, side by side, with a moderator's edits, which are kept only in
-  that moderator's browser; Versions (`/text-scan/prompts`) shows each prompt's history. It stores
-  nothing in the moderator database. Publishing edits needs the `textScan.prompt.publish` permission,
-  held by no one until granted on `/admin`; the pages are likewise unreachable until granted there.
-  `/text-scan` and `/text-scan/playground` redirect to Check.
-  The lab, Check included, accepts up to 600,000 characters per text, so a long text scans as up to three segments; its
-  quotes and results report the segment count.
+- Dry runs reproduce the web-search pass with `pass: "web-search"` on `scanEntity`, `batchEntities`,
+  `scanTexts`, `quoteEntities` and `quoteTexts` (Model only). It asks only for `poi` and `minor`, with the
+  `civitai:web_search` tool, through the same prompt composition and step builder production uses, so
+  `promptOverrides` apply. The default `pass: "main"` is unchanged: every profile label, no tool.
+  The two passes are separate calls; each result names its `pass` and the `labels` it judged, with the
+  per-label verdicts under `parse.output` and `costTotal` when the orchestrator returned one. The
+  search pass is a harness option, not gated by the search rollout, and still writes nothing.
+- The moderator app's text-scan lab drives those actions from two workspaces with the same layout.
+  Prompts (`/text-scan/prompts`) lists every prompt key; a key's edits are a draft kept in that
+  moderator's browser, Save writes a new version in one step (a note is optional), and a save is
+  refused if someone saved a newer version after the draft started (`putPrompt`'s `baseId`, checked
+  inside the insert's transaction). History compares any two of the last 20 versions and restores one
+  as a new version, reading its text by id. Model rules (`/text-scan/model-rules`) does the same for
+  the `label:modelRules` prompt and for the rules. Both pages share a Try panel: paste text, links or
+  ids and see the current and the edited verdicts side by side, the system prompt each side sent, and
+  Model rules matches by rule subject with literal hits marked. The lab reads a model's text whatever
+  its visibility; it records nothing. Saving prompts needs `textScan.prompt.publish` on Prompts and
+  `textScan.modelRules.edit` on Model rules (which also covers the `label:modelRules` prompt there);
+  both are held by no one until granted on `/admin`, as are the pages. `/text-scan`, `/text-scan/check`
+  and `/text-scan/playground` redirect to Prompts; roles granted the old Check or Playground pages
+  are moved to Prompts by a one-off migration applied after the moderator deploy.
+  The lab, Try on both pages included, accepts up to 600,000 characters per text, so a long text scans
+  as up to three segments; its quotes and results report the segment count.
+  Both workspaces also have a **Test sets** tab beside Try. "Add to test set" on a Try result or a Matches
+  row saves the text (re-composed on the server for an entity) with the verdict the moderator expects:
+  an nsfw range, yes/no per flag, or the Model rules that should match, any of them left unscored. A run
+  scores the production prompts (the baseline) and the moderator's draft against those expectations in
+  the background and lists cases whose verdict flipped first; Model rules are scored on LLM matches and
+  literal hits together, and matches on unsaved rules are shown as new rule hits. Sets, runs and results
+  live in the moderator database (`apps/moderator/text-scan-test-sets/`); curating sets and cancelling
+  another moderator's run need `textScan.testSets.edit`, running them only the workspace page.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.

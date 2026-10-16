@@ -96,6 +96,9 @@ export const BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS = 10;
 // call. 60 published images / 5-minute window is generous for a real benchmark
 // grid (which publishes a handful of results once) but hard-caps a token that
 // tries to drive a sustained fetch/upload/scan fan-out onto the origin.
+//
+// KEYED ON THE INSTALL ALONE, so on a page app it is one allowance shared by every
+// viewer of that app.
 export const BLOCK_PUBLISH_RATE_LIMIT_MAX = 60;
 export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 
@@ -590,6 +593,49 @@ export async function checkBlockTrainingDatasetRateLimit(
     BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX,
     BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS,
     Math.max(1, Math.floor(imageCount))
+  );
+}
+
+// UPLOAD bucket (blocks.persistAppUploadImage, the server half of an app's upload
+// from bytes). One token per upload: each one creates a real, scanned Image row.
+// It is the ONLY bucket an upload charges.
+//
+// KEYED ON `claims.appId`, like the app-aggregate post bucket: the app's identity
+// across every install and surface, and the id an uploaded image is stamped with. So
+// it bounds an app's uploads across all of its viewers and installs, and keeps one
+// app within a share of the capacity every app's uploads draw on.
+//
+// NOT the per-install publish bucket, which an upload used to charge: a page app's
+// `blockInstanceId` is one string shared by every viewer of that app, so one
+// viewer's uploads used up the allowance `publishGenerationOutputs` and post
+// creation draw on for everyone.
+//
+// NO PER-VIEWER UPLOAD BUCKET, deliberately. The procedure's 60/h per-user
+// `rateLimit` middleware is strictly tighter than a 60-per-300-s viewer bucket for
+// every prod non-moderator, and the host's 8-per-60-s bytes window
+// (`src/components/AppBlocks/imageUploadBytes.ts`) holds a single-page moderator to
+// 40 per 300 s. Accepted cost: a moderator calling the procedure directly, or with
+// many pages open, is bounded only by this bucket.
+//
+// 600 per 300 s. Not data-derived; a starting value.
+//
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A
+// refused call still counts toward this window.
+export const BLOCK_UPLOAD_APP_RATE_LIMIT_MAX = 600;
+export const BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS = 300;
+
+/**
+ * Records ONE upload from bytes against `appId`'s upload window. Own `:upload-app:`
+ * sub-namespace, so it never contends with the publish bucket or any other; fail-open
+ * like every sibling limiter.
+ */
+export async function checkBlockUploadAppRateLimit(
+  appId: string
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload-app:${appId}`,
+    BLOCK_UPLOAD_APP_RATE_LIMIT_MAX,
+    BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS
   );
 }
 

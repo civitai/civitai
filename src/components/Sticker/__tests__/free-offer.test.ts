@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   FREE_PLACEMENTS_PER_DAY,
   FREE_SLOT_TAKEN_NOTE,
-  PLACEMENT_SURFACES,
+  placementSurfaceAllowsZeroPrice,
+  placementSurfaces,
   SHARED_ALLOWANCE_NOTE,
 } from '~/shared/utils/placement';
 import {
@@ -643,11 +644,14 @@ describe('the shared-allowance note tracks the rules it describes', () => {
    * the third name.
    */
   // Promotions are paid only: nothing creates a free placement on them, so they
-  // never draw on this budget.
+  // never draw on this budget. Neither does a surface that may be priced at
+  // zero: `createFreePlacement` refuses it, and its zero-priced placements are
+  // not free rows, so the daily count never sees them.
   it('fails if a surface is added to the shared budget without updating the copy', () => {
     expect(
-      Object.keys(PLACEMENT_SURFACES)
+      placementSurfaces
         .filter((surface) => !isPromotionSurface(surface))
+        .filter((surface) => !placementSurfaceAllowsZeroPrice(surface))
         .sort()
     ).toEqual(['remixGallery', 'sticker']);
   });

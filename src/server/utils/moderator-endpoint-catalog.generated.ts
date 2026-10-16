@@ -15,6 +15,13 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/cosmetic/delete': () => import('~/pages/api/mod/cosmetic/delete'),
   '/api/mod/cosmetic/unassign': () => import('~/pages/api/mod/cosmetic/unassign'),
   '/api/mod/cosmetic/update': () => import('~/pages/api/mod/cosmetic/update'),
+  '/api/mod/creator-services/deal-file-url': () =>
+    import('~/pages/api/mod/creator-services/deal-file-url'),
+  '/api/mod/creator-services/deal-files': () =>
+    import('~/pages/api/mod/creator-services/deal-files'),
+  '/api/mod/creator-services/disputes': () => import('~/pages/api/mod/creator-services/disputes'),
+  '/api/mod/creator-services/resolve-dispute': () =>
+    import('~/pages/api/mod/creator-services/resolve-dispute'),
   '/api/mod/csam/training-data-report': () => import('~/pages/api/mod/csam/training-data-report'),
   '/api/mod/homeblock/create': () => import('~/pages/api/mod/homeblock/create'),
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
@@ -25,6 +32,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/minor-flag/confirm': () => import('~/pages/api/mod/minor-flag/confirm'),
   '/api/mod/minor-flag/dismiss': () => import('~/pages/api/mod/minor-flag/dismiss'),
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),
+  '/api/mod/minor-flag/resolve-redetection': () =>
+    import('~/pages/api/mod/minor-flag/resolve-redetection'),
   '/api/mod/minor-flag/revert': () => import('~/pages/api/mod/minor-flag/revert'),
   '/api/mod/minor-flag/set-minor': () => import('~/pages/api/mod/minor-flag/set-minor'),
   '/api/mod/model/bring-back': () => import('~/pages/api/mod/model/bring-back'),
@@ -36,6 +45,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),
+  '/api/mod/storyline/resolve-title-appeal': () =>
+    import('~/pages/api/mod/storyline/resolve-title-appeal'),
   '/api/mod/strike/create': () => import('~/pages/api/mod/strike/create'),
   '/api/mod/strike/get-user-strikes': () => import('~/pages/api/mod/strike/get-user-strikes'),
   '/api/mod/strike/void': () => import('~/pages/api/mod/strike/void'),

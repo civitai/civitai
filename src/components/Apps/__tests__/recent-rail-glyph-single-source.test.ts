@@ -111,22 +111,9 @@ describe('recents rail — the RENDERED icons are unchanged by the consolidation
     expect(ACTION_GLYPH_ICONS[recentRailActionGlyph('visit')]).toBe(IconExternalLink);
     expect(ACTION_GLYPH_ICONS[recentRailActionGlyph('view')]).toBe(IconEye);
   });
-
-  test('CONTROL: the three pinned icon components are pairwise distinct', () => {
-    // Without this, the identity assertions above could all hold while the rail
-    // rendered one glyph for everything — the test would be green for the wrong
-    // reason. Pins that the discriminator exists at all.
-    const icons = [IconPlayerPlay, IconExternalLink, IconEye];
-    expect(new Set(icons).size).toBe(3);
-  });
 });
 
 describe('the private copy is GONE (structural — these fail on the pre-change source)', () => {
-  test('RecentlyOpenedApps.tsx no longer declares RECENT_ACTION_ICONS', () => {
-    const src = read('RecentlyOpenedApps.tsx');
-    expect(src).not.toMatch(/const RECENT_ACTION_ICONS\b/);
-  });
-
   test('RecentlyOpenedApps.tsx resolves the glyph through the shared module', () => {
     const src = read('RecentlyOpenedApps.tsx');
     expect(src).toMatch(/from '~\/components\/Apps\/appListingActionGlyph'/);

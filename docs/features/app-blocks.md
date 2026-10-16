@@ -128,6 +128,11 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 > (`/api/v1/blocks/models`, `/api/v1/blocks/images`) serve public, maturity-clamped
 > data and accept any valid block token for its signed `maxBrowsingLevel` claim, not
 > for authorization (`catalog:read` was added in #2671 and retired the next day).
+> `/api/v1/blocks/models?owner=mine` narrows the same public data to the signed-in
+> viewer's own models, taken from the token `sub` (anon gets 401). It is a filter,
+> not a viewer, so it needs no scope and shows no unpublished or Private-availability
+> versions. `modelVersionIds=1,2,3` (max 100) rehydrates saved cards by version id
+> under the same rules.
 
 ## Routes
 

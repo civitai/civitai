@@ -2,6 +2,7 @@ import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
   SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
+  SERVICE_DEAL_HOLD_REASONS,
   SERVICE_DEAL_LATE_CANCEL_AFTER_MS,
 } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealStatus } from '~/shared/utils/prisma/enums';
@@ -51,6 +52,12 @@ export type DealTimingFields = {
 
 const PRIMARY: DealAction[] = ['accept', 'acceptDelivery', 'respondCancellation', 'cancelLate'];
 
+/**
+ * Behind `gated` on the router: the `creatorServices` flag, and `guardedProcedure`, which refuses a
+ * muted user. Not offered while either would refuse them.
+ */
+export const DEAL_GATED_ACTIONS: readonly DealAction[] = ['accept', 'requestRevision'];
+
 const plus = (date: Date | null, ms: number) => (date ? new Date(date.getTime() + ms) : null);
 
 export function dealViewerRole(
@@ -70,6 +77,24 @@ export function dealActorRole(
   if (actorId === deal.buyerId) return 'buyer';
   if (actorId === deal.sellerId) return 'seller';
   return 'moderator';
+}
+
+const HOLD_REASONS: readonly string[] = Object.values(SERVICE_DEAL_HOLD_REASONS);
+
+/**
+ * A dispute reason or event comment as the viewer may see it. A system hold's reason says the
+ * seller was banned or a file failed scanning: moderators see it, the parties never do.
+ */
+export function dealVisibleReason(reason: string | null, isModerator: boolean): string | null {
+  return !isModerator && reason !== null && HOLD_REASONS.includes(reason) ? null : reason;
+}
+
+/** An event's actor id as the parties may see it: their own ids only, never a moderator's. */
+export function dealEventActorId(
+  deal: Pick<DealTimingFields, 'buyerId' | 'sellerId'>,
+  actorId: number
+): number | null {
+  return actorId === deal.buyerId || actorId === deal.sellerId ? actorId : null;
 }
 
 export function dealDeadlines(deal: DealTimingFields) {
@@ -108,7 +133,19 @@ export function nextDealDeadline(deal: DealTimingFields) {
 }
 
 /** Ordered by prominence. */
-export function dealActions(deal: DealTimingFields, viewerId: number, now = new Date()) {
+export function dealActions(
+  deal: DealTimingFields,
+  viewerId: number,
+  now = new Date(),
+  {
+    gatedAllowed = true,
+    offeringTakenDown = false,
+  }: {
+    gatedAllowed?: boolean;
+    /** A moderator took the offering down: a pending request can be declined, never accepted. */
+    offeringTakenDown?: boolean;
+  } = {}
+) {
   const role = dealViewerRole(deal, viewerId);
   const actions: DealAction[] = [];
   const answersCancellation =
@@ -141,7 +178,7 @@ export function dealActions(deal: DealTimingFields, viewerId: number, now = new 
   } else if (role === 'seller') {
     switch (deal.status) {
       case 'Requested':
-        if (deal.heldAt) actions.push('accept');
+        if (deal.heldAt && !offeringTakenDown) actions.push('accept');
         actions.push('decline');
         break;
       case 'Accepted':
@@ -155,5 +192,11 @@ export function dealActions(deal: DealTimingFields, viewerId: number, now = new 
     }
   }
 
-  return { actions, primaryAction: actions.find((action) => PRIMARY.includes(action)) ?? null };
+  const offered = gatedAllowed
+    ? actions
+    : actions.filter((action) => !DEAL_GATED_ACTIONS.includes(action));
+  return {
+    actions: offered,
+    primaryAction: offered.find((action) => PRIMARY.includes(action)) ?? null,
+  };
 }

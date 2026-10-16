@@ -24,11 +24,7 @@ import {
 import { getModelChangeHistory } from '~/server/services/entity-change.service';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
-import {
-  getModelModerationDetail,
-  getModelModRules,
-  transferModelOwnership,
-} from '~/server/services/model.service';
+import { getModelModerationDetail, transferModelOwnership } from '~/server/services/model.service';
 import {
   confirmMinorHashAutoFlag,
   dismissMinorHashMatch,

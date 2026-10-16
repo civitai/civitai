@@ -15,6 +15,7 @@ import {
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
+import { holdRemovals, type HeldRemoval } from './removal-hold';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
 // not true, for every row with no flag, and would refuse every ordinary accept.
@@ -182,6 +183,9 @@ export async function blockImage({
   userAgent,
   violationType,
   violationDetails,
+  reportIds,
+  source = 'moderator.block',
+  skipAppealCheck = false,
 }: {
   imageId: number;
   userId: number;
@@ -189,7 +193,13 @@ export async function blockImage({
   userAgent?: string;
   violationType?: string;
   violationDetails?: string;
-}): Promise<void> {
+  /** Reports the caller actions after the block; kept on a held removal so confirming actions them. */
+  reportIds?: number[];
+  /** The removal path, recorded on a held removal. */
+  source?: string;
+  /** The actor may confirm re-removals themselves, or this IS the confirmation. */
+  skipAppealCheck?: boolean;
+}): Promise<{ held?: HeldRemoval }> {
   const img = await dbRead
     .selectFrom('Image')
     .select([
@@ -203,7 +213,16 @@ export async function blockImage({
     ])
     .where('id', '=', imageId)
     .executeTakeFirst();
-  if (!img) return;
+  if (!img) return {};
+
+  if (!skipAppealCheck) {
+    const { held } = await holdRemovals(
+      [{ imageId, violationType, violationDetails, reportIds }],
+      userId,
+      source
+    );
+    if (held.length) return { held: held[0] };
+  }
 
   const { numUpdatedRows } = await dbWrite
     .updateTable('Image')
@@ -232,7 +251,7 @@ export async function blockImage({
     // second time. Decided here, not off the replica read above.
     .where(NOT_FLAG_ONLY_REMAINING)
     .executeTakeFirst();
-  if (!numUpdatedRows) return;
+  if (!numUpdatedRows) return {};
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
 
@@ -248,6 +267,7 @@ export async function blockImage({
     violationType,
     violationDetails,
   });
+  return {};
 }
 
 /**

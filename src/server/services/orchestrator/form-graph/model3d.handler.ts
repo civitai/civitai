@@ -16,7 +16,7 @@ import type {
   PolyGenStepTemplate,
   Trellis2ImageTo3dComfyPolyGenInput,
   TripoFalPolyGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   toMeshyPolyGenInput,
   type Model3DGenerationSchema,

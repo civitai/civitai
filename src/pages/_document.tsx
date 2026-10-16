@@ -1,8 +1,18 @@
 import { ColorSchemeScript, mantineHtmlProps } from '@mantine/core';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
+import type { DocumentContext } from 'next/document';
 import clsx from 'clsx';
+import { recordPageRender } from '~/server/prom/route-traffic.metrics';
 
 export default class _Document extends Document {
+  // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
+  // `/404` and a thrown error as `/_error`, while redirects and `/_next/data` requests never do.
+  static async getInitialProps(ctx: DocumentContext) {
+    const initialProps = await Document.getInitialProps(ctx);
+    if (ctx.req) recordPageRender(ctx.pathname, ctx.req as never);
+    return initialProps;
+  }
+
   render() {
     const pageProps = this.props?.__NEXT_DATA__?.props?.pageProps;
     return (

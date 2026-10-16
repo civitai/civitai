@@ -243,15 +243,20 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     replies.stop();
   });
 
-  test('a persist refused by the publish bucket replies its message once and polls no scan', async () => {
-    h.persist.mockRejectedValueOnce(new Error('Rate limit exceeded, please retry shortly.'));
+  test('a persist refused by a rate limit replies its message once and polls no scan', async () => {
+    h.persist.mockRejectedValueOnce(
+      new Error('This app is handling too many uploads right now, please retry shortly.')
+    );
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_bucket', bytes: pngBytes() });
     await vi.waitFor(() =>
       expect(repliesFor(replies, 'rq_bucket')).toEqual([
-        { requestId: 'rq_bucket', error: 'Rate limit exceeded, please retry shortly.' },
+        {
+          requestId: 'rq_bucket',
+          error: 'This app is handling too many uploads right now, please retry shortly.',
+        },
       ])
     );
     expectReplyKeys('OPEN_IMAGE_UPLOAD', 'error', ['error'], repliesFor(replies, 'rq_bucket')[0]);

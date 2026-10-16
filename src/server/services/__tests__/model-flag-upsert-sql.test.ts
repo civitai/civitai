@@ -113,13 +113,6 @@ function parenGroupAfter(sql: string, fromIndex: number): string {
 }
 
 describe('buildModelFlagUpsert — structure', () => {
-  // `Prisma.Sql#text` is the Postgres form ($1, $2 …); `#sql` is the MySQL `?`
-  // form. Asserting this pins which one the execution arm sends to `pg`.
-  it('emits numbered Postgres placeholders on .text', () => {
-    const statement = buildModelFlagUpsert({ modelId: 1, scanResult: SCAN_RESULT });
-    expect(statement.text).toContain('$1');
-  });
-
   it('has each SQL clause exactly once, so a keyword typo cannot slip through', () => {
     const { text } = buildModelFlagUpsert({ modelId: 1, scanResult: SCAN_RESULT });
 

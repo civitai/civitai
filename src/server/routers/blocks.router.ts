@@ -71,6 +71,7 @@ import {
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
   checkBlockTrainingDatasetRateLimit,
+  checkBlockUploadAppRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
 import {
@@ -5431,14 +5432,25 @@ export const blocksRouter = router({
    *
    * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
    * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
-   * post-creation flag) and page tokens only. Then the upload's ONE per-install publish-bucket
-   * charge, BEFORE the persist, so a refusal creates no Image row and starts no scan. The bytes
+   * post-creation flag) and page tokens only. Then the upload's ONE rate-limit charge,
+   * BEFORE the persist, so a refusal creates no Image row and starts no scan. The bytes
    * are already in the store by then; a refused upload leaves that object unreferenced, as a
    * picked upload refused at `blockImageUpload.persist` does.
    *
+   * RATE LIMIT: one app-wide upload bucket, keyed on `appId`, which bounds the app across all
+   * of its viewers and installs. NOT the per-install publish bucket: a page app's install id is
+   * shared by every viewer, so charging it would let one viewer's uploads use up the allowance
+   * `publishGenerationOutputs` and post creation draw on for everyone.
+   *
+   * No per-viewer upload bucket, deliberately. The 60/h per-user `rateLimit` below is strictly
+   * tighter than any 60-per-300-s viewer bucket for every prod non-moderator, and the host's
+   * 8-per-60-s bytes window (`imageUploadBytes.ts`) holds a single-page moderator to 40 per
+   * 300 s. Accepted cost: a moderator calling this procedure directly, or with many pages
+   * open, is bounded only by the app-wide bucket (600 per 300 s).
+   *
    * ⚠️ The 60/h `rateLimit` below does NOT bind every caller: the middleware skips moderators
-   * (the current flag audience) and non-prod envs. For them the binding server bound is the
-   * publish bucket (60 per 300 s per install), plus the host's 8-per-60-s window per page.
+   * (the current flag audience) and dev/test/preview envs. For them the binding server bound is
+   * the app-wide upload bucket, plus the host's 8-per-60-s window per page.
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
@@ -5466,11 +5478,11 @@ export const blocksRouter = router({
           message: 'image byte uploads are available to page apps only',
         });
       }
-      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
+      const rate = await checkBlockUploadAppRateLimit(claims.appId);
       if (!rate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
+          message: 'This app is handling too many uploads right now, please retry shortly.',
         });
       }
       const { persistBlockUploadImage } = await import(

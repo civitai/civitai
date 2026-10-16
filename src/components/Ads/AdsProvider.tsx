@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
+import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
@@ -289,8 +290,14 @@ export function AdsProvider({
         />
       )}
       {adsEnabled && !useDirectAds && <ImpressionTracker />}
+      {adsEnabled && !useDirectAds && <PrivacyUiDetector />}
     </AdsContext.Provider>
   );
+}
+
+function PrivacyUiDetector() {
+  useEffect(() => detectPrivacyUi(), []);
+  return null;
 }
 
 function ImpressionTracker() {

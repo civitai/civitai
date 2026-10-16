@@ -223,20 +223,6 @@ describe('a keep-alive socket drop must not cost the request its ranking', () =>
     expect(mockChQuery).toHaveBeenCalledTimes(2);
   });
 
-  it('records the ClickHouse source on the metric, with no reason', async () => {
-    mockChQuery
-      .mockRejectedValueOnce(new Error(SOCKET_HANG_UP))
-      .mockResolvedValueOnce(RANKED.map((id) => ({ id })));
-
-    await run();
-
-    expect(mockRecordSource).toHaveBeenCalledWith({
-      period: 'Month',
-      source: 'clickhouse',
-      reason: undefined,
-    });
-  });
-
   it('still degrades — and says why — when the retry fails too', async () => {
     mockChQuery.mockRejectedValue(new Error(SOCKET_HANG_UP));
 

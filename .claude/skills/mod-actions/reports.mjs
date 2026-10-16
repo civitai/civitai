@@ -266,8 +266,12 @@ async function main() {
     }
 
     case 'appeals': {
+      // Counts the signed-in account's own appeals; there is no per-user lookup.
+      if (flags['user-id']) {
+        console.error('appeals counts only the signed-in account; --user-id is not supported.');
+        process.exit(1);
+      }
       const input = {};
-      if (flags['user-id']) input.userId = intOrUndef(flags['user-id']);
       if (flags['start-date']) input.startDate = flags['start-date'];
 
       const result = await trpcCall('report.getRecentAppeals', input, 'GET');

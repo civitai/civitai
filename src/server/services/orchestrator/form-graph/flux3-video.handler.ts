@@ -5,7 +5,7 @@ import type {
   Flux3V3ImageToVideoInput,
   Flux3V3TextToVideoInput,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';

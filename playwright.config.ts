@@ -18,7 +18,13 @@ export default defineConfig({
   testDir: './tests',
   // preview-* run only under playwright.preview.config.ts (need PREVIEW_URL); the
   // default `setup` project's *.setup.ts glob would otherwise pick them up.
-  testIgnore: ['example.spec.ts', '**/preview-*.ts'],
+  // storylines-smoke needs a seeded dev database; collected only when its env is set, so a
+  // default run cannot report it as skipped-and-green.
+  testIgnore: [
+    'example.spec.ts',
+    '**/preview-*.ts',
+    ...(process.env.STORYLINE_SMOKE_TOKEN ? [] : ['**/storylines-smoke.spec.ts']),
+  ],
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */

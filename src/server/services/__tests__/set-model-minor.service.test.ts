@@ -38,6 +38,11 @@ vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
   settleFlagAppealsAfterModeratorLift: mockSettleAppeals,
 }));
 const { mockReassertPoi } = vi.hoisted(() => ({ mockReassertPoi: vi.fn() }));
+const { mockBustGallerySettings } = vi.hoisted(() => ({ mockBustGallerySettings: vi.fn() }));
+vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
+  bustModelGallerySettings: mockBustGallerySettings,
+  getCreatorGalleryHiddenUserIds: vi.fn(),
+}));
 vi.mock('~/server/services/text-scan/actions/model-poi-minor', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelPoiMinor>()),
   reassertModelPoiRestrictions: mockReassertPoi,
@@ -765,5 +770,56 @@ describe('setModelMinor — moderator ruling on unset', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'text-scan', modelId: MODEL_ID })
     );
+  });
+});
+
+// A keep whose first attempt set the flag and died before propagating it is retried with
+// `reapplySideEffects`: the row already reads as flagged, so the fan-out is diffed against the
+// pre-flag state the flag snapshot recorded.
+describe('setModelMinor — reapplying side effects', () => {
+  const flaggedBefore = {
+    minor: true,
+    sfwOnly: true,
+    gallerySettings: { level: sfwBrowsingLevelsFlag, users: [], tags: [] },
+  };
+
+  it('busts the gallery settings from the snapshot level, which a minor-only diff would skip', async () => {
+    mockBefore(flaggedBefore);
+    mockDbWrite.model.findUnique.mockResolvedValue({
+      meta: { minorFlagSnapshot: { prevGalleryLevel: 31, prevSfwOnly: false, prevNsfw: true } },
+    });
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      reapplySideEffects: true,
+    });
+
+    expect(mockBustGallerySettings).toHaveBeenCalledWith([MODEL_ID]);
+    expect(mockModelsQueueUpdate).toHaveBeenCalled();
+  });
+
+  it('leaves the gallery alone on an ordinary repeat of the flag', async () => {
+    mockBefore(flaggedBefore);
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockBustGallerySettings).not.toHaveBeenCalled();
+  });
+
+  it('still flips minor when no snapshot survived', async () => {
+    mockBefore(flaggedBefore);
+    mockDbWrite.model.findUnique.mockResolvedValue({ meta: {} });
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      reapplySideEffects: true,
+    });
+
+    expect(mockModelsQueueUpdate).toHaveBeenCalled();
+    expect(mockBustGallerySettings).not.toHaveBeenCalled();
   });
 });

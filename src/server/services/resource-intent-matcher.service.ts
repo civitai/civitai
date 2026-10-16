@@ -577,10 +577,12 @@ export async function findCheckpointCandidates(opts: {
 }
 
 /**
- * The POOL_MERGE arm's list, exactly as the co-occurrence screen gated and merged it.
+ * The POOL_MERGE arm's list, exactly as the co-occurrence screen gated and merged it when a
+ * baseModel is given (the screen always had one).
  *
  * Co-occurrence: the candidates (best first) through `gateRankedCandidates`. BASE: `seedBasePool`'s
- * page, one version per model, `POOL_MERGE_BASE_MODELS` wide.
+ * page, one version per model, `POOL_MERGE_BASE_MODELS` wide. Without a baseModel, see
+ * `poolMergeModelIds`.
  */
 export async function findPoolMergeCandidates(
   criteria: ResourceIntentCriteria,
@@ -604,7 +606,9 @@ export async function findPoolMergeCandidates(
   const entries = poolMergeModelIds(
     coocList.map((e) => e.modelId),
     basePool.map((e) => e.modelId),
-    cap
+    cap,
+    // The same test `buildResourceIntentFilter` uses for its ecosystem clause.
+    { interleaveBase: !!seed.baseModels?.length }
   ).map((id) => byModel.get(id) as ResourceIntentShortlistEntry);
   return { entries, coocGated: gated.length };
 }

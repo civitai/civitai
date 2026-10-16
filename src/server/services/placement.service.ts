@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
-import { getCapTier } from '~/server/services/subscriptions.service';
+import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
@@ -156,18 +156,56 @@ export async function placementPriceRange(
     config ?? getPlacementConfig(),
   ]);
 
+  return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
+}
+
+/** The range from a creator's two facts, shared by the single and the batched read. */
+function toPlacementPriceRange(
+  rawScore: number | null | undefined,
+  capTier: string | null,
+  surface: PlacementSurface,
+  config: PlacementConfig
+): PlacementPriceRange {
   // `total` already nets penalties — `reportsAgainst` is stored negative — so a
   // heavily-reported creator can land below zero and gets the bottom band.
-  const score = scoreRow[0]?.score ?? 0;
+  const score = rawScore ?? 0;
   const tier = toPriceCapTier(capTier ?? undefined);
 
   return {
     min: PLACEMENT_SURFACES[surface].serverMinPrice,
-    max: placementPriceCap(score, tier, resolvedConfig.priceCapTiers(surface)),
-    freeSlotCap: placementFreeSlotCap(score, tier, resolvedConfig.freeSlotTiers(surface)),
+    max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
+    freeSlotCap: placementFreeSlotCap(score, tier, config.freeSlotTiers(surface)),
     score,
     tier,
   };
+}
+
+/**
+ * `placementPriceRange` for many creators at once, keyed by user id: two queries and one config
+ * read for the whole set, so a page of cards does not price each owner on its own round trips.
+ */
+export async function placementPriceRanges(
+  userIds: number[],
+  surface: PlacementSurface,
+  config?: PlacementConfig
+): Promise<Map<number, PlacementPriceRange>> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return new Map();
+  const [scoreRows, capTiers, resolvedConfig] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; score: number | null }[]>`
+      SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+      FROM "User" WHERE id = ANY(${ids}::int[])
+    `,
+    getCapTiers(ids),
+    config ?? getPlacementConfig(),
+  ]);
+  const scoreById = new Map(scoreRows.map((row) => [row.id, row.score]));
+  return new Map(
+    ids.map((id) => [
+      id,
+      toPlacementPriceRange(scoreById.get(id), capTiers.get(id) ?? null, surface, resolvedConfig),
+    ])
+  );
 }
 
 /**

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -12,6 +13,7 @@ import { recordUserActivity } from './user-activity';
 import { restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
+import type { HeldSummary } from './removal-hold';
 
 // Enforcement actions from User Lookup (Retool's BANAPI / UNBANAPI / ToggleMute / forceLogout, ticket
 // 868kkxqpn §1.2).
@@ -74,6 +76,8 @@ export type JsonResult =
       ok: false;
       error: string;
       requestNeverSent?: boolean;
+      /** No session to forward — no cookie, or no request in scope; the request was never sent. */
+      noSession?: true;
       status?: number;
       /** The recovered text alone, without the action label, so a caller that overrides the message
        *  can still carry what the far side said. */
@@ -94,10 +98,14 @@ async function readError(res: Response): Promise<string | null> {
  *  callers do — everything else about them was identical and drifted independently. */
 async function postJson(opts: {
   path: string;
+  /** Sent as the JSON body, or as the query string when `method` is `GET`. */
   body: Record<string, unknown>;
+  method?: 'GET' | 'POST';
   label: string;
   auth: 'webhook' | 'session';
   timeoutMs: number;
+  /** `'session'` only: forward this cookie instead of the current request's. */
+  cookie?: string;
 }): Promise<JsonResult> {
   const base = civitaiAppUrl();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -107,20 +115,24 @@ async function postJson(opts: {
     // Throws when there is no request in scope (a job, a script). That is a programming error rather
     // than a runtime condition, but it must not surface to the operator as a bare 500.
     let cookie: string | null;
-    try {
-      cookie = getRequestEvent().request.headers.get('cookie');
-    } catch {
-      return {
-        ok: false,
-        error: `${opts.label} must be called while handling a request.`,
-        requestNeverSent: true,
-      };
-    }
+    if (opts.cookie !== undefined) cookie = opts.cookie;
+    else
+      try {
+        cookie = getRequestEvent().request.headers.get('cookie');
+      } catch {
+        return {
+          ok: false,
+          error: `${opts.label} must be called while handling a request.`,
+          requestNeverSent: true,
+          noSession: true,
+        };
+      }
     if (!cookie)
       return {
         ok: false,
         error: `${opts.label} failed: no session to forward.`,
         requestNeverSent: true,
+        noSession: true,
       };
     headers.cookie = cookie;
   } else {
@@ -130,11 +142,21 @@ async function postJson(opts: {
     url += `?token=${encodeURIComponent(token)}`;
   }
 
+  const isGet = opts.method === 'GET';
+  if (isGet) {
+    const query = new URLSearchParams(
+      Object.entries(opts.body)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, String(v)])
+    ).toString();
+    if (query) url += `${url.includes('?') ? '&' : '?'}${query}`;
+  }
+
   try {
     const res = await fetch(url, {
-      method: 'POST',
+      method: isGet ? 'GET' : 'POST',
       headers,
-      body: JSON.stringify(opts.body),
+      ...(isGet ? {} : { body: JSON.stringify(opts.body) }),
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
     if (!res.ok) {
@@ -178,11 +200,13 @@ export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
+  | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
   | 'minor-flag/resolve-appeal'
+  | 'minor-flag/resolve-redetection'
   | 'minor-flag/revert'
   | 'minor-flag/set-minor'
   | 'model/bring-back'
@@ -193,7 +217,9 @@ export type ModEndpoint =
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
+  | 'storyline/resolve-title-appeal'
   | 'strike/create'
+  | 'strike/void'
   | 'text-scan'
   | 'training-data/resolve'
   | 'user/creator-score-grant'
@@ -219,6 +245,50 @@ export const callModEndpoint = (
   timeoutMs = 30_000
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
+
+/** The read-only `/api/mod/*` routes; kept apart from `ModEndpoint` so a read cannot be sent as a write. */
+export type ModReadEndpoint =
+  | 'creator-services/deal-file-url'
+  | 'creator-services/deal-files'
+  | 'creator-services/disputes';
+
+/** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
+export const readModEndpoint = (
+  path: ModReadEndpoint,
+  params: Record<string, string | number | undefined>,
+  label: string,
+  timeoutMs = 15_000
+): Promise<JsonResult> =>
+  postJson({
+    path: `/api/mod/${path}`,
+    body: params,
+    method: 'GET',
+    label,
+    auth: 'session',
+    timeoutMs,
+  });
+
+/** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
+export const callModEndpointAs = (
+  cookie: string,
+  path: ModEndpoint,
+  body: Record<string, unknown>,
+  label: string,
+  timeoutMs = 30_000
+): Promise<JsonResult> =>
+  postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs, cookie });
+
+/**
+ * The session cookie of the request being handled; null outside a request or without one.
+ * It is the moderator's session: keep it in memory only, never log or store it.
+ */
+export function requestCookie(): string | null {
+  try {
+    return getRequestEvent().request.headers.get('cookie') || null;
+  } catch {
+    return null;
+  }
+}
 
 // Best-effort: the resolve already committed, and a missed bust is a stale read that expires with the cache.
 export const bustModelVersionCache = (versionIds: number[]): Promise<JsonResult> =>
@@ -758,6 +828,26 @@ export async function issueStrike(input: {
   return { ok: true };
 }
 
+/** Voids one strike through the main app, which re-evaluates the account's escalation from the new
+ *  point total. `voidedBy` is the acting moderator, from the relayed session. */
+export async function voidStrike(input: {
+  strikeId: number;
+  voidReason: string;
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'strike/void',
+    { strikeId: input.strikeId, voidReason: input.voidReason },
+    'Void strike',
+    15_000
+  );
+  if (!result.ok) return result;
+
+  await logAction('voidStrike', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
 // GENERATION RESTRICTIONS. A system restriction leaves the account muted with a Pending
 // `UserRestriction` row, and the mute toggle beside it resolves NOTHING: the row stays Pending, the
 // cancelled subscription stays cancelled, the prohibited-request count stays where it was, and the
@@ -980,6 +1070,19 @@ async function inChunks(
   return { ok: true, count: affected };
 }
 
+export type RemoveImagesResult =
+  | { ok: true; count: number; held: HeldSummary[] }
+  | { ok: false; error: string };
+
+const heldSummarySchema = z.array(
+  z.object({
+    imageId: z.number(),
+    created: z.boolean(),
+    approvedAt: z.string(),
+    approvedByUsername: z.string().nullable(),
+  })
+);
+
 export async function removeImages(input: {
   imageIds: number[];
   reason?: string;
@@ -987,13 +1090,17 @@ export async function removeImages(input: {
    *  it files the removal with no classification at all — silent and unrecoverable after the fact. */
   violationType?: string;
   moderatorId: number;
-}): Promise<CountResult> {
+  /** The moderator holds `image.removal.confirm`, so the endpoint holds none of these removals. */
+  canConfirmReRemoval?: boolean;
+}): Promise<RemoveImagesResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
+  // Removals the endpoint held for a second moderator instead of applying (`removal-hold`).
+  const held: HeldSummary[] = [];
   const result = await inChunks(
     input.imageIds,
-    (chunk) =>
-      postMainAppJson(
+    async (chunk) => {
+      const sent = await postMainAppJson(
         '/api/mod/remove-images',
         {
           imageIds: chunk,
@@ -1001,28 +1108,36 @@ export async function removeImages(input: {
           reason: input.reason,
           ...(input.violationType ? { violationType: input.violationType } : {}),
           ...(input.reason ? { violationDetails: input.reason } : {}),
+          ...(input.canConfirmReRemoval ? { canConfirmReRemoval: true } : {}),
         },
         'Image removal'
-      ),
+      );
+      if (sent.ok) held.push(...(heldSummarySchema.safeParse(sent.body.held).data ?? []));
+      return sent;
+    },
     // One row per image: ModActivity keys on content id, so a single "removed 300" row would leave
-    // 299 images with no record of who removed them.
-    (chunk) =>
-      Promise.all(
-        chunk.map((id) =>
-          recordModActivity({
-            userId: input.moderatorId,
-            entityType: 'image',
-            entityId: id,
-            activity: 'bulkRemove',
-          })
-        )
-      ).then(() => undefined)
+    // 299 images with no record of who removed them. A held image was not removed.
+    (chunk) => {
+      const heldIds = new Set(held.map((h) => h.imageId));
+      return Promise.all(
+        chunk
+          .filter((id) => !heldIds.has(id))
+          .map((id) =>
+            recordModActivity({
+              userId: input.moderatorId,
+              entityType: 'image',
+              entityId: id,
+              activity: 'bulkRemove',
+            })
+          )
+      ).then(() => undefined);
+    }
   );
   if (!result.ok) return result;
 
-  if (result.count === 0)
+  if (result.count === 0 && !held.length)
     return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
-  return result;
+  return { ...result, held };
 }
 
 /**

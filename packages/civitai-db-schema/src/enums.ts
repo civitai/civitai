@@ -562,6 +562,7 @@ export const CosmeticType = {
   ProfileBackground: 'ProfileBackground',
   Sticker: 'Sticker',
   ChatTheme: 'ChatTheme',
+  CardDecoration: 'CardDecoration',
 } as const;
 
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
@@ -904,6 +905,7 @@ export const EntityType = {
   ResourceReview: 'ResourceReview',
   ChatMessage: 'ChatMessage',
   Model3D: 'Model3D',
+  Storyline: 'Storyline',
 } as const;
 
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
@@ -1253,6 +1255,21 @@ export const OutboxEntity = {
 
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
 
+export const StorylineStatus = {
+  Ongoing: 'Ongoing',
+  Complete: 'Complete',
+} as const;
+
+export type StorylineStatus = (typeof StorylineStatus)[keyof typeof StorylineStatus];
+
+export const StorylineWhoCanContinue = {
+  Anyone: 'Anyone',
+  Collaborators: 'Collaborators',
+} as const;
+
+export type StorylineWhoCanContinue =
+  (typeof StorylineWhoCanContinue)[keyof typeof StorylineWhoCanContinue];
+
 export const ServiceOfferingStatus = {
   Draft: 'Draft',
   Active: 'Active',
@@ -1323,6 +1340,16 @@ export const ServiceDealFileKind = {
 } as const;
 
 export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];
+
+export const ServiceDealFileStatus = {
+  Uploading: 'Uploading',
+  Processing: 'Processing',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+
+export type ServiceDealFileStatus =
+  (typeof ServiceDealFileStatus)[keyof typeof ServiceDealFileStatus];
 
 export const ServiceDealFileScanStatus = {
   Pending: 'Pending',

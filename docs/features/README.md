@@ -12,6 +12,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | NSFW Filtering | [docs/features/nsfw-filtering.md](nsfw-filtering.md) |
 | Image Rating and Visibility | [docs/features/image-rating.md](image-rating.md) |
 | Text Scan (LLM moderation of user text) | [docs/features/text-scan.md](text-scan.md) |
+| Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
@@ -27,3 +28,5 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Generator model onboarding (new ecosystem / model / version) | [docs/features/generator-model-onboarding.md](generator-model-onboarding.md) |
 | Batch post scheduling and the post planner                   | [docs/features/batch-post-scheduling.md](batch-post-scheduling.md)           |
 | Article scheduling                                           | [docs/features/article-scheduling.md](article-scheduling.md)                 |
+| Account settings deep links (`?setting=`)                    | [docs/features/account-settings-links.md](account-settings-links.md)         |
+| Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |

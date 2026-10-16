@@ -3,6 +3,8 @@ import {
   dealActions,
   dealActorRole,
   dealDeadlines,
+  dealEventActorId,
+  dealVisibleReason,
   nextDealDeadline,
   type DealTimingFields,
 } from '~/shared/utils/creator-service-deal-view';
@@ -39,6 +41,31 @@ describe('dealActions', () => {
     expect(dealActions(deal({ heldAt: null }), SELLER, NOW)).toEqual({
       actions: ['decline'],
       primaryAction: null,
+    });
+  });
+
+  // Decision (briony, 2026-10-15): after a moderator takedown the server refuses accept, so the
+  // button must not be offered either. Decline stays, and so does everything the buyer can do.
+  it('offers the seller only decline once a moderator has taken the offering down', () => {
+    const takenDown = { offeringTakenDown: true };
+    expect(dealActions(deal(), SELLER, NOW, takenDown)).toEqual({
+      actions: ['decline'],
+      primaryAction: null,
+    });
+    expect(dealActions(deal(), BUYER, NOW, takenDown).actions).toEqual(['withdraw']);
+  });
+
+  // With `creatorServices` off the router refuses these, so offering them is a dead button.
+  it('drops the flag-gated actions, and a primary among them, while the flag is off', () => {
+    const off = { gatedAllowed: false };
+    expect(dealActions(deal(), SELLER, NOW, off)).toEqual({
+      actions: ['decline'],
+      primaryAction: null,
+    });
+    const delivered = deal({ status: 'Delivered', deliveredAt: ago(1) });
+    expect(dealActions(delivered, BUYER, NOW, off)).toEqual({
+      actions: ['acceptDelivery', 'requestCancellation'],
+      primaryAction: 'acceptDelivery',
     });
   });
 
@@ -129,5 +156,33 @@ describe('dealActorRole', () => {
       'seller',
       'moderator',
     ]);
+  });
+});
+
+// A moderator's id would let either party look up who ruled on their deal.
+describe('dealEventActorId', () => {
+  it("shows the parties' own ids and hides everyone else's", () => {
+    const d = { buyerId: BUYER, sellerId: SELLER };
+    expect([-1, BUYER, SELLER, 42].map((id) => dealEventActorId(d, id))).toEqual([
+      null,
+      BUYER,
+      SELLER,
+      null,
+    ]);
+  });
+});
+
+// The buyer must not learn the seller was banned, nor anyone the details of a failed scan.
+describe('dealVisibleReason', () => {
+  it('hides a system hold reason from the parties and shows it to moderators', () => {
+    for (const reason of ['seller_unavailable', 'final_scan_failed']) {
+      expect(dealVisibleReason(reason, false)).toBeNull();
+      expect(dealVisibleReason(reason, true)).toBe(reason);
+    }
+  });
+
+  it("shows a party's own words and other system notes to everyone", () => {
+    for (const reason of ['broken zip', 'cancellation_declined', 'auto', null])
+      expect(dealVisibleReason(reason, false)).toBe(reason);
   });
 });

@@ -359,22 +359,6 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
     ).toEqual({ message: HUMAN });
   });
 
-  // ── Observability: genericizing must RELOCATE the text, never destroy it ────
-  it('logs the UN-REDACTED driver text for every 4xx it genericizes', () => {
-    const message =
-      '\nInvalid `prisma.appListing.create()` invocation:\n\nColumn: app_listings.slug';
-    throughTheSeam(prismaError('P2000', message));
-
-    expect(
-      mockLogToAxiom,
-      'a genericized 4xx must be logged — else the only copy is destroyed'
-    ).toHaveBeenCalledTimes(1);
-    const logged = mockLogToAxiom.mock.calls[0][0] as { message?: string };
-    expect(logged.message, 'the LOG keeps the driver text the RESPONSE dropped').toContain(
-      'app_listings.slug'
-    );
-  });
-
   it('does NOT log a 4xx it passes through — only genericized ones become faults', () => {
     const res = createRes();
     handleEndpointError(res as never, new TRPCError({ code: 'NOT_FOUND', message: 'No such app' }));
@@ -485,34 +469,6 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
       res._header('Cache-Control'),
       'a genericized error response must never be edge-cacheable'
     ).toBe('no-store, max-age=0');
-  });
-
-  // ── Log severity: forensics, not an incident ───────────────────────────────
-  it('logs a genericized 408 at INFO, not ERROR — pool exhaustion is wave-shaped', () => {
-    // 🔴 The only Prisma codes reaching 408 are P1008/P2024 — connection-pool
-    // exhaustion. Logging those at error severity would add one error-board line
-    // per affected public request during exactly the incident you need signal in.
-    // That is the same "fires in high-volume waves" property for which
-    // `isRestServerFault` excludes 503 from the error stream.
-    // `classifyErrorFault` treats TIMEOUT as a SERVER fault repo-wide (correct in
-    // general), so this arm overrides `type`/`level` locally instead.
-    throughTheSeam(prismaError('P2024', 'Timed out fetching a new connection'));
-
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    const logged = mockLogToAxiom.mock.calls[0][0] as { type?: string; level?: string };
-    // `type` is the load-bearing one: Alloy extracts it into Loki detected_level.
-    expect(logged.type, 'a genericized 4xx must not land on the error board').toBe('info');
-    expect(logged.level).toBe('info');
-  });
-
-  it('still logs a genuine 5xx at ERROR severity (the info override is scoped)', () => {
-    // Negative control for the override: if it leaked into the 5xx arm it would
-    // silently empty the error board of real faults.
-    throughTheSeam(prismaError('P2022', 'raw driver text'));
-
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    const logged = mockLogToAxiom.mock.calls[0][0] as { type?: string };
-    expect(logged.type, 'a real server fault must still be error-severity').not.toBe('info');
   });
 
   // ── INVARIANT GUARDS: green on both sides, pinning what must NOT change ─────

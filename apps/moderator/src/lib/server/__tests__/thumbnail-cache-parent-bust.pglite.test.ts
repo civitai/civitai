@@ -16,6 +16,13 @@ const { dbHandle, del, syncSearchIndexBulk } = vi.hoisted(() => ({
   syncSearchIndexBulk: vi.fn(async (_batch: { entityIds: number[]; action?: string }) => undefined),
 }));
 
+vi.mock('../removal-hold', () => ({
+  // No approved appeals here; the hold itself is covered by image-removal-confirmation.pglite.test.ts.
+  holdRemovals: vi.fn(async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  })),
+}));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');

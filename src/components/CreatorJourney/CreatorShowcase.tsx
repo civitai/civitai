@@ -24,6 +24,7 @@ type ShowcaseUser = Showcase['legends'][number]['user'];
 
 const SUPERNOVA = { key: 'score:supernova', accent: tierAccents['score:supernova'] };
 const LEGEND = { key: 'score:legend', accent: tierAccents['score:legend'] };
+const MYTHIC = { key: 'score:mythic', accent: tierAccents['score:mythic'] };
 const HIDE_LABEL = 'Hide me from the showcase';
 
 export function CreatorShowcase() {
@@ -44,6 +45,7 @@ export function CreatorShowcase() {
       isLoading={isLoading}
       supernovaArt={badgeUrl(SUPERNOVA.key)}
       legendArt={badgeUrl(LEGEND.key)}
+      mythicArt={badgeUrl(MYTHIC.key)}
       onHide={() => setHidden(true)}
       hiding={hiding}
     />
@@ -55,6 +57,7 @@ export function CreatorShowcaseView({
   isLoading,
   supernovaArt,
   legendArt,
+  mythicArt,
   onHide,
   hiding,
 }: {
@@ -62,6 +65,7 @@ export function CreatorShowcaseView({
   isLoading?: boolean;
   supernovaArt?: string | null;
   legendArt?: string | null;
+  mythicArt?: string | null;
   onHide?: () => void;
   hiding?: boolean;
 }) {
@@ -100,6 +104,33 @@ export function CreatorShowcaseView({
               />
             ))}
           </ShowcaseSection>
+
+          {/* Hidden while empty: this ships before the Mythic milestone row exists. */}
+          {data.mythics.length > 0 && (
+            <ShowcaseSection
+              accent={MYTHIC.accent}
+              art={mythicArt}
+              name="Mythic"
+              title="Mythic"
+              description="Every creator who has reached Mythic, a Creator Score of 100,000,000."
+              count={data.mythics.length}
+              empty="No Mythics yet. The first one will be remembered here."
+            >
+              {data.mythics.map(({ user, founding, since }) => (
+                <ShowcaseCreatorCard
+                  key={user.id}
+                  user={user}
+                  accent={MYTHIC.accent}
+                  isViewer={user.id === currentUser?.id}
+                  onHide={onHide}
+                  hiding={hiding}
+                  icon={<IconCrown size={14} />}
+                  label={legendStatusLabel({ founding, since }, 'Mythic')}
+                  highlight={founding}
+                />
+              ))}
+            </ShowcaseSection>
+          )}
 
           <ShowcaseSection
             accent={LEGEND.accent}
@@ -173,7 +204,7 @@ function Hero({
             </Title>
             <Text c="dimmed" maw={560}>
               Celebrating the creators at the top of the ladder. Supernovas who broke through this
-              month, and the Legends who made it all the way.
+              month, the Legends who made it, and the few who went on to Mythic.
             </Text>
           </div>
         </div>

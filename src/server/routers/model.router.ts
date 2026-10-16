@@ -462,7 +462,9 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(migrateResourceToCollectionSchema)
     .use(isOwnerOrModerator)
-    .mutation(({ input }) => migrateResourceToCollection(input)),
+    .mutation(({ input, ctx }) =>
+      migrateResourceToCollection({ ...input, isModerator: ctx.user.isModerator })
+    ),
   privateModelFromTraining: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(privateModelFromTrainingSchema)

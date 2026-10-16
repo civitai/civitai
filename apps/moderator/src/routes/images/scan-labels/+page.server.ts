@@ -81,7 +81,12 @@ export const actions: Actions = {
     // has already landed.
     await applyMajorityBlocks(
       { requester: locals.user.id, ...getActorMeta(event) },
-      { block: blockImage, isModerationBlocked }
+      {
+        // A majority of voting moderators already agreed, which is the second opinion a re-removal
+        // of an image approved on appeal is held for.
+        block: async (args) => void (await blockImage({ ...args, skipAppealCheck: true })),
+        isModerationBlocked,
+      }
     ).catch((e) => console.error('scan label block sweep failed', e));
     return { voted: true };
   },

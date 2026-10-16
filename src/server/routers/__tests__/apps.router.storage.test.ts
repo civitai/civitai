@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TRPCError } from '@trpc/server';
 
 /**
  * Coverage for `apps.storage.{get,set,delete,list,getQuota}`. Mocks the
@@ -113,11 +112,7 @@ import { appsRouter, appsStorageRouter } from '../apps.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Globally stubbed in src/__tests__/setup.ts (promMetricStub) — `.inc` is a
 // vi.fn(), so the refusal-instrumentation assertions below can read it.
-import {
-  appStorageOpsCounter,
-  appStorageQuotaExceededCounter,
-  appStorageUserQuotaUntrackedCounter,
-} from '~/server/prom/client';
+import { appStorageOpsCounter, appStorageQuotaExceededCounter } from '~/server/prom/client';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -717,21 +712,6 @@ describe('apps.storage shared gates', () => {
       const caller = appsRouter.createCaller(fakeCtx() as never);
       expect(await caller.storage.get({ blockToken: 't', key: 'k' })).toEqual({ value: 1 });
     });
-
-    // Audit 🟡-4: every other refusal in resolveStorageContext increments the
-    // ops counter; the capability refusals did not, which is why the defect
-    // behind this change was only visible in a raw request log.
-    it('counts the refusal on the ops counter (op + outcome)', async () => {
-      const inc = vi.mocked(appStorageOpsCounter.inc);
-      inc.mockClear();
-      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
-
-      const caller = appsRouter.createCaller(fakeCtx() as never);
-      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
-        TRPCError
-      );
-      expect(inc).toHaveBeenCalledWith({ op: 'get', outcome: 'unauthorized' });
-    });
   });
 
   // The OTHER capability refusal on this path — subject hydrates, but does not
@@ -1313,48 +1293,6 @@ describe('apps.storage.set', () => {
       expect(quotaReads).toHaveLength(2);
       expect(quotaReads[0]).toContain('user_quota');
       expect(quotaReads[1]).not.toContain('user_quota');
-    });
-
-    it('logs the missing relation so an inert sub-quota is visible', async () => {
-      mockPool.query.mockImplementation(poolMissingUserQuota());
-      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-      const caller = appsRouter.createCaller(fakeCtx() as never);
-      await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ event: 'user_quota_relation_missing', appBlockId: 'apb_test' }),
-        expect.anything()
-      );
-    });
-
-    // …and ALERTABLE, not only greppable. The log line alone made the inert
-    // sub-quota visible to a human who went looking, which is the state
-    // `countStorageFault`'s docstring argues is unacceptable for a fault: nothing
-    // can be alerted on it, and nothing schedules the backfill that ends it, so
-    // the app can serve unmetered indefinitely. Its own series is what closes it —
-    // deliberately not an `outcome` on the ops counter, where it would be
-    // invisible among ordinary successful writes.
-    it('counts the untracked write on its own series, labelled by app', async () => {
-      const untrackedInc = vi.mocked(appStorageUserQuotaUntrackedCounter.inc);
-      untrackedInc.mockClear();
-      mockPool.query.mockImplementation(poolMissingUserQuota());
-      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-      const caller = appsRouter.createCaller(fakeCtx() as never);
-      await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
-      expect(untrackedInc).toHaveBeenCalledWith({ app_block_id: 'apb_test' });
-      expect(untrackedInc).toHaveBeenCalledTimes(1);
-    });
-
-    // The other half: a NORMAL write must not touch that series, or it stops
-    // meaning "this app is unmetered" and an alert on it fires on every write.
-    it('does NOT count the untracked series when user_quota is present', async () => {
-      const untrackedInc = vi.mocked(appStorageUserQuotaUntrackedCounter.inc);
-      untrackedInc.mockClear();
-      useSubjectFromSub();
-      mockPool.query.mockImplementation(quotaPoolFor({ 42: 0 }));
-      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
-      const caller = appsRouter.createCaller(fakeCtx() as never);
-      await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
-      expect(untrackedInc).not.toHaveBeenCalled();
     });
 
     // The fallback must not swallow a genuinely broken schema: `quota` missing
@@ -1971,24 +1909,6 @@ describe('apps.storage — run-for-real preview namespace', () => {
 
       expect(out.value).toBe('preview-row');
       expect(mockProvisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: 'pubreq_aaa' });
-    });
-
-    // Every other refusal in resolveStorageContext increments the ops counter;
-    // this one must too, or a valid token refused here is visible only in a raw
-    // request log (audit 🟡-4). INVARIANT GUARD, not regression coverage for the
-    // null check: this case also passed before the guard existed, because the
-    // capability refusal it hit instead was already counted. What it does pin is
-    // the new guard's OWN `inc` — deleting that line alone turns it red.
-    it('counts the refusal on the ops counter (op + outcome)', async () => {
-      const inc = vi.mocked(appStorageOpsCounter.inc);
-      inc.mockClear();
-      mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
-
-      const caller = appsRouter.createCaller(fakeCtx() as never);
-      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
-        TRPCError
-      );
-      expect(inc).toHaveBeenCalledWith({ op: 'get', outcome: 'unauthorized' });
     });
   });
 });

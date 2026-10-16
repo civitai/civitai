@@ -8,6 +8,60 @@ export type TextScanFlagView = {
 
 export type FlagLabel = 'minor' | 'poi';
 
+export type DetectionKind = 'first' | 'redetected';
+
+/** What `Model.meta.textScanFlags[label].redetected` holds: a detection the scan held for a moderator
+ *  instead of flagging. `kind: 'redetected'` is text a human had already cleared under another hash;
+ *  `'first'` has no human ruling behind it. Nothing was flagged either way. */
+export type RedetectionView = {
+  kind?: DetectionKind;
+  at?: string;
+  workflowId: string;
+  reason?: string;
+  names?: string[];
+  textHash: string;
+  model?: string | null;
+};
+
+/** The human clear a re-detection sits on top of. */
+export type PriorClearView = { at?: string; by?: number; via?: string; textHash?: string };
+
+/** An earlier ruling kept on the flag entry (`rulings`), newest few only. */
+export type FlagRulingView = {
+  decision: string;
+  at?: string;
+  by?: number;
+  textHash?: string | null;
+  via?: string;
+};
+
+const RULING_TEXT: Record<string, { lead: string; via: Record<string, string> }> = {
+  appealGranted: {
+    lead: 'Cleared',
+    via: { appeal: 'appeal overturned', moderator: 'moderator unflagged' },
+  },
+  appealUpheld: {
+    lead: 'Kept flagged',
+    via: { appeal: 'upheld on appeal', moderator: 'kept by moderator' },
+  },
+};
+
+/** One earlier ruling in words, with the route worded for what that decision was. */
+export const rulingText = (decision: string, via?: string) => {
+  const text = RULING_TEXT[decision];
+  if (!text) return decision;
+  const route = via ? text.via[via] : undefined;
+  return route ? `${text.lead} (${route})` : text.lead;
+};
+
+export const CLEAR_VIA_LABELS: Record<string, string> = {
+  appeal: 'appeal overturned',
+  moderator: 'moderator unflagged',
+};
+
+export const clearViaLabel = (via: string | undefined) =>
+  (via && CLEAR_VIA_LABELS[via]) || 'cleared';
+
 const FLAG_LABELS: FlagLabel[] = ['minor', 'poi'];
 
 export const flagsOf = (v: unknown) =>
@@ -63,3 +117,35 @@ export const scanVerdictText = (v: Pick<LatestScanLabel, 'detected' | 'reason'>)
   const verdict = v.detected ? 'detected' : v.detected === false ? 'not detected' : 'no verdict';
   return v.reason ? `${verdict} — ${v.reason}` : verdict;
 };
+
+/** A marker with no `kind` predates first-detection review, so it is a re-detection. */
+export const detectionKind = (marker: { kind?: DetectionKind }): DetectionKind =>
+  marker.kind === 'first' ? 'first' : 'redetected';
+
+const DETECTION_COPY = {
+  first: {
+    badge: 'First detection',
+    explanation:
+      "No moderator has cleared this text. The scan held it for review instead of flagging, and the owner wasn't told.",
+    showsPriorClear: false,
+  },
+  redetected: {
+    badge: 'Re-detected',
+    explanation:
+      "Found on text edited after it was cleared. The scan held this instead of flagging; the owner wasn't told.",
+    showsPriorClear: true,
+  },
+} as const;
+
+/** The wording that depends on whether a human ever cleared this label. */
+export const detectionCopy = (kind: DetectionKind) => DETECTION_COPY[kind];
+
+/** Which history cards apply. A first detection has no clear behind it, but its entry can still carry
+ *  earlier rulings (e.g. an upheld appeal), so those show regardless of kind. */
+export const detectionSections = (
+  kind: DetectionKind,
+  rulings: readonly unknown[] | null | undefined
+) => ({
+  priorClear: DETECTION_COPY[kind].showsPriorClear,
+  rulings: (rulings?.length ?? 0) > 0,
+});

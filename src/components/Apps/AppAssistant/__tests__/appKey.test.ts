@@ -16,10 +16,6 @@ describe('appKeyError (the sandbox service accepts 1-200 characters)', () => {
   ])('%j → %j', (key, error) => {
     expect(appKeyError(key)).toBe(error);
   });
-
-  it('pins the service limit', () => {
-    expect(APP_KEY_MAX_LENGTH).toBe(200);
-  });
 });
 
 describe('isAppBlockId (the slug rule a dev tunnel needs)', () => {

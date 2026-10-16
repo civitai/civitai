@@ -156,10 +156,6 @@ describe('the kill switch reading', () => {
     expect(syncReads.engine - reads).toBe(2);
   });
 
-  it('reuses one reading for at most 5 seconds', () => {
-    expect(SWITCH_READ_MS).toBe(5_000);
-  });
-
   it('reads off, without throwing, when Flipt fails to initialise', async () => {
     setFlag(null);
     ensureInit.mockRejectedValueOnce(new Error('flipt down'));

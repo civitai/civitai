@@ -251,6 +251,7 @@ export function MembershipGiftsCard({
   if (pointer)
     return (
       <PointerCard
+        id="membership-gifts"
         icon={<IconGift size={18} />}
         title="Gift memberships"
         description="Codes you have bought or been given, and who redeemed them."

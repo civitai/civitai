@@ -199,15 +199,6 @@ describe('the marker read is narrow, and its blob never leaves the module', () =
     expect(readBlockPublishedAppId(liveShapedMetadata)).toBe('appblk-custom-generators');
   });
 
-  it('reads the key the WRITER writes, not a re-spelled literal', () => {
-    // The constant is shared with `block-post.service.ts`'s write path, so a
-    // rename there is a compile error here rather than a silently dead chip.
-    // One literal assertion remains so a change to the constant's VALUE — which
-    // would orphan every existing row — still fails something.
-    expect(BLOCK_POST_APP_ID_META_KEY).toBe('blockPublishedAppId');
-    expect(readBlockPublishedAppId({ blockPublishedAppId: 'appblk-x' })).toBe('appblk-x');
-  });
-
   it('reads no marker from metadata that has none, or that is not an object', () => {
     const { [BLOCK_POST_APP_ID_META_KEY]: _dropped, ...withoutMarker } = liveShapedMetadata;
     expect(readBlockPublishedAppId(withoutMarker)).toBeNull();

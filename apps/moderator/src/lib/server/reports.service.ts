@@ -9,6 +9,7 @@ import { SYSTEM_USER_ID } from './users.service';
 import { rewardReportReporters } from './rewards';
 import {
   DEFAULT_REPORT_REASONS,
+  DEFAULT_REPORT_STATUSES,
   NEW_REPORT_STATUSES,
   ReportStatus,
   reportCountKey,
@@ -129,6 +130,14 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       WHERE a.id = ${entityId} AND u.username IS NOT NULL
     )`,
 
+  // An offering has no page of its own; it is listed in its seller's shop.
+  serviceOffering: (entityId) =>
+    sql<string | null>`(
+      SELECT '/user/' || u.username || '/shop'
+      FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"
+      WHERE o.id = ${entityId} AND u.username IS NOT NULL
+    )`,
+
   // Absolute, on games.civitai.com: Game Frame computes it, and `getReportItemUrl` uses it as-is.
   gameFrameGame: (entityId) =>
     sql<string | null>`(
@@ -186,7 +195,70 @@ export type GetReportsParams = {
    *  queue and page through it by eye. Applied on top of the other filters, not instead of them — the
    *  page widens them itself when the id would otherwise fall outside the default view. */
   reportId?: number;
+  /** Every report about one item — the account or model a queue page has open, which lists them all
+   *  rather than the ones that happen to sit on the current page of the queue. */
+  entityId?: number;
 };
+
+/**
+ * A queue's reports under every filter but status — what `getReports` lists and
+ * `getReportStatusCounts` breaks down, built once so the two can never filter differently.
+ */
+function reportQueueBase({
+  type,
+  reasons,
+  reportedBy,
+  from,
+  to,
+  reportId,
+  entityId,
+}: Omit<GetReportsParams, 'statuses' | 'page' | 'limit'>) {
+  const join = reportEntity(type);
+  const entityExists =
+    entityId == null
+      ? sql<boolean>`exists (select 1 from ${sql.table(
+          join.reportTable
+        )} er where er."reportId" = "Report"."id")`
+      : sql<boolean>`exists (select 1 from ${sql.table(
+          join.reportTable
+        )} er where er."reportId" = "Report"."id" and er.${sql.ref(join.fk)} = ${entityId})`;
+
+  let base = dbRead
+    .selectFrom('Report')
+    .leftJoin('User', 'User.id', 'Report.userId')
+    // Who RESOLVED it, aliased so it does not collide with the reporter join above. Retool's report
+    // table showed this column; without it a moderator cannot tell whether to re-open a closed report.
+    .leftJoin('User as resolver', 'resolver.id', 'Report.statusSetBy')
+    .where(entityExists);
+
+  if (reasons !== 'all') base = base.where('Report.reason', 'in', reasons);
+  if (reportedBy) base = base.where('User.username', 'ilike', `${reportedBy}%`);
+  if (from) base = base.where('Report.createdAt', '>=', from);
+  if (to) base = base.where('Report.createdAt', '<', to);
+  if (reportId) base = base.where('Report.id', '=', reportId);
+  return base;
+}
+
+/**
+ * How many OPEN reports (Pending, Processing) each status holds under the queue's other filters, for the
+ * status filter's chips. One number per status instead of a total across the selected ones: the sidebar
+ * badge counts Pending alone, so a total over Pending + Processing read as the badge being wrong. With
+ * the default reasons the Pending figure here is the badge's.
+ *
+ * Open statuses only, on purpose: they ride `Report_open_reason_id_idx` as the badge does, where
+ * counting Actioned and Unactioned would walk every report ever resolved on each page load — for two
+ * numbers nobody works from.
+ */
+export async function getReportStatusCounts(
+  params: Omit<GetReportsParams, 'statuses' | 'page' | 'limit'>
+): Promise<Partial<Record<ReportStatus, number>>> {
+  const rows = await reportQueueBase(params)
+    .where('Report.status', 'in', DEFAULT_REPORT_STATUSES)
+    .select(['Report.status', (eb) => eb.fn.countAll<number>().as('count')])
+    .groupBy('Report.status')
+    .execute();
+  return Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
+}
 
 export async function getReports({
   type,
@@ -198,6 +270,7 @@ export async function getReports({
   from,
   to,
   reportId,
+  entityId: forEntity,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
@@ -207,28 +280,21 @@ export async function getReports({
   const join = reportEntity(type);
   const offset = (page - 1) * limit;
 
-  // The join table/column is dynamic, so these two use raw `sql`; the rest of the query stays typed.
-  const entityExists = sql<boolean>`exists (select 1 from ${sql.table(
-    join.reportTable
-  )} er where er."reportId" = "Report"."id")`;
+  // The join table/column is dynamic, so this uses raw `sql`; the rest of the query stays typed.
   const entityId = sql<number | null>`(select er.${sql.ref(join.fk)} from ${sql.table(
     join.reportTable
   )} er where er."reportId" = "Report"."id" limit 1)`;
 
-  let base = dbRead
-    .selectFrom('Report')
-    .leftJoin('User', 'User.id', 'Report.userId')
-    // Who RESOLVED it, aliased so it does not collide with the reporter join above. Retool's report
-    // table showed this column; without it a moderator cannot tell whether to re-open a closed report.
-    .leftJoin('User as resolver', 'resolver.id', 'Report.statusSetBy')
-    .where(entityExists);
-
+  let base = reportQueueBase({
+    type,
+    reasons,
+    reportedBy,
+    from,
+    to,
+    reportId,
+    entityId: forEntity,
+  });
   if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
-  if (reasons !== 'all') base = base.where('Report.reason', 'in', reasons);
-  if (reportedBy) base = base.where('User.username', 'ilike', `${reportedBy}%`);
-  if (from) base = base.where('Report.createdAt', '>=', from);
-  if (to) base = base.where('Report.createdAt', '<', to);
-  if (reportId) base = base.where('Report.id', '=', reportId);
 
   const totalItems = Number(
     (await base.select((eb) => eb.fn.countAll<number>().as('count')).executeTakeFirst())?.count ?? 0
@@ -753,7 +819,18 @@ export async function getReportedModelStates(ids: number[]): Promise<ReportedMod
   if (!ids.length) return [];
   const rows = await dbRead
     .selectFrom('Model')
-    .select(['id', 'name', 'status', 'mode', 'minor', 'sfwOnly', 'poi', 'nsfw', 'deletedAt', 'meta'])
+    .select([
+      'id',
+      'name',
+      'status',
+      'mode',
+      'minor',
+      'sfwOnly',
+      'poi',
+      'nsfw',
+      'deletedAt',
+      'meta',
+    ])
     .where('id', 'in', ids)
     .execute();
   return rows.map(({ deletedAt, meta, ...r }) => ({

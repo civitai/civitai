@@ -17,16 +17,13 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
-import { phase1CapableLabel } from '~/server/utils/client-version-saturation';
+import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
+import { canDecodeDevalueResponse, isWebClient } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { currentSerializeCtx, instrumentSerialize } from '~/server/logging/trpc-serialize-log';
-import {
-  buildTransformer,
-  onDevalueWriteFallback,
-  serverWriteSerialize,
-  WRITE_DEVALUE,
-} from '~/shared/utils/trpc-union-transformer';
+import { buildTransformer, onDevalueWriteFallback } from '~/shared/utils/trpc-union-transformer';
+import { responseWriteSerialize, responseWritesDevalue } from '~/server/trpc/response-write-format';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
@@ -93,30 +90,29 @@ const t = initTRPC
   .context<Context>()
   .meta<TRPCMeta>()
   .create({
-    // Phase 2 of the superjson → devalue transformer migration: the response
-    // WRITE is env-gated PER POOL (`TRPC_WRITE_DEVALUE`, resolved once at module
-    // load into `serverWriteSerialize`) while READ stays the format-sniffing
-    // UNION (so a peer that still writes superjson is decoded fine, and rollback
-    // is unsetting the env + a pod restart). Default (flag unset) =
-    // `superjson.serialize` = byte-for-byte the Phase-1 wire, so this is safe to
-    // merge; setting the env `true` on ONE pool makes only that pool write
-    // devalue responses. The shared `buildTransformer` fills the request-read /
-    // response-read (union) and request-write (superjson, never exercised
-    // server-side) slots; the ONLY server-specific difference is the instrumented
-    // response-serialize below, whose inner call is still `serverWriteSerialize`.
-    transformer: buildTransformer((data: any) =>
+    // superjson → devalue transformer migration: the HTTP response WRITE format
+    // is chosen PER REQUEST (`responseWriteSerialize`, see
+    // `src/server/trpc/response-write-format.ts`): devalue only when the pool's
+    // `TRPC_WRITE_DEVALUE` master switch is on AND the request comes from a web
+    // bundle that can decode it AND the response is not edge-cacheable;
+    // superjson otherwise. READ stays the format-sniffing UNION. With the switch
+    // off the wire is byte-for-byte superjson. The shared `buildTransformer`
+    // fills the request-read / response-read (union) and request-write
+    // (superjson, never exercised server-side) slots.
+    transformer: buildTransformer((data: any) => {
       // instrumentSerialize times the serialize (the exact frame that pegs the
       // loop on an oversized response — see trpc-serialize-log.ts) and, only
       // above a cheap duration floor, logs the offending procedure + byte size.
-      // The span label is derived from the live gate so the freeze-instrumentation
-      // frame name matches what is ACTUALLY written (superjson vs devalue).
-      // The wrappers are pass-through — they return serverWriteSerialize's result.
-      instrumentSerialize(() =>
-        withSpan(`trpc:serialize:${WRITE_DEVALUE ? 'devalue' : 'superjson'}`, () =>
-          serverWriteSerialize(data)
+      // The span label is read from the same per-request decision the write
+      // uses, so the freeze-instrumentation frame name matches what is ACTUALLY
+      // written (superjson vs devalue). The wrappers are pass-through.
+      const devalue = responseWritesDevalue();
+      return instrumentSerialize(() =>
+        withSpan(`trpc:serialize:${devalue ? 'devalue' : 'superjson'}`, () =>
+          responseWriteSerialize(data)
         )
-      )
-    ),
+      );
+    }),
     errorFormatter,
   });
 
@@ -158,11 +154,10 @@ async function getClientConfigCached(): Promise<Record<string, string>> {
 
 // TODO - figure out a better way to do this
 async function needsUpdate(req?: NextApiRequest) {
-  const type = req?.headers['x-client'] as string;
   const version = req?.headers['x-client-version'] as string;
   const date = req?.headers['x-client-date'] as string;
 
-  if (type !== 'web') return false;
+  if (!isWebClient(req?.headers)) return false;
   // Fail open: if sysRedis is unreachable, don't force a client update —
   // every tRPC call runs through enforceClientVersion, so a throw here
   // would 500 every authenticated request during a sysRedis incident.
@@ -193,9 +188,10 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   // requests have no browser bundle and are excluded so the ratio stays purely
   // about the SPA population the Phase-2 write-flip gate cares about. Counted
   // before next() so it reflects attempts even if the resolver throws.
-  if ((ctx.req?.headers['x-client'] as string) === 'web') {
-    const phase1Capable = phase1CapableLabel(ctx.req?.headers['x-client-version'] as string);
-    trpcClientReadCapabilityRequests.inc({ phase1_capable: phase1Capable });
+  if (isWebClient(ctx.req?.headers)) {
+    trpcClientReadCapabilityRequests.inc({
+      phase1_capable: canDecodeDevalueResponse(ctx.req?.headers) ? 'true' : 'false',
+    });
   }
   // if (await needsUpdate(ctx.req)) {
   //   throw new TRPCError({
@@ -308,6 +304,7 @@ function runRecordProcedureDuration<T>(
 
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
+  recordTrpcCall(ctx.req?.headers, !!ctx.user);
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the

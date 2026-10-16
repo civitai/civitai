@@ -82,6 +82,7 @@ export const accountSections: AccountSection[] = [
       'reactions',
       'who reacted',
       'who collected',
+      'older reactions',
       'video controls',
       'advanced mode',
       'air',

@@ -24,9 +24,9 @@ import {
   createMultiAccountBuzzTransaction,
   getMultiAccountTransactionsByPrefix,
   getUserBuzzAccount,
-  refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
+import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isPayoutPending, lockBountyForPayout } from '~/server/services/bounty-payout-lock';
 import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
@@ -1013,16 +1013,14 @@ function logBountyPayoutError({
 }
 
 async function refundBountyPrefix(txId: string, description: string, details: MixedObject) {
+  if (isBountyTransactionPrefix(txId)) {
+    await refundAllLegsByPrefix({ externalTransactionIdPrefix: txId, description, details });
+    return;
+  }
   try {
-    if (isBountyTransactionPrefix(txId))
-      await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: txId,
-        description,
-        details,
-      });
-    else await refundTransaction(txId, description);
+    await refundTransaction(txId, description);
   } catch (error) {
-    // Nothing left to refund under it: an earlier attempt already did.
+    // A single transaction: 409 means an earlier attempt already refunded it.
     const status = getBuzzApiStatus(error);
     if (status === 404 || status === 409) return;
     throw error;

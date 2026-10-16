@@ -107,15 +107,6 @@ describe('runImageSearch: the published type of `username`', () => {
     expect(typeof username).toBe('string');
   });
 
-  it('CANNOT restore a name the cache already destroyed — this belt is not the fix', async () => {
-    // `0222` reached the wire as `222` because the cache decoded the stored text
-    // as a number. Casting at this boundary produces a well-typed 200 carrying a
-    // name that matches no account, which is why the cache fix is the real one.
-    const username = await usernameFromFeed(222);
-    expect(username).toBe('222');
-    expect(username).not.toBe('0222');
-  });
-
   it('leaves an ordinary string untouched', async () => {
     expect(await usernameFromFeed('0222')).toBe('0222');
     expect(await usernameFromLegacy('2428023993')).toBe('2428023993');

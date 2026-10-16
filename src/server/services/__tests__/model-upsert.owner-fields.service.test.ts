@@ -134,6 +134,11 @@ const storedModel = {
   meta: null as Record<string, unknown> | null,
   availability: Availability.Public as Availability,
   status: ModelStatus.Published as ModelStatus,
+  createdAt: new Date('2025-01-01T00:00:00Z'),
+  allowNoCredit: true,
+  allowCommercialUse: ['Image'] as string[],
+  allowDerivatives: true,
+  allowDifferentLicense: false,
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
@@ -513,5 +518,76 @@ describe('flag appeals settled by a moderator save', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: false });
 
     expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+});
+
+describe('merge permissions on save', () => {
+  it('stores "different permissions" off when the owner saves with merges off', async () => {
+    mockStored({ allowDerivatives: true, allowDifferentLicense: true } as Partial<
+      typeof storedModel
+    >);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      allowDerivatives: false,
+      allowDifferentLicense: true,
+    });
+
+    expect(updateData()).toMatchObject({ allowDerivatives: false, allowDifferentLicense: false });
+  });
+
+  it('does the same on create', async () => {
+    await upsert({ userId: OWNER_ID, allowDerivatives: false, allowDifferentLicense: true });
+
+    expect(createData()).toMatchObject({ allowDerivatives: false, allowDifferentLicense: false });
+  });
+
+  it('control: keeps it on while merges are allowed', async () => {
+    mockStored({ allowDerivatives: false, allowDifferentLicense: false } as Partial<
+      typeof storedModel
+    >);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      allowDerivatives: true,
+      allowDifferentLicense: true,
+    });
+
+    expect(updateData()).toMatchObject({ allowDerivatives: true, allowDifferentLicense: true });
+  });
+});
+
+describe('permission snapshots', () => {
+  it('records a permission change in the save transaction', async () => {
+    mockStored();
+    mockDbWrite.modelPermissionSnapshot.findFirst.mockResolvedValue(null);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, allowDerivatives: false });
+
+    expect(mockDbWrite.modelPermissionSnapshot.createMany).toHaveBeenCalledTimes(1);
+    const { data } = mockDbWrite.modelPermissionSnapshot.createMany.mock.calls[0][0] as {
+      data: Record<string, unknown>[];
+    };
+    expect(data).toEqual([
+      expect.objectContaining({ modelId: MODEL_ID, source: 'baseline', allowDerivatives: true }),
+      expect.objectContaining({
+        modelId: MODEL_ID,
+        source: 'live',
+        allowDerivatives: false,
+        actorUserId: OWNER_ID,
+        actorRole: 'owner',
+      }),
+    ]);
+  });
+
+  it('control: a save that leaves permissions alone writes and reads nothing', async () => {
+    mockStored();
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, allowDerivatives: true, name: 'Renamed' });
+
+    expect(mockDbWrite.modelPermissionSnapshot.findFirst).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelPermissionSnapshot.createMany).not.toHaveBeenCalled();
   });
 });

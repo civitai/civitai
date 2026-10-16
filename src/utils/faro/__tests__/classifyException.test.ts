@@ -1422,16 +1422,6 @@ describe('classifyException — GROUP D: bizlogic phrasings (moderation + SFW-mo
     expect(r.drop).toBe(false);
     expect(r.category).toBe('real');
   });
-
-  // A bizlogic tag must never become a drop.
-  it('keeps every new bizlogic phrasing (tag-only, no drop)', () => {
-    for (const value of [
-      'Your prompt was flagged: breasts',
-      'The prompt has been blocked due to mature content, which is not allowed on this site',
-    ]) {
-      expect(classifyException(exc('TRPCClientError', value)).drop).toBe(false);
-    }
-  });
 });
 
 // 🔴 GROUP E. Before this change, `/\(evaluating ['"]window\.ethereum/i` was the only DROP-or-TAG

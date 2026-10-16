@@ -315,7 +315,17 @@ export function ModelModerationCard({
                   {data.unpublishedAt && (
                     <Text size="xs">
                       Unpublished {formatDate(data.unpublishedAt)}
-                      {data.unpublishedReason ? ` — ${data.unpublishedReason}` : ''}
+                      {data.modelRules
+                        ? ` — Model rules, ${
+                            data.modelRules.source === 'literal'
+                              ? 'named at publish'
+                              : 'matched by the scan'
+                          }: ${data.modelRules.rules
+                            .map((rule) => rule.subject ?? `rule ${rule.id}`)
+                            .join(', ')}`
+                        : data.unpublishedReason
+                        ? ` — ${data.unpublishedReason}`
+                        : ''}
                     </Text>
                   )}
                   {data.takenDownAt && (

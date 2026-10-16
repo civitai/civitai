@@ -4,6 +4,10 @@ import {
   latestScanDisagrees,
   openVerdicts,
   poiInForce,
+  detectionCopy,
+  detectionKind,
+  detectionSections,
+  rulingText,
   scanVerdictProvenance,
   scanVerdictText,
 } from '../text-scan-verdicts';
@@ -103,5 +107,68 @@ describe('scanVerdictText', () => {
     expect(scanVerdictText({ detected: true, reason: 'Says 15.' })).toBe('detected — Says 15.');
     expect(scanVerdictText({ detected: false, reason: null })).toBe('not detected');
     expect(scanVerdictText({ detected: null, reason: 'Odd.' })).toBe('no verdict — Odd.');
+  });
+});
+
+describe('rulingText', () => {
+  it.each([
+    ['appealGranted', 'moderator', 'Cleared (moderator unflagged)'],
+    ['appealGranted', 'appeal', 'Cleared (appeal overturned)'],
+    ['appealUpheld', 'moderator', 'Kept flagged (kept by moderator)'],
+    ['appealUpheld', 'appeal', 'Kept flagged (upheld on appeal)'],
+    ['appealUpheld', undefined, 'Kept flagged'],
+    ['somethingNew', 'moderator', 'somethingNew'],
+  ])('%s via %s reads %s', (decision, via, text) => {
+    expect(rulingText(decision, via)).toBe(text);
+  });
+});
+
+describe('detectionKind', () => {
+  it('reads a marker with no kind as a re-detection', () => {
+    expect(detectionKind({})).toBe('redetected');
+    expect(detectionKind({ kind: 'redetected' })).toBe('redetected');
+    expect(detectionKind({ kind: 'first' })).toBe('first');
+  });
+
+  it('treats an unrecognised kind as a re-detection', () => {
+    expect(detectionKind({ kind: 'later' as never })).toBe('redetected');
+  });
+});
+
+describe('detectionCopy', () => {
+  it('does not claim a prior clear for a first detection', () => {
+    const copy = detectionCopy('first');
+    expect(copy.badge).toBe('First detection');
+    expect(copy.explanation).not.toMatch(/edited|after it was cleared/i);
+    expect(copy.explanation).not.toMatch(/has ruled|never ruled|no ruling/i);
+    expect(copy.showsPriorClear).toBe(false);
+  });
+
+  it('describes a re-detection as text found after a human clear', () => {
+    const copy = detectionCopy('redetected');
+    expect(copy.badge).toBe('Re-detected');
+    expect(copy.explanation).toMatch(/after it was cleared/);
+    expect(copy.showsPriorClear).toBe(true);
+  });
+});
+
+describe('detectionSections', () => {
+  const ruling = { decision: 'appealUpheld' };
+
+  it('shows earlier rulings on a first detection that carries them, without a prior clear', () => {
+    expect(detectionSections('first', [ruling])).toEqual({ priorClear: false, rulings: true });
+  });
+
+  it('shows nothing prior on a first detection with no rulings', () => {
+    expect(detectionSections('first', null)).toEqual({ priorClear: false, rulings: false });
+    expect(detectionSections('first', [])).toEqual({ priorClear: false, rulings: false });
+  });
+
+  it('shows the prior clear on a re-detection, and its rulings when present', () => {
+    expect(detectionSections('redetected', [ruling])).toEqual({ priorClear: true, rulings: true });
+    expect(detectionSections('redetected', undefined)).toEqual({
+      priorClear: true,
+      rulings: false,
+    });
   });
 });

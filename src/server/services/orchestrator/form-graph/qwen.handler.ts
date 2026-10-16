@@ -8,7 +8,7 @@ import type {
   Qwen2EditFalImageGenInput,
   QwenApiCreateImageGenInput,
   QwenApiEditImageGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type {
   ImageGenStepTemplate,
   ComfyQwen21CreateImageGenInput,
@@ -98,7 +98,7 @@ export const createQwenInput = defineHandler<
       negativePrompt: data.negativePrompt,
       width: data.aspectRatio?.width,
       height: data.aspectRatio?.height,
-      promptExtend: 'enablePromptExpansion' in data ? data.enablePromptExpansion : undefined,
+      enhancePrompt: 'enablePromptExpansion' in data ? data.enablePromptExpansion : undefined,
       quantity,
       seed: data.seed,
     };

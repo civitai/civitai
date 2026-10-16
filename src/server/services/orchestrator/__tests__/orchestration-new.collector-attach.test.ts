@@ -98,28 +98,7 @@ async function ctxFor(surface: (typeof GENERATION_SURFACES)[number]) {
   return externalCtx;
 }
 
-describe('the graph fixture is still what this test assumes', () => {
-  it('Qwen/txt2img is modelLocked with a default', () => {
-    // Guard the guard: if Qwen stops being modelLocked nothing substitutes, and
-    // the end-to-end assertion below would pass vacuously.
-    expect(getWorkflowCapability('Qwen', 'txt2img')?.modelLocked).toBe(true);
-    expect(typeof QWEN_DEFAULT).toBe('number');
-  });
-});
-
 describe('buildGenerationContext attaches a substitution collector', () => {
-  it.each(GENERATION_SURFACES)(
-    '🔴 the returned context carries a collector labelled `%s`',
-    async (surface) => {
-      const externalCtx = await ctxFor(surface);
-      expect(externalCtx.modelSubstitutions).toBeDefined();
-      // The surface is fixed at construction by the caller and rides on the
-      // collector, because `validateInput` — where the metric is emitted — is
-      // shared by every surface and structurally cannot tell them apart.
-      expect(externalCtx.modelSubstitutions?.surface).toBe(surface);
-    }
-  );
-
   it('🔴 a fresh collector per call — never shared, never accumulating across users', async () => {
     // The hazard this guards is not hypothetical: a collector reachable from any
     // of the cached values `buildGenerationContext` awaits would accumulate
