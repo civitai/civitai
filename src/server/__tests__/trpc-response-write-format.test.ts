@@ -204,6 +204,27 @@ describe('TRPC_WRITE_DEVALUE=true — format chosen per request', () => {
     expect(containsPayload(chunks.map((chunk) => superjson.deserialize(chunk as any)))).toBe(true);
   });
 
+  it('writes superjson for an edge-cacheable response on the non-streamed batch path too', async () => {
+    const served = await get(`payload?batch=1&input=${encodeURIComponent('{}')}`, {
+      ...CAPABLE_WEB,
+      'x-test-cacheable': '1',
+    });
+    expect(served.status).toBe(200);
+    expect(served.headers.get('cache-control')).toContain('s-maxage=60');
+    expect(JSON.parse(served.text)[0].result.data).toEqual(asSuperjson(PAYLOAD));
+  });
+
+  it('marks every devalue response private itself, without relying on the proxy default', async () => {
+    // This harness runs the route without the proxy middleware, so a superjson response
+    // carries no Cache-Control at all (control); a devalue one must carry the private default.
+    expect((await get('payload')).headers.get('cache-control')).toBeNull();
+    const single = await get('payload', CAPABLE_WEB);
+    expect(singleData(single)).toEqual(asDevalue(PAYLOAD));
+    expect(single.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
+    const stream = await streamed(CAPABLE_WEB);
+    expect(stream.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
+  });
+
   it('still falls back to superjson when devalue cannot represent the payload', async () => {
     const served = await get('notAPojo', CAPABLE_WEB);
     expect(singleData(served)).toEqual(asSuperjson(new NotAPojo(7)));
@@ -215,7 +236,9 @@ describe('TRPC_WRITE_DEVALUE=false — superjson always', () => {
     h.writeDevalue = false;
   });
 
-  it('writes superjson even to a capable web bundle', async () => {
-    expect(singleData(await get('payload', CAPABLE_WEB))).toEqual(asSuperjson(PAYLOAD));
+  it('writes superjson even to a capable web bundle, with the route adding no header', async () => {
+    const served = await get('payload', CAPABLE_WEB);
+    expect(singleData(served)).toEqual(asSuperjson(PAYLOAD));
+    expect(served.headers.get('cache-control')).toBeNull();
   });
 });

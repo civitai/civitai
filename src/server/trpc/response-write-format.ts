@@ -23,6 +23,10 @@ import { pickServerWriteSerialize, WRITE_DEVALUE } from '~/shared/utils/trpc-uni
  *     streamed batch), so the pin is in place in time. Its error path serializes first, but
  *     an errored response is never cacheable.
  *
+ * Every response that stays devalue is also sent with a private `Cache-Control` by that same
+ * `responseMeta`, so a shared cache never stores one, whether or not the proxy middleware's
+ * default reaches the response.
+ *
  * No store (switch off, incapable client, or code running outside an HTTP request) means
  * superjson — the safe direction, since every client reads it.
  */

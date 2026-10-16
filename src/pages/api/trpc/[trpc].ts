@@ -20,8 +20,10 @@ import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/t
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
+import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import {
   pinResponseWriteToSuperjson,
+  responseWritesDevalue,
   runWithResponseWriteFormat,
 } from '~/server/trpc/response-write-format';
 import { redactBlockTokens } from '~/server/logging/redact-block-token';
@@ -76,6 +78,12 @@ const trpcHandler = createNextApiHandler({
       // A cached body is served to the next caller of this URL whatever client it is, so it
       // must be superjson, the format every client reads. See response-write-format.ts.
       pinResponseWriteToSuperjson();
+    } else if (responseWritesDevalue() && !headers['Cache-Control']) {
+      // A devalue body must never be stored by a shared cache: only a capable web bundle can
+      // read it. The proxy's api-cache middleware already sends this same private default on
+      // /api/trpc, but that lives outside this route and its matcher can change, so the route
+      // states it itself for every response it writes as devalue.
+      headers['Cache-Control'] = PRIVATE_CACHE_CONTROL;
     }
 
     return Object.keys(headers).length > 0 ? { headers } : {};
