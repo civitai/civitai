@@ -43,15 +43,16 @@ describe.each(['Asia/Tokyo', 'America/Los_Angeles'])('picker month in %s', (tz) 
   });
 });
 
+// Strict: the patch merges over pending filters, so an absent key keeps the old value.
 describe('jumpToPatch / periodPatch', () => {
   it('drops the relative period when a month is picked, and keeps it when the month is cleared', () => {
-    expect(jumpToPatch('2025-03', 'AllTime')).toEqual({ jumpTo: '2025-03', period: 'AllTime' });
-    expect(jumpToPatch(undefined, 'AllTime')).toEqual({ jumpTo: undefined });
+    expect(jumpToPatch('2025-03', 'AllTime')).toStrictEqual({ jumpTo: '2025-03', period: 'AllTime' });
+    expect(jumpToPatch(undefined, 'AllTime')).toStrictEqual({ jumpTo: undefined });
   });
 
   it('drops the month when a relative period is picked, and keeps it for All time', () => {
-    expect(periodPatch('Week')).toEqual({ period: 'Week', jumpTo: undefined });
-    expect(periodPatch('AllTime')).toEqual({ period: 'AllTime' });
+    expect(periodPatch('Week')).toStrictEqual({ period: 'Week', jumpTo: undefined });
+    expect(periodPatch('AllTime')).toStrictEqual({ period: 'AllTime' });
   });
 });
 
