@@ -676,11 +676,15 @@ describe('strike.service', () => {
       // The flag alone, set in SQL: no full-row write that could carry a stale `meta` or the mute.
       expect(userUpdate).not.toHaveBeenCalled();
       expect(executeRaw).toHaveBeenCalledTimes(1);
-      const [strings, userId] = executeRaw.mock.calls[0];
-      expect(sqlOf([strings])).toMatch(
-        /SET meta = jsonb_set\(COALESCE\(meta, '\{\}'::jsonb\), '\{strikeFlaggedForReview\}', 'false'::jsonb\)\s+WHERE id =\s*$/
+      const [strings, userId, , threshold] = executeRaw.mock.calls[0];
+      const text = sqlOf([strings]).replace(/\s+/g, ' ');
+      expect(text).toContain(
+        `SET meta = jsonb_set(COALESCE(u.meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)`
       );
+      // Re-summed in the statement: a strike committed after the caller's read must keep the flag.
+      expect(text).toMatch(/AND COALESCE\(\( SELECT SUM\(points\) FROM "UserStrike" .*\), 0\) < $/);
       expect(userId).toBe(1);
+      expect(threshold).toBe(3);
       expect(mockCreateNotification).not.toHaveBeenCalled();
       expect(mockInvalidateSession).not.toHaveBeenCalled();
       expect(mockRefreshSession).not.toHaveBeenCalled();

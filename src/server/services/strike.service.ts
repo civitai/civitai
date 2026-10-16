@@ -333,14 +333,20 @@ export async function getUserStandings(input: GetUserStandingsInput) {
 export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted';
 
 /**
- * `jsonb_set`, not a spread of the `meta` read earlier: the User row is not locked during escalation,
- * and writing a stale copy back would restore a `muteReason` that a concurrent unmute had just removed.
+ * The User row is not locked during escalation, so this decides in the statement itself: `jsonb_set`,
+ * not a spread of the `meta` read earlier (which would restore a `muteReason` a concurrent unmute had
+ * just removed), and the points re-summed, so a strike committed since the caller's read keeps its flag.
+ * Same rule as `voidScamCaseStrikes`; keep the active-strike predicate in step with it.
  */
 async function clearReviewFlag(tx: Prisma.TransactionClient, userId: number) {
   await tx.$executeRaw`
-    UPDATE "User"
-    SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)
-    WHERE id = ${userId}
+    UPDATE "User" u
+    SET meta = jsonb_set(COALESCE(u.meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)
+    WHERE u.id = ${userId}
+      AND COALESCE((
+        SELECT SUM(points) FROM "UserStrike"
+        WHERE "userId" = u.id AND status = ${StrikeStatus.Active}::"StrikeStatus" AND "expiresAt" > now()
+      ), 0) < ${REVIEW_MUTE_POINTS}
   `;
 }
 
