@@ -68,6 +68,7 @@ function serialisedValue(value: unknown, key: string): unknown {
   if (resolved instanceof Number) return Number(resolved);
   if (resolved instanceof String) return String(resolved);
   if (resolved instanceof Boolean) return resolved.valueOf();
+  if (resolved instanceof BigInt) return resolved.valueOf();
   return resolved;
 }
 

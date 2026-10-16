@@ -101,6 +101,7 @@ import {
   listAvailableSchema,
   setAppSpendCapConfigSchema,
   setMarketplaceMetaSchema,
+  blockSettingsWithinCap,
   subscriptionScopeSchema,
   toPublicBlockManifest,
 } from '~/server/schema/blocks/subscription.schema';
@@ -378,7 +379,6 @@ import {
   type TRPCMeta,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 import type { SessionUser } from '~/types/session';
 
 // G6 — the terminal orchestrator states (as mapped onto the block-contract
@@ -1705,11 +1705,9 @@ const KNOWN_SLOT_IDS = SLOT_KNOWN_SLOT_IDS;
 // H5: cap is in BYTES, not UTF-16 code units. The previous `.length` count
 // let a settings blob double its real byte size via 4-byte UTF-8 sequences
 // (emoji, certain CJK ranges). Buffer.byteLength is the right unit.
-const settingsSchema = z
-  .record(z.string(), z.unknown())
-  .refine((value) => jsonLengthWithin([value], 4096, { unit: 'utf8' }), {
-    message: 'settings exceeds 4KB',
-  });
+const settingsSchema = z.record(z.string(), z.unknown()).refine(blockSettingsWithinCap, {
+  message: 'settings exceeds 4KB',
+});
 
 /**
  * Asserts that the current user owns the model or is a moderator. Throws

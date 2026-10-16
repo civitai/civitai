@@ -37,6 +37,11 @@ const corpus: [string, unknown][] = [
   ['toJSON and boxed values', [new Date(0), new Number(3), new String('s"'), new Boolean(false)]],
   ['maps and sets', { m: new Map([['k', 1]]), s: new Set([1]) }],
   ['a toJSON that returns an object', { v: { toJSON: () => ({ inner: [1, 'two'] }) } }],
+  [
+    'a toJSON that reads its key',
+    { when: { toJSON: (k: string) => k.repeat(3) }, list: [{ toJSON: (k: string) => k }] },
+  ],
+  ['an invalid date', [new Date(NaN)]],
   ['a shared object, three times', [shared, shared, { again: shared }]],
   ['a top-level string', 'top "level"\n'],
   ['a top-level number', -0.5],
@@ -60,6 +65,12 @@ describe('jsonLengthWithin', () => {
       expect(jsonLengthWithin([value], length + 1)).toBe(true);
     });
 
+    it.each(corpus)('%s, with the UTF-8 verdict flipping exactly at the limit', (_, value) => {
+      const length = Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8');
+      expect(jsonLengthWithin([value], length - 1, { unit: 'utf8' })).toBe(false);
+      expect(jsonLengthWithin([value], length, { unit: 'utf8' })).toBe(true);
+    });
+
     it('sums several values against one limit', () => {
       const values = [{ a: 'x' }, { b: [1, 2] }, shared];
       const total = values.reduce<number>((sum, v) => sum + JSON.stringify(v).length, 0);
@@ -74,6 +85,7 @@ describe('jsonLengthWithin', () => {
 
     it('throws where JSON.stringify throws', () => {
       expect(() => jsonLengthWithin([{ n: 1n }], 1000)).toThrow(TypeError);
+      expect(() => jsonLengthWithin([{ n: Object(1n) }], 1000)).toThrow(TypeError);
       const cyclic: Record<string, unknown> = { a: 1 };
       cyclic.self = { back: cyclic };
       expect(() => jsonLengthWithin([cyclic], 1000)).toThrow(TypeError);
@@ -162,6 +174,22 @@ describe('request size caps on a repeated value', () => {
     expect(stringified).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
   });
 
+  it('refuses step inputs that are each under the cap but over it together', () => {
+    const third = { p: '.'.repeat(100_000) };
+    const body = {
+      kind: 'workflow',
+      steps: [
+        { $type: 'echo', input: third },
+        { $type: 'echo', input: third },
+        { $type: 'echo', input: third },
+      ],
+    };
+    const r = blockMultiStepWorkflowBodySchema.safeParse(body);
+    expect(issues(r)).toEqual([
+      [['steps'], 'workflow step inputs and arguments exceed the 262144-byte limit'],
+    ]);
+  });
+
   it('refuses an inline graph without serialising it', () => {
     const body = {
       kind: 'customComfy',
@@ -186,5 +214,23 @@ describe('request size caps on a repeated value', () => {
     const r = serialisedDuring(() => upsertSubscriptionSchema.safeParse(body));
     expect(issues(r)).toEqual([[['settings'], 'settings exceeds 4KB']]);
     expect(stringified).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
+  });
+
+  it('caps subscription settings in UTF-8 bytes, not UTF-16 units', () => {
+    // `{"s":"…"}` is 8 bytes of framing; each 日 is 3 UTF-8 bytes and 1 UTF-16 unit.
+    const settings = (extra: string) => ({ s: '日'.repeat(1_362) + extra });
+    const body = (extra: string) => ({
+      appBlockId: 'block',
+      scope: 'viewer_personal',
+      settings: settings(extra),
+      targetModelTypes: null,
+      targetBaseModels: null,
+    });
+    expect(Buffer.byteLength(JSON.stringify(settings('ab')), 'utf8')).toBe(4096);
+    expect(JSON.stringify(settings('abc')).length).toBeLessThan(4096);
+    expect(upsertSubscriptionSchema.safeParse(body('ab')).success).toBe(true);
+    expect(issues(upsertSubscriptionSchema.safeParse(body('abc')))).toEqual([
+      [['settings'], 'settings exceeds 4KB'],
+    ]);
   });
 });
