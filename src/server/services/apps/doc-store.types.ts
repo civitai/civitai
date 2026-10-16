@@ -191,6 +191,21 @@ export class DocStoreError extends Error {
   }
 }
 
+export const docStoreUnavailable = () =>
+  new DocStoreError('service_unavailable', 'storage is temporarily unavailable', {
+    retryAfter: 1,
+  });
+
+/** A read a storage gate depends on: a failure is retryable, never a refusal about the caller. */
+export async function docStoreDependency<T>(read: Promise<T>): Promise<T> {
+  try {
+    return await read;
+  } catch (err) {
+    if (err instanceof DocStoreError) throw err;
+    throw docStoreUnavailable();
+  }
+}
+
 export function isDocStoreError(err: unknown, code?: DocStoreErrorCode): err is DocStoreError {
   return err instanceof DocStoreError && (code === undefined || err.code === code);
 }

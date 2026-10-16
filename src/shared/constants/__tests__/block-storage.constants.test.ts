@@ -98,18 +98,25 @@ describe('parseManifestStorage', () => {
   });
 
   it('carries ownedModelVersions pointers through verbatim, in declared order', () => {
-    const pointers = ['/workflow/modelVersionId', '/a~1b/0'];
+    const pointers = ['/workflow/modelVersionId', '/_meta/v2'];
     const parsed = parseManifestStorage({
       storage: {
         collections: {
           picks: { visibility: 'shared', write: 'own', ownedModelVersions: pointers },
-          drafts: { visibility: 'private', ownedModelVersions: ['/v'] },
         },
       },
     });
     expect(parsed.errors).toEqual([]);
     expect(parsed.collections.get('picks')?.ownedModelVersions).toEqual(pointers);
-    expect(parsed.collections.get('drafts')?.ownedModelVersions).toEqual(['/v']);
+  });
+
+  it('refuses ownedModelVersions on a private collection as a shared-only field', () => {
+    const { errors } = parseManifestStorage({
+      storage: { collections: { drafts: { visibility: 'private', ownedModelVersions: ['/v'] } } },
+    });
+    expect(errors).toEqual([
+      'storage.collections.drafts.ownedModelVersions applies only to shared collections',
+    ]);
   });
 
   it('says why ownedModelVersions is refused on a collection the writer may not author', () => {
@@ -126,7 +133,7 @@ describe('parseManifestStorage', () => {
       },
     });
     expect(errors).toEqual([
-      'storage.collections.plays.ownedModelVersions applies only to private collections and shared collections with write "own" — the viewer writing a document must be its author',
+      'storage.collections.plays.ownedModelVersions applies only to shared collections with write "own" — the viewer writing a document must be its author',
     ]);
   });
 

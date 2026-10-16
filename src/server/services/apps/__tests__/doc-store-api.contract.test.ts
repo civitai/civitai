@@ -1703,7 +1703,6 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
       collections: {
         picks: ruled,
         plain: { visibility: 'shared', write: 'own' },
-        drafts: { visibility: 'private', ownedModelVersions: [POINTER] },
       },
     },
   };
@@ -1817,21 +1816,24 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
     expect(swapOwn.body).toMatchObject({ version: 2, data: pick(V1_OWN_2).data });
   });
 
-  it('a private collection with the rule refuses the same way, before its rate limit is charged', async () => {
-    const { tokenOf, spend } = await setup();
+  it('an ownership lookup that fails is a retryable 503 with Retry-After: nothing written, nothing spent', async () => {
+    const { A, tokenOf, spend } = await setup();
     const v1 = await tokenOf(VIEWER_IDS.v1);
+    dbMock.dbRead.modelVersion.findMany.mockRejectedValueOnce(new Error('replica unreachable'));
     const { result, spent } = await spend(() =>
-      call({ token: v1, method: 'PUT', path: '/drafts/d', body: pick(V2_OWN) })
+      call({ token: v1, method: 'POST', path: '/picks', body: pick(V1_OWN) })
     );
-    expect(result.status).toBe(403);
-    expect(result.body).toEqual(refusedBody);
+    expect(result.status).toBe(503);
+    expect(result.body).toMatchObject({
+      code: 'service_unavailable',
+      details: { retryAfter: 1 },
+    });
+    expect(result.headers['retry-after']).toBe('1');
     expect(spent).toEqual(NOTHING_SPENT);
-    // Positive control: an accepted private write is charged to the rate limit.
-    const ok = await spend(() =>
-      call({ token: v1, method: 'PUT', path: '/drafts/d', body: pick(V1_OWN) })
-    );
-    expect(ok.result.status).toBe(200);
-    expect(ok.spent.rateCounters).toBeGreaterThan(0);
+    expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [A.id])).toEqual([]);
+    // Control: the same write lands once the lookup answers.
+    const ok = await call({ token: v1, method: 'POST', path: '/picks', body: pick(V1_OWN) });
+    expect(ok.status).toBe(201);
   });
 
   it('a missing version, a deleted model and a value that is not an id are refused exactly like a stranger', async () => {
@@ -1839,13 +1841,28 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
     const v1 = await tokenOf(VIEWER_IDS.v1);
     const stranger = await call({ token: v1, method: 'POST', path: '/picks', body: pick(V2_OWN) });
     expect(stranger.status).toBe(403);
-    for (const id of [987_654, V1_DELETED_MODEL, String(V1_OWN), V1_OWN + 0.5, -V1_OWN, null]) {
+    lookups = [];
+    for (const id of [
+      987_654,
+      V1_DELETED_MODEL,
+      String(V1_OWN),
+      V1_OWN + 0.5,
+      -V1_OWN,
+      0,
+      2_147_483_648,
+      null,
+      true,
+      [V1_OWN],
+      { id: V1_OWN },
+    ]) {
       const r = await call({ token: v1, method: 'POST', path: '/picks', body: pick(id) });
       expect({ status: r.status, body: r.body }, JSON.stringify(id)).toEqual({
         status: stranger.status,
         body: stranger.body,
       });
     }
+    // Only well-formed ids reach the database; every malformed value was refused before it.
+    expect(lookups).toEqual([[987_654], [V1_DELETED_MODEL]]);
   });
 
   it('a document without the declared field is accepted, without a lookup', async () => {

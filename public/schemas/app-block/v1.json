@@ -471,13 +471,13 @@
                 },
                 "ownedModelVersions": {
                   "type": "array",
-                  "description": "Fields of a document's `data` that, when present, must hold a Civitai model version id owned by the viewer writing the document — for example [\"/workflow/modelVersionId\"] for a collection where viewers publish their own workflows. Each entry is a JSON Pointer (RFC 6901) of 1 to 4 segments, each \"/\" then 1 to 64 characters (an escape counts as one), with \"~\" and \"/\" written as \"~0\" and \"~1\"; on an array, only a decimal index without leading zeros resolves — any other segment finds nothing, so the field counts as absent and is allowed. 1 to 4 distinct pointers. On every create and update the server resolves each pointer in the new `data`: a field that is absent is allowed; a field that is present must be a positive integer naming a model version whose model the writer owns, and is otherwise refused with 403 `resource_not_owned` — a version that is someone else's, missing or deleted, and a value that is not a positive integer, are all refused the same way. The check runs before moderation and before any rate limit or write budget is spent. Private collections, and shared collections with `write` \"own\" only.",
+                  "description": "Shared collections with `write` \"own\" only. Fields of a document's `data` that, when present, must hold a Civitai model version id owned by the viewer writing the document — for example [\"/workflow/modelVersionId\"] for a collection where viewers publish their own workflows. Each entry is a pointer of 1 to 4 segments, each \"/\" then a letter or _ followed by up to 63 letters, digits or _; 1 to 4 distinct pointers. A pointer names one field of nested objects: it never indexes into an array, and a step through an array or any other non-object finds nothing. On every create and update the server resolves each pointer in the new `data`: a field that is absent is allowed; a field that is present must be a positive integer naming a model version whose model the writer owns, and is otherwise refused with 403 `resource_not_owned` — a version that is someone else's, missing or deleted, and a value that is not a positive integer, are all refused the same way. The check runs before moderation and before any write budget is spent. Ownership is checked when a document is written, not afterwards: if the model later changes hands or is deleted, documents already stored keep the id.",
                   "minItems": 1,
                   "maxItems": 4,
                   "uniqueItems": true,
                   "items": {
                     "type": "string",
-                    "pattern": "^(/([^/~]|~[01]){1,64}){1,4}$"
+                    "pattern": "^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$"
                   }
                 }
               },
@@ -495,7 +495,8 @@
                       "counters": false,
                       "marks": false,
                       "showAuthor": false,
-                      "dailyWritesPerAuthor": false
+                      "dailyWritesPerAuthor": false,
+                      "ownedModelVersions": false
                     }
                   }
                 },
@@ -516,7 +517,7 @@
                   "then": { "properties": { "dailyWritesPerAuthor": false } }
                 },
                 {
-                  "$comment": "ownedModelVersions checks the version against the viewer WRITING the document, so it is declared only where that viewer is always the author: private collections and write:\"own\".",
+                  "$comment": "ownedModelVersions checks the version against the viewer WRITING the document, so it is declared only where that viewer is always the author: shared collections with write:\"own\" (private collections are refused above).",
                   "if": {
                     "required": ["write"],
                     "properties": { "write": { "enum": ["anyone", "owner", "none"] } }

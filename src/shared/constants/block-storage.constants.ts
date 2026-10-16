@@ -104,20 +104,21 @@ export const APP_STORAGE_LOG_MAX_ENTRIES = 10_000;
 export const APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR = 1_000;
 
 /**
- * `ownedModelVersions` entries: JSON Pointers (RFC 6901) into a document's `data`, checked on
- * every create and update (`doc-store-ownership.ts`). The root pointer `""` is refused — the
- * root is the whole `data` object, never an id. A string, not a `RegExp`, because the schema's
- * `pattern` must equal it byte for byte and `RegExp.source` escapes `/`.
+ * `ownedModelVersions` entries: pointers into a document's `data`, checked on every create and
+ * update (`doc-store-ownership.ts`). 1 to 4 plain identifier segments, so a pointer names
+ * exactly one field: no array indexes (which would check one element and leave the others
+ * unchecked), no escapes. A string, not a `RegExp`, because the schema's `pattern` must equal
+ * it byte for byte and `RegExp.source` escapes `/`.
  */
-export const APP_STORAGE_OWNED_POINTER_PATTERN = '^(/([^/~]|~[01]){1,64}){1,4}$';
+export const APP_STORAGE_OWNED_POINTER_PATTERN = '^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$';
 export const APP_STORAGE_OWNED_POINTER_RE = new RegExp(APP_STORAGE_OWNED_POINTER_PATTERN, 'u');
 /** Most pointers one collection may declare in `ownedModelVersions`. */
 export const APP_STORAGE_MAX_OWNED_MODEL_VERSIONS = 4;
 /**
- * The write policies under which `ownedModelVersions` may be declared: the ones where the
- * viewer making a write is always the document's author (a private collection, or a shared
- * one with `write: "own"`). Under `anyone` a viewer could put their own version into another
- * viewer's document; under `owner` and `none` no viewer writes `data` at all.
+ * The write policies of a SHARED collection under which `ownedModelVersions` may be declared:
+ * the ones where the viewer making a write is always the document's author. Under `anyone` a
+ * viewer could put their own version into another viewer's document; under `owner` and `none`
+ * no viewer writes `data` at all. Private collections have no readers to mislead.
  */
 export const APP_STORAGE_OWNED_MODEL_VERSIONS_WRITE_POLICIES: readonly AppStorageWritePolicy[] = [
   'own',
@@ -519,12 +520,13 @@ function parseCollection(
 
   let ownedModelVersions: string[] | null = null;
   if (raw.ownedModelVersions !== undefined) {
-    if (
-      shared &&
+    if (!shared) {
+      sharedOnly('ownedModelVersions');
+    } else if (
       !(write === undefined || APP_STORAGE_OWNED_MODEL_VERSIONS_WRITE_POLICIES.includes(write))
     ) {
       errors.push(
-        `${at}.ownedModelVersions applies only to private collections and shared collections with write "own" — the viewer writing a document must be its author`
+        `${at}.ownedModelVersions applies only to shared collections with write "own" — the viewer writing a document must be its author`
       );
     } else {
       ownedModelVersions = parseOwnedPointers(
@@ -555,7 +557,7 @@ function parseCollection(
 
 function parseOwnedPointers(at: string, raw: unknown, errors: string[]): string[] | null {
   if (!Array.isArray(raw)) {
-    errors.push(`${at} must be an array of JSON Pointers`);
+    errors.push(`${at} must be an array of pointers`);
     return null;
   }
   // An empty list would read as a declared ownership rule that checks nothing.
@@ -569,7 +571,7 @@ function parseOwnedPointers(at: string, raw: unknown, errors: string[]): string[
   for (const [index, pointer] of raw.entries()) {
     if (typeof pointer !== 'string' || !APP_STORAGE_OWNED_POINTER_RE.test(pointer)) {
       errors.push(
-        `${at}[${index}] must be a JSON Pointer into the document's data, such as "/workflow/modelVersionId": 1 to 4 segments, each "/" then 1 to 64 characters, with "~" and "/" written as "~0" and "~1"`
+        `${at}[${index}] must be a pointer into the document's data, such as "/workflow/modelVersionId": 1 to 4 segments, each "/" then a letter or _ followed by up to 63 letters, digits or _`
       );
       return null;
     }
