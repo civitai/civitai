@@ -27,6 +27,20 @@
     (document.activeElement as HTMLElement | null)?.blur();
   };
 
+  let videoState = $state<'loading' | 'ready' | 'failed'>('loading');
+  $effect.pre(() => {
+    void data.card?.itemId;
+    videoState = 'loading';
+  });
+
+  // A <source> error fires per candidate; only the last one (or the <video>) means nothing can play.
+  const onMediaError = (e: Event) => {
+    const el = e.target as HTMLElement;
+    if (el.tagName === 'VIDEO' || (el.tagName === 'SOURCE' && !el.nextElementSibling)) {
+      videoState = 'failed';
+    }
+  };
+
   let serverError = $state<string | null>(null);
 
   const submitVote: SubmitFunction = ({ formData }) => {
@@ -121,7 +135,13 @@
         class="flex flex-col gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5 transition-opacity"
         class:opacity-50={submitting}
       >
-        <div class="flex justify-center">
+        <!-- Media events do not bubble; capture on the wrapper hears the inner <video>. -->
+        <div
+          class="relative flex justify-center"
+          onloadeddatacapture={() => (videoState = 'ready')}
+          oncanplaycapture={() => (videoState = 'ready')}
+          onerrorcapture={onMediaError}
+        >
           <EdgeMedia
             src={data.card.url}
             name={data.card.name}
@@ -132,6 +152,16 @@
             alt="Image under review"
             class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
           />
+          {#if data.card.type === 'video' && videoState !== 'ready'}
+            <div
+              class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-dark-2"
+              role="status"
+            >
+              <span class="rounded-md bg-dark-8/80 px-3 py-1.5">
+                {videoState === 'failed' ? 'Video failed to load' : 'Loading video...'}
+              </span>
+            </div>
+          {/if}
         </div>
         <VoteForm itemId={data.card.itemId} {submitting} onsubmit={submitVote} />
       </section>

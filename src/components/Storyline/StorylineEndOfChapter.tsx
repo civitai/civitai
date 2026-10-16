@@ -168,6 +168,17 @@ export function StorylineEndOfChapter({
             Create the next section
           </Button>
           {parentPostId && !isOwner && <StorylineContinueWithPost parentPostId={parentPostId} />}
+          {parentPostId && isOwner && (
+            <Button
+              variant="default"
+              onClick={() =>
+                openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
+              }
+              data-testid="storyline-add-own-chapter"
+            >
+              Use a post you made
+            </Button>
+          )}
         </div>
       </div>
     </div>

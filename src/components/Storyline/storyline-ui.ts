@@ -127,7 +127,7 @@ export type StorylineSubmitVerdict =
   | { allowed: true; awaitingScan: boolean }
   | {
       allowed: false;
-      reason: 'ownStoryline' | 'complete' | StorylineClosedReason | 'aboveRating';
+      reason: 'ownStoryline' | 'complete' | StorylineClosedReason | 'aboveRating' | 'notRated';
     };
 
 /**
@@ -142,13 +142,27 @@ export function storylineSubmitVerdict({
   viewerId,
   storyline,
   closedReason,
+  asOwner = false,
 }: {
   postLevel: number;
   viewerId: number;
   storyline: { userId: number; status: 'Ongoing' | 'Complete'; maxNsfwLevel: number };
   /** From the server's read for this viewer; `null` when they may continue. */
   closedReason: StorylineClosedReason | null;
+  /**
+   * The owner adding their own chapter: who may continue does not apply to them, and an unrated
+   * post is refused rather than queued, because nothing reviews it afterwards.
+   */
+  asOwner?: boolean;
 }): StorylineSubmitVerdict {
+  if (asOwner) {
+    if (storyline.userId !== viewerId) return { allowed: false, reason: 'ownStoryline' };
+    if (storyline.status === 'Complete') return { allowed: false, reason: 'complete' };
+    if (!postLevel) return { allowed: false, reason: 'notRated' };
+    if (!storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel }))
+      return { allowed: false, reason: 'aboveRating' };
+    return { allowed: true, awaitingScan: false };
+  }
   if (storyline.userId === viewerId) return { allowed: false, reason: 'ownStoryline' };
   if (storyline.status === 'Complete') return { allowed: false, reason: 'complete' };
   if (closedReason) return { allowed: false, reason: closedReason };

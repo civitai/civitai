@@ -118,6 +118,27 @@ export function useSubmitStorylineContinuation({
   };
 }
 
+/** The owner adding one of their own posts as the next chapter: no review, no price. */
+export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
+  isPending: boolean;
+  error: string | null;
+  mutate: (input: { parentChapterId: number; postId: number }) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.addChapter.useMutation();
+  return {
+    isPending: mutation.isPending,
+    error: mutation.error?.message ?? null,
+    mutate: (input) =>
+      mutation.mutate(input, {
+        onSuccess: () => {
+          void utils.storyline.invalidate();
+          onSuccess();
+        },
+      }),
+  };
+}
+
 /** Continuations waiting on the viewer's storylines, one page at a time. */
 export function useStorylineQueue({ enabled }: { enabled: boolean }): {
   unavailable: boolean;
