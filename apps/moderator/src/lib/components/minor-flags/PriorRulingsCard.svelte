@@ -1,7 +1,7 @@
 <script lang="ts">
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { dateTime } from '$lib/format';
-  import { ago } from '$lib/minor-flags/appeal-row';
+  import { ago, pastAppealsText } from '$lib/minor-flags/appeal-row';
   import {
     clearViaLabel,
     rulingText,
@@ -15,6 +15,7 @@
     rulings,
     showPriorClear,
     showRulings,
+    pastAppeals,
   }: {
     granted: PriorClearView | null;
     grantedByUsername: string | null;
@@ -22,45 +23,47 @@
     /** A first detection has no human clear behind it; its earlier rulings still show. */
     showPriorClear: boolean;
     showRulings: boolean;
+    /** The uploader's earlier appeals, when the row carries them. */
+    pastAppeals?: { approved: number; rejected: number; void: number; pending: number };
   } = $props();
+
+  const listed = $derived(showRulings ? (rulings ?? []) : []);
+  const empty = $derived(!showPriorClear && listed.length === 0 && !pastAppeals);
 </script>
 
-{#if showPriorClear}
-  <TriageCard title="Previously cleared">
-    <div class="space-y-2 text-base text-dark-0">
-      {#if granted}
-        <p class="m-0">
-          {clearViaLabel(granted.via)}
+<TriageCard title="Prior rulings and appeals">
+  <div class="space-y-1.5 text-base text-dark-0">
+    {#if showPriorClear}
+      <p class="m-0">
+        {#if granted}
+          Previously cleared: {clearViaLabel(granted.via)}
           {#if grantedByUsername}
             by <span class="font-medium text-white">{grantedByUsername}</span>
           {:else if granted.by}
             by user #{granted.by}
           {/if}
           {#if granted.at}
-            <span class="text-sm text-dark-2" title={dateTime(granted.at)}>
-              · {ago(granted.at)}
-            </span>
+            <span class="text-sm text-dark-2" title={dateTime(granted.at)}>· {ago(granted.at)}</span>
           {/if}
-        </p>
-      {:else}
-        <p class="m-0">No clearing record.</p>
-      {/if}
-    </div>
-  </TriageCard>
-{/if}
-
-{#if showRulings && rulings?.length}
-  <TriageCard title="Earlier rulings">
-    <div class="space-y-1 text-sm text-dark-0">
-      {#each rulings as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}
-        <p class="m-0">
-          {rulingText(ruling.decision, ruling.via)}
-          {#if ruling.by}by user #{ruling.by}{/if}
-          {#if ruling.at}
-            <span class="text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
-          {/if}
-        </p>
-      {/each}
-    </div>
-  </TriageCard>
-{/if}
+        {:else}
+          Previously cleared: no clearing record.
+        {/if}
+      </p>
+    {/if}
+    {#each listed as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}
+      <p class="m-0">
+        {rulingText(ruling.decision, ruling.via)}
+        {#if ruling.by}by user #{ruling.by}{/if}
+        {#if ruling.at}
+          <span class="text-sm text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
+        {/if}
+      </p>
+    {/each}
+    {#if pastAppeals}
+      <p class="m-0">This uploader's earlier appeals: {pastAppealsText(pastAppeals)}.</p>
+    {/if}
+    {#if empty}
+      <p class="m-0">No moderator has ruled on this model yet.</p>
+    {/if}
+  </div>
+</TriageCard>

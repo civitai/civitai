@@ -2,10 +2,10 @@
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
   import { optimisticEnhancer } from '$lib/form-action';
+  import { IconInfoCircle } from '@tabler/icons-svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -37,13 +37,6 @@
     url.searchParams.set('tab', tab);
     // The limit and page describe the tab you are leaving; the search carries over.
     url.searchParams.delete('limit');
-    url.searchParams.delete('page');
-    return url.pathname + url.search;
-  };
-
-  const clearSearchHref = () => {
-    const url = new URL(page.url);
-    url.searchParams.delete('q');
     url.searchParams.delete('page');
     return url.pathname + url.search;
   };
@@ -257,22 +250,13 @@
 </nav>
 {/if}
 
-<form method="GET" class="mb-4 flex max-w-xl gap-2">
-  {#if data.tabs}
-    <input type="hidden" name="tab" value={data.tab} />
-  {/if}
-  <Input
-    name="q"
-    value={data.q}
-    placeholder="Model ID, user ID or username"
-    aria-label="Search models"
-    class="flex-1"
-  />
-  <Button type="submit">Search</Button>
-  {#if data.q}
-    <Button href={clearSearchHref()} variant="outline">Clear</Button>
-  {/if}
-</form>
+<p
+  class="mb-4 flex items-start gap-2 rounded-lg border border-dark-4 bg-dark-6 px-3 py-2 text-sm text-dark-1"
+>
+  <IconInfoCircle class="mt-0.5 size-4 shrink-0 text-dark-2" aria-hidden="true" />
+  Minor only. Unflagged models that share a file with a minor-flagged model, from a different
+  uploader. Same-uploader matches are auto-flagged and sit in Flagged.
+</p>
 
 {#if form && 'error' in form && form.error}
   <ErrorAlert class="mb-4" message={form.error} />
@@ -395,19 +379,23 @@
         </div>
 
         {#if s(row.hash)}
-          <p class="mt-2 text-xs break-all text-dark-2">
-            Matches
-            {#if n(row.minorModelId)}
-              <a
-                href={modelHref(Number(row.minorModelId), n(row.minorModelVersionId))}
-                target="_blank"
-                rel="noreferrer"
-                class={LINK_CLASS}
-              >
-                {s(row.minorModelName) ?? `#${n(row.minorModelId)}`}
-              </a>
-            {/if}
-            on <code>{s(row.hash)}</code>
+          <p class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
+            <Badge variant="outline" class="h-5 border-blue-500/50 px-2 text-xs font-normal text-blue-300">
+              shares file with
+              {#if n(row.minorModelId)}
+                <a
+                  href={modelHref(Number(row.minorModelId), n(row.minorModelVersionId))}
+                  target="_blank"
+                  rel="noreferrer"
+                  class={LINK_CLASS}
+                >
+                  {s(row.minorModelName) ?? `#${n(row.minorModelId)}`}
+                </a>
+              {:else}
+                a flagged model
+              {/if}
+            </Badge>
+            <code class="break-all">{s(row.hash)}</code>
           </p>
         {/if}
 

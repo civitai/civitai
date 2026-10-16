@@ -2,10 +2,22 @@
   import { page } from '$app/state';
   import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
+  import TriageFilterChips, {
+    type ChipGroup,
+  } from '$lib/components/triage/TriageFilterChips.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
-  import { appealFilterParams } from '$lib/minor-flags/appeal-filters';
+  import {
+    APPEAL_FLAGS,
+    APPEAL_SORTS,
+    APPEAL_SOURCES,
+    DEFAULT_APPEAL_FILTERS,
+    FLAG_LABELS,
+    SORT_LABELS,
+    SOURCE_LABELS,
+    appealFilterParams,
+  } from '$lib/minor-flags/appeal-filters';
   import { formActionHref } from '$lib/triage/queue';
   import { flagInForce } from '$lib/minor-flags/text-scan-verdicts';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
@@ -38,6 +50,40 @@
   );
   const filtersActive = $derived(Object.keys(appealFilterParams(data.appealFilters)).length > 0);
   const total = $derived(data.facets?.source[data.appealFilters.source]);
+
+  // Flag first, with "All" clearing it; the source chips sit after it and switch themselves off.
+  const chipGroups = $derived.by(() => {
+    const f = data.appealFilters;
+    return [
+      {
+        key: 'flag',
+        label: 'Flag',
+        values: APPEAL_FLAGS,
+        labels: FLAG_LABELS,
+        active: f.flag,
+        defaultValue: DEFAULT_APPEAL_FILTERS.flag,
+        counts: data.facets?.flag,
+      },
+      {
+        key: 'source',
+        label: 'Source',
+        values: APPEAL_SOURCES,
+        labels: SOURCE_LABELS,
+        active: f.source,
+        defaultValue: DEFAULT_APPEAL_FILTERS.source,
+        counts: data.facets?.source,
+        toggle: true,
+      },
+    ] satisfies ChipGroup[];
+  });
+  const sortGroup = $derived({
+    key: 'sort',
+    label: 'Sort',
+    values: APPEAL_SORTS,
+    labels: SORT_LABELS,
+    active: data.appealFilters.sort,
+    defaultValue: DEFAULT_APPEAL_FILTERS.sort,
+  } satisfies ChipGroup);
 </script>
 
 {#snippet notice()}
@@ -47,6 +93,10 @@
       scanned again.
     </p>
   {/if}
+{/snippet}
+
+{#snippet listHeader()}
+  <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="appeal" />
 {/snippet}
 
 {#snippet empty()}
@@ -83,6 +133,7 @@
   {total}
   {form}
   {notice}
+  {listHeader}
   {empty}
 >
   {#snippet listRow(row, state)}
@@ -92,6 +143,7 @@
       selected={state.selected}
       title={row.modelName}
       meta="waiting {shortAge(row.appealCreatedAt)}"
+      metaClass="text-amber-400"
       coverUrl={row.coverImages[0]?.url}
       verdict={state.verdict}
       error={state.error}

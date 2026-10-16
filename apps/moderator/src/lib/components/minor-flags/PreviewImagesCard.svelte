@@ -1,16 +1,33 @@
 <script lang="ts">
   import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
-  import TriageCard from '$lib/components/triage/TriageCard.svelte';
+  import { LINK_CLASS } from '$lib/format';
   import type { AppealCoverImage } from '$lib/server/minor-hash.service';
 
-  let { images }: { images: AppealCoverImage[] } = $props();
+  let {
+    images,
+    allHref,
+  }: {
+    images: AppealCoverImage[];
+    /** Where every preview lives; omitted, the link is not shown. */
+    allHref?: string;
+  } = $props();
+
+  const SHOWN = 4;
+  const shown = $derived(images.slice(0, SHOWN));
 </script>
 
-<TriageCard title="Preview images">
+<section aria-label="Preview images">
+  <AppealImages images={shown} />
   {#if images.length}
-    <p class="m-0 mb-3 text-sm text-dark-2">
-      {images.length} preview image{images.length === 1 ? '' : 's'}
-    </p>
+    <div class="mt-2 flex items-center justify-between gap-3 text-sm text-dark-2">
+      <span>
+        {images.length} preview image{images.length === 1 ? '' : 's'}{images.length > SHOWN
+          ? `, ${SHOWN} shown`
+          : ''}
+      </span>
+      {#if allHref}
+        <a href={allHref} target="_blank" rel="noreferrer" class={LINK_CLASS}>Open all previews</a>
+      {/if}
+    </div>
   {/if}
-  <AppealImages {images} />
-</TriageCard>
+</section>

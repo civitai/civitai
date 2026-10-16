@@ -54,17 +54,19 @@
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
-  import { LINK_CLASS } from '$lib/format';
+  import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
+  import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
+  import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
+  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
+  import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
-  import { modelUrl } from '$lib/minor-flags/appeal-row';
+  import { modelUrl, waiting } from '$lib/minor-flags/appeal-row';
   import { flagInForce, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import WhyFlaggedCard from '$lib/components/minor-flags/WhyFlaggedCard.svelte';
-  import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
   import AppealTags from './AppealTags.svelte';
@@ -90,7 +92,14 @@
     draft: RulingDraft<AppealRuling>;
   } = $props();
 
-  const modelHref = (id: number) => modelUrl(civitaiUrl, id);
+  const modelHref = $derived(modelUrl(civitaiUrl, row.modelId));
+
+  // The decision keys, in key order; the labels say what the ruling does to the flag.
+  const DECISION_LABEL = {
+    Rejected: 'Reject appeal, flag stays',
+    Approved: 'Approve appeal, lift flag',
+  } as const;
+  const FIELDS_GRID = 'grid gap-2 sm:grid-cols-[minmax(14rem,22rem)_1fr_auto]';
 
   const poiOpen = $derived(poiInForce(row));
   const canUphold = $derived(flagInForce(row));
@@ -113,99 +122,116 @@
   );
 </script>
 
-<TriageDetailFrame {verdict} {error}>
-  {#snippet children()}
-    <header class="space-y-2">
-      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <a
-          href={modelHref(row.modelId)}
-          target="_blank"
-          rel="noreferrer"
-          class="text-lg font-semibold {LINK_CLASS}"
-        >
-          {row.modelName} ↗
-        </a>
-        <code class="text-sm text-dark-2">#{row.modelId}</code>
-        <Badge variant="secondary" class="h-6 px-2.5 text-sm">{row.status}</Badge>
-      </div>
-      <div class="flex flex-wrap items-center gap-1.5">
-        <AppealTags {row} size="md" />
-      </div>
-    </header>
-
-    <PreviewImagesCard images={row.coverImages} />
-
-    <div class="grid gap-4 lg:grid-cols-2">
-      <WhyFlaggedCard {row} {civitaiUrl} {canUphold} />
-      <OwnerSaysCard message={row.appealMessage} appealedAt={row.appealCreatedAt} />
-    </div>
-
-    <ModelFactsCard {row} />
-
-    <UploaderCard {row} />
-  {/snippet}
-  {#snippet actions()}
-    {#each FLAG_APPEAL_RULING_CHOICES as c, i (c.verdict)}
-      {@const blocked = c.verdict === 'Rejected' && !canUphold}
+{#snippet buttons()}
+  {#each FLAG_APPEAL_RULING_CHOICES as c, i (c.verdict)}
+    {@const blocked = c.verdict === 'Rejected' && !canUphold}
+    <TriageKeyButton
+      key={i + 1}
+      primary={i === 0}
+      pressed={draft.verdict === c.verdict}
+      disabled={blocked}
+      title={blocked ? 'Not flagged any more. Unflag closes the request.' : undefined}
+      onclick={() => choose(c.verdict)}
+    >
+      {DECISION_LABEL[c.verdict]}
+    </TriageKeyButton>
+  {/each}
+  {#if row.minor && poiOpen}
+    {#each SPLIT_RULINGS as split (split)}
       <Button
         size="lg"
-        class="h-11 px-5 text-base"
-        variant={draft.verdict === c.verdict ? c.variant : 'outline'}
-        aria-pressed={draft.verdict === c.verdict}
-        disabled={blocked}
-        title={blocked ? 'Not flagged any more. Unflag closes the request.' : undefined}
-        onclick={() => choose(c.verdict)}
+        variant="outline"
+        class="h-11 text-base {draft.verdict === split ? 'ring-2 ring-white/50' : ''}"
+        aria-pressed={draft.verdict === split}
+        onclick={() => choose(split)}
       >
-        {c.label} <Kbd>{i + 1}</Kbd>
+        {RULINGS[split].label}
       </Button>
     {/each}
-    {#if row.minor && poiOpen}
-      {#each SPLIT_RULINGS as split (split)}
+  {/if}
+{/snippet}
+
+{#snippet fields()}
+  {#if ruling}
+    <!-- Keyed: `use:enhance` reads its handler once, and each ruling reports its own outcome. -->
+    {#key draft.verdict}
+      <form
+        method="POST"
+        action={actionHref(ruling.action)}
+        use:enhance={submit(ruling.outcome)}
+        class={FIELDS_GRID}
+      >
+        <input type="hidden" name="modelId" value={row.modelId} />
+        {#if ruling.split}
+          <input type="hidden" name="minor" value={ruling.split.minor} />
+          <input type="hidden" name="poi" value={ruling.split.poi} />
+        {/if}
+        <InlineReasonFields
+          subject="flagAppeal"
+          verdict={ruling.verdict}
+          labels={ruledOn}
+          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
+          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
+        />
         <Button
+          type="submit"
           size="lg"
-          variant={draft.verdict === split ? 'default' : 'outline'}
-          class="h-11 text-base"
-          aria-pressed={draft.verdict === split}
-          onclick={() => choose(split)}
+          variant={ruling.variant}
+          class="h-10"
+          disabled={unavailable || !!unrecordable}
         >
-          {RULINGS[split].label}
+          {ruling.confirmLabel}
         </Button>
-      {/each}
-    {/if}
-    {#if ruling}
-      <!-- Keyed: `use:enhance` reads its handler once, and each ruling reports its own outcome. -->
-      {#key draft.verdict}
-        <form
-          method="POST"
-          action={actionHref(ruling.action)}
-          use:enhance={submit(ruling.outcome)}
-          class="grid w-full gap-2 rounded-md border border-dark-4 bg-dark-7 p-3"
-        >
-          <input type="hidden" name="modelId" value={row.modelId} />
-          {#if ruling.split}
-            <input type="hidden" name="minor" value={ruling.split.minor} />
-            <input type="hidden" name="poi" value={ruling.split.poi} />
-          {/if}
-          <ResolutionReasonFields
-            subject="flagAppeal"
-            verdict={ruling.verdict}
-            idPrefix="flag-appeal-{row.appealId}"
-            labels={ruledOn}
-            bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
-            bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
-          />
-          <div>
-            <Button
-              type="submit"
-              size="lg"
-              variant={ruling.variant}
-              disabled={unavailable || !!unrecordable}
-            >
-              {ruling.confirmLabel}
-            </Button>
-          </div>
-        </form>
-      {/key}
-    {/if}
+      </form>
+    {/key}
+  {:else}
+    <div class={FIELDS_GRID}>
+      <InlineReasonFields subject="flagAppeal" verdict={null} />
+    </div>
+  {/if}
+{/snippet}
+
+<TriageDetailFrame {verdict} {error}>
+  {#snippet children()}
+    <ModelDetailHeader
+      modelId={row.modelId}
+      modelName={row.modelName}
+      userId={row.userId}
+      {civitaiUrl}
+    >
+      {#snippet chips()}
+        <MetaChip size="md" tone="amber">appeal</MetaChip>
+        <AppealTags {row} size="md" />
+        <MetaChip size="md" tone="amber">waiting {waiting(row.appealCreatedAt)}</MetaChip>
+      {/snippet}
+    </ModelDetailHeader>
+
+    <PreviewImagesCard images={row.coverImages} allHref={modelHref} />
+
+    <div class="grid gap-4 md:grid-cols-[1fr_minmax(320px,380px)]">
+      <OwnerSaysCard message={row.appealMessage} appealedAt={row.appealCreatedAt} />
+      <WhyFlaggedCard {row} {civitaiUrl} {canUphold} />
+    </div>
+
+    <PriorRulingsCard
+      granted={null}
+      grantedByUsername={null}
+      rulings={null}
+      showPriorClear={false}
+      showRulings={false}
+      pastAppeals={row.pastAppeals}
+    />
+
+    <div class="grid gap-4 md:grid-cols-2">
+      <ModelFactsCard {row} />
+      <UploaderCard {row} />
+    </div>
+  {/snippet}
+  {#snippet actions()}
+    <TriageDecisionBar
+      {buttons}
+      {fields}
+      hint="Every decision here is stored as a labelled example for tuning the text-scan prompts."
+    />
   {/snippet}
 </TriageDetailFrame>

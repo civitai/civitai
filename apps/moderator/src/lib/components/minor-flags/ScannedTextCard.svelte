@@ -32,9 +32,6 @@
       {/if}
     </p>
     <p class="m-0 text-sm">{detection.reason ?? 'No reason recorded.'}</p>
-    {#if detection.names?.length}
-      <p class="m-0 text-sm">Names: {detection.names.join(', ')}</p>
-    {/if}
     <p class="m-0 text-sm">
       Now:
       <span class={flagged ? 'font-medium text-red-300' : 'font-medium text-emerald-300'}>

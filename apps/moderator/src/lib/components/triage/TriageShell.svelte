@@ -52,6 +52,7 @@
     total,
     form,
     listRow,
+    listHeader,
     detail,
     empty,
     notice,
@@ -82,6 +83,8 @@
     total?: number;
     form?: QueueForm | undefined;
     listRow: Snippet<[R, RowState]>;
+    /** A compact row above the list: filter chips and sort. */
+    listHeader?: Snippet;
     detail: Snippet<[R, DetailState]>;
     empty: Snippet;
     /** `unpicked` is true until the moderator chooses a row, as opposed to defaulting to the first. */
@@ -242,6 +245,11 @@
     aria-label={queueLabel}
     class="flex max-h-80 min-h-0 flex-col overflow-hidden rounded-xl border border-dark-4 bg-dark-6 lg:max-h-none lg:w-[35%] lg:max-w-[36rem] lg:min-w-80 lg:shrink-0"
   >
+    {#if listHeader}
+      <div class="shrink-0 border-b border-dark-4 px-3 py-2">
+        {@render listHeader()}
+      </div>
+    {/if}
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#if rows.length}
         <ul class="m-0 list-none divide-y divide-dark-4 p-0">

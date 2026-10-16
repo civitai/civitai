@@ -1,16 +1,28 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
+  import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import TriageFilterChips, {
+    type ChipGroup,
+  } from '$lib/components/triage/TriageFilterChips.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { flaggedDecisionEnabled } from '$lib/minor-flags/flagged-decision';
-  import { flaggedFilterParams } from '$lib/minor-flags/flagged-filters';
+  import {
+    DEFAULT_FLAGGED_FILTERS,
+    FLAGGED_FLAGS,
+    FLAGGED_FLAG_LABELS,
+    FLAGGED_SORTS,
+    FLAGGED_SORT_LABELS,
+    FLAGGED_SOURCES,
+    FLAGGED_SOURCE_LABELS,
+    flaggedFilterParams,
+  } from '$lib/minor-flags/flagged-filters';
   import { formActionHref } from '$lib/triage/queue';
   import type { FlaggedQueueData } from '$lib/server/minor-flag-queue';
   import type { FlaggedRow } from '$lib/server/minor-hash.service';
@@ -48,6 +60,38 @@
   );
   const filtersActive = $derived(Object.keys(flaggedFilterParams(data.flaggedFilters)).length > 0);
 
+  // Source first, with "All" clearing it; the flag chips sit after it and switch themselves off.
+  const chipGroups = $derived.by(() => {
+    const f = data.flaggedFilters;
+    return [
+      {
+        key: 'source',
+        label: 'Source',
+        values: FLAGGED_SOURCES,
+        labels: FLAGGED_SOURCE_LABELS,
+        active: f.source,
+        defaultValue: DEFAULT_FLAGGED_FILTERS.source,
+      },
+      {
+        key: 'flag',
+        label: 'Flag',
+        values: FLAGGED_FLAGS,
+        labels: FLAGGED_FLAG_LABELS,
+        active: f.flag,
+        defaultValue: DEFAULT_FLAGGED_FILTERS.flag,
+        toggle: true,
+      },
+    ] satisfies ChipGroup[];
+  });
+  const sortGroup = $derived({
+    key: 'sort',
+    label: 'Sort',
+    values: FLAGGED_SORTS,
+    labels: FLAGGED_SORT_LABELS,
+    active: data.flaggedFilters.sort,
+    defaultValue: DEFAULT_FLAGGED_FILTERS.sort,
+  } satisfies ChipGroup);
+
   const ondecision = (row: FlaggedRow, index: number) => {
     if (row.source === 'redetected') {
       const verdict = HELD_DETECTION_RULING_CHOICES[index]?.verdict;
@@ -62,6 +106,10 @@
       ?.requestSubmit();
   };
 </script>
+
+{#snippet listHeader()}
+  <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+{/snippet}
 
 {#snippet empty()}
   <div class="p-5 text-sm text-dark-0">
@@ -95,6 +143,7 @@
   offset={data.offset}
   total={data.total}
   {form}
+  {listHeader}
   {empty}
 >
   {#snippet listRow(row, state)}
@@ -103,17 +152,17 @@
       href={state.href}
       selected={state.selected}
       title={row.modelName}
-      meta={row.flaggedAt ? `flagged ${shortAge(row.flaggedAt)} ago` : 'flagged'}
+      meta={row.flaggedAt ? `flagged ${shortAge(row.flaggedAt)}` : 'flagged'}
       coverUrl={row.coverImages[0]?.url}
       verdict={state.verdict}
       error={state.error}
       onselect={state.select}
     >
       {#snippet badges()}
-        <FlagBadge label={row.label} />
         <FlaggedSourceBadge {row} />
+        <FlagBadge label={row.label} />
         {#if row.hasPendingAppeal}
-          <Badge variant="outline" class="h-5 px-2 text-xs">also in Appeals</Badge>
+          <MetaChip tone="amber">also in Appeals</MetaChip>
         {/if}
         {#if row.daysLeft !== null}
           <span class="text-xs text-dark-2 tabular-nums">{row.daysLeft} d left</span>
