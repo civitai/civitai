@@ -28,6 +28,7 @@ import {
   type BulkBatch,
 } from '$lib/server/bulk-image.service';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
+import { heldRemovalMessage } from '$lib/server/removal-hold';
 
 // `source` + `q` in the URL so a moderator can hand a colleague the exact batch they are looking at.
 // `limit` and `offset` ride along for the same reason — a page of a 40k-image account is as much a
@@ -162,7 +163,11 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return actionFail(input);
 
-    const result = await removeImagesWithFollowUps({ ...input, moderatorId: locals.user.id });
+    const result = await removeImagesWithFollowUps({
+      ...input,
+      moderatorId: locals.user.id,
+      canConfirmReRemoval: !!locals.grants['image.removal.confirm'],
+    });
     if (!result.ok) return actionFail(result.error);
 
     const flagWarning =
@@ -178,13 +183,14 @@ export const actions: Actions = {
       removed: result.removed,
       alreadyBlocked: result.alreadyBlocked,
       struck: result.struck?.struck,
+      held: heldRemovalMessage(result.held) || undefined,
       // Both halves are reported, and the strike one wins the single warning slot: a missing flag is
       // recoverable from this screen, an unissued strike is not. A removal that changed nothing is
       // last, because it is the only one of the three that is not a partial failure of the action.
       warning:
         strikeWarning ??
         flagWarning ??
-        (result.removed - result.alreadyBlocked === 0
+        (result.removed - result.alreadyBlocked === 0 && !result.held.length
           ? 'Nothing changed — every image submitted was already blocked.'
           : undefined),
     };

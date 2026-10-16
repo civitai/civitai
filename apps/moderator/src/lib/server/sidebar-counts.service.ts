@@ -13,6 +13,7 @@ import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
 import { countStrikeReview } from './strike-review.service';
+import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getMinorFlagAppealGroups,
   getMinorQueueCounts,
@@ -41,6 +42,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     feedbackNew,
     feedbackAppsPlatformNew,
     removedAppeals,
+    reRemovals,
     minorQueue,
     modelFlagAppealGroups,
     heldDetections,
@@ -77,6 +79,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     countNewFeedback(),
     countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
     countRemovedAppeals(),
+    countPendingRemovalConfirmations(),
     // Bounded tighter than the default: every verdict busts this cache, so a cold ~10s fill (see
     // `getMinorQueueCounts`) is routine. The race does not cancel it, so the fill still lands in its
     // own cache and the badge returns on a later refresh.
@@ -99,6 +102,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     feedbackNew,
     feedbackAppsPlatformNew,
     removedAppeals,
+    reRemovals,
     modelFlagAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
     ...(heldDetections != null ? { heldDetections } : {}),
     ...(strikeReview != null ? { strikeReview } : {}),

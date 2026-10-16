@@ -13,6 +13,13 @@ import type { BlockDeps, BlockImageArgs } from '../scan-label.service';
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
+vi.mock('../removal-hold', () => ({
+  // No approved appeals here; the hold itself is covered by image-removal-confirmation.pglite.test.ts.
+  holdRemovals: vi.fn(async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  })),
+}));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');

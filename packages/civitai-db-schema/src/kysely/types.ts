@@ -3142,6 +3142,27 @@ export type ImageReaction = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ImageRemovalConfirmation = {
+  id: Generated<number>;
+  imageId: number;
+  appealId: number;
+  requestedById: number;
+  requestedAt: Generated<Timestamp>;
+  violationType: string | null;
+  violationDetails: string | null;
+  /**
+   * Which removal path was held, e.g. `moderator.block`, `site.setTosViolation`.
+   */
+  source: string;
+  reportIds: Generated<number[]>;
+  /**
+   * Pending | Confirmed | Declined | Void
+   */
+  status: Generated<string>;
+  decidedById: number | null;
+  decidedAt: Timestamp | null;
+  decisionNote: string | null;
+};
 export type ImageReport = {
   imageId: number;
   reportId: number;
@@ -5814,6 +5835,7 @@ export type DB = {
   ImageModHelper: ImageModHelper;
   ImageRatingRequest: ImageRatingRequest;
   ImageReaction: ImageReaction;
+  ImageRemovalConfirmation: ImageRemovalConfirmation;
   ImageReport: ImageReport;
   ImageResource: ImageResource;
   ImageResourceHelper: ImageResourceHelper;

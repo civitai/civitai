@@ -86,6 +86,7 @@ export const NAVIGATION: NavLink[] = [
         label: 'Appeals: Content Removed',
         countKey: 'removedAppeals',
       },
+      { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },

@@ -19,6 +19,10 @@ import {
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
+import { dbRead } from '$lib/server/db';
+import { approvedAppealOf } from '$lib/server/removal-hold';
+import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
+import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageViewSlug } from '$lib/image-review';
@@ -52,9 +56,19 @@ function parseViolation(
   return parseForm(violationInputSchema, form);
 }
 
+/** Each card's Model3D parent, and the image's latest approved appeal, so a moderator sees it before
+ *  removing the image again. */
 async function withModel3d<T extends { id: number }>(items: T[]) {
-  const model3ds = await getModel3DsByThumbnailImageIds(items.map((i) => i.id));
-  return items.map((i) => ({ ...i, model3d: model3ds[i.id] ?? null }));
+  const ids = items.map((i) => i.id);
+  const [model3ds, appeals] = await Promise.all([
+    getModel3DsByThumbnailImageIds(ids),
+    getLatestApprovedImageAppeals(dbRead, ids),
+  ]);
+  return items.map((i) => ({
+    ...i,
+    model3d: model3ds[i.id] ?? null,
+    approvedAppeal: approvedAppealOf(appeals.get(i.id)),
+  }));
 }
 
 /**
@@ -166,6 +180,20 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
 export type ImageQueueData = Awaited<ReturnType<typeof loadImageQueue>>;
 
 // accept/block also resolve a coupled report when a `reportId` is posted: accept → Unactioned, block → Actioned.
+/** Which of the given reports is on which image. */
+async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number[]>> {
+  const byImage = new Map<number, number[]>();
+  if (!reportIds.length) return byImage;
+  const rows = await dbRead
+    .selectFrom('ImageReport')
+    .select(['imageId', 'reportId'])
+    .where('reportId', 'in', reportIds)
+    .execute();
+  for (const { imageId, reportId } of rows)
+    byImage.set(imageId, [...(byImage.get(imageId) ?? []), reportId]);
+  return byImage;
+}
+
 function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
   const input = parseForm(z.object(resolutionReasonFields), form);
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
@@ -208,12 +236,16 @@ export const imageQueueActions = {
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
 
-    await blockImage({
+    const { held } = await blockImage({
       imageId,
       userId: locals.user.id,
       ...violation,
       ...getActorMeta(event),
+      reportIds: reportId ? [reportId] : undefined,
+      skipAppealCheck: !!locals.grants['image.removal.confirm'],
     });
+    // Not removed, so the report stays open; confirming the hold actions it.
+    if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
     if (reportId)
       await setReportStatus({
         id: reportId,
@@ -376,16 +408,37 @@ export const imageQueueActions = {
     const reportIds = parseIds(form.get('reportIds'));
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
-    const actor = { ...violation, ...getActorMeta(event) };
-    await Promise.all(
-      imageIds.map((imageId) => blockImage({ imageId, userId: locals.user.id, ...actor }))
-    );
-    await Promise.all(
-      reportIds.map((id) =>
-        setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id })
+    const actor = {
+      ...violation,
+      ...getActorMeta(event),
+      skipAppealCheck: !!locals.grants['image.removal.confirm'],
+    };
+    const reportsByImage = await reportIdsByImage(reportIds);
+    const results = await Promise.all(
+      imageIds.map((imageId) =>
+        blockImage({
+          imageId,
+          userId: locals.user.id,
+          ...actor,
+          reportIds: reportsByImage.get(imageId),
+        })
       )
     );
-    return { success: true };
+    const held = results.flatMap((r): HeldRemoval[] => (r.held ? [r.held] : []));
+    // A held image's reports stay open: it is still up, and confirming the hold actions them.
+    const heldReports = new Set(held.flatMap((h) => reportsByImage.get(h.imageId) ?? []));
+    await Promise.all(
+      reportIds
+        .filter((id) => !heldReports.has(id))
+        .map((id) => setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id }))
+    );
+    return {
+      success: true,
+      ...(held.length && {
+        held: heldRemovalMessage(held),
+        heldImageIds: held.map((h) => h.imageId),
+      }),
+    };
   },
 
   bulkResolveAppeal: async ({ request, locals }) => {

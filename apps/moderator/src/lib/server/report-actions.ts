@@ -6,6 +6,7 @@ import { issueStrike, restoreImages, setImageFlag } from './user-actions.service
 import { countBlockedImages, removeImagesWithFollowUps } from './bulk-image.service';
 import { sendModNotification } from './moderation-memory.service';
 import { setReportStatus } from './reports.service';
+import { heldRemovalMessage } from './removal-hold';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4 } from './users.service';
 import { REPORT_RULINGS } from '$lib/reports';
@@ -98,8 +99,13 @@ export function reportModerationActions(pagePath: string) {
       );
       if (typeof input === 'string') return scopedFail('images', input);
 
-      const result = await removeImagesWithFollowUps({ ...input, moderatorId: locals.user.id });
+      const result = await removeImagesWithFollowUps({
+        ...input,
+        moderatorId: locals.user.id,
+        canConfirmReRemoval: !!locals.grants['image.removal.confirm'],
+      });
       if (!result.ok) return scopedFail('images', result.error);
+      const heldNote = result.held.length ? ` ${heldRemovalMessage(result.held)}` : '';
 
       // A silent flag failure is worse than none: the moderator believes the images are marked.
       const flagNote = result.flag?.applied
@@ -120,7 +126,8 @@ export function reportModerationActions(pagePath: string) {
         imageResult:
           `Removed ${result.removed - result.alreadyBlocked} of ${input.imageIds.length}` +
           `${result.alreadyBlocked > 0 ? ` (${result.alreadyBlocked} already blocked)` : ''}.` +
-          `${flagNote}${strikeNote}`,
+          `${flagNote}${strikeNote}${heldNote}`,
+        imageHeld: result.held.length > 0,
       };
     },
 

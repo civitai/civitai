@@ -81,12 +81,17 @@
   // differ from what was asked (images already removed, a follow-up that failed).
   const selected = new SelectionSet<string | number>();
   let imageResult = $state<string | null>(null);
+  let imageHeld = $state(false);
   const imageForm = new FormState({
     reload: true,
-    onSubmit: () => (imageResult = null),
+    onSubmit: () => {
+      imageResult = null;
+      imageHeld = false;
+    },
     onSuccess: (r) => {
       selected.clear();
       imageResult = typeof r?.imageResult === 'string' ? r.imageResult : null;
+      imageHeld = r?.imageHeld === true;
     },
   });
   const blockedIds = $derived(
@@ -175,7 +180,10 @@
         {#if imageForm.error}
           <ErrorAlert class="mb-3" message={imageForm.error} />
         {:else if imageResult}
-          <p class="mb-3 text-sm text-dark-0" role="status">{imageResult}</p>
+          <p class="mb-3 text-sm text-dark-0" role="status">
+            {imageResult}
+            {#if imageHeld}<a href="/images/re-removals" class="link ml-1">Open Re-removals</a>{/if}
+          </p>
         {/if}
         {#if data.canAct}
           <div class="mb-3">
@@ -328,6 +336,7 @@
   negativePrompt?: string | null;
   isProfilePicture?: boolean;
   hasConnection?: boolean;
+  approvedAppeal?: { approvedAt: Date; approvedByUsername: string | null } | null;
 })}
   <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -338,6 +347,7 @@
         needsReview={img.needsReview}
         poi={img.poi}
         minor={img.minor}
+        approvedAppeal={img.approvedAppeal}
       />
       <!-- Removing either has consequences beyond the image: one blanks the account's avatar, the
            other pulls an entry out of a bounty. -->
