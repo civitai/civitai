@@ -497,6 +497,21 @@ describe('grantModelTextScanPoi', () => {
     expect(bound).not.toContain('appeal');
   });
 
+  it('only lifts the flag whose text hash the caller expects, and not at all without one', async () => {
+    await grantModelTextScanPoi({
+      modelId: MODEL_ID,
+      userId: 3,
+      grantHash: 'h-current',
+      expectTextHash: 'h-seen',
+    });
+    const guarded = flat(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(sqlOf(guarded)).toContain(`->'poi')->>'textHash' = ?`);
+    expect(guarded.slice(1)).toContain('h-seen');
+
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
+    expect(sqlOf(flat(dbMock.dbWrite.$queryRaw.mock.calls[1]))).not.toContain(`->>'textHash' = ?`);
+  });
+
   it('restores the pre-poi nsfw and sfwOnly from the snapshot', async () => {
     await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
@@ -560,6 +575,21 @@ describe('stampModelTextScanAppeal', () => {
     expect(call.slice(1).map((v) => (typeof v === 'string' ? v : ''))).toContain(
       JSON.stringify({ poi: 'h-main', minor: 'h-search' })
     );
+  });
+
+  it('stamps only the flag whose text hash the caller expects and returns the rows it changed', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0);
+    const changed = await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealUpheld',
+      labels: ['poi'],
+      expectTextHash: 'h-seen',
+    });
+    expect(changed).toBe(0);
+    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    expect(sqlOf(call)).toContain(`->'poi')->>'textHash' = ?`);
+    expect(call.slice(1)).toContain('h-seen');
   });
 
   it('keeps an upheld ruling on the flagged text', async () => {

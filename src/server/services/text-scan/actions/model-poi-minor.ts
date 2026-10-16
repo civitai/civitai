@@ -603,6 +603,7 @@ export async function grantModelTextScanPoi({
   via = 'appeal',
   reason,
   note,
+  expectTextHash,
 }: {
   modelId: number;
   userId: number;
@@ -610,6 +611,8 @@ export async function grantModelTextScanPoi({
   via?: 'appeal' | 'moderator';
   reason?: string;
   note?: string;
+  /** Lift only while the flag still carries this text hash; a flag since re-scanned is left alone. */
+  expectTextHash?: string;
 }) {
   if (!grantHash) throw new Error('A granted appeal needs the grant hash it covers');
   const before = await dbWrite.model.findUnique({
@@ -665,6 +668,11 @@ export async function grantModelTextScanPoi({
     WHERE m.id = ${modelId}
       AND m.poi
       AND m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' IS NOT NULL
+      ${
+        expectTextHash
+          ? Prisma.sql`AND ${flagEntryPath('poi')}->>'textHash' = ${expectTextHash}`
+          : Prisma.empty
+      }
     RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
               m.status, m."gallerySettings", m."lockedProperties"
   `;
@@ -719,6 +727,7 @@ export async function stampModelTextScanAppeal({
   via = 'appeal',
   reason,
   note,
+  expectTextHash,
 }: {
   modelId: number;
   userId: number;
@@ -728,8 +737,10 @@ export async function stampModelTextScanAppeal({
   via?: 'appeal' | 'moderator';
   reason?: string;
   note?: string;
-}) {
-  if (!labels.length) return;
+  /** Stamp only while the first label's flag still carries this text hash. */
+  expectTextHash?: string;
+}): Promise<number> {
+  if (!labels.length) return 0;
   // A grant covers the text the moderator reviewed, per label because the scan that owns a label
   // can differ. Falling back to the flagged hash would leave an owner's later edit uncovered, and
   // the next scan of it would re-flag and erase the grant. An upheld ruling keeps the flagged one.
@@ -737,7 +748,7 @@ export async function stampModelTextScanAppeal({
   if (granted && !labels.every((label) => grantHashes?.[label]))
     throw new Error('A granted appeal needs the grant hash it covers for every label');
   const hashes = JSON.stringify(granted ? grantHashes : {});
-  await dbWrite.$executeRaw`
+  return dbWrite.$executeRaw`
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || (
@@ -759,6 +770,11 @@ export async function stampModelTextScanAppeal({
       )
     )
     WHERE m.id = ${modelId}
+      ${
+        expectTextHash
+          ? Prisma.sql`AND ${flagEntryPath(labels[0])}->>'textHash' = ${expectTextHash}`
+          : Prisma.empty
+      }
   `;
 }
 

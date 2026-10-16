@@ -14,10 +14,13 @@ import {
   withResolutionLock,
 } from '~/server/services/text-scan/actions/redetection';
 import {
+  hasOpenTextScanFlag,
   readTextScanFlags,
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+
+const FLAG_CHANGED = 'The flag changed while you were ruling. Reload and review it again.';
 
 export type FlagRulingOutcome = 'kept' | 'lifted';
 
@@ -49,15 +52,27 @@ async function rule({
   reason,
   note,
 }: Parameters<typeof ruleModelTextScanFlag>[0]) {
-  const model = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { meta: true, minor: true, poi: true },
+  });
   const entry = model ? readTextScanFlags(model.meta)[label] : undefined;
   if (!model || !entry)
     throw throwBadRequestError(
       `No text-scan ${label} flag on this model; hash flags are confirmed or reverted from the queue.`
     );
+  // A lifted flag keeps its entry and hash, and a stale snapshot outlives the lift: only a flag that
+  // is still standing on the model can be ruled.
+  if (!hasOpenTextScanFlag(model.meta, label) || !model[label])
+    throw throwBadRequestError('This flag is no longer in force. Reload and review it again.');
   if (entry.textHash !== textHash)
     throw throwBadRequestError('The text changed since this flag. Reload and review it again.');
+  if (entry.redetected && entry.redetected.textHash !== textHash)
+    throw throwBadRequestError(
+      'Newer text is held for review on this flag. Rule it from the re-detection queue.'
+    );
 
+  // Races the owner's appeal being resolved (resolveMinorFlagAppeal takes no lock shared with this).
   if (keep && (await hasOpenModelAppeal(modelId)))
     throw throwBadRequestError("Rule the owner's open appeal from Appeals instead.");
 
@@ -68,11 +83,12 @@ async function rule({
         userId,
         reason,
         note,
+        textHash,
       });
       if (hadVerdict && !stamped)
         throw throwBadRequestError('The ruling could not be recorded. Try again.');
-    } else
-      await stampModelTextScanAppeal({
+    } else {
+      const stamped = await stampModelTextScanAppeal({
         modelId,
         userId,
         decision: 'appealUpheld',
@@ -80,14 +96,18 @@ async function rule({
         via: 'moderator',
         reason,
         note,
+        expectTextHash: textHash,
       });
+      if (!stamped) throw throwBadRequestError(FLAG_CHANGED);
+    }
     return { ruled: 'kept' as const, label, modelId };
   }
 
   if (label === 'minor') {
     const meta = model.meta as Record<string, unknown> | null;
-    if (meta?.[MINOR_FLAG_SNAPSHOT_KEY])
-      await revertMinorHashAutoFlag({
+    if (meta?.[MINOR_FLAG_SNAPSHOT_KEY]) {
+      // The rollback reports per-row failures instead of throwing, after the ruling is stamped.
+      const report = await revertMinorHashAutoFlag({
         modelId,
         userId,
         recordTextScanRuling: true,
@@ -95,7 +115,9 @@ async function rule({
         note,
         textHash,
       });
-    else
+      if (report.rolledBack !== 1)
+        throw throwBadRequestError('The flag could not be lifted. Reload and try again.');
+    } else
       await setModelMinor({
         id: modelId,
         minor: false,
@@ -107,14 +129,16 @@ async function rule({
         textHash,
       });
   } else {
-    await grantModelTextScanPoi({
+    const granted = await grantModelTextScanPoi({
       modelId,
       userId,
       grantHash: textHash,
       via: 'moderator',
       reason,
       note,
+      expectTextHash: textHash,
     });
+    if (!granted) throw throwBadRequestError(FLAG_CHANGED);
     await settleFlagAppealsAfterModeratorLift({
       modelId,
       userId,

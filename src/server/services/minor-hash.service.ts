@@ -604,11 +604,14 @@ export async function confirmMinorHashAutoFlag({
   userId,
   reason,
   note,
+  textHash,
 }: {
   modelId: number;
   userId: number;
   reason?: string;
   note?: string;
+  /** Stamp the ruling only while the flag still carries the text the moderator saw. */
+  textHash?: string;
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -639,10 +642,14 @@ export async function confirmMinorHashAutoFlag({
   // rule on, and the sign-off above has already happened, so a failed stamp is only logged.
   let hadVerdict = false;
   try {
-    const model = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
+    const model = await dbWrite.model.findUnique({
+      where: { id: modelId },
+      select: { meta: true },
+    });
     hadVerdict = hasTextScanVerdict(model?.meta, 'minor');
-    if (hadVerdict)
-      await stampModelTextScanAppeal({
+    let stamped = hadVerdict;
+    if (hadVerdict) {
+      const changed = await stampModelTextScanAppeal({
         modelId,
         userId,
         decision: 'appealUpheld',
@@ -650,8 +657,11 @@ export async function confirmMinorHashAutoFlag({
         via: 'moderator',
         reason,
         note,
+        expectTextHash: textHash,
       });
-    return { hadVerdict, stamped: hadVerdict };
+      if (textHash) stamped = changed > 0;
+    }
+    return { hadVerdict, stamped };
   } catch (error) {
     logToAxiom({
       type: 'error',

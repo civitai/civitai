@@ -69,8 +69,18 @@ function call(body: Record<string, unknown>) {
   return handler(req, res).then(() => ({ status: statusCode, payload }));
 }
 
-const flagged = (label: 'minor' | 'poi', extra: Record<string, unknown> = {}) => ({
-  meta: { textScanFlags: { [label]: { textHash: 'h-1' } }, ...extra },
+const flagged = (
+  label: 'minor' | 'poi',
+  extra: Record<string, unknown> = {},
+  entry: Record<string, unknown> = {},
+  live = true
+) => ({
+  meta: {
+    textScanFlags: { [label]: { workflowId: 'wf-1', textHash: 'h-1', ...entry } },
+    ...extra,
+  },
+  minor: label === 'minor' && live,
+  poi: label === 'poi' && live,
 });
 const body = { modelId: 42, textHash: 'h-1' };
 const errorOf = (res: { payload: unknown }) => (res.payload as { message?: string }).message ?? '';
@@ -83,6 +93,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.appeal.findFirst.mockResolvedValue(null);
   m.confirm.mockResolvedValue({ hadVerdict: true, stamped: true });
+  m.stamp.mockResolvedValue(1);
+  m.grantPoi.mockResolvedValue(true);
+  m.revert.mockResolvedValue({ rolledBack: 1 });
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -108,6 +121,7 @@ describe('minorFlag.rule', () => {
       userId: 7,
       reason: 'detection-correct',
       note: 'clear',
+      textHash: 'h-1',
     });
     expect(res.payload).toMatchObject({ ruled: 'kept', label: 'minor', modelId: 42 });
   });
@@ -123,6 +137,7 @@ describe('minorFlag.rule', () => {
       via: 'moderator',
       reason: 'detection-correct',
       note: undefined,
+      expectTextHash: 'h-1',
     });
   });
 
@@ -174,6 +189,7 @@ describe('minorFlag.rule', () => {
       via: 'moderator',
       reason: 'not-a-real-person',
       note: undefined,
+      expectTextHash: 'h-1',
     });
     expect(m.settle).toHaveBeenCalledWith({
       modelId: 42,
@@ -240,6 +256,70 @@ describe('minorFlag.rule', () => {
     expect(res.status).toBe(400);
     expect(errorOf(res)).toContain('text changed');
     nothingRuled();
+  });
+
+  it('refuses a keep on a flag that was lifted, without stamping', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      flagged('poi', {}, { appealGranted: { textHash: 'h-1' } })
+    );
+    const res = await call({ ...body, label: 'poi', keep: true });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('no longer in force');
+    nothingRuled();
+  });
+
+  it('refuses a ruling when the model column no longer carries the flag', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi', {}, {}, false));
+    const res = await call({ ...body, label: 'poi', keep: false });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('no longer in force');
+    nothingRuled();
+  });
+
+  it('refuses to lift minor on a cleared column with a stale snapshot, without rolling back', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      flagged('minor', { minorFlagSnapshot: { source: 'auto' } }, {}, false)
+    );
+    const res = await call({ ...body, label: 'minor', keep: false });
+    expect(res.status).toBe(400);
+    nothingRuled();
+  });
+
+  it('refuses a ruling on the old text while a re-detection on newer text is held', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      flagged('poi', {}, { redetected: { workflowId: 'wf-2', textHash: 'h-2' } })
+    );
+    const res = await call({ ...body, label: 'poi', keep: false });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('queue');
+    nothingRuled();
+  });
+
+  it('does not answer lifted or settle appeals when the poi grant did not apply', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
+    m.grantPoi.mockResolvedValue(false);
+    const res = await call({ ...body, label: 'poi', keep: false });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.payload).not.toMatchObject({ ruled: 'lifted' });
+    expect(m.settle).not.toHaveBeenCalled();
+  });
+
+  it('does not answer lifted when the minor revert rolled nothing back', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      flagged('minor', { minorFlagSnapshot: { source: 'auto' } })
+    );
+    m.revert.mockResolvedValue({ rolledBack: 0, failed: 1 });
+    const res = await call({ ...body, label: 'minor', keep: false });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.payload).not.toMatchObject({ ruled: 'lifted' });
+  });
+
+  it('refuses a poi keep whose stamp touched no row', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
+    m.stamp.mockResolvedValue(0);
+    const res = await call({ ...body, label: 'poi', keep: true });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.payload).not.toMatchObject({ ruled: 'kept' });
   });
 
   it('refuses a minor keep whose ruling could not be recorded', async () => {
