@@ -35,14 +35,10 @@ type RequestHeaders = Parameters<typeof canDecodeDevalueResponse>[0];
 /**
  * Run `fn` (the tRPC handler) with this request's write format in scope. Creates a store only
  * when the response could be devalue, so superjson-only requests pay nothing beyond the
- * header check. `masterSwitch` is a parameter only so tests can drive both branches.
+ * header check.
  */
-export function runWithResponseWriteFormat<T>(
-  headers: RequestHeaders,
-  fn: () => T,
-  masterSwitch: boolean = WRITE_DEVALUE
-): T {
-  if (!masterSwitch || !canDecodeDevalueResponse(headers)) return fn();
+export function runWithResponseWriteFormat<T>(headers: RequestHeaders, fn: () => T): T {
+  if (!WRITE_DEVALUE || !canDecodeDevalueResponse(headers)) return fn();
   return writeFormatStorage.run({ devalue: true }, fn);
 }
 

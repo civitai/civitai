@@ -154,11 +154,10 @@ async function getClientConfigCached(): Promise<Record<string, string>> {
 
 // TODO - figure out a better way to do this
 async function needsUpdate(req?: NextApiRequest) {
-  const type = req?.headers['x-client'] as string;
   const version = req?.headers['x-client-version'] as string;
   const date = req?.headers['x-client-date'] as string;
 
-  if (type !== 'web') return false;
+  if (!isWebClient(req?.headers)) return false;
   // Fail open: if sysRedis is unreachable, don't force a client update —
   // every tRPC call runs through enforceClientVersion, so a throw here
   // would 500 every authenticated request during a sysRedis incident.
