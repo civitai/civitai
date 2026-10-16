@@ -188,10 +188,7 @@ describe("kind: 'step' pass-through — inline media is refused", () => {
 
   it('at the top level', () => {
     expect(issuesOf({ ImageUrl: tinyJpeg })).toEqual([
-      [
-        ['input', 'ImageUrl'],
-        `step input field input.ImageUrl carries inline media (data URI/base64); ${fix}`,
-      ],
+      [['input', 'ImageUrl'], `input.ImageUrl carries inline media (data URI/base64); ${fix}`],
     ]);
   });
 
@@ -199,17 +196,14 @@ describe("kind: 'step' pass-through — inline media is refused", () => {
     expect(issuesOf({ source: { image: tinyJpeg } })).toEqual([
       [
         ['input', 'source', 'image'],
-        `step input field input.source.image carries inline media (data URI/base64); ${fix}`,
+        `input.source.image carries inline media (data URI/base64); ${fix}`,
       ],
     ]);
   });
 
   it('in an array', () => {
     expect(issuesOf({ images: ['https://image.civitai.com/a.jpeg', tinyJpeg] })).toEqual([
-      [
-        ['input', 'images', 1],
-        `step input field input.images[1] carries inline media (data URI/base64); ${fix}`,
-      ],
+      [['input', 'images', 1], `input.images[1] carries inline media (data URI/base64); ${fix}`],
     ]);
   });
 
@@ -224,11 +218,14 @@ describe("kind: 'step' pass-through — inline media is refused", () => {
     const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
     expect(photo.length).toBeGreaterThan(PASS_THROUGH_INPUT_BYTES_MAX);
     expect(issuesOf({ ImageUrl: photo })).toEqual([
-      [
-        ['input', 'ImageUrl'],
-        `step input field input.ImageUrl carries inline media (data URI/base64); ${fix}`,
-      ],
+      [['input', 'ImageUrl'], `input.ImageUrl carries inline media (data URI/base64); ${fix}`],
     ]);
+  });
+
+  it('behind padding that still fits inside the byte cap', () => {
+    const input = { pad: new Array(130_000).fill(0), photo: tinyJpeg };
+    expect(JSON.stringify(input).length).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
+    expect(issuesOf(input).map(([path]) => path)).toEqual([['input', 'photo']]);
   });
 
   it('accepts hosted urls, short strings, long prose and a $ref object', () => {

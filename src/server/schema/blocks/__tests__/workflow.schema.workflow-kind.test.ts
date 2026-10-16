@@ -167,17 +167,14 @@ describe("kind:'workflow' — inline media is refused", () => {
     expect(issuesOf(withPhoto)).toEqual([
       [
         ['steps', 1, 'input', 'images', 1],
-        `step input field steps[1].input.images[1] carries inline media (data URI/base64); ${fix}`,
+        `steps[1].input.images[1] carries inline media (data URI/base64); ${fix}`,
       ],
     ]);
   });
 
   it('in `arguments`, which a step input can $ref', () => {
     expect(issuesOf(body({ arguments: { photo: tinyPng } }))).toEqual([
-      [
-        ['arguments', 'photo'],
-        `step input field arguments.photo carries inline media (data URI/base64); ${fix}`,
-      ],
+      [['arguments', 'photo'], `arguments.photo carries inline media (data URI/base64); ${fix}`],
     ]);
   });
 
@@ -187,12 +184,20 @@ describe("kind:'workflow' — inline media is refused", () => {
     expect(issuesOf(body({ steps: [{ $type: 'imageGen', input: { ImageUrl: photo } }] }))).toEqual([
       [
         ['steps', 0, 'input', 'ImageUrl'],
-        `step input field steps[0].input.ImageUrl carries inline media (data URI/base64); ${fix}`,
+        `steps[0].input.ImageUrl carries inline media (data URI/base64); ${fix}`,
       ],
     ]);
   });
 
-  it('still parses $ref objects and hosted urls', () => {
-    expect(issuesOf(body())).toEqual([]);
+  it('accepts hosted urls and long prose in step inputs and arguments', () => {
+    const prose = 'a watercolor fox in a misty forest, '.repeat(300);
+    const withUrls = body({
+      steps: [
+        { name: 'gen', $type: 'imageGen', input: { prompt: prose } },
+        { $type: 'imageGen', input: { images: ['https://image.civitai.com/a.jpeg'] } },
+      ],
+      arguments: { source: 'https://image.civitai.com/b.jpeg', caption: prose },
+    });
+    expect(issuesOf(withUrls)).toEqual([]);
   });
 });

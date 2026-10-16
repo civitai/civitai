@@ -10305,7 +10305,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // A phone photo inlined as a data URI: over the byte cap AND inline media.
     const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
     const expected =
-      'step input field input.ImageUrl carries inline media (data URI/base64); ' +
+      'input.ImageUrl carries inline media (data URI/base64); ' +
       "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
       'or pick it with useImagePicker and pass the returned url';
 
@@ -10345,7 +10345,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
 
       await expect(caller().estimateWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: expect.stringContaining('step input field steps[1].input.images[1] carries'),
+        message: expect.stringContaining('steps[1].input.images[1] carries'),
       });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
@@ -12449,6 +12449,24 @@ describe('blocks.estimateWorkflowBatch', () => {
     // The schema's own issue list, naming the missing field.
     expect(result.snapshots[1].error).toContain('"params"');
     expect(result.aggregate).toEqual({ total: 43, pricedCells: 2, cellCount: 3 });
+  });
+
+  it('an inline-media cell fails with the inline-media message; the others still price', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [
+        {
+          kind: 'step',
+          $type: 'imageUpscaler',
+          input: { image: 'data:image/png;base64,iVBORw0KGgo=' },
+          maxBuzz: 10,
+        },
+        txt('cell-c'),
+      ],
+    });
+    expect(result.snapshots[0]).toMatchObject({ workflowId: 'failed', status: 'failed' });
+    expect(result.snapshots[0].error).toContain('input.image carries inline media');
+    expect(result.snapshots[1].cost).toEqual({ total: 31, authorFee: 0 });
   });
 
   it('a cell that is not a body at all (null, a string) fails alone', async () => {

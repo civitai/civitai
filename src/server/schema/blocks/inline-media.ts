@@ -1,23 +1,21 @@
-// Dependency-free on purpose: the SDK mock host mirrors this file, so its regexes and
-// threshold must stay copyable verbatim.
+// Keep dependency-free: the SDK mock host is meant to copy these regexes and the threshold verbatim.
 
-/** A string that is an inline image / video / audio data URI. */
 export const INLINE_MEDIA_DATA_URI_REGEX = /^\s*data:(image|video|audio)\//i;
 
-/** A string made only of the base64 alphabet, with optional `=` padding and no whitespace. */
+/** Base64 alphabet with optional `=` padding. Line-wrapped (MIME) base64 does not match. */
 export const INLINE_MEDIA_RAW_BASE64_REGEX = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /**
- * Shortest string the raw-base64 clause refuses. Far longer than any id, hash or token a
- * step input legitimately carries, and far shorter than any real encoded image.
+ * Above any id, hash or token a step input carries. Raw base64 shorter than this is not
+ * refused; only the data-URI clause catches a tiny image.
  */
 export const INLINE_MEDIA_RAW_BASE64_MIN_CHARS = 4096;
 
-/** Containers deeper than this are not searched. */
-export const INLINE_MEDIA_MAX_DEPTH = 64;
-
-/** Values visited before the search gives up. */
-export const INLINE_MEDIA_MAX_VISITS = 100_000;
+/**
+ * Values searched before giving up (fail open). Every JSON value serialises to at least one
+ * byte, so this covers any input inside the 256 KiB byte cap; a larger one is refused by it.
+ */
+export const INLINE_MEDIA_MAX_VISITS = 262_144;
 
 export type InlineMediaPath = (string | number)[];
 
@@ -28,32 +26,45 @@ export function isInlineMediaString(value: string): boolean {
   );
 }
 
+type Frame = { value: unknown; key: string | number | null; parent: Frame | null };
+
+function pathOf(frame: Frame): InlineMediaPath {
+  const path: InlineMediaPath = [];
+  for (let f: Frame | null = frame; f && f.key !== null; f = f.parent) path.push(f.key);
+  return path.reverse();
+}
+
 /**
- * The JSON path of the first string in `value` that carries inline media, or `null`.
- *
- * Fails open past the depth and visit caps: this is a guidance check, and the byte cap
- * still bounds the payload.
+ * The JSON path of the first string in `value`, in document order, that carries inline
+ * media, or `null`. Iterative, so nesting depth cannot overflow the stack.
  */
 export function findInlineMediaPath(value: unknown): InlineMediaPath | null {
-  let visits = 0;
-  const walk = (node: unknown, path: InlineMediaPath, depth: number): InlineMediaPath | null => {
-    if (++visits > INLINE_MEDIA_MAX_VISITS) return null;
-    if (typeof node === 'string') return isInlineMediaString(node) ? path : null;
-    if (node === null || typeof node !== 'object' || depth >= INLINE_MEDIA_MAX_DEPTH) return null;
+  const stack: Frame[] = [{ value, key: null, parent: null }];
+  let visits = 1;
+  while (stack.length > 0) {
+    const frame = stack.pop() as Frame;
+    const node = frame.value;
+    if (typeof node === 'string') {
+      if (isInlineMediaString(node)) return pathOf(frame);
+      continue;
+    }
+    if (node === null || typeof node !== 'object') continue;
+    const children: Frame[] = [];
     if (Array.isArray(node)) {
       for (let i = 0; i < node.length; i++) {
-        const hit = walk(node[i], [...path, i], depth + 1);
-        if (hit) return hit;
+        if (++visits > INLINE_MEDIA_MAX_VISITS) return null;
+        children.push({ value: node[i], key: i, parent: frame });
       }
-      return null;
+    } else {
+      for (const key in node) {
+        if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
+        if (++visits > INLINE_MEDIA_MAX_VISITS) return null;
+        children.push({ value: (node as Record<string, unknown>)[key], key, parent: frame });
+      }
     }
-    for (const [key, child] of Object.entries(node)) {
-      const hit = walk(child, [...path, key], depth + 1);
-      if (hit) return hit;
-    }
-    return null;
-  };
-  return walk(value, [], 0);
+    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+  }
+  return null;
 }
 
 /** `['input', 'images', 0]` → `input.images[0]`. */
@@ -66,7 +77,7 @@ export function formatInlineMediaPath(path: InlineMediaPath): string {
 
 export function inlineMediaMessage(path: InlineMediaPath): string {
   return (
-    `step input field ${formatInlineMediaPath(path)} carries inline media (data URI/base64); ` +
+    `${formatInlineMediaPath(path)} carries inline media (data URI/base64); ` +
     `pass a hosted url instead — for an image, upload it with ` +
     `useImageUpload({ purpose: 'generationSource' }) or pick it with useImagePicker ` +
     `and pass the returned url`

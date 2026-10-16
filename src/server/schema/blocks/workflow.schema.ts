@@ -639,10 +639,10 @@ const blockPassThroughStepShape = {
   // fine and then throws on the first parse, measured.
   step: z.undefined(),
   $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
-  // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server may refuse it
-  // (inline media, size) but never rewrites, merges or defaults any field in
-  // here — that is the whole point of the arm, and the submitted step's `input`
-  // is BYTE-IDENTICAL to this value.
+  // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server may refuse it,
+  // but never rewrites, merges or defaults any field in here — that is the
+  // whole point of the arm, and the submitted step's `input` is BYTE-IDENTICAL
+  // to this value.
   // (Not the SAME object: `z.record` rebuilds the top level, so the caller's own
   // object never reaches the orchestrator whatever the router does. An earlier
   // draft claimed identity here and in `blocks.router`; measured false.)
@@ -656,8 +656,8 @@ const blockPassThroughStepShape = {
 };
 
 /**
- * Refuses inline media anywhere under `fields`, at the first offending path. Runs before the
- * byte cap and stops it: an inline photo usually trips both, and only this message names the fix.
+ * First inline-media path under `fields`. `continue: false` suppresses the byte-cap issue, which
+ * an inline photo usually also trips; only this message names the fix.
  */
 function refuseInlineMedia<T extends Record<string, unknown>>(
   fields: (body: T) => [InlineMediaPath, unknown][]

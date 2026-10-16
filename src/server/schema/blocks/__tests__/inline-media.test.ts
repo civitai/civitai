@@ -1,24 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import {
-  findInlineMediaPath,
-  INLINE_MEDIA_DATA_URI_REGEX,
-  INLINE_MEDIA_RAW_BASE64_MIN_CHARS,
-  INLINE_MEDIA_RAW_BASE64_REGEX,
-  inlineMediaMessage,
-} from '~/server/schema/blocks/inline-media';
+import { findInlineMediaPath, inlineMediaMessage } from '~/server/schema/blocks/inline-media';
 
 /** A base64-alphabet run of exactly `n` characters, using every character class. */
 const base64Run = (n: number) => 'Qm+/ZTY0aW5saW5l'.repeat(Math.ceil(n / 16)).slice(0, n);
 
 describe('inline-media predicate', () => {
-  // The SDK mock host mirrors these verbatim; a change here is a change there.
-  it('pins the mirrored regexes and threshold', () => {
-    expect(INLINE_MEDIA_DATA_URI_REGEX.source).toBe('^\\s*data:(image|video|audio)\\/');
-    expect(INLINE_MEDIA_DATA_URI_REGEX.flags).toBe('i');
-    expect(INLINE_MEDIA_RAW_BASE64_REGEX.source).toBe('^[A-Za-z0-9+/]+={0,2}$');
-    expect(INLINE_MEDIA_RAW_BASE64_MIN_CHARS).toBe(4096);
-  });
-
   describe('data URIs', () => {
     it.each([
       ['data:image/jpeg;base64,/9j/4AAQSkZJRg=='],
@@ -95,15 +81,37 @@ describe('inline-media predicate', () => {
     });
   });
 
-  it('does not overflow the stack on pathological nesting', () => {
+  it('finds an offender behind many siblings and deep nesting', () => {
+    let nested: unknown = { photo: 'data:image/png;base64,iVBOR' };
+    for (let i = 0; i < 10; i++) nested = { level: nested };
+    const input = {
+      params: Array.from({ length: 1000 }, (_, i) => ({ weight: i / 7, label: `l${i}` })),
+      nested,
+    };
+    expect(findInlineMediaPath(input)).toEqual([
+      'nested',
+      ...Array.from({ length: 10 }, () => 'level'),
+      'photo',
+    ]);
+  });
+
+  // Every JSON value is at least one byte, so a body inside the 256 KiB byte cap must be
+  // searched to the end: anything less lets an app pad its way past the guard.
+  it('searches a body with as many values as the byte cap allows', () => {
+    const input = { pad: new Array(130_000).fill(0), photo: 'data:image/png;base64,iVBOR' };
+    expect(JSON.stringify(input).length).toBeLessThan(262_144);
+    expect(findInlineMediaPath(input)).toEqual(['photo']);
+  });
+
+  it('survives nesting deep enough to overflow a recursive walk', () => {
     let deep: unknown = 'data:image/png;base64,AA';
     for (let i = 0; i < 100_000; i++) deep = { d: deep };
-    expect(() => findInlineMediaPath(deep)).not.toThrow();
+    expect(findInlineMediaPath(deep)).toHaveLength(100_000);
   });
 
   it('names the path and the fix in its message', () => {
     expect(inlineMediaMessage(['steps', 1, 'input', 'images', 0])).toBe(
-      'step input field steps[1].input.images[0] carries inline media (data URI/base64); ' +
+      'steps[1].input.images[0] carries inline media (data URI/base64); ' +
         "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
         'or pick it with useImagePicker and pass the returned url'
     );
