@@ -23,6 +23,7 @@
     FLAGGED_SOURCE_LABELS,
     flaggedFilterParams,
   } from '$lib/minor-flags/flagged-filters';
+  import { submitDecisionForm } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import type { FlaggedQueueData } from '$lib/server/minor-flag-queue';
   import type { FlaggedRow } from '$lib/server/minor-hash.service';
@@ -99,11 +100,7 @@
       return;
     }
     // A hash flag has no reason to write, so the key submits straight away.
-    document
-      .querySelector<HTMLFormElement>(
-        `[data-triage-actions] form[data-triage-action="${HASH_ACTIONS[index]}"]`
-      )
-      ?.requestSubmit();
+    submitDecisionForm(HASH_ACTIONS, flaggedDecisionEnabled(row), index);
   };
 </script>
 

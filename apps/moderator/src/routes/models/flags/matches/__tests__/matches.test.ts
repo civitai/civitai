@@ -1,38 +1,114 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const {
+  getMinorHashMatchesForReview,
+  getMinorQueueCounts,
+  setModelMinorFlag,
+  dismissMinorHashMatch,
+} = vi.hoisted(() => ({
+  getMinorHashMatchesForReview: vi.fn(),
+  getMinorQueueCounts: vi.fn(),
+  setModelMinorFlag: vi.fn(),
+  dismissMinorHashMatch: vi.fn(),
+}));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-const { getMinorHashMatchesForReview, getAutoFlaggedMinorModels } = vi.hoisted(() => ({
-  getMinorHashMatchesForReview: vi.fn(async () => ({ items: [] })),
-  getAutoFlaggedMinorModels: vi.fn(async () => ({ items: [] })),
-}));
 vi.mock('$lib/server/minor-hash.service', () => ({
-  getAutoFlaggedMinorModels,
+  getMinorFlagAppealGroups: vi.fn(),
   getMinorFlagAppealsForReview: vi.fn(),
   getMinorHashMatchesForReview,
-  getModelMinorState: vi.fn(),
+  getMinorQueueCounts,
+  getFlaggedModels: vi.fn(),
+  getFlaggedCount: vi.fn(),
 }));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag: vi.fn(),
-  dismissMinorHashMatch: vi.fn(),
+  dismissMinorHashMatch,
   resolveMinorFlagAppeal: vi.fn(),
   resolveMinorFlagAppealPerLabel: vi.fn(),
+  resolveRedetection: vi.fn(),
   revertMinorFlag: vi.fn(),
-  setModelMinorFlag: vi.fn(),
+  setModelMinorFlag,
 }));
 
 const { actions, load } = await import('../+page.server');
 
+type LoadEvent = Parameters<NonNullable<typeof load>>[0];
+const loadAt = (query = '') =>
+  (load as (e: unknown) => Promise<Record<string, unknown>>)({
+    url: new URL(`http://x/models/flags/matches${query}`),
+  } as LoadEvent);
+
+const post = (fields: Record<string, string>) => {
+  const body = new FormData();
+  for (const [key, value] of Object.entries(fields)) body.set(key, value);
+  return { request: new Request('http://x/models/flags/matches', { method: 'POST', body }) };
+};
+type ActionEvent = Parameters<NonNullable<typeof actions>[string]>[0];
+const run = (name: string, fields: Record<string, string>) =>
+  actions![name](post(fields) as unknown as ActionEvent) as Promise<Record<string, unknown>>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  getMinorHashMatchesForReview.mockResolvedValue({ items: [], hasMore: false });
+  getMinorQueueCounts.mockResolvedValue({ pending: 8 });
+  setModelMinorFlag.mockResolvedValue({ ok: true });
+  dismissMinorHashMatch.mockResolvedValue({ ok: true });
+});
+
 describe('Model Flags / File matches', () => {
-  it('keeps its actions', () => {
-    expect(Object.keys(actions!).sort()).toEqual(['confirm', 'dismiss', 'revert', 'setMinor']);
+  it('has the two decisions and nothing else', () => {
+    expect(Object.keys(actions!).sort()).toEqual(['dismiss', 'setMinor']);
   });
 
-  it('always loads the pending queue, whatever ?tab= says', async () => {
-    const data = await (load as (e: unknown) => Promise<Record<string, unknown>>)({
-      url: new URL('http://x/models/flags/matches?tab=auto'),
+  it('loads the pending queue with the whole queue as its total', async () => {
+    expect(await loadAt()).toMatchObject({ page: 1, offset: 0, hasMore: false, total: 8 });
+    expect(getMinorHashMatchesForReview).toHaveBeenCalledWith({
+      limit: 50,
+      offset: 0,
+      search: undefined,
     });
-    expect(getMinorHashMatchesForReview).toHaveBeenCalledTimes(1);
-    expect(getAutoFlaggedMinorModels).not.toHaveBeenCalled();
-    expect(data).toMatchObject({ tab: 'pending', tabs: null });
+  });
+
+  it('offers no total for a search, which narrows the list but not the count', async () => {
+    const data = await loadAt('?q=42&page=2&limit=10');
+    expect(data).toMatchObject({ total: undefined, page: 2, offset: 10, q: '42' });
+    expect(getMinorHashMatchesForReview).toHaveBeenCalledWith({
+      limit: 10,
+      offset: 10,
+      search: { modelOrUserId: 42 },
+    });
+    expect(getMinorQueueCounts).not.toHaveBeenCalled();
+  });
+
+  it('still lists the page when the total fails', async () => {
+    getMinorQueueCounts.mockRejectedValue(new Error('slow'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await loadAt()).toMatchObject({ items: [], total: undefined });
+  });
+
+  it('flags as minor by model id', async () => {
+    expect(await run('setMinor', { modelId: '7' })).toMatchObject({ success: true, modelId: 7 });
+    expect(setModelMinorFlag).toHaveBeenCalledWith(7);
+    expect(dismissMinorHashMatch).not.toHaveBeenCalled();
+  });
+
+  it('dismisses by model id', async () => {
+    expect(await run('dismiss', { modelId: '7' })).toMatchObject({ success: true, modelId: 7 });
+    expect(dismissMinorHashMatch).toHaveBeenCalledWith(7);
+    expect(setModelMinorFlag).not.toHaveBeenCalled();
+  });
+
+  it("shows the main app's refusal against the model instead of reporting success", async () => {
+    setModelMinorFlag.mockResolvedValue({ ok: false, error: 'Model not found.' });
+    expect(await run('setMinor', { modelId: '7' })).toMatchObject({
+      status: 400,
+      data: { error: 'Model not found.', modelId: 7, subject: 'Model #7' },
+    });
+  });
+
+  it('refuses a missing model id before calling the main app', async () => {
+    expect(await run('dismiss', {})).toMatchObject({ status: 400 });
+    expect(dismissMinorHashMatch).not.toHaveBeenCalled();
   });
 });

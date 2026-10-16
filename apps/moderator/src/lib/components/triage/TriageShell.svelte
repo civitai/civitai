@@ -8,6 +8,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { LINK_CLASS, num } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
+  import { submitDecisionForm } from '$lib/triage/decision-form';
   import { isTypingTarget, triageKeyAction } from '$lib/triage/keys';
   import { failureBanner, failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
@@ -214,12 +215,7 @@
       if (to !== null) select(to);
     } else if (!e.repeat && selected) {
       if (ondecision) ondecision(selected, action.decision);
-      else
-        document
-          .querySelector<HTMLFormElement>(
-            `[data-triage-actions] form[data-triage-action="${decisionActions[action.decision]}"]`
-          )
-          ?.requestSubmit();
+      else submitDecisionForm(decisionActions, decisionEnabled(selected), action.decision);
     }
   }
 

@@ -133,6 +133,16 @@ export type MinorHashReviewRow = {
   minorModelName: string | null;
   minorUserId: number;
   minorModelVersionId: number | null;
+  modelType: string;
+  modelCreatedAt: Date;
+  baseModel: string | null;
+  trainedWords: string[];
+  trainedWordCount: number;
+  tags: string[];
+  tagCount: number;
+  coverImages: AppealCoverImage[];
+  otherFlaggedModels: number;
+  pastAppeals: { approved: number; rejected: number; void: number; pending: number };
 };
 
 /** Tab 1 — Pending review: a model sharing a file hash with something a human flagged as minor, where
@@ -162,7 +172,8 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0, search }
         AND NOT (m.meta ? 'minorHashDismissed')
         AND ${notMinorHashClearedPredicate}
       GROUP BY m.id, m.name, m."userId", m.status, m."createdAt"
-    )
+    ),
+    pg AS (
     SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",
            c."modelVersionId",
            s."minorModelId", mm.name AS "minorModelName", s."userId" AS "minorUserId",
@@ -197,6 +208,25 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0, search }
       )}
     ORDER BY c."modelId"
     LIMIT ${limit + 1} OFFSET ${offset}
+    )
+    -- The page is cut first (pg), so the per-model LATERALs are bounded by the limit.
+    SELECT pg.*, m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
+           v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
+           COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
+           COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
+           COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
+           COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+           jsonb_build_object(
+             'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
+             'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
+           ) AS "pastAppeals"
+    FROM pg
+    JOIN "Model" m ON m.id = pg."modelId"
+    ${modelFactsJoin}
+    ${coverImagesJoin}
+    ${uploaderFlagsJoin}
+    ${pastAppealsJoin(sql``)}
+    ORDER BY pg."modelId"
   `.execute(dbRead);
 
   // The extra row is how "there is another page" is known without a second count query.

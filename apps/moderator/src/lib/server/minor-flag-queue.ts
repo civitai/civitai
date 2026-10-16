@@ -4,11 +4,10 @@ import type { Actions, RequestEvent } from '@sveltejs/kit';
 import { parseQuery } from '$lib/server/query';
 import { rulingReasonFromForm } from '$lib/server/resolution-reason';
 import {
-  getAutoFlaggedMinorModels,
   getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview,
-  getModelMinorState,
+  getMinorQueueCounts,
   getFlaggedCount,
   getFlaggedModels,
   type MinorSearch,
@@ -38,8 +37,6 @@ import {
   revertMinorFlag,
   setModelMinorFlag,
 } from '$lib/server/minor-flag.service';
-
-export type MinorQueueView = 'pending' | 'auto';
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(10).max(200).catch(50),
@@ -71,33 +68,36 @@ function parsePaging(url: URL) {
 }
 
 /**
- * Only the open tab's ROWS are queried here. The tab counts come from `/api/minor-queue-counts`,
- * client-side and cached, because the Pending count costs ~10s on its own — it rebuilds the same seed
- * set and candidate CTE this query does, then counts the whole population instead of one page of it.
+ * The File matches list. Its total is the cached sidebar-grade count, which costs ~10s cold, so it is
+ * bounded: a slow count drops the "of N" instead of holding the page. A search narrows the list, not the
+ * count, so the total is only offered for the whole queue.
  *
  * ⚠️ Offset paging over a queue moderators are draining SKIPS rows: action a row on page 1 and every
- * later row shifts up one, so page 2 starts past something never seen. It is the right trade here —
- * the alternative is a keyset over a CTE with no monotonic column — but a moderator working straight
- * through should re-read page 1 after acting rather than paging forward.
+ * later row shifts up one, so page 2 starts past something never seen. The shell's "Refresh queue"
+ * re-cuts the page after acting.
  */
-export async function loadMinorQueue(
-  url: URL,
-  tab: MinorQueueView,
-  tabs: readonly { value: MinorQueueView; label: string }[] | null
-) {
-  const { limit, page, q, offset, numeric, search } = parsePaging(url);
+const TOTAL_BUDGET_MS = 1_000;
 
-  const [queue, lookup] = await Promise.all([
-    tab === 'auto'
-      ? getAutoFlaggedMinorModels({ limit, offset, search })
-      : getMinorHashMatchesForReview({ limit, offset, search }),
-    numeric !== null && numeric <= MAX_INT4 ? getModelMinorState(numeric) : null,
+export async function loadMatchesQueue(url: URL) {
+  const { limit, page, q, offset, search } = parsePaging(url);
+
+  const [queue, total] = await Promise.all([
+    getMinorHashMatchesForReview({ limit, offset, search }),
+    search
+      ? undefined
+      : Promise.race([
+          getMinorQueueCounts().then((counts) => counts.pending),
+          new Promise<undefined>((resolve) => setTimeout(resolve, TOTAL_BUDGET_MS)),
+        ]).catch((err) => {
+          console.error('File matches total failed', err);
+          return undefined;
+        }),
   ]);
 
-  return { tab, limit, page, offset, q, lookup, tabs, ...queue, wide: true };
+  return { limit, page, offset, q, total, ...queue, fullBleed: true };
 }
 
-export type MinorQueueData = Awaited<ReturnType<typeof loadMinorQueue>>;
+export type MatchesQueueData = Awaited<ReturnType<typeof loadMatchesQueue>>;
 
 export async function loadAppealQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
@@ -164,10 +164,9 @@ const run = async (
   return { success: true, modelId, rescanQueued: result.rescanQueued === true };
 };
 
-export const minorHashActions: Actions = {
+/** Flag a file match as minor, or dismiss it. The main app's endpoints take the model id only. */
+export const matchesActions: Actions = {
   setMinor: (event) => run(event, setModelMinorFlag),
-  confirm: (event) => run(event, confirmMinorFlag),
-  revert: (event) => run(event, revertMinorFlag),
   dismiss: (event) => run(event, dismissMinorHashMatch),
 };
 
@@ -184,6 +183,8 @@ const flaggedAction =
       fail(400, { error, modelId, subject: modelSubject(modelId) });
 
     if (source.data === 'hash') {
+      // Hash flags are minor flags; a poi label here would still lift or keep the minor flag.
+      if (label.data !== 'minor') return refusal('A hash flag can only be ruled as minor.');
       // The main app's confirm and revert endpoints take no reason yet, so none is read or recorded.
       const result = await (keep ? confirmMinorFlag : revertMinorFlag)(modelId);
       if (!result.ok) return refusal(result.error ?? 'Action failed.');

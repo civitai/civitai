@@ -66,6 +66,16 @@ describe('hash flag actions', () => {
     expect(resolveRedetection).not.toHaveBeenCalled();
   });
 
+  it.each(['keepFlag', 'liftFlag'])('%s refuses a poi label on a hash flag', async (action) => {
+    const result = await run(action, { ...hash, label: 'poi', ...kept });
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: 'A hash flag can only be ruled as minor.', modelId: 42 },
+    });
+    expect(confirmMinorFlag).not.toHaveBeenCalled();
+    expect(revertMinorFlag).not.toHaveBeenCalled();
+  });
+
   it('lift reverts the flag by model id', async () => {
     expect(await run('liftFlag', hash)).toMatchObject({ success: true, resolved: 'dismissed' });
     expect(revertMinorFlag).toHaveBeenCalledWith(42);
