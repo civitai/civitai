@@ -53,6 +53,13 @@ export const getServerProxySSGHelpers = async (
     // either format through the union READ. SSR HTML and the JS chunks it
     // references are the same content-hashed deploy, so dehydrate/hydrate is
     // inherently version-matched. See src/shared/utils/trpc-union-transformer.ts.
+    //
+    // Deliberately NOT the per-request client check the /api/trpc route uses
+    // (src/server/trpc/response-write-format.ts): a page navigation carries no
+    // `x-client` headers, and the only reader of this state is the same-deploy
+    // bundle (a stale tab's `/_next/data` fetch is a buildId mismatch, which Next
+    // turns into a full reload), so the client check would only switch SSR to
+    // superjson without protecting anyone.
     transformer: unionTransformer,
   });
   return ssg;

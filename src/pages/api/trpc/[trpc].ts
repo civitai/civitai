@@ -20,6 +20,12 @@ import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/t
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
+import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import {
+  pinResponseWriteToSuperjson,
+  responseWritesDevalue,
+  runWithResponseWriteFormat,
+} from '~/server/trpc/response-write-format';
 import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 
@@ -67,7 +73,18 @@ const trpcHandler = createNextApiHandler({
       errorCount: errors.length,
       paths: info?.calls.map((call) => call.path) ?? paths,
     });
-    if (edgeCached) ctx?.res?.removeHeader('Set-Cookie');
+    if (edgeCached) {
+      ctx?.res?.removeHeader('Set-Cookie');
+      // A cached body is served to the next caller of this URL whatever client it is, so it
+      // must be superjson, the format every client reads. See response-write-format.ts.
+      pinResponseWriteToSuperjson();
+    } else if (responseWritesDevalue() && !headers['Cache-Control']) {
+      // A devalue body must never be stored by a shared cache: only a capable web bundle can
+      // read it. The proxy's api-cache middleware already sends this same private default on
+      // /api/trpc, but that lives outside this route and its matcher can change, so the route
+      // states it itself for every response it writes as devalue.
+      headers['Cache-Control'] = PRIVATE_CACHE_CONTROL;
+    }
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
@@ -252,5 +269,10 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // Seed the request-scoped procedure-path context so the transformer's serialize
   // step (an awaited descendant of trpcHandler) can name the offending procedure
   // on an oversized/slow serialize. No-op wrapper when the instrument is disabled.
-  await runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res));
+  //
+  // The response write format (superjson vs devalue) is decided per request from the
+  // client headers — see `~/server/trpc/response-write-format`.
+  await runWithResponseWriteFormat(req.headers, () =>
+    runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res))
+  );
 }) as NextApiHandler;
