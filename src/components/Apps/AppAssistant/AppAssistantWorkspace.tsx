@@ -15,11 +15,7 @@ import {
 } from '@mantine/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import type {
-  ChatMcpServer,
-  ChatToolGate,
-  CivitaiChat,
-} from '@civitai/components-chat/civitai-chat';
+import type { ChatMcpServer, CivitaiChat } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
@@ -166,7 +162,14 @@ export function AppAssistantWorkspace({
     stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
 
-  const gate = useMemo(() => createAssistantGate(), []);
+  const gate = useMemo(
+    () =>
+      createAssistantGate({
+        // Features are planned for an app, so not before one exists.
+        refuse: (name) => (name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : null),
+      }),
+    []
+  );
   // What was verified belongs to the sandbox it was verified in.
   useEffect(() => gate.reset(), [activeName, gate]);
 
@@ -190,6 +193,7 @@ export function AppAssistantWorkspace({
       }),
       ...createAppTools({
         apps: () => live.current.apps,
+        current: () => live.current.active,
         open: async (app) => {
           const opened = await openRef.current(app);
           // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
@@ -201,14 +205,6 @@ export function AppAssistantWorkspace({
       ...gate.tools,
     }),
     [canPreview, gate]
-  );
-
-  const beforeToolCall = useCallback<ChatToolGate>(
-    (name, input, context) =>
-      name === SET_CHECKLIST && !live.current.active
-        ? { refuse: NO_APP_REFUSAL }
-        : gate.beforeToolCall(name, input, context),
-    [gate]
   );
 
   const instructions = useCallback(
@@ -403,7 +399,7 @@ export function AppAssistantWorkspace({
             instructions={instructions}
             mcpServers={mcpServers}
             holdReason={active?.state === 'starting' ? APP_STARTING_HOLD : undefined}
-            beforeToolCall={beforeToolCall}
+            beforeToolCall={gate.beforeToolCall}
             onToolResult={gate.onToolResult}
             chatRef={chatRef}
           />

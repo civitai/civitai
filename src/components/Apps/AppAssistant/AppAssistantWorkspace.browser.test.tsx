@@ -246,6 +246,14 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     ]);
   });
 
+  test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
+    m.list = [];
+    await mount();
+    for (let i = 0; i < 150; i++)
+      expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toHaveProperty('refuse');
+    expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toMatchObject({ stop: true });
+  });
+
   test('numbers a name the user already has', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { app: 'tip-calculator', state: 'suspended' })];
     await mount();
@@ -263,7 +271,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     m.openReject = new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit');
     await expect(
       Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Fourth app' }, ctx))
-    ).rejects.toThrow(/delete one under Your apps/);
+    ).rejects.toThrow(/Delete one under Your apps/);
     m.openError = m.openReject;
     screen.rerender(<Workspace />);
     await expect.element(page.getByText('You have as many apps as you can keep')).toBeVisible();
@@ -274,7 +282,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     m.list = [];
     await mount();
     expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toEqual({
-      refuse: expect.stringMatching(/Call create_app/),
+      refuse: expect.stringMatching(/^There is no app yet to plan features for\./),
     });
     await m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
     expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toEqual({ allow: true });

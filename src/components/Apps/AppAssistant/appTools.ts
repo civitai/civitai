@@ -5,18 +5,80 @@ import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/
 
 export const CREATE_APP = 'create_app';
 
-/** What the assistant reads when it tries to plan features before there is an app to build them in. */
+// The chat shows the user every refusal and thrown error, so these are written for them to read too:
+// no tool names, ids or service wording.
 export const NO_APP_REFUSAL =
-  'No app is open, so nothing could be built. Call create_app with a short name for the app the user described first.';
+  'There is no app yet to plan features for. Start the app the user described first, then list its features.';
+export const APPS_LOADING = 'Your apps are still loading. Try again in a moment.';
+export const KEEP_LIMIT =
+  'You already have as many apps as you can keep. Delete one under Your apps at the top of the page, then ask again.';
+export const RUNNING_LIMIT =
+  'Another of your apps is still running. Pause it under Your apps at the top of the page, then ask again.';
+export const APPS_CHANGING = 'Your apps were changing at the same moment. Try again.';
+export const APPS_UNREACHABLE = 'Your apps could not be reached right now. Try again in a moment.';
+
+/** What the user may read about a failed open; never the service's own message. */
+export function appOpenFailure(error: unknown): string {
+  if (isRunningLimit(error)) return RUNNING_LIMIT;
+  if (error instanceof SandboxApiError && error.kind === 'limit') return KEEP_LIMIT;
+  if (error instanceof SandboxApiError && error.kind === 'conflict') return APPS_CHANGING;
+  return APPS_UNREACHABLE;
+}
 
 export interface AppToolsOptions {
   /** The user's apps as last listed; undefined until the list has loaded. */
   apps: () => Sandbox[] | undefined;
+  /** The app open on the page, if any. */
+  current: () => Sandbox | null;
   /** Creates (or, when it exists after all, resumes) the app's sandbox and makes it the open app. */
   open: (app: string) => Promise<{ sandbox: Sandbox; created: boolean }>;
 }
 
-export function createAppTools({ apps, open }: AppToolsOptions): Record<string, ChatTool> {
+type CreateResult = { app: string; state: Sandbox['state']; existed?: true; note: string };
+
+export function createAppTools({ apps, current, open }: AppToolsOptions): Record<string, ChatTool> {
+  // The chat runs a step's calls together; a second create must not race the first to the service,
+  // which would make two apps under one name.
+  let pending: Promise<CreateResult> | null = null;
+
+  const create = async (name: string): Promise<CreateResult> => {
+    const list = apps();
+    if (!list) throw new Error(APPS_LOADING);
+    const openNow = current();
+    // Asked again for the app that is open: keep building it rather than make a numbered copy.
+    if (openNow && newAppKey(name, []) === openNow.app)
+      return {
+        app: openNow.app,
+        state: openNow.state,
+        existed: true,
+        note: `The app ${openNow.app} is already open; keep working on it.`,
+      };
+    const app = newAppKey(
+      name,
+      list.map((s) => s.app)
+    );
+    let opened: { sandbox: Sandbox; created: boolean };
+    try {
+      opened = await open(app);
+    } catch (error) {
+      throw new Error(appOpenFailure(error));
+    }
+    const { sandbox, created } = opened;
+    // The list it was named against can be stale, and the service finds before it creates.
+    if (!created)
+      return {
+        app,
+        state: sandbox.state,
+        existed: true,
+        note: `The user already had an app called ${app}, made somewhere else after this page last listed their apps, and it is now open instead of a new one. Ask the user whether to keep working on it; do not build over it before they answer.`,
+      };
+    return {
+      app,
+      state: sandbox.state,
+      note: `The app ${app} is starting, and ${app} is also its blockId. Its tools arrive with your next reply, so call set_checklist now with the features the user asked for; that ends this reply.`,
+    };
+  };
+
   const create_app: ChatTool = {
     description:
       'Start a new app for the user and open it. Call it once, before anything else, when the user describes an app to build and no app is open, or when they ask for a different app than the open one. Never call it for a question that builds nothing.',
@@ -31,37 +93,12 @@ export function createAppTools({ apps, open }: AppToolsOptions): Record<string, 
       },
       required: ['name'],
     },
-    async execute(input) {
-      const list = apps();
-      if (!list) throw new Error('The user’s apps have not loaded yet. Try again in a moment.');
-      const app = newAppKey(
-        typeof input.name === 'string' ? input.name : '',
-        list.map((s) => s.app)
-      );
-      try {
-        const { sandbox, created } = await open(app);
-        // The list it was named against can be stale, and the service finds before it creates.
-        if (!created)
-          return {
-            app,
-            state: sandbox.state,
-            existed: true,
-            note: `The user already had an app called ${app}, made somewhere else after this page last listed their apps, and it is now open instead of a new one. Ask the user whether to keep working on it; do not build over it before they answer.`,
-          };
-        return {
-          app,
-          state: sandbox.state,
-          note: `The app ${app} is starting, and ${app} is also its blockId. Its tools arrive with your next reply, so call set_checklist now with the features the user asked for; that ends this reply.`,
-        };
-      } catch (error) {
-        if (error instanceof SandboxApiError && error.kind === 'limit')
-          throw new Error(
-            isRunningLimit(error)
-              ? `Another of the user’s apps is still running (${error.message}). Tell them to pause it under Your apps at the top of the page, then ask again. Do not call create_app again in this reply.`
-              : `The user keeps the most apps they may (${error.message}). Tell them to delete one under Your apps at the top of the page, then ask again. Do not call create_app again in this reply.`
-          );
-        throw error;
-      }
+    execute(input) {
+      if (pending) return pending;
+      pending = create(typeof input.name === 'string' ? input.name : '').finally(() => {
+        pending = null;
+      });
+      return pending;
     },
   };
   return { [CREATE_APP]: create_app };

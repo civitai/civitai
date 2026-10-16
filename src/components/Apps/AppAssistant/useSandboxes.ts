@@ -20,6 +20,7 @@ export async function openApp(client: SandboxClient, app: string) {
   try {
     return await client.open(app);
   } catch (error) {
+    // The service checks the kept-apps cap before the running cap, so at that cap nothing is paused.
     if (!isRunningLimit(error)) throw error;
   }
   const others = (await client.list()).filter((s) => s.app !== app && s.state !== 'suspended');
