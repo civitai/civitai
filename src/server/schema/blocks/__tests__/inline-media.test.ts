@@ -165,8 +165,8 @@ describe('inline-media predicate', () => {
   it('names the path and the fix in its message', () => {
     expect(inlineMediaMessage(['steps', 1, 'input', 'images', 0])).toBe(
       'steps[1].input.images[0] carries inline media (data URI/base64); ' +
-        "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-        'or pick it with useImagePicker and pass the returned url'
+        'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+        "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url"
     );
   });
 });

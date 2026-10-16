@@ -183,8 +183,8 @@ describe("kind: 'step' — the REGISTRY arm is unchanged by the new sibling", ()
 
 describe("kind: 'step' pass-through — inline media is refused", () => {
   const fix =
-    "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-    'or pick it with useImagePicker and pass the returned url';
+    'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+    "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
   const issuesOf = (input: Record<string, unknown>) => {
     const parsed = blockWorkflowBodySchema.safeParse(passThroughBody({ input }));
     return parsed.success ? [] : parsed.error.issues.map((i) => [i.path, i.message]);

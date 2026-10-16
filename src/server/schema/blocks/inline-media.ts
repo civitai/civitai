@@ -170,8 +170,8 @@ export function formatInlineMediaPath(path: InlineMediaPath): string {
 export function inlineMediaMessage(path: InlineMediaPath): string {
   return (
     `${formatInlineMediaPath(path)} carries inline media (data URI/base64); ` +
-    `pass a hosted url instead — for an image, upload it with ` +
-    `useImageUpload({ purpose: 'generationSource' }) or pick it with useImagePicker ` +
-    `and pass the returned url`
+    `pass a hosted url instead — upload the image, video or audio with useMediaUpload ` +
+    `(an image also works with useImageUpload({ purpose: 'generationSource' }) or ` +
+    `useImagePicker) and pass the returned url`
   );
 }

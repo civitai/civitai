@@ -468,6 +468,24 @@ read that file. As of this writing the families are:
   answer as a dismissal, and a signed-out viewer is offered sign-in. Logic:
   `src/components/AppBlocks/imagePickerLogic.ts` and
   `src/server/services/blocks/block-image-picker.logic.ts`.
+- **Media upload** (page host only, no scope): `OPEN_MEDIA_UPLOAD`
+  (→ `MEDIA_UPLOAD_RESULT`) uploads an image, video or audio file as a PRIVATE
+  generation input, an orchestrator consumer blob. Nothing is published: no
+  `Image` row and no public scan; the orchestrator scans the generation output.
+  This is how media reaches a step input, since inline data URIs and base64 there
+  are refused (`src/server/schema/blocks/inline-media.ts`). Request
+  `{ requestId, kind, purpose: 'generationSource', bytes?, mimeType? }`. Without
+  `bytes` the host opens its own picker; with `bytes` (an `ArrayBuffer` the app
+  made: canvas, crop, MediaRecorder) it uploads with no modal, at most 8 uploads
+  and 128 MB per 60 s. Content is judged by magic bytes: image PNG / JPEG / WebP
+  (resized into 64..2048 and re-encoded as JPEG), video MP4 / WebM, audio MP3 /
+  WAV / WebM, each at most 64 MB; a declared `mimeType` must match the content.
+  Video and audio must decode in a media element, and video needs a video track.
+  The answer is `{ requestId, selected? }` with
+  `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`, no `selected`
+  on dismiss, or `{ requestId, error }`. Review mode and a block that is not ready
+  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged. Logic:
+  `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
@@ -752,6 +770,7 @@ same page host, so the owner sees the same confirm.
    within the per-job limit.
 
    Three things to know as an author:
+
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
      quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
      cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
@@ -759,10 +778,11 @@ same page host, so the owner sees the same confirm.
    - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
      plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
      `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
-     body.input.<path> is a Date`), at the estimate and at the submit.
+body.input.<path> is a Date`), at the estimate and at the submit.
    - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
      refused with `a training step type cannot run as a confirmed step — use
-     kind:'training'`. Training runs have their own kind, with its own dataset and checks.
+kind:'training'`. Training runs have their own kind, with its own dataset and checks.
+
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session

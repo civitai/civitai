@@ -10306,8 +10306,8 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
     const expected =
       'input.ImageUrl carries inline media (data URI/base64); ' +
-      "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-      'or pick it with useImagePicker and pass the returned url';
+      'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+      "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
 
     it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
       '%s reports the inline-media message, not the byte cap',
