@@ -106,11 +106,12 @@ import {
   UPLOAD_BYTES_NO_TOKEN_ERROR,
 } from './imageUploadBytes';
 import {
+  MEDIA_UPLOAD_FAILED_ERROR,
+  MEDIA_UPLOAD_NO_TOKEN_ERROR,
   processMediaUploadBytes,
   resolveMediaUploadRequest,
   type BlockMediaUploadInfo,
 } from './mediaUploadLogic';
-import { mediaUploadErrorMessage, uploadGenerationMedia } from './mediaUploadRun';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
@@ -4338,6 +4339,12 @@ export function PageBlockHost({
       const { kind, bytes, mimeType } = decision.request;
 
       if (bytes) {
+        // A block cannot upload unasked into the account of a viewer it holds no token for.
+        if (!token) {
+          reportNoToken('OPEN_MEDIA_UPLOAD');
+          send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_NO_TOKEN_ERROR });
+          return;
+        }
         const { result, recent } = processMediaUploadBytes(
           { kind, bytes, mimeType },
           mediaUploadWindowRef.current,
@@ -4349,21 +4356,27 @@ export function PageBlockHost({
           return;
         }
         mediaUploadInFlightRef.current.add(requestId);
-        uploadGenerationMedia(
-          kind,
-          new Blob([bytes], { type: result.contentType }),
-          result.contentType
-        )
-          .then((selected) =>
-            send(
-              'MEDIA_UPLOAD_RESULT',
-              selected ? { requestId, selected } : { requestId, error: 'media upload failed' }
-            )
-          )
-          .catch((err: unknown) =>
-            send('MEDIA_UPLOAD_RESULT', { requestId, error: mediaUploadErrorMessage(err) })
-          )
-          .finally(() => mediaUploadInFlightRef.current.delete(requestId));
+        const contentType = result.contentType;
+        // Loaded on use: the image path reaches the workflow schema, too heavy for every page load.
+        void (async () => {
+          try {
+            const run = await import('./mediaUploadRun');
+            try {
+              const blob = new Blob([bytes], { type: contentType });
+              const selected = await run.uploadGenerationMedia(kind, blob, contentType);
+              send(
+                'MEDIA_UPLOAD_RESULT',
+                selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
+              );
+            } catch (err) {
+              send('MEDIA_UPLOAD_RESULT', { requestId, error: run.mediaUploadErrorMessage(err) });
+            }
+          } catch {
+            send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_FAILED_ERROR });
+          } finally {
+            mediaUploadInFlightRef.current.delete(requestId);
+          }
+        })();
         return;
       }
 
@@ -4388,7 +4401,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //

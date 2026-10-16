@@ -476,10 +476,11 @@ read that file. As of this writing the families are:
   are refused (`src/server/schema/blocks/inline-media.ts`). Request
   `{ requestId, kind, purpose: 'generationSource', bytes?, mimeType? }`. Without
   `bytes` the host opens its own picker; with `bytes` (an `ArrayBuffer` the app
-  made: canvas, crop, MediaRecorder) it uploads with no modal, at most 8 uploads
-  and 128 MB per 60 s. Content is judged by magic bytes: image PNG / JPEG / WebP
-  (resized into 64..2048 and re-encoded as JPEG), video MP4 / WebM, audio MP3 /
-  WAV / WebM, each at most 64 MB; a declared `mimeType` must match the content.
+  made: canvas, crop, MediaRecorder) it uploads with no modal, only for a block
+  holding a token, at most 8 uploads and 128 MB per 60 s. Content is judged by
+  magic bytes: image PNG / JPEG / WebP (at most 24 MB, resized into 64..2048 and
+  re-encoded as JPEG), video MP4 / WebM and audio MP3 / WAV / WebM (at most
+  64 MB); a declared `mimeType` must match the content.
   Video and audio must decode in a media element, and video needs a video track.
   The answer is `{ requestId, selected? }` with
   `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`, no `selected`
@@ -770,7 +771,6 @@ same page host, so the owner sees the same confirm.
    within the per-job limit.
 
    Three things to know as an author:
-
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
      quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
      cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
@@ -778,11 +778,10 @@ same page host, so the owner sees the same confirm.
    - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
      plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
      `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
-body.input.<path> is a Date`), at the estimate and at the submit.
+     body.input.<path> is a Date`), at the estimate and at the submit.
    - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
      refused with `a training step type cannot run as a confirmed step — use
-kind:'training'`. Training runs have their own kind, with its own dataset and checks.
-
+     kind:'training'`. Training runs have their own kind, with its own dataset and checks.
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session

@@ -6,6 +6,7 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { renderWithProviders } from '../../../test/component-setup';
 import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as BlobUploadMod from '~/utils/consumer-blob-upload';
+import { ConsumerBlobUploadError } from '~/utils/consumer-blob-upload';
 import type * as TrpcMod from '~/utils/trpc';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -148,25 +149,36 @@ async function makeWebmVideo(): Promise<ArrayBuffer> {
   }
 }
 
-/** An AudioContext stays suspended without a user gesture, so click first. */
+/**
+ * An AudioContext stays suspended without a user gesture, so click first. The click does not always
+ * take when several files share the browser, so a recording that came out empty is retried.
+ */
 async function makeWebmAudioOnly(): Promise<ArrayBuffer> {
-  const target = document.createElement('button');
-  target.textContent = 'gesture';
-  document.body.appendChild(target);
-  await userEvent.click(page.elementLocator(target));
-  target.remove();
-  const ac = new AudioContext();
-  await ac.resume();
-  const osc = ac.createOscillator();
-  const dest = ac.createMediaStreamDestination();
-  osc.connect(dest);
-  osc.start();
-  try {
-    return await record(dest.stream, 'audio/webm', 400);
-  } finally {
-    osc.stop();
-    await ac.close();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const target = document.createElement('button');
+    target.textContent = 'gesture';
+    document.body.appendChild(target);
+    await userEvent.click(page.elementLocator(target));
+    target.remove();
+    const ac = new AudioContext();
+    await Promise.race([ac.resume(), new Promise((r) => setTimeout(r, 2000))]);
+    if (ac.state !== 'running') {
+      await ac.close();
+      continue;
+    }
+    const osc = ac.createOscillator();
+    const dest = ac.createMediaStreamDestination();
+    osc.connect(dest);
+    osc.start();
+    try {
+      const recorded = await record(dest.stream, 'audio/webm', 400);
+      if (recorded.byteLength > 500) return recorded;
+    } finally {
+      osc.stop();
+      await ac.close();
+    }
   }
+  return new ArrayBuffer(0);
 }
 
 let PNG: ArrayBuffer;
@@ -355,6 +367,61 @@ describe('PageBlockHost OPEN_MEDIA_UPLOAD — bytes mode', () => {
     expect(h.upload).not.toHaveBeenCalled();
   });
 
+  test('an image over its own 24 MB cap is refused before any decode', async () => {
+    const replies = await mountReady();
+    const big = new Uint8Array(24 * 1024 * 1024 + 1);
+    big.set(new Uint8Array(PNG.slice(0, 64)));
+    postFromBlock('OPEN_MEDIA_UPLOAD', req('rq_bigimg', 'image', { bytes: big.buffer }));
+    expect(await oneReply(replies, 'rq_bigimg')).toEqual({
+      requestId: 'rq_bigimg',
+      error: 'file exceeds the 24 MB image upload limit',
+    });
+    expect(h.upload).not.toHaveBeenCalled();
+  });
+
+  test('with no block token, bytes are refused and nothing is uploaded', async () => {
+    const replies = await mountReady({ token: null });
+    postFromBlock('OPEN_MEDIA_UPLOAD', req('rq_tok', 'audio', { bytes: WAV.slice(0) }));
+    expect(await oneReply(replies, 'rq_tok')).toEqual({
+      requestId: 'rq_tok',
+      error: 'no block token',
+    });
+    expect(h.upload).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [
+      'a blob POST failure',
+      new ConsumerBlobUploadError('Failed to upload blob: SECRET-BODY', 'http-500', false),
+      'media upload failed — please try again',
+    ],
+    [
+      'a presign denial',
+      new ConsumerBlobUploadError('SECRET-DENIAL-TEXT', 'presign-http-403', false),
+      'media upload failed — please try again',
+    ],
+    [
+      'a signed-out presign',
+      new ConsumerBlobUploadError('Sign in to upload images.', 'presign-http-401', false),
+      'Sign in to upload media.',
+    ],
+  ])('%s reaches the block as a fixed message', async (_, err, error) => {
+    h.upload.mockRejectedValueOnce(err);
+    const replies = await mountReady();
+    postFromBlock('OPEN_MEDIA_UPLOAD', req('rq_err', 'audio', { bytes: WAV.slice(0) }));
+    expect(await oneReply(replies, 'rq_err')).toEqual({ requestId: 'rq_err', error });
+  });
+
+  test('a blob the upload service blocks is refused, not answered with its url', async () => {
+    h.upload.mockResolvedValueOnce({ url: 'blob:blocked', available: false, blockedReason: 'x' });
+    const replies = await mountReady();
+    postFromBlock('OPEN_MEDIA_UPLOAD', req('rq_blocked', 'audio', { bytes: WAV.slice(0) }));
+    expect(await oneReply(replies, 'rq_blocked')).toEqual({
+      requestId: 'rq_blocked',
+      error: 'this audio was refused by the upload service',
+    });
+  });
+
   test('a declared mimeType that disagrees with the content is refused', async () => {
     const replies = await mountReady();
     postFromBlock(
@@ -464,6 +531,22 @@ describe('PageBlockHost OPEN_MEDIA_UPLOAD — picker mode', () => {
       mimeType: 'audio/wav',
       durationMs: WAV_MS,
     });
+  });
+
+  test('closing the modal mid-upload answers one cancel, never the late upload', async () => {
+    let release!: () => void;
+    h.upload.mockImplementationOnce(
+      (blob: Blob) => new Promise((r) => (release = () => r({ url: URL.createObjectURL(blob) })))
+    );
+    const replies = await mountReady();
+    postFromBlock('OPEN_MEDIA_UPLOAD', req('rq_midclose', 'audio'));
+    await userEvent.upload(await fileInput(), new File([WAV], 'take.wav', { type: 'audio/wav' }));
+    await vi.waitFor(() => expect(h.upload).toHaveBeenCalledTimes(1));
+    await userEvent.keyboard('{Escape}');
+    await vi.waitFor(() => expect(replies('rq_midclose')).toHaveLength(1));
+    release();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(replies('rq_midclose')).toEqual([{ requestId: 'rq_midclose' }]);
   });
 
   test('dismissing the modal answers as a cancel', async () => {

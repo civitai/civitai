@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checkMediaFile,
   MEDIA_UPLOAD_MAX_BYTES,
   processMediaUploadBytes,
   resolveMediaUploadRequest,
@@ -26,6 +27,7 @@ const HEADS = {
   id3: [...ascii('ID3'), 4, 0, 0, 0, 0, 0, 0],
   mp3Frame: [0xff, 0xfb, 0x90, 0x64],
   aacAdts: [0xff, 0xf1, 0x50, 0x80],
+  mp3ReservedVersion: [0xff, 0xeb, 0x90, 0x64],
   wav: [...ascii('RIFF'), 0x24, 0, 0, 0, ...ascii('WAVEfmt ')],
 };
 
@@ -46,6 +48,7 @@ describe('sniffMediaType', () => {
     ['audio', 'id3', 'audio/mpeg'],
     ['audio', 'mp3Frame', 'audio/mpeg'],
     ['audio', 'aacAdts', null],
+    ['audio', 'mp3ReservedVersion', null],
     ['audio', 'mkv', null],
     ['audio', 'png', null],
     ['audio', 'mp4', null],
@@ -98,6 +101,19 @@ describe('resolveMediaUploadRequest', () => {
   });
 });
 
+describe('checkMediaFile (the picked-file path)', () => {
+  // Literal sizes, not the constants, so a changed cap cannot move both sides of the test.
+  const MB = 1024 * 1024;
+  it.each([
+    ['video', HEADS.mp4, 64 * MB, 'file exceeds the 64 MB upload limit'],
+    ['audio', HEADS.wav, 64 * MB, 'file exceeds the 64 MB upload limit'],
+    ['image', HEADS.png, 24 * MB, 'file exceeds the 24 MB image upload limit'],
+  ] as const)('caps %s at its limit', (kind, head, cap, error) => {
+    expect(checkMediaFile(kind, cap + 1, buf([...head]))).toEqual({ ok: false, error });
+    expect(checkMediaFile(kind, cap, buf([...head])).ok).toBe(true);
+  });
+});
+
 describe('processMediaUploadBytes', () => {
   const T0 = 1_000_000;
   const run = (
@@ -116,10 +132,14 @@ describe('processMediaUploadBytes', () => {
     expect(out.recent).toEqual([]);
   });
 
-  it('admits each kind and records it', () => {
-    const out = run({ kind: 'audio', bytes: buf(HEADS.wav, 300) });
-    expect(out.result).toEqual({ ok: true, contentType: 'audio/wav' });
-    expect(out.recent).toEqual([{ at: T0, size: 300 }]);
+  it.each([
+    ['image', HEADS.webp, 'image/webp', 301],
+    ['video', HEADS.webm, 'video/webm', 302],
+    ['audio', HEADS.wav, 'audio/wav', 303],
+  ] as const)('admits %s and records it', (kind, head, contentType, size) => {
+    const out = run({ kind, bytes: buf([...head], size) });
+    expect(out.result).toEqual({ ok: true, contentType });
+    expect(out.recent).toEqual([{ at: T0, size }]);
   });
 
   it('refuses an over-cap file as too large, even when the window is also full', () => {

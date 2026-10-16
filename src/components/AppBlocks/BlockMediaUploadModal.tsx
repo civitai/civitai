@@ -8,7 +8,7 @@ import { reportUnreadablePick, snapshotPick } from '~/utils/unreadable-pick';
 import {
   checkMediaFile,
   MEDIA_UPLOAD_ACCEPT,
-  MEDIA_UPLOAD_MAX_BYTES,
+  MEDIA_UPLOAD_MAX_BYTES_BY_KIND,
   type BlockMediaUploadInfo,
   type MediaUploadKind,
 } from './mediaUploadLogic';
@@ -59,7 +59,9 @@ export default function BlockMediaUploadModal({
     setUnreadablePick(false);
     setStatus('uploading');
     try {
-      const { file, error } = await snapshotPick(picked, { maxBytes: MEDIA_UPLOAD_MAX_BYTES });
+      const { file, error } = await snapshotPick(picked, {
+        maxBytes: MEDIA_UPLOAD_MAX_BYTES_BY_KIND[kind],
+      });
       if (epoch !== epochRef.current) return;
       if (error) {
         reportUnreadablePick(picked, 'app-block-media-upload');
@@ -98,8 +100,9 @@ export default function BlockMediaUploadModal({
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconBolt size={16} />}>
           <Text size="sm">
-            This file is a <strong>private generation input</strong> — it isn&apos;t published.
-            Upload {copy.types}, up to 64 MB.
+            This file is a <strong>private generation input</strong> — it isn&apos;t published, and
+            the app receives a link to it. Upload {copy.types}, up to {kind === 'image' ? 24 : 64}{' '}
+            MB.
           </Text>
         </Alert>
 

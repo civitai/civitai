@@ -7,6 +7,8 @@
  * rules and error strings so a block test accepts and refuses what production does; change both.
  */
 
+import { maxOrchestratorImageFileSize } from '~/server/common/constants';
+import { ENGINE_INPUT_IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { CONSUMER_BLOB_MAX_UPLOAD_BYTES } from '~/utils/consumer-blob-upload';
 import {
   admitSaveBytes,
@@ -20,6 +22,15 @@ export const MEDIA_UPLOAD_KINDS = ['image', 'video', 'audio'] as const;
 export type MediaUploadKind = (typeof MEDIA_UPLOAD_KINDS)[number];
 
 export const MEDIA_UPLOAD_MAX_BYTES = CONSUMER_BLOB_MAX_UPLOAD_BYTES;
+/**
+ * An image is decoded in full before it is resized, so it keeps the source-image modal's lower cap
+ * rather than the upload's.
+ */
+export const MEDIA_UPLOAD_MAX_BYTES_BY_KIND: Record<MediaUploadKind, number> = {
+  image: maxOrchestratorImageFileSize,
+  video: MEDIA_UPLOAD_MAX_BYTES,
+  audio: MEDIA_UPLOAD_MAX_BYTES,
+};
 
 /** Bytes mode only: a picked file is gated on a person. Each upload stores a blob for the viewer. */
 export const MEDIA_UPLOAD_WINDOW_LIMITS: BytesWindowLimits = {
@@ -31,9 +42,15 @@ export const MEDIA_UPLOAD_WINDOW_LIMITS: BytesWindowLimits = {
 export const MEDIA_UPLOAD_INVALID_ERROR = 'invalid media-upload request';
 export const MEDIA_UPLOAD_KIND_ERROR = "kind must be 'image', 'video' or 'audio'";
 export const MEDIA_UPLOAD_PURPOSE_ERROR = "purpose must be 'generationSource'";
-export const MEDIA_UPLOAD_TOO_LARGE_ERROR = 'file exceeds the 64 MB upload limit';
+export const MEDIA_UPLOAD_TOO_LARGE_ERROR: Record<MediaUploadKind, string> = {
+  image: 'file exceeds the 24 MB image upload limit',
+  video: 'file exceeds the 64 MB upload limit',
+  audio: 'file exceeds the 64 MB upload limit',
+};
 export const MEDIA_UPLOAD_MIME_MISMATCH_ERROR = "mimeType does not match the file's content";
 export const MEDIA_UPLOAD_BUSY_ERROR = 'busy';
+export const MEDIA_UPLOAD_NO_TOKEN_ERROR = 'no block token';
+export const MEDIA_UPLOAD_FAILED_ERROR = 'media upload failed — please try again';
 export const MEDIA_UPLOAD_NO_VIDEO_TRACK_ERROR = 'this file has no video track';
 export const MEDIA_UPLOAD_TYPE_ERROR: Record<MediaUploadKind, string> = {
   image: 'images must be PNG, JPEG or WebP',
@@ -45,10 +62,13 @@ export const MEDIA_UPLOAD_UNREADABLE_ERROR: Record<'video' | 'audio', string> = 
   audio: 'could not read this audio file',
 };
 
-/** What the file input offers per kind. Content is still checked by `sniffMediaType`. */
+/**
+ * What the file input offers per kind. Content is still checked by `sniffMediaType`, which has no
+ * AVIF rule, so images stop at the engine-input set rather than the source-image modal's wider one.
+ */
 export const MEDIA_UPLOAD_ACCEPT: Record<MediaUploadKind, string> = {
-  image: 'image/png,image/jpeg,image/webp',
-  video: 'video/mp4,video/webm',
+  image: ENGINE_INPUT_IMAGE_MIME_TYPE.join(','),
+  video: VIDEO_MIME_TYPE.join(','),
   audio: 'audio/mpeg,audio/wav,audio/x-wav,audio/webm',
 };
 
@@ -166,7 +186,9 @@ export function checkMediaFile(
   size: number,
   head: ArrayBuffer
 ): { ok: true; contentType: string } | { ok: false; error: string } {
-  if (size > MEDIA_UPLOAD_MAX_BYTES) return { ok: false, error: MEDIA_UPLOAD_TOO_LARGE_ERROR };
+  if (size > MEDIA_UPLOAD_MAX_BYTES_BY_KIND[kind]) {
+    return { ok: false, error: MEDIA_UPLOAD_TOO_LARGE_ERROR[kind] };
+  }
   const contentType = sniffMediaType(kind, head);
   if (!contentType) return { ok: false, error: MEDIA_UPLOAD_TYPE_ERROR[kind] };
   return { ok: true, contentType };
@@ -192,7 +214,8 @@ export function processMediaUploadBytes(
     result: { ok: false as const, error },
     recent: [...recent],
   });
-  if (size > MEDIA_UPLOAD_MAX_BYTES) return refuse(MEDIA_UPLOAD_TOO_LARGE_ERROR);
+  if (size > MEDIA_UPLOAD_MAX_BYTES_BY_KIND[req.kind])
+    return refuse(MEDIA_UPLOAD_TOO_LARGE_ERROR[req.kind]);
   if (!saveBytesWindowHasRoom(recent, now, size, MEDIA_UPLOAD_WINDOW_LIMITS)) {
     return refuse(MEDIA_UPLOAD_BUSY_ERROR);
   }

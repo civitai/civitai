@@ -2,6 +2,7 @@ import { IMAGE_PREP_ERROR, ImagePrepError } from '~/shared/utils/canvas-utils';
 import { ConsumerBlobUploadError, uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import { uploadGenerationSourceImage } from './generationSourceImageUpload';
 import {
+  MEDIA_UPLOAD_FAILED_ERROR,
   MEDIA_UPLOAD_NO_VIDEO_TRACK_ERROR,
   MEDIA_UPLOAD_UNREADABLE_ERROR,
   type BlockMediaUploadInfo,
@@ -9,6 +10,11 @@ import {
 } from './mediaUploadLogic';
 
 const PROBE_TIMEOUT_MS = 15_000;
+
+const MEDIA_UPLOAD_BLOCKED_ERROR = {
+  video: 'this video was refused by the upload service',
+  audio: 'this audio was refused by the upload service',
+};
 
 /** A refusal whose message is written for the block and the viewer. */
 export class MediaUploadError extends Error {
@@ -89,7 +95,11 @@ export async function uploadGenerationMedia(
   }
   const probed = await probeMedia(kind, file);
   const body = file.type === contentType ? file : new Blob([file], { type: contentType });
-  const { url } = await uploadConsumerBlob(body);
+  const blob = await uploadConsumerBlob(body);
+  if (blob.blockedReason || blob.available === false) {
+    throw new MediaUploadError(MEDIA_UPLOAD_BLOCKED_ERROR[kind]);
+  }
+  const { url } = blob;
   if (!url) throw new Error('Upload did not return a URL');
   const info: BlockMediaUploadInfo = { url, kind, mimeType: contentType, sizeBytes: body.size };
   if (probed.width !== undefined) info.width = probed.width;
@@ -99,14 +109,17 @@ export async function uploadGenerationMedia(
 }
 
 /**
- * The refusal text for a failed upload. A blob POST's error message embeds the upload server's
- * response body, which is not the block's to read, so that case gets a fixed message.
+ * The refusal text for a failed upload. A blob POST's error embeds the upload server's response
+ * body, and a presign 4xx relays upstream text written for the viewer; neither is the block's to
+ * read, so both get a fixed message.
  */
 export function mediaUploadErrorMessage(err: unknown): string {
   if (err instanceof ImagePrepError) return IMAGE_PREP_ERROR;
   if (err instanceof ConsumerBlobUploadError) {
     if (err.kind === 'presign-http-401') return 'Sign in to upload media.';
-    if (err.kind.startsWith('http-')) return 'media upload failed — please try again';
+    if (err.kind.startsWith('http-') || err.kind.startsWith('presign-http-')) {
+      return MEDIA_UPLOAD_FAILED_ERROR;
+    }
   }
   if (err instanceof Error && err.message) return err.message;
   return 'media upload failed — please try again';
