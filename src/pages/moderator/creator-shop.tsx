@@ -145,7 +145,8 @@ const flagConcerns: { label: string; icon: TablerIcon; note?: string }[] = [
   {
     label: 'Copyright / IP',
     icon: IconCopyright,
-    note: 'Copyright / IP - We explicitly state "All cosmetics must ... not use copyrighted or trademarked material you don\'t own."',
+    // Quotes the rule in CreatorShopSubmitModal's warning alert; keep the two in sync.
+    note: 'Copyright / IP - We explicitly state "All cosmetics must be ... your own original design. No characters, logos or symbols from brands or franchises you don\'t own, even redrawn."',
   },
   {
     label: 'Hexagonal',
