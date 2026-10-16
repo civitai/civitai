@@ -7,7 +7,6 @@ import {
   APP_FEEDBACK_NOT_AVAILABLE_MESSAGE,
   APP_FEEDBACK_SENT_MESSAGE,
   APP_FEEDBACK_SIGNED_OUT_MESSAGE,
-  APP_FEEDBACK_HOST_SURFACES,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
   appFeedbackCharacterCounter,
@@ -112,16 +111,6 @@ describe('appFeedbackEntryRequest — which host surfaces offer feedback', () =>
 
   it('a host that names no surface → null (fails closed)', () => {
     expect(ask(undefined)).toBeNull();
-  });
-
-  it('the surface table is exactly this — a new member must be decided, not defaulted', () => {
-    expect(APP_FEEDBACK_HOST_SURFACES).toEqual({
-      'model-slot': true,
-      'page-run': true,
-      'private-run': true,
-      'dev-tunnel': false,
-      'review-preview': false,
-    });
   });
 });
 

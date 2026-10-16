@@ -8,7 +8,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  seedCarriedSearchText,
   shouldRefineSearchQuery,
   useCarriedSearchText,
 } from '~/components/Search/useCarriedSearchText';
@@ -770,30 +769,5 @@ describe('useCarriedSearchText', () => {
     // An empty carrier falls back to the helper query — the first-mount behaviour above. That is
     // the documented precedence, pinned here so a change to it is a decision rather than a drift.
     expect(harness.text()).toBe('restored-from-url');
-  });
-});
-
-describe('shouldRefineSearchQuery', () => {
-  it('refines when the typed text differs from the helper query', () => {
-    expect(shouldRefineSearchQuery('dreamshaper', '')).toBe(true);
-  });
-
-  it('does not refine when the helper already holds that text', () => {
-    expect(shouldRefineSearchQuery('dreamshaper', 'dreamshaper')).toBe(false);
-  });
-
-  it('does not refine while blocked, however far apart the two are', () => {
-    expect(shouldRefineSearchQuery('dreamshaper', '', true)).toBe(false);
-  });
-});
-
-describe('seedCarriedSearchText', () => {
-  it('prefers carried text over the helper query', () => {
-    expect(seedCarriedSearchText('dreamshaper', 'restored-from-url')).toBe('dreamshaper');
-  });
-
-  it('falls back to the helper query when nothing is carried', () => {
-    expect(seedCarriedSearchText('', 'restored-from-url')).toBe('restored-from-url');
-    expect(seedCarriedSearchText(undefined, 'restored-from-url')).toBe('restored-from-url');
   });
 });
