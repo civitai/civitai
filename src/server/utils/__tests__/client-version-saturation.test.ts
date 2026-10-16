@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetCapabilityCacheForTests,
   isPhase1CapableClientVersion,
-  PHASE1_CLIENT_VERSION,
   phase1CapableLabel,
 } from '~/server/utils/client-version-saturation';
 
@@ -18,10 +17,6 @@ import {
 
 describe('isPhase1CapableClientVersion', () => {
   beforeEach(() => __resetCapabilityCacheForTests());
-
-  it('threshold constant is the first unambiguously-Phase-1 version', () => {
-    expect(PHASE1_CLIENT_VERSION).toBe('5.0.2080');
-  });
 
   it('the exact threshold version is capable', () => {
     expect(isPhase1CapableClientVersion('5.0.2080')).toBe(true);
