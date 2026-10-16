@@ -203,6 +203,29 @@ describe("kind:'workflow' — inline media is refused", () => {
     ]);
   });
 
+  it('still reports padding in a later field once an earlier one is over the byte cap', () => {
+    const pad = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined]));
+    const over = body({
+      steps: [
+        { $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX), next: 'a' } },
+      ],
+      arguments: pad,
+    });
+    expect(issuesOf(over)).toEqual([
+      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
+    ]);
+  });
+
+  it('leaves a photo in a later field to the byte cap once an earlier one is over it', () => {
+    const over = body({
+      steps: [{ $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX) } }],
+      arguments: { photo: tinyPng },
+    });
+    expect(issuesOf(over)).toEqual([
+      [['steps'], 'workflow step inputs and arguments exceed the 262144-byte limit'],
+    ]);
+  });
+
   it('over the byte cap, reports ONLY the inline-media issue', () => {
     const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
     expect(photo.length).toBeGreaterThan(WORKFLOW_INPUT_BYTES_MAX);

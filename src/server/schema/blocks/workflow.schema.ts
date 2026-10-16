@@ -21,10 +21,12 @@ import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/trai
 import {
   findInlineMediaPath,
   INLINE_MEDIA_MAX_VISITS,
+  INLINE_MEDIA_OVER_BYTE_LIMIT,
   INLINE_MEDIA_TOO_MANY_VALUES,
   inlineMediaMessage,
 } from '~/server/schema/blocks/inline-media';
 import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -493,7 +495,7 @@ export const blockInlineComfyBodySchema = z
     path: ['workflow'],
     message: `inline workflow may contain at most ${INLINE_GRAPH_NODES_MAX} nodes`,
   })
-  .refine((b) => JSON.stringify(b.workflow).length <= INLINE_GRAPH_BYTES_MAX, {
+  .refine((b) => jsonLengthWithin([b.workflow], INLINE_GRAPH_BYTES_MAX), {
     path: ['workflow'],
     message: `inline workflow exceeds the ${INLINE_GRAPH_BYTES_MAX}-byte limit`,
   });
@@ -664,16 +666,22 @@ const blockPassThroughStepShape = {
  * Refuses at the first inline-media path under `fields`, or at `overflow` once the body's
  * shared value budget runs out. `continue: false` suppresses the byte-cap issue, which an
  * inline photo usually also trips; only this message names the fix.
+ *
+ * `byteLimit` is the byte cap checked after this, over the same `fields`. Once the strings
+ * already searched put the body over it, no further string is read and this adds no issue
+ * for that reason; the remaining fields are still walked for the value budget, and the cap
+ * refuses the body.
  */
 function refuseInlineMedia<T extends Record<string, unknown>>(
   fields: (body: T) => [InlineMediaPath, unknown][],
-  overflow: { path: InlineMediaPath; message: string }
+  overflow: { path: InlineMediaPath; message: string },
+  byteLimit: number
 ) {
   return (body: T, ctx: z.RefinementCtx) => {
     const budget = { visits: 0 };
     for (const [prefix, value] of fields(body)) {
-      const hit = findInlineMediaPath(value, budget);
-      if (!hit) continue;
+      const hit = findInlineMediaPath(value, budget, byteLimit);
+      if (!hit || hit === INLINE_MEDIA_OVER_BYTE_LIMIT) continue;
       const issue =
         hit === INLINE_MEDIA_TOO_MANY_VALUES
           ? overflow
@@ -684,19 +692,33 @@ function refuseInlineMedia<T extends Record<string, unknown>>(
   };
 }
 
+/** The value(s) of `fields` the byte cap measures; the inline-media search walks the same. */
+const fieldValues = (fields: [InlineMediaPath, unknown][]) => fields.map(([, value]) => value);
+
+const passThroughInputFields = (b: { input: unknown }): [InlineMediaPath, unknown][] => [
+  [['input'], b.input],
+];
+
 export const blockPassThroughStepBodySchema = z
   .object(blockPassThroughStepShape)
   .strict()
   .superRefine(
-    refuseInlineMedia((b) => [[['input'], b.input]], {
-      path: ['input'],
-      message: `step input holds more than ${INLINE_MEDIA_MAX_VISITS} values`,
-    })
+    refuseInlineMedia(
+      passThroughInputFields,
+      {
+        path: ['input'],
+        message: `step input holds more than ${INLINE_MEDIA_MAX_VISITS} values`,
+      },
+      PASS_THROUGH_INPUT_BYTES_MAX
+    )
   )
-  .refine((b) => JSON.stringify(b.input).length <= PASS_THROUGH_INPUT_BYTES_MAX, {
-    path: ['input'],
-    message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
-  });
+  .refine(
+    (b) => jsonLengthWithin(fieldValues(passThroughInputFields(b)), PASS_THROUGH_INPUT_BYTES_MAX),
+    {
+      path: ['input'],
+      message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
+    }
+  );
 
 export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>;
 
@@ -725,6 +747,15 @@ export const WORKFLOW_INPUT_BYTES_MAX = PASS_THROUGH_INPUT_BYTES_MAX;
 /** Max characters of a step `name` on the wire; the name rules are tighter. */
 const WORKFLOW_STEP_NAME_WIRE_MAX = 64;
 
+/** Every step `input`, then `arguments` (absent counts nothing). */
+const workflowInputFields = (b: {
+  steps: { input: unknown }[];
+  arguments?: unknown;
+}): [InlineMediaPath, unknown][] => [
+  ...b.steps.map((step, i): [InlineMediaPath, unknown] => [['steps', i, 'input'], step.input]),
+  [['arguments'], b.arguments],
+];
+
 const blockMultiStepWorkflowStepSchema = z
   .object({
     name: z.string().min(1).max(WORKFLOW_STEP_NAME_WIRE_MAX).optional(),
@@ -745,29 +776,18 @@ export const blockMultiStepWorkflowBodySchema = z
   // `arguments` too: a step input can `$ref` it, so it reaches the orchestrator the same way.
   .superRefine(
     refuseInlineMedia(
-      (b) => [
-        ...b.steps.map((step, i): [InlineMediaPath, unknown] => [
-          ['steps', i, 'input'],
-          step.input,
-        ]),
-        [['arguments'], b.arguments],
-      ],
+      workflowInputFields,
       {
         path: ['steps'],
         message: `step inputs and arguments hold more than ${INLINE_MEDIA_MAX_VISITS} values in total`,
-      }
+      },
+      WORKFLOW_INPUT_BYTES_MAX
     )
   )
-  .refine(
-    (b) =>
-      b.steps.reduce((bytes, step) => bytes + JSON.stringify(step.input).length, 0) +
-        (b.arguments ? JSON.stringify(b.arguments).length : 0) <=
-      WORKFLOW_INPUT_BYTES_MAX,
-    {
-      path: ['steps'],
-      message: `workflow step inputs and arguments exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,
-    }
-  );
+  .refine((b) => jsonLengthWithin(fieldValues(workflowInputFields(b)), WORKFLOW_INPUT_BYTES_MAX), {
+    path: ['steps'],
+    message: `workflow step inputs and arguments exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,
+  });
 
 export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBodySchema>;
 

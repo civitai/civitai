@@ -49,6 +49,7 @@ import type {
 } from '~/server/prom/app-block-storage.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 import { appSchemaIdent } from '~/server/utils/apps-slug';
 
 /**
@@ -666,15 +667,19 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     // bypass — both byte ceilings below are enforced in the stored unit and bind
     // regardless. Tightening the per-value cap would refuse writes that succeed
     // today, so it is left alone deliberately.
-    const serialized = JSON.stringify(value ?? null);
-    const byteSize = Buffer.byteLength(serialized, 'utf8');
-    if (byteSize > PER_VALUE_BYTE_CAP) {
+    //
+    // The cap is measured before the value is serialised: a tRPC `value` arrives deserialised
+    // and can repeat one object or string many times, so its JSON can be far longer than the
+    // request. Only an under-cap value is built.
+    if (!jsonLengthWithin([value ?? null], PER_VALUE_BYTE_CAP, { unit: 'utf8' })) {
       countStorageOutcome('set', 'payload_too_large');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: `value exceeds ${PER_VALUE_BYTE_CAP / 1024}KB cap`,
       });
     }
+    const serialized = JSON.stringify(value ?? null);
+    const byteSize = Buffer.byteLength(serialized, 'utf8');
 
     const pool = requireAppsDb();
 
