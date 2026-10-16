@@ -12,5 +12,7 @@ export const getBlockPickablePostedImagesSchema = z.object({
   cursor: z.number().int().positive().optional(),
   /** List only images created at or before this moment: the picker's "jump to date". */
   toDate: z.date().min(PICKER_JUMP_MIN_DATE).optional(),
+  /** List only images whose post is not Private: the app asked `OPEN_IMAGE_PICKER` for `publicOnly`. */
+  publicOnly: z.boolean().optional(),
 });
 export type GetBlockPickablePostedImagesInput = z.infer<typeof getBlockPickablePostedImagesSchema>;

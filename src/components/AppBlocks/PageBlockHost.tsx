@@ -4285,6 +4285,7 @@ export function PageBlockHost({
         props: {
           sources: request.sources,
           max: request.max,
+          publicOnly: request.publicOnly,
           onResolved: (result: BlockPickedImageInfo[]) => {
             picked = result;
           },

@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { COMMON_IMAGE_WIDTHS, getEdgeUrl } from '~/client-utils/edge-url';
 import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
-import { publishedImageWhere } from '~/server/selectors/image.selector';
+import { publicPostImageWhere, publishedImageWhere } from '~/server/selectors/image.selector';
 import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { Flags } from '~/shared/utils/flags';
@@ -14,8 +14,16 @@ import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
  * `browsingLevel` is the viewer's own, already capped for the domain. The rating test is the image
  * feeds': a level is allowed when it is one of the selectable levels in `browsingLevel`, so an
  * unrated image (level 0) never matches.
+ *
+ * `publicOnly` (the app's `OPEN_IMAGE_PICKER` `publicOnly: true`) also leaves out images whose post
+ * is Private, for an app that will hand the pick to a surface that shows it to everyone, such as an
+ * App Store card (`isImageInPublicPost` refuses such an image).
  */
-export function postedPickableWhere(userId: number, browsingLevel: number): Prisma.ImageWhereInput {
+export function postedPickableWhere(
+  userId: number,
+  browsingLevel: number,
+  { publicOnly = false }: { publicOnly?: boolean } = {}
+): Prisma.ImageWhereInput {
   return {
     userId,
     type: MediaType.image,
@@ -25,7 +33,7 @@ export function postedPickableWhere(userId: number, browsingLevel: number): Pris
     nsfwLevel: { in: Flags.instanceToArray(onlySelectableLevels(browsingLevel)) },
     width: { gt: 0 },
     height: { gt: 0 },
-    ...publishedImageWhere(),
+    ...(publicOnly ? publicPostImageWhere() : publishedImageWhere()),
   };
 }
 

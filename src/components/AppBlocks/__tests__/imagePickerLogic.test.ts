@@ -5,6 +5,7 @@ import {
   capPickedImages,
   IMAGE_PICKER_MULTIPLE_ERROR,
   IMAGE_PICKER_MULTIPLE_MAX,
+  IMAGE_PICKER_PUBLIC_ONLY_ERROR,
   IMAGE_PICKER_SOURCES_ERROR,
   jumpDateToBound,
   pickerGridLayout,
@@ -41,7 +42,12 @@ describe('resolveImagePickerRequest', () => {
   it('opens a single pick over both sources when sources and multiple are omitted', () => {
     expect(resolveImagePickerRequest({ requestId: 'rq_1' })).toEqual({
       kind: 'open',
-      request: { requestId: 'rq_1', sources: ['posted', 'generated'], max: null },
+      request: {
+        requestId: 'rq_1',
+        sources: ['posted', 'generated'],
+        max: null,
+        publicOnly: false,
+      },
     });
   });
 
@@ -53,11 +59,16 @@ describe('resolveImagePickerRequest', () => {
       })
     ).toEqual({
       kind: 'open',
-      request: { requestId: 'rq_2', sources: ['generated', 'posted'], max: null },
+      request: {
+        requestId: 'rq_2',
+        sources: ['generated', 'posted'],
+        max: null,
+        publicOnly: false,
+      },
     });
     expect(resolveImagePickerRequest({ requestId: 'rq_3', sources: ['generated'] })).toEqual({
       kind: 'open',
-      request: { requestId: 'rq_3', sources: ['generated'], max: null },
+      request: { requestId: 'rq_3', sources: ['generated'], max: null, publicOnly: false },
     });
   });
 
@@ -94,6 +105,33 @@ describe('resolveImagePickerRequest', () => {
     expect(resolveImagePickerRequest({ requestId: 'rq_6', multiple: { max: 999 } })).toMatchObject({
       request: { max: 20 },
     });
+  });
+
+  it('opens a publicOnly picker only when publicOnly is true', () => {
+    const open = (publicOnly: unknown) =>
+      resolveImagePickerRequest({ requestId: 'rq_p', sources: ['posted'], publicOnly });
+    expect(open(true)).toEqual({
+      kind: 'open',
+      request: { requestId: 'rq_p', sources: ['posted'], max: null, publicOnly: true },
+    });
+    expect(open(false)).toEqual({
+      kind: 'open',
+      request: { requestId: 'rq_p', sources: ['posted'], max: null, publicOnly: false },
+    });
+    expect(open(undefined)).toEqual({
+      kind: 'open',
+      request: { requestId: 'rq_p', sources: ['posted'], max: null, publicOnly: false },
+    });
+  });
+
+  it('refuses a publicOnly that is not a boolean instead of opening without it', () => {
+    for (const publicOnly of [null, 'true', 1, 0, {}, []]) {
+      expect(resolveImagePickerRequest({ requestId: 'rq_q', publicOnly })).toEqual({
+        kind: 'refuse',
+        requestId: 'rq_q',
+        error: IMAGE_PICKER_PUBLIC_ONLY_ERROR,
+      });
+    }
   });
 
   it('refuses an invalid multiple instead of downgrading it to a single pick', () => {
