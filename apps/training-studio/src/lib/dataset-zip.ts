@@ -44,15 +44,17 @@ export async function buildDatasetZip(
       return;
     }
     included += 1;
-    // Bytes, not the Blob: JSZip only reads Blobs where it detects browser support (not under the tests).
-    zip.file(`${item.base}.${item.ext ?? extOfMime(blob.type) ?? 'png'}`, await blob.arrayBuffer());
+    // The Blob itself in a browser, which can keep it out of the JS heap. JSZip reads Blobs through
+    // FileReader, which Node (the tests) lacks, so there it needs the bytes.
+    const name = `${item.base}.${item.ext ?? extOfMime(blob.type) ?? 'png'}`;
+    zip.file(name, typeof FileReader === 'undefined' ? await blob.arrayBuffer() : blob);
     const caption = item.caption.trim();
     if (caption) zip.file(`${item.base}.txt`, caption);
   });
   const failed = items.length - included;
   if (included === 0) return { blob: null, included, failed };
-  const bytes = await zip.generateAsync({ type: 'arraybuffer' });
-  return { blob: new Blob([bytes], { type: 'application/zip' }), included, failed };
+  const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/zip' });
+  return { blob, included, failed };
 }
 
 export function saveBlob(blob: Blob, fileName: string) {

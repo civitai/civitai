@@ -50,6 +50,7 @@
     isTriggerTag,
     labelOptions,
     labelString,
+    withTrigger,
     nextImgId,
     parseLabel,
     runCard,
@@ -497,10 +498,13 @@
       const { blob, failed } = await buildDatasetZip(
         items.map((img, i) => {
           const airExt = img.blobId ? extOfAir(img.blobId) : undefined;
+          const label = labelString(img, labelMode);
           return {
             base: bases[i]!,
             ext: named[i]!.ext ?? (airExt && mediaOfExt(airExt) ? airExt : undefined),
-            caption: labelString(img, labelMode),
+            // Labels leave the trigger to the server, so the zip would otherwise lose it — but an
+            // unlabeled image stays unlabeled rather than re-importing with the trigger as its label.
+            caption: label && withTrigger(trigger, label),
             load: () => imgBytes(img),
           };
         })
