@@ -112,7 +112,7 @@ describe('cleanupTextScanRows', () => {
     });
     expect(holds.updateMany).toHaveBeenCalledWith({
       where: {
-        status: { not: 'Pending' },
+        status: 'Dismissed',
         decidedAt: { lt: new Date('2026-09-01T00:00:00Z') },
         text: { not: '' },
       },

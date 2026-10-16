@@ -389,7 +389,12 @@ describe('setTextScanCsamMode', () => {
 
   it('refuses users who are not active moderators, and any mode but off or review', async () => {
     dbMock.dbRead.user.findFirst.mockResolvedValue(null);
-    await expect(setTextScanCsamMode('review', { moderatorId: 9 })).rejects.toThrow();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 7, key: 'label:csam', content: 'CSAM DEF' },
+    ] as never);
+    await expect(setTextScanCsamMode('review', { moderatorId: 9 })).rejects.toThrow(
+      'not an active moderator'
+    );
     dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
     await expect(setTextScanCsamMode('auto' as never, { moderatorId: 5 })).rejects.toThrow(
       'csam has no auto mode'

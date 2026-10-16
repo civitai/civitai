@@ -31,32 +31,30 @@ const messageIdsOf = (meta: unknown) => {
 
 /**
  * Each new message rescans the sender's recent window, so one conversation would otherwise queue a
- * hold per message. The held id of a pending hold, or of a decided hold that already saw every
+ * hold per message. The id of the newest pending or newest decided hold that already saw every
  * message in this window.
  */
 async function coveringChatHold(userId: number | null, meta: Record<string, unknown> | undefined) {
   const chatId = meta?.chatId;
   if (typeof chatId !== 'number') return null;
+  const window = messageIdsOf(meta);
+  if (!window.length) return null;
   const where = {
     entityType: 'ChatMessage',
     label: 'csam',
     userId,
     meta: { path: ['chatId'], equals: chatId },
   } satisfies Prisma.TextScanHoldWhereInput;
-  const pending = await dbWrite.textScanHold.findFirst({
-    where: { ...where, status: 'Pending' },
-    select: { id: true },
-  });
-  if (pending) return pending.id;
-  const decided = await dbWrite.textScanHold.findFirst({
-    where: { ...where, status: { not: 'Pending' } },
-    orderBy: { id: 'desc' },
-    select: { id: true, meta: true },
-  });
-  if (!decided) return null;
-  const seen = new Set(messageIdsOf(decided.meta));
-  const window = messageIdsOf(meta);
-  return window.length && window.every((id) => seen.has(id)) ? decided.id : null;
+  for (const status of ['Pending', { not: 'Pending' }] as const) {
+    const hold = await dbWrite.textScanHold.findFirst({
+      where: { ...where, status },
+      orderBy: { id: 'desc' },
+      select: { id: true, meta: true },
+    });
+    const seen = new Set(messageIdsOf(hold?.meta));
+    if (hold && window.every((id) => seen.has(id))) return hold.id;
+  }
+  return null;
 }
 
 export async function applyCsamHold({

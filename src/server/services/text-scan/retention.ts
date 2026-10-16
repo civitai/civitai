@@ -87,7 +87,8 @@ export async function cleanupTextScanRows({
 
   const { count: holdTextCleared } = await dbWrite.textScanHold.updateMany({
     where: {
-      status: { not: 'Pending' },
+      // Confirmed retention is decided with the Confirm feature.
+      status: 'Dismissed',
       decidedAt: { lt: decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days') },
       text: { not: '' },
     },

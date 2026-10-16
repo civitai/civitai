@@ -15,8 +15,9 @@ positive; nothing else happens to the content or its author. See the hold paragr
 Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
 
-Thirty days after a hold is decided, the daily `text-scan-retention` job clears its text and meta;
-the row, reason, ids and decision stay.
+Thirty days after a hold is dismissed, the daily `text-scan-retention` job clears its text and meta;
+the row, reason, ids and decision stay. Confirmed holds are left alone: their retention is decided
+with the Confirm feature.
 
 ## Decisions
 

@@ -47,12 +47,27 @@ type HoldRow = Record<string, unknown> & { id: number };
 let holds: HoldRow[] = [];
 const holdKey = (row: Record<string, unknown>) =>
   [row.entityType, row.entityId, row.label, row.textHash].join('|');
-type HoldWhere = { userId: unknown; status: unknown; meta: { equals: unknown } };
-const matchesChatHold = (row: HoldRow, where: HoldWhere) =>
-  row.entityType === 'ChatMessage' &&
-  row.userId === where.userId &&
-  (row.meta as { chatId?: unknown } | null)?.chatId === where.meta.equals &&
-  (where.status === 'Pending' ? row.status === 'Pending' : row.status !== 'Pending');
+type HoldWhere = {
+  entityType: unknown;
+  label: unknown;
+  userId: unknown;
+  status: unknown;
+  meta: { path: unknown; equals: unknown };
+};
+const HOLD_WHERE_KEYS = new Set(['entityType', 'label', 'userId', 'status', 'meta']);
+const matchesChatHold = (row: HoldRow, where: HoldWhere) => {
+  const unexpected = Object.keys(where).filter((key) => !HOLD_WHERE_KEYS.has(key));
+  if (unexpected.length) throw new Error(`unexpected hold where keys: ${unexpected.join(', ')}`);
+  if (JSON.stringify(where.meta.path) !== JSON.stringify(['chatId']))
+    throw new Error(`unexpected hold meta path: ${JSON.stringify(where.meta.path)}`);
+  return (
+    row.entityType === where.entityType &&
+    row.label === where.label &&
+    row.userId === where.userId &&
+    (row.meta as { chatId?: unknown } | null)?.chatId === where.meta.equals &&
+    (where.status === 'Pending' ? row.status === 'Pending' : row.status !== 'Pending')
+  );
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -227,10 +242,16 @@ describe('chat holds over one conversation', () => {
     };
   };
 
-  it('adds nothing while a hold for the same sender and chat is pending', async () => {
-    await applyCsamHold(chatWindow(77, [77, 70]));
-    await applyCsamHold(chatWindow(80, [80, 77, 70]));
-    expect(holds.map((row) => row.entityId)).toEqual([77]);
+  it('adds nothing while a pending hold already holds every message of the window', async () => {
+    await applyCsamHold(chatWindow(80, [70, 77, 80]));
+    await applyCsamHold(chatWindow(81, [77, 80]));
+    expect(holds.map((row) => row.entityId)).toEqual([80]);
+  });
+
+  it('holds a later message that the pending hold never saw', async () => {
+    await applyCsamHold(chatWindow(77, [70, 77]));
+    await applyCsamHold(chatWindow(80, [77, 80]));
+    expect(holds.map((row) => row.entityId)).toEqual([77, 80]);
   });
 
   it('adds nothing when the last decided hold already saw every message', async () => {
