@@ -87,10 +87,6 @@ export function hasOpenTextScanFlag(meta: unknown, label: TextScanFlagLabel): bo
   return !!entry?.workflowId && !entry.appealGranted;
 }
 
-export function isTextScanFlagAppealGranted(meta: unknown, label: TextScanFlagLabel): boolean {
-  return !!readTextScanFlags(meta)[label]?.appealGranted;
-}
-
 export function getTextScanRedetection(
   meta: unknown,
   label: TextScanFlagLabel

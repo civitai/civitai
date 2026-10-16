@@ -7,7 +7,11 @@
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { originSummary } from '$lib/restrictions/origin';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
-  import { unwiredRulingReason, type RestrictionType } from '$lib/restriction-types';
+  import {
+    unwiredRulingReason,
+    type RestrictionType,
+    type SortOrder,
+  } from '$lib/restriction-types';
   import type {
     RemixSource,
     RestrictionFacets,
@@ -36,6 +40,7 @@
     type: RestrictionType;
     status: string;
     origin: string | null;
+    sort: SortOrder | null;
     q: string;
     civitaiUrl: string;
     grants: Record<string, boolean | undefined>;
@@ -63,6 +68,7 @@
       type: data.type === fallbackType ? undefined : data.type,
       status: data.status === 'Pending' ? undefined : data.status,
       origin: data.origin ?? undefined,
+      sort: data.sort ?? undefined,
       q: data.q,
       page: data.page > 1 ? data.page : undefined,
     });
@@ -77,7 +83,14 @@
     row.status === 'Pending' && !unwiredRulingReason(row.type);
 
   const clearFiltersHref = $derived(
-    urlWith(page.url, { status: null, origin: null, q: null, page: null, selected: null })
+    urlWith(page.url, {
+      status: null,
+      origin: null,
+      sort: null,
+      q: null,
+      page: null,
+      selected: null,
+    })
   );
   const filtersActive = $derived(data.status !== 'Pending' || !!data.origin || !!data.q);
 </script>
@@ -88,6 +101,7 @@
   {fallbackType}
   status={data.status}
   origin={data.origin}
+  sort={data.sort}
   facets={data.facets}
   q={data.q}
 />

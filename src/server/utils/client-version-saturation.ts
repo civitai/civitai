@@ -14,6 +14,10 @@ import semver from 'semver';
  * makes it measurable at BOUNDED cardinality (one boolean label, not the raw
  * version string).
  *
+ * The same bucketing now also DECIDES the write format: the server writes devalue
+ * only to requests `canDecodeDevalueResponse` (below) accepts, so an old bundle
+ * keeps getting superjson rather than breaking.
+ *
  * THE THRESHOLD. `x-client-version` is the web bundle's `package.json` version
  * (`next.config.mjs` injects `packageJson.version` as `process.env.version`,
  * sent by every web client — `src/utils/trpc.ts`). Version bumps are their own
@@ -62,9 +66,35 @@ export function isPhase1CapableClientVersion(version: string | undefined | null)
   return capable;
 }
 
-/** The bounded metric label value for a reported client version. */
-export function phase1CapableLabel(version: string | undefined | null): 'true' | 'false' {
-  return isPhase1CapableClientVersion(version) ? 'true' : 'false';
+/** Request headers as Node hands them to a Next API route. */
+type ClientHeaders = Record<string, string | string[] | undefined> | undefined | null;
+
+/** A header's value when it was sent exactly once; a repeated (array) header counts as absent. */
+function singleHeader(headers: ClientHeaders, name: string): string | undefined {
+  const value = headers?.[name];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Whether the request comes from the civitai.com web bundle (`src/utils/trpc.ts` sends `x-client: web`). */
+export function isWebClient(headers: ClientHeaders): boolean {
+  return singleHeader(headers, 'x-client') === 'web';
+}
+
+/**
+ * THE predicate for "this request's client can decode a devalue tRPC response": a web-bundle
+ * request whose reported version contains the union deserializer. Everything else — API keys,
+ * OAuth apps, `@civitai/app-sdk`, CLIs, scripts, and web bundles older than
+ * `PHASE1_CLIENT_VERSION` — reads only the superjson wire shape.
+ *
+ * Two consumers, deliberately the same function: the per-request response write format
+ * (`src/server/trpc/response-write-format.ts`) and the `phase1_capable` label of
+ * `civitai_app_trpc_client_read_capability_requests_total` (`src/server/trpc.ts`), so the metric
+ * that gates the rollout measures exactly the population that will receive devalue.
+ */
+export function canDecodeDevalueResponse(headers: ClientHeaders): boolean {
+  return (
+    isWebClient(headers) && isPhase1CapableClientVersion(singleHeader(headers, 'x-client-version'))
+  );
 }
 
 /** TEST-ONLY: drop the memo cache so a test can assert cold-path behavior. */

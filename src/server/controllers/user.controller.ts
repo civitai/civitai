@@ -6,6 +6,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
   OnboardingComplete,
   OnboardingSteps,
@@ -777,6 +778,17 @@ export const deleteUserHandler = async ({
   // Self-only, in every environment. A moderator deleting somebody else's account goes through
   // `/api/mod/user/delete`, which writes a ModActivity row.
   if (id !== currentUser.id) throw throwAuthorizationError();
+
+  // A muted account can't close itself: deletion nulls the email and OAuth links, so the person
+  // could sign up again without the mute. Read from the primary, not the session, so a mute that
+  // landed after the session was issued still counts. Banned accounts never get here (`isAuthed`).
+  // Erasure stays available through support, which deletes via `/api/mod/user/delete`.
+  const self = await dbWrite.user.findUnique({ where: { id }, select: { muted: true } });
+  if (self?.muted)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: `Restricted accounts can't be closed from account settings. You can still have your account deleted: open a ticket through our support portal at ${SUPPORT_LINKS.portal} and our team will process it.`,
+    });
 
   try {
     const user = await deleteUser(input);
