@@ -7,11 +7,14 @@ import { MAX_INT4 } from './users.service';
 // semantics differ per page in ways that matter, so there is no `createLookupLoad` behind this.
 export const lookupQuerySchema = z.object({ q: z.string().trim().catch('') });
 
+/** A Postgres `integer` id from the client; see `userIdSchema` for why the bound matters. */
+export const int4Id = z.coerce.number().int().positive().max(MAX_INT4);
+
 /** `User.id` and friends are Postgres `integer`: a larger value ERRORS the comparison rather than
  *  missing, so an unbounded id 500s the action. The two hand-written copies of this had already
  *  drifted — one bounded, one not. */
 export const userIdSchema = z.object({
-  userId: z.coerce.number().int().positive().max(MAX_INT4),
+  userId: int4Id,
 });
 
 /** A comma-separated id list from a hidden input. Same int4 bound as `userIdSchema`, and for the same
@@ -76,6 +79,25 @@ export function parseQuery<T extends z.ZodType>(
 ): z.infer<T> {
   const obj: Record<string, string | string[]> = {};
   for (const key of new Set(url.searchParams.keys())) {
+    obj[key] = multiKeys.includes(key) ? url.searchParams.getAll(key) : url.searchParams.get(key)!;
+  }
+  return schema.parse(obj);
+}
+
+/**
+ * `parseQuery` for a load that must NOT rerun on params it does not use — a layout under a page with
+ * its own params. SvelteKit tracks `searchParams.get`/`getAll`/`has` per key, but `keys()`, which
+ * `parseQuery` walks, counts as reading the whole query string: every param change anywhere on the
+ * page reruns the load. This reads the schema's own keys and nothing else.
+ */
+export function parseQueryKeys<T extends z.ZodObject>(
+  url: URL,
+  schema: T,
+  multiKeys: string[] = []
+): z.infer<T> {
+  const obj: Record<string, string | string[]> = {};
+  for (const key of Object.keys(schema.shape)) {
+    if (!url.searchParams.has(key)) continue;
     obj[key] = multiKeys.includes(key) ? url.searchParams.getAll(key) : url.searchParams.get(key)!;
   }
   return schema.parse(obj);

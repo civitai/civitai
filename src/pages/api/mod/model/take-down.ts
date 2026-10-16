@@ -13,7 +13,7 @@ export default defineModeratorEndpoint('model.takeDown', {
   returns: '{ modelId, mode }',
   notes: [
     'Refused when the model is already taken down.',
-    'Does not touch any report — the caller actions the report itself.',
+    'Does not touch any report: closing one is a separate decision.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({

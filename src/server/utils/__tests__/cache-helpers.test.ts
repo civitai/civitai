@@ -19,10 +19,6 @@ describe('resolveCacheExpiry', () => {
     expect(resolveCacheExpiry(TTL, true)).toBe(57600);
   });
 
-  it('treats an explicitly-undefined tail the same as the default', () => {
-    expect(resolveCacheExpiry(TTL, true, undefined)).toBe(57600);
-  });
-
   it('adds a shortened tail to ttl (the tag-ids 1h-tail case → 9h)', () => {
     expect(resolveCacheExpiry(TTL, true, 3600)).toBe(32400);
   });

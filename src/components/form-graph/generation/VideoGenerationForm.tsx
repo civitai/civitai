@@ -597,18 +597,6 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         />
         <Controller
           graph={videoHub}
-          name="usePro"
-          render={({ value, onChange }) => (
-            <Checkbox
-              label="Pro Mode"
-              description="Generate with higher quality (uses more credits)"
-              checked={value}
-              onChange={(e) => onChange(e.currentTarget.checked)}
-            />
-          )}
-        />
-        <Controller
-          graph={videoHub}
           name="enablePromptEnhancer"
           render={({ value, onChange }) => (
             <Checkbox

@@ -775,12 +775,13 @@ export const creatorShopSectionKeys = [
   'featured',
   'cosmetics',
   'resold',
+  'services',
   'merch',
   'models',
 ] as const;
 export type CreatorShopSectionKey = (typeof creatorShopSectionKeys)[number];
 export const creatorShopSectionSchema = z.object({
-  key: z.enum(['featured', 'cosmetics', 'resold', 'merch', 'models']),
+  key: z.enum(creatorShopSectionKeys),
   visible: z.boolean(),
 });
 

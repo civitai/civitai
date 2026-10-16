@@ -22,7 +22,7 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
-/** `rescanQueued`: the owner edited the text while the appeal was open, so it is scanned again. */
+/** `rescanQueued` is always false now: the endpoint keeps it for compatibility. */
 export type AppealResult = { ok: true; rescanQueued: boolean } | { ok: false; error: string };
 
 export const resolveMinorFlagAppeal = (modelId: number, uphold: boolean): Promise<AppealResult> =>
@@ -39,8 +39,40 @@ export const resolveMinorFlagAppealPerLabel = (
   labels: { minor: 'uphold' | 'overturn'; poi: 'uphold' | 'overturn' }
 ): Promise<AppealResult> =>
   toAppealResult(
-    callModEndpoint('minor-flag/resolve-appeal', { modelId, uphold: false, ...labels }, 'Rule per label')
+    callModEndpoint(
+      'minor-flag/resolve-appeal',
+      { modelId, uphold: false, ...labels },
+      'Rule per label'
+    )
   );
+
+export type RedetectionOutcome = 'kept' | 'dismissed' | 'closed';
+export type RedetectionResult =
+  | { ok: true; resolved: RedetectionOutcome }
+  | { ok: false; error: string };
+
+/** Rules on a label the text scan re-detected after a human had cleared it, for the text the
+ *  moderator was shown (`textHash`). The main app owns the write: keeping applies the flag with every
+ *  restriction and the owner notice a scan would have. `closed` means the model was already flagged. */
+export async function resolveRedetection(
+  modelId: number,
+  label: 'minor' | 'poi',
+  keep: boolean,
+  textHash: string
+): Promise<RedetectionResult> {
+  const result = await callModEndpoint(
+    'minor-flag/resolve-redetection',
+    { modelId, label, keep, textHash },
+    keep ? 'Keep re-detected flag' : 'Dismiss re-detection'
+  );
+  if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  const resolved = result.body.resolved;
+  return {
+    ok: true,
+    resolved: resolved === 'closed' || resolved === 'dismissed' ? resolved : 'kept',
+  };
+}
 
 /**
  * Revert is the one action whose 200 does not mean it happened. A model whose snapshot capture failed

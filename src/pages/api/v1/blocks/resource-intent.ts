@@ -6,6 +6,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { getResourceIntent } from '~/server/services/resource-intent.service';
+import { matchHostedModels } from '~/server/services/resource-intent-hosted-models';
 import { resourceIntentInputSchema } from '~/server/schema/resource-intent.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { checkBlockLLMRateLimit } from '~/server/utils/block-catalog-rate-limit';
@@ -102,6 +103,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
+  const { needs, ...intentInput } = parsed.data;
   const regionRestricted = isRegionRestricted(getRegion(req));
   const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
@@ -109,7 +111,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // Coverage is resolved INSIDE the service: in add-on mode on the cache-miss
     // path only (a Flipt eval on every hit would be waste); in checkpoint mode
     // before the cache read, because it is a term of that mode's cache key.
-    const result = await getResourceIntent(parsed.data, {
+    const result = await getResourceIntent(intentInput, {
       browsingLevel,
       poolMerge: !!features.resourceIntentPoolMerge,
     });
@@ -117,6 +119,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       ...result,
       // Echo the applied ceiling (advisory — the clamp is authoritative).
       maturity: { browsingLevel, sfwOnly: isSfwCeiling },
+      // Only when asked for, so a caller that sends no `needs` gets the body it always got. Not
+      // filtered by the ceiling: every hosted model is listed in every browsing mode.
+      ...(needs && { hostedModels: matchHostedModels(needs) }),
     });
     return;
   } catch (e) {

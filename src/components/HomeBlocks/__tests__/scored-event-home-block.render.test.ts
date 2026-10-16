@@ -258,6 +258,16 @@ describe('not joined', () => {
     expect(h.join).toHaveBeenCalledWith({ event: 'birthday2026' });
   });
 
+  // To whoever lets the accent flow inline again: it wrapped as "Civitai turns 4. Pick / up a hat."
+  // on desktop. Justin asked for the break after the title, always, and the accent unbroken
+  // (2026-10-14).
+  it('puts the accent on its own line and never breaks it', () => {
+    const accent = [...block().querySelectorAll('span')].find((s) => text(s) === 'Pick up a hat.')!;
+    expect(accent.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['block', 'whitespace-nowrap', 'w-fit'])
+    );
+  });
+
   it('plays the film with a join offer under it', () => {
     const el = block();
     const play = el.querySelector<HTMLButtonElement>(
@@ -307,6 +317,17 @@ describe('joined', () => {
     expect(el.querySelector('[data-testid="event-home-block-get-hat"]')?.getAttribute('href')).toBe(
       '/events/birthday2026#team-hats'
     );
+  });
+
+  // To whoever puts the longer copy back: "Get another hat / One more post scoring" wrapped to four
+  // lines in the 104px tile. Justin chose this hat-tile layout, two short unbroken lines (2026-10-14).
+  it('lays the get-a-hat tile out like a hat tile, in two lines that do not wrap', () => {
+    joinAs('Pink');
+    h.hats = [placed(1, 512)];
+    const tile = block().querySelector('[data-testid="event-home-block-get-hat"]')!;
+    const lines = [...tile.querySelectorAll('span.truncate')];
+    expect(lines.map((l) => text(l))).toEqual(['Another hat', '+1 post scoring']);
+    expect(text(tile)).toBe('Another hat+1 post scoring');
   });
 
   // To whoever shortens these again: compacted to "122.4K", a live total that moves by a few

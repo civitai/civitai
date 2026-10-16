@@ -253,6 +253,15 @@
       {/if}
     </div>
   {/if}
+  {#if form && 'held' in form && form.held}
+    <div
+      class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
+      role="status"
+    >
+      {form.held}
+      <a href="/images/re-removals" class="link ml-1">Open Re-removals</a>
+    </div>
+  {/if}
   {#if form && 'warning' in form && form.warning}
     <div
       class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200"
@@ -455,6 +464,7 @@
   negativePrompt?: string | null;
   isProfilePicture?: boolean;
   hasConnection?: boolean;
+  approvedAppeal?: { approvedAt: Date; approvedByUsername: string | null } | null;
 })}
   <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -465,6 +475,7 @@
         needsReview={img.needsReview}
         poi={img.poi}
         minor={img.minor}
+        approvedAppeal={img.approvedAppeal}
       />
       <span>{dateTime(img.createdAt ?? null)}</span>
       <!-- New tab: this page's whole job is assembling a selection, and navigating away loses it. -->

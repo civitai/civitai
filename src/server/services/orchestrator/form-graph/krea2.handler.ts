@@ -10,7 +10,7 @@ import type {
   ImageGenStepTemplate,
   Krea2FalImageGenInput,
   Krea2StyleReference,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import {
   isOfficialKrea2Version,

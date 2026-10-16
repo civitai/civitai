@@ -142,8 +142,12 @@
         {#if selectable.length > 100}
           <Button size="sm" variant="outline" onclick={() => selectAll(100)}>Select 100</Button>
         {/if}
-        {#if selectable.length > 50}
-          <Button size="sm" variant="outline" onclick={() => selectAll(50)}>Select 50</Button>
+        <!-- Half the page, not a fixed 50: a 60-image page offered "all 60" and "50", and 50 is no
+             useful fraction of anything. Only for page-sized lists; past that, 100 is the step. -->
+        {#if selectable.length > 20 && selectable.length <= 200 && Math.ceil(selectable.length / 2) !== 100}
+          <Button size="sm" variant="outline" onclick={() => selectAll(Math.ceil(selectable.length / 2))}>
+            Select {num(Math.ceil(selectable.length / 2))}
+          </Button>
         {/if}
       {/if}
       {#if count > 0}

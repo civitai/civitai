@@ -10,8 +10,15 @@ import {
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
+  type VoteChoice,
 } from '$lib/server/scan-label.service';
-import { scanLabelFiltersSchema, toFilters } from '$lib/scan-labels';
+import {
+  BLOCK_REASON_IDS,
+  REASON_COMMENT_MAX,
+  REASON_NEEDING_COMMENT,
+  scanLabelFiltersSchema,
+  toFilters,
+} from '$lib/scan-labels';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   const query = parseQuery(url, scanLabelFiltersSchema);
@@ -25,11 +32,32 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   return { card, counters, versions, day: query.day ?? '', version: query.version ?? '' };
 };
 
-const voteSchema = z.object({
-  itemId: z.coerce.number().int().positive().max(2_147_483_647),
-  block: z.enum(['1', '0'], { message: 'Choose Block or Don’t block.' }),
-  ms: z.coerce.number().int().min(0).max(2_147_483_647).nullable().catch(null),
-});
+const voteSchema = z
+  .object({
+    itemId: z.coerce.number().int().positive().max(2_147_483_647),
+    block: z.enum(['1', '0'], { message: 'Choose Block or Don’t block.' }),
+    reason: z.enum(BLOCK_REASON_IDS).optional().catch(undefined),
+    reasonComment: z
+      .string()
+      .trim()
+      .max(REASON_COMMENT_MAX)
+      .optional()
+      .transform((v) => v || null),
+    ms: z.coerce.number().int().min(0).max(2_147_483_647).nullable().catch(null),
+  })
+  .transform(({ block, reason, reasonComment, ...rest }, ctx) => {
+    if (block === '0') return { ...rest, choice: { block: false } as VoteChoice };
+    if (!reason) {
+      ctx.addIssue({ code: 'custom', message: 'Pick a reason for the block.' });
+      return z.NEVER;
+    }
+    if (reason === REASON_NEEDING_COMMENT && !reasonComment) {
+      ctx.addIssue({ code: 'custom', message: 'Add a short comment for “Other ToS violation”.' });
+      return z.NEVER;
+    }
+    const comment = reason === REASON_NEEDING_COMMENT ? reasonComment : null;
+    return { ...rest, choice: { block: true, reason, reasonComment: comment } as VoteChoice };
+  });
 
 const REFUSAL: Record<'not-open' | 'already-voted' | 'full', string> = {
   'not-open': 'Someone else finished this one. Here is the next.',
@@ -45,7 +73,7 @@ export const actions: Actions = {
     const result = await castVote({
       itemId: input.itemId,
       userId: locals.user.id,
-      block: input.block === '1',
+      choice: input.choice,
       msOnItem: input.ms,
     });
     if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
@@ -53,7 +81,12 @@ export const actions: Actions = {
     // has already landed.
     await applyMajorityBlocks(
       { requester: locals.user.id, ...getActorMeta(event) },
-      { block: blockImage, isModerationBlocked }
+      {
+        // A majority of voting moderators already agreed, which is the second opinion a re-removal
+        // of an image approved on appeal is held for.
+        block: async (args) => void (await blockImage({ ...args, skipAppealCheck: true })),
+        isModerationBlocked,
+      }
     ).catch((e) => console.error('scan label block sweep failed', e));
     return { voted: true };
   },

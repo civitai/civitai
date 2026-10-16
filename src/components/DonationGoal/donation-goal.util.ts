@@ -1,3 +1,4 @@
+import { modelVersionAccessInput } from '~/components/Model/ModelVersions/model-version.utils';
 import type { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
@@ -6,8 +7,7 @@ export const useMutateDonationGoal = () => {
 
   const donateMutation = trpc.donationGoal.donate.useMutation({
     async onSuccess(donationGoal, { donationGoalId }) {
-      const versionId =
-        donationGoal?.entityType === 'ModelVersion' ? donationGoal.entityId : null;
+      const versionId = donationGoal?.entityType === 'ModelVersion' ? donationGoal.entityId : null;
       if (donationGoal && versionId != null) {
         await queryUtils.modelVersion.donationGoal.setData({ id: versionId }, (data) => {
           if (!data || data.id !== donationGoalId) return data ?? null;
@@ -16,10 +16,7 @@ export const useMutateDonationGoal = () => {
 
         if (donationGoal.total >= donationGoal.goalAmount) {
           // Goal met → the server may have ended the access gate; refresh entity access.
-          await queryUtils.common.getEntityAccess.invalidate({
-            entityId: [versionId],
-            entityType: 'ModelVersion',
-          });
+          await queryUtils.common.getEntityAccess.invalidate(modelVersionAccessInput(versionId));
         }
       }
     },

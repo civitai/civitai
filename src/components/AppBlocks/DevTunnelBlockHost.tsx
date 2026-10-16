@@ -81,6 +81,7 @@ export function DevTunnelBlockHost({
     kind,
     needsConsent,
     missingScopes,
+    signedScopes,
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,
@@ -121,6 +122,7 @@ export function DevTunnelBlockHost({
       tokenKind={kind}
       declaredScopes={scopes}
       missingScopes={missingScopes}
+      signedScopes={signedScopes}
       needsConsent={needsConsent}
       domain={domain}
       maxBrowsingLevel={maxBrowsingLevel}

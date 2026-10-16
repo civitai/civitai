@@ -1,7 +1,8 @@
 import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
-import { FLAG_APPEALS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
+import { FLAG_APPEALS_PATH, HELD_DETECTIONS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 
 export const APP = 'moderator';
@@ -79,13 +80,13 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/newUser', label: 'New Users', countKey: 'newUser' },
       { path: '/images/modRule', label: 'Rule Violations', countKey: 'modRule' },
       { path: '/images/remixSource', label: 'Remix Source', countKey: 'remixSource' },
-      { path: '/images/reported', label: 'Reported', countKey: 'reported' },
       { path: '/images/appeals', label: 'Appeals', countKey: 'appeals' },
       {
         path: '/images/removed-appeals',
         label: 'Appeals: Content Removed',
         countKey: 'removedAppeals',
       },
+      { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
@@ -109,17 +110,20 @@ export const NAVIGATION: NavLink[] = [
     label: 'Models',
     path: '/models',
     children: [
-      // No `countKey`: the Pending count costs ~10s, and `sidebar-counts.service.ts` is one Promise.all
-      // that every navigation in the app waits on. The counts live on the page's own tabs instead,
-      // fetched separately. A countKey nothing produces renders as a silently missing badge.
-      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches' },
-      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals' },
+      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches', countKey: 'minorHashMatches' },
+      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals', countKey: 'modelFlagAppeals' },
+      { path: HELD_DETECTIONS_PATH, label: 'Held Detections', countKey: 'heldDetections' },
     ],
   },
   {
     label: 'Bounties',
     path: '/bounties',
     children: [{ path: '/bounties/poi-appeals', label: 'Real-Person Appeals' }],
+  },
+  {
+    label: 'Storylines',
+    path: '/storylines',
+    children: [{ path: '/storylines/title-appeals', label: 'Title Appeals' }],
   },
   {
     label: 'Articles',
@@ -136,6 +140,7 @@ export const NAVIGATION: NavLink[] = [
   // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
+  { path: '/creator-services/disputes', label: 'Service Disputes' },
   {
     label: 'Audit',
     path: '/audit',
@@ -154,8 +159,8 @@ export const NAVIGATION: NavLink[] = [
     label: 'Text Scan',
     path: '/text-scan',
     children: [
-      { path: '/text-scan/check', label: 'Check' },
-      { path: '/text-scan/prompts', label: 'Versions' },
+      { path: '/text-scan/prompts', label: 'Prompts' },
+      { path: '/text-scan/model-rules', label: 'Model rules' },
     ],
   },
   {
@@ -170,8 +175,6 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/reactor-lookup', label: 'Reactor Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
       { path: '/retool/model-lookup', label: 'Model Lookup' },
-      { path: '/retool/user-reports', label: 'User Reports' },
-      { path: '/retool/post-reports', label: 'Post Reports' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
@@ -192,7 +195,22 @@ export const NAVIGATION: NavLink[] = [
   // One grant covers the queue and its per-report page (`/feedback/<id>`), which resolves here by
   // prefix rather than being listed — the same shape as `/abuse` below. A report is a row of this
   // queue, and granting the list without the rows would show a moderator a count they cannot open.
-  { path: '/feedback', label: 'Feedback', countKey: 'feedbackNew' },
+  //
+  // `sharedAccess`, like `/reports`: both children are views of one page, so the grant stays on
+  // `/feedback`.
+  {
+    path: '/feedback',
+    label: 'Feedback',
+    sharedAccess: true,
+    children: [
+      { path: '/feedback', label: 'General queue', countKey: 'feedbackNew' },
+      {
+        path: `/feedback?area=${APPS_PLATFORM_FEEDBACK_AREA}&status=new`,
+        label: 'Apps platform (developers)',
+        countKey: 'feedbackAppsPlatformNew',
+      },
+    ],
+  },
   // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
   // than being listed: a run and its findings are one thing, and granting the list without the rows
   // would show a moderator a count they cannot open.
@@ -220,6 +238,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/users', label: 'Users' },
       { path: '/users/newest', label: 'Newest Users' },
       { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
+      { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
     ],
   },
   { path: '/admin', label: 'Permissions' },

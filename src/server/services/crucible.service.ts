@@ -114,6 +114,7 @@ import {
   getAverageFinishTopPercent,
   getCreatorFinish,
   getCruciblePrizeWinners,
+  isPaidPrize,
   getCrucibleTotalPrizePool,
   getCruciblePublishableName,
   type CrucibleNameScan,
@@ -128,17 +129,15 @@ import {
   type CruciblePrizeWinner,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
-import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
-import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   matureBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
   exceedsModelBrowsingLevelLimit,
-  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { settleSkippedCrucibleScan } from '~/server/services/text-scan/actions/crucible';
@@ -366,7 +365,6 @@ export const createCrucible = async ({
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
-  if (!isModerator) assertSfwCrucibleText([name, description ?? ''], nsfwLevel);
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
   assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
@@ -628,16 +626,6 @@ const entryVisibleToViewerSql = (viewerId: number | undefined, visibleImage: Pri
     viewerId ? Prisma.sql`ce."userId" = ${viewerId} OR` : Prisma.empty
   } (${visibleImage}))`;
 
-// throwOnBlockedUserContent doesn't catch profanity, so SFW-only crucibles check it here.
-function assertSfwCrucibleText(texts: string[], nsfwLevel: number) {
-  const isSfwOnly = (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
-  if (isSfwOnly && getProfanityFilter().isProfane(texts.join(' '))) {
-    throw throwBadRequestError(
-      "The name or description contains language that isn't allowed on a PG or PG-13 crucible."
-    );
-  }
-}
-
 async function assertPublishedModelVersions(versionIds: number[]) {
   const ids = [...new Set(versionIds)];
   if (!ids.length) return;
@@ -812,7 +800,6 @@ export const updateCrucible = async ({
     isModerator,
     surface: 'crucible',
   });
-  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription ?? ''], next.nsfwLevel);
   // Only newly added ones: a required model unpublished later shouldn't block editing the rest.
   const addedResources = next.allowedResources.filter(
     (versionId) => !current.allowedResources.includes(versionId)
@@ -1214,7 +1201,8 @@ export const getCrucibleDetail = async ({
           ])
         )
           .get(id)
-          ?.map(({ userId, ...prize }) => prize) ?? []
+          ?.filter(isPaidPrize)
+          .map(({ userId, ...prize }) => prize) ?? []
       : [];
 
   return {
@@ -3651,7 +3639,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Filter entries that have a prize amount > 0
   const prizeWinners = finalizedEntries.filter(
     (entry): entry is FinalizedEntry & { position: number; prizePlace: number } =>
-      entry.position !== null && entry.prizePlace !== null && entry.prizeAmount > 0
+      entry.position !== null && entry.prizePlace !== null && isPaidPrize(entry)
   );
 
   // Awarded, not paid: each winner claims theirs and picks the currency. The key is the one this
@@ -4107,11 +4095,7 @@ export type CancelCrucibleResult = {
   failedRefunds: Array<{ entryId: number | null; userId: number; error: string }>;
 };
 
-/**
- * Buzz keys refunds on `externalTransactionIdPrefix`: a second refund of one returns 409, and a
- * prefix matching nothing returns 404. Neither means money is owed, so tolerating both is what
- * makes cancelling safe to re-run — the same tolerance as `refundChallengeFundsByPrefix`.
- */
+/** Safe to re-run: legs an earlier attempt reversed are reported as already settled. */
 async function refundCrucibleTransactionOnce({
   externalTransactionIdPrefix,
   description,
@@ -4125,25 +4109,18 @@ async function refundCrucibleTransactionOnce({
   label: string;
   reason?: string;
 }): Promise<'refunded' | 'already-settled'> {
-  try {
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix,
-      description,
-      details: {
-        entityId: crucibleId,
-        entityType: 'Crucible',
-        reason,
-      },
-    });
-    return 'refunded';
-  } catch (error) {
-    const status = getBuzzApiStatus(error);
-    if (status === 404 || status === 409) {
-      log(`Refund for ${label} already settled (buzz ${status}); nothing moved`);
-      return 'already-settled';
-    }
-    throw error;
-  }
+  const { refundedLegs } = await refundAllLegsByPrefix({
+    externalTransactionIdPrefix,
+    description,
+    details: {
+      entityId: crucibleId,
+      entityType: 'Crucible',
+      reason,
+    },
+  });
+  if (refundedLegs > 0) return 'refunded';
+  log(`Refund for ${label} already settled; nothing moved`);
+  return 'already-settled';
 }
 
 const NOT_RUNNING = 'Entries can only be removed while the crucible is running';
@@ -4696,7 +4673,7 @@ export const getUserCrucibleStats = async ({
         seededPrizePool: crucible?.seededPrizePool ?? 0,
       }),
     });
-    if (winners.some((winner) => winner.userId === userId && winner.prizeAmount > 0))
+    if (winners.some((winner) => winner.userId === userId && isPaidPrize(winner)))
       cruciblesWon++;
     const finish = getCreatorFinish({ placed: crucibleRows, userId });
     if (finish) finishes.push(finish);

@@ -19,7 +19,7 @@ import type {
   ImageTransformer,
   PreprocessImageInput,
   PreprocessImageStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { ControlNetPreprocessorKey } from '~/shared/constants/controlnets.constants';
 import { controlNetToPreprocessKind } from '~/shared/constants/controlnets.constants';
 import type { ControlNetsNodeValue } from '~/shared/generation/values';

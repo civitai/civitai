@@ -16,6 +16,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getTextScanConfig: vi.fn(async () => ({
     model: 'air:test',
     maxInputChars: 1000,
+    maxSegments: 10,
     thinking: false,
   })),
 }));

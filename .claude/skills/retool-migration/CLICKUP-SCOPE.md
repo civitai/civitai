@@ -124,7 +124,7 @@ The conventions that apply to every page:
 ### Apps V2
 
 - [ ] **§2.1 Bulk Ban** — restricted tool.
-- [ ] **§2.2 Moderation Rules** — low priority, "not used much".
+- [ ] **§2.2 Moderation Rules** — low priority, "not used much". Model rules shipped on the moderator app's `/text-scan/model-rules`; image rules stay in Retool.
 - [x] **§2.3 Model notes** — free text on models, shipped 2026-09-29 as Model Lookup's "Moderator
       notes" panel over the existing `ModelNotes` data (`868mb8h0y`).
 

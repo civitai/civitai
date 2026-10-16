@@ -269,15 +269,4 @@ describe('two-layer metadata model', () => {
     expect(sd.resources).toEqual([]);
     expect(sd.remixOfId).toBeUndefined();
   });
-
-  it('works with Omit<NormalizedStep, "output"> (no generic needed)', () => {
-    const step: Omit<NormalizedStep, 'output'> = {
-      $type: 'textToImage',
-      name: '$0',
-      metadata: { params: { prompt: 'test' } },
-    } as any;
-    const sd = new StepData(step, makeWorkflowData());
-
-    expect(sd.params).toEqual({ prompt: 'test' });
-  });
 });

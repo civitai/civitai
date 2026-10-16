@@ -8,18 +8,19 @@ then shows and moves what was scheduled. Plans: `docs/batch-scheduling-plan.md` 
 
 ## Key files
 
-| File                                             | Purpose                                                                                                                                                                         |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/civitai-shared/src/post-scheduling.ts` | Window and batch constants, schedule generators, jitter, `validateBatchSchedule`, `getPostScheduleScope`; shared by the main app, the element and Creator Studio                |
-| `src/server/services/post-batch.service.ts`      | `validateBatchSchedule`, `scheduleBatch` (one chunk of posts per call, compensating delete on failure)                                                                          |
-| `src/server/services/post-planner.service.ts`    | Planner reads and moves (`getScheduledPosts`, `getPlannerPostDetail`, `reschedulePlannerPost`, `unschedulePlannerPosts`, `shiftPlannerPosts`)                                   |
-| `src/server/routers/post.router.ts`              | `post.validateBatchSchedule`, `post.scheduleBatch`, `post.getScheduled`, `post.getPlannerDetail`, `post.reschedule`, `post.publishNow`, `post.unschedule`, `post.shiftSchedule` |
-| `src/pages/api/v1/posts/planner/[action].ts`     | REST twins of the planner procedures for Creator Studio, table-driven by `@civitai/post-planner/contract`                                                                       |
-| `src/components/Post/Batch/`                     | The `/posts/batch` composer: media grid, shared metadata, schedule builder, summary rail, review table, progress modal                                                          |
-| `src/server/services/post-preset.service.ts`     | Saved presets (`getPostPresets`, `upsertPostPreset`, `deletePostPreset`; 20 per user, name unique per user); router `src/server/routers/post-preset.router.ts`                  |
-| `src/components/Post/Batch/BatchPresets.tsx`     | Composer preset select and "Save as preset…" modal; `src/components/Post/EditV2/PostEditApplyPreset.tsx` applies tags, tools and techniques in the post editor                  |
-| `packages/civitai-post-planner/`                 | The planner element (Lit, on `@civitai/components`), its host contract and REST backend                                                                                         |
-| `apps/creator-studio/src/routes/(app)/calendar/` | Creator Studio host of the planner; `routes/api/planner/[action]` proxies to the main app                                                                                       |
+| File                                                | Purpose                                                                                                                                                                                             |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/civitai-shared/src/post-scheduling.ts`    | Window and batch constants, schedule generators, jitter, `validateBatchSchedule`, `getPostScheduleScope`; shared by the main app, the element and Creator Studio                                    |
+| `src/server/services/post-batch.service.ts`         | `validateBatchSchedule`, `scheduleBatch` (one chunk of posts per call, compensating delete on failure)                                                                                              |
+| `src/server/services/post-planner.service.ts`       | Planner reads and moves (`getScheduledPosts`, `getPlannerPostDetail`, `reschedulePlannerPost`, `unschedulePlannerPosts`, `shiftPlannerPosts`)                                                       |
+| `src/server/routers/post.router.ts`                 | `post.validateBatchSchedule`, `post.scheduleBatch`, `post.getScheduled`, `post.getPlannerDetail`, `post.reschedule`, `post.publishNow`, `post.unschedule`, `post.shiftSchedule`                     |
+| `src/pages/api/v1/posts/planner/[action].ts`        | REST twins of the planner procedures for Creator Studio, table-driven by `@civitai/post-planner/contract`                                                                                           |
+| `src/components/Post/Batch/`                        | The `/posts/batch` composer: media grid, shared metadata, schedule builder, summary rail, review table, progress modal                                                                              |
+| `src/components/Post/Batch/batch-composer.draft.ts` | The composer's draft in IndexedDB (`idb-keyval`, one per user): completed uploads with their metadata, grouping, shared settings, promoted version and schedule; cleared when every post is created |
+| `src/server/services/post-preset.service.ts`        | Saved presets (`getPostPresets`, `upsertPostPreset`, `deletePostPreset`; 20 per user, name unique per user); router `src/server/routers/post-preset.router.ts`                                      |
+| `src/components/Post/Batch/BatchPresets.tsx`        | Composer preset select and "Save as preset…" modal; `src/components/Post/EditV2/PostEditApplyPreset.tsx` applies tags, tools and techniques in the post editor                                      |
+| `packages/civitai-post-planner/`                    | The planner element (Lit, on `@civitai/components`), its host contract and REST backend                                                                                                             |
+| `apps/creator-studio/src/routes/(app)/calendar/`    | Creator Studio host of the planner; `routes/api/planner/[action]` proxies to the main app                                                                                                           |
 
 ## Flags
 
@@ -43,6 +44,9 @@ members, then set `enabled: true` for everyone.
   seed), so the publish sweep never sees a burst.
 - A creator's daily post limit (`getDailyPostLimit`, the same tiers as `postRateLimits`) is counted per
   UTC go-live day across existing and incoming posts. Moderators skip the cap, not the window or gap.
+- A promoted version must be `Published` on a `Published` model with no `mode` (not taken down or
+  archived): the model page hides "Promote this model" otherwise, the composer shows why instead of
+  its sections, and `scheduleBatch` refuses the chunk.
 - A batch is at most `POST_BATCH_MAX_POSTS` (200) posts and `POST_BATCH_MAX_IMAGES` (500) files; a
   `scheduleBatch` call takes at most `POST_BATCH_CHUNK_POSTS` (10) posts and
   `POST_BATCH_CHUNK_MAX_IMAGES` (60) images; the composer sends chunks sequentially, sized so the
@@ -51,7 +55,11 @@ members, then set `enabled: true` for everyone.
 ## How a batch is created
 
 1. The composer uploads files to S3 through `useMediaUpload` with no post yet. Nothing exists on the
-   server until the creator confirms the review screen.
+   server until the creator confirms the review screen. Every edit is saved to the browser's
+   IndexedDB draft, so a reload brings the uploads back by their S3 keys (thumbnails are served
+   through `EdgeMedia`, never the local blob URL, which the upload hook revokes on completion). A
+   version picked in the composer or arriving in the query supplies the `{model}` / `{version}`
+   title tokens. A schedule that already started comes back at the defaults.
 2. The composer previews the schedule with the shared validator against `post.getScheduled`, then
    asks `post.validateBatchSchedule` for the authoritative answer. Review stays disabled while either
    reports an issue.
@@ -76,7 +84,8 @@ members, then set `enabled: true` for everyone.
 
 - Batch posts are counted against the daily limit in the database by go-live day, while ordinary
   creates count in Redis at creation time; the two can add up to one tier size on the same day.
-- Files uploaded and then abandoned in the composer leave S3 keys with no `Image` row.
+- Files uploaded and then abandoned in the composer leave S3 keys with no `Image` row. The draft is
+  per browser: another device starts empty, and a failed or blocked upload is not in it.
 - Weekday/time-slot schedules in the planner are planned, not built.
 - A preset stores resource display names at save time, so a renamed or deleted model version keeps
   its old chip until the preset is re-saved; the post editor applies no resources from a preset.

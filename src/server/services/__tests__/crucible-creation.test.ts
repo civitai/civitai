@@ -900,18 +900,9 @@ describe('createCrucible — name and description', () => {
     });
   });
 
-  it('refuses profanity on an SFW-only crucible, before any money moves', async () => {
-    await expect(createCrucible(input({ name: 'fuck this', nsfwLevel: 1 }))).rejects.toThrow(
-      /isn't allowed on a PG or PG-13 crucible/
+  it('does not reject an SFW-only crucible for a profanity-dictionary match', async () => {
+    await expect(createCrucible(input({ name: 'Fukushima', nsfwLevel: 1 }))).resolves.toMatchObject(
+      { id: 1 }
     );
-
-    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
-    expect(crucibleCreate).not.toHaveBeenCalled();
-  });
-
-  it('allows the same language on a crucible that accepts mature content', async () => {
-    await expect(
-      createCrucible(input({ name: 'fuck this', nsfwLevel: 1 | 4 }))
-    ).resolves.toMatchObject({ id: 1 });
   });
 });

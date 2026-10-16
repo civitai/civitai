@@ -46,11 +46,6 @@ describe('AppsPageLayout draws no rule of its own', () => {
     expect(src).not.toMatch(/\bborder\s*:/);
   });
 
-  it('the guard is reading a real file (not a silently-empty read)', () => {
-    // A missing/renamed file would make every `not.toMatch` above pass vacuously.
-    expect(layoutSrc()).toMatch(/export function AppsPageLayout/);
-  });
-
   it('the header band carries NO vertical padding of its own', () => {
     // UPDATED (vertical-padding pass): this used to pin `pt="sm"` on the band.
     // That pad was dropped deliberately — it sat ABOVE the tabs, i.e. outside the

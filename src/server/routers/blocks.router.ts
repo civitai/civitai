@@ -41,6 +41,7 @@ import {
 } from '~/server/services/blocks/block-post.logic';
 import {
   BLOCK_BUZZ_CAP_PER_DAY,
+  BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
@@ -12555,8 +12556,18 @@ function multiStepTrainingType(steps: readonly ResolvedBlockWorkflowStep[]): str
   return steps.flatMap((step) => step.stepTypes).find(isTrainingStepTypeIgnoringCase) ?? '';
 }
 
+/** The most one `kind:'workflow'` call may be quoted or reserved at, author fee included. */
 function multiStepWorkflowCeiling(perStepBudget: number, stepCount: number): number {
-  return perStepBudget * stepCount;
+  return Math.min(perStepBudget * stepCount, BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL);
+}
+
+/**
+ * The timeout, in seconds, each step of an UNQUOTED workflow is stamped with. The
+ * timeouts are the only bound on what such a workflow spends, so they share the
+ * ceiling that was reserved: summed over the steps, the seconds never exceed it.
+ */
+function multiStepUnquotedStepTimeout(workflowCeiling: number, stepCount: number): number {
+  return Math.floor(workflowCeiling / stepCount);
 }
 
 /** The serialized step inputs and arguments — the caller's own text, for a quote refusal. */
@@ -12719,12 +12730,12 @@ async function submitMultiStepWorkflow(opts: {
   const reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz;
   const refusalCost = { total: reserveBuzz, authorFee: reservedAuthorFeeBuzz };
 
-  // With no quote each step gets a timeout of the per-step budget in seconds —
-  // the pass-through arm's fallback, with the budget standing in for `maxBuzz`.
-  // (An unpriced workflow with a `repeat` never gets here; see
-  // `refuseUnpricedMultiStep`.)
+  // With no quote each step gets an equal share of the ceiling as its timeout —
+  // the pass-through arm's fallback. (An unpriced workflow with a `repeat` never
+  // gets here; see `refuseUnpricedMultiStep`.)
   if (quotedBuzz === null) {
-    for (const step of orchestratorSteps) stampUnquotedTimeout(step, perStepBudget);
+    const stepTimeout = multiStepUnquotedStepTimeout(workflowCeiling, stepCount);
+    for (const step of orchestratorSteps) stampUnquotedTimeout(step, stepTimeout);
   }
 
   // (1) STATIC pre-submit gate: the whole workflow, fee included, must fit under
@@ -12736,9 +12747,14 @@ async function submitMultiStepWorkflow(opts: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: refusalCost,
+        // Two bounds, two sentences: the app's own budget, or the platform limit on
+        // one multi-step call, which no budget raises.
         error:
-          `insufficient buzz budget: workflow price ${reserveBuzz} exceeds budget ` +
-          `${workflowCeiling} (${stepCount} steps at ${perStepBudget} each)`,
+          workflowCeiling < perStepBudget * stepCount
+            ? `insufficient buzz budget: workflow price ${reserveBuzz} exceeds the limit of ` +
+              `${BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL} Buzz for one multi-step call`
+            : `insufficient buzz budget: workflow price ${reserveBuzz} exceeds budget ` +
+              `${workflowCeiling} (${stepCount} steps at ${perStepBudget} each)`,
       },
     };
   }

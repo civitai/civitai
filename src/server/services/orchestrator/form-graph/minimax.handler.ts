@@ -5,7 +5,7 @@ import type {
   ComfyMiniMaxH3ReferenceToVideoInput,
   MiniMaxH3VideoGenInput,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type {
   ComfyMiniMaxH3ControlVideoInput,
@@ -60,13 +60,13 @@ export const createMiniMaxInput = defineHandler<
       return [
         {
           $type: 'videoGen',
-          input: removeEmpty({
+          input: removeEmpty<ComfyMiniMaxH3ReferenceToVideoInput>({
             ...shared,
             operation: 'referenceToVideo',
             images: referenceImages,
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
-          }) as ComfyMiniMaxH3ReferenceToVideoInput,
+          }),
         },
       ];
     }
@@ -82,13 +82,13 @@ export const createMiniMaxInput = defineHandler<
         ...controlVideo.preprocessSteps,
         {
           $type: 'videoGen',
-          input: removeEmpty({
+          input: removeEmpty<ComfyMiniMaxH3ControlVideoInput>({
             ...shared,
             operation: 'controlVideo',
             ...controlVideo.control,
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
-          }) as ComfyMiniMaxH3ControlVideoInput,
+          }),
         },
       ];
     }
@@ -103,14 +103,14 @@ export const createMiniMaxInput = defineHandler<
     return [
       {
         $type: 'videoGen',
-        input: removeEmpty({
+        input: removeEmpty<ComfyMiniMaxH3ImageToVideoInput>({
           ...shared,
           operation: 'imageToVideo',
           firstFrame,
           lastFrame,
           width,
           height,
-        }) as ComfyMiniMaxH3ImageToVideoInput,
+        }),
       },
     ];
   }
@@ -135,13 +135,13 @@ export const createMiniMaxInput = defineHandler<
       return [
         {
           $type: 'videoGen',
-          input: removeEmpty({
+          input: removeEmpty<MiniMaxH3MaxReferenceToVideoInput>({
             ...shared,
             operation: 'referenceToVideo',
             aspectRatio: data.aspectRatio
               ?.value as MiniMaxH3MaxReferenceToVideoInput['aspectRatio'],
             referenceImages,
-          }) as MiniMaxH3MaxReferenceToVideoInput,
+          }),
         },
       ];
     }
@@ -149,23 +149,23 @@ export const createMiniMaxInput = defineHandler<
       return [
         {
           $type: 'videoGen',
-          input: removeEmpty({
+          input: removeEmpty<MiniMaxH3MaxImageToVideoInput>({
             ...shared,
             operation: 'imageToVideo',
             firstFrameImage,
             lastFrameImage,
-          }) as MiniMaxH3MaxImageToVideoInput,
+          }),
         },
       ];
     }
     return [
       {
         $type: 'videoGen',
-        input: removeEmpty({
+        input: removeEmpty<MiniMaxH3MaxTextToVideoInput>({
           ...shared,
           operation: 'textToVideo',
           aspectRatio: data.aspectRatio?.value as MiniMaxH3MaxTextToVideoInput['aspectRatio'],
-        }) as MiniMaxH3MaxTextToVideoInput,
+        }),
       },
     ];
   }
@@ -174,7 +174,7 @@ export const createMiniMaxInput = defineHandler<
     return [
       {
         $type: 'videoGen',
-        input: removeEmpty({
+        input: removeEmpty<HeyGenVideoGenInput>({
           engine: 'heygen',
           operation: isRef2Vid
             ? 'referenceToVideo'
@@ -190,7 +190,7 @@ export const createMiniMaxInput = defineHandler<
           seed: data.seed,
           firstFrameImage,
           referenceImages,
-        }) as HeyGenVideoGenInput,
+        }),
       },
     ];
   }
@@ -198,7 +198,7 @@ export const createMiniMaxInput = defineHandler<
   return [
     {
       $type: 'videoGen',
-      input: removeEmpty({
+      input: removeEmpty<MiniMaxH3VideoGenInput>({
         engine: 'minimax-h3',
         prompt,
         aspectRatio: firstFrameImage
@@ -209,7 +209,7 @@ export const createMiniMaxInput = defineHandler<
         firstFrameImage,
         lastFrameImage,
         referenceImages,
-      }) as MiniMaxH3VideoGenInput,
+      }),
     },
   ];
 });

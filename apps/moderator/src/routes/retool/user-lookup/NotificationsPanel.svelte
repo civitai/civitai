@@ -6,6 +6,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { Capped, Notification } from './user-account';
   import { dateTime } from '$lib/format';
@@ -52,7 +53,7 @@
             return r.json();
           }
         )
-      : null
+      : SSR_PENDING
   );
 
   // Called through, not captured: reading the prop inside the closure is what stops a re-passed

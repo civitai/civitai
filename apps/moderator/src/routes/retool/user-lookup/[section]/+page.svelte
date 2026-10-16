@@ -30,6 +30,7 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
@@ -80,7 +81,7 @@
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
-      <AddressesPanel {signals} />
+      <AddressesPanel {signals} accountId={result.identity.id} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
       <SocialsPanel
@@ -173,6 +174,9 @@
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
+      {#if data.grants['user.creatorScore.grant']}
+        <CreatorScoreGrantPanel userId={result.identity.id} />
+      {/if}
     {:else if section === 'reports'}
       <ReportsPanel
         userId={result.identity.id}

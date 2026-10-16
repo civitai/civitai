@@ -92,6 +92,13 @@ describe('settings modal rows agree with the rendered nav', () => {
     expect(matchesDefaults(moved, true)).toBe(false);
   });
 
+  it('persists the keep-profile-labels setting and counts it as a change', () => {
+    const rows = seedRows(undefined);
+    expect(rowsToConfig(rows, true, true).keepProfileLabels).toBe(true);
+    expect('keepProfileLabels' in rowsToConfig(rows, true)).toBe(false);
+    expect(matchesDefaults(rows, true, true)).toBe(false);
+  });
+
   /**
    * Save must round-trip: what the modal writes, re-seeded, has to be what it showed. Otherwise
    * opening the modal and saving without touching anything would move things.

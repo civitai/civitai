@@ -32,6 +32,7 @@ export function BatchProgressModal({
   calendarHref,
   onCreated,
   onHardFailure,
+  onDone,
   onScheduleAnother,
   onKeepEditing,
 }: {
@@ -42,6 +43,7 @@ export function BatchProgressModal({
   calendarHref: string | null;
   onCreated: (keys: string[]) => void;
   onHardFailure: (message: string) => void;
+  onDone: () => void;
   onScheduleAnother: () => void;
   onKeepEditing: () => void;
 }) {
@@ -97,6 +99,7 @@ export function BatchProgressModal({
       }
     }
     setPhase('done');
+    onDone();
   };
 
   const fail = (failedPosts: PlannedPost[], reason: string) => {

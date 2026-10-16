@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Edge } from './import-graph.harness';
 import {
+  eraseServerOnlyBlocks,
   exportTargetToPath,
   parseImports,
   REPO_ROOT,
@@ -27,6 +28,12 @@ import {
  * redis client into the browser graph. Nothing reported it: the leaves were externalised by
  * `serverExternalPackages`, so the build stayed green. Only an `fs/promises` import ever
  * failed loudly enough to notice.
+ *
+ * The ONE construct that does keep a module out is an `if (typeof window === 'undefined') { … }`
+ * block: Next defines `typeof window` at build time, so the client build drops the block and
+ * the imports in it. The walk follows the client's view of each file
+ * (`eraseServerOnlyBlocks`), and every edge that view drops must be listed in
+ * `SERVER_ONLY_EDGES` below — so such an edge is a reviewed decision, not a quiet escape.
  */
 
 const ENTRY = 'src/pages/_app.tsx';
@@ -110,6 +117,23 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
 ];
 
 /**
+ * Imports the client build drops because they sit inside an
+ * `if (typeof window === 'undefined') { … }` block. Asserted EXACTLY: a new one fails until it
+ * is listed here, and a removed one fails until it is deleted. Measured for this form on
+ * Next 16.3.1 under both Turbopack and `--webpack`: a marker string in a module imported this
+ * way was absent from every `.next/static` file, while the same module imported behind only a
+ * runtime `if (!req) return` was present.
+ */
+const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/services/settings-bootstrap.service',
+    reason:
+      'the per-render settings bootstrap, read in-process instead of over an HTTP request to our own `/api/user/settings`.',
+  },
+];
+
+/**
  * Breadth-first so a reported chain is the SHORTEST one, and `visited` bounds the walk to
  * one visit per file — the import graph has cycles, and an unbounded walk would hang rather
  * than fail.
@@ -119,6 +143,7 @@ function walkGraph() {
   const parent = new Map<string, { from: string; dynamic: boolean } | null>([[entryAbs, null]]);
   const queue = [entryAbs];
   const parsed = new Map<string, Edge[]>();
+  const serverOnly: string[] = [];
 
   while (queue.length) {
     const file = queue.shift()!;
@@ -130,7 +155,9 @@ function walkGraph() {
       } catch {
         continue; // unreadable -> leaf
       }
-      edges = parseImports(source);
+      const clientView = eraseServerOnlyBlocks(source, file);
+      for (const spec of clientView.erased) serverOnly.push(`${rel(file)} -> ${spec}`);
+      edges = parseImports(clientView.source);
       parsed.set(file, edges);
     }
     for (const edge of edges) {
@@ -152,10 +179,15 @@ function walkGraph() {
     return hops.reverse();
   };
 
-  return { reachable: new Set([...parent.keys()].map(rel)), chainTo, parent };
+  return {
+    reachable: new Set([...parent.keys()].map(rel)),
+    chainTo,
+    parent,
+    serverOnly: serverOnly.sort(),
+  };
 }
 
-const { reachable, chainTo } = walkGraph();
+const { reachable, chainTo, serverOnly } = walkGraph();
 const isDenied = (file: string) => DENIED_PREFIXES.some((p) => file === p || file.startsWith(p));
 const known = new Set(KNOWN_REACHABLE.map((k) => k.file));
 
@@ -164,6 +196,53 @@ function formatViolation(file: string): string {
   const lines = chain.map((hop, i) => (i === 0 ? `    ${hop}` : `      -> ${hop}`));
   return `  ${file}\n${lines.join('\n')}`;
 }
+
+describe('client view of a file (eraseServerOnlyBlocks)', () => {
+  const erasedOf = (src: string) => eraseServerOnlyBlocks(src, 'x.tsx').erased;
+
+  it('drops an import inside the exact server-only block, in either operand order', () => {
+    expect(erasedOf(`if (typeof window === 'undefined') { await import('~/a'); }`)).toEqual([
+      '~/a',
+    ]);
+    expect(erasedOf(`if ('undefined' === typeof window) { await import('~/b'); }`)).toEqual([
+      '~/b',
+    ]);
+    // Nested deeper inside the block is still inside it.
+    expect(
+      erasedOf(`if (typeof window === 'undefined') { const f = async () => import('~/c'); }`)
+    ).toEqual(['~/c']);
+  });
+
+  it('keeps the import in the client view of that file', () => {
+    const { source } = eraseServerOnlyBlocks(
+      `before();\nif (typeof window === 'undefined') {\n  await import('~/a');\n}\nafter();`,
+      'x.tsx'
+    );
+    expect(source).not.toContain('~/a');
+    expect(source).toContain('before();');
+    expect(source).toContain('after();');
+    expect(source.split('\n')).toHaveLength(5);
+  });
+
+  // Each of these reaches the client in at least one of the two bundlers, so the walk must
+  // keep following it.
+  it.each([
+    [
+      'an early return (webpack keeps what follows)',
+      `function f() { if (typeof window !== 'undefined') return; return import('~/a'); }`,
+    ],
+    ['the else branch', `if (typeof window === 'undefined') { x(); } else { import('~/a'); }`],
+    ['a loose comparison', `if (typeof window == 'undefined') { import('~/a'); }`],
+    [
+      'an aliased condition',
+      `const isServer = typeof window === 'undefined'; if (isServer) { import('~/a'); }`,
+    ],
+    ['a runtime-only guard', `if (!req) return; await import('~/a');`],
+  ])('does not drop %s', (_label, src) => {
+    expect(erasedOf(src)).toEqual([]);
+    expect(eraseServerOnlyBlocks(src, 'x.tsx').source).toContain('~/a');
+  });
+});
 
 describe('workspace export resolution', () => {
   // Every manifest ships flat string targets today, so the conditions form is unexercised by
@@ -224,6 +303,13 @@ describe('no server infrastructure in the _app client graph', () => {
           `\n`
       );
     }
+  });
+
+  it('drops exactly the reviewed server-only edges', () => {
+    expect(
+      serverOnly,
+      "an import inside `if (typeof window === 'undefined') { … }` is skipped by this walk — list it in SERVER_ONLY_EDGES, or delete a stale entry"
+    ).toEqual(SERVER_ONLY_EDGES.map((e) => `${e.file} -> ${e.spec}`).sort());
   });
 
   it('has no stale KNOWN_REACHABLE entries', () => {

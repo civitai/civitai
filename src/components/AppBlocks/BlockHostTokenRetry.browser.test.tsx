@@ -256,6 +256,44 @@ async function driveToReady(el: HTMLIFrameElement) {
   throw new Error('block never became ready');
 }
 
+describe('the per-call budget the block is told', () => {
+  // The whole seam: the mint's response, through the real hook and BlockHost, to the
+  // envelope the block receives. `install.publisherSettings` is empty here, as it is for
+  // any install whose budget setting is not public, so nothing on the client could
+  // produce 53 except the mint's own report of what it signed.
+  test('is the budget the mint signed, not one derived from visible settings', async () => {
+    respondWith(() => {
+      const ok = mintOk(++mintCount);
+      const json = ok.json.bind(ok);
+      return { ...ok, json: async () => ({ ...(await json()), buzzBudget: 53 }) } as Response;
+    });
+    renderWithProviders(<BlockHost blockInstall={install} slotContext={context} />);
+    const el = await waitForIframe();
+    const inits: Array<{ token?: { buzzBudget?: number; raw?: string } }> = [];
+    el.contentWindow!.addEventListener('message', (e: MessageEvent) => {
+      const d = e.data as { type?: string; payload?: (typeof inits)[number] } | null;
+      if (d?.type === 'BLOCK_INIT' && d.payload) inits.push(d.payload);
+    });
+    for (let i = 0; i < 200 && inits.length === 0; i++) await advance(5);
+    expect(inits.length).toBeGreaterThan(0);
+    expect(inits.at(-1)!.token?.raw).toBe('tok_1');
+    expect(inits.at(-1)!.token?.buzzBudget).toBe(53);
+  });
+
+  test('is absent when the mint reports none', async () => {
+    renderWithProviders(<BlockHost blockInstall={install} slotContext={context} />);
+    const el = await waitForIframe();
+    const inits: Array<{ token?: Record<string, unknown> }> = [];
+    el.contentWindow!.addEventListener('message', (e: MessageEvent) => {
+      const d = e.data as { type?: string; payload?: (typeof inits)[number] } | null;
+      if (d?.type === 'BLOCK_INIT' && d.payload) inits.push(d.payload);
+    });
+    for (let i = 0; i < 200 && inits.length === 0; i++) await advance(5);
+    expect(inits.at(-1)!.token?.raw).toBe('tok_1');
+    expect(inits.at(-1)!.token).not.toHaveProperty('buzzBudget');
+  });
+});
+
 describe('a TRANSIENT refresh failure', () => {
   test('🔴 does NOT unmount the block — same <iframe> node, no second beacon', async () => {
     renderWithProviders(<BlockHost blockInstall={install} slotContext={context} />);

@@ -1,11 +1,16 @@
 import { createHash } from 'crypto';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import type {
   TextScanEntityType,
   TextScanLabel,
   TextScanMode,
 } from '~/server/services/text-scan/types';
+import {
+  TEXT_SCAN_FLAG_LABELS,
+  type TextScanFlagLabel,
+} from '~/server/services/text-scan/flag-snapshot';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
 export const TEXT_SCAN_ENTITY_TYPES = [
@@ -23,6 +28,8 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'UserProfile',
   'Crucible',
   'Collection',
+  'Storyline',
+  'ModelRules',
 ] as const satisfies readonly TextScanEntityType[];
 
 /**
@@ -34,6 +41,8 @@ export type TextScanRollout = { shadow: number; active: number };
 export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollout>>;
 
 export const ROLLOUT_CACHE_MS = 15_000;
+
+let lastLabelModeErrorLogAt = 0;
 
 function percent(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value)
@@ -69,6 +78,8 @@ const getTextScanRollouts = createTtlMemo(readTextScanRollouts, ROLLOUT_CACHE_MS
 export function resetTextScanRolloutCache() {
   getTextScanRollouts.clear();
   getTextScanWebSearchRollouts.clear();
+  getTextScanLabelModes.clear();
+  lastLabelModeErrorLogAt = 0;
 }
 
 export function textScanBucket(entityType: TextScanEntityType, entityId: number) {
@@ -155,6 +166,49 @@ export async function getTextScanWebSearchMode(
     return MODE_ORDER[search] < MODE_ORDER[main] ? search : main;
   } catch {
     return 'off';
+  }
+}
+
+/** What a poi/minor detection does once the scan can act: `review` holds it for a moderator. */
+export type TextScanLabelMode = 'auto' | 'review';
+export type TextScanLabelModes = Partial<Record<TextScanFlagLabel, 'review'>>;
+
+/** Uncached read. Only `review` is stored; anything else reads as `auto`. */
+export async function readTextScanLabelModes(): Promise<TextScanLabelModes> {
+  const raw = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES));
+  const modes: TextScanLabelModes = {};
+  for (const label of TEXT_SCAN_FLAG_LABELS) if (raw?.[label] === 'review') modes[label] = 'review';
+  return modes;
+}
+
+const getTextScanLabelModes = createTtlMemo(readTextScanLabelModes, ROLLOUT_CACHE_MS, () =>
+  Date.now()
+);
+
+const LABEL_MODE_ERROR_LOG_MS = 5 * 60_000;
+
+/** A failed read is `auto`: the flag lands as it always did rather than a detection going unheld. */
+export async function getTextScanLabelMode(label: TextScanFlagLabel): Promise<TextScanLabelMode> {
+  try {
+    return (await getTextScanLabelModes())[label] ?? 'auto';
+  } catch (error) {
+    // Every scan retries a failed read, so the log is throttled per process.
+    const now = Date.now();
+    if (now - lastLabelModeErrorLogAt >= LABEL_MODE_ERROR_LOG_MS) {
+      lastLabelModeErrorLogAt = now;
+      try {
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'label mode read failed, falling back to auto',
+          label,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => null);
+      } catch {
+        // Logging must not undo the fail-open.
+      }
+    }
+    return 'auto';
   }
 }
 

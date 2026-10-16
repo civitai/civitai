@@ -1246,6 +1246,18 @@ export const updateImageReportStatusByReason = ({
   `;
 };
 
+/** The image's reports for one reason that are not yet actioned. */
+export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT r.id FROM "Report" r
+    JOIN "ImageReport" i ON i."reportId" = r.id
+    WHERE i."imageId" = ${id}
+      AND r.reason = ${reason}::"ReportReason"
+      AND r.status <> 'Actioned'::"ReportStatus"
+  `;
+  return rows.map((r) => r.id);
+};
+
 export const getImageDetail = async ({ id }: GetByIdInput) => {
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
@@ -2370,11 +2382,13 @@ const getAllImagesUncaptured = async (
 
   if (userId && !!reactions?.length) {
     isPersonalized = true; // per-user reaction filter
-    // Use IN subquery - planner can start from reactions (small set per user) and join to images
-    AND.push(Prisma.sql`i.id IN (
+    // An array, not an IN subquery: the planner badly overestimates one user's rows for a rare
+    // reaction type and then walks an id index backwards to fill LIMIT. ARRAY() runs the subquery
+    // first, so the plan always starts from the user's own reactions.
+    AND.push(Prisma.sql`i.id = ANY(ARRAY(
       SELECT ir."imageId" FROM "ImageReaction" ir
       WHERE ir."userId" = ${userId} AND ir.reaction IN (${Prisma.join(reactions)})
-    )`);
+    ))`);
   }
 
   if (!!tools?.length) {
@@ -2970,8 +2984,11 @@ export async function getImagesFromFeedServiceForRest(
       )
     );
     if (!enabled) return undefined;
-    // An `offset|sortAt` cursor belongs to a scroll the search path started; it finishes there.
-    if (String(searchInput.cursor ?? '').includes('|')) return fallBack('cursor:legacy');
+    // An `offset|sortAt` cursor is a scroll the search path started. It was left to finish there,
+    // but 4,000 a day never did: clients keep such cursors for weeks. The mapper reads it as the
+    // website does, the offset inside the set frozen at that minute, and the feed answers the
+    // page; the next cursor it hands out is the feed's own. A cursor past the feed's offset cap
+    // is refused by the mapper and finishes on the search path as before.
     // The feed query turns a zero limit into its default page size.
     if (searchInput.limit < 1) return fallBack('limit:0');
   }

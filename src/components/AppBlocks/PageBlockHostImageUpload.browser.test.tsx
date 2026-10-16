@@ -5,6 +5,7 @@ import type { BlockUploadedImageInfo } from '~/components/AppBlocks/BlockImageUp
 import type { BlockSourceImageInfo } from '~/components/AppBlocks/BlockGenerationSourceUploadModal';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
@@ -304,6 +305,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
       if (!r) throw new Error('no reply yet');
       // EXACTLY the source projection — no imageId / nsfwLevel / contentRating.
       expect(r.payload).toEqual({ requestId, selected: source });
+      expectReplyKeys('OPEN_IMAGE_UPLOAD', 'success', ['selected'], r.payload);
     });
     const sel = (
       replies.last('IMAGE_UPLOAD_RESULT')!.payload as { selected: Record<string, unknown> }
@@ -366,6 +368,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
       const r = replies.last('IMAGE_UPLOAD_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId });
+      expectReplyKeys('OPEN_IMAGE_UPLOAD', 'success', [], r.payload);
     });
     replies.stop();
   });

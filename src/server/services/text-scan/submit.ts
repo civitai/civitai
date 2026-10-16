@@ -3,6 +3,7 @@ import { submitWorkflow } from '@civitai/client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -13,6 +14,8 @@ import {
   textScanEmEntityType,
   type TextScanVariant,
 } from '~/server/services/text-scan/mode';
+import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
+import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -44,6 +47,7 @@ export const TEXT_SCAN_CALLBACK_PATH = '/api/webhooks/text-scan-result';
 const MAX_OUTPUT_TOKENS = 1024;
 // Same window as the retry cron's stuck-Pending timeout (text-moderation-retry.ts).
 const IN_FLIGHT_MINUTES = 30;
+const BACKGROUND_SCAN_CONCURRENCY = 5;
 const MISSING_PROMPT_LOG_SECONDS = 15 * 60;
 
 export function textScanCallbackUrl() {
@@ -61,6 +65,7 @@ export type ScanEntityResult =
         | 'off'
         | 'no-profile'
         | 'missing'
+        | 'not-public'
         | 'too-short'
         | 'unchanged'
         | 'in-flight'
@@ -69,12 +74,18 @@ export type ScanEntityResult =
   | { status: 'submitted'; workflowId: string }
   | { status: 'failed' };
 
+/** Segment 0 keeps the pre-segmentation step name. */
+export function textScanStepName(segment: number) {
+  return segment === 0 ? 'textScan' : `textScan${segment}`;
+}
+
 export function buildTextScanStep({
   system,
   user,
   model,
   labels,
   thinking,
+  segment,
   webSearch = false,
 }: {
   system: string;
@@ -82,6 +93,7 @@ export function buildTextScanStep({
   model: string;
   labels: TextScanLabel[];
   thinking: boolean;
+  segment?: number;
   webSearch?: boolean;
 }) {
   // The generated ChatCompletionMessage type declares only `role`; content is untyped upstream.
@@ -98,7 +110,34 @@ export function buildTextScanStep({
     // Auto tool choice: the model decides whether a name needs looking up.
     ...(webSearch ? { tools: [{ type: 'civitai:web_search' }] } : {}),
   };
-  return { $type: 'chatCompletion', name: 'textScan', input } as ChatCompletionStepTemplate;
+  return {
+    $type: 'chatCompletion',
+    name: textScanStepName(segment ?? 0),
+    ...(segment === undefined ? {} : { metadata: { segment } }),
+    input,
+  } as ChatCompletionStepTemplate;
+}
+
+export function buildTextScanSteps({
+  system,
+  segments,
+  model,
+  labels,
+  thinking,
+  webSearch = false,
+}: {
+  system: string;
+  segments: string[];
+  model: string;
+  labels: TextScanLabel[];
+  thinking: boolean;
+  webSearch?: boolean;
+}) {
+  if (segments.length === 1)
+    return [buildTextScanStep({ system, user: segments[0], model, labels, thinking, webSearch })];
+  return segments.map((user, segment) =>
+    buildTextScanStep({ system, user, model, labels, thinking, webSearch, segment })
+  );
 }
 
 export function textScanContentHash({
@@ -106,20 +145,34 @@ export function textScanContentHash({
   promptIds,
   model,
   thinking,
+  rulesFingerprint,
   variant,
+  segmentBudget,
 }: {
   user: string;
   promptIds: PromptIds;
   model: string;
   thinking: boolean;
+  rulesFingerprint?: string;
   variant?: TextScanVariant;
+  segmentBudget?: { maxInputChars: number; maxSegments: number };
 }) {
   const ids = Object.keys(promptIds)
     .sort()
     .map((key) => `${key}=${promptIds[key]}`)
     .join(',');
+  // Appended only when present, so every existing row's hash is unchanged.
+  const rules = rulesFingerprint ? `\u0000rules=${rulesFingerprint}` : '';
   const tail = variant ? `\u0000${variant}` : '';
-  return hashContent(`${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${tail}`);
+  // Only text over the budget is split, so only its hash may change with the budget: a shorter
+  // text keeps its hash and is not rescanned when the budget changes.
+  const segmenting =
+    segmentBudget && user.length > segmentBudget.maxInputChars
+      ? `\u0000segments=${segmentBudget.maxInputChars}x${segmentBudget.maxSegments}`
+      : '';
+  return hashContent(
+    `${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}${tail}${segmenting}`
+  );
 }
 
 export function textScanExternalId({
@@ -193,6 +246,7 @@ async function clearStaleVerdict({
   for (const label of labels) {
     if (label === 'nsfw') output.nsfw = { level: 'none', reason: NO_TEXT_REASON };
     else if (label === 'poi') output.poi = { detected: false, names: [], reason: NO_TEXT_REASON };
+    else if (label === 'modelRules') output.modelRules = { matched: [] };
     else output[label] = { detected: false, reason: NO_TEXT_REASON };
   }
   const outcome = evaluateTextScan(output, subject.declared, labels);
@@ -277,13 +331,18 @@ export async function scanEntity({
 
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return { status: 'skipped', reason: 'missing' };
+  if (subject.notPublic) return { status: 'skipped', reason: 'not-public' };
   if (subjectTextLength(subject) < (profile.minChars ?? 1)) {
     for (const pass of passes) await clearStaleVerdict({ entityType, entityId, pass, subject });
     return { status: 'skipped', reason: 'too-short' };
   }
 
-  const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
-  const ctx = { entityType, entityId, subject, config, prompts, force };
+  const [config, prompts, modelRules] = await Promise.all([
+    getTextScanConfig(),
+    getActiveTextScanPrompts(),
+    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+  ]);
+  const ctx = { entityType, entityId, subject, config, prompts, modelRules, force };
 
   const [first, ...rest] = passes;
   const result = await submitTextScanPass({ ...ctx, fromRetry, pass: first });
@@ -310,6 +369,7 @@ async function submitTextScanPass({
   subject,
   config,
   prompts,
+  modelRules,
   force,
   fromRetry,
   pass: { mode, labels, variant },
@@ -319,6 +379,7 @@ async function submitTextScanPass({
   subject: TextScanSubject;
   config: Awaited<ReturnType<typeof getTextScanConfig>>;
   prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>;
+  modelRules: Awaited<ReturnType<typeof getModelRulesForPrompt>> | undefined;
   force: boolean;
   fromRetry: boolean;
   pass: TextScanPass;
@@ -330,19 +391,28 @@ async function submitTextScanPass({
       labels,
       subject,
       maxInputChars: config.maxInputChars,
+      modelRules,
+      maxSegments: config.maxSegments,
     });
   } catch (e) {
     if (!(e instanceof MissingTextScanPromptError)) throw e;
     await logMissingPrompts({ entityType, entityId, keys: e.keys });
     return { status: 'skipped', reason: 'missing-prompt' };
   }
+  // A profile with minChars 0 would otherwise submit an empty step.
+  if (!composed.text.trim()) {
+    await clearStaleVerdict({ entityType, entityId, pass: { mode, labels, variant }, subject });
+    return { status: 'skipped', reason: 'too-short' };
+  }
 
   const contentHash = textScanContentHash({
-    user: composed.user,
+    user: composed.text,
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
+    rulesFingerprint: composed.rulesFingerprint,
     variant,
+    segmentBudget: config,
   });
 
   const emEntityType = textScanEmEntityType(entityType, mode, variant);
@@ -400,7 +470,15 @@ async function submitTextScanPass({
     textHash: textScanTextHash(subject),
     inputChars: composed.inputChars,
     inputCut: composed.inputCut,
+    segments: composed.segments.length,
+    scannedChars: composed.scannedChars,
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
+    ...(composed.ruleIds
+      ? { ruleIds: composed.ruleIds, rulesFingerprint: composed.rulesFingerprint }
+      : {}),
+    ...(composed.ruleIds && modelRules
+      ? { literalRuleIds: findLiteralHitsInSubject(subject, modelRules) }
+      : {}),
   };
 
   // Before submit: a content-cache hit can call back before submitWorkflow returns.
@@ -409,6 +487,7 @@ async function submitTextScanPass({
     entityId,
     marker: externalId,
     contentHash,
+    rearmRetries: !fromRetry,
   });
 
   let workflowId: string | undefined;
@@ -421,16 +500,14 @@ async function submitTextScanPass({
         tags: ['text-scan', entityType, mode, ...(variant ? [variant] : [])],
         externalId,
         currencies: [],
-        steps: [
-          buildTextScanStep({
-            system: composed.system,
-            user: composed.user,
-            model: config.model,
-            labels,
-            thinking: config.thinking,
-            webSearch: variant === 'web-search',
-          }),
-        ],
+        steps: buildTextScanSteps({
+          system: composed.system,
+          segments: composed.segments,
+          model: config.model,
+          labels,
+          thinking: config.thinking,
+          webSearch: variant === 'web-search',
+        }),
         callbacks: [
           {
             url: textScanCallbackUrl(),
@@ -479,16 +556,15 @@ async function submitTextScanPass({
     mode,
     ...(variant ? { variant } : {}),
     workflowId,
+    segments: composed.segments.length,
   }).catch(() => null);
   return { status: 'submitted', workflowId };
 }
 
-export function scanEntityInBackground(args: {
-  entityType: TextScanEntityType;
-  entityId: number;
-  force?: boolean;
-}) {
-  scanEntity(args).catch((e) =>
+type BackgroundScanArgs = { entityType: TextScanEntityType; entityId: number; force?: boolean };
+
+function scanEntityOrLog(args: BackgroundScanArgs) {
+  return scanEntity(args).catch((e) =>
     logToAxiom({
       name: 'text-scan',
       type: 'error',
@@ -498,4 +574,30 @@ export function scanEntityInBackground(args: {
       error: (e as Error).message,
     })
   );
+}
+
+export function scanEntityInBackground(args: BackgroundScanArgs) {
+  scanEntityOrLog(args).catch(() => null);
+}
+
+// A publish can date every post on a model at once.
+export function scanEntitiesInBackground(entityType: TextScanEntityType, entityIds: number[]) {
+  limitConcurrency(
+    entityIds.map((entityId) => () => scanEntityOrLog({ entityType, entityId })),
+    BACKGROUND_SCAN_CONCURRENCY
+  ).catch(() => null);
+}
+
+/**
+ * The one place a model's rules scan is queued. Callers decide who is scanned (moderator edits
+ * are not); the profile skips a model that is not public.
+ */
+export function scanModelRules(modelId: number) {
+  scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
+}
+
+/** Every Model scan trigger also checks the rules; both profiles skip a model that is not public. */
+export function scanModelAndRules(modelId: number, { rules = true }: { rules?: boolean } = {}) {
+  scanEntityInBackground({ entityType: 'Model', entityId: modelId });
+  if (rules) scanModelRules(modelId);
 }

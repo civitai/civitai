@@ -115,3 +115,22 @@ export async function withModerators<R extends { userId: number | null }>(rows: 
     moderatorUsername: userId ? byId.get(userId)?.username ?? null : null,
   }));
 }
+
+/**
+ * The most recent `activity` recorded against one entity, and the moderator who did it — "banned by" on
+ * the user report queue. Rides `ModActivity_entityType_entityId_createdAt_idx`. Null when nothing was
+ * recorded, which is not the same as nobody: a ban made before ModActivity existed has no row.
+ */
+export async function lastModActivity(entityType: string, entityId: number, activity: string) {
+  const row = await dbRead
+    .selectFrom('ModActivity as m')
+    .leftJoin('User as u', 'u.id', 'm.userId')
+    .select(['m.userId', 'u.username', 'm.createdAt'])
+    .where('m.entityType', '=', entityType)
+    .where('m.entityId', '=', entityId)
+    .where('m.activity', '=', activity)
+    .orderBy('m.createdAt', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row ? { moderatorId: row.userId, moderator: row.username, at: row.createdAt } : null;
+}

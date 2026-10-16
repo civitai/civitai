@@ -55,6 +55,20 @@ describe('the Users section', () => {
     expect(labelsUnder('Users')).toEqual([['/users/scam-restrictions', 'Scam Restrictions']]);
   });
 
+  it('gives Strike Review its own grant and badge, conferring nothing on /users', () => {
+    applyGrants({ '/users/strike-review': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/users/strike-review')).toBe(true);
+    expect(canAccess(reviewer, '/users')).toBe(false);
+    expect(
+      navForUser(reviewer)
+        .find((l) => l.label === 'Users')
+        ?.children?.map((c) => [c.path, c.label, c.countKey])
+    ).toEqual([['/users/strike-review', 'Strike Review', 'strikeReview']]);
+
+    applyGrants({ '/users': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/users/strike-review')).toBe(false);
+  });
+
   it('leaves Scam Restrictions out of Audit', () => {
     applyGrants({ '/audit/generator-restrictions': ['moderator:reviewer'] });
     expect(labelsUnder('Audit')).toEqual([
@@ -65,14 +79,16 @@ describe('the Users section', () => {
 });
 
 describe('the Models section', () => {
-  it('shows both pages, each under its own grant', () => {
+  it('shows every page, each under its own grant', () => {
     applyGrants({
       '/models/minor-hash-matches': ['moderator:reviewer'],
       '/models/flag-appeals': ['moderator:reviewer'],
+      '/models/held-detections': ['moderator:reviewer'],
     });
     expect(labelsUnder('Models')).toEqual([
       ['/models/minor-hash-matches', 'Minor Hash Matches'],
       ['/models/flag-appeals', 'Model Flag Appeals'],
+      ['/models/held-detections', 'Held Detections'],
     ]);
 
     applyGrants({ '/models/minor-hash-matches': ['moderator:reviewer'] });
@@ -82,6 +98,20 @@ describe('the Models section', () => {
     applyGrants({ '/models/flag-appeals': ['moderator:reviewer'] });
     expect(labelsUnder('Models')).toEqual([['/models/flag-appeals', 'Model Flag Appeals']]);
     expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
+    expect(canAccess(reviewer, '/models/held-detections')).toBe(false);
+
+    applyGrants({ '/models/held-detections': ['moderator:reviewer'] });
+    expect(labelsUnder('Models')).toEqual([['/models/held-detections', 'Held Detections']]);
+    expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
+  });
+
+  it('badges every queue', () => {
+    const models = NAVIGATION.find((n) => n.path === '/models');
+    expect(models?.children?.map((c) => [c.path, c.countKey])).toEqual([
+      ['/models/minor-hash-matches', 'minorHashMatches'],
+      ['/models/flag-appeals', 'modelFlagAppeals'],
+      ['/models/held-detections', 'heldDetections'],
+    ]);
   });
 
   it('is hidden from whoever holds neither page', () => {
@@ -105,10 +135,11 @@ describe('/admin grantable pages', () => {
     );
   });
 
-  it('lists both Models pages as grantable', () => {
+  it('lists every Models page as grantable', () => {
     expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
       '/models/minor-hash-matches',
       '/models/flag-appeals',
+      '/models/held-detections',
     ]);
   });
 });
@@ -116,12 +147,74 @@ describe('/admin grantable pages', () => {
 describe('the text-scan lab', () => {
   it('declares the text-scan lab permissions and pages', () => {
     const ids = PERMISSIONS.map((p) => p.id);
-    expect(ids).toContain('textScan.prompt.publish');
-    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual(['textScan.prompt.publish']);
+    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual([
+      'textScan.prompt.publish',
+      'textScan.modelRules.edit',
+      'textScan.testSets.edit',
+    ]);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
-      ['/text-scan/check', 'Check'],
-      ['/text-scan/prompts', 'Versions'],
+      ['/text-scan/prompts', 'Prompts'],
+      ['/text-scan/model-rules', 'Model rules'],
     ]);
+  });
+
+  it('does not offer the retired Check page on /admin', () => {
+    expect(pageAccessState().paths).not.toContain('/text-scan/check');
+  });
+});
+
+describe('the Model rules history endpoint', () => {
+  it('is gated with the Model rules page', () => {
+    applyGrants({ '/text-scan/model-rules': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(true);
+
+    applyGrants({ '/text-scan/prompts': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/text-scan/model-rules/history')).toBe(false);
+  });
+});
+
+describe('the Feedback section', () => {
+  const feedback = () => NAVIGATION.find((n) => n.path === '/feedback');
+  const platformHref = '/feedback?area=apps-platform&status=new';
+
+  it('keeps one grant, on /feedback, for the queue and its developer-platform view', () => {
+    expect(feedback()?.sharedAccess).toBe(true);
+    expect(feedback()?.children?.map((c) => [c.path, c.countKey])).toEqual([
+      ['/feedback', 'feedbackNew'],
+      [platformHref, 'feedbackAppsPlatformNew'],
+    ]);
+    const { tree, granted } = pageAccessState();
+    expect(tree.filter((n) => n.key.startsWith('/feedback')).map((n) => [n.key, n.kind])).toEqual([
+      ['/feedback', 'page'],
+    ]);
+    expect(Object.keys(granted).filter((k) => k.startsWith('/feedback'))).toEqual(['/feedback']);
+  });
+
+  it('shows both links, counts and all, to whoever holds /feedback, and neither to anyone else', () => {
+    applyGrants({ '/feedback': ['moderator:reviewer'] });
+    expect(labelsUnder('Feedback')).toEqual([
+      ['/feedback', 'General queue'],
+      [platformHref, 'Apps platform (developers)'],
+    ]);
+    expect(canAccess(reviewer, '/feedback')).toBe(true);
+    expect(canAccess(reviewer, '/feedback/12')).toBe(true);
+
+    applyGrants({ '/abuse': ['moderator:reviewer'] });
+    expect(labelsUnder('Feedback')).toBeUndefined();
+    expect(canAccess(reviewer, '/feedback')).toBe(false);
+  });
+
+  it('marks the developer-platform link active on its view and the queue link everywhere else', () => {
+    const links = feedback()?.children ?? [];
+    const [general, platform] = links;
+    const active = (href: string) =>
+      [general, platform].map((l) => isNavLinkActive(l, links, at(href)));
+    expect(active('/feedback?area=apps-platform&status=new')).toEqual([false, true]);
+    expect(active('/feedback?status=new&area=apps-platform&sort=age')).toEqual([false, true]);
+    expect(active('/feedback?status=new')).toEqual([true, false]);
+    expect(active('/feedback?area=apps-platform&status=reviewed')).toEqual([true, false]);
+    expect(active('/feedback/12')).toEqual([true, false]);
+    expect(active('/abuse')).toEqual([false, false]);
   });
 });

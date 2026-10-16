@@ -2,7 +2,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createSchema,
-  installPgliteQueryRaw,
   seedAppBlock,
   seedModel,
   seedModelVersion,
@@ -73,20 +72,6 @@ const manifestG = { targets: [{ slotId: SLOT }], contentRating: 'g' };
 const manifestX = { targets: [{ slotId: SLOT }], contentRating: 'x' };
 
 let db: PGlite;
-
-// Sanity: prove the bridge fn the harness exports matches the inline one used
-// in the mock (keeps the harness export covered + asserts the contract).
-it('bridge: installPgliteQueryRaw reconstructs parameterized SQL', async () => {
-  const tmp = new PGlite();
-  await tmp.query('CREATE TABLE z (a int)');
-  await tmp.query('INSERT INTO z VALUES (7)');
-  const bridge = installPgliteQueryRaw(tmp);
-  const strings = Object.assign(['SELECT a FROM z WHERE a = ', ''], {
-    raw: ['SELECT a FROM z WHERE a = ', ''],
-  }) as unknown as TemplateStringsArray;
-  const rows = (await bridge(strings, 7)) as Array<{ a: number }>;
-  expect(rows).toEqual([{ a: 7 }]);
-});
 
 beforeAll(async () => {
   db = new PGlite();

@@ -12,9 +12,14 @@ import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner
 import { EmptyShopState } from '~/components/CreatorShop/Storefront/EmptyShopState';
 import { ShopHeader } from '~/components/CreatorShop/Storefront/ShopHeader';
 import { StorefrontSections } from '~/components/CreatorShop/Storefront/StorefrontSections';
-import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
+import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  isStorefrontEmpty,
+  useOwnedCosmeticIds,
+} from '~/components/CreatorShop/Storefront/storefront.util';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -49,6 +54,12 @@ function UserShopPage() {
   const { shop, isLoading, isError } = useQueryCreatorShop(user?.id, isModerator && preview);
   const { updateSettings } = useMutateCreatorShop();
   const ownedCosmeticIds = useOwnedCosmeticIds();
+  const features = useFeatureFlags();
+  const servicesEnabled = !!features.creatorServices && !!user?.id;
+  const { offerings: services, isLoading: servicesLoading } = useQueryShopServices(
+    user?.id ?? 0,
+    servicesEnabled
+  );
 
   const isOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
@@ -61,7 +72,13 @@ function UserShopPage() {
 
   const baseUrl = `/user/${username}`;
   const displayName = user?.username ?? username;
-  const isEmpty = !isLoading && (shop?.cosmetics.length ?? 0) === 0;
+  const isEmpty =
+    !isLoading &&
+    isStorefrontEmpty({
+      cosmeticCount: shop?.cosmetics.length ?? 0,
+      activeServiceCount: services.length,
+      servicesEnabled,
+    });
 
   // The header/banners and non-Featured sections are constrained to a max width
   // and centered; the outer wrapper stays full-width so the Featured section can
@@ -101,7 +118,7 @@ function UserShopPage() {
           </Stack>
         </div>
 
-        {isLoading ? (
+        {isLoading || servicesLoading ? (
           <div className={constrained}>
             <Center py="xl">
               <Loader />

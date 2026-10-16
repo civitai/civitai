@@ -129,6 +129,13 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   // its own status event, so it is routinely the newest event on a listing — and must not
   // displace the status event underneath it.
   'rating-change',
+  // Document-store takedown of ONE user-authored shared document. NEUTRAL, not a close
+  // call: it writes nothing in `app_listings` — it changes a row in the app's document
+  // store, in a different database, and records the fact here.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
+  'storage-doc-dismiss',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

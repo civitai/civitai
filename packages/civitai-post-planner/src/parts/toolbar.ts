@@ -43,7 +43,7 @@ function renderWideToolbar(props: ToolbarProps): TemplateResult {
         >${formatRangeLabel(props.loc.view, props.loc.anchor)}${renderLoader(props)}</span
       >
       <span class="spacer"></span>
-      ${renderModelFilter(props)}
+      ${renderModelFilter(props)} ${renderTagFilter(props)}
       <div class="filters">${renderStatusFilters(props)}</div>
       ${renderMatureToggle(props)} ${renderSelectToggle(props)}
     </div>
@@ -76,7 +76,7 @@ function renderNarrowToolbar(props: ToolbarProps): TemplateResult {
       </div>
       ${props.filtersOpen
         ? html`<div class="filters-panel">
-            ${renderModelFilter(props)}
+            ${renderModelFilter(props)} ${renderTagFilter(props)}
             <div class="filters">${renderStatusFilters(props)}</div>
             ${renderMatureToggle(props)} ${renderLegend()}
           </div>`
@@ -89,7 +89,22 @@ function activeFilterCount({ filters, loc }: ToolbarProps): number {
   const changed = (Object.keys(DEFAULT_FILTERS) as (keyof Filters)[]).filter(
     (key) => filters[key] !== DEFAULT_FILTERS[key]
   ).length;
-  return changed + (loc.modelVersionId ? 1 : 0);
+  return changed + (loc.modelVersionId ? 1 : 0) + (loc.tag ? 1 : 0);
+}
+
+function renderTagFilter({ loc, actions }: ToolbarProps): TemplateResult | typeof nothing {
+  if (!loc.tag) return nothing;
+  return html`<span class="tag-filter" aria-label="Tag filter"
+    >#${loc.tag}
+    <button
+      class="plain clear"
+      type="button"
+      aria-label="Clear tag filter"
+      @click=${() => actions.setTag(undefined)}
+    >
+      ✕
+    </button></span
+  >`;
 }
 
 function renderViewSwitcher({ loc, actions }: ToolbarProps): TemplateResult {
@@ -206,6 +221,28 @@ export const toolbarStyles = css`
   }
   .toolbar .spacer {
     flex: 1;
+  }
+  .tag-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--civitai-color-primary);
+    background: color-mix(in srgb, var(--civitai-color-primary) 12%, transparent);
+  }
+  .tag-filter .clear {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    font-size: 11px;
+  }
+  .tag-filter .clear:hover {
+    background: color-mix(in srgb, var(--civitai-color-primary) 20%, transparent);
   }
   .filters {
     display: inline-flex;

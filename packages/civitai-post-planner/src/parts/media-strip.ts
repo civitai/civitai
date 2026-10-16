@@ -1,7 +1,7 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
 import type { PlannerHost, PlannerPost, PlannerPostDetail } from '../host';
 import { renderLightbox } from './lightbox';
-import { eyeIcon, mediaUrl, PG_LEVEL, thumb } from './media';
+import { eyeIcon, isMatureLevel, mediaUrl, thumb } from './media';
 import type { PlannerActions } from './props';
 
 export interface MediaStripProps {
@@ -41,13 +41,13 @@ export function renderMediaStrip(props: MediaStripProps): TemplateResult {
               ? html`<span class="thumb lg"></span>`
               : html`<img
                   class=${blurred ? 'blurred' : ''}
-                  src=${mediaUrl(location, m.url, 192)}
+                  src=${mediaUrl(location, m, 192)}
                   alt=""
                   loading="lazy"
                 />`}
           </button>
           <span class="idx">${i + 1} / ${detail.media.length}</span>
-          ${m.nsfwLevel > PG_LEVEL
+          ${isMatureLevel(m.nsfwLevel)
             ? html`<button
                 class="plain eye"
                 aria-label=${blurred ? 'Show' : 'Hide'}

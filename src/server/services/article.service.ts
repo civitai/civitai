@@ -28,6 +28,7 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -93,6 +94,10 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import {
+  articleAwaitsTextVerdict,
+  isPublicArticle,
+} from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
   computeArticleDerivedNsfwLevel,
@@ -765,7 +770,12 @@ export const getArticleById = async ({
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the
       // field doesn't flow into external webhook / search-index payloads.
-      select: { ...articleDetailSelect, moderatorNsfwLevel: true, scheduledAt: true },
+      select: {
+        ...articleDetailSelect,
+        moderatorNsfwLevel: true,
+        scheduledAt: true,
+        reactions: viewerReactionsSelect(userId),
+      },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
@@ -1070,7 +1080,7 @@ export const upsertArticle = async ({
       }
 
       // Submit for text moderation (non-blocking, fire-and-forget)
-      if (result.content) {
+      if (result.content && isPublicArticle(result)) {
         const textForModeration = [data.title, removeTags(result.content)]
           .filter(Boolean)
           .join(' ');
@@ -1084,6 +1094,7 @@ export const upsertArticle = async ({
               content: textForModeration,
               labels: ['nsfw'],
               recordForReview: true,
+              rearmRetries: true,
             }),
         }).catch((e) => {
           logToAxiom({
@@ -1322,6 +1333,7 @@ export const upsertArticle = async ({
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
         coverId: coverId ?? article.coverId,
+        publication: { status: result.status, scheduledAt: result.scheduledAt },
       },
     });
 
@@ -1362,6 +1374,7 @@ type ArticleContentChangeContext = {
   title: string | null;
   previousContent: string | null;
   coverId: number | null;
+  publication: { status: ArticleStatus; scheduledAt: Date | null };
 };
 
 /**
@@ -1406,7 +1419,14 @@ export async function applyArticleContentChange({
   if (!resolved) {
     const stored = await dbWrite.article.findUnique({
       where: { id },
-      select: { userId: true, title: true, content: true, coverId: true },
+      select: {
+        userId: true,
+        title: true,
+        content: true,
+        coverId: true,
+        status: true,
+        scheduledAt: true,
+      },
     });
     if (!stored) throw throwNotFoundError(`No article with id ${id}`);
     resolved = {
@@ -1414,9 +1434,10 @@ export async function applyArticleContentChange({
       title: stored.title,
       previousContent: stored.content,
       coverId: stored.coverId,
+      publication: { status: stored.status, scheduledAt: stored.scheduledAt },
     };
   }
-  const { ownerId, title, previousContent, coverId } = resolved;
+  const { ownerId, title, previousContent, coverId, publication } = resolved;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1490,7 +1511,8 @@ export async function applyArticleContentChange({
   // orchestrator-wise. If the article's text was emptied out entirely,
   // drop any stale EntityModeration row — otherwise the retry cron would
   // keep re-submitting and `recomputeArticleIngestion` could still read
-  // the old blocked/error state.
+  // the old blocked/error state. A draft waits for the save that makes it public: the
+  // author may still edit it.
   {
     const currentTitle = title ?? '';
     const hasText = articleHasText(currentTitle, content);
@@ -1499,10 +1521,10 @@ export async function applyArticleContentChange({
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
-    } else {
+    } else if (isPublicArticle(publication)) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
-      submitTextModerationOrScan({
+      const submitted = submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
         xguard: () =>
@@ -1512,6 +1534,7 @@ export async function applyArticleContentChange({
             content: textForModeration,
             labels: ['nsfw'],
             recordForReview: true,
+            rearmRetries: true,
           }),
       }).catch((e) => {
         logToAxiom({
@@ -1521,6 +1544,8 @@ export async function applyArticleContentChange({
           articleId: id,
         }).catch();
       });
+      // Otherwise the recompute below can count a verdict for older text and take it live.
+      if (articleAwaitsTextVerdict(publication)) await submitted;
     }
   }
 
@@ -2478,7 +2503,15 @@ export async function rescanArticle({
   const db = await getDbWithoutLag('article', id);
   const article = await db.article.findUnique({
     where: { id },
-    select: { id: true, userId: true, content: true, title: true, coverId: true },
+    select: {
+      id: true,
+      userId: true,
+      content: true,
+      title: true,
+      coverId: true,
+      status: true,
+      scheduledAt: true,
+    },
   });
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -2559,7 +2592,7 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  if (article.content) {
+  if (article.content && isPublicArticle(article)) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');
@@ -2576,6 +2609,7 @@ export async function rescanArticle({
           labels: ['nsfw'],
           recordForReview: true,
           forceRescan: true,
+          rearmRetries: true,
         }),
     }).catch((e) => {
       logToAxiom({

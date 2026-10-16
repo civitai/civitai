@@ -11,8 +11,10 @@ import {
   seededRng,
   utcDayKey,
 } from '@civitai/shared/post-scheduling';
+import * as z from 'zod';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { formatDate } from '~/utils/date-helpers';
+import type { SharedSettings } from './batch-composer.store';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
@@ -41,6 +43,17 @@ export function expandTitleTemplate(template: string, tokens: TitleTokens): stri
 
 export function defaultTitleTemplate(hasModel: boolean): string {
   return hasModel ? '{model} — {n}' : '';
+}
+
+export type PromotedVersion = { id: number; model: string; version: string };
+
+/** The `{model}` / `{version}` names of a version picked in the composer's resource modal. */
+export function promotedFromResource(resource: {
+  id: number;
+  name: string;
+  model: { name: string };
+}): PromotedVersion {
+  return { id: resource.id, model: resource.model.name, version: resource.name };
 }
 
 export function groupIntoPosts<T>(items: T[], perPost: number): T[][] {
@@ -324,4 +337,123 @@ export function describeServerError(message: string): string {
   if (/minutes from now|months out/i.test(message))
     return `Some dates fell outside the ${POST_MINIMUM_SCHEDULE_MINUTES}-minute to 3-month window. Nothing was created.`;
   return message;
+}
+
+export type ComposerDraft = {
+  media: UploadedMedia[];
+  imagesPerPost: number;
+  shared: SharedSettings;
+  presetId: number | null;
+  promotedNames: { model: string; version: string } | null;
+  schedule: ScheduleSettings;
+  seed: number;
+  fixedDates: Date[] | null;
+};
+
+const draftMediaSchema = z
+  .object({
+    status: z.literal('added'),
+    url: z.string().min(1),
+    index: z.number(),
+    name: z.string(),
+    mimeType: z.string(),
+    type: z.enum(['image', 'video']),
+    metadata: z.record(z.string(), z.unknown()),
+    meta: z.record(z.string(), z.unknown()).optional(),
+    generationWorkflowId: z.string().optional(),
+  })
+  .passthrough();
+
+const namedOptionSchema = z.object({ id: z.number(), name: z.string() });
+
+const serializedDraftSchema = z.object({
+  version: z.literal(1),
+  media: z.array(draftMediaSchema),
+  imagesPerPost: z.number(),
+  shared: z.object({
+    promotedVersionId: z.number().nullable(),
+    resources: z.array(z.object({ id: z.number() }).passthrough()),
+    tools: z.array(namedOptionSchema),
+    techniques: z.array(namedOptionSchema),
+    tags: z.array(z.string()),
+    titleTemplate: z.string(),
+  }),
+  presetId: z.number().nullable(),
+  promotedNames: z.object({ model: z.string(), version: z.string() }).nullable(),
+  schedule: z.object({
+    mode: z.enum(['every', 'spread']),
+    start: z.iso.datetime(),
+    every: z.number(),
+    unit: z.enum(['minutes', 'hours', 'days']),
+    from: z.iso.datetime(),
+    to: z.iso.datetime(),
+  }),
+  seed: z.number(),
+  fixedDates: z.array(z.iso.datetime()).nullable(),
+});
+
+export type SerializedDraft = z.infer<typeof serializedDraftSchema>;
+
+/** JSON-safe form of the draft; only completed uploads are kept, since a failed or blocked file's
+ *  `url` is a blob URL that dies with the page. */
+export function serializeDraft(draft: ComposerDraft): SerializedDraft {
+  return {
+    version: 1,
+    media: draft.media
+      .filter((item) => item.status === 'added')
+      .map(({ objectUrl: _objectUrl, ...item }) => item as SerializedDraft['media'][number]),
+    imagesPerPost: draft.imagesPerPost,
+    shared: draft.shared,
+    presetId: draft.presetId,
+    promotedNames: draft.promotedNames,
+    schedule: {
+      ...draft.schedule,
+      start: draft.schedule.start.toISOString(),
+      from: draft.schedule.from.toISOString(),
+      to: draft.schedule.to.toISOString(),
+    },
+    seed: draft.seed,
+    fixedDates: draft.fixedDates?.map((date) => date.toISOString()) ?? null,
+  };
+}
+
+/** Anything unreadable is dropped rather than repaired; a schedule that has already started goes
+ *  back to the defaults so the composer never reopens on dates in the past. */
+export function parseDraft(raw: unknown, now: Date): ComposerDraft | null {
+  const parsed = serializedDraftSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const { data } = parsed;
+  const schedule: ScheduleSettings = {
+    ...data.schedule,
+    start: new Date(data.schedule.start),
+    from: new Date(data.schedule.from),
+    to: new Date(data.schedule.to),
+  };
+  const earliest = defaultScheduleStart(now);
+  const stale = schedule.mode === 'every' ? schedule.start < earliest : schedule.from < earliest;
+  const fixedDates = data.fixedDates?.map((date) => new Date(date)) ?? null;
+  return {
+    media: data.media.map((item) => ({ ...item, objectUrl: '' } as unknown as UploadedMedia)),
+    imagesPerPost: data.imagesPerPost,
+    shared: data.shared as SharedSettings,
+    presetId: data.presetId,
+    promotedNames: data.promotedNames,
+    schedule: stale ? defaultScheduleSettings(now) : schedule,
+    seed: data.seed,
+    fixedDates:
+      !stale && fixedDates?.length && fixedDates.every((date) => date >= earliest)
+        ? fixedDates
+        : null,
+  };
+}
+
+export function isEmptyDraft(draft: ComposerDraft): boolean {
+  return (
+    !draft.media.length &&
+    !draft.promotedNames &&
+    !draft.shared.resources.length &&
+    !draft.shared.tools.length &&
+    !draft.shared.techniques.length &&
+    !draft.shared.tags.length
+  );
 }

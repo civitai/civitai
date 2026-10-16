@@ -13,6 +13,21 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
     'It is suspended, so you have no sandbox tools: ask the user to press Resume. Its files are kept.',
 };
 
+/** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */
+export const APP_ASSISTANT_RULES = [
+  'App Assistant rules (these come after the rules above and win where they differ):',
+  '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',
+  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
+  '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
+  '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
+  '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+].join('\n');
+
+/** The chat's built-in rules, then App Assistant's. */
+export function buildAssistantSystemPrompt(defaults: string): string {
+  return `${defaults}\n\n${APP_ASSISTANT_RULES}`;
+}
+
 /** What the page tells the assistant before every reply. */
 export function buildAssistantInstructions({
   sandbox,

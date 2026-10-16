@@ -72,7 +72,7 @@
     },
     "auth": {
       "type": "string",
-      "description": "Which credential the host hands the block: \"block-token\" (default when omitted) is the block-scoped JWT; \"oauth\" asks for an opaque OAuth access token for the block's own OauthClient, which ordinary /api/v1 routes accept as a viewer bearer. Minting it is gated on a server flag that is not generally enabled, and also requires a signed-in viewer and a declared \"user:read:self\" scope; when any of those is unmet the host hands back a block JWT instead of failing, so branch on the token kind the host reports rather than on this field. An OAuth token is refused by the postMessage bridge procedures, which verify a block JWT only, and a manifest declaring \"oauth\" alongside any \"apps:storage:*\" scope is rejected by manifest validation.",
+      "description": "Which credential the host hands the block: \"block-token\" (default when omitted) is the block-scoped JWT; \"oauth\" asks for an opaque OAuth access token for the block's own OauthClient, which ordinary /api/v1 routes accept as a viewer bearer. Minting it is gated on a server flag that is not generally enabled, and also requires a signed-in viewer and a declared \"user:read:self\" scope; when any of those is unmet the host hands back a block JWT instead of failing, so branch on the token kind the host reports rather than on this field. An OAuth token is refused by the postMessage bridge procedures, which verify a block JWT only, and a manifest declaring \"oauth\" alongside \"apps:storage\" or any \"apps:storage:*\" scope is rejected by manifest validation.",
       "enum": ["block-token", "oauth"]
     },
     "trustTier": {
@@ -96,6 +96,8 @@
           "apps:storage:write",
           "apps:storage:shared:read",
           "apps:storage:shared:write",
+          "apps:storage",
+          "apps:storage:publish",
           "collections:read:self",
           "collections:write:self",
           "collections:read:private",
@@ -108,7 +110,7 @@
     },
     "scopeJustifications": {
       "type": "object",
-      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `goods:purchase:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `posts:write:self`, `apps:store:items:write`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
+      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `goods:purchase:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `apps:storage:publish`, `posts:write:self`, `apps:store:items:write`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,
@@ -219,7 +221,7 @@
         },
         "buzzBudgetPerGen": {
           "type": "integer",
-          "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost — e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` — no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with a 10 Buzz default, which is below almost any real generation. Server-clamped to the platform per-gen cap (1000 today), so a generous value is safe. This bounds ONE generation only — cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
+          "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost — e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` — no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with the platform default budget. Server-clamped to the platform per-call cap, so a generous value is safe. The current default and cap are listed in the App Blocks developer docs (https://developer.civitai.com/apps). This bounds ONE generation only — cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
           "exclusiveMinimum": 0
         }
       }
@@ -368,6 +370,154 @@
                   }
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; and requesting either scope with nothing here for it to reach is rejected. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
+      "additionalProperties": false,
+      "required": ["collections"],
+      "properties": {
+        "collections": {
+          "type": "object",
+          "description": "Map of collection name → declaration. At least 1 and at most 16 collections. A collection name is lowercase snake_case: a letter, then up to 31 of a-z, 0-9 or _. Renaming a collection, or changing its visibility, is a NEW collection: the old one's documents are not carried over.",
+          "minProperties": 1,
+          "maxProperties": 16,
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,31}$": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["visibility"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "description": "\"docs\" (the default): documents with app-chosen or server-assigned keys that can be updated in place. \"log\": append-only entries with server-assigned keys, never updated, trimmed to `maxEntries` per key space. RESERVED: civitai.com refuses \"log\" until log collections are enabled, so declare \"docs\" (or omit `kind`).",
+                  "enum": ["docs", "log"]
+                },
+                "visibility": {
+                  "type": "string",
+                  "description": "Who can read the collection. \"private\": a separate key space per viewer — only that viewer reads or writes their documents. \"shared\": one key space for the whole app — every viewer of the app reads it, including signed-out viewers. Cannot be changed later: declare a new collection instead.",
+                  "enum": ["private", "shared"]
+                },
+                "write": {
+                  "type": "string",
+                  "description": "Shared collections only, and REQUIRED on them. Who may create, update and delete documents. \"own\": eligible signed-in viewers create documents, and only a document's author updates or deletes it. \"anyone\": eligible signed-in viewers may update or delete any document — RESERVED: civitai.com refuses \"anyone\" until it is enabled. \"none\": nobody creates, updates or deletes documents — viewers may only increment the declared `counters` and set the declared `marks`, and incrementing a counter on a document that does not exist creates an empty one authored by no viewer; a \"none\" collection must declare at least one counter or mark. \"owner\": only the app owner writes documents; viewers can still mark and count. Only \"own\" and \"anyone\" require the `apps:storage:publish` scope. RESERVED: civitai.com refuses \"owner\" until owner-written documents are enabled. Available today: \"own\" and \"none\".",
+                  "enum": ["own", "anyone", "owner", "none"]
+                },
+                "counters": {
+                  "type": "array",
+                  "description": "Shared collections only. Names of the counters each document carries — atomic tallies the app increments (for example plays). At most 8 distinct names, each lowercase snake_case: a letter, then up to 31 of a-z, 0-9 or _. A counter may not share a name with a mark on the same collection, or with the built-in `report` mark.",
+                  "maxItems": 8,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                    "not": { "enum": ["report"] }
+                  }
+                },
+                "marks": {
+                  "type": "array",
+                  "description": "Shared collections only. Names of the per-user marks a viewer can set on a document (for example vote) — at most one of each per viewer per document. A reader sees each mark's count and whether THEY set it, never who else did. At most 8 distinct names, each lowercase snake_case: a letter, then up to 31 of a-z, 0-9 or _. `report` is built in on every shared collection and must NOT be declared. A mark may not share a name with a counter on the same collection.",
+                  "maxItems": 8,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                    "not": { "enum": ["report"] }
+                  }
+                },
+                "indexes": {
+                  "type": "object",
+                  "description": "Fields of a document's `data` the app can filter and sort by, as a map of field PATH → type. A path is 1 to 3 segments joined by `.` (for example status, datasetId or meta.round), each a letter followed by up to 31 letters, digits or _; a field whose own name contains `.` cannot be indexed. At most 4 indexes. Types: \"string\" (values up to 128 bytes), \"number\", \"boolean\", \"time\". `key`, `createdAt` and `updatedAt` are built-in sort keys and cannot be index names. Changing an index's type is not supported: remove it and add one under a new name.",
+                  "maxProperties": 4,
+                  "additionalProperties": false,
+                  "properties": {
+                    "key": false,
+                    "createdAt": false,
+                    "updatedAt": false
+                  },
+                  "patternProperties": {
+                    "^[A-Za-z][A-Za-z0-9_]{0,31}(\\.[A-Za-z][A-Za-z0-9_]{0,31}){0,2}$": {
+                      "type": "string",
+                      "enum": ["string", "number", "boolean", "time"]
+                    }
+                  }
+                },
+                "showAuthor": {
+                  "type": "boolean",
+                  "description": "Shared collections only. When true, readers see each viewer-authored document's author USERNAME. Default false: readers learn only whether they wrote a document themselves. The numeric user id is never exposed either way."
+                },
+                "ttlSeconds": {
+                  "type": "integer",
+                  "description": "RESERVED — civitai.com refuses this field until expiring documents are enabled, so do not declare it yet. Intended meaning: the default lifetime of a document in this collection, in seconds. The bounds (60 to 31536000, i.e. one minute to 365 days) are provisional and may change before the field is enabled.",
+                  "minimum": 60,
+                  "maximum": 31536000
+                },
+                "maxEntries": {
+                  "type": "integer",
+                  "description": "RESERVED — log collections are refused by civitai.com until enabled, so this field cannot be used yet. Intended meaning, for `kind` \"log\" only: the most entries kept per key space, the oldest trimmed beyond it, from 1 to 10000 (omitted means 10000). The default is provisional and may change before log collections are enabled.",
+                  "minimum": 1,
+                  "maximum": 10000
+                },
+                "dailyWritesPerAuthor": {
+                  "type": "integer",
+                  "description": "RESERVED — civitai.com refuses this field until per-collection write budgets are enabled, so do not declare it yet. Intended meaning: for a shared collection that viewers write (`write` \"own\" or \"anyone\"; refused with \"owner\" or \"none\"), the per-viewer daily budget for creating and updating documents in this collection in place of the platform default, from 1 to 1000, shown to the moderator at review. The bounds are provisional and may change before the field is enabled.",
+                  "minimum": 1,
+                  "maximum": 1000
+                }
+              },
+              "allOf": [
+                {
+                  "$comment": "A shared collection must state its write policy; a private one carries none of the shared-only fields.",
+                  "if": {
+                    "required": ["visibility"],
+                    "properties": { "visibility": { "const": "shared" } }
+                  },
+                  "then": { "required": ["write"] },
+                  "else": {
+                    "properties": {
+                      "write": false,
+                      "counters": false,
+                      "marks": false,
+                      "showAuthor": false,
+                      "dailyWritesPerAuthor": false
+                    }
+                  }
+                },
+                {
+                  "$comment": "maxEntries belongs to log collections only (kind defaults to docs).",
+                  "if": {
+                    "required": ["kind"],
+                    "properties": { "kind": { "const": "log" } }
+                  },
+                  "else": { "properties": { "maxEntries": false } }
+                },
+                {
+                  "$comment": "No viewer authors documents in a write:\"owner\" or write:\"none\" collection, so it has no per-author budget.",
+                  "if": {
+                    "required": ["write"],
+                    "properties": { "write": { "enum": ["owner", "none"] } }
+                  },
+                  "then": { "properties": { "dailyWritesPerAuthor": false } }
+                },
+                {
+                  "$comment": "A write:\"none\" collection is written only through counters and marks, so it must declare at least one.",
+                  "if": {
+                    "required": ["write"],
+                    "properties": { "write": { "const": "none" } }
+                  },
+                  "then": {
+                    "anyOf": [
+                      { "required": ["counters"], "properties": { "counters": { "minItems": 1 } } },
+                      { "required": ["marks"], "properties": { "marks": { "minItems": 1 } } }
+                    ]
+                  }
+                }
+              ]
             }
           }
         }

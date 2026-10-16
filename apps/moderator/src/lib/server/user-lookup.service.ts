@@ -111,6 +111,7 @@ export type UserScores = {
   articles: number | null;
   reportsAgainst: number | null;
   reportsActioned: number | null;
+  staffAwarded: number | null;
 };
 
 export type UserLookupResult = {
@@ -571,6 +572,7 @@ async function getScores(userId: number): Promise<UserScores | null> {
     articles: at('articles'),
     reportsAgainst: at('reportsAgainst'),
     reportsActioned: at('reportsActioned'),
+    staffAwarded: at('staffAwarded'),
   };
 }
 

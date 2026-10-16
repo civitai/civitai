@@ -8,7 +8,7 @@ import type {
   PromptEnhancementStepTemplate,
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type {
   ImageGenStepTemplate as OrchestrationImageGenStepTemplate,
   PreprocessVideoStepTemplate,

@@ -418,17 +418,19 @@ export const getModel3DsInfinite = async ({
     // returned every status (including published). The ownership check
     // also required `userId === user.id`, but the profile page sends
     // `username` (not `userId`), so self-view never qualified for drafts.
-    if (statuses?.length) {
-      AND.push({ status: { in: statuses } });
-    } else if (status) {
-      AND.push({ status });
+    const isOwner =
+      !!user &&
+      ((!!userId && userId === user.id) ||
+        (!!username && !!user.username && username === user.username));
+    const canSeeDrafts = isModerator || isOwner;
+    const requestedStatuses = statuses?.length ? statuses : status ? [status] : undefined;
+
+    if (requestedStatuses) {
+      AND.push({
+        status: canSeeDrafts ? { in: requestedStatuses } : Model3DStatus.Published,
+      });
     } else {
-      const isOwner =
-        !!user &&
-        ((!!userId && userId === user.id) ||
-          (!!username && !!user.username && username === user.username));
       const wantDrafts = includeDrafts ?? false;
-      const canSeeDrafts = isModerator || isOwner;
 
       if (wantDrafts && canSeeDrafts) {
         AND.push({ status: { in: [Model3DStatus.Draft, Model3DStatus.Unpublished] } });

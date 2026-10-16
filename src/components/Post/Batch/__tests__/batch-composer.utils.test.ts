@@ -15,10 +15,13 @@ import {
   fixSpacing,
   generateBatchDates,
   groupIntoPosts,
+  isEmptyDraft,
+  parseDraft,
+  serializeDraft,
   shuffle,
   toBatchImage,
 } from '~/components/Post/Batch/batch-composer.utils';
-import type { UploadedMedia } from '~/components/Post/Batch/batch-composer.utils';
+import type { ComposerDraft, UploadedMedia } from '~/components/Post/Batch/batch-composer.utils';
 
 const date = (iso: string) => new Date(iso);
 
@@ -255,5 +258,109 @@ describe('describeServerError', () => {
     ).toContain('too close together');
     expect(describeServerError('Post 1 must be at least 10 minutes from now.')).toContain('window');
     expect(describeServerError('Something else')).toBe('Something else');
+  });
+});
+
+describe('promotedFromResource', () => {
+  it('takes the model and version names off a picked resource', async () => {
+    const { promotedFromResource } = await import('../batch-composer.utils');
+    expect(promotedFromResource({ id: 42, name: 'v2.0', model: { name: 'Neon Noir' } })).toEqual({
+      id: 42,
+      model: 'Neon Noir',
+      version: 'v2.0',
+    });
+    expect(
+      expandTitleTemplate('{model} {version} — {n}', {
+        n: 1,
+        total: 1,
+        ...promotedFromResource({ id: 42, name: 'v2.0', model: { name: 'Neon Noir' } }),
+        date: date('2026-10-07T15:07:00Z'),
+      })
+    ).toBe('Neon Noir v2.0 — 1');
+  });
+});
+
+describe('draft serialisation', () => {
+  const now = date('2026-10-07T12:00:00Z');
+  const media = (url: string, status: UploadedMedia['status'] | 'error') =>
+    ({
+      status,
+      url,
+      index: 1,
+      name: `${url}.png`,
+      mimeType: 'image/png',
+      type: 'image',
+      objectUrl: `blob:${url}`,
+      metadata: { width: 10, height: 20, hash: 'h' },
+      meta: { prompt: 'x' },
+    } as unknown as UploadedMedia);
+  const draft = (): ComposerDraft => ({
+    media: [media('a', 'added'), media('b', 'added')],
+    imagesPerPost: 2,
+    shared: {
+      promotedVersionId: 42,
+      resources: [],
+      tools: [{ id: 1, name: 'Comfy' }],
+      techniques: [],
+      tags: ['anime'],
+      titleTemplate: '{model} — {n}',
+    },
+    presetId: 3,
+    promotedNames: { model: 'Neon Noir', version: 'v2.0' },
+    schedule: {
+      mode: 'every',
+      start: date('2026-10-08T15:00:00Z'),
+      every: 4,
+      unit: 'hours',
+      from: date('2026-10-08T15:00:00Z'),
+      to: date('2026-11-07T15:00:00Z'),
+    },
+    seed: 7,
+    fixedDates: [date('2026-10-08T15:07:00Z'), date('2026-10-08T19:07:00Z')],
+  });
+
+  it('round-trips through JSON with its dates intact and no blob URLs', () => {
+    const serialized = JSON.parse(JSON.stringify(serializeDraft(draft())));
+    expect(JSON.stringify(serialized)).not.toContain('blob:');
+    const restored = parseDraft(serialized, now);
+    expect(restored).toEqual({
+      ...draft(),
+      media: draft().media.map((item) => ({ ...item, objectUrl: '' })),
+    });
+  });
+
+  it('keeps only completed uploads', () => {
+    const serialized = serializeDraft({
+      ...draft(),
+      media: [media('a', 'added'), media('b', 'error')],
+    });
+    expect(serialized.media.map((item) => item.url)).toEqual(['a']);
+  });
+
+  it('drops a schedule and fixed dates that have already started', () => {
+    const restored = parseDraft(serializeDraft(draft()), date('2026-10-08T16:00:00Z'));
+    expect(restored?.schedule.start.getTime()).toBeGreaterThan(
+      date('2026-10-08T16:00:00Z').getTime()
+    );
+    expect(restored?.fixedDates).toBeNull();
+    expect(restored?.media).toHaveLength(2);
+  });
+
+  it('rejects anything it cannot read', () => {
+    expect(parseDraft(undefined, now)).toBeNull();
+    expect(parseDraft({ version: 2 }, now)).toBeNull();
+    expect(parseDraft({ ...serializeDraft(draft()), media: [{ url: 'a' }] }, now)).toBeNull();
+  });
+
+  it('treats a draft with nothing in it as empty', () => {
+    expect(isEmptyDraft(draft())).toBe(false);
+    expect(
+      isEmptyDraft({
+        ...draft(),
+        media: [],
+        promotedNames: null,
+        shared: { ...draft().shared, tools: [], tags: [] },
+      })
+    ).toBe(true);
   });
 });

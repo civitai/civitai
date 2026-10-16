@@ -64,6 +64,8 @@ const reports = [
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
       ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -89,6 +91,8 @@ const reports = [
       ReportEntity.Challenge,
       ReportEntity.Announcement,
       ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -115,6 +119,8 @@ const reports = [
       ReportEntity.Challenge,
       ReportEntity.Announcement,
       ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -173,9 +179,15 @@ const reports = [
       ReportEntity.Challenge,
       ReportEntity.Announcement,
       ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
 ];
+
+/** The reasons offered for an entity, in display order. */
+export const reportOptionsFor = (entityType: ReportEntity) =>
+  reports.filter(({ availableFor }) => availableFor.includes(entityType));
 
 const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
 const SEND_REPORT_ID = 'sending-report';
@@ -383,8 +395,7 @@ export default function ReportModal({
               // label="Report reason"
             >
               <Stack pb="xs">
-                {reports
-                  .filter(({ availableFor }) => availableFor.includes(entityType))
+                {reportOptionsFor(entityType)
                   .filter((item) => {
                     if (entityType === ReportEntity.Model) {
                       if (item.reason === ReportReason.Claim) return data?.userId !== -1;

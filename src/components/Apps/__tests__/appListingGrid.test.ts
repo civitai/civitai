@@ -6,7 +6,6 @@ import {
   LISTING_GRID_COLUMN_STEPS,
   LISTING_GRID_GUTTER,
   LISTING_GRID_SPAN,
-  LISTING_STORE_CONTAINER_SIZE,
   listingCardWidthAt,
   listingGridColumnsAt,
   MANTINE_BREAKPOINT_PX,
@@ -55,16 +54,6 @@ describe('LISTING_GRID_SPAN — the legacy breakpoint spans the narrow ladder is
 
   test('the span set is exactly the five expected breakpoints', () => {
     expect(Object.keys(LISTING_GRID_SPAN).sort()).toEqual(['base', 'lg', 'md', 'sm', 'xl']);
-  });
-});
-
-describe('LISTING_STORE_CONTAINER_SIZE', () => {
-  test('the store container is the ULTRAWIDE apps-page width (2560)', () => {
-    // Moved 1600 → 1920 by the full-width pass and 1920 → 2560 by the ultrawide
-    // pass. The number itself is single-sourced from `appsPageWidths.ts`; the
-    // container/ladder arithmetic is pinned in `__tests__/appsPageWidths.test.ts`.
-    expect(LISTING_STORE_CONTAINER_SIZE).toBe(2560);
-    expect(LISTING_STORE_CONTAINER_SIZE).toBe(APPS_PAGE_CONTAINER_WIDTH);
   });
 });
 

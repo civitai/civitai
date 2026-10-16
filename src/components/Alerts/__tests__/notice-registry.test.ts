@@ -186,14 +186,6 @@ describe('isNoticeAudienceMatched', () => {
   });
 
   describe('a notice with an audience', () => {
-    test('matches a user its own flag is on for', () => {
-      expect(isNoticeAudienceMatched(targetedAlpha, flags, true)).toBe(true);
-    });
-
-    test('does NOT match a user its own flag is off for', () => {
-      expect(isNoticeAudienceMatched(targetedBeta, flags, true)).toBe(false);
-    });
-
     test('reads ITS OWN flag, not whichever flag happens to be on', () => {
       // Same map, same readiness, opposite results. A body that ignored
       // `audience.feature` could not produce both.

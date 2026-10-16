@@ -21,7 +21,7 @@ import type {
   Wan30ImageToVideoInput,
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -136,7 +136,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
     quantity: data.quantity ?? 1,
     seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
-    frameRate: 24,
+    fps: 24,
   };
 
   // `wanVersion` (the branch tag) and the backend-ecosystem lookup agree by
@@ -175,7 +175,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
         input: removeEmpty({
           ...baseInput,
           provider: 'comfy' as const,
-          frameRate: 12,
+          fps: 12,
           width: dims?.width,
           height: dims?.height,
           duration: data.duration ?? 5,
@@ -208,7 +208,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
         aspectRatio: (hasImages
           ? getImageAspectRatio(data.images, v225bAspectRatios)
           : data.aspectRatio?.value) as Wan225bFalTextToVideoInput['aspectRatio'],
-        enablePromptExpansion: false,
+        enhancePrompt: false,
         shift: data.shift,
         numInferenceSteps: data.steps,
         interpolatorModel: data.interpolatorModel,
@@ -234,7 +234,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
         aspectRatio: (hasImages
           ? getImageAspectRatio(data.images, v25AspectRatios)
           : data.aspectRatio?.value) as Wan25FalTextToVideoInput['aspectRatio'],
-        enablePromptExpansion: false,
+        enhancePrompt: false,
       };
       return [
         {
@@ -247,7 +247,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
     }
 
     // v2.7 video (WanImage27 routes to wan-image.handler).
-    // Per fal spec: cfgScale, steps, frameRate, loras are NOT supported for v2.7.
+    // Per fal spec: cfgScale, steps, fps, loras are NOT supported for v2.7.
     case 'v2.7': {
       const v27Base = {
         engine: 'wan' as const,
@@ -311,7 +311,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
               endImage,
               duration,
               negativePrompt,
-              enablePromptExpansion: data.enablePromptEnhancer,
+              enhancePrompt: data.enablePromptEnhancer,
             }) as Wan27FalImageToVideoInput,
           },
         ];
@@ -327,7 +327,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
             aspectRatio,
             duration,
             negativePrompt,
-            enablePromptExpansion: data.enablePromptEnhancer,
+            enhancePrompt: data.enablePromptEnhancer,
           }) as Wan27FalTextToVideoInput,
         },
       ];
@@ -343,7 +343,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
         negativePrompt: data.negativePrompt,
         duration: data.duration,
         resolution: data.resolution,
-        enablePromptExpansion: data.enablePromptEnhancer,
+        enhancePrompt: data.enablePromptEnhancer,
         usePrime: data.usePrime,
         seed: data.seed,
       };

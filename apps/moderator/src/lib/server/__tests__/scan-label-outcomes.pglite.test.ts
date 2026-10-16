@@ -13,6 +13,13 @@ import type { BlockDeps, BlockImageArgs } from '../scan-label.service';
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
+vi.mock('../removal-hold', () => ({
+  // No approved appeals here; the hold itself is covered by image-removal-confirmation.pglite.test.ts.
+  holdRemovals: vi.fn(async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  })),
+}));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -29,7 +36,13 @@ const { isModerationBlocked } = await import('../image-moderation.service');
 
 const noop = () => vi.fn(async (_args: BlockImageArgs) => undefined);
 const deps = (block: BlockDeps['block'] = noop()): BlockDeps => ({ block, isModerationBlocked });
-const { getQuotaReport, setQuota } = await import('../scan-label-metrics.service');
+const { getQuotaReport, removeFromRoster, setQuota, SCAN_LABEL_ROLE } = await import(
+  '../scan-label-metrics.service'
+);
+const busted = () => ({ invalidateSession: vi.fn(async (_userId: number) => undefined) });
+
+const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
+const KEEP = { block: false } as const;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const migration = (name: string) =>
@@ -46,14 +59,21 @@ let pg: PGlite;
 beforeEach(async () => {
   pg = await PGlite.create();
   await pg.exec(`
-    CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
+    CREATE TABLE "User" (
+      "id" INTEGER PRIMARY KEY, "username" TEXT, "isModerator" BOOLEAN NOT NULL DEFAULT true
+    );
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "pHash" BIGINT,
       "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "metadata" JSONB
     );
+    CREATE TABLE "OauthClient" ("id" TEXT PRIMARY KEY);
   `);
   await pg.exec(migration('20261022130000_scan_label_queue'));
   await pg.exec(migration('20261022140000_scan_label_outcomes'));
+  await pg.exec(migration('20261023130000_scan_label_reasons_copy'));
+  await pg.exec(migration('20260626120000_add_user_roles_and_oauth_access'));
+  await pg.exec(migration('20260630140000_add_role_table'));
+  await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:scan-labels')`);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
 });
 
@@ -76,7 +96,7 @@ async function seedItem(imageId: number): Promise<number> {
 
 const at = (iso: string) => new Date(iso);
 const vote = (itemId: number, userId: number, block: boolean, when = '2026-10-13T10:00:00Z') =>
-  castVote({ itemId, userId, block, msOnItem: 1000 }, at(when));
+  castVote({ itemId, userId, choice: block ? BLOCK : KEEP, msOnItem: 1000 }, at(when));
 const item = async (id: number) =>
   (await pg.query<Record<string, unknown>>(`SELECT * FROM "ScanLabelItem" WHERE id = $1`, [id]))
     .rows[0];
@@ -268,6 +288,38 @@ describe('applyMajorityBlocks', () => {
   });
 });
 
+describe('block reasons', () => {
+  it('stores the reason and comment with a block vote', async () => {
+    const it1 = await seedItem(1);
+    await castVote(
+      {
+        itemId: it1,
+        userId: 11,
+        choice: { block: true, reason: 'other', reasonComment: 'self-harm' },
+        msOnItem: 1,
+      },
+      at('2026-10-13T10:00:00Z')
+    );
+    const { rows } = await pg.query(`SELECT "reason", "reasonComment" FROM "ScanLabelVote"`);
+    expect(rows).toEqual([{ reason: 'other', reasonComment: 'self-harm' }]);
+  });
+
+  it.each([
+    ['a block with no reason', `TRUE, NULL, NULL`],
+    ['a keep vote with a reason', `FALSE, 'real-person', NULL`],
+    ['an unknown reason', `TRUE, 'made-up', NULL`],
+    ['"other" with no comment', `TRUE, 'other', '  '`],
+  ])('the database refuses %s', async (_, values) => {
+    const it1 = await seedItem(1);
+    await expect(
+      pg.query(
+        `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block", "reason", "reasonComment")
+         VALUES (${it1}, 11, ${values})`
+      )
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+});
+
 describe('quota', () => {
   it('treats a day with no votes as a day off and a short day as a miss', () => {
     expect(quotaStatus(0, 50, true, true)).toBe('off');
@@ -280,9 +332,12 @@ describe('quota', () => {
 
   it('reports each roster moderator per UTC day', async () => {
     await pg.exec(`INSERT INTO "User" VALUES (1, 'ana'), (2, 'bo'), (3, 'cy')`);
-    expect(await setQuota({ userId: 1, dailyVotes: 50, active: true, updatedBy: 9 })).toBe(true);
-    expect(await setQuota({ userId: 2, dailyVotes: 50, active: true, updatedBy: 9 })).toBe(true);
-    expect(await setQuota({ userId: 404, dailyVotes: 50, active: true, updatedBy: 9 })).toBe(false);
+    const deps = busted();
+    const add = (userId: number) =>
+      setQuota({ userId, dailyVotes: 50, active: true, updatedBy: 9 }, deps);
+    expect(await add(1)).toMatchObject({ ok: true });
+    expect(await add(2)).toMatchObject({ ok: true });
+    expect(await add(404)).toEqual({ ok: false, reason: 'no-user' });
 
     const ids: number[] = [];
     for (let i = 0; i < 55; i++) ids.push(await seedItem(100 + i));
@@ -311,15 +366,129 @@ describe('quota', () => {
 
   it('drops a moderator taken off the roster unless they voted', async () => {
     await pg.exec(`INSERT INTO "User" VALUES (1, 'ana')`);
-    await setQuota({ userId: 1, dailyVotes: 60, active: false, updatedBy: 9 });
+    await setQuota({ userId: 1, dailyVotes: 60, active: false, updatedBy: 9 }, busted());
     expect(await getQuotaReport('2026-10-12', 1)).toEqual([]);
   });
 
   it('refuses a quota under the floor in the database too', async () => {
     await pg.exec(`INSERT INTO "User" VALUES (1, 'ana')`);
     await expect(
-      setQuota({ userId: 1, dailyVotes: 49, active: true, updatedBy: 9 })
+      setQuota({ userId: 1, dailyVotes: 49, active: true, updatedBy: 9 }, busted())
     ).rejects.toThrow();
+  });
+});
+
+describe('roster access', () => {
+  const roles = async (userId: number) =>
+    (
+      await pg.query<{ role: string; note: string | null; addedById: number | null }>(
+        `SELECT "role", "note", "addedById" FROM "UserRole" WHERE "userId" = $1 ORDER BY "role"`,
+        [userId]
+      )
+    ).rows;
+  const quota = async (userId: number) =>
+    (
+      await pg.query<{ active: boolean; dailyVotes: number; updatedBy: number }>(
+        `SELECT "active", "dailyVotes", "updatedBy" FROM "ScanLabelQuota" WHERE "userId" = $1`,
+        [userId]
+      )
+    ).rows[0];
+  const add = (userId: number, deps = busted(), dailyVotes = 50) =>
+    setQuota({ userId, dailyVotes, active: true, updatedBy: 9 }, deps);
+
+  it('grants the page role on add, records who added them, and busts their session', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
+    const deps = busted();
+    expect(await add(1, deps)).toEqual({ ok: true, username: 'ana', sessionBusted: true });
+    expect(await roles(1)).toEqual([
+      { role: SCAN_LABEL_ROLE, note: 'Scan Labels roster', addedById: 9 },
+    ]);
+    expect(await quota(1)).toEqual({ active: true, dailyVotes: 50, updatedBy: 9 });
+    expect(deps.invalidateSession).toHaveBeenCalledWith(1);
+  });
+
+  it('keeps the original grant when a member is saved again with a new quota', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
+    await pg.exec(
+      `INSERT INTO "UserRole" ("userId", "role", "note", "addedById")
+       VALUES (1, 'moderator:scan-labels', 'by hand', 7)`
+    );
+    expect(await add(1, busted(), 80)).toMatchObject({ ok: true });
+    expect(await roles(1)).toEqual([{ role: SCAN_LABEL_ROLE, note: 'by hand', addedById: 7 }]);
+    expect(await quota(1)).toMatchObject({ dailyVotes: 80 });
+  });
+
+  it('refuses to add a user who is not a moderator, writing nothing', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (2, 'bo', false)`);
+    const deps = busted();
+    expect(await add(2, deps)).toEqual({ ok: false, reason: 'not-moderator' });
+    expect(await roles(2)).toEqual([]);
+    expect(await quota(2)).toBeUndefined();
+    expect(deps.invalidateSession).not.toHaveBeenCalled();
+  });
+
+  it('revokes the role on remove, keeping the quota, including a grant made elsewhere', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true), (2, 'bo', true)`);
+    await add(1, busted(), 70);
+    await add(2);
+    await pg.exec(`UPDATE "UserRole" SET "note" = 'from the hub' WHERE "userId" = 2`);
+    await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:other')`);
+    await pg.exec(`INSERT INTO "UserRole" ("userId", "role") VALUES (1, 'moderator:other')`);
+
+    const deps = busted();
+    expect(await removeFromRoster({ userId: 1, updatedBy: 5 }, deps)).toEqual({
+      ok: true,
+      username: 'ana',
+      sessionBusted: true,
+    });
+    expect(await removeFromRoster({ userId: 2, updatedBy: 5 }, deps)).toMatchObject({ ok: true });
+    expect(await roles(1)).toEqual([{ role: 'moderator:other', note: null, addedById: null }]);
+    expect(await roles(2)).toEqual([]);
+    expect(await quota(1)).toEqual({ active: false, dailyVotes: 70, updatedBy: 5 });
+    expect(deps.invalidateSession.mock.calls).toEqual([[1], [2]]);
+  });
+
+  it('refuses to remove someone not on the roster', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
+    const deps = busted();
+    expect(await removeFromRoster({ userId: 1, updatedBy: 5 }, deps)).toEqual({
+      ok: false,
+      reason: 'not-on-roster',
+    });
+    expect(deps.invalidateSession).not.toHaveBeenCalled();
+  });
+
+  it('commits the roster and role change when the session bust fails', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
+    const failing = { invalidateSession: vi.fn(async () => Promise.reject(new Error('hub down'))) };
+    expect(await add(1, failing)).toEqual({ ok: true, username: 'ana', sessionBusted: false });
+    expect(await roles(1)).toHaveLength(1);
+    expect(await quota(1)).toMatchObject({ active: true });
+
+    expect(await removeFromRoster({ userId: 1, updatedBy: 9 }, failing)).toMatchObject({
+      ok: true,
+      sessionBusted: false,
+    });
+    expect(await roles(1)).toEqual([]);
+    expect(await quota(1)).toMatchObject({ active: false });
+    expect(failing.invalidateSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses to add anyone while the role is missing, writing nothing', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
+    await pg.exec(`DELETE FROM "Role"`);
+    expect(await add(1)).toEqual({ ok: false, reason: 'no-role' });
+    expect(await quota(1)).toBeUndefined();
+  });
+
+  it('rolls the quota back when the role grant fails', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
+    await pg.exec(`
+      CREATE FUNCTION refuse() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'refused'; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER refuse BEFORE INSERT ON "UserRole" FOR EACH ROW EXECUTE FUNCTION refuse();
+    `);
+    await expect(add(1)).rejects.toThrow('refused');
+    expect(await quota(1)).toBeUndefined();
   });
 });
 

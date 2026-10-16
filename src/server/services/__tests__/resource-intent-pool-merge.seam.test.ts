@@ -11,10 +11,10 @@ import type * as CoocHolder from '~/server/services/resource-intent-cooc/holder'
 import type { ResourceIntentShortlistEntry } from '~/server/services/resource-intent-matcher.service';
 
 /**
- * SEAM: the shipped POOL_MERGE path must produce exactly the list the offline co-occurrence
- * screen produced for the same inputs. The screen's own gate and merge code is copied below
- * VERBATIM as the oracle (its script lives outside this repo); both sides read the same synthetic
- * index, the same synthetic snapshot and the same candidates.
+ * SEAM: with a baseModel, the shipped POOL_MERGE path must produce exactly the list the offline
+ * co-occurrence screen produced for the same inputs. The screen's own gate and merge code is copied
+ * below VERBATIM as the oracle (its script lives outside this repo); both sides read the same
+ * synthetic index, the same synthetic snapshot and the same candidates.
  *
  * Faked: the vendor's HTTP (`fetch`, stage 1 only), the search client, hydration, redis and the
  * snapshot holder (it hands over a snapshot scored from synthetic counts). `askJev`, the
@@ -543,6 +543,55 @@ describe('🔴 seam: shipped POOL_MERGE = the screen, row by row', () => {
       expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
     }
   );
+});
+
+/**
+ * No baseModel: BASE is global popularity (the filter carries no ecosystem), so interleaving it
+ * would put the same popular models in every other slot of every such response. The co-occurrence
+ * list goes first in its own order and BASE only backfills. Not screened, so there is no oracle:
+ * the expected lists are literals, read off row B's and row A's co-occurrence order above.
+ */
+describe('🔴 no baseModel: co-occurrence first, popularity only backfills', () => {
+  async function shippedNoBaseModel(limit?: number) {
+    fetchMock.mockClear();
+    const result = await getResourceIntent(
+      { prompt: PROMPT, limit },
+      { browsingLevel: 31, coverage: COVERAGE, poolMerge: true }
+    );
+    expect(result.degraded).toBe(false);
+    expect(result.coocFallback).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // stage 1 only
+    return result.suggestions.map((s) => s.modelId - 5000);
+  }
+
+  it('row B: the 3 co-occurrence models fill positions 1..3, popularity after; with a baseModel it still interleaves', async () => {
+    install(rowB());
+    const noBm = await shippedNoBaseModel();
+    // Both searches (BASE page, co-occurrence page) ran with no ecosystem clause.
+    expect(meiliCalls.map((c) => c.filter?.includes(BASE_MODEL))).toEqual([false, false]);
+    expect(noBm).toEqual([0, 120, 250, ...Array.from({ length: 47 }, (_, i) => i + 1)]);
+
+    install(rowB());
+    fetchMock.mockClear();
+    const withBm = (await shipped()).suggestions.map((s) => s.modelId - 5000);
+    expect(meiliCalls.map((c) => c.filter?.includes(BASE_MODEL))).toEqual([true, true]);
+    expect(withBm.slice(0, 7)).toEqual([0, 1, 120, 2, 250, 3, 4]);
+  });
+
+  it('row A: 50 or more gated co-occurrence models leave popularity no slot', async () => {
+    install(rowA());
+    const noBm = await shippedNoBaseModel();
+    expect(noBm).toHaveLength(50);
+    // Row A's co-occurrence order (ROW_A_HEAD's odd slots), plus 170: every 9th model fails only
+    // the base-model gate, so with no baseModel it passes.
+    expect(noBm.slice(0, 5)).toEqual([365, 47, 64, 170, 276]);
+    expect(noBm.filter((id) => !ROW_A_COOC.has(id + 5000))).toEqual([]);
+  });
+
+  it('row B at limit 4: the prefix', async () => {
+    install(rowB());
+    expect(await shippedNoBaseModel(4)).toEqual([0, 120, 250, 1]);
+  });
 });
 
 // Model 365 is on both token lists, so it scores highest; model 3 is reserved, so BASE skips it.

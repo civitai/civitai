@@ -139,7 +139,7 @@ function txClient(
       ),
     },
   };
-  return { tx, queryRaw, userUpdate };
+  return { tx, queryRaw, userUpdate, executeRaw: tx.$executeRaw };
 }
 
 function mockTransactionForEscalation(
@@ -150,13 +150,13 @@ function mockTransactionForEscalation(
   const { lastStrikeAt = new Date('2026-06-01'), openCase } = opts;
   // Two reads in the transaction now: the locked point sum, then the last strike date the acceptance
   // check compares against.
-  const { tx, queryRaw, userUpdate } = txClient(
+  const { tx, queryRaw, userUpdate, executeRaw } = txClient(
     user,
     [[{ sum: pointsSum }], [{ last: lastStrikeAt }]],
     { openCase }
   );
   mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
-  return { queryRaw, userUpdate };
+  return { queryRaw, userUpdate, executeRaw };
 }
 
 // Prisma tagged templates hand the raw SQL over as a TemplateStringsArray.
@@ -660,6 +660,95 @@ describe('strike.service', () => {
           }),
         })
       );
+    });
+
+    it('void 3 -> 2 points: clears the review flag only, the mute stays', async () => {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(2, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 2, action: 'none' });
+      // The flag alone, set in SQL: no full-row write that could carry a stale `meta` or the mute.
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      const [strings, userId, , threshold] = executeRaw.mock.calls[0];
+      const text = sqlOf([strings]).replace(/\s+/g, ' ');
+      expect(text).toContain(
+        `SET meta = jsonb_set(COALESCE(u.meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)`
+      );
+      // Re-summed in the statement: a strike committed after the caller's read must keep the flag.
+      expect(text).toMatch(/AND COALESCE\(\( SELECT SUM\(points\) FROM "UserStrike" .*\), 0\) < $/);
+      expect(userId).toBe(1);
+      expect(threshold).toBe(3);
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(mockInvalidateSession).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
+    });
+
+    it('void 2 -> 2 points, not flagged: writes nothing', async () => {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(2, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation' },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 2, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('void 4 -> 3 points: still flagged, writes nothing', async () => {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(3, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 3, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('void to <2 points on a moderator mute: clears the review flag, keeps the mute', async () => {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(1, {
+        muted: true,
+        mutedAt: new Date('2026-10-01'),
+        muteExpiresAt: null,
+        meta: { strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 1, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      expect(sqlOf([executeRaw.mock.calls[0][0]])).toContain("'{strikeFlaggedForReview}', 'false'");
+    });
+
+    it('<2 points, flagged but no longer muted: clears the review flag', async () => {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(0, {
+        muted: false,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 0, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).toHaveBeenCalledTimes(1);
     });
 
     it('<2 points, user not muted: no action', async () => {

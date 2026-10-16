@@ -303,3 +303,79 @@ describe('createEntityAppealHandler — Bounty', () => {
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 });
+
+describe('createEntityAppealHandler — Storyline', () => {
+  const storylineInput = {
+    entityId: 31,
+    entityType: EntityType.Storyline,
+    message: 'The title names a fictional character.',
+  } as const;
+  const mockStorylineFindUnique = dbMock.dbRead.storyline.findUnique;
+  const scanTakenDown = {
+    userId: 602767,
+    tosViolationByScan: true,
+    tosViolationByModerator: false,
+  };
+
+  it('404s a missing storyline and refuses a non-owner', async () => {
+    mockStorylineFindUnique.mockResolvedValue(null);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    mockStorylineFindUnique.mockResolvedValue({ ...scanTakenDown, userId: 1 } as never);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it('refuses a storyline the title scan has not taken down', async () => {
+    mockStorylineFindUnique.mockResolvedValue({
+      ...scanTakenDown,
+      tosViolationByScan: false,
+    } as never);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/title scan/) });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  // Granting this appeal lifts only the scan's takedown, so the storyline would stay down; and a
+  // moderator's own takedown is not a scan error for another moderator to overturn here.
+  it("refuses while a moderator's takedown holds, even with the scan's too", async () => {
+    mockStorylineFindUnique.mockResolvedValue({
+      ...scanTakenDown,
+      tosViolationByModerator: true,
+    } as never);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/moderator/) });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it('creates a fee-free appeal the first time', async () => {
+    mockStorylineFindUnique.mockResolvedValue(scanTakenDown as never);
+    await createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() });
+    expect(mockCreateEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: EntityType.Storyline, entityId: 31, skipFee: true })
+    );
+  });
+
+  it('refuses while one is pending, and reopens the row after a denial', async () => {
+    mockStorylineFindUnique.mockResolvedValue(scanTakenDown as never);
+    mockGetLatestAppeal.mockResolvedValue({ id: 8, status: 'Pending', resolvedAt: null });
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockReopenAppeal).not.toHaveBeenCalled();
+
+    mockGetLatestAppeal.mockResolvedValue({ id: 8, status: 'Rejected', resolvedAt: new Date() });
+    await createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() });
+    expect(mockGetLatestAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: EntityType.Storyline, entityId: 31, userId: 602767 })
+    );
+    expect(mockReopenAppeal).toHaveBeenCalledWith({ id: 8, message: storylineInput.message });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+});

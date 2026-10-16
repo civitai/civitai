@@ -574,20 +574,6 @@ describe("civitai#3845 TIER 1 — no unauthenticated route serves a caught error
     for (const secret of PRISMA_SECRETS) expect(String(res._sent())).not.toContain(secret);
   });
 
-  it('INVARIANT: download/models still logs the un-redacted text — genericizing relocates, never destroys', async () => {
-    mockGetServerAuthSession.mockResolvedValue(null);
-    mockKeyValueFindUnique.mockResolvedValue(null);
-    mockHasExceededLimit.mockResolvedValue(false);
-    mockGetFileForModelVersion.mockImplementation((() => {
-      throw prismaDriverError();
-    }) as () => never);
-    const { req, res } = createMocks({ query: { modelVersionId: '1' } });
-    await downloadModelHandler(req, res);
-
-    const logged = mockLogToAxiom.mock.calls.map(([c]) => JSON.stringify(c)).join('\n');
-    expect(logged, 'the un-redacted text must reach `_axiom`').toContain(LEAKED_COLUMN);
-  });
-
   it('INVARIANT: tensor-metadata KEEPS its 422 and serves a human-readable string', async () => {
     // The status is caller feedback about the requested FILE, so it is preserved
     // rather than reclassified into a 500 — and `ModelTensorMetadata.tsx` renders

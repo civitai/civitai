@@ -17,6 +17,7 @@ import {
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
 
@@ -395,6 +396,11 @@ export const processScheduledPublishing = createJob(
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
       await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
+      // Undated until now, so never scanned.
+      scanEntitiesInBackground(
+        'Post',
+        scheduledPosts.map((p) => p.id)
+      );
     }
 
     const processedModelIds = [
@@ -411,7 +417,7 @@ export const processScheduledPublishing = createJob(
     }
 
     // Last and caught: an article fault must not stop the run being recorded.
-    await publishDueScheduledArticles(now).catch((error) =>
+    const goLive = await publishDueScheduledArticles(now).catch((error) =>
       logToAxiom({
         name: 'process-scheduled-publishing',
         type: 'error',
@@ -419,6 +425,9 @@ export const processScheduledPublishing = createJob(
         error: (error as Error)?.message,
       }).catch(() => undefined)
     );
+    // Scanned when scheduled; this re-arms a scan that ran out of retries, and is a no-op otherwise.
+    const liveArticleIds = goLive ? [...goLive.published, ...goLive.processing] : [];
+    if (liveArticleIds.length) scanEntitiesInBackground('Article', liveArticleIds);
 
     await setLastRun();
   }

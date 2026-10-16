@@ -1868,6 +1868,8 @@ export async function generateFromGraph({
         remixOfId,
         inputImages,
         inputVideo,
+        sourceImageIds,
+        orchestratorToken: token,
         acknowledgedSoftBlock,
         // Observability only — see `~/server/prom/external-moderation.metrics`. Reuses the ONE
         // surface→source mapping that already exists for the submit metric rather than inventing a
@@ -2459,6 +2461,8 @@ export interface NormalizedWorkflow {
   cost: WorkflowCost;
   tags: string[];
   allowMatureContent?: boolean | null;
+  /** The highest rating the orchestrator will release; an unlock does not lift it. */
+  nsfwCap?: NsfwLevel | null;
   downloadPriority?: DownloadPriority;
   duration?: number;
   /** Workflow-level metadata — the form input snapshot for replay. */
@@ -3241,6 +3245,7 @@ export async function formatGenerationResponse2(
       cost: workflow.cost,
       tags: workflow.tags ?? [],
       allowMatureContent: workflow.allowMatureContent,
+      nsfwCap: workflow.nsfwLevel,
       downloadPriority: readDownloadPriority(workflow),
       duration:
         workflow.startedAt && workflow.completedAt

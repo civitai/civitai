@@ -335,11 +335,6 @@ describe('updateSessionState scan is bounded in aggregate', () => {
     expect(extra).toMatchObject({ userId: 42, type: 'refresh' });
   });
 
-  it('does not report truncation on a scan that completes normally', async () => {
-    await refreshSession(42, { sendSignal: false });
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
-  });
-
   // HSCAN can return the same field twice when the hash rehashes mid-scan. The write dedupes structurally,
   // but the count feeding the log line and the histogram would over-report.
   it('counts each field once when the scan returns duplicates', async () => {

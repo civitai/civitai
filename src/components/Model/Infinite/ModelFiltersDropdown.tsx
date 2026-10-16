@@ -469,6 +469,9 @@ export function DumbModelFiltersDropdown({
         shadow="md"
         opened={opened}
         onClose={close}
+        onChange={(next) => {
+          if (!next) close();
+        }}
         middlewares={{ flip: true, shift: true }}
         withinPortal
         withArrow

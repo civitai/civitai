@@ -1,6 +1,9 @@
 /** Flux family handler for the form-graph lane (Flux1 + FluxKrea). */
 
-import type { ImageGenStepTemplate, PreprocessImageStepTemplate } from '@civitai/client';
+import type {
+  ImageGenStepTemplate,
+  PreprocessImageStepTemplate,
+} from '@civitai/orchestration-client';
 import type {
   ComfyFlux1CreateImageGenInput,
   Flux1ProImageGenInput,

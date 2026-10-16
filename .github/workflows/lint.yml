@@ -466,8 +466,21 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+      # A real Postgres for the App Blocks document store's concurrency tests (quota under racing
+      # writers, concurrent marks/counters, lock timeout — doc-store.pg.test.ts). Same pattern as
+      # Redis above: the file skips itself without its URL, so other shards pay only the container
+      # start. The suite creates and drops its own databases on this throwaway server.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
     env:
       ROSTER_REDIS_URL: redis://localhost:6379/15
+      APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
@@ -657,6 +670,11 @@ jobs:
       # that exists but did not apply is caught. ~50ms, no test runner.
       - name: Next SVG loader patch applied
         run: node scripts/ci/assert-next-svg-patch-applied.mjs
+
+      # Parked here for the same reasons as the step above. Guards the @prisma/client patch that
+      # memoises the per-model field map (see the script header); reads the INSTALLED runtime.
+      - name: Prisma field-map patch applied
+        run: node scripts/ci/assert-prisma-field-map-patch-applied.mjs
 
       # Parked here for the same two reasons as the step above: it needs a completed
       # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is

@@ -3,6 +3,8 @@ import { NsfwLevel } from '@civitai/shared';
 import { dbRead } from './db';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
+import { approvedAppealOf, type ApprovedAppealBadge, type HeldSummary } from './removal-hold';
+import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 
 // Retool's Bulk Image Manager: find a batch of images by one of five sources, then act on the batch.
 //
@@ -37,6 +39,7 @@ export type BulkImage = {
   negativePrompt: string | null;
   isProfilePicture: boolean;
   hasConnection: boolean;
+  approvedAppeal: ApprovedAppealBadge;
 };
 
 const IMAGE_COLUMNS = [
@@ -122,8 +125,13 @@ async function batchFrom(
     base.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
   ]);
 
+  const items = rows.slice(0, limit);
+  const appeals = await getLatestApprovedImageAppeals(
+    dbRead,
+    items.map((r) => r.id)
+  );
   return {
-    items: rows.slice(0, limit),
+    items: items.map((r) => ({ ...r, approvedAppeal: approvedAppealOf(appeals.get(r.id)) })),
     total: Number(total?.c ?? 0),
     truncated: rows.length > limit,
     offset,
@@ -341,6 +349,8 @@ export type RemoveBatchResult =
       /** `null` when no flag was asked for. `applied: false` carries why. */
       flag: { flag: 'poi' | 'minor' | 'tag'; applied: boolean; error?: string } | null;
       struck: { struck: number; owners: number; error?: string } | null;
+      /** Removals held for a second moderator; neither flagged nor struck. */
+      held: HeldSummary[];
     };
 
 export async function removeImagesWithFollowUps(input: {
@@ -350,6 +360,7 @@ export async function removeImagesWithFollowUps(input: {
   alsoFlag?: 'poi' | 'minor' | 'tag';
   strikeOwners?: boolean;
   moderatorId: number;
+  canConfirmReRemoval?: boolean;
 }): Promise<RemoveBatchResult> {
   if (input.strikeOwners && !input.reason)
     return { ok: false, error: 'A strike needs a reason — it is the message the user is sent.' };
@@ -361,35 +372,41 @@ export async function removeImagesWithFollowUps(input: {
     reason: input.reason || undefined,
     violationType: input.violationType,
     moderatorId: input.moderatorId,
+    canConfirmReRemoval: input.canConfirmReRemoval,
   });
   if (!result.ok) return { ok: false, error: result.error };
 
+  // A held image is still up, so its follow-ups wait for the removal they follow.
+  const heldIds = new Set(result.held.map((h) => h.imageId));
+  const removedIds = input.imageIds.filter((id) => !heldIds.has(id));
+
   // `tag` is offered by the reason list but is not an image flag. Reported rather than dropped: the
   // moderator otherwise believes the images are marked.
-  const flag =
-    input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
-      ? await setImageFlag({
-          imageIds: input.imageIds,
-          flag: input.alsoFlag,
-          value: true,
-          moderatorId: input.moderatorId,
-        }).then((r) =>
-          r.ok
-            ? { flag: input.alsoFlag!, applied: true }
-            : { flag: input.alsoFlag!, applied: false, error: r.error }
-        )
-      : input.alsoFlag === 'tag'
-      ? { flag: 'tag' as const, applied: false, error: 'not an image flag' }
-      : null;
+  const flag = !removedIds.length
+    ? null
+    : input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
+    ? await setImageFlag({
+        imageIds: removedIds,
+        flag: input.alsoFlag,
+        value: true,
+        moderatorId: input.moderatorId,
+      }).then((r) =>
+        r.ok
+          ? { flag: input.alsoFlag!, applied: true }
+          : { flag: input.alsoFlag!, applied: false, error: r.error }
+      )
+    : input.alsoFlag === 'tag'
+    ? { flag: 'tag' as const, applied: false, error: 'not an image flag' }
+    : null;
 
   const struck =
-    input.strikeOwners && input.reason
+    input.strikeOwners && input.reason && removedIds.length
       ? await strikeBatchOwners({
-          imageIds: input.imageIds,
+          imageIds: removedIds,
           description: input.reason,
           moderatorId: input.moderatorId,
         })
       : null;
 
-  return { ok: true, removed: result.count, alreadyBlocked, flag, struck };
+  return { ok: true, removed: result.count, alreadyBlocked, flag, struck, held: result.held };
 }

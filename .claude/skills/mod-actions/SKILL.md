@@ -161,7 +161,7 @@ node .claude/skills/mod-actions/reports.mjs <command> [options]
 node .claude/skills/mod-actions/reports.mjs list --type image --limit 20
 node .claude/skills/mod-actions/reports.mjs set-status 456 Actioned --dry-run
 node .claude/skills/mod-actions/reports.mjs bulk-status Actioned --ids 1,2,3
-node .claude/skills/mod-actions/reports.mjs appeals --user-id 3879899
+node .claude/skills/mod-actions/reports.mjs appeals   # the signed-in account's own recent appeals
 node .claude/skills/mod-actions/reports.mjs resolve-appeal --ids 10,11 --entity-type Image --status Approved
 ```
 

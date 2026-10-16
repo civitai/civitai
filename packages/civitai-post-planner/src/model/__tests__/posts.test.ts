@@ -136,8 +136,10 @@ describe('modelFilterOptions', () => {
 });
 
 describe('hasMature / capColor', () => {
-  it('detects anything above PG', () => {
-    expect(hasMature([post(at(9, 9), 1, { nsfwLevel: 1 })])).toBe(false);
+  it('detects R and up, not PG-13', () => {
+    expect(
+      hasMature([post(at(9, 9), 1, { nsfwLevel: 1 }), post(at(9, 9), 2, { nsfwLevel: 2 })])
+    ).toBe(false);
     expect(
       hasMature([post(at(9, 9), 1, { nsfwLevel: 1 }), post(at(9, 9), 2, { nsfwLevel: 4 })])
     ).toBe(true);

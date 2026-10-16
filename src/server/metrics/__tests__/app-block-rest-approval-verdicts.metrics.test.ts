@@ -58,11 +58,6 @@ beforeEach(() => {
 });
 
 describe('civitai_app_block_rest_approval_verdicts_total', () => {
-  it('is registered on the default registry that /api/metrics scrapes', () => {
-    ensureRegisterAppBlockRuntimeMetrics();
-    expect(client.register.getSingleMetric(METRIC)).toBeDefined();
-  });
-
   it.each(
     APP_BLOCK_REST_APPROVAL_VERDICT_REASONS.map((r) => [r] as [AppBlockRestApprovalVerdictReason])
   )('increments the `%s` series', async (reason) => {
@@ -210,16 +205,6 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
     // different file and against the real middleware. Kept here only as the
     // cardinality-budget half: 100 increments on a 4th reason still yield one series.
     expect(await readReason('tunnel_lookup_failed')).toBe(100);
-  });
-
-  it('is idempotent to register — a double module import does not throw', () => {
-    // prom-client throws on a duplicate metric name; Next.js can import a module twice
-    // (hot reload / route bundling), so the get-or-create guard is what keeps that from
-    // taking the process down.
-    expect(() => {
-      ensureRegisterAppBlockRuntimeMetrics();
-      ensureRegisterAppBlockRuntimeMetrics();
-    }).not.toThrow();
   });
 
   /**

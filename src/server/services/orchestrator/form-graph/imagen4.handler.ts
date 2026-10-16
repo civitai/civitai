@@ -1,6 +1,6 @@
 /** Imagen 4 handler for the form-graph lane — one google-engine imageGen step. */
 
-import type { Imagen4ImageGenInput, ImageGenStepTemplate } from '@civitai/client';
+import type { Imagen4ImageGenInput, ImageGenStepTemplate } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
@@ -11,15 +11,15 @@ export const createImagen4Input = defineHandler<EcosystemData<'Imagen4'>, [Image
   (data) => [
     {
       $type: 'imageGen',
-      input: removeEmpty({
+      input: removeEmpty<Imagen4ImageGenInput>({
         engine: 'google',
         model: 'imagen4',
         prompt: data.prompt,
         negativePrompt: data.negativePrompt,
         aspectRatio: data.aspectRatio?.value as Imagen4AspectRatio | undefined,
-        numImages: data.quantity ?? 1,
+        quantity: data.quantity ?? 1,
         seed: data.seed,
-      }) as Imagen4ImageGenInput,
+      }),
     },
   ]
 );

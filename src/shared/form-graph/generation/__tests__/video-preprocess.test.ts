@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { videoPreprocessKinds } from '~/shared/generation/preprocess-specs';
 import type { GenerationCtx } from '~/shared/generation/context';
 
 const EXT: GenerationCtx = {
@@ -52,11 +51,5 @@ describe('vid2vid:preprocess graph', () => {
     const s = store();
     s.set({ video: { url: 'https://example.test/source.mp4' } } as never);
     expect(s.validate().success).toBe(true);
-  });
-
-  it('derives its kind list from the H3 ControlNet key list', () => {
-    expect([...videoPreprocessKinds].sort()).toEqual(
-      ['canny', 'depth-anything-v2', 'dwpose', 'hed', 'mlsd'].sort()
-    );
   });
 });

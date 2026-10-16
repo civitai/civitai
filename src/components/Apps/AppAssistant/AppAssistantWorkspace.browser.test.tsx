@@ -26,6 +26,18 @@ const m = vi.hoisted(() => ({
     tools: Record<string, ChatTool>;
     instructions: () => string;
     mcpServers: { id: string; url: string }[];
+    holdReason?: string;
+    beforeToolCall?: (
+      name: string,
+      input: unknown,
+      context: { conversationId: string; reply: number }
+    ) => { allow: true } | { refuse: string; stop?: boolean; message?: string };
+    onToolResult?: (result: {
+      name: string;
+      input: unknown;
+      output: unknown;
+      isError: boolean;
+    }) => void;
   },
   list: [] as Sandbox[],
   start: vi.fn(),
@@ -353,5 +365,80 @@ describe('AppAssistantWorkspace without a sandbox service', () => {
       .element(page.getByText(/Sandboxes are not configured on this deployment/))
       .toBeInTheDocument();
     expect(m.getToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppAssistantWorkspace hold while the sandbox starts', () => {
+  test('holds the composer while the open sandbox is starting, and lifts it once it runs', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'starting' })];
+    const screen = await mount();
+    expect(m.chat!.holdReason).toBeUndefined();
+    await openFirst();
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('The sandbox is starting…'));
+    expect(m.chat!.mcpServers).toEqual([]);
+
+    m.list = [sandbox('sbx-aaaaaaaaaaaa')];
+    screen.rerender(<AppAssistantWorkspace canPreview sandboxUrl={BASE} />);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    expect(m.chat!.mcpServers).toHaveLength(1);
+  });
+});
+
+describe('AppAssistantWorkspace tool gate', () => {
+  const conv = { conversationId: 'c', reply: 1 };
+
+  test('offers report_ready and set_checklist beside the preview tools, and refuses an unchecked ready', async () => {
+    await mount();
+    expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'report_ready',
+      'set_checklist',
+      'start_preview',
+      'stop_preview',
+    ]);
+    expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse');
+  });
+
+  /** What the sandbox reports when the app was checked: a passing preview, tests and typecheck. */
+  async function checkEverything() {
+    await m.chat!.tools.set_checklist.execute({ items: [{ label: 'Avatar', done: true }] }, ctx);
+    const run = (command: string) =>
+      m.chat!.onToolResult!({
+        name: 'sandbox__run_command',
+        input: { command },
+        output: 'exit_code: 0\ntimed_out: false\n---\nok',
+        isError: false,
+      });
+    m.chat!.onToolResult!({
+      name: 'sandbox__preview_check',
+      input: {},
+      output: 'render: ok\npage_errors: 0',
+      isError: false,
+    });
+    run('cd my-app && npm test');
+    run('cd my-app && npx tsc --noEmit');
+  }
+
+  test('allows report_ready once the chat reports passing checks, and forgets them in another sandbox', async () => {
+    await mount();
+    await openFirst();
+    m.chat!.beforeToolCall!('sandbox__list_dir', {}, conv);
+    await checkEverything();
+    expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toEqual({ allow: true });
+
+    await page.getByRole('button', { name: 'Sandboxes', exact: true }).click();
+    await page.getByRole('button', { name: 'Open', exact: true }).nth(1).click();
+    await vi.waitFor(() =>
+      expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse')
+    );
+  });
+
+  test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
+    await mount();
+    for (let i = 0; i < 150; i++)
+      expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
+    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toMatchObject({ stop: true });
+    expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
+      allow: true,
+    });
   });
 });

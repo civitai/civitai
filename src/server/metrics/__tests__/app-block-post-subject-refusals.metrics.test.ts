@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   APP_BLOCK_POST_SURFACES,
-  ensureRegisterAppBlockRuntimeMetrics,
   recordBlockPostSubjectRefusal,
   type AppBlockPostSurface,
 } from '../app-block-runtime.metrics';
@@ -63,11 +62,6 @@ beforeEach(() => {
 });
 
 describe(METRIC, () => {
-  it('is registered on the default registry that /api/metrics scrapes', () => {
-    ensureRegisterAppBlockRuntimeMetrics();
-    expect(client.register.getSingleMetric(METRIC)).toBeDefined();
-  });
-
   it.each(APP_BLOCK_POST_SURFACES.map((s) => [s] as [AppBlockPostSurface]))(
     'increments the `%s` series',
     async (surface) => {

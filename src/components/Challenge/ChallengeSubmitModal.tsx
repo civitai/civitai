@@ -313,6 +313,10 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
       const images = uploaded.filter(isDefined).map((u) => ({
         url: u.id,
         type: u.type,
+        hash: u.hash,
+        width: u.width,
+        height: u.height,
+        mimeType: u.mimeType,
         meta: u.meta,
       }));
 

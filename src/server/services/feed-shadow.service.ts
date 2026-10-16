@@ -88,8 +88,6 @@ const MAX_HUB = {
 // Filters the candidate has no dimension for; the app resolves the server-side lists
 // (hidden) inside the search functions, out of this hook's reach.
 const UNSUPPORTED_KEYS = [
-  'postId',
-  'postIds',
   'collectionId',
   'collectionTagId',
   'reviewId',
@@ -127,17 +125,33 @@ const emptied = (v: unknown) => Array.isArray(v) && v.length > 0 && ints(v).leng
 
 export type FeedQueryMapping = { ok: true; query: string } | { ok: false; reason: string };
 export type FeedQueryMode = 'shadow' | 'primary';
+/** Who is asking: the site's own pages, or the public API. A few shapes are served only to one. */
+export type FeedQueryCaller = 'website' | 'rest';
+const MAX_POST_IDS = 50;
 
 export { encodeFeedCursor, parseFeedCursor };
 
 /** The candidate's query for a search input, or the first reason it cannot be expressed. */
 export function mapSearchInputToFeedQuery(
   input: CapturableSearchInput,
-  mode: FeedQueryMode = 'shadow'
+  mode: FeedQueryMode = 'shadow',
+  caller: FeedQueryCaller = 'website'
 ): FeedQueryMapping {
   const skip = (reason: string): FeedQueryMapping => ({ ok: false, reason });
   for (const key of UNSUPPORTED_KEYS) if (present(input[key])) return skip(`input:${key}`);
   for (const flag of UNSUPPORTED_FLAGS) if (input[flag] === true) return skip(`flag:${flag}`);
+  // A post's media. The site's own post page shows the author's order, which the feed cannot
+  // give (the mirror has no Image.index), and the website already serves it from Postgres; the
+  // public API sorts a post's page like any other, as the search index did, and asks for one
+  // post 150k times a day.
+  const postIds = ints([
+    ...(Array.isArray(input.postIds) ? input.postIds : []),
+    ...(present(input.postId) ? [Number(input.postId)] : []),
+  ]);
+  if (postIds.length) {
+    if (caller !== 'rest') return skip('input:postId');
+    if (postIds.length > MAX_POST_IDS) return skip(`postIds>${MAX_POST_IDS}`);
+  }
   // These only narrow a model version's gallery; without one they filter nothing.
   if (present(input.modelVersionId))
     for (const flag of ['hideAutoResources', 'hideManualResources'] as const)
@@ -242,6 +256,7 @@ export function mapSearchInputToFeedQuery(
   if (techniques.length) params.set('techniques', techniques.join(','));
   const ids = ints(input.ids);
   if (ids.length) params.set('ids', ids.slice(0, 200).join(','));
+  if (postIds.length) params.set('postIds', [...new Set(postIds)].join(','));
   if (present(input.model3dId)) params.set('model3dIds', String(input.model3dId));
   if (visibility) params.set('visibility', visibility);
   params.set('sort', sort);
@@ -279,6 +294,8 @@ function mapHubSources(input: CapturableSearchInput): HubMapping {
     input.followed === true ||
     input.newCreators === true ||
     present(input.ids) ||
+    present(input.postId) ||
+    present(input.postIds) ||
     present(input.model3dId)
   )
     return skip('hub:driver');
@@ -330,6 +347,8 @@ export type FeedAnswer = {
   status: number;
   ms: number;
   ids: number[];
+  /** The feed's reason for a 400, so a request the mapper thought fine can be read back. */
+  error?: string;
   route?: string;
   estimate?: number;
   candidates?: number;
@@ -503,7 +522,11 @@ export async function fetchFeedAnswer(
     headers: { ...traceContextHeaders(), 'x-request-source': source },
   });
   const ms = Date.now() - started;
-  if (!res.ok) return { status: res.status, ms, ids: [] };
+  if (!res.ok) {
+    let error: string | undefined;
+    if (res.status === 400) error = (await res.text().catch(() => '')).slice(0, 600) || undefined;
+    return { status: res.status, ms, ids: [], error };
+  }
   const body = (await res.json()) as {
     items?: number[];
     nextCursor?: string;

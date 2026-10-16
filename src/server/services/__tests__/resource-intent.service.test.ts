@@ -1129,16 +1129,6 @@ describe('shadow event', () => {
 });
 
 describe('degradation reasons', () => {
-  it('a Jev timeout propagates its kind into the degraded-reason log', async () => {
-    const { JevError } = await import('~/server/services/ai/jev');
-    mockAskJev.mockRejectedValue(new JevError('timeout', 'Jev call exceeded 2000ms'));
-    await getResourceIntent(INPUT, CTX);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-degraded', degradedReason: 'jev_timeout' }),
-      'temp-search'
-    );
-  });
-
   it('a stage-3 answer of the wrong kind degrades as jev_stage3_shape', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));

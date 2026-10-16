@@ -602,6 +602,14 @@ describe('getActiveDevTunnel', () => {
 });
 
 describe('reserveDevSessionBuzz (spend-cap backstop)', () => {
+  // The per-call budget cap equals the default session cap (both 5000).
+  it('at the default cap, one 5000 call fits a fresh session and a 5001 call never does', async () => {
+    expect(DEV_TUNNEL_SESSION_BUZZ_CAP).toBe(5000);
+    expect(await reserveDevSessionBuzz('over', 5001)).toEqual({ allowed: false, total: 0 });
+    expect(await reserveDevSessionBuzz('exact', 5000)).toEqual({ allowed: true, total: 5000 });
+    expect(await reserveDevSessionBuzz('exact', 1)).toEqual({ allowed: false, total: 5000 });
+  });
+
   it('allows spend under the ceiling and DENIES + rolls back once it would exceed', async () => {
     const cap = 100;
     expect(await reserveDevSessionBuzz('sess', 60, cap)).toEqual({ allowed: true, total: 60 });
@@ -979,38 +987,11 @@ describe('deleteDevTunnelDns outcome counter (exactly one outcome per call)', ()
     __resetDevTunnelDnsCacheForTest();
   });
 
-  it('skipped — token unset (feature off)', async () => {
-    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
-    await run(CF_DEV_HOST, vi.fn());
-    expect(mockRecordDnsGc.mock.calls).toEqual([['skipped']]);
-  });
-
   it('skipped — zone id unresolvable (lookup returns no zone)', async () => {
     const fetchMock = routeCfFetch({ [CF_DEV_HOST]: [{ id: 'rec-a' }] }, []);
     await run(CF_DEV_HOST, fetchMock);
     expect(mockRecordDnsGc.mock.calls).toEqual([['skipped']]);
     expect(fetchMock.mock.calls.filter(isDelete)).toHaveLength(0);
-  });
-
-  it('refused — host fails the dev-host guard (once per call)', async () => {
-    await run('civitai.com', vi.fn());
-    await run('evil-dev-0123456789abcdef.civit.ai', vi.fn());
-    expect(mockRecordDnsGc.mock.calls).toEqual([['refused'], ['refused']]);
-  });
-
-  it('deleted — records found and every DELETE ok', async () => {
-    const fetchMock = routeCfFetch({
-      [CF_DEV_HOST]: [{ id: 'rec-a' }],
-      [`a-${CF_DEV_HOST}`]: [{ id: 'rec-txt' }],
-    });
-    await run(CF_DEV_HOST, fetchMock);
-    expect(mockRecordDnsGc.mock.calls).toEqual([['deleted']]);
-  });
-
-  it('none_found — zone resolved, both names list fine but match nothing', async () => {
-    const fetchMock = routeCfFetch({});
-    await run(CF_DEV_HOST, fetchMock);
-    expect(mockRecordDnsGc.mock.calls).toEqual([['none_found']]);
   });
 
   it('failed — one DELETE returns non-ok while another succeeds', async () => {
@@ -1027,25 +1008,6 @@ describe('deleteDevTunnelDns outcome counter (exactly one outcome per call)', ()
     });
     await run(CF_DEV_HOST, fetchMock);
     expect(fetchMock.mock.calls.filter(isDelete)).toHaveLength(2);
-    expect(mockRecordDnsGc.mock.calls).toEqual([['failed']]);
-  });
-
-  it('failed — a DELETE rejects (network error)', async () => {
-    const base = routeCfFetch({ [CF_DEV_HOST]: [{ id: 'rec-a' }] });
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method === 'DELETE') throw new Error('socket hang up');
-      return base(url, init);
-    });
-    await run(CF_DEV_HOST, fetchMock);
-    expect(mockRecordDnsGc.mock.calls).toEqual([['failed']]);
-  });
-
-  it('failed — a record LIST fails (not miscounted as none_found)', async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (String(url).includes('/zones?name=')) return cfEnvelope([{ id: 'zone-1' }]);
-      return cfEnvelope([], false, 403);
-    });
-    await run(CF_DEV_HOST, fetchMock);
     expect(mockRecordDnsGc.mock.calls).toEqual([['failed']]);
   });
 

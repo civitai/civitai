@@ -379,6 +379,71 @@ export const upsertChat = async ({
 };
 
 /**
+ * The 1:1 chat for a Creator Services deal, opened when the seller accepts.
+ *
+ * Accepting is the seller's consent to talk to this buyer, so the recipients' DM policies and the
+ * chat caps do not apply to this pair. A block still does: the deal refuses to be requested or
+ * accepted across one, and this refuses again rather than trusting that it was checked.
+ */
+export const upsertDealChat = async ({
+  sellerId,
+  buyerId,
+}: {
+  sellerId: number;
+  buyerId: number;
+}) => {
+  const [blocked, blockedBy] = await Promise.all([
+    BlockedUsers.getCached({ userId: sellerId }),
+    BlockedByUsers.getCached({ userId: sellerId }),
+  ]);
+  if ([...blocked, ...blockedBy].some((user) => user.id === buyerId))
+    throw throwBadRequestError('Unable to open a chat for this deal');
+
+  const userIds = [sellerId, buyerId];
+  const identity = resolveChatIdentity({ userIds, isGroup: false });
+  const existing = identity.hash
+    ? await dbWrite.chat.findFirst({ where: { hash: identity.hash }, select: { id: true } })
+    : null;
+
+  if (existing) {
+    // Lift the Requests filter for both: neither should have to accept a chat the deal opened.
+    await dbWrite.chatMember.updateMany({
+      where: { chatId: existing.id, userId: { in: userIds }, filteredAt: { not: null } },
+      data: { filteredAt: null },
+    });
+    return existing;
+  }
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    const chat = await tx.chat.create({
+      data: { hash: identity.hash, ownerId: sellerId, isGroup: false, name: null },
+      select: { id: true, createdAt: true },
+    });
+    await tx.chatMember.createMany({
+      data: userIds.map((userId) => ({
+        userId,
+        chatId: chat.id,
+        isOwner: userId === sellerId,
+        status: ChatMemberStatus.Joined,
+        joinedAt: chat.createdAt,
+      })),
+    });
+    return chat;
+  });
+
+  for (const userId of userIds)
+    withSignals(() =>
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${created.id}`),
+      })
+    ).catch(() => undefined);
+
+  return { id: created.id };
+};
+
+/**
  * Create a message (direct)
  */
 export const createMessage = async ({

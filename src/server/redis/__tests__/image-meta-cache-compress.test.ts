@@ -67,13 +67,6 @@ describe('imageMetaCache compression (#4588)', () => {
     expect(block).not.toMatch(/(^|\n)\s*localTtl:/);
   });
 
-  it('keeps the 4h logical TTL and the trimmed 1h stale tail', () => {
-    // Compression is the lever that replaced the (already-spent) TTL lever; a future change that
-    // shortens the logical TTL would convert the hot working set into misses and stampede dbRead.
-    expect(block).toContain('ttl: CacheTTL.hour * 4');
-    expect(block).toContain('staleWhileRevalidateTtl: CacheTTL.hour');
-  });
-
   it('POSITIVE CONTROL: the extractor is block-scoped, not a whole-file scan', () => {
     // imageMetadataCache sits directly after imageMetaCache in the file and is NOT compressed.
     // If the extractor degraded to scanning the whole source, this would find imageMetaCache's

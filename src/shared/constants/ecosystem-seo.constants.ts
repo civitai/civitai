@@ -3706,24 +3706,29 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Sora 2', 'Kling', 'Seedance'],
+      peers: ['Kling', 'Seedance', 'Wan'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Cinematic clips with native audio',
-            'Cinematic video with synced audio',
             'Polished realistic motion',
             'One-pass video + audio',
+            'Open T2V/I2V with a huge LoRA ecosystem',
           ],
         },
         {
           label: 'Provider',
-          values: ['Google DeepMind', 'OpenAI', 'Kuaishou', 'ByteDance'],
+          values: ['Google DeepMind', 'Kuaishou', 'ByteDance', 'Alibaba'],
         },
         {
           label: 'Native audio',
-          values: ['Yes (dialogue, SFX, music)', 'Yes', 'No', 'Yes (dialogue + lip-sync)'],
+          values: [
+            'Yes (dialogue, SFX, music)',
+            'No',
+            'Yes (dialogue + lip-sync)',
+            'No (video only)',
+          ],
           winner: 0,
         },
         {
@@ -3732,12 +3737,12 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
             'API-only (hosted)',
             'API-only (hosted)',
             'API-only (hosted)',
-            'API-only (hosted)',
+            'Open weights + LoRAs',
           ],
         },
         {
           label: 'Image-to-video',
-          values: ['Yes', 'Yes', 'Yes, first-frame anchored', 'Yes'],
+          values: ['Yes', 'Yes, first-frame anchored', 'Yes', 'Native, strong'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -3772,160 +3777,8 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     factCheck: [
       {
         field: 'comparison',
-        claim: 'peer native-audio cells (Sora 2 = Yes, Kling = No, …)',
-        note: 'Cross-checked against the Sora 2 config (consistent), but peer cells are general knowledge, not re-verified against each provider.',
-      },
-    ],
-  },
-
-  Sora2: {
-    key: 'Sora2',
-    updatedAt: '2026-07-23',
-    slug: 'sora-2',
-    name: 'Sora 2',
-    metaDescription:
-      "Generate Sora 2 video on Civitai — OpenAI's hosted text-to-video model known for physical realism and synchronized audio. Browse example clips & prompts.",
-    modality: 'video',
-    hero: {
-      intro:
-        "Sora 2 is OpenAI's text-to-video generation model, built for physically plausible motion, coherent multi-shot scenes, and synchronized audio generated alongside the video. It reads long, natural-language descriptions and holds character and world state steady across a clip. On Civitai it's fully hosted, so you can turn a prompt into a video right in the browser — no GPU, no install.",
-      badges: ['Text-to-Video', 'Physical Realism', 'By OpenAI'],
-    },
-    overview: [
-      'Sora 2 is OpenAI\'s text-to-video generation model and the successor to the original Sora, unveiled in February 2024. OpenAI frames that first Sora as a "GPT-1 moment" for video — the point at which simple behaviors like object permanence first emerged from scaling up pre-training compute. Sora 2 is the team\'s next major step, focused less on raw novelty and more on world simulation: modeling how objects, people, and physics actually behave over time rather than deforming reality to satisfy a prompt.',
-      'The headline improvement is physical plausibility. OpenAI notes that where earlier video models will bend reality to complete a prompt — teleporting a missed basketball into the hoop — Sora 2 is more likely to let the shot rebound off the backboard, modeling failure as well as success. It also improves controllability, following intricate multi-shot instructions while keeping world state consistent, and it works across realistic, cinematic, and anime styles. As a general-purpose video-and-audio system it can generate synchronized speech, sound effects, and background soundscapes in the same pass rather than as a separate step.',
-      "Sora 2 is a closed, hosted model: there are no downloadable weights and no Sora LoRAs, so control comes from prompting, reference material, and the generator's settings rather than community fine-tunes. On Civitai it runs entirely in the browser — no GPU, no install. Choose it when you want realistic motion, coherent physics, and cinematic multi-shot direction out of the box. For open weights, stackable LoRAs, and deep community control the Wan ecosystem is the natural alternative, while Veo 3 and Kling are the closest hosted peers to compare against.",
-    ],
-    promptTips: [
-      "Write in natural language — vivid, descriptive paragraphs, not comma-separated tags. Sora 2's strong language understanding handles complex multi-element scenes, so describe the subject, action, setting, and mood as full prose.",
-      'Skip weight syntax and negative prompts — neither is supported. Rephrase anything negative as a positive description: say "sharp, crystal clear" instead of "no blur."',
-      'Direct the camera explicitly. Sora 2 responds to real cinematography language — "the camera follows behind a woman walking," "drone aerial shot rising over the city," "low-angle tracking shot," or "slow push-in on the character\'s face."',
-      "Describe characters thoroughly. Sora's world-model approach maintains appearance across a clip, but sparse descriptions lead to drift — spell out who or what is on screen in detail.",
-      'Add temporal and stylistic cues to shape the shot: "as the sun sets" or "transitioning from day to night" for motion over time, and references like "in the style of a Wes Anderson film," "noir aesthetic," or "documentary footage" for a consistent look. A reliable order is subject → action and scene → camera work → visual style and mood.',
-    ],
-    generatorVersionId: 2320065,
-    featuredModels: [
-      {
-        modelId: 2049999,
-        versionId: 2320065,
-        imageId: 136011852,
-        displayName: 'Sora 2',
-        note: 'Civitai-hosted · by OpenAI',
-      },
-    ],
-    featuredExamples: [
-      {
-        imageId: 136011852,
-        prompt: 'Anthropomorphic dog and cat having a party, saying "magnificent"',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 132779682,
-        prompt:
-          'A cozy cinematic animated scene filled with warmth and nostalgia. Early autumn evening in a small countryside town. A fluffy orange cat wearing a tiny hat',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 134305014,
-        prompt: "Cat walking on two legs. It's on the beach. It strikes a pose",
-        settings: 'Sora 2 · 1280×720',
-      },
-      {
-        imageId: 134601390,
-        prompt: 'Cartoon kangaroo, twirling around, rainbow park',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 126602082,
-        prompt:
-          'In the style of a Studio Ghibli action movie with gritty 24fps cinematic flair, a pack of sleek anthropomorphic robots crafted from rusted brass gears and glowing blue eyes',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 126981587,
-        prompt: 'Anthropomorphic badger, victory dance',
-        settings: 'Sora 2 · 720×1280',
-      },
-    ],
-    comparison: {
-      peers: ['Veo 3', 'Kling', 'Wan'],
-      rows: [
-        {
-          label: 'Best for',
-          values: [
-            'Physical realism & cinematic multi-shot video',
-            'Cinematic clips with native audio',
-            'Polished cinematic motion & camera control',
-            'Open T2V/I2V + huge LoRA ecosystem',
-          ],
-        },
-        {
-          label: 'Provider',
-          values: ['OpenAI', 'Google DeepMind', 'Kuaishou', 'Alibaba'],
-        },
-        {
-          label: 'Access',
-          values: ['API-only (hosted)', 'API-only (hosted)', 'API-only (hosted)', 'Open weights'],
-        },
-        {
-          label: 'Native audio',
-          values: [
-            'Synchronized speech + sound',
-            'Synchronized speech + sound',
-            'No native audio',
-            'No native audio',
-          ],
-        },
-        {
-          label: 'LoRA support',
-          values: ['None (closed)', 'None (closed)', 'None (closed)', '2,500+ (largest for video)'],
-          winner: 3,
-        },
-        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
-      ],
-    },
-    faq: [
-      {
-        q: 'How much does it cost to generate Sora 2 video on Civitai?',
-        a: "Generation on Civitai runs on Buzz, and every account earns free Blue Buzz daily through on-site actions like reacting to images. Sora 2 is a premium hosted video model — producing a clip is far heavier than rendering a single image, so a Sora 2 generation costs more Buzz per clip than most models, and longer clips cost more than shorter ones. You can put your daily free Blue Buzz toward it, but for regular Sora 2 use you'll want to let Buzz accumulate or add a membership for higher limits.",
-      },
-      {
-        q: 'Does Sora 2 generate audio?',
-        a: 'Yes. Sora 2 is a general-purpose video-and-audio system: OpenAI describes it as able to create synchronized speech, sound effects, and background soundscapes along with the video in a single pass. Remix an example above to try it yourself.',
-      },
-      {
-        q: 'Can I use LoRAs with Sora 2?',
-        a: 'No — Sora 2 is a closed, hosted model with no downloadable weights or LoRAs. You steer results through prompting, reference material, and the generator settings instead. If you want stackable video LoRAs and motion effects, the open Wan ecosystem is the place to look.',
-      },
-      {
-        q: 'How is Sora 2 different from the original Sora?',
-        a: 'OpenAI positions the first Sora (February 2024) as an early breakthrough where basic behaviors like object permanence emerged, and Sora 2 as a larger step toward genuine world simulation — better physics, stronger controllability across multiple shots, and synchronized audio. Try a prompt in the Civitai generator to see the difference.',
-      },
-      {
-        q: 'What is Sora 2 best at?',
-        a: 'Sora 2 leans toward realistic, physically coherent motion and cinematic, multi-shot direction — OpenAI highlights its ability to model real-world dynamics rather than deforming a scene to hit a prompt, and it also handles cinematic and anime styles. Describe a single clear scene and remix an example to see how it performs.',
-      },
-      {
-        q: 'Do I need a GPU to run Sora 2?',
-        a: 'No. Sora 2 is API-only, and Civitai runs the generation for you in the cloud — there are no weights to download and nothing to install. Just enter a prompt and generate in the browser.',
-      },
-    ],
-    sunset: {
-      date: '2026-09-24',
-      note: 'OpenAI is permanently shutting down the Sora and Sora 2 endpoints, after which they will no longer be generatable on Civitai. Veo 3, Kling, and the open Wan ecosystem are the closest alternatives.',
-    },
-    attribution: 'a hosted text-to-video model by OpenAI (Sora 2)',
-    factCheck: [
-      {
-        field: 'overview',
-        claim: 'synchronized audio (speech, SFX, soundscapes)',
-        highlight: 'synchronized speech, sound effects, and background soundscapes',
-        note: 'Claimed from the model card only; the sora2 prompt guide does not mention audio. Verify the capability.',
-      },
-      {
-        field: 'comparison',
-        claim: 'peer native-audio / provider cells',
-        note: 'From general knowledge / sibling configs, not independently re-verified.',
+        claim: 'peer native-audio cells (Kling = No, Seedance = Yes, Wan = No)',
+        note: 'Peer cells are general knowledge, not re-verified against each provider.',
       },
     ],
   },
@@ -4156,7 +4009,6 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'imagen-4', label: 'Imagen 4', ecosystemKeys: ['Imagen4'] },
   { slug: 'seedream', label: 'Seedream', ecosystemKeys: ['Seedream'] },
   { slug: 'veo-3', label: 'Veo 3', ecosystemKeys: ['Veo3'] },
-  { slug: 'sora-2', label: 'Sora 2', ecosystemKeys: ['Sora2'] },
   { slug: 'chroma', label: 'Chroma', ecosystemKeys: ['Chroma'] },
   { slug: 'qwen', label: 'Qwen', ecosystemKeys: ['Qwen'] },
   { slug: 'stable-diffusion', label: 'Stable Diffusion', ecosystemKeys: ['SD1'] },

@@ -11,7 +11,9 @@ const SUPER_ROLE = 'moderator:admin';
 export type ModeratorGrantId =
   | 'user.deleteAccount'
   | 'user.membership.code'
-  | 'user.creatorScore.grant';
+  | 'user.creatorScore.grant'
+  | 'creatorServices.resolveDispute'
+  | 'image.removal.confirm';
 
 export async function hasModeratorGrant(
   user: { roles?: string[] },

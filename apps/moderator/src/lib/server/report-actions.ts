@@ -6,9 +6,10 @@ import { issueStrike, restoreImages, setImageFlag } from './user-actions.service
 import { countBlockedImages, removeImagesWithFollowUps } from './bulk-image.service';
 import { sendModNotification } from './moderation-memory.service';
 import { setReportStatus } from './reports.service';
+import { HELD_FOLLOW_UPS_NOTE, heldRemovalMessage } from './removal-hold';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4 } from './users.service';
-import { ReportStatus } from '$lib/reports';
+import { REPORT_RULINGS } from '$lib/reports';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 
 /**
@@ -43,7 +44,7 @@ export function reportModerationActions(pagePath: string) {
           id: z.coerce.number().int().positive().max(MAX_INT4),
           // Claiming was removed at the team's request, so `Processing` is no longer reachable from a
           // queue. It is still a status they FILTER on — reports carrying it predate the removal.
-          status: z.enum([ReportStatus.Actioned, ReportStatus.Unactioned]),
+          status: z.enum(REPORT_RULINGS),
         }),
         await request.formData()
       );
@@ -98,8 +99,17 @@ export function reportModerationActions(pagePath: string) {
       );
       if (typeof input === 'string') return scopedFail('images', input);
 
-      const result = await removeImagesWithFollowUps({ ...input, moderatorId: locals.user.id });
+      const result = await removeImagesWithFollowUps({
+        ...input,
+        moderatorId: locals.user.id,
+        canConfirmReRemoval: !!locals.grants['image.removal.confirm'],
+      });
       if (!result.ok) return scopedFail('images', result.error);
+      const heldNote = result.held.length
+        ? ` ${heldRemovalMessage(result.held)}${
+            input.strikeOwners || input.alsoFlag ? ` ${HELD_FOLLOW_UPS_NOTE}` : ''
+          }`
+        : '';
 
       // A silent flag failure is worse than none: the moderator believes the images are marked.
       const flagNote = result.flag?.applied
@@ -120,7 +130,8 @@ export function reportModerationActions(pagePath: string) {
         imageResult:
           `Removed ${result.removed - result.alreadyBlocked} of ${input.imageIds.length}` +
           `${result.alreadyBlocked > 0 ? ` (${result.alreadyBlocked} already blocked)` : ''}.` +
-          `${flagNote}${strikeNote}`,
+          `${flagNote}${strikeNote}${heldNote}`,
+        imageHeld: result.held.length > 0,
       };
     },
 

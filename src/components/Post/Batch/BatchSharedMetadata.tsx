@@ -3,12 +3,14 @@ import { IconLock, IconPlus } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { AlwaysOpenCombobox } from '~/components/Combobox/AlwaysOpenComboBox';
 import type { ComboboxOption } from '~/components/Combobox/combobox.types';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { TagPicker } from '~/components/Post/EditV2/EditPostTags';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useQueryTools } from '~/components/Tool/tools.utils';
 import { MAX_MANUAL_RESOURCES_PER_IMAGE, POST_TAG_LIMIT } from '~/server/common/constants';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import type { NamedOption, SharedSettings } from './batch-composer.store';
@@ -50,10 +52,13 @@ function readRememberedShared(userId: number | undefined): RememberedShared | nu
 export function BatchSharedMetadata({
   disabled,
   promoted,
+  onPromotedChange,
   titlePreviews,
 }: {
   disabled?: boolean;
-  promoted: { id: number; label: string } | null;
+  /** `locked` when the version came in the URL, so it can only change there. */
+  promoted: { id: number; label: string; locked: boolean } | null;
+  onPromotedChange: (resource: GenerationResource | null) => void;
   titlePreviews: string[];
 }) {
   const [shared, updateShared] = useBatchComposerStore((state) => [
@@ -87,15 +92,43 @@ export function BatchSharedMetadata({
       )}
       <Field label="Resources">
         <div className="flex flex-wrap items-center gap-2">
-          {promoted && (
+          {promoted ? (
             <Badge
               size="lg"
               variant="light"
-              leftSection={<IconLock size={12} />}
+              leftSection={promoted.locked ? <IconLock size={12} /> : undefined}
+              rightSection={
+                !promoted.locked && (
+                  <CloseButton
+                    size="xs"
+                    aria-label="Remove promoted version"
+                    onClick={() => onPromotedChange(null)}
+                  />
+                )
+              }
               className="normal-case"
+              data-testid="batch-promoted"
             >
               {promoted.label}
             </Badge>
+          ) : (
+            <Button
+              size="compact-sm"
+              variant="light"
+              leftSection={<IconPlus size={14} />}
+              disabled={disabled}
+              onClick={() =>
+                openResourceSelectModal({
+                  title: 'Pick a model to promote',
+                  selectSource: 'addResource',
+                  options: { excludeIds: shared.resources.map((resource) => resource.id) },
+                  onSelect: (resource) => onPromotedChange(resource),
+                })
+              }
+              data-testid="batch-pick-promoted"
+            >
+              Promote a model
+            </Button>
           )}
           <ResourceSelectMultiple
             buttonLabel="Add resource"

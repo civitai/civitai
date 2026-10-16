@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
-import {
-  OFFSITE_REJECTION_REASON_MIN,
-  rejectExternalRequestSchema,
-} from '~/server/schema/blocks/offsite-listing.schema';
-import {
-  PUBLISH_REJECTION_REASON_MIN,
-  rejectRequestSchema,
-} from '~/server/schema/blocks/publish-request.schema';
+import { rejectExternalRequestSchema } from '~/server/schema/blocks/offsite-listing.schema';
+import { rejectRequestSchema } from '~/server/schema/blocks/publish-request.schema';
 
 /**
  * Bug 1: the /apps/review Reject confirm was gated on a silent 10-char minimum
@@ -17,12 +11,6 @@ import {
  * this test locks that lockstep so a future edit can't silently re-diverge.
  */
 describe('reject-reason minimum is unified on OFFSITE_MOD_REASON_MIN (Bug 1)', () => {
-  it('both reject-reason floors equal the shared moderator-reason minimum (3)', () => {
-    expect(OFFSITE_MOD_REASON_MIN).toBe(3);
-    expect(OFFSITE_REJECTION_REASON_MIN).toBe(OFFSITE_MOD_REASON_MIN);
-    expect(PUBLISH_REJECTION_REASON_MIN).toBe(OFFSITE_MOD_REASON_MIN);
-  });
-
   it('off-site reject schema accepts a min-length reason and rejects a shorter one', () => {
     const atMin = 'a'.repeat(OFFSITE_MOD_REASON_MIN);
     const tooShort = 'a'.repeat(OFFSITE_MOD_REASON_MIN - 1);

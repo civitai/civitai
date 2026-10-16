@@ -1654,7 +1654,55 @@ export const removeAllContent = async ({
         }`
     );
   }
+
+  await wipeAccountFromDocStore(id);
 };
+
+/**
+ * The App Blocks DOCUMENT STORE half of an account wipe (`DocStoreMaintenance.wipeAccount`):
+ * private documents, authored shared documents and marks deleted, usage released, in
+ * every app. Same posture as the per-user storage purge above, for the same reasons: it runs
+ * LAST, in a separate database with no transaction spanning the two, and NEVER throws into the
+ * wipe — a failure is logged, as the purge above logs its own.
+ *
+ * RETRY: nothing retries it automatically. A wiped account leaves no state in the main database
+ * that a sweep could find it by (the user row stays, with no flag), so the review-storage sweep's
+ * pattern does not transfer. The wipe is idempotent, so the retry is re-running the content wipe
+ * (`user.removeAllContent`, or the webhook) for that user: every step of it, this one included,
+ * only removes what is still there. A namespace that failed rolled back in full.
+ */
+async function wipeAccountFromDocStore(userId: number): Promise<void> {
+  try {
+    const { getDocStoreMaintenance } = await import(
+      '~/server/services/apps/doc-store-maintenance.instance'
+    );
+    const result = await getDocStoreMaintenance().wipeAccount(userId);
+    if (result.failures.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks document store wipe INCOMPLETE (userId=${userId}): ` +
+          `${result.failures.length} namespace(s) failed and were left unchanged, ` +
+          `${result.namespaces.length} wiped. The content wipe COMPLETED and is unaffected — ` +
+          `re-run user.removeAllContent for this user to retry. Failures: ` +
+          result.failures.map((f) => `${f.appId}/${f.ns}: ${f.error}`).join('; ')
+      );
+    }
+  } catch (err) {
+    const { isDocStoreError } = await import('~/server/services/apps/doc-store.types');
+    // No store connection, or one the store refuses: nothing can be removed through it. Not
+    // logged, because that is every wipe in an environment without the store. Rows CAN survive
+    // here if the store was configured, written to, and then disabled or pointed at a role it
+    // refuses (logged once, by the store instance); re-running the wipe once the store is back
+    // removes them.
+    if (isDocStoreError(err, 'storage_disabled')) return;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[removeAllContent] App Blocks document store wipe failed (userId=${userId}); ` +
+        `the content wipe COMPLETED and is unaffected — re-run user.removeAllContent for this ` +
+        `user to retry: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
 
 export const getUserCosmetics = ({
   userId,

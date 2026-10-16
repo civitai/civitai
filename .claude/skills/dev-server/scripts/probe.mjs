@@ -96,10 +96,11 @@ function pathnameOf(target) {
 }
 
 // Reads the session's own stdout for what the server thought it was doing during our request.
-// `_app` self-fetches /api/user/settings on every SSR render and aborts it at
-// APP_SETTINGS_FETCH_TIMEOUT_MS (8s). That abort is charged to application-code, so a server too
-// sick to answer its own API route reads as "slow upstream" on the split alone — the one case where
-// the split points at the wrong half of the stack. The marker is the tell, and it outranks timing.
+// `_app` reads the settings bootstrap (the function behind /api/user/settings, in-process) on every
+// SSR render and gives up at APP_SETTINGS_FETCH_TIMEOUT_MS (8s). That wait is charged to
+// application-code, so a bootstrap that never answers reads as "slow upstream" on the split alone —
+// the one case where the split points at the wrong half of the stack. The marker is the tell, and it
+// outranks timing. (The verdict keeps its old `self-fetch-failing` name: callers match on it.)
 const SELF_FETCH_FAILED = /\[_app\] settings bootstrap fetch failed/;
 
 // A branch or merge that adds a dependency leaves node_modules behind, and the page then 500s
@@ -178,7 +179,7 @@ const VERDICTS = {
   'stale-deps': () =>
     'STALE-DEPS — the server answered fast, but it cannot resolve a module. node_modules is behind the checkout, so this is an install, not a cache problem.',
   'self-fetch-failing': () =>
-    "SELF-FETCH-FAILING — the server cannot reach its OWN /api/user/settings, so every page renders signed-out and degraded. The 8s abort is billed to application-code, so the timing split points the wrong way here.",
+    "SELF-FETCH-FAILING — the per-render settings bootstrap (the code behind /api/user/settings) failed, so pages render signed-out and degraded. Its 8s render deadline is billed to application-code, so the timing split points the wrong way here.",
   'error-status': (s) => `ERROR-STATUS — answered ${s.status} in ${ms(s.totalMs)}. Fast, and wrong.`,
   'proxy-slow': () =>
     'PROXY-SLOW — the time is in middleware (proxy.ts), not in the framework or in application code.',
@@ -204,7 +205,7 @@ export const REMEDIES = {
   'self-fetch-failing': (ctx) =>
     ctx.settingsHangs
       ? `/api/user/settings itself never answers (probed above), so this is the endpoint, not the build cache — a purge costs 45s and changes nothing (measured 2026-08-16: it still hung on a freshly built session). Find what that handler awaits. Meanwhile every page renders signed-out at exactly APP_SETTINGS_FETCH_TIMEOUT_MS.`
-      : `The self-fetch failed but /api/user/settings answers directly, so it is aimed at the wrong place: check NEXTAUTH_URL_INTERNAL in this session's .env against the port in \`cli.mjs list\`. If it matches, the server is too sick to reach itself: node .claude/skills/dev-server/cli.mjs unwedge ${ctx.sessionId || '<session-id>'}`,
+      : `The render's settings bootstrap failed but /api/user/settings (the same code) answers directly, so the failure was transient or specific to the page request: the \`[_app] settings bootstrap fetch failed\` line names the error (node .claude/skills/dev-server/cli.mjs logs ${ctx.sessionId || '<session-id>'}); its full message is in the 'settings bootstrap failed' structured log.`,
   timeout: (ctx) =>
     `Check the session is alive (node .claude/skills/dev-server/cli.mjs list). If it is running and every route behaves this way, unwedge ${ctx.sessionId || '<session-id>'}.`,
   'stopped-answering': (ctx) =>
@@ -343,7 +344,7 @@ export async function probe({ route, port, sessionId, worktree, daemonRequest, t
   const verdict = classify(first, second);
   const sample = second.ok ? second : first;
 
-  // The remedy for a failing self-fetch splits on whether the endpoint answers at all, and that is
+  // The remedy for a failing bootstrap splits on whether the endpoint answers at all, and that is
   // one bounded request away — asking the agent to run it is asking them to improvise a curl.
   let followUp = null;
   if (verdict === 'self-fetch-failing' && route !== SETTINGS_ROUTE) {

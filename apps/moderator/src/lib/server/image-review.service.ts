@@ -4,6 +4,7 @@ import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
+import { DEFAULT_REPORT_REASONS } from '$lib/reports';
 
 export type ReviewTag = { id: number; name: string; nsfwLevel: number };
 
@@ -226,10 +227,14 @@ export async function getReportedImageQueue({
   browsingLevel,
   cursor,
   limit,
+  reportId,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  /** One report, whatever its status or rating — what `reportActionPath` links to from User Lookup and
+   *  the hand-off panels. Without it a link to a ruled report landed on an unrelated Pending list. */
+  reportId?: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
   const fetched = await dbRead
     .selectFrom('Image as i')
@@ -258,8 +263,15 @@ export async function getReportedImageQueue({
       'ru.username as reportUsername',
       'ru.id as reportUserId',
     ])
-    .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
-    .where('r.status', '=', 'Pending')
+    .$if(reportId != null, (qb) => qb.where('r.id', '=', reportId!))
+    .$if(reportId == null, (qb) =>
+      qb
+        .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
+        .where('r.status', '=', 'Pending')
+        // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
+        // number. Today it removes nothing: Automated reports are filed for other entity types.
+        .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
+    )
     .$if(cursor != null, (qb) => qb.where('r.id', '>', cursor!))
     .orderBy('r.id', 'asc')
     .limit(limit + 1)

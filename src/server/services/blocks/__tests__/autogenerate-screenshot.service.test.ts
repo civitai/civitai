@@ -46,7 +46,6 @@ import {
   backfillMissingScreenshots,
   blockPublicUrl,
   hasDevScreenshots,
-  BLOCK_SCREENSHOT_AUTOGEN_ENABLED,
 } from '../autogenerate-screenshot.service';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -104,14 +103,6 @@ describe('hasDevScreenshots', () => {
         { key: 'b', index: 1, ext: 'png', contentType: 'image/png' },
       ])
     ).toBe(true);
-  });
-});
-
-// --- disabled kill-switch ---------------------------------------------------
-
-describe('BLOCK_SCREENSHOT_AUTOGEN_ENABLED', () => {
-  it('is disabled (false) — standalone-URL autogen only ever captures skeletons', () => {
-    expect(BLOCK_SCREENSHOT_AUTOGEN_ENABLED).toBe(false);
   });
 });
 

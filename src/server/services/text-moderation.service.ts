@@ -16,6 +16,7 @@ export async function submitTextModeration({
   wait,
   recordForReview = false,
   forceRescan = false,
+  rearmRetries = false,
 }: {
   entityType: string;
   entityId: number;
@@ -36,6 +37,8 @@ export async function submitTextModeration({
    * previous verdict shouldn't be reused.
    */
   forceRescan?: boolean;
+  /** A fresh submit, not a retry: reset the row's retry budget. */
+  rearmRetries?: boolean;
 }) {
   return createXGuardModerationRequest({
     mode: 'text',
@@ -48,5 +51,6 @@ export async function submitTextModeration({
     wait,
     recordForReview,
     forceRescan,
+    rearmRetries,
   });
 }
