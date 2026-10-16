@@ -1,5 +1,8 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+  import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
+  import { rulingDraft } from '$lib/ruling-draft.svelte';
   import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
@@ -19,6 +22,11 @@
     data,
     form,
   }: { data: RedetectedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
+
+  type Verdict = ResolutionVerdict<'heldDetection'>;
+
+  let current = $state<string | null>(null);
+  const ruling = rulingDraft<Verdict>(() => current);
 
   // A model can wait on both labels, so a row is identified by the pair.
   const rowKey = (row: RedetectedRow) => `${row.modelId}:${row.label}`;
@@ -62,6 +70,11 @@
   queueLabel="Held detections queue"
   itemLabel="Detection"
   decisionEnabled={(row) => [!row.hasPendingAppeal, !row.hasPendingAppeal]}
+  ondecision={(_row, index) => {
+    const verdict = HELD_DETECTION_RULING_CHOICES[index]?.verdict;
+    if (verdict) ruling.choose(verdict);
+  }}
+  bind:current
   outcomeFor={(result, outcome) =>
     result.type === 'success' && result.data?.resolved === 'closed' ? 'Already flagged' : outcome}
   pageNumber={data.page}
@@ -97,6 +110,7 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
+      bind:draft={() => ruling.current, (d) => (ruling.current = d)}
     />
   {/snippet}
 </TriageShell>

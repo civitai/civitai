@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RESOLUTION_NOTE_MAX_LENGTH } from '@civitai/shared/resolution-reasons';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { mockResolve, session } = vi.hoisted(() => ({
@@ -67,6 +68,40 @@ describe('minorFlag.resolveRedetection', () => {
     expect(mockResolve).toHaveBeenCalledWith(
       expect.objectContaining({ label: 'poi', keep: false })
     );
+  });
+
+  it('forwards a reason that belongs to the verdict, with its note', async () => {
+    const body = { modelId: 42, label: 'minor', textHash: 'h-1' };
+    await call({ ...body, keep: 'false', resolvedReason: 'other', internalNotes: 'a cartoon' });
+    expect(mockResolve).toHaveBeenCalledWith(
+      expect.objectContaining({ keep: false, reason: 'other', note: 'a cartoon' })
+    );
+  });
+
+  it.each([
+    ['a keep reason on a dismissal', { keep: false, resolvedReason: 'detection-correct' }],
+    ['an appeal reason on a keep', { keep: true, resolvedReason: 'flag-confirmed' }],
+    ['Other without a note', { keep: true, resolvedReason: 'other' }],
+    [
+      'a real-person reason on a minor detection',
+      { keep: false, resolvedReason: 'not-a-real-person' },
+    ],
+    [
+      'a note over the limit',
+      {
+        keep: true,
+        resolvedReason: 'other',
+        internalNotes: 'x'.repeat(RESOLUTION_NOTE_MAX_LENGTH + 1),
+      },
+    ],
+  ])('refuses %s before resolving anything', async (_, ruling) => {
+    expect(await call({ modelId: 42, label: 'minor', textHash: 'h-1', ...ruling })).toBe(400);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it('rules without a reason when none is sent', async () => {
+    await call({ modelId: 42, label: 'minor', keep: true, textHash: 'h-1' });
+    expect(mockResolve.mock.calls[0][0].reason).toBeUndefined();
   });
 
   it('rejects an unknown label before resolving anything', async () => {

@@ -96,10 +96,14 @@ export async function resolveBountyPoiAppeal({
   bountyId,
   uphold,
   userId,
+  resolvedReason,
+  internalNotes,
 }: {
   bountyId: number;
   uphold: boolean;
   userId: number;
+  resolvedReason?: string;
+  internalNotes?: string;
 }) {
   const bounty = await dbWrite.bounty.findUnique({
     where: { id: bountyId },
@@ -150,6 +154,8 @@ export async function resolveBountyPoiAppeal({
     ids: [bountyId],
     entityType: EntityType.Bounty,
     status: uphold ? AppealStatus.Rejected : AppealStatus.Approved,
+    resolvedReason,
+    internalNotes,
     userId,
   });
 

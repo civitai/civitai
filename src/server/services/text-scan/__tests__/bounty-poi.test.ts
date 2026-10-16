@@ -178,12 +178,22 @@ describe('resolveBountyPoiAppeal', () => {
     );
   });
 
-  it('uphold stamps the decision and rejects the appeal', async () => {
-    await resolveBountyPoiAppeal({ bountyId: 9, uphold: true, userId: 3 });
+  it("uphold stamps the decision and rejects the appeal with the moderator's reason", async () => {
+    await resolveBountyPoiAppeal({
+      bountyId: 9,
+      uphold: true,
+      userId: 3,
+      resolvedReason: 'flag-confirmed',
+      internalNotes: 'a named actor',
+    });
     expect(sqlOf(dbMock.dbWrite.$executeRaw.mock.calls[0])).toContain(`'appealUpheld'`);
     expect(mockQueueUpdate).not.toHaveBeenCalled();
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'Rejected' })
+      expect.objectContaining({
+        status: 'Rejected',
+        resolvedReason: 'flag-confirmed',
+        internalNotes: 'a named actor',
+      })
     );
   });
 

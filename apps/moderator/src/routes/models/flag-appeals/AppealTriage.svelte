@@ -1,5 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
+  import { rulingDraft } from '$lib/ruling-draft.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
@@ -9,7 +11,7 @@
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import type { AppealQueueData } from '$lib/server/minor-flag-queue';
   import { urlWith } from '$lib/url';
-  import AppealDetail from './AppealDetail.svelte';
+  import AppealDetail, { type AppealRuling } from './AppealDetail.svelte';
   import AppealTags from './AppealTags.svelte';
 
   type QueueForm = { error?: string; rescanQueued?: boolean; modelId?: number } | null;
@@ -18,6 +20,9 @@
     data,
     form,
   }: { data: AppealQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
+
+  let current = $state<number | null>(null);
+  const ruling = rulingDraft<AppealRuling>(() => current);
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
@@ -67,6 +72,11 @@
   queueLabel="Appeal queue"
   itemLabel="Appeal"
   decisionEnabled={(row) => [flagInForce(row), true]}
+  ondecision={(_row, index) => {
+    const verdict = FLAG_APPEAL_RULING_CHOICES[index]?.verdict;
+    if (verdict) ruling.choose(verdict);
+  }}
+  bind:current
   pageNumber={data.page}
   hasMore={data.hasMore}
   offset={data.offset}
@@ -100,6 +110,8 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
+      choose={ruling.choose}
+      bind:draft={() => ruling.current, (d) => (ruling.current = d)}
     />
   {/snippet}
 </TriageShell>

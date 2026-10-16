@@ -43,33 +43,79 @@ beforeEach(() => {
   getRedetectedCount.mockResolvedValue(3);
 });
 
+const kept = { resolvedReason: 'detection-correct' };
+const dismissed = { resolvedReason: 'not-a-minor' };
+
 describe('re-detection actions', () => {
-  it('keep forwards the label and keeps', async () => {
+  it('keep forwards the label, the reason and keeps', async () => {
     expect(
-      await run('keepRedetected', { modelId: '42', label: 'poi', textHash: 'h-1' })
+      await run('keepRedetected', { modelId: '42', label: 'poi', textHash: 'h-1', ...kept })
     ).toMatchObject({ success: true, modelId: 42, resolved: 'kept' });
-    expect(resolveRedetection).toHaveBeenCalledWith(42, 'poi', true, 'h-1');
+    expect(resolveRedetection).toHaveBeenCalledWith(42, 'poi', true, 'h-1', {
+      resolvedReason: 'detection-correct',
+      internalNotes: undefined,
+    });
   });
 
   it('hands the main app\'s "already flagged" answer to the page', async () => {
     resolveRedetection.mockResolvedValue({ ok: true, resolved: 'closed' });
     expect(
-      await run('keepRedetected', { modelId: '42', label: 'minor', textHash: 'h-1' })
+      await run('keepRedetected', { modelId: '42', label: 'minor', textHash: 'h-1', ...kept })
     ).toMatchObject({ success: true, resolved: 'closed' });
   });
 
-  it('dismiss forwards the label and dismisses', async () => {
-    await run('dismissRedetected', { modelId: '42', label: 'minor', textHash: 'h-1' });
-    expect(resolveRedetection).toHaveBeenCalledWith(42, 'minor', false, 'h-1');
+  it('dismiss forwards the label, the reason and note, and dismisses', async () => {
+    await run('dismissRedetected', {
+      modelId: '42',
+      label: 'minor',
+      textHash: 'h-1',
+      resolvedReason: 'other',
+      internalNotes: 'a cartoon',
+    });
+    expect(resolveRedetection).toHaveBeenCalledWith(42, 'minor', false, 'h-1', {
+      resolvedReason: 'other',
+      internalNotes: 'a cartoon',
+    });
   });
 
   it.each([
-    ['an unknown label', { modelId: '42', label: 'nsfw', textHash: 'h-1' }],
-    ['no model', { label: 'minor', textHash: 'h-1' }],
-    ['no text hash', { modelId: '42', label: 'minor' }],
-  ])('refuses %s before calling the main app', async (_name, fields) => {
+    ['an unknown label', { modelId: '42', label: 'nsfw', textHash: 'h-1', ...kept }],
+    ['no model', { label: 'minor', textHash: 'h-1', ...kept }],
+    ['no text hash', { modelId: '42', label: 'minor', ...kept }],
+    ['no reason', { modelId: '42', label: 'minor', textHash: 'h-1' }],
+    ['a dismissal reason', { modelId: '42', label: 'minor', textHash: 'h-1', ...dismissed }],
+    [
+      'Other without a note',
+      { modelId: '42', label: 'minor', textHash: 'h-1', resolvedReason: 'other' },
+    ],
+  ])('refuses %s on a keep before calling the main app', async (_name, fields) => {
     const result = await run('keepRedetected', fields);
     expect(result).toMatchObject({ status: 400 });
+    expect(resolveRedetection).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reason bound to the other label', async () => {
+    const result = await run('dismissRedetected', {
+      modelId: '42',
+      label: 'poi',
+      textHash: 'h-1',
+      ...dismissed,
+    });
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/does not apply/) },
+    });
+    expect(resolveRedetection).not.toHaveBeenCalled();
+  });
+
+  it('refuses a keep reason on a dismissal', async () => {
+    const result = await run('dismissRedetected', {
+      modelId: '42',
+      label: 'minor',
+      textHash: 'h-1',
+      ...kept,
+    });
+    expect(result).toMatchObject({ status: 400, data: { modelId: 42 } });
     expect(resolveRedetection).not.toHaveBeenCalled();
   });
 
@@ -79,6 +125,7 @@ describe('re-detection actions', () => {
       modelId: '42',
       label: 'minor',
       textHash: 'h-1',
+      ...dismissed,
     })) as {
       status: number;
       data: { error: string; modelId: number };

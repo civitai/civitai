@@ -1,4 +1,5 @@
 import { bustMinorQueueCounts } from './minor-hash.service';
+import type { checkedResolutionReason } from './resolution-reason';
 import { callModEndpoint, type ActionResult, type JsonResult } from './user-actions.service';
 
 /**
@@ -22,26 +23,33 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
+export type RulingReason = Exclude<ReturnType<typeof checkedResolutionReason>, string>;
+
 /** `rescanQueued` is always false now: the endpoint keeps it for compatibility. */
 export type AppealResult = { ok: true; rescanQueued: boolean } | { ok: false; error: string };
 
-export const resolveMinorFlagAppeal = (modelId: number, uphold: boolean): Promise<AppealResult> =>
+export const resolveMinorFlagAppeal = (
+  modelId: number,
+  uphold: boolean,
+  reason: RulingReason
+): Promise<AppealResult> =>
   toAppealResult(
     callModEndpoint(
       'minor-flag/resolve-appeal',
-      { modelId, uphold },
+      { modelId, uphold, ...reason },
       uphold ? 'Uphold flag' : 'Overturn flag'
     )
   );
 
 export const resolveMinorFlagAppealPerLabel = (
   modelId: number,
-  labels: { minor: 'uphold' | 'overturn'; poi: 'uphold' | 'overturn' }
+  labels: { minor: 'uphold' | 'overturn'; poi: 'uphold' | 'overturn' },
+  reason: RulingReason
 ): Promise<AppealResult> =>
   toAppealResult(
     callModEndpoint(
       'minor-flag/resolve-appeal',
-      { modelId, uphold: false, ...labels },
+      { modelId, uphold: false, ...labels, ...reason },
       'Rule per label'
     )
   );
@@ -58,11 +66,12 @@ export async function resolveRedetection(
   modelId: number,
   label: 'minor' | 'poi',
   keep: boolean,
-  textHash: string
+  textHash: string,
+  reason: RulingReason
 ): Promise<RedetectionResult> {
   const result = await callModEndpoint(
     'minor-flag/resolve-redetection',
-    { modelId, label, keep, textHash },
+    { modelId, label, keep, textHash, ...reason },
     keep ? 'Keep re-detected flag' : 'Dismiss re-detection'
   );
   if (!result.ok) return result;

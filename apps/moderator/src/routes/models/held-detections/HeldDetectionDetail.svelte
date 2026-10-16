@@ -1,9 +1,6 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
@@ -22,6 +19,12 @@
   import { FLAG_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
   import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
+  import RulingForm, { type RulingDraft } from '$lib/components/RulingForm.svelte';
+  import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
+  import type { Outcome } from '$lib/triage/queue';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+
+  type Verdict = ResolutionVerdict<'heldDetection'>;
 
   let {
     row,
@@ -30,14 +33,17 @@
     error,
     submit,
     actionHref,
+    draft = $bindable(),
   }: {
     row: RedetectedRow;
     civitaiUrl: string;
     verdict: string | undefined;
     error: string | undefined;
-    submit: (outcome: string) => SubmitFunction;
+    submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
+    draft: RulingDraft<Verdict>;
   } = $props();
+
 
   // Mirrors the main app's refusal in resolveTextScanRedetection: any Pending appeal on the model, for
   // either label, blocks a ruling. Change both together.
@@ -168,40 +174,22 @@
     {/if}
   {/snippet}
   {#snippet actions()}
-    <form
-      data-triage-action="uphold"
-      method="POST"
-      action={actionHref('keepRedetected')}
-      use:enhance={submit('Flagged')}
+    <RulingForm
+      subject="heldDetection"
+      choices={HELD_DETECTION_RULING_CHOICES}
+      action={actionHref(draft.verdict === 'Kept' ? 'keepRedetected' : 'dismissRedetected')}
+      enhancer={submit((form) => (form.get('status') === 'Kept' ? 'Flagged' : 'Not flagged'))}
+      idPrefix="held-{row.modelId}-{row.label}"
+      size="lg"
+      kbd
+      labels={[row.label]}
+      disabled={blocked}
+      choiceDisabled={() => (blocked ? APPEAL_FIRST : null)}
+      bind:draft
     >
-      {@render verdictFields()}
-      <Button
-        type="submit"
-        size="lg"
-        class="h-11 px-5 text-base"
-        disabled={blocked}
-        title={blocked ? APPEAL_FIRST : undefined}
-      >
-        Flag <Kbd>1</Kbd>
-      </Button>
-    </form>
-    <form
-      data-triage-action="overturn"
-      method="POST"
-      action={actionHref('dismissRedetected')}
-      use:enhance={submit('Not flagged')}
-    >
-      {@render verdictFields()}
-      <Button
-        type="submit"
-        size="lg"
-        variant="destructive"
-        class="h-11 px-5 text-base"
-        disabled={blocked}
-        title={blocked ? APPEAL_FIRST : undefined}
-      >
-        Don't flag <Kbd>2</Kbd>
-      </Button>
-    </form>
+      {#snippet hidden()}
+        {@render verdictFields()}
+      {/snippet}
+    </RulingForm>
   {/snippet}
 </TriageDetailFrame>

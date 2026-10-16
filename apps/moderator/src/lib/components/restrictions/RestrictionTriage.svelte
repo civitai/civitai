@@ -2,11 +2,11 @@
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { originSummary } from '$lib/restrictions/origin';
+  import { rulingDraft } from '$lib/ruling-draft.svelte';
   import {
     unwiredRulingReason,
     type RestrictionType,
@@ -61,16 +61,7 @@
   // The open restriction, reported by the shell; a chosen verdict belongs to it alone.
   let current = $state<number | null>(null);
 
-  // A chosen verdict, reason and note belong to one restriction.
-  let draft = $state<RulingDraft<Verdict>>(emptyRulingDraft<Verdict>());
-  $effect(() => {
-    void current;
-    draft = emptyRulingDraft<Verdict>();
-  });
-
-  const choose = (verdict: Verdict) => {
-    draft = { verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' };
-  };
+  const ruling = rulingDraft<Verdict>(() => current);
 
   const actionHref = (action: string) =>
     formActionHref(action, {
@@ -143,7 +134,7 @@
   queueLabel="Restriction queue"
   itemLabel="Restriction"
   decisionEnabled={(row) => [canDecide(row), canDecide(row)]}
-  ondecision={(_row, index) => choose(index === 0 ? 'Upheld' : 'Overturned')}
+  ondecision={(_row, index) => ruling.choose(index === 0 ? 'Upheld' : 'Overturned')}
   pinned={data.pinned}
   bind:current
   pageNumber={data.page}
@@ -188,8 +179,8 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
-      {choose}
-      bind:draft
+      choose={ruling.choose}
+      bind:draft={() => ruling.current, (d) => (ruling.current = d)}
     />
   {/snippet}
 </TriageShell>

@@ -349,7 +349,7 @@ describe('applyModelPoiMinor — poi', () => {
     await run(outcome({ poi: poi() }));
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain(`'rulings'`);
-    expect(text).toContain(`->'appealGranted' || '{"decision":"appealGranted"}'`);
+    expect(text).toContain(`->'appealGranted') - 'note') || '{"decision":"appealGranted"}'`);
   });
 
   it('does not notify a model owned by the system/deleted-user account', async () => {

@@ -222,7 +222,9 @@ keep one and lift the other (`minor`/`poi` on `/api/mod/minor-flag/resolve-appea
 flag whose origin is `auto` or `text-scan` rolls it back to its snapshot; a moderator-origin flag takes
 the plain unset path instead. A grant covers the text it was about: if the owner edited the text while
 the appeal was open, the model is rescanned (`rescanQueued`). The hash-match detail renders only for
-hash-origin rows.
+hash-origin rows. A ruling may carry `resolvedReason` + `internalNotes` (`flagAppeal` subject;
+`not-a-minor` and `not-a-real-person` apply only to their own label). The endpoint validates them
+when sent and stores them on the `Appeal` row; the moderator app requires them.
 
 **Re-detections** — a clear stays a clear when the owner edits the text. If a label already carries
 a human `appealGranted` and a later scan detects it on text with a *different* hash, the scan flags
@@ -236,7 +238,9 @@ the prior clear (who, when, via). **Flag** (the API's keep) calls
 notice included) and records `appealUpheld`; **Don't flag** (the API's dismiss) stamps a new
 moderator `appealGranted` on the re-detected text and clears the marker. Flagging replaces the label
 entry, so the decisions it replaces move into a capped `rulings` history (newest 5) rather than
-being lost. Bounty real-person flags keep the old behaviour: a changed text re-flags.
+being lost. Both decisions carry the moderator's `reason` slug and `note` (from the `heldDetection`
+subject in `@civitai/shared/resolution-reasons`) on the stamp, so `rulings` keeps the reason; the
+note is dropped from history. A `closed` outcome stamps neither. Bounty real-person flags keep the old behaviour: a changed text re-flags.
 
 Neither queue is paginated (`limit` default 1000, max 2000, plus a `truncated` flag). This is
 deliberate: rows *leave* these queues as they're actioned, so any server-side window — OFFSET or keyset

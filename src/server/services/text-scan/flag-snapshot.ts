@@ -14,6 +14,9 @@ export type TextScanFlagDecision = {
   by: number;
   textHash?: string | null;
   via?: 'appeal' | 'moderator';
+  /** A held-detection ruling's reason slug from `@civitai/shared/resolution-reasons`, and its note. */
+  reason?: string;
+  note?: string;
 };
 
 export type TextScanFlagRuling = TextScanFlagDecision & {

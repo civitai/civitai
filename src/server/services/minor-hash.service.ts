@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -747,11 +748,15 @@ export async function resolveMinorFlagAppeal({
   uphold,
   userId,
   labels,
+  resolvedReason,
+  internalNotes,
 }: {
   modelId: number;
   uphold: boolean;
   userId: number;
   labels?: Partial<Record<AppealLabel, AppealLabelDecision>>;
+  resolvedReason?: string;
+  internalNotes?: string;
 }) {
   // Read from the primary: a revert inside replication lag is exactly the race the uphold
   // guard exists for, and the replica would still answer "flagged". One PK lookup.
@@ -776,6 +781,21 @@ export async function resolveMinorFlagAppeal({
   const decide = (label: AppealLabel) => labels?.[label] ?? (uphold ? 'uphold' : 'overturn');
   const upheld = flagged.filter((label) => decide(label) === 'uphold');
   const overturned = flagged.filter((label) => decide(label) === 'overturn');
+  const approved = labels ? overturned.length > 0 : !uphold;
+
+  // Checked against the verdict this ruling writes: a per-label ruling also decides flagged labels it
+  // does not name.
+  if (resolvedReason) {
+    const ruledOn = approved ? overturned : flagged;
+    const invalid = resolutionReasonError(
+      'flagAppeal',
+      approved ? 'Approved' : 'Rejected',
+      resolvedReason,
+      internalNotes,
+      ruledOn.length ? ruledOn : undefined
+    );
+    if (invalid) throw throwBadRequestError(invalid);
+  }
 
   const grantHashes: Record<string, string> = {};
   for (const label of overturned) {
@@ -817,11 +837,12 @@ export async function resolveMinorFlagAppeal({
   if (overturned.includes('poi'))
     await grantModelTextScanPoi({ modelId, userId, grantHash: grantHashes.poi });
 
-  const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({
     ids: [modelId],
     entityType: EntityType.Model,
     status: approved ? AppealStatus.Approved : AppealStatus.Rejected,
+    resolvedReason,
+    internalNotes,
     userId,
   });
 

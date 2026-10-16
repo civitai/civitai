@@ -1346,6 +1346,7 @@ export async function resolveEntityAppeal({
   status,
   internalNotes,
   resolvedMessage,
+  resolvedReason,
   refundBuzz,
   userId,
 }: ResolveAppealInput & { userId?: number }) {
@@ -1358,7 +1359,14 @@ export async function resolveEntityAppeal({
       entityType,
       entityRemovedAt: null,
     },
-    data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
+    data: {
+      status,
+      resolvedBy: userId,
+      resolvedMessage,
+      resolvedReason,
+      internalNotes,
+      resolvedAt: new Date(),
+    },
     select: {
       id: true,
       entityId: true,

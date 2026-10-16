@@ -1,3 +1,53 @@
+<script module lang="ts">
+  import type { ResolutionVerdict, TextScanLabel } from '@civitai/shared/resolution-reasons';
+  import type { ButtonVariant } from '@civitai/ui/components/ui/button/index.js';
+  import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
+
+  type Decision = 'uphold' | 'overturn';
+  type Ruling = {
+    action: 'upholdAppeal' | 'overturnAppeal' | 'splitAppeal';
+    verdict: ResolutionVerdict<'flagAppeal'>;
+    label: string;
+    confirmLabel: string;
+    variant: ButtonVariant;
+    outcome: string;
+    split?: { minor: Decision; poi: Decision; lifted: TextScanLabel };
+  };
+
+  const choice = (verdict: ResolutionVerdict<'flagAppeal'>) => {
+    const found = FLAG_APPEAL_RULING_CHOICES.find((c) => c.verdict === verdict);
+    if (!found) throw new Error(`No flag appeal choice for ${verdict}`);
+    return found;
+  };
+
+  // A split lifts one flag, so it is an Approved ruling.
+  const RULINGS = {
+    Rejected: { ...choice('Rejected'), action: 'upholdAppeal', outcome: 'Appeal rejected' },
+    Approved: { ...choice('Approved'), action: 'overturnAppeal', outcome: 'Appeal approved' },
+    liftPoi: {
+      action: 'splitAppeal',
+      verdict: 'Approved',
+      label: 'Keep minor, lift real person',
+      confirmLabel: 'Confirm keep minor, lift real person',
+      variant: 'default',
+      outcome: 'Kept minor, lifted real person',
+      split: { minor: 'uphold', poi: 'overturn', lifted: 'poi' },
+    },
+    liftMinor: {
+      action: 'splitAppeal',
+      verdict: 'Approved',
+      label: 'Lift minor, keep real person',
+      confirmLabel: 'Confirm lift minor, keep real person',
+      variant: 'default',
+      outcome: 'Lifted minor, kept real person',
+      split: { minor: 'overturn', poi: 'uphold', lifted: 'minor' },
+    },
+  } satisfies Record<string, Ruling>;
+
+  export type AppealRuling = keyof typeof RULINGS;
+  const SPLIT_RULINGS = ['liftPoi', 'liftMinor'] as const satisfies readonly AppealRuling[];
+</script>
+
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { browser } from '$app/environment';
@@ -23,6 +73,9 @@
     type FlagLabel,
   } from '$lib/minor-flags/text-scan-verdicts';
   import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
+  import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
+  import type { RulingDraft } from '$lib/components/RulingForm.svelte';
+  import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
   import AppealTags from './AppealTags.svelte';
 
   let {
@@ -32,6 +85,8 @@
     error,
     submit,
     actionHref,
+    choose,
+    draft = $bindable(),
   }: {
     row: MinorFlagAppealRow;
     civitaiUrl: string;
@@ -40,7 +95,10 @@
     error: string | undefined;
     submit: (verdict: string) => SubmitFunction;
     actionHref: (action: string) => string;
+    choose: (ruling: AppealRuling) => void;
+    draft: RulingDraft<AppealRuling>;
   } = $props();
+
 
   const modelHref = (id: number, versionId: number | null = null) =>
     `${civitaiUrl}/models/${id}?view=basic${versionId ? `&modelVersionId=${versionId}` : ''}`;
@@ -57,6 +115,23 @@
   const labelName = (label: FlagLabel) => (label === 'poi' ? 'real person' : 'minor');
   const poiOpen = $derived(poiInForce(row));
   const canUphold = $derived(flagInForce(row));
+
+  const ruling = $derived<Ruling | null>(draft.verdict ? RULINGS[draft.verdict] : null);
+  // Mirrors `resolveMinorFlagAppeal`'s check; change both together.
+  const ruledOn = $derived.by((): TextScanLabel[] | undefined => {
+    if (ruling?.split) return [ruling.split.lifted];
+    const flagged = (['minor', 'poi'] as const).filter((l) => (l === 'minor' ? row.minor : poiOpen));
+    return flagged.length ? flagged : undefined;
+  });
+  // The row can change under a chosen ruling (another moderator, a reload).
+  const unavailable = $derived(
+    (draft.verdict === 'Rejected' && !canUphold) || (!!ruling?.split && !(row.minor && poiOpen))
+  );
+  const unrecordable = $derived(
+    ruling
+      ? resolutionReasonError('flagAppeal', ruling.verdict, draft.reason, draft.note, ruledOn)
+      : null
+  );
   const ago = (value: Date | string) => `${shortAge(value)} ago`;
 
   // Primitives first, so a reload that hands back an equal row doesn't rebuild the promise.
@@ -227,59 +302,67 @@
     <UploaderCard {row} />
   {/snippet}
   {#snippet actions()}
-    <form
-      data-triage-action="uphold"
-      method="POST"
-      action={actionHref('upholdAppeal')}
-      use:enhance={submit('Appeal rejected')}
-    >
-      <input type="hidden" name="modelId" value={row.modelId} />
+    {#each FLAG_APPEAL_RULING_CHOICES as c, i (c.verdict)}
+      {@const blocked = c.verdict === 'Rejected' && !canUphold}
       <Button
-        type="submit"
         size="lg"
         class="h-11 px-5 text-base"
-        disabled={!canUphold}
-        title={canUphold ? undefined : 'Not flagged any more. Unflag closes the request.'}
+        variant={draft.verdict === c.verdict ? c.variant : 'outline'}
+        aria-pressed={draft.verdict === c.verdict}
+        disabled={blocked}
+        title={blocked ? 'Not flagged any more. Unflag closes the request.' : undefined}
+        onclick={() => choose(c.verdict)}
       >
-        Keep flagged <Kbd>1</Kbd>
+        {c.label} <Kbd>{i + 1}</Kbd>
       </Button>
-    </form>
-    <form
-      data-triage-action="overturn"
-      method="POST"
-      action={actionHref('overturnAppeal')}
-      use:enhance={submit('Appeal approved')}
-    >
-      <input type="hidden" name="modelId" value={row.modelId} />
-      <Button type="submit" size="lg" variant="destructive" class="h-11 px-5 text-base">
-        Unflag <Kbd>2</Kbd>
-      </Button>
-    </form>
+    {/each}
     {#if row.minor && poiOpen}
-      <form
-        method="POST"
-        action={actionHref('splitAppeal')}
-        use:enhance={submit('Kept minor, lifted real person')}
-      >
-        <input type="hidden" name="modelId" value={row.modelId} />
-        <input type="hidden" name="minor" value="uphold" />
-        <input type="hidden" name="poi" value="overturn" />
-        <Button type="submit" size="lg" variant="outline" class="h-11 text-base">
-          Keep minor, lift real person
+      {#each SPLIT_RULINGS as split (split)}
+        <Button
+          size="lg"
+          variant={draft.verdict === split ? 'default' : 'outline'}
+          class="h-11 text-base"
+          aria-pressed={draft.verdict === split}
+          onclick={() => choose(split)}
+        >
+          {RULINGS[split].label}
         </Button>
-      </form>
-      <form
-        method="POST"
-        action={actionHref('splitAppeal')}
-        use:enhance={submit('Lifted minor, kept real person')}
-      >
-        <input type="hidden" name="modelId" value={row.modelId} />
-        <input type="hidden" name="minor" value="overturn" />
-        <input type="hidden" name="poi" value="uphold" />
-        <Button type="submit" size="lg" variant="outline" class="h-11 text-base">
-          Lift minor, keep real person
-        </Button>
-      </form>
+      {/each}
+    {/if}
+    {#if ruling}
+      <!-- Keyed: `use:enhance` reads its handler once, and each ruling reports its own outcome. -->
+      {#key draft.verdict}
+        <form
+          method="POST"
+          action={actionHref(ruling.action)}
+          use:enhance={submit(ruling.outcome)}
+          class="grid w-full gap-2 rounded-md border border-dark-4 bg-dark-7 p-3"
+        >
+          <input type="hidden" name="modelId" value={row.modelId} />
+          {#if ruling.split}
+            <input type="hidden" name="minor" value={ruling.split.minor} />
+            <input type="hidden" name="poi" value={ruling.split.poi} />
+          {/if}
+          <ResolutionReasonFields
+            subject="flagAppeal"
+            verdict={ruling.verdict}
+            idPrefix="flag-appeal-{row.appealId}"
+            labels={ruledOn}
+            bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
+            bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
+          />
+          <div>
+            <Button
+              type="submit"
+              size="lg"
+              variant={ruling.variant}
+              disabled={unavailable || !!unrecordable}
+            >
+              {ruling.confirmLabel}
+            </Button>
+          </div>
+        </form>
+      {/key}
     {/if}
   {/snippet}
 </TriageDetailFrame>

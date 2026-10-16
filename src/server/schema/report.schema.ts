@@ -250,6 +250,7 @@ export const resolveAppealSchema = z.object({
   entityType: z.enum(EntityType),
   status: z.enum(AppealStatus),
   resolvedMessage: z.string().trim().max(MAX_APPEAL_MESSAGE_LENGTH).optional(),
+  resolvedReason: z.string().trim().optional(),
   internalNotes: z.string().trim().optional(),
   refundBuzz: z.boolean().optional(),
 });

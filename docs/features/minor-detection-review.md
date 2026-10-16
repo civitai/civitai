@@ -63,15 +63,15 @@ locked per model and label, refused while an appeal is pending, resumable keep).
   never held again. A later detection on different text becomes an ordinary re-detection.
 
 Each decision is logged (`held detection resolved`) with the label, the hold kind, the decision
-(`kept`, `dismissed`, or `closed` when the item was already resolved) and the prompt ids that
-produced the verdict.
+(`kept`, `dismissed`, or `closed` when the item was already resolved), the prompt ids that
+produced the verdict, and the moderator's `reason` and `note` (absent on `closed`).
 
 ## Moderator app
 
 `/models/held-detections` ("Held Detections", under Models) lists first detections and
 re-detections together, each badged with its kind, in the shared triage layout: **Flag (1)** /
 **Don't flag (2)**. The Re-detected tab moves here from Flag Appeals, which keeps appeals only; the old
-`/models/flag-appeals?view=redetected` URL redirects. The page lists held poi (real person) re-detections as well as minor ones, hence the name.
+`/models/flag-appeals?view=redetected` URL redirects. The page lists held poi (real person) re-detections as well as minor ones, hence the name. Each verdict requires a reason from a fixed list (plus a note for Other), sent as `resolvedReason`/`internalNotes` on `resolve-redetection` and stamped on the label's decision; the server treats both as optional.
 
 ## Rollout
 

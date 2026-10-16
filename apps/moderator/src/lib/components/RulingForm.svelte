@@ -10,6 +10,13 @@
     reason: '',
     note: '',
   });
+
+  /** A reason and note are written for one verdict: switching drops them, and choosing it again
+   *  clears it. */
+  export const chooseVerdict = <V extends string>(
+    draft: RulingDraft<V>,
+    verdict: V
+  ): RulingDraft<V> => ({ verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' });
 </script>
 
 <script lang="ts" generics="S extends ResolutionSubject">
@@ -17,12 +24,15 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
+  import { cn } from '@civitai/ui/utils.js';
   // Used by the `generics=` attribute above, which ESLint cannot see.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   import type { ResolutionSubject } from '@civitai/shared/resolution-reasons';
   import {
     resolutionReasonError,
     type ResolutionVerdict,
+    type TextScanLabel,
   } from '@civitai/shared/resolution-reasons';
   import type { RulingChoice } from '$lib/ruling-choices';
   import ResolutionReasonFields from './ResolutionReasonFields.svelte';
@@ -38,6 +48,9 @@
     disabled = false,
     busy = false,
     size = 'sm',
+    kbd = false,
+    labels,
+    choiceDisabled,
     hidden,
     extra,
     draft = $bindable(emptyRulingDraft<Verdict>()),
@@ -52,7 +65,13 @@
     disabled?: boolean;
     /** The ruling is submitting; the confirm button says so. */
     busy?: boolean;
-    size?: 'sm' | 'xs';
+    size?: 'sm' | 'xs' | 'lg';
+    /** Shows each choice's digit key; the queue maps the keys to the same order. */
+    kbd?: boolean;
+    /** The flags being ruled on; reasons bound to another flag are neither offered nor accepted. */
+    labels?: readonly TextScanLabel[];
+    /** Why one choice is unavailable, shown as its title, or null when it is available. */
+    choiceDisabled?: (verdict: Verdict) => string | null;
     /** The subject's ids, and anything else the action reads that the moderator does not type. */
     hidden: Snippet;
     /** Extra fields inside the form, after the reason. */
@@ -63,26 +82,31 @@
 
   const chosen = $derived(choices.find((c) => c.verdict === draft.verdict));
   const unrecordable = $derived(
-    chosen ? resolutionReasonError(subject, chosen.verdict, draft.reason, draft.note) : null
+    chosen
+      ? (choiceDisabled?.(chosen.verdict) ??
+          resolutionReasonError(subject, chosen.verdict, draft.reason, draft.note, labels))
+      : null
   );
+  const large = $derived(size === 'lg');
 
-  // A reason and note are written for one verdict; a switch must not carry them to the other.
-  const choose = (verdict: Verdict) => {
-    draft = { verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' };
-  };
+  const choose = (verdict: Verdict) => (draft = chooseVerdict(draft, verdict));
 </script>
 
-<div class="grid gap-2">
-  <div class="flex flex-wrap gap-1.5">
-    {#each choices as c (c.verdict)}
+<div class={cn('grid gap-2', large && 'w-full')}>
+  <div class={cn('flex flex-wrap', large ? 'gap-3' : 'gap-1.5')}>
+    {#each choices as c, i (c.verdict)}
+      {@const unavailable = choiceDisabled?.(c.verdict) ?? null}
       <Button
         {size}
+        class={large ? 'h-11 px-5 text-base' : undefined}
         variant={draft.verdict === c.verdict ? c.variant : 'outline'}
         aria-pressed={draft.verdict === c.verdict}
-        {disabled}
+        disabled={disabled || !!unavailable}
+        title={unavailable ?? undefined}
         onclick={() => choose(c.verdict)}
       >
         {c.label}
+        {#if kbd}<Kbd>{i + 1}</Kbd>{/if}
       </Button>
     {/each}
   </div>
@@ -99,6 +123,7 @@
         {subject}
         verdict={chosen.verdict}
         {idPrefix}
+        {labels}
         bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
         bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
       />
@@ -107,6 +132,7 @@
         <Button
           type="submit"
           {size}
+          class={large ? 'h-11 px-5 text-base' : undefined}
           variant={chosen.variant}
           disabled={disabled || !!unrecordable}
         >
