@@ -342,7 +342,7 @@ function ImageContent({
               }}
             />
           )}
-          {safe && <ImageStickerOverlay imageId={image.id} width={width} height={height} />}
+          {safe && <ImageStickerOverlay imageId={image.id} />}
         </div>
       )}
     </ImageGuardContent>
