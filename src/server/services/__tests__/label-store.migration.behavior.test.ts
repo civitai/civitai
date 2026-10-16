@@ -376,9 +376,10 @@ describe('the change feed', () => {
   it('a label that changes no consensus value adds no consensus change', async () => {
     for (const m of MODS) await vote(m, false);
     const before = await rows(`SELECT * FROM label_store.change WHERE "kind" = 'consensus'`);
+    // The same person giving the same answer again: a new label, the same consensus.
     await db.pg.query(
-      `SELECT label_store.record_label('image', '${IMAGE}', '${sha256('u-501')}', 'x', 'image.appeal',
-         'approved', 'appeal', 'a-1', now(), p_labeller_ref => 'appeal-review')`
+      `SELECT label_store.record_label('image', '${IMAGE}', '${sha256('u-501')}', 'relabel', 'image.block',
+         'clear', 'moderator', 'again-1', now(), ${MODS[0]})`
     );
 
     expect(await rows(`SELECT * FROM label_store.change WHERE "kind" = 'label'`)).toHaveLength(4);
