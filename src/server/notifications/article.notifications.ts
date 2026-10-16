@@ -60,6 +60,9 @@ export function newArticleFromFollowingQuery({ lastSent }: { lastSent: string })
         WHERE a."publishedAt" > '${lastSent}'::timestamp - INTERVAL '${PUBLISHED_LOOKBACK}'
           AND a."publishedAt" <= now()
           AND a.status = 'Published'
+          AND NOT a."tosViolation"
+          AND u."bannedAt" IS NULL
+          AND NOT u.muted
           AND ${notBlockedBetween('ue."userId"', 'a."userId"')}
       )
       SELECT

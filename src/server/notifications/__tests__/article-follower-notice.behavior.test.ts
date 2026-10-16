@@ -52,12 +52,17 @@ const recipientsOf = (rows: Row[], articleId: number) =>
 async function article(
   id: number,
   publishedAt: string | null,
-  { status = 'Published', category = 'announcement' as string | null, userId = AUTHOR } = {}
+  {
+    status = 'Published',
+    category = 'announcement' as string | null,
+    userId = AUTHOR,
+    tosViolation = false,
+  } = {}
 ) {
   await db.query(
-    `INSERT INTO "Article" (id, "userId", title, status, "publishedAt")
-     VALUES ($1, $2, $3, $4, $5::timestamp)`,
-    [id, userId, `Article ${id}`, status, publishedAt]
+    `INSERT INTO "Article" (id, "userId", title, status, "publishedAt", "tosViolation")
+     VALUES ($1, $2, $3, $4, $5::timestamp, $6)`,
+    [id, userId, `Article ${id}`, status, publishedAt, tosViolation]
   );
   if (category) {
     const tag = await db.query<{ id: number }>(`SELECT id FROM "Tag" WHERE name = $1`, [category]);
@@ -77,13 +82,19 @@ beforeAll(async () => {
     CREATE TABLE test_clock (t timestamptz NOT NULL);
     INSERT INTO test_clock VALUES ('${NOW}');
     CREATE FUNCTION public.now() RETURNS timestamptz LANGUAGE sql STABLE AS 'SELECT t FROM test_clock';
-    CREATE TABLE "User" (id INT PRIMARY KEY, username TEXT);
+    CREATE TABLE "User" (
+      id INT PRIMARY KEY,
+      username TEXT,
+      "bannedAt" TIMESTAMP(3),
+      muted BOOLEAN NOT NULL DEFAULT false
+    );
     CREATE TABLE "Article" (
       id INT PRIMARY KEY,
       "userId" INT NOT NULL,
       title TEXT NOT NULL,
       status TEXT NOT NULL,
-      "publishedAt" TIMESTAMP(3)
+      "publishedAt" TIMESTAMP(3),
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false
     );
     CREATE TABLE "Tag" (id INT PRIMARY KEY, name TEXT NOT NULL);
     CREATE TABLE "TagsOnTags" ("fromTagId" INT NOT NULL, "toTagId" INT NOT NULL);
@@ -109,7 +120,7 @@ beforeEach(async () => {
     TRUNCATE "User", "Article", "Tag", "TagsOnTags", "TagsOnArticle", "UserEngagement",
       "UserNotificationSettings";
     UPDATE test_clock SET t = '${NOW}';
-    INSERT INTO "User" VALUES
+    INSERT INTO "User" (id, username) VALUES
       (${AUTHOR}, 'author'), (${OTHER_AUTHOR}, 'other'), (${F1}, 'f1'), (${F2}, 'f2'),
       (${LATE_FOLLOWER}, 'late'), (${OPTED_OUT}, 'quiet'), (${BLOCKED_BY_AUTHOR}, 'blocker');
     INSERT INTO "Tag" VALUES
@@ -165,6 +176,34 @@ describe('new-article-from-following — who gets what, executed', () => {
     await article(15, '2026-10-16 10:00:10');
 
     expect([...new Set((await run()).map((r) => r.details.articleId))]).toEqual([15]);
+  });
+
+  describe('articles a follower should not be sent', () => {
+    // F1 also follows OTHER_AUTHOR, whose article is the positive control in each case.
+    beforeEach(async () => {
+      await db.exec(
+        `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES (${F1}, ${OTHER_AUTHOR}, 'Follow')`
+      );
+      await article(12, '2026-10-16 10:00:10', { userId: OTHER_AUTHOR });
+    });
+    const announced = async () => [...new Set((await run()).map((r) => r.details.articleId))];
+
+    it('an article taken down for a ToS violation', async () => {
+      await article(11, '2026-10-16 10:00:10', { tosViolation: true });
+      expect(await announced()).toEqual([12]);
+    });
+
+    it('an article by a banned author', async () => {
+      await db.exec(`UPDATE "User" SET "bannedAt" = '2026-10-16 09:00' WHERE id = ${AUTHOR}`);
+      await article(11, '2026-10-16 10:00:10');
+      expect(await announced()).toEqual([12]);
+    });
+
+    it('an article by a muted author', async () => {
+      await db.exec(`UPDATE "User" SET muted = true WHERE id = ${AUTHOR}`);
+      await article(11, '2026-10-16 10:00:10');
+      expect(await announced()).toEqual([12]);
+    });
   });
 
   it('a future-dated publishedAt is not announced until it arrives', async () => {
