@@ -4,19 +4,28 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getSysRedis } from './redis';
 
-import { RESTRICTION_TYPE, type RestrictionType } from '$lib/restriction-types';
+import {
+  defaultSortFor,
+  RESTRICTION_TYPE,
+  type RestrictionType,
+  type SortOrder,
+} from '$lib/restriction-types';
 import type { MediaType } from '../media/edge-url';
 import type { TriggerOrigin } from '$lib/restrictions/origin';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
 // live in a client-safe module because the filter component needs them as values — see the note there.
 export {
+  defaultSortFor,
   RESTRICTION_TYPE,
   RESTRICTION_TYPES,
   RESTRICTION_TYPE_LABELS,
   RULINGS_WIRED_FOR,
+  SORT_LABELS,
+  SORT_ORDERS,
   unwiredRulingReason,
   type RestrictionType,
+  type SortOrder,
 } from '$lib/restriction-types';
 
 /** One prohibited request recorded against a restriction. Every field is optional: the shape is
@@ -79,6 +88,8 @@ export type RestrictionQuery = {
   restrictionId?: number;
   /** `remix`: some trigger came from a remix. `typed`: every prompt trigger recorded its origin and none came from a remix or the prompt enhancer. `unchanged-remix`: some trigger's remixed prompt matched the source image's stored prompt. */
   origin?: OriginFilter;
+  /** Omitted means `defaultSortFor(status)`. */
+  sort?: SortOrder;
 };
 
 export const ORIGIN_FILTERS = ['remix', 'typed', 'unchanged-remix'] as const;
@@ -163,6 +174,7 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     userId,
     restrictionId,
     origin,
+    sort = defaultSortFor(status),
   } = query;
 
   // 🔴 The type predicate is what separates one review queue from another, and it is applied for every
@@ -181,9 +193,7 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`))
     .$if(!!origin, (qb) => qb.where(originPredicate(origin!)));
 
-  // The account is muted while its row is Pending, so the queue is worked oldest first: newest first
-  // left month-old mutes on the last page. A history view reads newest first.
-  const direction = status === 'Pending' ? 'asc' : 'desc';
+  const direction = sort === 'oldest' ? 'asc' : 'desc';
 
   const [rows, count] = await Promise.all([
     base

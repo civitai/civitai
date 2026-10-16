@@ -137,6 +137,7 @@ A sticky decision bar:
 - J/K move between items. Shortcuts are ignored while a text field has focus.
 - After decisions, the queue offers "Refresh queue (N decided)" instead of paging.
 - Facet chips with counts for status and origin (has a remix, all typed).
+- Order chips (`?sort=oldest|newest`, `SORT_ORDERS` in `apps/moderator/src/lib/restriction-types.ts`). Pending defaults to oldest first, because the account stays muted until ruled and newest-first buried old mutes on the last page; every other status defaults to newest first (`defaultSortFor`). Changing status resets to that status's default.
 
 ### Reuse
 
