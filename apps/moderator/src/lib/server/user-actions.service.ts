@@ -217,6 +217,7 @@ export type ModEndpoint =
   | 'review/set-exclude'
   | 'storyline/resolve-title-appeal'
   | 'strike/create'
+  | 'strike/void'
   | 'text-scan'
   | 'training-data/resolve'
   | 'user/creator-score-grant'
@@ -822,6 +823,26 @@ export async function issueStrike(input: {
     return { ok: false, error: 'The strike was rate-limited and NOT issued.' };
 
   await logAction('issueStrike', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+/** Voids one strike through the main app, which re-evaluates the account's escalation from the new
+ *  point total. `voidedBy` is the acting moderator, from the relayed session. */
+export async function voidStrike(input: {
+  strikeId: number;
+  voidReason: string;
+  userId: number;
+  moderatorId: number;
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'strike/void',
+    { strikeId: input.strikeId, voidReason: input.voidReason },
+    'Void strike',
+    15_000
+  );
+  if (!result.ok) return result;
+
+  await logAction('voidStrike', input.userId, input.moderatorId);
   return { ok: true };
 }
 
