@@ -54,6 +54,7 @@ const m = vi.hoisted(() => ({
   sandboxClient: null as null | { list: () => Promise<unknown> },
   onConsentRequired: null as null | (() => void),
   openError: null as unknown,
+  listError: null as unknown,
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
@@ -73,19 +74,18 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
     const serve = (app: string) => {
       m.open(app);
       if (m.openReject) throw m.openReject;
-      let found = m.list.find((s) => s.app === app);
-      if (!found) {
-        found = sandbox(`sbx-new-${app}`, { app, state: 'starting' });
-        m.list = [...m.list, found];
-      }
-      return { sandbox: found, created: true };
+      const found = m.list.find((s) => s.app === app);
+      if (found) return { sandbox: found, created: false };
+      const made = sandbox(`sbx-new-${app}`, { app, state: 'starting' });
+      m.list = [...m.list, made];
+      return { sandbox: made, created: true };
     };
     return {
       list: {
         data: client ? m.list : undefined,
         isSuccess: !!client,
         isLoading: false,
-        error: null,
+        error: m.listError,
       },
       open: {
         mutate: (app: string, opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void }) =>
@@ -98,6 +98,7 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
       remove: {
         mutate: (name: string, opts?: { onSuccess?: () => void }) => {
           m.remove(name);
+          m.list = m.list.filter((s) => s.name !== name);
           opts?.onSuccess?.();
         },
         isPending: false,
@@ -176,6 +177,7 @@ beforeEach(() => {
   m.sandboxClient = null;
   m.onConsentRequired = null;
   m.openError = null;
+  m.listError = null;
 });
 
 describe('AppAssistantWorkspace with no apps', () => {
@@ -187,12 +189,25 @@ describe('AppAssistantWorkspace with no apps', () => {
     expect(document.querySelector('[role="radiogroup"]')).toBeNull();
   });
 
-  test('NEGATIVE CONTROL: with apps, Your apps shows how many', async () => {
+  test('NEGATIVE CONTROL: with apps, Your apps shows how many, and an open app brings the preview and the switch', async () => {
     await mount();
     await expect
       .element(page.getByRole('button', { name: /^Your apps/ }))
       .toHaveTextContent('Your apps2');
     await expect.element(page.getByText('Describe a new app, or open one of yours.')).toBeVisible();
+    await openFirst();
+    expect(document.querySelector('[data-testid="app-assistant-preview-pane"]')).not.toBeNull();
+    expect(document.querySelector('[role="radiogroup"]')).not.toBeNull();
+  });
+
+  test('a list that fails to load is reported, not shown as having no apps', async () => {
+    m.list = [];
+    m.listError = new SandboxApiError('Sandbox service error (503)', 503, 'unavailable');
+    await mount();
+    await expect
+      .element(page.getByText('Your apps could not be reached right now. Try again in a moment.'))
+      .toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Sandbox service error/);
   });
 });
 
@@ -310,6 +325,29 @@ describe('AppAssistantWorkspace Your apps', () => {
     await page.getByRole('button', { name: 'Delete app' }).click();
     expect(m.remove).toHaveBeenCalledWith('sbx-aaaaaaaaaaaa');
     await expect.element(page.getByTestId('preview')).not.toBeInTheDocument();
+  });
+
+  test('deleting another app from the list leaves the open one open', async () => {
+    await mount();
+    await openFirst();
+    await page.getByRole('button', { name: /^Your apps/ }).click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
+    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+    await expect.element(page.getByText('app-aaaa', { exact: true }).first()).toBeVisible();
+  });
+
+  test('an open app that disappears from the list (deleted elsewhere) is closed, with its preview', async () => {
+    const screen = await mount();
+    await openFirst();
+    await startPreview('my-app');
+    m.list = [m.list[1]];
+    screen.rerender(<Workspace />);
+    await expect.element(page.getByTestId('preview')).not.toBeInTheDocument();
+    await expect.element(page.getByText('Describe a new app, or open one of yours.')).toBeVisible();
+    await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
   });
 
   test('Start a new app closes the open app and starts a new chat', async () => {
@@ -513,6 +551,27 @@ describe('AppAssistantWorkspace header errors', () => {
     screen.rerender(<Workspace />);
     await expect.element(page.getByText('Only one app can run at a time')).toBeInTheDocument();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+describe('AppAssistantWorkspace app errors', () => {
+  test('shows an error once: in the list while it is open, on the page otherwise', async () => {
+    m.openError = new SandboxApiError('busy', 409, 'conflict');
+    await mount();
+    const copy = 'That app was changing at the same moment. Try again.';
+    await expect.element(page.getByText(copy)).toBeVisible();
+    await page.getByRole('button', { name: /^Your apps/ }).click();
+    await expect.element(page.getByRole('dialog').getByText(copy)).toBeVisible();
+    expect(page.getByText(copy).elements()).toHaveLength(1);
+  });
+
+  test('says what failed in words, not the service’s raw error', async () => {
+    m.openError = new SandboxApiError('Sandbox service error (500)', 500, 'unavailable');
+    await mount();
+    await expect
+      .element(page.getByText('Your apps could not be reached right now. Try again in a moment.'))
+      .toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Sandbox service error/);
   });
 });
 

@@ -9,7 +9,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
-import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
+import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
 import type { SandboxesState } from '~/components/Apps/AppAssistant/useSandboxes';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -21,8 +21,8 @@ export const APP_STATUS: Record<Sandbox['state'], string> = {
 
 export function AppError({ error }: { error: unknown }) {
   if (!error) return null;
-  // Opening an app pauses the others first, so this one is a race with another tab.
-  if (error instanceof SandboxApiError && error.kind === 'limit' && /running/.test(error.message))
+  // openApp pauses the other running app first, so reaching this means another tab started one meanwhile.
+  if (isRunningLimit(error))
     return (
       <Alert color="yellow" variant="light" title="Only one app can run at a time">
         Pause your other app under Your apps, then try again.
@@ -42,7 +42,9 @@ export function AppError({ error }: { error: unknown }) {
     );
   return (
     <Alert color="red" variant="light">
-      {error instanceof Error ? error.message : 'Your apps could not be reached.'}
+      {error instanceof Error && !(error instanceof SandboxApiError)
+        ? error.message
+        : 'Your apps could not be reached right now. Try again in a moment.'}
     </Alert>
   );
 }

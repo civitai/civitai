@@ -1,7 +1,7 @@
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import { newAppKey } from '~/components/Apps/AppAssistant/appKey';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
-import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
+import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
 
 export const CREATE_APP = 'create_app';
 
@@ -12,11 +12,10 @@ export const NO_APP_REFUSAL =
 export interface AppToolsOptions {
   /** The user's apps as last listed; undefined until the list has loaded. */
   apps: () => Sandbox[] | undefined;
-  /** Creates the app's sandbox and makes it the open app. */
-  open: (app: string) => Promise<Sandbox>;
+  /** Creates (or, when it exists after all, resumes) the app's sandbox and makes it the open app. */
+  open: (app: string) => Promise<{ sandbox: Sandbox; created: boolean }>;
 }
 
-/** `create_app`: how a new user's first build request gets an app, with no setup step of their own. */
 export function createAppTools({ apps, open }: AppToolsOptions): Record<string, ChatTool> {
   const create_app: ChatTool = {
     description:
@@ -40,7 +39,15 @@ export function createAppTools({ apps, open }: AppToolsOptions): Record<string, 
         list.map((s) => s.app)
       );
       try {
-        const sandbox = await open(app);
+        const { sandbox, created } = await open(app);
+        // The list it was named against can be a minute old, and the service finds before it creates.
+        if (!created)
+          return {
+            app,
+            state: sandbox.state,
+            existed: true,
+            note: `The user already had an app called ${app}, made somewhere else after this page last listed their apps, and it is now open instead of a new one. Ask the user whether to keep working on it; do not build over it before they answer.`,
+          };
         return {
           app,
           state: sandbox.state,
@@ -49,7 +56,7 @@ export function createAppTools({ apps, open }: AppToolsOptions): Record<string, 
       } catch (error) {
         if (error instanceof SandboxApiError && error.kind === 'limit')
           throw new Error(
-            /running/.test(error.message)
+            isRunningLimit(error)
               ? `Another of the user’s apps is still running (${error.message}). Tell them to pause it under Your apps at the top of the page, then ask again. Do not call create_app again in this reply.`
               : `The user keeps the most apps they may (${error.message}). Tell them to delete one under Your apps at the top of the page, then ask again. Do not call create_app again in this reply.`
           );

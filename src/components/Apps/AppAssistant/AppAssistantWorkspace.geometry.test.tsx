@@ -17,6 +17,7 @@ const BASE = 'https://sandbox.example';
 const m = vi.hoisted(() => ({
   tools: null as null | Record<string, ChatTool>,
   list: [] as Sandbox[],
+  state: 'running' as Sandbox['state'],
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
@@ -34,7 +35,7 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
       const created: Sandbox = {
         name: `sbx-${app}`,
         app,
-        state: 'running',
+        state: m.state,
         mcpUrl: `${BASE}/s/${app}/mcp`,
         createdAt: null,
         lastActivityAt: null,
@@ -67,14 +68,23 @@ vi.mock('~/components/Apps/AppAssistant/assistantToken', async (importOriginal) 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({
-    'blocks.startDevTunnel': { useMutation: () => ({ mutateAsync: vi.fn() }) },
-    'blocks.stopDevTunnel': { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    'blocks.startDevTunnel': {
+      useMutation: () => ({
+        mutateAsync: async () => ({
+          sessionId: 'bki_1',
+          host: 'dev-0123456789abcdef.civit.ai',
+          sshHostPublicKey: 'ssh-ed25519 AAAAhostkey',
+        }),
+      }),
+    },
+    'blocks.stopDevTunnel': { useMutation: () => ({ mutateAsync: async () => ({ ok: true }) }) },
   }),
 }));
 
 const { AppAssistantWorkspace } = await import('./AppAssistantWorkspace');
 
 const ctx = { signal: new AbortController().signal, conversationId: 'c', files: [] };
+const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExample sandbox-dev-tunnel';
 const NARROW = [
   { width: 375, height: 812 },
   { width: 1023, height: 800 },
@@ -116,9 +126,31 @@ function clickTab(label: string) {
   el.click();
 }
 
+/** Every control the user taps on a phone. */
+function expectTapTargets(targets: (HTMLElement | null | undefined)[], count: number) {
+  const found = targets.filter((t): t is HTMLElement => !!t);
+  expect(found).toHaveLength(count);
+  for (const target of found) expect(box(target).height).toBeGreaterThanOrEqual(44);
+}
+
+const buttonStartingWith = (text: string) =>
+  [...document.querySelectorAll<HTMLElement>('button')].find((b) =>
+    b.textContent?.startsWith(text)
+  );
+
+/** Both panes, wherever shown, have height and end inside the window. */
+function expectPanesOnScreen(viewport: { height: number }) {
+  for (const el of [pane('chat'), pane('preview')]) {
+    if (!shown(el)) continue;
+    expect(box(el!).height).toBeGreaterThan(200);
+    expect(box(el!).bottom).toBeLessThanOrEqual(viewport.height);
+  }
+}
+
 beforeEach(() => {
   m.tools = null;
   m.list = [];
+  m.state = 'running';
 });
 
 describe.each(NARROW)('App Assistant at $width px (narrow)', (viewport) => {
@@ -147,15 +179,37 @@ describe.each(NARROW)('App Assistant at $width px (narrow)', (viewport) => {
     expect(shown(pane('chat'))).toBe(true);
     expect(shown(pane('preview'))).toBe(false);
 
-    const targets = [
-      ...document.querySelectorAll<HTMLElement>('.mantine-SegmentedControl-label'),
-      document.querySelector<HTMLElement>('[aria-label="Actions for tip-calculator"]')!,
-      [...document.querySelectorAll<HTMLElement>('button')].find((b) =>
-        b.textContent?.startsWith('Your apps')
-      )!,
-    ];
-    expect(targets).toHaveLength(4);
-    for (const target of targets) expect(box(target).height).toBeGreaterThanOrEqual(44);
+    expectPanesOnScreen(viewport);
+    expectTapTargets(
+      [
+        ...document.querySelectorAll<HTMLElement>('.mantine-SegmentedControl-label'),
+        document.querySelector<HTMLElement>('[aria-label="Actions for tip-calculator"]'),
+        buttonStartingWith('Your apps'),
+      ],
+      4
+    );
+  });
+
+  test('the Your apps list and a paused app’s Resume are 44 px targets', async () => {
+    m.state = 'suspended';
+    await mount(viewport);
+    await createApp();
+    expectTapTargets([buttonStartingWith('Resume')], 1);
+
+    buttonStartingWith('Your apps')!.click();
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    await nextLayout();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    // It slides in from the right; wait for it to come to rest on screen.
+    await vi.waitFor(() => expect(box(dialog).right).toBeLessThanOrEqual(viewport.width));
+    expectTapTargets(
+      [
+        buttonStartingWith('Start a new app'),
+        buttonStartingWith('tip-calculator'),
+        dialog.querySelector<HTMLElement>('[aria-label="Actions for tip-calculator"]'),
+      ],
+      3
+    );
   });
 });
 
@@ -166,15 +220,33 @@ describe.each(WIDE)('App Assistant at $width px (wide)', (viewport) => {
     expect(box(pane('chat')!).width).toBe(box(pane('chat')!.parentElement!).width);
   });
 
-  test('with an app, chat and preview sit side by side with no switch', async () => {
-    await mount(viewport);
-    await createApp();
+  /** The chat takes 5/12 of the row and the preview the rest, both on screen. */
+  function expectSideBySide() {
     expect(shown(tabs())).toBe(false);
     expect(shown(pane('chat'))).toBe(true);
     expect(shown(pane('preview'))).toBe(true);
+    const row = box(pane('chat')!.parentElement!);
     const chat = box(pane('chat')!);
     const preview = box(pane('preview')!);
+    expect(chat.width).toBeCloseTo((row.width * 5) / 12, 0);
     expect(chat.right).toBeLessThanOrEqual(preview.left);
+    expect(preview.right).toBe(row.right);
+    expect(preview.width).toBeGreaterThan(row.width / 3);
     expect(chat.top).toBe(preview.top);
+    expectPanesOnScreen(viewport);
+  }
+
+  test('with an app, chat and preview sit side by side with no switch', async () => {
+    await mount(viewport);
+    await createApp();
+    expectSideBySide();
+  });
+
+  test('a started preview, which selects the Preview tab, keeps the chat beside it', async () => {
+    await mount(viewport);
+    await createApp();
+    await m.tools!.start_preview.execute({ public_key: KEY, block_id: 'tip-calculator' }, ctx);
+    await nextLayout();
+    expectSideBySide();
   });
 });

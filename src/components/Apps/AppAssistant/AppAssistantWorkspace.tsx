@@ -190,11 +190,11 @@ export function AppAssistantWorkspace({
       ...createAppTools({
         apps: () => live.current.apps,
         open: async (app) => {
-          const { sandbox } = await openRef.current(app);
-          // The assistant's next call (set_checklist) can come before the next render.
-          live.current.active = sandbox;
-          setActiveName(sandbox.name);
-          return sandbox;
+          const opened = await openRef.current(app);
+          // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
+          live.current.active = opened.sandbox;
+          setActiveName(opened.sandbox.name);
+          return opened;
         },
       }),
       ...gate.tools,
@@ -202,7 +202,6 @@ export function AppAssistantWorkspace({
     [canPreview, gate]
   );
 
-  // The features are built in an app, so they are not planned before one exists.
   const beforeToolCall = useCallback<ChatToolGate>(
     (name, input, context) =>
       name === SET_CHECKLIST && !live.current.active
@@ -234,7 +233,6 @@ export function AppAssistantWorkspace({
             {
               id: SANDBOX_SERVER_ID,
               url: mcpUrl,
-              // The chat names it in "Connecting to …" and when it cannot be reached.
               label: 'your app',
               token: () => tokens.getToken({ purpose: 'sandbox' }),
             },
@@ -254,7 +252,7 @@ export function AppAssistantWorkspace({
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
 
-  const openApp = (app: string) => {
+  const selectApp = (app: string) => {
     if (active?.app === app && active.state !== 'suspended') return setDrawerOpen(false);
     sandboxes.open.mutate(app, {
       onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
@@ -333,7 +331,7 @@ export function AppAssistantWorkspace({
               <AppMenu
                 sandbox={active}
                 sandboxes={sandboxes}
-                onOpen={openApp}
+                onOpen={selectApp}
                 onRemoved={onRemoved}
               />
             </Group>
@@ -363,7 +361,7 @@ export function AppAssistantWorkspace({
             <Button
               className="min-h-11 shrink-0"
               loading={sandboxes.open.isPending}
-              onClick={() => openApp(active.app)}
+              onClick={() => selectApp(active.app)}
             >
               Resume
             </Button>
@@ -372,7 +370,12 @@ export function AppAssistantWorkspace({
       )}
       {!drawerOpen && (
         <AppError
-          error={sandboxes.open.error ?? sandboxes.suspend.error ?? sandboxes.remove.error}
+          error={
+            sandboxes.open.error ??
+            sandboxes.suspend.error ??
+            sandboxes.remove.error ??
+            sandboxes.list.error
+          }
         />
       )}
 
@@ -438,7 +441,7 @@ export function AppAssistantWorkspace({
         <YourAppsList
           sandboxes={sandboxes}
           activeName={activeName}
-          onOpen={openApp}
+          onOpen={selectApp}
           onRemoved={onRemoved}
           onNewApp={startNewApp}
         />

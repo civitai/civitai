@@ -132,15 +132,15 @@ describe('AppAssistantChat', () => {
       />
     );
     await vi.waitFor(() => expect(chatEl().app).toBeDefined());
-    expect(chatEl().examples!.map((e) => e.title)).toEqual([
-      'Tip calculator',
-      'Prompt helper',
-      'Drawing prompt of the day',
-      'Character card maker',
-    ]);
-    expect(chatEl().examples!.every((e) => e.prompt.length > 0)).toBe(true);
-    expect(chatEl().placeholder).toBe('Describe the app you want to build');
-    // The page starts a new chat through it, for Start a new app.
+    // Not the chat's own examples and hint, which are about making media with tools this page excludes.
+    const examples = chatEl().examples!;
+    expect(examples.length).toBeGreaterThan(0);
+    expect(examples.every((e) => e.title.trim() && e.prompt.trim())).toBe(true);
+    const titles = examples.map((e) => e.title);
+    for (const media of ['Make a picture', 'Make a short video', 'Write a song', 'Say it out loud'])
+      expect(titles).not.toContain(media);
+    expect(chatEl().placeholder?.trim()).toBeTruthy();
+    expect(chatEl().placeholder).not.toMatch(/picture|video|song/i);
     expect(chatRef.current).toBe(chatEl());
   });
 

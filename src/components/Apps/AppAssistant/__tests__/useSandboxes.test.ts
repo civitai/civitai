@@ -15,41 +15,71 @@ describe('openApp', () => {
     expiresAt: null,
   });
 
-  function fakeClient(list: Sandbox[]) {
+  const RUNNING_LIMIT = new SandboxApiError(
+    'running-sandbox limit (1) reached: sbx-a (app "alpha") is running; suspend it first',
+    409,
+    'limit'
+  );
+
+  /** The service: refuses the first open with `firstOpen`, if given, and accepts after that. */
+  function fakeClient(list: Sandbox[], firstOpen?: unknown) {
     const calls: string[] = [];
+    let refused = false;
     const client = {
       list: vi.fn(async () => (calls.push('list'), list)),
       suspend: vi.fn(async (name: string) => (calls.push(`suspend ${name}`), list[0])),
       open: vi.fn(async (app: string) => {
         calls.push(`open ${app}`);
+        if (firstOpen && !refused) {
+          refused = true;
+          throw firstOpen;
+        }
         return { sandbox: sandbox('sbx-new', app, 'starting'), created: true };
       }),
     } as unknown as SandboxClient;
     return { client, calls };
   }
 
-  it('suspends every other app that is running or starting, then opens', async () => {
-    const { client, calls } = fakeClient([
-      sandbox('sbx-a', 'alpha', 'running'),
-      sandbox('sbx-b', 'beta', 'suspended'),
-      sandbox('sbx-c', 'gamma', 'starting'),
-    ]);
+  it('opens straight away when the service accepts, touching no other app', async () => {
+    const { client, calls } = fakeClient([sandbox('sbx-a', 'alpha', 'running')]);
     const result = await openApp(client, 'delta');
-    expect(calls).toEqual(['list', 'suspend sbx-a', 'suspend sbx-c', 'open delta']);
+    expect(calls).toEqual(['open delta']);
     expect(result.sandbox.app).toBe('delta');
   });
 
-  it('leaves the app being opened alone when it already runs', async () => {
-    const { client, calls } = fakeClient([sandbox('sbx-a', 'alpha', 'running')]);
-    await openApp(client, 'alpha');
-    expect(calls).toEqual(['list', 'open alpha']);
+  it('on the running limit, suspends every other app that is running or starting, then opens again', async () => {
+    const { client, calls } = fakeClient(
+      [
+        sandbox('sbx-a', 'alpha', 'running'),
+        sandbox('sbx-b', 'beta', 'suspended'),
+        sandbox('sbx-c', 'gamma', 'starting'),
+        sandbox('sbx-d', 'delta', 'suspended'),
+      ],
+      RUNNING_LIMIT
+    );
+    const result = await openApp(client, 'delta');
+    expect(calls).toEqual(['open delta', 'list', 'suspend sbx-a', 'suspend sbx-c', 'open delta']);
+    expect(result.sandbox.app).toBe('delta');
   });
 
-  it('does not open when a suspend fails', async () => {
-    const { client } = fakeClient([sandbox('sbx-a', 'alpha', 'running')]);
+  it.each([
+    [
+      'the kept-apps limit',
+      new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit'),
+    ],
+    ['an outage', new SandboxApiError('Sandbox service error (503)', 503, 'unavailable')],
+    ['a concurrent change', new SandboxApiError('busy', 409, 'conflict')],
+  ])('on %s, leaves the running app alone and passes the refusal on', async (_label, refusal) => {
+    const { client, calls } = fakeClient([sandbox('sbx-a', 'alpha', 'running')], refusal);
+    await expect(openApp(client, 'beta')).rejects.toBe(refusal);
+    expect(calls).toEqual(['open beta']);
+  });
+
+  it('does not open again when a suspend fails', async () => {
+    const { client, calls } = fakeClient([sandbox('sbx-a', 'alpha', 'running')], RUNNING_LIMIT);
     vi.mocked(client.suspend).mockRejectedValueOnce(new SandboxApiError('busy', 409, 'conflict'));
     await expect(openApp(client, 'beta')).rejects.toThrow('busy');
-    expect(client.open).not.toHaveBeenCalled();
+    expect(calls).toEqual(['open beta', 'list']);
   });
 });
 

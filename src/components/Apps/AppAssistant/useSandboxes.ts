@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AssistantTokenError } from '~/components/Apps/AppAssistant/assistantToken';
 import type { Sandbox, SandboxClient } from '~/components/Apps/AppAssistant/sandboxClient';
+import { isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
 
 const SANDBOXES_KEY = ['app-assistant', 'sandboxes'] as const;
 
@@ -11,10 +12,16 @@ export function shouldRetrySandboxList(failureCount: number, error: unknown): bo
 }
 
 /**
- * Creates or resumes the sandbox for `app`, first suspending any other that runs: the service lets
- * one run at a time and refuses the open otherwise.
+ * Creates or resumes the sandbox for `app`. The service runs one at a time, so when it refuses for
+ * that reason the others are suspended and the open is tried once more; any other refusal leaves them
+ * running.
  */
 export async function openApp(client: SandboxClient, app: string) {
+  try {
+    return await client.open(app);
+  } catch (error) {
+    if (!isRunningLimit(error)) throw error;
+  }
   const others = (await client.list()).filter((s) => s.app !== app && s.state !== 'suspended');
   for (const sandbox of others) await client.suspend(sandbox.name);
   return client.open(app);
@@ -38,6 +45,13 @@ export function useSandboxes(client: SandboxClient | null) {
 
   const open = useMutation({
     mutationFn: (app: string) => openApp(client as SandboxClient, app),
+    // In the list before the refetch, which can fail: the page drops an open app the list lacks.
+    onSuccess: ({ sandbox }) =>
+      queryClient.setQueryData<Sandbox[]>(SANDBOXES_KEY, (old = []) =>
+        old.some((s) => s.name === sandbox.name)
+          ? old.map((s) => (s.name === sandbox.name ? sandbox : s))
+          : [...old, sandbox]
+      ),
     onSettled: refresh,
   });
   const suspend = useMutation({

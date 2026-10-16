@@ -32,11 +32,7 @@ export const APP_ASSISTANT_MCP: CivitaiChat['mcp'] = {
   orchestration: { exclude: APP_ASSISTANT_EXCLUDED_TOOLS },
 };
 
-/**
- * What an empty chat offers in place of the chat's own examples, which are about making media with
- * tools this page excludes. Each is an app the assistant can build; any media they need is made by the
- * app itself, on the viewer's Buzz.
- */
+/** Replaces the chat's own examples, which are about media-making tools this page excludes. */
 export const APP_ASSISTANT_EXAMPLES: ChatExample[] = [
   {
     title: 'Tip calculator',
