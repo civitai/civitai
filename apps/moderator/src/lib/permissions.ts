@@ -65,8 +65,7 @@ export const PERMISSIONS = [
   // and every report queue withheld them from a Reports-only moderator — the weld this file's header
   // describes. One id per kind of harm, not per page: the same strike, notification and image writes run
   // from User Lookup, every report queue, Image Lookup and Bulk Image Manager, and a gate on one of
-  // those pages alone would leave the others as a way round it. Seeded from the `/users` roles by
-  // `20261101120000_moderator_strike_image_grants`.
+  // those pages alone would leave the others as a way round it. Granted by hand on `/admin` at launch.
   { id: 'user.strike', label: 'Strike or notify an account' },
   { id: 'image.moderate', label: 'Remove, restore or flag images' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
