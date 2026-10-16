@@ -19,8 +19,10 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
  * or the response body.
  *
  * The raw model query is a FAKE that understands exactly one predicate — the owner clause
- * `mm."userId" = $n` (not the `OR mm."userId" = $n` arms of the poi/minor gates). Everything else
- * in the WHERE is ignored, so these tests say nothing about the rest of the SQL.
+ * `<alias>."userId" = $n`, on either `m` (Model) or `mm` (ModelMetric), which both hold the owner
+ * (not the `OR … "userId" = $n` arms of the poi/minor/tag gates). It filters rows by the id
+ * BOUND there, so a test pins the filter's effect, not which column spells it. Everything else in
+ * the WHERE is ignored, so these tests say nothing about the rest of the SQL.
  */
 
 // Pairwise distinct, and distinct from every other literal in this file.
@@ -36,6 +38,8 @@ const MINE_PUBLIC_A = 6102;
 const MINE_PUBLIC_B = 6103;
 const MINE_DRAFT_V = 6104;
 const THEIRS_PUBLIC_V = 6201;
+const PUBLIC_BASE = 'SD 1.5';
+const PRIVATE_ONLY_BASE = 'SDXL 1.0';
 
 const {
   mockSearch,
@@ -141,6 +145,7 @@ vi.mock('~/server/redis/caches', () => ({
 // Static import: model.service's cold transform belongs in collection, not in one test's budget
 // (see get-models-raw.transient-503.test.ts).
 import handler from '~/pages/api/v1/blocks/models';
+import toolsHandler from '~/pages/api/v1/blocks/tools';
 import { resolveModelSearchIds } from '~/server/services/model-search.service';
 
 const MODEL_ROWS = [
@@ -152,14 +157,15 @@ function version(
   id: number,
   index: number,
   availability: 'Public' | 'Private',
-  status: 'Published' | 'Draft' = 'Published'
+  status: 'Published' | 'Draft' = 'Published',
+  baseModel = PUBLIC_BASE
 ) {
   return {
     id,
     index,
     name: `v${id}`,
     status,
-    baseModel: 'SD 1.5',
+    baseModel,
     nsfwLevel: 1,
     availability,
     covered: true,
@@ -174,7 +180,9 @@ const MODEL_DATA: Record<number, unknown> = {
     hashes: [],
     tags: [],
     versions: [
-      version(MINE_PRIVATE_V, 0, 'Private'),
+      // Its own base model, so a surface that shows only the latest version's base model (the
+      // block tool's projection) reveals whether this version leaked.
+      version(MINE_PRIVATE_V, 0, 'Private', 'Published', PRIVATE_ONLY_BASE),
       version(MINE_PUBLIC_A, 1, 'Public'),
       version(MINE_PUBLIC_B, 2, 'Public'),
       // Public but unpublished: must stay out on every path (Published-only).
@@ -189,8 +197,9 @@ const MODEL_DATA: Record<number, unknown> = {
   },
 };
 
-// The owner clause, excluding the `... OR mm."userId" = $n` owner-exemption arms.
-const OWNER_CLAUSE = /(?<!OR )mm\."userId" = \$(\d+)/g;
+// The owner clause on either alias, excluding the `... OR <alias>."userId" = $n` owner-exemption
+// arms. `\b` stops the second `m` of `mm` matching on its own, past the lookbehind.
+const OWNER_CLAUSE = /(?<!OR )\bm{1,2}\."userId" = \$(\d+)/g;
 
 /** Values bound into every owner clause of the captured model query. */
 function boundOwnerIds(): unknown[] {
@@ -284,12 +293,27 @@ function claimsFor(sub: string): BlockTokenClaims {
 }
 
 async function invoke(query: Record<string, unknown>) {
-  const req = {
+  return call(handler, {
     method: 'GET',
     query,
     headers: {},
     url: '/api/v1/blocks/models',
-  } as unknown as NextApiRequest;
+  });
+}
+
+/** POST a `search_models` call to /api/v1/blocks/tools. */
+async function invokeSearchTool(args: Record<string, unknown>) {
+  return call(toolsHandler, {
+    method: 'POST',
+    query: {},
+    body: { name: 'search_models', arguments: args },
+    headers: {},
+    url: '/api/v1/blocks/tools',
+  });
+}
+
+async function call(route: unknown, reqInit: Record<string, unknown>) {
+  const req = reqInit as unknown as NextApiRequest;
   const res = {
     headers: {} as Record<string, unknown>,
     statusCode: undefined as number | undefined,
@@ -307,7 +331,7 @@ async function invoke(query: Record<string, unknown>) {
       return this;
     },
   };
-  await (handler as (q: NextApiRequest, s: NextApiResponse) => Promise<void>)(
+  await (route as (q: NextApiRequest, s: NextApiResponse) => Promise<void>)(
     req,
     res as unknown as NextApiResponse
   );
@@ -454,6 +478,26 @@ describe('/api/v1/blocks/models modelVersionIds — through the real search chai
     });
     expect(itemIds(res.body)).toEqual([MINE_MODEL]);
     expect(versionIds(res.body, MINE_MODEL)).toEqual([MINE_PUBLIC_A]);
+  });
+});
+
+describe('/api/v1/blocks/tools search_models — through the real search chain', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    primeIo();
+    claimsBox.claims = claimsFor(`user:${OWNER_ID}`);
+  });
+
+  // A text query hands getModelsRaw an id list, which turns its own private-version filter off;
+  // the tool shows only the latest version's base model, so a leaked Private version shows up as
+  // that version's base model.
+  it('a text query never surfaces a Private-availability version as the latest', async () => {
+    const res = await invokeSearchTool({ query: 'anything' });
+    expect(res.statusCode).toBe(200);
+    const items: { id: number; baseModel?: string }[] = res.body.result.items;
+    const mine = items.find((i) => i.id === MINE_MODEL);
+    expect(mine, JSON.stringify(res.body)).toBeDefined();
+    expect(mine!.baseModel).toBe(PUBLIC_BASE);
   });
 });
 

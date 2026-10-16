@@ -695,6 +695,9 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
 
+  // Kept on ModelMetric, not Model: the deployed database indexes ModelMetric."userId" too (not
+  // declared in this repo's DDL), and m."userId" measured several times slower for prolific owners
+  // on Newest and Highest Rated (faster in one base-model-filtered case of the eight measured).
   if (ownerUserId !== undefined) AND.push(Prisma.sql`mm."userId" = ${ownerUserId}`);
 
   if (types?.length) {

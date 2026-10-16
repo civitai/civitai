@@ -32,7 +32,8 @@ import { isDefined } from '~/utils/type-guards';
  * neither filter; the block endpoint passes a server-clamped `browsingLevel`,
  * `nsfwImagePassthrough: false` so a SFW-domain block can never widen the image
  * filter, `publicVersionsOnly: true`, and `ownerUserId` (from the token `sub`)
- * only for `owner=mine`.
+ * only for `owner=mine`. The block tool route (`blocks/tools.ts`) passes the
+ * same clamp and `publicVersionsOnly: true`, and no owner filter.
  *
  * Maturity policy is NOT decided here — this helper is a pure executor. The
  * caller is the single place that derives the effective `browsingLevel`.

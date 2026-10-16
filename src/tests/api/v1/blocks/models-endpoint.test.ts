@@ -424,6 +424,24 @@ describe('/api/v1/blocks/models — owner filter', () => {
     expect(res.body.maturity).toEqual({ browsingLevel: sfwBrowsingLevelsFlag, sfwOnly: true });
   });
 
+  // A server that predates `owner` ignores it and serves the unscoped catalog with no marker, so
+  // the echo is the only way a client can tell the two apart.
+  it('echoes the applied owner filter as metadata.owner: mine, any, and any when absent', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    const cases: [Record<string, unknown>, string][] = [
+      [{ owner: 'mine' }, 'mine'],
+      [{ owner: 'mine', query: 'x' }, 'mine'],
+      [{ owner: 'any' }, 'any'],
+      [{}, 'any'],
+      [{ query: 'x' }, 'any'],
+    ];
+    for (const [query, expected] of cases) {
+      const res = await invoke(query);
+      expect(res.statusCode, JSON.stringify(query)).toBe(200);
+      expect(res.body.metadata.owner, JSON.stringify(query)).toBe(expected);
+    }
+  });
+
   it('asks for Public-availability versions only, with or without owner', async () => {
     claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
     await invoke({ query: 'x' });
