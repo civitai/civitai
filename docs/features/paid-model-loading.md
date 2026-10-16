@@ -130,11 +130,11 @@ from `external`, so the picker marks both **Ready** and only the live read says 
 
 The rest is live, from `resourceLoad.getResidency`: signed-in, ≤50 ids (`RESIDENCY_MAX_IDS`),
 rate-limited, cached 30s per version (`resource-residency.service.ts`) and marked stale for any version
-whose `generatorLoaded` the webhook or the backstop job flips — otherwise the **Generation** rows name
+whose `generatorLoaded` the webhook or the backstop job flips — otherwise the picker card's **Generation** row names
 the pre-change state while the column-driven **Create** badge already shows the new one. That is the
 generator's marks, whose resources do not come from
 page data — the added-resource list batches into one request (`ResidencyBatchProvider`), while the
-checkpoint input, the two **Generation** rows (version details, picker card's back) and every
+checkpoint input, the **Generation** row on the picker card's back and every
 `ResourceItemContent` outside that provider — the compatibility confirm, the image-metadata modal and
 the metadata-extraction panel — each ask for their one id, so a modal listing ten resources is ten
 calls. Naming *downloading* or *queued* is the one thing the page's own data cannot do. The reverse
@@ -523,7 +523,7 @@ Everything here is the deploying engineer's, before this branch merges.
       *Closes when:* it is on a dashboard someone named is watching.
 - [ ] **Watch `getResidency`** — its 120/min rate limit and its cache hit ratio. The model page and
       the picker read page/index readiness instead, so what is left on it is the generator's marks and
-      the two **Generation** rows — minus `ExternalGeneration` versions, which short-circuit before the
+      the picker card's **Generation** row — minus `ExternalGeneration` versions, which short-circuit before the
       orchestrator call.
 - [ ] **Keep `sync-generator-loaded-resources` on.** Every column-backed indicator is only as fresh
       as that job: with the flag off the column freezes at its last value, so the marks keep stating
