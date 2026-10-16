@@ -148,16 +148,18 @@ function addJsonLength(
  * work is bounded by `limit` code units plus `INLINE_MEDIA_MAX_VISITS` values; a value past
  * that budget is refused, as the inline-media search refuses it.
  */
-export function jsonLengthWithin(
+// A `const`, not a `function`, so the block-token schema scan (no-unguarded-block-bridge-token)
+// can read it from the schemas that call it.
+export const jsonLengthWithin = (
   values: unknown[],
   limit: number,
   {
     unit = 'utf16',
     meter = { visits: 0, chars: 0, scanned: 0 },
   }: { unit?: JsonLengthUnit; meter?: JsonLengthMeter } = {}
-): boolean {
+): boolean => {
   for (const value of values) {
     if (!addJsonLength(value, limit, unit, meter)) return false;
   }
   return true;
-}
+};

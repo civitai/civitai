@@ -43,10 +43,12 @@ export const subscriptionTargetsSchema = z.object({
 /** Max UTF-8 bytes of a block's JSON `settings`, here and in blocks.router. */
 export const BLOCK_SETTINGS_BYTES_MAX = 4096;
 
-/** Whether `settings` serialises to at most `BLOCK_SETTINGS_BYTES_MAX` UTF-8 bytes. */
-export function blockSettingsWithinCap(settings: unknown): boolean {
-  return jsonLengthWithin([settings], BLOCK_SETTINGS_BYTES_MAX, { unit: 'utf8' });
-}
+/**
+ * Whether `settings` serialises to at most `BLOCK_SETTINGS_BYTES_MAX` UTF-8 bytes. A `const`
+ * so the block-token schema scan can read it from blocks.router's `settingsSchema`.
+ */
+export const blockSettingsWithinCap = (settings: unknown): boolean =>
+  jsonLengthWithin([settings], BLOCK_SETTINGS_BYTES_MAX, { unit: 'utf8' });
 
 /**
  * Wire shape for `blocks.upsertSubscription`. Settings are validated through
