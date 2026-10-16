@@ -43,6 +43,17 @@ const FLAG_IS_WRONG = [
   },
 ] as const satisfies readonly ResolutionReason[];
 
+const FLAG_KEPT = [
+  {
+    value: 'detection-correct',
+    label: 'Detection correct',
+    description: 'The text does describe a minor or a real person.',
+  },
+  OTHER,
+] as const satisfies readonly ResolutionReason[];
+
+const FLAG_DISMISSED = [...FLAG_IS_WRONG, OTHER] as const satisfies readonly ResolutionReason[];
+
 export const RESOLUTION_REASONS = {
   restriction: {
     Overturned: [
@@ -147,15 +158,14 @@ export const RESOLUTION_REASONS = {
     ],
   },
   heldDetection: {
-    Kept: [
-      {
-        value: 'detection-correct',
-        label: 'Detection correct',
-        description: 'The text does describe a minor or a real person.',
-      },
-      OTHER,
-    ],
-    Dismissed: [...FLAG_IS_WRONG, OTHER],
+    Kept: FLAG_KEPT,
+    Dismissed: FLAG_DISMISSED,
+  },
+  // A moderator's call on a standing text-scan flag outside an appeal; same judgment as a held
+  // detection, so the lists are shared.
+  flagReview: {
+    Kept: FLAG_KEPT,
+    Lifted: FLAG_DISMISSED,
   },
 } as const satisfies Record<string, Record<string, readonly ResolutionReason[]>>;
 

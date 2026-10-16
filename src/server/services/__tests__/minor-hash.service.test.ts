@@ -953,6 +953,77 @@ describe('confirmMinorHashAutoFlag', () => {
   });
 });
 
+describe('confirmMinorHashAutoFlag — text-scan ruling', () => {
+  const verdictMeta = { textScanFlags: { minor: { workflowId: 'wf-1', textHash: 'h1' } } };
+
+  it('upholds the text-scan minor flag as a moderator ruling with the reason and note', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
+
+    await confirmMinorHashAutoFlag({
+      modelId: 100,
+      userId: 4,
+      reason: 'Minor depicted',
+      note: 'n',
+    });
+
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
+      modelId: 100,
+      userId: 4,
+      decision: 'appealUpheld',
+      labels: ['minor'],
+      via: 'moderator',
+      reason: 'Minor depicted',
+      note: 'n',
+    });
+  });
+
+  it('reports whether a verdict existed and the ruling landed', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: true,
+      stamped: true,
+    });
+
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: { minorFlagSnapshot: {} } });
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: false,
+      stamped: false,
+    });
+  });
+
+  it('records nothing when the flag has no text-scan verdict', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: { minorFlagSnapshot: {} } });
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      meta: { textScanFlags: { minor: { appealGranted: { by: 1 } } } },
+    });
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+  });
+
+  it('still signs the flag off when the ruling cannot be recorded', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
+    mockStampModelTextScanAppeal.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: true,
+      stamped: false,
+    });
+
+    expect(mockTrackModActivity).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ name: 'text-scan' }));
+  });
+
+  it('leaves the verdict alone when the caller records the ruling itself', async () => {
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4, recordTextScanRuling: false });
+
+    expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+    expect(mockTrackModActivity).toHaveBeenCalled();
+  });
+});
+
 describe('revertMinorHashAutoFlag', () => {
   it('rolls back exactly that model and audits the revert', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
@@ -983,6 +1054,43 @@ describe('revertMinorHashAutoFlag', () => {
     });
     expect(mockSettleFlagAppeals.mock.invocationCallOrder[0]).toBeGreaterThan(
       mockSetModelMinor.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("passes the moderator's reason and note to the recorded ruling", async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+
+    await revertMinorHashAutoFlag({
+      modelId: 77,
+      userId: 4,
+      recordTextScanRuling: true,
+      reason: 'Adult',
+      note: 'n',
+    });
+
+    expect(mockStampModeratorTextScanRuling).toHaveBeenCalledWith({
+      modelId: 77,
+      userId: 4,
+      label: 'minor',
+      reason: 'Adult',
+      note: 'n',
+    });
+  });
+
+  it('rules against the hash the moderator saw when one is given', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+
+    await revertMinorHashAutoFlag({
+      modelId: 77,
+      userId: 4,
+      recordTextScanRuling: true,
+      textHash: 'seen-h',
+    });
+
+    expect(mockStampModeratorTextScanRuling).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: 77, label: 'minor', textHash: 'seen-h' })
     );
   });
 

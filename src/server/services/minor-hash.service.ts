@@ -602,9 +602,19 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
 export async function confirmMinorHashAutoFlag({
   modelId,
   userId,
+  reason,
+  note,
+  textHash,
+  recordTextScanRuling = true,
 }: {
   modelId: number;
   userId: number;
+  reason?: string;
+  note?: string;
+  /** Stamp the ruling only while the flag still carries the text the moderator saw. */
+  textHash?: string;
+  /** False when the caller has already recorded the ruling and only wants the sign-off. */
+  recordTextScanRuling?: boolean;
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -630,22 +640,73 @@ export async function confirmMinorHashAutoFlag({
     entityId: modelId,
     activity: 'setMinor',
   });
+
+  if (!recordTextScanRuling) return { hadVerdict: true, stamped: true };
+
+  // Affirming the flag is a ruling on the text-scan verdict too. A hash-only flag has no verdict to
+  // rule on, and the sign-off above has already happened, so a failed stamp is only logged.
+  let hadVerdict = false;
+  try {
+    const model = await dbWrite.model.findUnique({
+      where: { id: modelId },
+      select: { meta: true },
+    });
+    hadVerdict = hasTextScanVerdict(model?.meta, 'minor');
+    let stamped = hadVerdict;
+    if (hadVerdict) {
+      const changed = await stampModelTextScanAppeal({
+        modelId,
+        userId,
+        decision: 'appealUpheld',
+        labels: ['minor'],
+        via: 'moderator',
+        reason,
+        note,
+        expectTextHash: textHash,
+      });
+      if (textHash) stamped = changed > 0;
+    }
+    return { hadVerdict, stamped };
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'moderator minor ruling not recorded on confirm',
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return { hadVerdict, stamped: false };
+  }
 }
 
 export async function revertMinorHashAutoFlag({
   modelId,
   userId,
   recordTextScanRuling,
+  reason,
+  note,
+  textHash,
 }: {
   modelId: number;
   userId: number;
+  reason?: string;
+  note?: string;
   /** A moderator's direct revert; an appeal records its own grant instead. */
   recordTextScanRuling?: boolean;
+  /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
+  textHash?: string;
 }) {
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
   if (
     recordTextScanRuling &&
-    !(await stampModeratorTextScanRuling({ modelId, userId, label: 'minor' }))
+    !(await stampModeratorTextScanRuling({
+      modelId,
+      userId,
+      label: 'minor',
+      reason,
+      note,
+      textHash,
+    }))
   )
     logToAxiom({
       type: 'error',

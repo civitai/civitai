@@ -691,6 +691,30 @@ describe('setModelMinor — moderator ruling on unset', () => {
     );
   });
 
+  it('forwards the moderator reason, note and the ruled text hash to the ruling', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockStampRuling.mockResolvedValue(true);
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: MODERATOR_ID,
+      recordTextScanRuling: true,
+      reason: 'Adult character',
+      note: 'checked the sheet',
+      textHash: 'h-ruled',
+    });
+
+    expect(mockStampRuling).toHaveBeenCalledWith({
+      modelId: MODEL_ID,
+      userId: MODERATOR_ID,
+      label: 'minor',
+      reason: 'Adult character',
+      note: 'checked the sheet',
+      textHash: 'h-ruled',
+    });
+  });
+
   it('records no ruling for a rollback-style unset or for a set', async () => {
     mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
     await setModelMinor({
