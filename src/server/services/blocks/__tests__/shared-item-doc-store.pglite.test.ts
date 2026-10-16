@@ -36,25 +36,16 @@ const h = vi.hoisted(() => ({
   lookup: undefined as unknown,
   legacy: new Map<string, { author: number; hidden: boolean }>(),
   legacyCalls: 0,
-  /** Error code the legacy store fails with (null: it answers). */
-  legacyFailure: null as string | null,
-  appsConfigured: true,
 }));
 
 vi.mock('~/server/services/apps/doc-store-lookup.instance', () => ({
   getDocStoreLookup: () => h.lookup,
 }));
-// The legacy per-app shared store: rows keyed by "<schema>/<key>". `appsDb` is null when the
-// environment has no apps datastore.
+// The legacy per-app shared store: rows keyed by "<schema>/<key>".
 vi.mock('~/server/db/appsDb', () => ({
-  get appsDb() {
-    return h.appsConfigured ? {} : null;
-  },
   requireAppsDb: () => ({
     query: async (sql: string, params: unknown[]) => {
       h.legacyCalls += 1;
-      if (h.legacyFailure)
-        throw Object.assign(new Error('legacy store'), { code: h.legacyFailure });
       const schema = /FROM\s+("[a-z0-9_]+")\.shared_kv/.exec(sql)?.[1];
       const row = h.legacy.get(`${schema}/${String(params[0])}`);
       if (!row) return { rows: [] };
@@ -139,8 +130,6 @@ function defineSuite(rls: boolean) {
       h.lookup = docStore.createDocStoreLookup?.({ db });
       h.legacy.clear();
       h.legacyCalls = 0;
-      h.legacyFailure = null;
-      h.appsConfigured = true;
       dbMock.dbRead.appBlock.findUnique.mockImplementation(
         async ({ where }: { where: { id: string } }) => apps.get(where.id) ?? null
       );
@@ -168,43 +157,12 @@ function defineSuite(rls: boolean) {
         expect(await subListing(app, 'item-2')).toEqual({ authorUserId: DOC_AUTHOR, hidden: true });
       });
 
-      it('during the move, an item copied with its author resolves once; hidden in either store is hidden', async () => {
+      it('a document-store hit decides alone: the legacy store is not read, even where its row differs', async () => {
         const app = freshApp();
         await put(app, POSTS, 'both', DOC_AUTHOR);
-        legacyRow(app, 'both', DOC_AUTHOR);
+        legacyRow(app, 'both', LEGACY_AUTHOR, true);
         expect(await subListing(app, 'both')).toEqual({ authorUserId: DOC_AUTHOR, hidden: false });
-        legacyRow(app, 'both', DOC_AUTHOR, true);
-        expect(await subListing(app, 'both')).toEqual({ authorUserId: DOC_AUTHOR, hidden: true });
-      });
-
-      it("a document under a legacy item's key by another author is not that item", async () => {
-        const app = freshApp();
-        legacyRow(app, 'taken', LEGACY_AUTHOR);
-        await put(app, POSTS, 'taken', OTHER_AUTHOR);
-        expect(await subListing(app, 'taken')).toBeNull();
-      });
-
-      it('a document-store item of an app with no legacy schema resolves; a legacy outage is a 503', async () => {
-        const app = freshApp();
-        await put(app, POSTS, 'new-only', DOC_AUTHOR);
-        for (const unprovisioned of ['42P01', '3F000']) {
-          h.legacyFailure = unprovisioned;
-          expect(await subListing(app, 'new-only')).toEqual({
-            authorUserId: DOC_AUTHOR,
-            hidden: false,
-          });
-        }
-        // No apps datastore in this environment at all.
-        h.legacyFailure = '57P01';
-        h.appsConfigured = false;
-        expect(await subListing(app, 'new-only')).toEqual({
-          authorUserId: DOC_AUTHOR,
-          hidden: false,
-        });
-        h.appsConfigured = true;
-        h.legacyFailure = '57P01';
-        const err = await subListing(app, 'new-only').catch((e: unknown) => e);
-        expect(err).toMatchObject({ status: 503, code: 'unavailable' });
+        expect(h.legacyCalls).toBe(0);
       });
 
       it('no document: the legacy row resolves, hidden state included (unchanged behaviour)', async () => {
@@ -314,40 +272,17 @@ function defineSuite(rls: boolean) {
         const app = freshApp();
         await put(app, POSTS, 'gen-2', DOC_AUTHOR);
         await hide(app, POSTS, 'gen-2');
-        // A visible legacy copy of the same item: the document store's hide still decides.
+        // A visible legacy copy of the same item: the document store's hide decides.
         legacyRow(app, 'gen-2', DOC_AUTHOR);
         expect(await attribution(app, 'gen-2')).toBeNull();
       });
 
-      it('during the move, an item copied with its author resolves; hidden in either store is nobody', async () => {
+      it('a document-store hit decides alone: the legacy store is not read, even where its row differs', async () => {
         const app = freshApp();
         await put(app, POSTS, 'both', DOC_AUTHOR);
-        legacyRow(app, 'both', DOC_AUTHOR);
+        legacyRow(app, 'both', LEGACY_AUTHOR, true);
         expect(await attribution(app, 'both')).toBe(DOC_AUTHOR);
-        legacyRow(app, 'both', DOC_AUTHOR, true);
-        expect(await attribution(app, 'both')).toBeNull();
-      });
-
-      it("a document under a legacy item's key by another author attributes nobody", async () => {
-        const app = freshApp();
-        legacyRow(app, 'taken', LEGACY_AUTHOR);
-        await put(app, POSTS, 'taken', OTHER_AUTHOR);
-        expect(await attribution(app, 'taken')).toBeNull();
-      });
-
-      it('a document-store item of an app with no legacy schema resolves; a legacy outage is nobody', async () => {
-        const app = freshApp();
-        await put(app, POSTS, 'new-only', DOC_AUTHOR);
-        for (const unprovisioned of ['42P01', '3F000']) {
-          h.legacyFailure = unprovisioned;
-          expect(await attribution(app, 'new-only')).toBe(DOC_AUTHOR);
-        }
-        h.legacyFailure = '57P01';
-        h.appsConfigured = false;
-        expect(await attribution(app, 'new-only')).toBe(DOC_AUTHOR);
-        h.appsConfigured = true;
-        h.legacyFailure = '57P01';
-        expect(await attribution(app, 'new-only')).toBeNull();
+        expect(h.legacyCalls).toBe(0);
       });
 
       it('no document: a visible legacy row resolves, a hidden one does not (unchanged behaviour)', async () => {

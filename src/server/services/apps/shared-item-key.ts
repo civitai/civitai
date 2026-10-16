@@ -2,6 +2,8 @@
 // checks one by key: App Store sub-listings (author + hidden) and spend attribution (author).
 // An app's shared items live in the App Blocks document store, in its legacy per-app shared
 // storage (`app_<slug>.shared_kv`), or — while it moves between them — in both under one key.
+// A move copies each item with its key, author and hidden state, so a document-store hit is read
+// alone and the legacy row is never consulted for it.
 //
 // Document store: production namespace only, so a dev or review document never resolves; only
 // the collections the APPROVED manifest declares shared are probed, so an app with none costs
@@ -11,16 +13,15 @@ import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 export type SharedItem =
   | { kind: 'found'; authorUid: number | null; hidden: boolean }
   /**
-   * The key does not name one item: more than one declared shared collection holds it (the
-   * store's primary key includes the collection), or the two stores name different authors.
+   * More than one declared shared collection holds the key (the store's primary key includes
+   * the collection), so the key does not name one item.
    */
   | { kind: 'ambiguous' }
   | { kind: 'none' };
 
 /**
- * The item `key` names, hidden included. The document store decides when it holds the key; the
- * legacy store is the fallback otherwise. A document is accepted only if a legacy row under the
- * same key, if any, has the same author.
+ * The item `key` names, hidden included. A document-store hit decides on its own (the legacy
+ * store is not read); the legacy store is the fallback only when the document store has none.
  *
  * A document deleted from the document store is not remembered: a legacy copy of it, if one
  * remains, resolves again (the store's tombstones are short-lived and carry no author).
@@ -38,16 +39,9 @@ export async function resolveSharedItem(args: {
   key: string;
 }): Promise<SharedItem> {
   const doc = await findInDocStore(args);
-  if (doc.kind === 'ambiguous') return doc;
-  if (doc.kind === 'absent') {
-    const legacy = await readLegacySharedItem(args.blockId, args.key);
-    return legacy ? { kind: 'found', ...legacy } : { kind: 'none' };
-  }
-  // A document under a legacy item's key must be that item (copied, same author), not another
-  // user's document that took the key.
-  const legacy = await readLegacySharedItemIfProvisioned(args.blockId, args.key);
-  if (legacy && legacy.authorUid !== doc.authorUid) return { kind: 'ambiguous' };
-  return { kind: 'found', authorUid: doc.authorUid, hidden: doc.hidden || !!legacy?.hidden };
+  if (doc.kind !== 'absent') return doc;
+  const legacy = await readLegacySharedItem(args.blockId, args.key);
+  return legacy ? { kind: 'found', ...legacy } : { kind: 'none' };
 }
 
 type DocStoreResult =
@@ -97,25 +91,4 @@ async function readLegacySharedItem(blockId: string, key: string): Promise<Legac
     )
   ).rows[0];
   return row ? { authorUid: row.author_user_id, hidden: row.hidden } : null;
-}
-
-/**
- * The legacy row, for the cross-check of a document hit: null where there can be none (no apps
- * datastore in this environment, or the app has no legacy schema). Any other failure throws —
- * it cannot prove the row is absent.
- */
-async function readLegacySharedItemIfProvisioned(
-  blockId: string,
-  key: string
-): Promise<LegacyItem | null> {
-  const { appsDb } = await import('~/server/db/appsDb');
-  if (!appsDb) return null;
-  try {
-    return await readLegacySharedItem(blockId, key);
-  } catch (err) {
-    const code = (err as { code?: unknown })?.code;
-    // undefined_table / invalid_schema_name: never provisioned, so no legacy row.
-    if (code === '42P01' || code === '3F000') return null;
-    throw err;
-  }
 }

@@ -31,10 +31,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimit>()),
   checkSubListingWriteRateLimit: mockRateLimit,
 }));
-vi.mock('~/server/db/appsDb', () => ({
-  appsDb: {},
-  requireAppsDb: () => ({ query: mockPoolQuery }),
-}));
+vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQuery }) }));
 vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
 // The App Blocks document store's server lookup (its SQL is covered against a real Postgres in
 // `shared-item-doc-store.pglite.test.ts`).
@@ -282,6 +279,7 @@ describe('upsertSubListing — refusals', () => {
       await expect(upsert()).resolves.toMatchObject({ status: 'pending', pendingEdit: false });
       // Asked for the calling app, its SHARED collections only, and the item's key.
       expect(mockFindShared).toHaveBeenCalledWith('apb_1', ['generators'], 'gen-1');
+      expect(mockPoolQuery).not.toHaveBeenCalled();
     });
 
     it("refuses a document-store item that is hidden, or that is someone else's", async () => {
