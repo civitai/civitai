@@ -22,6 +22,7 @@ export function JumpToMonthFilter({ value, sort, onChange }: Props) {
           disabled={!enabled}
           dropdownType={mobile ? 'modal' : 'popover'}
           clearable
+          clearButtonProps={{ 'aria-label': 'Clear month' }}
         />
       </div>
     </Tooltip>

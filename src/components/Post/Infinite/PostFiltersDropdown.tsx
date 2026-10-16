@@ -6,6 +6,7 @@ import { useCallback, useMemo } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { JumpToMonthFilter } from '~/components/Filters/JumpToMonthFilter';
+import { isJumpToSort, jumpToPatch, periodPatch } from '~/shared/utils/jump-to-month';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -71,7 +72,7 @@ export function PostFiltersDropdown({
   const filterLength =
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (showScheduled && mergedFilters.scheduled ? 1 : 0) +
-    (showJumpTo && jumpTo ? 1 : 0);
+    (showJumpTo && jumpTo && isJumpToSort(jumpToSort) ? 1 : 0);
 
   const target = (
     <Indicator
@@ -96,21 +97,13 @@ export function PostFiltersDropdown({
           type="posts"
           variant="chips"
           value={mergedFilters.period ?? MetricTimeframe.AllTime}
-          onChange={(period) =>
-            patchPending(
-              showJumpTo && period !== MetricTimeframe.AllTime
-                ? { period, jumpTo: undefined }
-                : { period }
-            )
-          }
+          onChange={(period) => patchPending(showJumpTo ? periodPatch(period) : { period })}
         />
         {showJumpTo && (
           <JumpToMonthFilter
             value={jumpTo}
             sort={jumpToSort}
-            onChange={(jumpTo) =>
-              patchPending(jumpTo ? { jumpTo, period: MetricTimeframe.AllTime } : { jumpTo })
-            }
+            onChange={(jumpTo) => patchPending(jumpToPatch(jumpTo, MetricTimeframe.AllTime))}
           />
         )}
       </Stack>

@@ -24,6 +24,15 @@ describe('JumpToMonthFilter', () => {
     expect(onChange).toHaveBeenLastCalledWith('2025-02');
   });
 
+  test('clears the jump', async () => {
+    const onChange = vi.fn();
+    renderWithProviders(<JumpToMonthFilter value="2025-03" sort="Newest" onChange={onChange} />);
+
+    await userEvent.click(page.getByRole('button', { name: 'Clear month' }));
+
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
   test.each([
     ['offered on Oldest', 'Oldest', true],
     ['withheld on a ranked sort', 'Most Reactions', false],

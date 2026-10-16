@@ -17,6 +17,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { JumpToMonthFilter } from '~/components/Filters/JumpToMonthFilter';
+import { isJumpToSort, jumpToPatch, periodPatch } from '~/shared/utils/jump-to-month';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { getDefaultMediaTypes } from '~/components/Image/image.utils';
@@ -204,7 +205,7 @@ export function MediaFiltersDropdown({
     (isModerator && shows('disablePoi') && mergedFilters.disablePoi ? 1 : 0) +
     (isModerator && shows('disableMinor') && mergedFilters.disableMinor ? 1 : 0) +
     (showPG13Toggle && shows('includePG13') && mergedFilters.includePG13 ? 1 : 0) +
-    (showJumpTo && jumpTo ? 1 : 0);
+    (showJumpTo && jumpTo && isJumpToSort(jumpToSort) ? 1 : 0);
 
   const handleChange: Props['onChange'] = (value) => {
     patchPending(value);
@@ -234,21 +235,13 @@ export function MediaFiltersDropdown({
             type={filterType}
             variant="chips"
             value={mergedFilters.period ?? MetricTimeframe.AllTime}
-            onChange={(period) =>
-              handleChange(
-                showJumpTo && period !== MetricTimeframe.AllTime
-                  ? { period, jumpTo: undefined }
-                  : { period }
-              )
-            }
+            onChange={(period) => handleChange(showJumpTo ? periodPatch(period) : { period })}
           />
           {showJumpTo && (
             <JumpToMonthFilter
               value={jumpTo}
               sort={jumpToSort}
-              onChange={(jumpTo) =>
-                handleChange(jumpTo ? { jumpTo, period: undefined } : { jumpTo })
-              }
+              onChange={(jumpTo) => handleChange(jumpToPatch(jumpTo, undefined))}
             />
           )}
         </Stack>

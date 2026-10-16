@@ -105,6 +105,16 @@ describe.each([
     expect(sortAtClauses(sentFilter())).toEqual([`sortAtUnix >= ${MARCH_2025.start}`]);
   });
 
+  it('keeps the bound on a later page', async () => {
+    await search({
+      ...creatorFeed,
+      sort: 'Newest',
+      offset: 20,
+      entry: MARCH_2025.end - 86_400_000,
+    });
+    expect(sortAtClauses(sentFilter())).toContain(`sortAtUnix < ${MARCH_2025.end}`);
+  });
+
   it('applies no bound to a sort with no place in time', async () => {
     await search({ ...creatorFeed, sort: 'Most Reactions' });
     expect(sortAtClauses(sentFilter())).toEqual([]);
@@ -134,6 +144,8 @@ describe('getAllImagesIndex jump to month when the feed cannot serve it', () => 
   it('keeps the search index inside the month when the feed is down', async () => {
     fetchFeedPrimary.mockRejectedValue(Object.assign(new Error('t'), { name: 'TimeoutError' }));
     await getAllImagesIndex(request({ sort: 'Oldest' }));
+    const feedQuery = new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
+    expect(feedQuery.get('cursor')).toBe(`${MARCH_2025.start}|0`);
     expect(sortAtClauses(sentFilter())).toEqual([`sortAtUnix >= ${MARCH_2025.start}`]);
   });
 });
