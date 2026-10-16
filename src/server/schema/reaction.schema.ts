@@ -63,8 +63,42 @@ export const getMyImageReactionsSchema = z.object({
 
 export type ReactionEntityType = ToggleReactionInput['entityType'];
 export type ToggleReactionInput = z.infer<typeof toggleReactionSchema>;
+/**
+ * `reaction` accepts every enum value because toggling is also how a legacy reaction (a Dislike
+ * on an image) is removed. What may be created is `allowedReactionsByEntity`, enforced in
+ * `toggleReactionHandler`, which knows whether the call creates.
+ */
 export const toggleReactionSchema = z.object({
   entityId: z.number(),
   entityType: z.enum(reactableEntities),
   reaction: z.enum(ReviewReactions),
 });
+
+const contentReactions = ['Like', 'Heart', 'Laugh', 'Cry'] as const satisfies ReviewReactions[];
+
+/**
+ * The reactions a user may create on each entity type: the set the site's own UI offers.
+ * The display filter in `src/components/Reaction/Reactions.tsx` is a separate copy.
+ * - `commentOld` keeps Dislike: the legacy comment `ReactionPicker` still offers it.
+ * - `question` / `answer` are reacted to only through `FavoriteBadge`, which sends Heart.
+ * - `resourceReview` has no reaction UI; it gets the standard set so the API can still use it.
+ */
+export const allowedReactionsByEntity: Record<
+  (typeof reactableEntities)[number],
+  readonly ReviewReactions[]
+> = {
+  image: contentReactions,
+  post: contentReactions,
+  article: contentReactions,
+  bountyEntry: contentReactions,
+  comment: contentReactions,
+  resourceReview: contentReactions,
+  commentOld: ['Like', 'Dislike', 'Heart', 'Laugh', 'Cry'],
+  question: ['Heart'],
+  answer: ['Heart'],
+};
+
+export const isReactionAllowedForEntity = (
+  entityType: ReactionEntityType,
+  reaction: ReviewReactions
+) => allowedReactionsByEntity[entityType].includes(reaction);
