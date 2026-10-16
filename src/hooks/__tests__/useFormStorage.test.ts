@@ -188,6 +188,23 @@ describe('resolveRestoredValues', () => {
     ).toEqual({ values: { ...newArticle, title: 'My draft' }, partial: true });
   });
 
+  // A stored date comes back from JSON as a string; the field schema is what revives it.
+  it('restores each field as its schema parses it, not the raw stored value', () => {
+    const schema = z.object({ name: z.string().min(1), startAt: z.coerce.date() });
+    const startAt = new Date('2026-11-01T12:00:00Z');
+    const stored = JSON.parse(JSON.stringify({ name: '', startAt }));
+
+    const result = resolveRestoredValues({
+      schema,
+      current: { name: '', startAt: null },
+      stored,
+    });
+
+    expect(result?.partial).toBe(true);
+    expect(result?.values.startAt).toBeInstanceOf(Date);
+    expect((result?.values.startAt as Date).getTime()).toBe(startAt.getTime());
+  });
+
   it('gives up on a schema that is not an object, as before', () => {
     const piped = articleLikeSchema.transform((v) => v);
 
@@ -405,14 +422,19 @@ describe('useFormStorage restore', () => {
     unmount();
   });
 
-  it('keeps the draft after a partial restore', () => {
-    const raw = serializeStoredFormValue({ title: 'My draft', categoryId: 'bad' }, NOW - 60_000);
-    localStorage.setItem(KEY, raw);
+  // The real `form.reset` fires the watch, which re-persists the restored form.
+  it('clears the stored copy after a partial restore', () => {
+    localStorage.setItem(
+      KEY,
+      serializeStoredFormValue({ title: 'My draft', categoryId: 'bad' }, NOW - 60_000)
+    );
+    const form = makeForm(newArticle);
 
-    const unmount = renderArticleHook(makeForm(newArticle));
+    const unmount = renderArticleHook(form);
     confirmRestore();
 
-    expect(localStorage.getItem(KEY)).toBe(raw);
+    expect(form.reset.mock.calls[0][0]).toEqual({ ...newArticle, title: 'My draft' });
+    expect(localStorage.getItem(KEY)).toBeNull();
     unmount();
   });
 

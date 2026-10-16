@@ -69,6 +69,33 @@ describe('getArticleScanStatus text requirement', () => {
     expect(status.allComplete).toBe(false);
   });
 
+  // A blocked verdict is what unpublishes an article, so it must still reach the author.
+  it('reports a blocked text verdict on an article it unpublished', async () => {
+    givenArticle(
+      { status: ArticleStatus.UnpublishedViolation, scheduledAt: null },
+      { status: EntityModerationStatus.Succeeded, blocked: true }
+    );
+
+    const status = await getArticleScanStatus({ id: ARTICLE_ID });
+
+    expect(status.textModeration).toMatchObject({ required: true, blocked: true });
+    expect(status.allComplete).toBe(true);
+  });
+
+  // A draft that went non-public mid-scan has its row recorded Failed; it is not rescanned
+  // until it goes public, so there is nothing for the author to retry.
+  it('does not surface a failed scan on a draft', async () => {
+    givenArticle(
+      { status: ArticleStatus.Draft, scheduledAt: null },
+      { status: EntityModerationStatus.Failed, blocked: false }
+    );
+
+    const status = await getArticleScanStatus({ id: ARTICLE_ID });
+
+    expect(status.textModeration.required).toBe(false);
+    expect(status.allComplete).toBe(true);
+  });
+
   it('completes a published article once its text verdict lands', async () => {
     givenArticle(
       { status: ArticleStatus.Published, scheduledAt: null },

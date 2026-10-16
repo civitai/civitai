@@ -2061,8 +2061,13 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   );
 
   // A draft's text is not scanned until the save that makes it public, so no verdict is coming.
+  // A blocked verdict still counts: it is what moved the article to UnpublishedViolation.
+  const textBlocked =
+    moderation?.status === EntityModerationStatus.Succeeded && !!moderation.blocked;
   const required =
-    !!article && isPublicArticle(article) && articleHasText(article.title, article.content);
+    !!article &&
+    (isPublicArticle(article) || textBlocked) &&
+    articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
     EntityModerationStatus.Failed,
