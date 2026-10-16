@@ -376,7 +376,7 @@ which constraint the change gave up on.
 
 The fingerprint excludes the `declared`/`actual` prose — #3589 corrected eight declared
 referential actions and touched no constraint, and folding that in would have retired eight
-entries and raised eight identical-looking new ones. Two things are deliberately folded back
+entries and raised eight identical-looking new ones. Three things are deliberately folded back
 in, because they _are_ the finding rather than prose about it:
 
 - **nullability direction**, so flipping a field to required against a NULLABLE column cannot

@@ -140,7 +140,7 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         // 2026-09-09 — so the duplicate is unrepresentable there. An environment where that
         // migration has not been applied by hand can still produce one. Note the Prisma schema
         // does NOT declare `@unique` on this column yet. The 2026-10-16 drift-gate catalog
-        // snapshot includes `Blocklist_type_key`, so declaring it no longer blocks the gate.
+        // snapshot has a unique index on `Blocklist(type)`, so declaring it no longer blocks the gate.
         if (id !== undefined) return undefined;
         await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
         return blocklistData;

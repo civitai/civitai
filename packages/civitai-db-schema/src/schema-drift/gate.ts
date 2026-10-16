@@ -104,8 +104,8 @@ export function blocking(result: GateResult): DriftFinding[] {
 /**
  * A stable identity for a finding, so "the same drift" survives an unrelated edit.
  *
- * `declared` and `actual` are deliberately EXCLUDED for every kind but nullability. They
- * carry prose that legitimately changes without the drift changing: a missing foreign key's
+ * `declared` and `actual` are deliberately EXCLUDED except for nullability and
+ * referential-action (below). They carry prose that legitimately changes without the drift changing: a missing foreign key's
  * `declared` embeds its `ON DELETE`/`ON UPDATE`, so #3589 — which corrected eight declared
  * actions and touched no constraint — would have retired eight baseline entries and raised
  * eight identical-looking new ones.

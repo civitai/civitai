@@ -128,6 +128,9 @@ describe('fingerprint', () => {
     });
     const onDeleteToo = { ...onUpdateOnly, declared: 'ON DELETE Cascade ON UPDATE Cascade' };
     expect(fingerprint(onDeleteToo)).not.toBe(fingerprint(onUpdateOnly));
+    expect(
+      fingerprint({ ...onUpdateOnly, actual: 'ON DELETE Cascade ON UPDATE NoAction' })
+    ).not.toBe(fingerprint(onUpdateOnly));
   });
 
   it('separates findings that differ only in column order', () => {
