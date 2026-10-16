@@ -22,6 +22,7 @@ import {
   mergeRestoredValues,
   persistedValueLostIdentity,
   readStoredFormValue,
+  resolveRestoredValues,
   serializeStoredFormValue,
   useFormStorage,
 } from '~/hooks/useFormStorage';
@@ -116,6 +117,93 @@ describe('mergeRestoredValues', () => {
     expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
     expect((merged as Record<string, unknown>).polluted).toBeUndefined();
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+// The article editor's shape: a new article's category and cover stay unset until the author
+// picks them, so a half-written draft never passes the whole schema.
+const articleLikeSchema = z.object({
+  title: z.string().min(1),
+  content: z.string().min(1),
+  categoryId: z.number().min(0),
+  coverImage: z.object({ url: z.string() }),
+});
+const newArticle = { title: '', content: '', categoryId: -1, coverImage: null };
+
+describe('resolveRestoredValues', () => {
+  it('restores the parsed output of a draft that passes the whole schema', () => {
+    const schema = z.object({ title: z.string().trim(), count: z.coerce.number() });
+
+    expect(
+      resolveRestoredValues({
+        schema,
+        current: { title: '', count: 0 },
+        stored: { title: ' draft ', count: '3' },
+      })
+    ).toEqual({ values: { title: 'draft', count: 3 }, partial: false });
+  });
+
+  // The bounty form's shape: `.extend` plus chained object-level `.refine`s.
+  it('restores a complete draft of a refined schema exactly as the whole-schema parse did', () => {
+    const refined = z
+      .object({ name: z.string().min(1).trim(), unitAmount: z.number().min(5000) })
+      .refine((v) => v.name !== 'x', { path: ['name'] });
+    const current = { name: '', unitAmount: 5000 };
+    const stored = { name: ' Pony LoRA ', unitAmount: 10000 };
+
+    expect(resolveRestoredValues({ schema: refined, current, stored })).toEqual({
+      values: refined.parse(mergeRestoredValues({ current, stored })),
+      partial: false,
+    });
+  });
+
+  it('restores the valid fields of a half-written draft and keeps the rest', () => {
+    expect(
+      resolveRestoredValues({
+        schema: articleLikeSchema,
+        current: newArticle,
+        stored: { title: 'My draft', content: '<p>typed</p>', categoryId: -1, coverImage: null },
+      })
+    ).toEqual({
+      values: { title: 'My draft', content: '<p>typed</p>', categoryId: -1, coverImage: null },
+      partial: true,
+    });
+  });
+
+  it('keeps the current value for a stored field that fails its own schema', () => {
+    expect(
+      resolveRestoredValues({
+        schema: articleLikeSchema,
+        current: newArticle,
+        stored: { title: 'My draft', categoryId: 'not-a-number' },
+      })
+    ).toEqual({ values: { ...newArticle, title: 'My draft' }, partial: true });
+  });
+
+  it('checks fields of a schema with an object-level refinement', () => {
+    const refined = articleLikeSchema.refine((v) => v.title !== v.content, { path: ['content'] });
+
+    expect(
+      resolveRestoredValues({ schema: refined, current: newArticle, stored: { title: 'My draft' } })
+    ).toEqual({ values: { ...newArticle, title: 'My draft' }, partial: true });
+  });
+
+  it('gives up on a schema that is not an object, as before', () => {
+    const piped = articleLikeSchema.transform((v) => v);
+
+    expect(
+      resolveRestoredValues({ schema: piped, current: newArticle, stored: { title: 'My draft' } })
+    ).toBeNull();
+  });
+
+  it('gives up when no stored field is usable', () => {
+    expect(
+      resolveRestoredValues({
+        schema: articleLikeSchema,
+        current: newArticle,
+        stored: { categoryId: 'nope', unknownField: 'x' },
+      })
+    ).toBeNull();
   });
 });
 
@@ -270,6 +358,105 @@ describe('useFormStorage on mount', () => {
       title: 'draft',
       coverImage: { url: 'key-b' },
     });
+    unmount();
+  });
+});
+
+describe('useFormStorage restore', () => {
+  function renderArticleHook(form: FakeForm) {
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    function Probe() {
+      useFormStorage({
+        schema: articleLikeSchema as any,
+        form: form as any,
+        timeout: 1000,
+        key: KEY,
+        watch: (value: any) => value,
+      });
+      return null;
+    }
+    act(() => {
+      root.render(React.createElement(Probe));
+    });
+    return () => act(() => root.unmount());
+  }
+
+  // Confirm then close, in the order Mantine runs them for `closeOnConfirm`.
+  function confirmRestore() {
+    const modal = openConfirmModalMock.mock.calls[0][0];
+    act(() => {
+      modal.onConfirm();
+      modal.onClose();
+    });
+  }
+
+  it('restores the text of a new article that has no category or cover yet', () => {
+    const draft = { title: 'My draft', content: '<p>typed</p>', categoryId: -1, coverImage: null };
+    localStorage.setItem(KEY, serializeStoredFormValue(draft, NOW - 60_000));
+    const form = makeForm(newArticle);
+
+    const unmount = renderArticleHook(form);
+    confirmRestore();
+
+    expect(showErrorNotificationMock).not.toHaveBeenCalled();
+    expect(form.reset).toHaveBeenCalledTimes(1);
+    expect(form.reset.mock.calls[0][0]).toEqual(draft);
+    unmount();
+  });
+
+  it('keeps the draft after a partial restore', () => {
+    const raw = serializeStoredFormValue({ title: 'My draft', categoryId: 'bad' }, NOW - 60_000);
+    localStorage.setItem(KEY, raw);
+
+    const unmount = renderArticleHook(makeForm(newArticle));
+    confirmRestore();
+
+    expect(localStorage.getItem(KEY)).toBe(raw);
+    unmount();
+  });
+
+  it('keeps the draft and says so when nothing can be restored', () => {
+    const raw = serializeStoredFormValue({ categoryId: 'bad' }, NOW - 60_000);
+    localStorage.setItem(KEY, raw);
+    const form = makeForm(newArticle);
+
+    const unmount = renderArticleHook(form);
+    confirmRestore();
+
+    expect(form.reset).not.toHaveBeenCalled();
+    expect(showErrorNotificationMock).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(KEY)).toBe(raw);
+    unmount();
+  });
+
+  it('clears the draft after a complete restore, as before', () => {
+    const draft = {
+      title: 'My draft',
+      content: '<p>typed</p>',
+      categoryId: 3,
+      coverImage: { url: 'key-a' },
+    };
+    localStorage.setItem(KEY, serializeStoredFormValue(draft, NOW - 60_000));
+    const form = makeForm(newArticle);
+
+    const unmount = renderArticleHook(form);
+    confirmRestore();
+
+    expect(form.reset.mock.calls[0][0]).toEqual(draft);
+    expect(localStorage.getItem(KEY)).toBeNull();
+    unmount();
+  });
+
+  it('clears the draft when the author declines it', () => {
+    localStorage.setItem(KEY, serializeStoredFormValue({ title: 'My draft' }, NOW - 60_000));
+
+    const unmount = renderArticleHook(makeForm(newArticle));
+    act(() => {
+      openConfirmModalMock.mock.calls[0][0].onClose();
+    });
+
+    expect(localStorage.getItem(KEY)).toBeNull();
     unmount();
   });
 });
