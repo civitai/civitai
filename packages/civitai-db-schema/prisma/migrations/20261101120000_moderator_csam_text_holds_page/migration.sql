@@ -1,6 +1,6 @@
 -- Moderator app: /csam/text-holds is the queue of pending csam text-scan holds. It is granted on its own
 -- path, so copy the grants of the image CSAM queue (/images/csam); otherwise only moderator:admin can
--- open it. Dismissing a hold additionally needs the `csam.report.file` permission.
+-- open it. Viewing and dismissing holds also need the `csam.report.file` permission.
 --
 -- HAND-APPLIED. Safe to run BEFORE the moderator release (applyGrants ignores paths not in NAVIGATION).
 -- Idempotent (ON CONFLICT DO NOTHING), so re-running never overwrites a grant edited on /admin since.

@@ -29,11 +29,7 @@ const messageIdsOf = (meta: unknown) => {
   return Array.isArray(ids) ? ids : [];
 };
 
-/**
- * Each new message rescans the sender's recent window, so one conversation would otherwise queue a
- * hold per message. The id of the newest pending or newest decided hold that already saw every
- * message in this window.
- */
+/** A new message rescans the sender's recent window; returns the newest pending (else newest decided) hold that already saw every message in this window, so one conversation queues one hold. */
 async function coveringChatHold(userId: number | null, meta: Record<string, unknown> | undefined) {
   const chatId = meta?.chatId;
   if (typeof chatId !== 'number') return null;
@@ -112,10 +108,7 @@ export async function applyCsamHold({
   }).catch(() => null);
 }
 
-/**
- * The hold goes first, and a failed write fails the callback before the entity action runs: the
- * retry cron rescans, and an action that never ran cannot be applied twice.
- */
+/** Hold first: a failed write throws before the entity action, so the retry cron's rescan redoes both. */
 export function withCsamHold(
   entityType: TextScanEntityType,
   apply: (args: ApplyTextScanArgs) => Promise<unknown>

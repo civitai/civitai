@@ -354,7 +354,6 @@ export async function scanEntity({
     logCsamShadowDrop(entityType);
     return resolved.filter((label) => label !== 'csam');
   };
-  // Gated before the load, so a scan with nothing left to ask costs no subject query.
   const gatedPasses = planPasses(await resolveLabels());
   if (!gatedPasses.length) return { status: 'skipped', reason: 'off' };
 

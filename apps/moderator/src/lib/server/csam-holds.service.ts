@@ -11,7 +11,6 @@ export type CsamHoldDecisionResult = { ok: true } | { ok: false; error: string }
 const DISMISS_MAY_HAVE_COMPLETED =
   'Could not confirm the dismissal. It may already have completed — reload the queue before retrying.';
 
-/** The main app owns the write and refuses a hold that is no longer pending. */
 export async function dismissCsamHold({
   holdId,
   note,

@@ -1,5 +1,6 @@
--- Text-scan verdicts held for a moderator (first label: csam). The text-scan callback inserts one Pending
--- row per (entity, label, scanned text); a moderator dismisses or confirms it in the moderator app.
+-- Text-scan verdicts held for a moderator (first label: csam). The text-scan callback inserts a Pending
+-- row per (entity, label, scanned text), unless an earlier chat hold already covers the window.
+-- A moderator dismisses or confirms it in the moderator app.
 --
 -- HAND-APPLIED. Apply before the csam label mode is set to `review`: the callback writes here only in
 -- that mode, and a missing table fails the callback (the retry cron then rescans).
@@ -37,6 +38,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS "TextScanHold_entityType_entityId_label_textHa
   ON "TextScanHold" ("entityType", "entityId", "label", "textHash");
 CREATE INDEX IF NOT EXISTS "TextScanHold_status_createdAt_idx"
   ON "TextScanHold" ("status", "createdAt");
--- The moderator queue reads pending rows oldest first; decided rows accumulate and are never queued.
+-- Partial: decided rows accumulate and the queue never reads them.
 CREATE INDEX IF NOT EXISTS "TextScanHold_pending_createdAt_idx"
   ON "TextScanHold" ("createdAt") WHERE "status" = 'Pending';

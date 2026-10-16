@@ -66,7 +66,7 @@
     </header>
 
     <TriageCard title="Held text">
-      <!-- Focusable so a keyboard user can scroll long text (WCAG 2.1.1, scrollable region). -->
+      <!-- Focusable so a keyboard user can scroll the text (WCAG 2.1.1). -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <pre
         tabindex="0"

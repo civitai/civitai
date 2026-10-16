@@ -5,7 +5,7 @@ import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 
-// The held text is personal data; a month leaves room to escalate a decided hold by hand.
+// Held text is personal data; 30 days leaves time to escalate a decided hold.
 export const CSAM_HOLD_TEXT_RETENTION_DAYS = 30;
 
 export const TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES: TextScanEntityType[] = [
@@ -87,7 +87,7 @@ export async function cleanupTextScanRows({
 
   const { count: holdTextCleared } = await dbWrite.textScanHold.updateMany({
     where: {
-      // Confirmed retention is decided with the Confirm feature.
+      // Dismissed only: a Confirmed hold's text may be evidence, and its retention is not decided yet.
       status: 'Dismissed',
       decidedAt: { lt: decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days') },
       text: { not: '' },
