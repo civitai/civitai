@@ -116,6 +116,7 @@ function UserPostsPage() {
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
                   showScheduled={canViewDrafts}
+                  jumpToSort={viewingDraft ? undefined : sort}
                   size="compact-sm"
                 />
               </Group>

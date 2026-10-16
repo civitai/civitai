@@ -16,6 +16,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { jumpToMonthSchema } from '~/shared/utils/jump-to-month';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -65,6 +66,8 @@ export const imagesQueryParamSchema = z
     fromPlatform: booleanString(),
     hidden: booleanString(),
     includeBaseModel: booleanString(),
+    // `.catch`: a junk month must not fail the whole object, which drops every other filter.
+    jumpTo: jumpToMonthSchema.optional().catch(undefined),
     limit: numericString(),
     modelId: numericString(),
     modelVersionId: numericString(),

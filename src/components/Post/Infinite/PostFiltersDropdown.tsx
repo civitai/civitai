@@ -5,6 +5,7 @@ import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { JumpToMonthFilter } from '~/components/Filters/JumpToMonthFilter';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -18,6 +19,7 @@ export function PostFiltersDropdown({
   onChange,
   style,
   showScheduled = true,
+  jumpToSort,
   ...buttonProps
 }: Props) {
   const mobile = useIsMobile();
@@ -39,8 +41,10 @@ export function PostFiltersDropdown({
     [onChange, setFilters]
   );
 
+  const showJumpTo = jumpToSort !== undefined;
+
   const handleClear = useCallback(() => {
-    const reset = { period: MetricTimeframe.AllTime, scheduled: undefined };
+    const reset = { period: MetricTimeframe.AllTime, scheduled: undefined, jumpTo: undefined };
     if (onChange) onChange(reset);
     else setFilters(reset);
   }, [onChange, setFilters]);
@@ -63,7 +67,8 @@ export function PostFiltersDropdown({
 
   const filterLength =
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (showScheduled && mergedFilters.scheduled ? 1 : 0);
+    (showScheduled && mergedFilters.scheduled ? 1 : 0) +
+    (showJumpTo && mergedFilters.jumpTo ? 1 : 0);
 
   const target = (
     <Indicator
@@ -88,8 +93,23 @@ export function PostFiltersDropdown({
           type="posts"
           variant="chips"
           value={mergedFilters.period ?? MetricTimeframe.AllTime}
-          onChange={(period) => patchPending({ period })}
+          onChange={(period) =>
+            patchPending(
+              showJumpTo && period !== MetricTimeframe.AllTime
+                ? { period, jumpTo: undefined }
+                : { period }
+            )
+          }
         />
+        {showJumpTo && (
+          <JumpToMonthFilter
+            value={mergedFilters.jumpTo}
+            sort={jumpToSort}
+            onChange={(jumpTo) =>
+              patchPending(jumpTo ? { jumpTo, period: MetricTimeframe.AllTime } : { jumpTo })
+            }
+          />
+        )}
       </Stack>
       {showScheduled && currentUser && !isModerator && (
         <Stack gap="md">
@@ -178,4 +198,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<PostsQueryInput>;
   onChange?: (params: Partial<PostsQueryInput>) => void;
   showScheduled?: boolean;
+  /** Offer the jump-to-month control; it only applies while this is a chronological sort. */
+  jumpToSort?: string;
 };

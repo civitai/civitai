@@ -171,6 +171,8 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   // feeds and model galleries, none of which have a toggle.
                   exclude={PROFILE_EXCLUDED_FILTERS}
                   isSameUser={isSameUser}
+                  // Reactions span other creators, and the jump is resolved within one.
+                  jumpToSort={viewingReactions ? undefined : sort}
                 />
               </Group>
             </Group>
@@ -198,6 +200,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   userId: viewingReactions ? undefined : user.id,
                   username: viewingReactions ? undefined : username,
                   notPublished: viewingReactions ? undefined : notPublished,
+                  jumpTo: viewingReactions ? undefined : query.jumpTo,
                   scheduled,
                   followed,
                   baseModels,

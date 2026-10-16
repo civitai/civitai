@@ -97,8 +97,8 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   route?: FeedPrimaryRoute;
 };
 
-/** The image query for hydrating exactly `ids`: the request's filters without its paging or
- *  period, both already applied by the feed (getAllImages would cut the period on createdAt). */
+/** The image query for hydrating exactly `ids`: the request's filters without its paging,
+ *  period or jump, all applied by the feed (getAllImages would cut the period on createdAt). */
 export function feedHydrateQuery<
   T extends {
     cursor?: unknown;
@@ -107,6 +107,7 @@ export function feedHydrateQuery<
     entry?: number;
     limit?: number;
     period?: unknown;
+    jumpTo?: string;
     modelId?: number;
     modelVersionId?: number;
     hubId?: number;
@@ -122,6 +123,7 @@ export function feedHydrateQuery<
   | 'offset'
   | 'entry'
   | 'period'
+  | 'jumpTo'
   | 'modelId'
   | 'modelVersionId'
   | 'hubId'
@@ -138,6 +140,9 @@ export function feedHydrateQuery<
     offset: _offset,
     entry: _entry,
     period: _period,
+    // The feed bounds the month on sortAt; the hydrate's createdAt bound would drop an image
+    // created before the month and published inside it.
+    jumpTo: _jumpTo,
     // The feed already scoped these, and counts a creator's post on a version as a member where
     // the hydrate's resource join would drop it.
     modelId: _modelId,

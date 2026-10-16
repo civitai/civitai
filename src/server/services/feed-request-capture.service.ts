@@ -128,6 +128,7 @@ export type CapturableSearchInput = {
   useCombinedNsfwLevel?: boolean;
   limit?: number;
   cursor?: unknown;
+  jumpTo?: string;
   tags?: number[];
   excludedTagIds?: number[];
   excludedUserIds?: number[];
