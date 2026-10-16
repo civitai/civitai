@@ -390,12 +390,7 @@ export async function fetchThroughCache<T>(
   // turns a successful origin fetch into a 500.
   try {
     const data = await fetchFn();
-    const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
-    try {
-      await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName });
-    } catch (err) {
-      logSysRedisFailOpen('write-degraded', 'fetchThroughCache set (cache cluster)', err, { key });
-    }
+    await writeFetchThroughEntry(key, data, { ttl, compress, cacheName }, 'fetchThroughCache');
     return data;
   } finally {
     // Best-effort lock release; a failure here just leaves the lock to expire via its
@@ -408,6 +403,50 @@ export async function fetchThroughCache<T>(
       });
     }
   }
+}
+
+/**
+ * The one writer of a fresh `fetchThroughCache` entry: the refill after an origin fetch, and
+ * `setFetchThroughCache`. Best-effort: a Redis stall on the write never fails the caller.
+ */
+async function writeFetchThroughEntry<T>(
+  key: RedisKeyTemplateCache,
+  data: T,
+  { ttl, compress, cacheName }: { ttl: number; compress: boolean; cacheName?: string },
+  caller: string
+) {
+  const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
+  try {
+    await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName });
+  } catch (err) {
+    logSysRedisFailOpen('write-degraded', `${caller} set (cache cluster)`, err, { key });
+  }
+}
+
+/**
+ * Writes a fresh `fetchThroughCache` entry, as a refill after an origin fetch would. For a write
+ * that knows the new value: marking the entry stale instead (`bustFetchThroughCache`) leaves the
+ * old value to any read that loses the refill lock, so a reader can be shown the count from
+ * before their own write.
+ *
+ * `ttl`, `compress` and `cacheName` MUST match what the key's `fetchThroughCache()` passes: an
+ * entry written with a different `compress` is evicted by the read that cannot decode it.
+ */
+export async function setFetchThroughCache<T>(
+  key: RedisKeyTemplateCache,
+  data: T,
+  options: Pick<FetchThroughCacheOptions, 'ttl' | 'compress' | 'cacheName'> = {}
+) {
+  await writeFetchThroughEntry(
+    key,
+    data,
+    {
+      ttl: options.ttl ?? CacheTTL.sm,
+      compress: options.compress ?? false,
+      cacheName: options.cacheName,
+    },
+    'setFetchThroughCache'
+  );
 }
 
 export async function bustFetchThroughCache(

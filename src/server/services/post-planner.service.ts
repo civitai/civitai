@@ -101,11 +101,13 @@ export async function getScheduledPosts({
   from,
   to,
   modelVersionId,
+  tag,
 }: {
   user: SessionUser;
   from: Date;
   to: Date;
   modelVersionId?: number;
+  tag?: string;
 }): Promise<ScheduledRange> {
   const rows = await dbRead.$queryRaw<ScheduledPostRow[]>`
     SELECT
@@ -135,6 +137,15 @@ export async function getScheduledPosts({
       AND p."publishedAt" >= ${from}
       AND p."publishedAt" < ${to}
       ${modelVersionId ? Prisma.sql`AND p."modelVersionId" = ${modelVersionId}` : Prisma.empty}
+      ${
+        tag
+          ? Prisma.sql`AND EXISTS (
+            SELECT 1 FROM "PostTag" pt
+            JOIN "Tag" t ON t.id = pt."tagId"
+            WHERE pt."postId" = p.id AND t.name = ${tag}
+          )`
+          : Prisma.empty
+      }
     ORDER BY p."publishedAt" ASC, p.id ASC
     LIMIT ${PLANNER_PAGE_LIMIT + 1}
   `;

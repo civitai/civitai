@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type { DocStore } from '~/server/services/apps/doc-store';
+import type { DocStore, DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
 
 /**
@@ -32,6 +32,7 @@ type Req = {
 const h = vi.hoisted(() => ({
   requests: new Map<string, Req>(),
   store: undefined as unknown as DocStore,
+  maint: undefined as unknown as DocStoreMaintenance,
   zipBytes: new Uint8Array(),
   outcomes: [] as string[],
 }));
@@ -108,6 +109,9 @@ const existingAppBlock = {
 };
 
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
+vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
+  getDocStoreMaintenance: () => h.maint,
+}));
 vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
   ...(await importOriginal<typeof RuntimeMetrics>()),
   recordReviewStorageCleanup: (outcome: string) => {
@@ -167,7 +171,9 @@ vi.mock('~/utils/bundle-s3', () => ({
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { createDocStore, reviewNamespace } = await import('~/server/services/apps/doc-store');
+const { createDocStore, createDocStoreMaintenance, reviewNamespace } = await import(
+  '~/server/services/apps/doc-store'
+);
 const { createPgliteHarness } = await import('~/server/services/apps/__tests__/doc-store.harness');
 const { PREFS, POSTS, TALLIES, ctx } = await import(
   '~/server/services/apps/__tests__/doc-store.functional'
@@ -179,6 +185,7 @@ const { approveRequest, rejectRequest, withdrawRequest, teardownReviewStorageFor
 type Harness = Awaited<ReturnType<typeof createPgliteHarness>>;
 let harness: Harness;
 let liveStore: DocStore;
+let liveMaint: DocStoreMaintenance;
 
 const SUBMITTER = 4242;
 const MODS = [5_101, 5_202];
@@ -236,6 +243,7 @@ async function expectPurged(publishRequestId: string) {
 beforeAll(async () => {
   harness = await createPgliteHarness({ rls: true });
   liveStore = createDocStore({ db: harness.db });
+  liveMaint = createDocStoreMaintenance({ db: harness.db });
   const zip = new JSZip();
   zip.file('block.manifest.json', JSON.stringify({ name: 'Cool App', scopes: [] }));
   zip.file('index.html', '<html></html>');
@@ -251,6 +259,7 @@ beforeEach(() => {
   h.requests.clear();
   h.outcomes.length = 0;
   h.store = liveStore;
+  h.maint = liveMaint;
 });
 
 describe('review storage is deleted inline when a request is decided', () => {
@@ -331,7 +340,7 @@ describe('teardownReviewStorageForRequest', () => {
     const pr = pending('fail-app');
     await seedReview(pr.id);
     const before = await rows(pr.id);
-    h.store = createDocStore({
+    h.maint = createDocStoreMaintenance({
       db: {
         connect: async () => {
           throw new Error('appdata unreachable');
@@ -366,7 +375,7 @@ describe('teardownReviewStorageForRequest', () => {
     expect(h.outcomes).toEqual(['failed']);
 
     // A later purge finishes it…
-    h.store = liveStore;
+    h.maint = liveMaint;
     await teardownReviewStorageForRequest(pr.id);
     expect(await rows(pr.id)).toBe(0);
     expect(h.outcomes).toEqual(['failed', 'purged']);
@@ -377,7 +386,7 @@ describe('teardownReviewStorageForRequest', () => {
 
   it('no store connection: counted as disabled, never thrown', async () => {
     const pr = pending('nodb-app', { status: 'rejected' });
-    h.store = createDocStore({ db: null });
+    h.maint = createDocStoreMaintenance({ db: null });
     await expect(teardownReviewStorageForRequest(pr.id)).resolves.toBeUndefined();
     expect(h.outcomes).toEqual(['disabled']);
   });

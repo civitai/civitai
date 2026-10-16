@@ -2,7 +2,7 @@
 
 Dev-flagged claims on the ecosystem SEO pages that a human should verify against a source before we treat them as authoritative. Each links to the page (and the relevant section). Generated from the `factCheck` data in `src/shared/constants/ecosystem-seo.constants.ts`.
 
-**15 pages · 21 items.** As of **2026-07-22** these were fact-checked against public sources (see per-item verdicts + source links). No claim was found to be outright wrong. The handful of open judgment calls were then **resolved by dev decision on 2026-07-22**:
+**14 pages · 19 items.** As of **2026-07-22** these were fact-checked against public sources (see per-item verdicts + source links). No claim was found to be outright wrong. The handful of open judgment calls were then **resolved by dev decision on 2026-07-22**:
 
 - **HappyHorse & Seedream arena rankings** — keep both out of the evergreen pages (already excluded).
 - **Anima weighting** — page now says weighting _works_ (use higher values like `:2`), replacing the old "don't use weight syntax" tip.
@@ -110,17 +110,9 @@ Page: [https://civitai.com/ecosystems/seedream](https://civitai.com/ecosystems/s
 
 Page: [https://civitai.com/ecosystems/veo-3](https://civitai.com/ecosystems/veo-3)
 
-- [x] **comparison** ([open →](https://civitai.com/ecosystems/veo-3#compare)) — **peer native-audio cells (Sora 2 = Yes, Kling = No, …)** — Cross-checked against the Sora 2 config (consistent), but peer cells are general knowledge, not re-verified against each provider.
+- [x] **comparison** ([open →](https://civitai.com/ecosystems/veo-3#compare)) — **peer native-audio cells (Kling = No, Seedance = Yes, Wan = No)** — Peer cells are general knowledge, not re-verified against each provider.
   - ✅ **Verified 2026-07-22:** All cells accurate. Veo 3 generates native audio (dialogue/SFX/ambient); **Sora 2 = Yes** (native audio since its Sept 2025 launch); **Kling = No** (no native synchronized audio). Sources: [Google DeepMind Veo](https://deepmind.google/models/veo/), [OpenAI Sora 2](https://openai.com/index/sora-2/).
-
-## Sora 2
-
-Page: [https://civitai.com/ecosystems/sora-2](https://civitai.com/ecosystems/sora-2)
-
-- [x] **overview** ([open →](https://civitai.com/ecosystems/sora-2#overview)) — **synchronized audio (speech, SFX, soundscapes)** — Claimed from the model card only; the sora2 prompt guide does not mention audio. Verify the capability.
-  - ✅ **Verified 2026-07-22:** Confirmed. OpenAI states Sora 2 generates video with natively synchronized audio incl. dialogue/speech, sound effects, and ambient soundscapes. Source: [OpenAI Sora 2](https://openai.com/index/sora-2/).
-- [x] **comparison** ([open →](https://civitai.com/ecosystems/sora-2#compare)) — **peer native-audio / provider cells** — From general knowledge / sibling configs, not independently re-verified.
-  - ✅ **Verified 2026-07-22:** Consistent with the Veo 3 check above — peer native-audio/provider cells hold. Sources: [OpenAI Sora 2](https://openai.com/index/sora-2/), [Google DeepMind Veo](https://deepmind.google/models/veo/).
+  - **2026-10-15:** the Sora 2 page was removed after OpenAI shut down the Sora API, and Wan replaced Sora 2 in this comparison. The Wan cells are copied from the Seedance and Grok pages; the Wan audio cell has not been re-verified.
 
 ## Chroma
 
@@ -158,7 +150,7 @@ Beyond the dev-flagged claims above, the **descriptive/architecture/version pros
 - **Z-Image** ~6B S³-DiT, Turbo 8 steps, fits 16GB / sub-second on H800 — ✅.
 - **Wan** Wan-VAE, 1.3B–14B, 2.1 first open CN+EN in-clip text, 2.2 MoE + 5B TI2V, **2.7 is current** — ✅. **LTXV** DiT/real-time/T5, LTX-2 (19B) joint A/V, LTX-2.3, Sulphur 2 — ✅.
 - **Kling** Kuaishou, 3.0 current (Feb 2026) — ✅. **Grok** Aurora autoregressive image model + dual image/video — ✅. **HappyHorse** unified-Transformer native A/V, EN/CN/JP, v1.1 — ✅ (developer is an ex-Alibaba/ex-Kuaishou **spin-off**, which supports keeping the hedged "attributed to Alibaba" wording + its existing flag).
-- **Nano Banana** = Gemini 2.5 Flash Image; original/Pro/2 versions real — ✅. **Sora 2** OpenAI, successor to Sora (Feb 2024), synchronized audio — ✅.
+- **Nano Banana** = Gemini 2.5 Flash Image; original/Pro/2 versions real — ✅.
 
 ### Freshness disclosure
 

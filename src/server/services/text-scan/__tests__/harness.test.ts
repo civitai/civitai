@@ -9,6 +9,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
   getActiveTextScanPrompts: vi.fn(),
   getTextScanConfig: vi.fn(),
+  setTextScanLabelMode: vi.fn(),
 }));
 
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
@@ -20,7 +21,7 @@ const { getTextScanProfile, registerTextScanProfile } = await import(
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { submitWorkflow } = await import('@civitai/client');
-const { getActiveTextScanPrompts, getTextScanConfig } = await import(
+const { getActiveTextScanPrompts, getTextScanConfig, setTextScanLabelMode } = await import(
   '~/server/services/text-scan/prompt'
 );
 
@@ -47,6 +48,15 @@ registerTextScanProfile({
           declared: {},
         },
       ])
+    ),
+});
+
+registerTextScanProfile({
+  entityType: 'ModelRules',
+  labels: ['modelRules'],
+  load: async (ids) =>
+    new Map(
+      ids.map((id) => [id, { fields: [{ heading: 'Name', text: 'Some model' }], declared: {} }])
     ),
 });
 
@@ -136,5 +146,93 @@ describe('text-scan harness with segmented text', () => {
     ] as never);
     const res = await run({ action: 'sampleShadow', entityType: 'Post', label: 'nsfw' });
     expect(res.items.map((i: any) => i.textChangedSinceScan)).toEqual([false]);
+  });
+
+  describe('a ModelRules shadow row', () => {
+    const PROMPT_IDS = { base: 1, modelRules: 5 };
+    const row = (storedFingerprint: string, hashedFingerprint: string) => {
+      const subject = getTextScanProfile('ModelRules')!.load([1]) as Promise<Map<number, any>>;
+      return subject.then((subjects) => ({
+        entityId: 1,
+        workflowId: 'wf-1',
+        triggeredLabels: [],
+        nsfwLevel: null,
+        result: {
+          version: 1,
+          labels: { modelRules: { matched: [] } },
+          promptIds: PROMPT_IDS,
+          model: 'air:test',
+          modelRules: { fingerprint: storedFingerprint, snapshot: [], literalRuleIds: [] },
+        },
+        contentHash: textScanContentHash({
+          user: composeUserText(subjects.get(1)),
+          promptIds: PROMPT_IDS,
+          model: 'air:test',
+          thinking: false,
+          rulesFingerprint: hashedFingerprint,
+          segmentBudget: CONFIG,
+        }),
+        updatedAt: new Date('2026-10-01T00:00:00Z'),
+      }));
+    };
+    const changed = async (stored: string, hashed: string) => {
+      vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([await row(stored, hashed)] as never);
+      const res = await run({
+        action: 'sampleShadow',
+        entityType: 'ModelRules',
+        label: 'modelRules',
+      });
+      return res.items.map((i: any) => i.textChangedSinceScan);
+    };
+
+    it('is not stale when the stored fingerprint is the one the row was hashed with', async () => {
+      expect(await changed('fp-a', 'fp-a')).toEqual([false]);
+    });
+
+    it('is stale when the rule set the row was hashed with differs from the stored one', async () => {
+      expect(await changed('fp-b', 'fp-a')).toEqual([true]);
+    });
+  });
+});
+
+describe('putLabelModes', () => {
+  const parse = (extra: Record<string, unknown> = {}) =>
+    textScanHarnessSchema.parse({
+      action: 'putLabelModes',
+      label: 'minor',
+      mode: 'review',
+      ...extra,
+    });
+  beforeEach(() => vi.mocked(setTextScanLabelMode).mockReset());
+
+  it('sets one label mode as the authenticated moderator and returns the stored modes', async () => {
+    vi.mocked(setTextScanLabelMode).mockResolvedValue({ minor: 'review' });
+    const res = await runTextScanHarnessAction(parse(), { moderatorId: 5 });
+    expect(setTextScanLabelMode).toHaveBeenCalledWith('minor', 'review', { moderatorId: 5 });
+    expect(res).toEqual({ kind: 'json', body: { labelModes: { minor: 'review' } } });
+  });
+
+  it('ignores a moderator id asserted in the body', async () => {
+    vi.mocked(setTextScanLabelMode).mockResolvedValue({});
+    await runTextScanHarnessAction(parse({ moderatorId: 99 }), { moderatorId: 5 });
+    expect(setTextScanLabelMode).toHaveBeenCalledWith('minor', 'review', { moderatorId: 5 });
+  });
+
+  it('is refused without an authenticated moderator, even when the body names one', async () => {
+    await expect(runTextScanHarnessAction(parse({ moderatorId: 5 }), {})).rejects.toThrow(
+      'moderator id is required'
+    );
+    expect(setTextScanLabelMode).not.toHaveBeenCalled();
+  });
+
+  it('rejects a label that has no mode and a mode that does not exist', () => {
+    expect(
+      textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'nsfw', mode: 'review' })
+        .success
+    ).toBe(false);
+    expect(
+      textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'minor', mode: 'hold' })
+        .success
+    ).toBe(false);
   });
 });

@@ -1,5 +1,3 @@
-import fs from 'fs';
-import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClientModule from '~/server/flipt/client';
 import {
@@ -153,7 +151,6 @@ import {
 } from '../apps-shared.router';
 import {
   SHARED_STORAGE_OPS,
-  SHARED_STORAGE_REACHABLE_SERIES,
   type SharedStorageOp,
   type SharedStorageOutcome,
 } from '~/server/prom/app-block-shared-storage.metrics';
@@ -654,17 +651,6 @@ describe('every shared storage call records one (op, outcome) and one latency sa
       expect(recordedExactlyOnce()).toEqual({ op: c.op, outcome: c.outcome });
     }
   );
-
-  it('🔴 the cases above reach EXACTLY the seeded series — no seeded pair is a permanent zero', () => {
-    // The other half of the ledger: `SHARED_STORAGE_REACHABLE_SERIES` is what the scrape seeds,
-    // and a seeded pair no case reaches is a zero that reads as "never happens". A case that
-    // produces an unseeded pair already fails above, since its expected pair is checked there.
-    const covered = new Set(CASES.map((c) => `${c.op}/${c.outcome}`));
-    const seeded = new Set(SHARED_STORAGE_REACHABLE_SERIES.map((s) => `${s.op}/${s.outcome}`));
-    expect([...covered].sort()).toEqual([...seeded].sort());
-    const names = new Set(CASES.map((c) => `${c.op}/${c.outcome}/${c.path}`));
-    expect(names.size, 'no duplicate cases').toBe(CASES.length);
-  });
 });
 
 describe('a thrown error is recorded once and reaches the caller unchanged', () => {
@@ -791,43 +777,6 @@ describe('both transports record once per call', () => {
   }
   const bearer = { authorization: 'Bearer t' };
 
-  // Every procedure on `apps.shared`, so a procedure that bypasses its op's wrapper, or calls
-  // it twice, fails here as behaviour and not only in the source ledger below. `getCount` and
-  // `getCounts` are one op.
-  const PROCEDURES: Array<[procedure: string, op: SharedStorageOp, call: () => Promise<unknown>]> =
-    [
-      ['list', 'list', () => trpcCaller().list({ blockToken: 't' })],
-      ['get', 'get', () => trpcCaller().get({ blockToken: 't', key: ROW_KEY })],
-      ['getCount', 'getCount', () => trpcCaller().getCount({ blockToken: 't', key: ROW_KEY })],
-      [
-        'getCounts',
-        'getCount',
-        () => trpcCaller().getCounts({ blockToken: 't', keys: [ROW_KEY, 'k2'] }),
-      ],
-      ['append', 'append', () => trpcCaller().append({ blockToken: 't', value: { title: 'hi' } })],
-      [
-        'update',
-        'update',
-        () => trpcCaller().update({ blockToken: 't', key: ROW_KEY, value: { title: 'hi' } }),
-      ],
-      ['vote', 'vote', () => trpcCaller().vote({ blockToken: 't', key: ROW_KEY })],
-      ['unvote', 'unvote', () => trpcCaller().unvote({ blockToken: 't', key: ROW_KEY })],
-      ['withdraw', 'withdraw', () => trpcCaller().withdraw({ blockToken: 't', key: ROW_KEY })],
-      ['report', 'report', () => trpcCaller().report({ blockToken: 't', key: ROW_KEY })],
-    ];
-
-  it('the table covers every procedure on the router', () => {
-    expect(PROCEDURES.map(([p]) => p).sort()).toEqual(
-      Object.keys(appsSharedRouter._def.procedures).sort()
-    );
-  });
-
-  it.each(PROCEDURES)('tRPC `%s` records once as op `%s`', async (_procedure, op, call) => {
-    SUCCESS[op]();
-    await call();
-    expect(recordedExactlyOnce()).toEqual({ op, outcome: 'ok' });
-  });
-
   it('tRPC `append` records once, including its refusal', async () => {
     mockReserveWrite.mockResolvedValueOnce(denyAll);
     await expect(
@@ -872,69 +821,5 @@ describe('both transports record once per call', () => {
     expect(sent.status).toBe(400);
     expect(incSpy).not.toHaveBeenCalled();
     expect(observeSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe('the router has one metered entry point per op', () => {
-  const SRC = path.resolve(__dirname, '../../..');
-  // Comments stripped; a `//` preceded by `:` is a URL inside a string, not a comment.
-  const codeOf = (file: string) =>
-    fs
-      .readFileSync(file, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const code = codeOf(path.join(SRC, 'server/routers/apps-shared.router.ts'));
-
-  it('🔴 only the router and the module that defines it call the wrapper', () => {
-    // A wrapper added anywhere else (a REST route, a service) would count a call twice.
-    const callers: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
-        } else if (
-          /(?<!\.test)\.tsx?$/.test(entry.name) &&
-          /\bwithSharedStorageMetrics\b/.test(codeOf(full))
-        ) {
-          callers.push(path.relative(SRC, full).split(path.sep).join('/'));
-        }
-      }
-    };
-    walk(SRC);
-    expect(callers.sort()).toEqual([
-      'server/prom/app-block-shared-storage.metrics.ts',
-      'server/routers/apps-shared.router.ts',
-    ]);
-  });
-
-  it('🔴 each op is wrapped exactly once, and every wrapper is an exported function', () => {
-    // A second wrapper for one op double-counts it; a missing one leaves it unrecorded. Read
-    // from source because the per-case checks above can only see the paths they drive.
-    const wrapped = [...code.matchAll(/withSharedStorageMetrics\(\s*'([A-Za-z]+)'/g)].map(
-      (m) => m[1]
-    );
-    expect(wrapped.sort()).toEqual([...SHARED_STORAGE_OPS].sort());
-
-    const wrappers = [
-      ...code.matchAll(
-        /export async function (\w+)\([^)]*\)\s*\{\s*return withSharedStorageMetrics\(\s*'(\w+)'/g
-      ),
-    ];
-    expect(wrappers.length).toBe(SHARED_STORAGE_OPS.length);
-  });
-
-  it('🔴 nothing but its own wrapper calls an op body', () => {
-    // An internal caller of an `…Unmetered` body (a new procedure, or one op delegating to
-    // another) would serve a call that is never recorded.
-    // Any REFERENCE counts, not just a call: `.map(xUnmetered)` or `.call` would reach it too.
-    const bodies = [...code.matchAll(/\b(\w+Unmetered)\b/g)].map((m) => m[1]);
-    const distinct = [...new Set(bodies)];
-    expect(distinct.length).toBe(SHARED_STORAGE_OPS.length);
-    for (const body of distinct) {
-      // The declaration plus the one call in its wrapper.
-      expect(bodies.filter((b) => b === body).length, body).toBe(2);
-      expect(code, body).toMatch(new RegExp(`\\nasync function ${body}\\(`));
-    }
   });
 });

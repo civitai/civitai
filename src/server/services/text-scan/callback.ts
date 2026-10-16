@@ -1,4 +1,5 @@
 import { getWorkflow } from '@civitai/client';
+import type { StoredModelRules } from '@civitai/moderation/model-rules';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -10,9 +11,7 @@ import {
 } from '~/server/services/text-scan/merge';
 import {
   getTextScanMode,
-  getTextScanWebSearchMode,
   isTextScanWebSearchEntityType,
-  TEXT_SCAN_WEB_SEARCH_LABELS,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
 import { parseTextScanSteps } from '~/server/services/text-scan/parse';
@@ -20,20 +19,17 @@ import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import {
+  filterModelRuleMatches,
+  getModelRuleSnapshots,
+} from '~/server/services/text-scan/model-rules';
+import {
   readTextScanVerdict,
   recordTextScanFailure,
   recordTextScanRaise,
   revertTextScanRaise,
   recordTextScanSuccess,
 } from '~/server/services/text-scan/record';
-import type {
-  PromptIds,
-  TextScanDeclared,
-  TextScanEntityType,
-  TextScanLabel,
-  TextScanOutcome,
-  TextScanOutput,
-} from '~/server/services/text-scan/types';
+import type { PromptIds, TextScanLabel, TextScanOutput } from '~/server/services/text-scan/types';
 import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -59,6 +55,9 @@ type TextScanWorkflowMetadata = {
   model?: string;
   textHash?: string;
   subjectMeta?: Record<string, unknown>;
+  ruleIds?: number[];
+  rulesFingerprint?: string;
+  literalRuleIds?: number[];
   inputChars?: number;
   inputCut?: boolean;
   segments?: number;
@@ -68,6 +67,34 @@ type TextScanWorkflowMetadata = {
 /** Workflows submitted before segmentation carry no `segments` and hold one step. */
 function expectedSegments({ segments }: TextScanWorkflowMetadata) {
   return Number.isInteger(segments) && (segments as number) > 0 ? (segments as number) : 1;
+}
+
+/**
+ * Narrows the merged `modelRules` match to rules the prompt listed that are still live, in place.
+ * Every path that acts on a verdict goes through here, so a rule the prompt never carried, or one
+ * disabled since the submit, can never unpublish a model.
+ */
+async function scopeModelRules(
+  output: TextScanOutput,
+  metadata: TextScanWorkflowMetadata,
+  ctx: Record<string, unknown>
+): Promise<StoredModelRules | undefined> {
+  if (!output.modelRules) return undefined;
+  const { kept, dropped } = filterModelRuleMatches(output.modelRules.matched, metadata.ruleIds);
+  if (dropped.length)
+    await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
+  const listed = new Set(metadata.ruleIds);
+  const literalCandidates = (metadata.literalRuleIds ?? []).filter((id) => listed.has(id));
+  const snapshot = await getModelRuleSnapshots([
+    ...new Set([...kept.map((m) => m.ruleId), ...literalCandidates]),
+  ]);
+  const live = new Set(snapshot.map((rule) => rule.id));
+  output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
+  return {
+    fingerprint: metadata.rulesFingerprint,
+    snapshot,
+    literalRuleIds: literalCandidates.filter((id) => live.has(id)),
+  };
 }
 
 function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedSegments) {
@@ -83,44 +110,6 @@ function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedS
         }),
     ...(Object.keys(flaggedSegments).length ? { flaggedSegments } : {}),
   };
-}
-
-const searchOwned = (label: TextScanLabel) =>
-  (TEXT_SCAN_WEB_SEARCH_LABELS as readonly TextScanLabel[]).includes(label);
-
-/**
- * The part of `outcome` the live adapter may act on. An active search pass owns poi/minor: a main
- * pass submitted before it went active still asked for them, and must not act on them now.
- */
-async function applicableOutcome({
-  outcome,
-  output,
-  declared,
-  labels,
-  submittedActive,
-  variant,
-  entityType,
-  entityId,
-}: {
-  outcome: TextScanOutcome;
-  output: TextScanOutput;
-  declared: TextScanDeclared;
-  labels: TextScanLabel[];
-  submittedActive: boolean;
-  variant?: string;
-  entityType: TextScanEntityType;
-  entityId: number;
-}) {
-  return submittedActive &&
-    !variant &&
-    labels.some(searchOwned) &&
-    (await getTextScanWebSearchMode(entityType, entityId, 'active')) === 'active'
-    ? evaluateTextScan(
-        output,
-        declared,
-        labels.filter((label) => !searchOwned(label))
-      )
-    : outcome;
 }
 
 export async function handleTextScanCallback(event: { workflowId: string; status: string }) {
@@ -173,11 +162,10 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const submittedActive = mode === 'active';
   const ctx = { workflowId, entityType, entityId, emEntityType };
 
-  // After a rollback the old pipeline owns the live row again, and plan 02's floor reads it.
-  const currentMode = variant
-    ? await getTextScanWebSearchMode(entityType, entityId)
-    : await getTextScanMode(entityType, entityId);
-  if (submittedActive && currentMode !== 'active')
+  // After a rollback the old pipeline owns the live row again. Gate every pass, search included, on
+  // the main mode only: after a search-only rollback the main scan has stopped asking for poi/minor,
+  // so dropping this search verdict would leave that edit with no poi/minor verdict at all.
+  if (submittedActive && (await getTextScanMode(entityType, entityId)) !== 'active')
     return log('info', 'mode left active before the callback; live row not written', ctx);
 
   // Shadow verdicts must not drive the live adapter's failure hooks either (e.g. Article ingestion).
@@ -212,7 +200,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   // the whole text, so it may raise the stored verdict now; it never lowers or clears it.
   const raisePartialVerdict = async (outputs: TextScanOutput[]) => {
     const subject = (await profile.load([entityId])).get(entityId);
-    if (!subject) return;
+    if (!subject || subject.notPublic) return;
     const stored = await readTextScanVerdict({
       entityType: emEntityType,
       entityId,
@@ -220,6 +208,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     if (!stored) return;
     const { output: merged } = mergeTextScanOutputs(outputs, labels);
+    const modelRules = await scopeModelRules(merged, metadata, ctx);
     const raised = stricterThanStored(stored, merged, labels);
     if (!raised.length) return;
     const output: TextScanOutput = Object.fromEntries(
@@ -237,31 +226,22 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       model: metadata.model ?? '',
       textHash: metadata.textHash,
       meta: metadata.subjectMeta ?? subject.meta,
+      modelRules,
     });
     if (!recorded) return;
-    const applied = await applicableOutcome({
-      outcome,
-      output,
-      declared: subject.declared,
-      labels: raised,
-      submittedActive,
-      variant,
-      entityType,
-      entityId,
-    });
     await log('warning', 'partial verdict raised', {
       ...ctx,
       raised,
       parsedSegments: outputs.length,
       segments,
-      acted: !!adapter?.applyTextScan && applied.triggeredLabels.length > 0,
+      acted: !!adapter?.applyTextScan && outcome.triggeredLabels.length > 0,
     });
-    if (!applied.triggeredLabels.length && !applied.nsfw) return;
+    if (!outcome.triggeredLabels.length && !outcome.nsfw) return;
     try {
       await adapter?.applyTextScan?.({
         entityId,
         workflowId,
-        outcome: applied,
+        outcome,
         subject,
         textHash: metadata.textHash ?? textScanTextHash(subject),
       });
@@ -308,8 +288,24 @@ export async function handleTextScanCallback(event: { workflowId: string; status
 
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return log('info', 'entity gone before callback', ctx);
+  // Failed, not a verdict: a Succeeded row with this content hash would dedupe the publish rescan.
+  // The retry cron parks it until that rescan re-arms it.
+  if (subject.notPublic) {
+    const recorded = await recordTextScanFailure({
+      entityType: emEntityType,
+      entityId,
+      workflowId,
+      marker,
+      status: EntityModerationStatus.Failed,
+    });
+    if (!recorded) return log('warning', 'stale callback ignored', ctx);
+    return log('info', 'subject not public; verdict dropped', ctx);
+  }
 
   const { output, flaggedSegments } = mergeTextScanOutputs(parsed.outputs, labels);
+
+  const modelRules = await scopeModelRules(output, metadata, ctx);
+
   const outcome = evaluateTextScan(output, subject.declared, labels);
   const subjectMeta = metadata.subjectMeta ?? subject.meta;
   const extra = inputMeta(metadata, flaggedSegments);
@@ -325,19 +321,9 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     model: metadata.model ?? '',
     textHash: metadata.textHash,
     meta,
+    modelRules,
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
-
-  const applied = await applicableOutcome({
-    outcome,
-    output,
-    declared: subject.declared,
-    labels,
-    submittedActive,
-    variant,
-    entityType,
-    entityId,
-  });
 
   void logScanVerdict({
     system: 'text-scan',
@@ -347,13 +333,17 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     mode,
     workflowId,
     flagged: outcome.triggeredLabels.length > 0,
-    acted: submittedActive && applied.triggeredLabels.length > 0,
+    acted: submittedActive && outcome.triggeredLabels.length > 0,
     nsfwLevel: outcome.nsfw?.detectedLevel,
     declaredNsfwLevel: outcome.nsfw?.declaredLevel,
     poi: outcome.poi?.detected,
     minor: outcome.minor?.detected,
     scam: outcome.scam?.detected,
-    tags: [...outcome.triggeredLabels, ...(metadata.inputCut ? ['inputCut'] : [])],
+    tags: [
+      ...outcome.triggeredLabels,
+      ...(outcome.modelRules?.matched.map((m) => `modelRules:${m.ruleId}`) ?? []),
+      ...(metadata.inputCut ? ['inputCut'] : []),
+    ],
     textHash: metadata.textHash,
     ...(variant ? { variant } : {}),
   });
@@ -362,7 +352,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     await adapter?.applyTextScan?.({
       entityId,
       workflowId,
-      outcome: applied,
+      outcome,
       subject,
       textHash: metadata.textHash ?? textScanTextHash(subject),
     });

@@ -9,11 +9,18 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// The ONE exception is review maintenance (`purgeReview`, `listReviewAppIds`):
+// There are TWO exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
 // statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
 // on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
 // admit — review namespaces only, read and delete only.
+//
+// The other exception is the ACCOUNT WIPE's enumeration (`listAccountNamespaces`): one
+// SELECT keyed on `user_id = $1` over `usage_user` and `doc_mark`, run only inside
+// `accountWipeTx`, whose transaction-local `appdata.account_wipe_uid` setting the
+// migration's wipe policy admits for that ONE user's rows of those two tables, read only.
+// It returns (app, ns) pairs; the wipe of each runs in an ordinary `withTx`, keyed and
+// scoped like any viewer call.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -64,6 +71,8 @@ import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { newUlid } from '~/server/utils/app-block-ids';
 import type {
+  AccountWipeNamespaceResult,
+  AccountWipeResult,
   DocCollection,
   DocIndexType,
   DocListQuery,
@@ -160,6 +169,26 @@ export function reviewNamespace(publishRequestId: string, moderatorUid: number):
   return ns;
 }
 
+/** (app, ns) pairs read per page by the account wipe's enumeration. */
+const ACCOUNT_WIPE_PAGE = 500;
+
+/** A user id the account wipe accepts: a positive integer that fits the `integer` columns. */
+function assertWipeUserId(userId: number): void {
+  if (!(Number.isSafeInteger(userId) && userId > 0 && userId <= 2_147_483_647)) {
+    throw new Error('doc-store: malformed user id');
+  }
+}
+
+/**
+ * Whether `ns` is `userId`'s own dev namespace: only that user's dev tokens resolve to it
+ * (`doc-store-access.ts`), so every row in it is theirs and the wipe deletes all of it. A review
+ * namespace is not treated so: it belongs to the reviewing moderator, and is purged when the
+ * request is decided and by the hourly sweep; the wipe handles it like any other namespace.
+ */
+function ownsNamespace(userId: number, ns: string): boolean {
+  return ns === `dev:${userId}`;
+}
+
 type WritePolicy = 'own' | 'owner' | 'none';
 
 /**
@@ -204,6 +233,17 @@ export function assertShareWritable(
       'documents in this collection are written by counters only'
     );
   }
+}
+
+/**
+ * A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh report
+ * after a moderator dismissed the document's reports, so one viewer could re-open it
+ * indefinitely (see DISMISSED REPORTS in the moderation section). Exported so the route refuses
+ * it before spending any budget or reading the viewer's trust; the store runs it on every
+ * `unmark` itself.
+ */
+export function refuseReportWithdrawal(name: string): void {
+  if (name === REPORT_MARK) throw invalid('a report cannot be withdrawn', { mark: name });
 }
 
 /** A key made only of dots (`.`, `..`, …) is a path step to every URL client, not a name. */
@@ -596,6 +636,115 @@ const SQL_REVIEW_APP_IDS = `SELECT r.app_id FROM (
     SELECT d.app_id FROM appdata.doc d WHERE d.ns LIKE 'rev:%' AND d.app_id > $1
   ) r ORDER BY r.app_id LIMIT $2::int`;
 
+// ACCOUNT WIPE (see the module header and `wipeAccount`).
+//
+// The (app, ns) pairs in which one user has rows that name them, in key order after a keyset
+// cursor. Two sources suffice: every document that names a user — their private documents, the
+// shared documents they authored, the counter documents whose creation was charged to them — is
+// charged to that user's `usage_user` row in the same transaction that writes it (the invariant
+// `assertUsageConsistent` checks in every suite), and a mark names its user in `doc_mark`. Run
+// only inside `accountWipeTx`. $1 user id, $2 app id and $3 ns of the cursor (exclusive), $4 limit.
+const SQL_ACCOUNT_NAMESPACES = `SELECT w.app_id, w.ns FROM (
+    SELECT wu.app_id, wu.ns FROM appdata.usage_user wu WHERE wu.user_id = $1::int
+    UNION
+    SELECT wm.app_id, wm.ns FROM appdata.doc_mark wm WHERE wm.user_id = $1::int
+  ) w WHERE (w.app_id, w.ns) > ($2::text, $3::text)
+  ORDER BY w.app_id, w.ns LIMIT $4::int`;
+
+// The wipe of ONE (app, ns), in an ordinary scoped transaction. $1 app, $2 ns, $3 user id.
+// Statement order follows the store's LOCK ORDER: document rows, then tally and mark rows, then
+// `usage_app` (taken by `charge`), then `usage_user` — except one second pass over the documents
+// at the end, whose reason and cost are at its call in `wipeAccountNamespace`.
+
+// The account's own dev namespace (`dev:<uid>`): only that user ever writes there, so everything
+// in it goes, table by table (index rows by the document cascade). Review namespaces are not
+// treated so: they belong to the reviewing moderator and are purged with their request.
+const SQL_WIPE_NAMESPACE = [
+  `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_index ix WHERE ix.app_id = $1 AND ix.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.usage_user u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+] as const;
+
+// Any other namespace (`prod`, a review namespace): only what names the user.
+// The user's private documents; their index rows go by the cascade. Private documents have no
+// tallies or marks, and get no tombstone: the only reader of a private key space is its owner.
+const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int RETURNING d.size_bytes)
+  SELECT count(*)::int AS docs, COALESCE(sum(gone.size_bytes), 0)::bigint AS bytes FROM gone`;
+// EVERY shared document the wipe will touch in this namespace — the ones the user authored
+// (hidden or not), which it deletes; the counter documents whose creation was charged to the
+// user, whose uid it clears; and the ones the user marked, whose tallies it decrements — locked
+// in ONE statement, in (coll, key) order. Two wipes of users who authored and marked each
+// other's documents then queue on the first document they share instead of each holding its own
+// author's documents and waiting for the other's: with the authored set and the marked set
+// locked by separate statements, that deadlocked every time on a real server.
+// FOR UPDATE for both sets: the authored ones are deleted, which needs it, and a single statement
+// has a single strength. Taking a weaker lock on the marked ones would need a second statement
+// (or an upgrade later), which is the interleaving this exists to remove. The cost: a viewer
+// marking or incrementing one of those documents waits for the wipe to commit (bounded by
+// LOCK_TIMEOUT).
+// After this statement, the only document rows the wipe writes are (a) shared documents in this
+// lock set — deleted by `deleteLockedSharedDocs` (authored), uid-cleared by
+// `SQL_WIPE_RELEASE_COUNTER_DOCS` (counter) — and (b) the user's own PRIVATE documents
+// (`SQL_WIPE_PRIVATE_DOCS`, `scope_uid` = the user), which no other wipe ever locks: every other
+// wipe's lock set is shared documents only. Every tally and mark row it changes belongs to a
+// document in this set, except a document the user's own in-flight write commits between
+// statements, which the second pass locks. (Leaving the counter documents out of this set deadlocked two wipes of
+// users who had reported each other's counter documents.) `authored` marks the documents to
+// delete: user-authored only, never a counter document, which outlives its creator; the same
+// delete path a moderator delete takes.
+const SQL_WIPE_LOCK_DOCS = `SELECT d.coll, d.key, d.size_bytes, d.author_uid,
+    (d.author_kind = 'user' AND d.author_uid = $3::int) AS authored
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0
+    AND ((d.author_kind IN ('user', 'counter') AND d.author_uid = $3::int)
+      OR EXISTS (SELECT 1 FROM appdata.doc_mark lm
+        WHERE lm.app_id = $1 AND lm.ns = $2 AND lm.coll = d.coll AND lm.key = d.key
+          AND lm.user_id = $3::int))
+  ORDER BY d.coll, d.key
+  FOR UPDATE OF d`;
+// Counter-created documents whose creation was charged to the user: the uid was kept ONLY for
+// that charge, and the charge is released with the user's usage rows below, so the uid goes too.
+const SQL_WIPE_RELEASE_COUNTER_DOCS = `WITH done AS (UPDATE appdata.doc d
+    SET author_uid = NULL, last_writer_uid = NULL
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'counter'
+      AND d.author_uid = $3::int
+    RETURNING 1)
+  SELECT count(*)::int AS n FROM done`;
+// The user's marks, reports included, and the same statement takes each from its tally: the
+// two can never disagree. A tally already below its marks (drift; the reconciler's to report)
+// stops at 0 rather than failing the wipe on the `doc_tally_nonnegative` CHECK.
+const SQL_WIPE_MARKS = `WITH gone AS (DELETE FROM appdata.doc_mark mk
+    WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.user_id = $3::int
+    RETURNING mk.coll, mk.key, mk.name),
+  per AS (SELECT g.coll, g.key, g.name, count(*)::bigint AS n FROM gone g
+    GROUP BY g.coll, g.key, g.name),
+  down AS (UPDATE appdata.doc_tally t SET count = GREATEST(t.count - per.n, 0)
+    FROM per
+    WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = per.coll AND t.key = per.key
+      AND t.kind = 'mark' AND t.name = per.name
+    RETURNING 1)
+  SELECT (SELECT count(*) FROM gone)::int AS marks`;
+// Tombstones of the user's private documents carry their uid as `scope_uid`. After `usage_app`,
+// where every writer of a tombstone takes it.
+const SQL_WIPE_PRIVATE_TOMBS = `DELETE FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.scope_uid = $3::int`;
+// The user's usage row: every byte it counted is gone (deleted documents) or released (counter
+// documents now charge no user).
+const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
+  WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
+
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
 // $1 app, $2 ns, $3 coll, $4 scope_uid; `joins` are the fragments below.
@@ -789,8 +938,36 @@ type UsageDelta = { bytes: number; docs: number };
 type UserCharge = UsageDelta & { uid: number; ceiling: QuotaCeiling };
 
 export type DocStore = ReturnType<typeof createDocStore>;
+export type DocStoreModeration = ReturnType<typeof createDocStoreModeration>;
 
+/** The store the block-token routes use. It carries no moderator operation. */
 export function createDocStore(deps: DocStoreDeps) {
+  return buildDocStore(deps).store;
+}
+
+/**
+ * The session-moderator operations, as a SEPARATE object from the viewer store, so holding
+ * the block-token API's store gives no path to them. Only `doc-store-moderation.instance.ts`
+ * builds one in production; its importers are pinned by a ledger test.
+ */
+export function createDocStoreModeration(deps: DocStoreDeps) {
+  return buildDocStore(deps).moderation;
+}
+
+/**
+ * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`) and account
+ * deletion (`wipeAccount`) — as a separate object from the viewer store: the first runs with the
+ * setting that reaches every `rev:` row of a request, the second with the one that reads one
+ * user's rows in every app, so nothing holding the block-token routes' store may reach either.
+ * Only `doc-store-maintenance.instance.ts` builds one in production; its importers are pinned by
+ * a ledger test (`__tests__/doc-store-maintenance.ledger.test.ts`).
+ */
+export function createDocStoreMaintenance(deps: DocStoreDeps) {
+  return buildDocStore(deps).maintenance;
+}
+export type DocStoreMaintenance = ReturnType<typeof createDocStoreMaintenance>;
+
+function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
   let privileges: 'safe' | 'refused' | undefined;
@@ -859,6 +1036,24 @@ export function createDocStore(deps: DocStoreDeps) {
       `BEGIN; SELECT set_config('appdata.app_id', ${escapeLiteral(
         publishRequestId ?? ''
       )}, true), set_config('appdata.ns', '', true), set_config('appdata.review_maintenance', 'on', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
+   * An ACCOUNT-WIPE ENUMERATION transaction: no app or namespace bound, and
+   * `appdata.account_wipe_uid` set to one validated user id — which the migration's wipe policy
+   * admits for that user's `usage_user` and `doc_mark` rows only, read only. Transaction-local like
+   * every other setting. 🔴 Called by `listAccountNamespaces` ONLY (pinned by
+   * `doc-store.sql-isolation.test.ts`).
+   */
+  async function accountWipeTx<T>(
+    userId: number,
+    fn: (c: DocStoreClient) => Promise<T>
+  ): Promise<T> {
+    assertWipeUserId(userId);
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.account_wipe_uid', '${userId}', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
       fn
     );
   }
@@ -1257,6 +1452,7 @@ export function createDocStore(deps: DocStoreDeps) {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
+    refuseReportWithdrawal(name);
     const viewer = requireViewer(ctx);
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
@@ -1451,7 +1647,150 @@ export function createDocStore(deps: DocStoreDeps) {
     );
   }
 
-  return {
+  /** Every (app, ns) in which `userId` has a usage row or a mark, in key order, all pages. */
+  async function listAccountNamespaces(userId: number): Promise<{ appId: string; ns: string }[]> {
+    const out: { appId: string; ns: string }[] = [];
+    let after = { appId: '', ns: '' };
+    for (;;) {
+      const page = await accountWipeTx(userId, async (c) =>
+        (
+          await c.query(SQL_ACCOUNT_NAMESPACES, [userId, after.appId, after.ns, ACCOUNT_WIPE_PAGE])
+        ).rows.map((r) => ({ appId: r.app_id as string, ns: r.ns as string }))
+      );
+      out.push(...page);
+      if (page.length < ACCOUNT_WIPE_PAGE) return out;
+      after = page[page.length - 1];
+    }
+  }
+
+  /** One (app, ns) of an account wipe, in ONE ordinary scoped transaction: all of it or none. */
+  async function wipeAccountNamespace(
+    userId: number,
+    appId: string,
+    ns: string
+  ): Promise<AccountWipeNamespaceResult> {
+    // The viewer is the account being wiped. Enumeration only finds namespaces the account has
+    // rows in, and through the store only its own tokens can write into a review namespace, so
+    // `assertContext`'s review-namespace check passes for every namespace the store could have
+    // produced. (A row put into another moderator's review namespace by hand would be refused
+    // here and reported in `failures`.)
+    const ctx: DocStoreContext = { appId, ns, viewerUid: userId };
+    const result: AccountWipeNamespaceResult = {
+      appId,
+      ns,
+      mode: ownsNamespace(userId, ns) ? 'namespace' : 'user',
+      privateDocs: 0,
+      privateBytes: 0,
+      sharedDocs: 0,
+      sharedBytes: 0,
+      counterDocsReleased: 0,
+      marks: 0,
+      namespaceRows: 0,
+    };
+    const n = (res: DocStoreQueryResult, col = 'n') => Number(res.rows[0]?.[col] ?? 0);
+    return withTx(ctx, async (c) => {
+      if (result.mode === 'namespace') {
+        for (const sql of SQL_WIPE_NAMESPACE)
+          result.namespaceRows += n(await c.query(sql, [appId, ns]));
+        return result;
+      }
+      const args = [appId, ns, userId];
+      /**
+       * The document rows (LOCK ORDER (1)): every shared document the wipe touches is locked in
+       * one ordered statement (`SQL_WIPE_LOCK_DOCS`), then the private documents are deleted and
+       * the counter documents released. Nothing is charged here; `settle` does that once every
+       * row lock is held.
+       */
+      const wipeDocs = async () => {
+        const locked = (await c.query(SQL_WIPE_LOCK_DOCS, args)).rows;
+        const authored = locked.filter((r) => r.authored === true).map(toLockedSharedDoc);
+        const priv = await c.query(SQL_WIPE_PRIVATE_DOCS, args);
+        const deleted = { docs: n(priv, 'docs'), bytes: n(priv, 'bytes') };
+        result.privateDocs += deleted.docs;
+        result.privateBytes += deleted.bytes;
+        result.counterDocsReleased += n(await c.query(SQL_WIPE_RELEASE_COUNTER_DOCS, args));
+        return { authored, deleted };
+      };
+      /**
+       * Delete the locked authored documents exactly as a moderator delete does (tallies, marks,
+       * app and author refunds, tombstones), then refund the app for the private documents. No
+       * user is charged for those: the account's own usage row is deleted below.
+       */
+      const settle = async (pass: Awaited<ReturnType<typeof wipeDocs>>) => {
+        result.sharedDocs += pass.authored.length;
+        result.sharedBytes += pass.authored.reduce((sum, d) => sum + d.sizeBytes, 0);
+        await deleteLockedSharedDocs(c, ctx, charge, pass.authored);
+        if (pass.deleted.docs > 0) {
+          await charge(
+            c,
+            ctx,
+            { bytes: -pass.deleted.bytes, docs: -pass.deleted.docs },
+            { uid: 0, bytes: 0, docs: 0, ceiling: 'viewer' }
+          );
+        }
+      };
+      const first = await wipeDocs();
+      // Every tally this changes belongs to a document `wipeDocs` locked, so no other wipe can
+      // hold one of them (LOCK ORDER (1b) after (1)).
+      result.marks = n(await c.query(SQL_WIPE_MARKS, args), 'marks');
+      await settle(first);
+      // A write by this user that was in flight when the statements above took their snapshots
+      // holds its `usage_user` row until it commits; this delete waits for it, and then deletes
+      // the row that counted that document. The second pass (a new statement, so a new
+      // snapshot) sees what that writer committed, so no document naming the user outlives the
+      // usage row a re-run would find it by. A write that starts later recreates the row and is
+      // found by a re-run. The second pass re-runs the single ordered lock statement, so it
+      // takes document locks after the usage locks — the reverse of LOCK ORDER. It already holds
+      // every document lock from the first pass, so a new lock can only be on a document the
+      // in-flight writer created or a document this user marked meanwhile. That document can
+      // also be locked by someone else (a moderator delete, or another wipe) who then waits on
+      // this user's usage row, so the second pass can deadlock with them in that narrow window.
+      // Postgres then aborts one side whole; for this wipe the namespace is reported in
+      // `failures` for a re-run.
+      await c.query(SQL_WIPE_USAGE_USER, args);
+      await settle(await wipeDocs());
+      // The second pass refunds the author of any document it deleted, which re-creates the
+      // usage row it just charged (as a negative); remove it again.
+      await c.query(SQL_WIPE_USAGE_USER, args);
+      await c.query(SQL_WIPE_PRIVATE_TOMBS, args);
+      return result;
+    });
+  }
+
+  /**
+   * ACCOUNT WIPE (`removeAllContent`, a moderator content-removal action): remove one user from
+   * the document store, in every app and namespace they have rows in. Per namespace, in one
+   * transaction:
+   *   - their own dev namespace (`dev:<uid>`) is deleted outright;
+   *   - elsewhere, their private documents are deleted (index rows with them) and refunded to the
+   *     app; their marks — reports included — are deleted and each tally decremented; the shared
+   *     documents they authored are DELETED, hidden or not, exactly as a moderator delete does
+   *     (index rows, tallies, every user's marks on them, app and author refunds, tombstones);
+   *     counter-created documents charged to them keep their counters but lose the uid; their
+   *     usage rows and private tombstones are deleted.
+   * Idempotent: a re-run finds nothing left that names the user. A namespace whose transaction
+   * fails is reported in `failures` (it rolled back in full) and the rest continue; a disabled
+   * store throws `storage_disabled`.
+   */
+  async function wipeAccount(userId: number): Promise<AccountWipeResult> {
+    assertWipeUserId(userId);
+    const result: AccountWipeResult = { userId, namespaces: [], failures: [] };
+    for (const { appId, ns } of await listAccountNamespaces(userId)) {
+      try {
+        result.namespaces.push(await wipeAccountNamespace(userId, appId, ns));
+      } catch (err) {
+        if (err instanceof DocStoreError && err.code === 'storage_disabled') throw err;
+        result.failures.push({
+          appId,
+          ns,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return result;
+  }
+
+  const store = {
     get,
     getMany,
     put,
@@ -1462,9 +1801,12 @@ export function createDocStore(deps: DocStoreDeps) {
     mark,
     unmark,
     usage,
-    purgeReview,
-    listReviewAppIds,
     limits,
+  };
+  return {
+    store,
+    moderation: createModeration({ withTx, charge }),
+    maintenance: { purgeReview, listReviewAppIds, wipeAccount },
   };
 }
 
@@ -1484,4 +1826,418 @@ function translatePgError(err: unknown): unknown {
     });
   }
   return err;
+}
+
+// ---------------------------------------------------------------------------
+// Moderation — session moderators only
+// ---------------------------------------------------------------------------
+//
+// Reachable only through `createDocStoreModeration` — a separate object from the viewer store
+// the block-token routes hold — built by `doc-store-moderation.instance.ts` and used by
+// `doc-store-moderation.service.ts` behind `moderatorProcedure`. The importer set is pinned by
+// `routers/__tests__/apps-mod-doc-store.router.test.ts` (its ledger case).
+//
+// DISMISSED REPORTS. A moderator who reviews a VISIBLE document and keeps it dismisses its
+// reports: `doc.reports_dismissed_at` records when, and only report marks made after that point
+// count as OPEN (the queue and `reports` below). The marks themselves are kept, so each
+// reporter's own "I reported this" state (`viewer.marks`) stays true. A report is one per user
+// AND cannot be withdrawn (`unmark` refuses `report`), so a reporter cannot re-open a dismissed
+// document by withdrawing and re-filing: only a report from someone who had not reported it
+// re-opens it. Deleting the marks instead would tell reporters they never reported, and let
+// each of them re-open it after every dismissal. Unhide does not touch the point, so it
+// re-surfaces no dismissed report; a hidden document is not dismissable (unhide it first), and
+// the hidden and all views list hidden documents whatever their open count. The point is the dismissing transaction's start time: a report whose own
+// transaction started later is never swept, and one made between the moderator's last look
+// and the click is (the revision binding covers the document's content, not its reports).
+//
+// CROSS-APP WITHOUT A CROSS-APP CONNECTION. Every call here runs in ONE app's
+// transaction through the same `withTx` a viewer call uses: the RLS settings are
+// bound to that (app, ns), the connection is the same least-privilege role, and every
+// statement keeps the `$1`/`$2` isolation shape. Nothing here can name a second app,
+// and RLS would hide its rows if anything tried. A cross-app view (the report queue)
+// is assembled by the caller from one call per app; there is no superuser or
+// BYPASSRLS path.
+//
+// Moderators act on SHARED documents only (`scope_uid = 0`): reports exist only
+// there, and private per-viewer documents are not a moderation surface.
+
+export type ModeratedDocStatus = 'open' | 'hidden' | 'all';
+
+export type ReportedDocRow = {
+  collection: string;
+  key: string;
+  reports: number;
+  createdAt: Date;
+  updatedAt: Date;
+  authorKind: 'user' | 'app' | 'counter';
+  /** Moderators may see it; it must never reach an app. */
+  authorUid: number | null;
+  hiddenAt: Date | null;
+  hiddenBy: number | null;
+  sizeBytes: number;
+  version: number;
+  /** The document's revision (`seq`): pass it back to bind an action to exactly this state. */
+  revision: number;
+};
+
+export type ModeratedDoc = ReportedDocRow & {
+  /** When a moderator last dismissed this document's reports; earlier reports are closed. */
+  reportsDismissedAt: Date | null;
+  data: Record<string, unknown>;
+  /** md5 of the stored jsonb text — what an audit row records instead of the content. */
+  dataMd5: string;
+  counters: Record<string, number>;
+  marks: Record<string, number>;
+};
+
+type ModerationDeps = {
+  withTx: <T>(ctx: DocStoreContext, fn: (c: DocStoreClient) => Promise<T>) => Promise<T>;
+  charge: (
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    app: UsageDelta,
+    user: UserCharge
+  ) => Promise<number>;
+};
+
+// The queue for one (app, ns). Driven by the report marks through `doc_mark_name_idx`
+// (app_id, ns, name, …), so its cost follows the app's REPORT marks — not its document count,
+// and not its other marks (votes, likes…), which that index skips: documents with at least one
+// OPEN report (made after any dismissal), counted per document. The other mark reads are served
+// by the existing indexes (`markedBy=me` by `doc_mark_user_idx`, a document's own marks by the
+// primary key). $1 app, $2 ns, $3 the report mark name; `statusCond` is a
+// fixed string chosen in `listReported`.
+const sqlModOpenReported = (statusCond: string) => `SELECT d.coll, d.key, d.author_uid,
+    d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by, d.size_bytes,
+    d.version, d.seq, count(rm.user_id) AS reports
+  FROM appdata.doc_mark rm
+  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = rm.coll AND d.scope_uid = 0
+    AND d.key = rm.key
+  WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.name = $3
+    AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at) ${statusCond}
+  GROUP BY d.app_id, d.ns, d.coll, d.scope_uid, d.key`;
+
+// The hidden and all views add every HIDDEN document with NO open report (a document hidden
+// after its reports were dismissed, or hidden without reports), so it stays reachable for
+// unhide or delete. Uses the partial `doc_hidden_idx`, so it reads hidden rows only. $1 app,
+// $2 ns, $3 the report mark name.
+const SQL_MOD_HIDDEN_UNREPORTED = `SELECT hd.coll, hd.key, hd.author_uid, hd.author_kind,
+    hd.created_at, hd.updated_at, hd.hidden_at, hd.hidden_by, hd.size_bytes, hd.version, hd.seq,
+    0::bigint AS reports
+  FROM appdata.doc hd
+  WHERE hd.app_id = $1 AND hd.ns = $2 AND hd.scope_uid = 0 AND hd.hidden_at IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM appdata.doc_mark hm
+      WHERE hm.app_id = $1 AND hm.ns = $2 AND hm.coll = hd.coll AND hm.key = hd.key
+        AND hm.name = $3
+        AND (hd.reports_dismissed_at IS NULL OR hm.created_at > hd.reports_dismissed_at))`;
+
+/** The page: the branches above, in the queue order, `LIMIT $4`. */
+const sqlModReported = (open: string, withHiddenUnreported: boolean) => `SELECT q.* FROM (
+  ${open}${withHiddenUnreported ? `\n  UNION ALL\n  ${SQL_MOD_HIDDEN_UNREPORTED}` : ''}
+) q
+ORDER BY q.reports DESC, q.updated_at DESC, q.coll DESC, q.key DESC
+LIMIT $4::int`;
+
+// One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
+// $5 the report mark name.
+const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.seq, d.size_bytes,
+    d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by,
+    d.reports_dismissed_at,
+    (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
+      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies,
+    (SELECT count(*) FROM appdata.doc_mark rm
+      WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key AND rm.name = $5
+        AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)) AS open_reports
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// Open reports of one shared document. $1 app, $2 ns, $3 coll, $4 key, $5 the report mark name
+const SQL_MOD_OPEN_REPORTS = `SELECT count(*) AS n FROM appdata.doc_mark rm
+  JOIN appdata.doc d ON d.app_id = $1 AND d.ns = $2 AND d.coll = rm.coll AND d.scope_uid = 0 AND d.key = rm.key
+  WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = $3 AND rm.key = $4 AND rm.name = $5
+    AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)`;
+
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_MOD_DISMISS = `UPDATE appdata.doc d SET reports_dismissed_at = now()
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// $1 app, $2 ns, $3 coll, $4 key, $5 moderator
+const SQL_MOD_HIDE = `UPDATE appdata.doc d SET hidden_at = now(), hidden_by = $5::int
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// Unhiding is a change a feed reader must see again: the doc takes the new seq, which
+// is above the hide's tombstone. The tombstone row stays (as it does when a deleted key is
+// re-created), so a reader must order a key's doc and tombstone by seq, never treat a
+// tombstone's presence alone as "deleted". $1 app, $2 ns, $3 coll, $4 key, $5 seq
+const SQL_MOD_UNHIDE = `UPDATE appdata.doc d SET hidden_at = NULL, hidden_by = NULL, seq = $5::bigint
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+
+// The moderator's lock read: SQL_LOCK_DOC's columns plus `seq`, the revision an action is
+// bound to. $1 app, $2 ns, $3 coll, $4 key
+const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  FOR UPDATE`;
+
+function assertModTarget(collection: string, key: string): void {
+  if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
+  assertKey(key);
+}
+
+/**
+ * Refuse, under the row lock, an action on any revision other than the one the moderator saw.
+ * The revision is the document's `seq`, not its `version`: `version` restarts at 1 when a key
+ * is deleted and re-created, while `seq` is unique per (app, ns) and changes on every document
+ * write (and on unhide), so a re-created document can never pass for the one that was reviewed.
+ */
+function assertModRevision(row: Record<string, unknown>, ifRevision: number | undefined): void {
+  if (ifRevision !== undefined && Number(row.seq) !== ifRevision) {
+    throw new DocStoreError('version_conflict', 'document changed since it was read', {
+      currentVersion: Number(row.version),
+    });
+  }
+}
+
+/**
+ * The context a moderator operation runs under. A review namespace belongs to the review
+ * itself and is deleted with it (`purgeReview`), so moderation refuses it cleanly
+ * (`invalid_request`) rather than reaching it or failing as a malformed context.
+ */
+function modCtx(appId: string, ns: string): DocStoreContext {
+  if (ns.startsWith('rev:')) {
+    throw invalid('moderation does not act on review namespaces');
+  }
+  return { appId, ns, viewerUid: null };
+}
+
+/** A shared document already locked FOR UPDATE, as `deleteLockedSharedDocs` needs it. */
+type LockedSharedDoc = { coll: string; key: string; sizeBytes: number; authorUid: number | null };
+
+function toLockedSharedDoc(row: Record<string, unknown>): LockedSharedDoc {
+  return {
+    coll: row.coll as string,
+    key: row.key as string,
+    sizeBytes: Number(row.size_bytes),
+    authorUid:
+      row.author_uid === null || row.author_uid === undefined ? null : Number(row.author_uid),
+  };
+}
+
+/**
+ * Hard-delete shared documents the caller has ALREADY locked FOR UPDATE — the one implementation
+ * behind the moderator delete and the account wipe. Each document's index rows go with it (FK
+ * cascade), its tallies and marks are deleted, the app and the user its creation was charged to
+ * are refunded, and a tombstone takes the next seq: the same accounting as an author delete.
+ * Every document, tally and mark row is deleted before any usage row is charged (LOCK ORDER (1),
+ * (1b), then (2), (3)). Returns each document's tombstone seq, in input order.
+ */
+async function deleteLockedSharedDocs(
+  c: DocStoreClient,
+  ctx: DocStoreContext,
+  charge: ModerationDeps['charge'],
+  docs: LockedSharedDoc[]
+): Promise<number[]> {
+  for (const d of docs) {
+    await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, d.coll, 0, d.key]);
+    await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, d.coll, d.key]);
+    await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, d.coll, d.key]);
+  }
+  const seqs: number[] = [];
+  for (const d of docs) {
+    const seq = await charge(
+      c,
+      ctx,
+      { bytes: -d.sizeBytes, docs: -1 },
+      // No user carries a doc without an author uid: a counter document whose creator's account
+      // was wiped had its charge released with that account's usage row, and an app-authored
+      // doc never charged one.
+      d.authorUid === null
+        ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
+        : { uid: d.authorUid, bytes: -d.sizeBytes, docs: -1, ceiling: 'author' }
+    );
+    await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, d.coll, 0, d.key, seq]);
+    seqs.push(seq);
+  }
+  return seqs;
+}
+
+function createModeration({ withTx, charge }: ModerationDeps) {
+  /**
+   * The first `limit` reported shared documents of ONE app: most reports, then most recently
+   * updated, then collection and key (all descending). The caller asks for one more than it
+   * keeps, to know whether the app was cut off.
+   */
+  async function listReported(
+    appId: string,
+    ns: string,
+    opts: { status: ModeratedDocStatus; limit: number }
+  ): Promise<ReportedDocRow[]> {
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > B.listLimitMax + 1) {
+      throw invalid(`limit must be 1–${B.listLimitMax + 1}`);
+    }
+    const statusCond =
+      opts.status === 'open'
+        ? 'AND d.hidden_at IS NULL'
+        : opts.status === 'hidden'
+        ? 'AND d.hidden_at IS NOT NULL'
+        : '';
+    // The hidden and all views list every hidden document; the open view needs an open report.
+    const sql = sqlModReported(sqlModOpenReported(statusCond), opts.status !== 'open');
+    const rows = await withTx(
+      modCtx(appId, ns),
+      async (c) => (await c.query(sql, [appId, ns, REPORT_MARK, opts.limit])).rows
+    );
+    return rows.map((r) => ({
+      collection: r.coll as string,
+      key: r.key as string,
+      reports: Number(r.reports),
+      createdAt: new Date(r.created_at as string | Date),
+      updatedAt: new Date(r.updated_at as string | Date),
+      authorKind: r.author_kind as ReportedDocRow['authorKind'],
+      authorUid: r.author_uid === null ? null : Number(r.author_uid),
+      hiddenAt: r.hidden_at ? new Date(r.hidden_at as string | Date) : null,
+      hiddenBy: r.hidden_by === null ? null : Number(r.hidden_by),
+      sizeBytes: Number(r.size_bytes),
+      version: Number(r.version),
+      revision: Number(r.seq),
+    }));
+  }
+
+  /** One shared document, hidden or not, with every tally (the report count included). */
+  async function get(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<ModeratedDoc | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      modCtx(appId, ns),
+      async (c) => (await c.query(SQL_MOD_GET, [appId, ns, collection, key, REPORT_MARK])).rows[0]
+    );
+    if (!row) return null;
+    const counters: Record<string, number> = {};
+    const marks: Record<string, number> = {};
+    for (const [k, v] of Object.entries((row.tallies ?? {}) as Record<string, number | string>)) {
+      const sep = k.indexOf(':');
+      (k.slice(0, sep) === 'counter' ? counters : marks)[k.slice(sep + 1)] = Number(v);
+    }
+    return {
+      collection: row.coll as string,
+      key: row.key as string,
+      data: row.data as Record<string, unknown>,
+      dataMd5: row.data_md5 as string,
+      // Open reports only; `marks.report` keeps the all-time count.
+      reports: Number(row.open_reports),
+      reportsDismissedAt: row.reports_dismissed_at
+        ? new Date(row.reports_dismissed_at as string | Date)
+        : null,
+      createdAt: new Date(row.created_at as string | Date),
+      updatedAt: new Date(row.updated_at as string | Date),
+      authorKind: row.author_kind as ReportedDocRow['authorKind'],
+      authorUid: row.author_uid === null ? null : Number(row.author_uid),
+      hiddenAt: row.hidden_at ? new Date(row.hidden_at as string | Date) : null,
+      hiddenBy: row.hidden_by === null ? null : Number(row.hidden_by),
+      sizeBytes: Number(row.size_bytes),
+      version: Number(row.version),
+      revision: Number(row.seq),
+      counters,
+      marks,
+    };
+  }
+
+  /**
+   * Hide (or unhide) one shared document. A hidden document reads as not found to the
+   * app (`VISIBLE`) and keeps its data, tallies, marks and quota charge, so the action
+   * is reversible. A hide takes the next seq into a tombstone, so a feed reader drops
+   * the document; an unhide gives the document the next seq, so the reader sees it
+   * again. Already in the requested state: `changed: false`, nothing written. With
+   * `ifRevision`, a document at any other revision (`seq`) is refused (`version_conflict`).
+   */
+  async function setHidden(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    hidden: boolean,
+    moderatorUid: number,
+    opts: { ifRevision?: number } = {}
+  ): Promise<{ changed: boolean; seq: number | null }> {
+    assertModTarget(collection, key);
+    if (!(Number.isSafeInteger(moderatorUid) && moderatorUid > 0)) {
+      throw new Error('doc-store: malformed moderator id');
+    }
+    const ctx = modCtx(appId, ns);
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModRevision(row, opts.ifRevision);
+      if (row.hidden === hidden) return { changed: false, seq: null };
+      // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
+      const noCharge = { uid: 0, bytes: 0, docs: 0, ceiling: 'app' as const };
+      if (hidden) {
+        await c.query(SQL_MOD_HIDE, [appId, ns, collection, key, moderatorUid]);
+        const seq = await charge(c, ctx, { bytes: 0, docs: 0 }, noCharge);
+        await c.query(SQL_TOMBSTONE, [appId, ns, collection, 0, key, seq]);
+        return { changed: true, seq };
+      }
+      const seq = await charge(c, ctx, { bytes: 0, docs: 0 }, noCharge);
+      await c.query(SQL_MOD_UNHIDE, [appId, ns, collection, key, seq]);
+      return { changed: true, seq };
+    });
+  }
+
+  /**
+   * Dismiss the document's open reports (it was reviewed and kept): later reports open it
+   * again. Bound to the revision like the other actions. Returns how many were open.
+   */
+  async function dismissReports(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { ifRevision?: number } = {}
+  ): Promise<{ dismissed: number }> {
+    assertModTarget(collection, key);
+    return withTx(modCtx(appId, ns), async (c) => {
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModRevision(row, opts.ifRevision);
+      if (row.hidden) {
+        throw invalid('a hidden document is not dismissable; unhide it first');
+      }
+      const open = await c.query(SQL_MOD_OPEN_REPORTS, [appId, ns, collection, key, REPORT_MARK]);
+      await c.query(SQL_MOD_DISMISS, [appId, ns, collection, key]);
+      return { dismissed: Number(open.rows[0]?.n ?? 0) };
+    });
+  }
+
+  /**
+   * Hard-delete one shared document, hidden or not: its index rows go with it (FK
+   * cascade), its tallies and marks are deleted, the app and the charged author are
+   * refunded (a counter-created doc's `author_uid` is the user its creation was charged
+   * to), and a tombstone takes the next seq — the same accounting as an author delete.
+   * A document with no `author_uid` (a counter document whose creator's account was wiped,
+   * or app-authored) refunds the app only: no user carries it.
+   */
+  async function remove(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { ifRevision?: number } = {}
+  ): Promise<{ deleted: true; sizeBytes: number; seq: number }> {
+    assertModTarget(collection, key);
+    const ctx = modCtx(appId, ns);
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_MOD_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) throw new DocStoreError('not_found', 'document not found');
+      assertModRevision(row, opts.ifRevision);
+      const doc = toLockedSharedDoc({ ...row, coll: collection, key });
+      const [seq] = await deleteLockedSharedDocs(c, ctx, charge, [doc]);
+      return { deleted: true as const, sizeBytes: doc.sizeBytes, seq };
+    });
+  }
+
+  return { listReported, get, setHidden, dismissReports, delete: remove };
 }

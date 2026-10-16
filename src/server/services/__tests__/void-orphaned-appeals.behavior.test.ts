@@ -17,6 +17,7 @@ const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   // SQL run once after the pick query, standing in for a moderator acting before the claims.
   afterPick: null as string | null,
+  clickhouse: 'normal' as 'normal' | 'throw' | 'empty',
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -28,24 +29,32 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: holder.notify,
 }));
-// Must match APPEALS rows 1 and 9: each appellant deleted the image after filing.
+// Must match APPEALS rows 1 and 9: each appellant deleted the image after filing. A model delete
+// is read from `Model.deletedBy`, so this fake answers only the two delete-event queries.
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: {
-    $query: vi.fn((strings: TemplateStringsArray) =>
-      Promise.resolve(
-        /FROM images/.test(strings.join('?'))
-          ? [
-              { entityId: '1001', userId: '11', t: String(Date.UTC(2026, 8, 2) / 1000) },
-              { entityId: '1009', userId: '19', t: String(Date.UTC(2026, 8, 2) / 1000) },
-            ]
-          : []
-      )
-    ),
+    $query: vi.fn((strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (holder.clickhouse === 'throw') return Promise.reject(new Error('clickhouse down'));
+      if (holder.clickhouse === 'empty') return Promise.resolve([]);
+      if (/FROM images WHERE type = 'Delete' AND imageId IN/.test(sql))
+        return Promise.resolve([
+          { entityId: '1001', userId: '11', t: String(Date.UTC(2026, 8, 2) / 1000) },
+          { entityId: '1009', userId: '19', t: String(Date.UTC(2026, 8, 2) / 1000) },
+        ]);
+      if (/FROM modelEvents WHERE type IN \('Delete', 'PermanentDelete'\) AND modelId IN/.test(sql))
+        return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected ClickHouse query: ${sql}`));
+    }),
   },
 }));
 
-import { closeAppealsDeletedByOwner, voidOrphanedAppeals } from '~/server/services/report.service';
+import {
+  closeAppealsDeletedByOwner,
+  closeAppealsOnDeletedModel,
+  voidOrphanedAppeals,
+} from '~/server/services/report.service';
 
 const FILED = '2026-09-01 00:00:00';
 
@@ -55,7 +64,7 @@ const APPEALS: [number, number, string, number, string, string | null, string | 
   [2, 12, 'Image', 1002, 'Pending', null, 'appeal-12-1'], // removed: routed
   [3, 13, 'Image', 1003, 'Pending', null, null], // image still exists
   [4, 14, 'Image', 1004, 'Rejected', null, null], // decided
-  [5, 15, 'Model', 2005, 'Pending', null, null], // removed model: routed
+  [5, 15, 'Model', 2005, 'Pending', null, null], // hard-deleted model, no owner event: quiet
   [6, 16, 'Model', 2006, 'Pending', null, null], // model still exists
   [7, 17, 'Model', 2007, 'Rejected', null, null], // decided model
   [8, 18, 'Image', 1008, 'Pending', '2026-09-10 00:00:00', null], // already routed
@@ -67,7 +76,9 @@ const APPEALS: [number, number, string, number, string, string | null, string | 
   [14, 24, 'Image', 1014, 'Pending', null, null], // appellant has another image blocked for it
   [15, 25, 'Image', 1015, 'Pending', null, null], // appellant's other image blocked for another reason
   [16, 26, 'Image', 1016, 'Pending', null, null], // deleted account
-  [17, 27, 'Model', 1009, 'Pending', null, null], // model sharing a reported image's id
+  [17, 27, 'Model', 1009, 'Pending', null, null], // hard-deleted model sharing a reported image's id: quiet
+  [18, 28, 'Model', 2018, 'Pending', null, 'appeal-28-1'], // model soft-deleted by its owner
+  [19, 29, 'Model', 2019, 'Pending', null, 'appeal-29-1'], // model soft-deleted by a moderator: quiet
 ];
 
 beforeAll(async () => {
@@ -77,7 +88,7 @@ beforeAll(async () => {
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Model');
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text);
-    CREATE TABLE "Model" (id int PRIMARY KEY);
+    CREATE TABLE "Model" (id int PRIMARY KEY, "deletedAt" timestamp(3), "deletedBy" int);
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
@@ -115,15 +126,19 @@ beforeEach(async () => {
   holder.refundMulti.mockResolvedValue(undefined);
   holder.notify.mockResolvedValue(undefined);
   holder.afterPick = null;
+  holder.clickhouse = 'normal';
   await holder.db.exec(`
     TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "Appeal";
-    INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 27) g;
+    INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 29) g;
     UPDATE "User" SET "deletedAt" = now() WHERE id = 26;
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (1003, 13, NULL),
       (5014, 24, 'CSAM'),
       (5015, 25, 'moderated');
-    INSERT INTO "Model" (id) VALUES (2006);
+    INSERT INTO "Model" (id, "deletedAt", "deletedBy") VALUES
+      (2006, NULL, NULL),
+      (2018, '2026-09-02 00:00:00', 28),
+      (2019, '2026-09-02 00:00:00', 999);
     INSERT INTO "Report" (id, reason) VALUES (1, 'TOSViolation'), (2, 'CSAM');
     INSERT INTO "UserReport" ("userId", "reportId") VALUES (22, 1), (23, 2);
     INSERT INTO "CsamReport" (id, "userId", images) VALUES
@@ -181,7 +196,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
       2: 'Pending:routed',
       3: 'Pending',
       4: 'Rejected',
-      5: 'Pending:routed',
+      5: 'void:quiet',
       6: 'Pending',
       7: 'Rejected',
       8: 'Pending',
@@ -193,27 +208,52 @@ describe('voidOrphanedAppeals against Postgres', () => {
       14: 'void:quiet',
       15: 'Pending:routed',
       16: 'void:quiet',
-      17: 'Pending:routed',
+      17: 'void:quiet',
+      18: 'void:deleted-by-owner',
+      19: 'void:quiet',
     });
-    expect(result).toMatchObject({ closedQuietly: 6, closedOwnerDeleted: 1, routedForReview: 5 });
+    expect(result).toMatchObject({ closedQuietly: 9, closedOwnerDeleted: 2, routedForReview: 3 });
     // Only Pending, unstamped orphans are candidates: decided or existing models are never looked up.
     const modelLookup = vi
       .mocked(clickhouse!.$query)
       .mock.calls.find((c) => /FROM modelEvents/.test((c[0] as TemplateStringsArray).join('?')));
     expect([...(modelLookup?.[1] as number[])].sort()).toEqual([1009, 2005]);
 
-    // Routed fees stay held; the quiet group is refunded but never told.
-    expect(refundedPrefixes()).toEqual(['appeal-11-1', 'appeal-19-1', 'appeal-23-1']);
-    expect(notifiedUsers()).toEqual([11, 12, 15, 22, 25, 27]);
+    // Routed images keep their fee held; the quiet group is refunded but never told.
+    expect(refundedPrefixes()).toEqual([
+      'appeal-11-1',
+      'appeal-19-1',
+      'appeal-23-1',
+      'appeal-28-1',
+      'appeal-29-1',
+    ]);
+    expect(notifiedUsers()).toEqual([11, 12, 22, 25, 28]);
   });
+
+  it.each(['throw', 'empty'] as const)(
+    'still closes a model its appellant soft-deleted when ClickHouse is %s',
+    async (mode) => {
+      holder.clickhouse = mode;
+
+      const result = await voidOrphanedAppeals();
+      const rows = await appeals();
+
+      expect(rows.get(18)).toMatchObject({ status: 'Void', resolvedReason: 'deleted-by-owner' });
+      expect(rows.get(19)).toMatchObject({ status: 'Void', resolvedReason: null });
+      expect(rows.get(19)!.entityRemovedAt).toBeNull();
+      expect(refundedPrefixes()).toContain('appeal-28-1');
+      expect(result.closedOwnerDeleted).toBeGreaterThanOrEqual(1);
+    }
+  );
 
   it('stamps closed appeals resolved and leaves routed ones unresolved', async () => {
     const before = (await appeals()).get(8)!.entityRemovedAt;
     await voidOrphanedAppeals();
     const rows = await appeals();
 
-    for (const id of [1, 9, 16]) expect(rows.get(id)!.resolvedAt).not.toBeNull();
-    for (const id of [2, 5]) expect(rows.get(id)!.resolvedAt).toBeNull();
+    for (const id of [1, 5, 9, 16, 17, 18, 19]) expect(rows.get(id)!.resolvedAt).not.toBeNull();
+    for (const id of [5, 17, 19]) expect(rows.get(id)!.entityRemovedAt).toBeNull();
+    for (const id of [2, 12, 15]) expect(rows.get(id)!.resolvedAt).toBeNull();
     expect(rows.get(8)!.entityRemovedAt).toEqual(before);
     expect(before).not.toBeNull();
   });
@@ -248,9 +288,9 @@ describe('voidOrphanedAppeals against Postgres', () => {
     });
     expect(rows.get(2)).toMatchObject({ status: 'Rejected', entityRemovedAt: null });
     expect(rows.get(12)!.entityRemovedAt).toEqual(await routedMeanwhile());
-    expect(refundedPrefixes()).toEqual([]);
-    expect(notifiedUsers()).toEqual([15, 25, 27]);
-    expect(result).toMatchObject({ closedQuietly: 4, closedOwnerDeleted: 0, routedForReview: 3 });
+    expect(refundedPrefixes()).toEqual(['appeal-28-1', 'appeal-29-1']);
+    expect(notifiedUsers()).toEqual([25, 28]);
+    expect(result).toMatchObject({ closedQuietly: 7, closedOwnerDeleted: 1, routedForReview: 1 });
   });
 
   it('does nothing on a second run', async () => {
@@ -303,5 +343,53 @@ describe('closeAppealsDeletedByOwner against Postgres', () => {
       ['entity-appeal-content-removed:101:closed-owner-deleted', true],
       ['entity-appeal-content-removed:107:closed-owner-deleted', false],
     ]);
+  });
+});
+
+describe('closeAppealsOnDeletedModel against Postgres', () => {
+  it("closes and refunds every appellant's Pending appeal on that model, quietly", async () => {
+    await holder.db.exec(`
+      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+        "buzzTransactionId") VALUES
+        (201, 40, 'Model', 8001, 'Pending', '2026-09-01', '2026-09-01', 'appeal-40-2'),
+        (202, 41, 'Model', 8001, 'Rejected', '2026-09-01', '2026-09-01', NULL),
+        (203, 42, 'Model', 8002, 'Pending', '2026-09-01', '2026-09-01', NULL),
+        (204, 43, 'Image', 8001, 'Pending', '2026-09-01', '2026-09-01', NULL);
+    `);
+
+    await closeAppealsOnDeletedModel({ modelId: 8001 });
+
+    const rows = await appeals();
+    expect(rows.get(201)).toMatchObject({ status: 'Void', resolvedReason: null });
+    expect(rows.get(201)!.resolvedAt).not.toBeNull();
+    expect(rows.get(201)!.entityRemovedAt).toBeNull();
+    expect(rows.get(202)).toMatchObject({ status: 'Rejected' });
+    for (const id of [203, 204]) expect(rows.get(id)).toMatchObject({ status: 'Pending' });
+    expect(refundedPrefixes()).toEqual(['appeal-40-2']);
+    expect(holder.notify).not.toHaveBeenCalled();
+  });
+
+  it('closes nothing for a model that is not deleted', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "deletedAt", "deletedBy") VALUES (8003, NULL, NULL), (8004, now(), 1);
+      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+        "buzzTransactionId") VALUES
+        (205, 44, 'Model', 8003, 'Pending', '2026-09-01', '2026-09-01', 'appeal-44-1'),
+        (206, 45, 'Model', 8004, 'Pending', '2026-09-01', '2026-09-01', NULL);
+    `);
+
+    await closeAppealsOnDeletedModel({ modelId: 8003 });
+    await closeAppealsOnDeletedModel({ modelId: 8004 });
+
+    const rows = await appeals();
+    expect(rows.get(205)).toMatchObject({ status: 'Pending', resolvedAt: null });
+    expect(rows.get(206)).toMatchObject({ status: 'Void' });
+    expect(refundedPrefixes()).toEqual([]);
+  });
+
+  it('never throws when the database does', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(closeAppealsOnDeletedModel({ modelId: 8001 })).resolves.toBeUndefined();
   });
 });

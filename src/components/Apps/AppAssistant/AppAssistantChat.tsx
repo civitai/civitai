@@ -1,7 +1,18 @@
 import type { FC, Ref } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Center, Loader } from '@mantine/core';
-import type { ChatMcpServer, ChatTool, CivitaiChat } from '@civitai/components-chat/civitai-chat';
+import type {
+  ChatMcpServer,
+  ChatTool,
+  ChatToolGate,
+  ChatToolResult,
+  CivitaiChat,
+} from '@civitai/components-chat/civitai-chat';
+import {
+  APP_ASSISTANT_CHAT_CONFIG,
+  APP_ASSISTANT_MCP,
+} from '~/components/Apps/AppAssistant/assistantChatConfig';
+import { buildAssistantSystemPrompt } from '~/components/Apps/AppAssistant/assistantInstructions';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 import classes from './AppAssistant.module.scss';
@@ -18,6 +29,10 @@ export interface AppAssistantChatProps {
   instructions: () => string;
   /** Connections are kept while each entry's `id` and `url` stay the same. */
   mcpServers: ChatMcpServer[];
+  /** While set, nothing can be sent and the message box shows this. */
+  holdReason?: string;
+  beforeToolCall?: ChatToolGate;
+  onToolResult?: (result: ChatToolResult) => void;
 }
 
 export function AppAssistantChat({
@@ -25,6 +40,9 @@ export function AppAssistantChat({
   tools,
   instructions,
   mcpServers,
+  holdReason,
+  beforeToolCall,
+  onToolResult,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
@@ -34,10 +52,13 @@ export function AppAssistantChat({
     let cancelled = false;
     (async () => {
       // Client-only: the element and its SDK touch `customElements` and `window` at import.
-      const [{ initialize }] = await Promise.all([
+      const [{ initialize }, { configureChat }] = await Promise.all([
         import('@civitai/sdk'),
+        import('@civitai/components-chat/civitai-chat'),
         import('@civitai/components-chat/civitai-chat/define'),
       ]);
+      // Page-wide: any other chat on this page would inherit these limits.
+      configureChat(APP_ASSISTANT_CHAT_CONFIG);
       await customElements.whenDefined('civitai-chat');
       const app = await initialize({
         token: () => tokens.getToken(),
@@ -46,7 +67,10 @@ export function AppAssistantChat({
       });
       if (cancelled || !ref.current) return;
       // Set after upgrade: a property assigned before would shadow the element's accessor.
-      (ref.current as CivitaiChat).app = app;
+      const el = ref.current as CivitaiChat;
+      el.mcp = APP_ASSISTANT_MCP;
+      el.systemPrompt = buildAssistantSystemPrompt;
+      el.app = app;
       setReady(true);
     })().catch(() => {
       if (!cancelled) setError('The assistant could not start. Reload the page to try again.');
@@ -68,6 +92,21 @@ export function AppAssistantChat({
     (ref.current as CivitaiChat).mcpServers = mcpServers;
   }, [ready, mcpServers]);
 
+  useEffect(() => {
+    if (!ready || !ref.current) return;
+    const el = ref.current as CivitaiChat;
+    el.holdReason = holdReason;
+    el.beforeToolCall = beforeToolCall;
+  }, [ready, holdReason, beforeToolCall]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!ready || !el || !onToolResult) return;
+    const listener = (event: Event) => onToolResult((event as CustomEvent<ChatToolResult>).detail);
+    el.addEventListener('tool-result', listener);
+    return () => el.removeEventListener('tool-result', listener);
+  }, [ready, onToolResult]);
+
   if (error)
     return (
       <Alert color="red" variant="light" m="md">
@@ -76,7 +115,7 @@ export function AppAssistantChat({
     );
 
   return (
-    <div className="relative h-full min-h-0">
+    <div className="relative min-h-0 flex-1">
       {!ready && (
         <Center className="absolute inset-0">
           <Loader size="sm" />

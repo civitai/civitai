@@ -295,18 +295,13 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="resolution"
         render={({ value, meta, onChange, note }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-            <FieldCorrectionNote note={note} />
-          </div>
+          <SegmentedEnumField
+            label="Resolution"
+            value={value}
+            onChange={onChange}
+            options={(meta as SegmentedEnumMeta).options}
+            note={note}
+          />
         )}
       />
       <Controller
@@ -328,17 +323,24 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="creativity"
         render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Creativity</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={meta.options.map((o: { label: string; value: string }) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-          </div>
+          <SegmentedEnumField
+            label="Creativity"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="thinkingMode"
+        render={({ value, meta, onChange }) => (
+          <SegmentedEnumField
+            label="Thinking"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
         )}
       />
       <div className="flex gap-4">
@@ -603,5 +605,33 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         />
       </AccordionLayout>
     </Stack>
+  );
+}
+
+type SegmentedEnumMeta = { options: readonly { label: string; value: string }[] };
+
+function SegmentedEnumField<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  note,
+}: {
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: SegmentedEnumMeta['options'];
+  note?: React.ComponentProps<typeof FieldCorrectionNote>['note'];
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Input.Label>{label}</Input.Label>
+      <SegmentedControlWrapper
+        value={value}
+        onChange={(v) => onChange(v as T)}
+        data={options.map((o) => ({ label: o.label, value: o.value }))}
+      />
+      <FieldCorrectionNote note={note} />
+    </div>
   );
 }

@@ -60,6 +60,12 @@ CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE "EntityModeration" (
+  "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Pending', "result" JSONB,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-01-01',
+  UNIQUE ("entityType", "entityId")
+);
 `;
 
 const snapshot = (source: string | null, at: string, extra: Record<string, unknown> = {}) =>
@@ -323,11 +329,30 @@ describe('row context', () => {
     expect((await rowFor(2)).tags).toEqual([]);
   });
 
-  it('serves up to four owner-posted published images, in version then post then image order', async () => {
+  it('serves up to four owner-posted images, published posts first, in version then post then image order', async () => {
     const row = await rowFor(1);
     expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-c', 'u-d']);
     expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b' });
     expect((await rowFor(2)).coverImages).toEqual([]);
+  });
+
+  it('serves images from unpublished posts, after any published ones', async () => {
+    await db.exec(`
+      INSERT INTO "ModelVersion" ("id","modelId","index","baseModel","trainedWords","status","createdAt") VALUES
+        (103, 3, 1, 'Illustrious', '{}', 'Unpublished', '2026-05-01'),
+        (104, 4, 1, 'Illustrious', '{}', 'Unpublished', '2026-05-01'),
+        (105, 4, 2, 'Illustrious', '{}', 'Published', '2026-05-02');
+      INSERT INTO "Post" ("id","userId","modelVersionId","publishedAt") VALUES
+        (204, 12, 103, NULL), (205, 13, 104, NULL), (206, 13, 105, '2026-05-03');
+      INSERT INTO "Image" ("id","url","nsfwLevel","postId","index","type") VALUES
+        (9, 'u-unpub', 1, 204, 0, 'image'), (10, 'u-early-unpub', 1, 205, 0, 'image'),
+        (11, 'u-late-pub', 1, 206, 0, 'image');
+    `);
+    expect((await rowFor(3)).coverImages).toEqual([{ id: 9, url: 'u-unpub' }]);
+    expect((await rowFor(4)).coverImages.map((i) => i.url)).toEqual([
+      'u-late-pub',
+      'u-early-unpub',
+    ]);
   });
 
   it('names the latest moderator to set minor, for manual flags only', async () => {
@@ -342,5 +367,188 @@ describe('row context', () => {
     expect(row.otherFlaggedModels).toBe(0);
     expect(row.pastAppeals).toEqual({ approved: 1, rejected: 2, void: 0, pending: 1 });
     expect((await rowFor(5)).otherFlaggedModels).toBe(1);
+  });
+});
+
+describe('latest scan', () => {
+  const scanRow = (labels: Record<string, unknown>) => JSON.stringify({ version: 1, labels });
+  const insert = (rows: [string, number, string, string | null, string][]) =>
+    db.query(
+      `INSERT INTO "EntityModeration" ("entityType","entityId","status","result","updatedAt")
+       SELECT * FROM jsonb_to_recordset($1::jsonb)
+         AS x("entityType" text, "entityId" int, status text, result jsonb, "updatedAt" timestamp)`,
+      [
+        JSON.stringify(
+          rows.map(([entityType, entityId, status, result, updatedAt]) => ({
+            entityType,
+            entityId,
+            status,
+            result: result === null ? null : JSON.parse(result),
+            updatedAt,
+          }))
+        ),
+      ]
+    );
+
+  const scanFor = async (modelId: number) => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    return items.find((i) => i.modelId === modelId)!.latestScan;
+  };
+
+  it('takes each label from the web-search row when it is the newest succeeded one', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'stale main poi' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+      [
+        'Model:search',
+        7,
+        'Succeeded',
+        scanRow({
+          poi: { detected: false, names: [], reason: 'No real person named.' },
+          minor: { detected: false, reason: 'No age given.' },
+        }),
+        '2026-10-02T00:00:00Z',
+      ],
+    ]);
+    const scan = await scanFor(7);
+    expect(scan).toMatchObject({
+      poi: {
+        detected: false,
+        reason: 'No real person named.',
+        source: 'web search',
+        status: 'Succeeded',
+      },
+      minor: { detected: false, reason: 'No age given.', source: 'web search' },
+    });
+    expect(new Date(scan!.poi!.updatedAt).toISOString()).toBe('2026-10-02T00:00:00.000Z');
+  });
+
+  it('serializes updatedAt as a UTC instant', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Names an actor.' } }),
+        '2026-10-14T20:39:32.167Z',
+      ],
+    ]);
+    const { updatedAt } = (await scanFor(7))!.poi!;
+    expect(updatedAt).toBe('2026-10-14T20:39:32.167Z');
+    expect(new Date(updatedAt).getTime()).toBe(Date.UTC(2026, 9, 14, 20, 39, 32, 167));
+  });
+
+  it('prefers a newer succeeded main verdict over a stale succeeded web-search one', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: false, reason: 'Fresh main.' } }),
+        '2026-10-05T00:00:00Z',
+      ],
+      [
+        'Model:search',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Stale search.' } }),
+        '2026-10-02T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({
+      poi: { detected: false, reason: 'Fresh main.', source: 'main', status: 'Succeeded' },
+      minor: null,
+    });
+  });
+
+  it('falls back to the main verdict when the web-search row is pending with no result', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Names an actor.' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+      ['Model:search', 7, 'Pending', null, '2026-10-06T00:00:00Z'],
+    ]);
+    expect(await scanFor(7)).toMatchObject({
+      poi: { detected: true, reason: 'Names an actor.', source: 'main', status: 'Succeeded' },
+    });
+  });
+
+  it('prefers a succeeded verdict over a newer one from an unfinished rescan', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'Main.' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+      [
+        'Model:search',
+        7,
+        'Failed',
+        scanRow({ poi: { detected: false, reason: 'Old search.' } }),
+        '2026-10-06T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({ poi: { reason: 'Main.', source: 'main' } });
+  });
+
+  it('shows an unfinished row verdict, with its status, when no succeeded row carries the label', async () => {
+    await insert([
+      [
+        'Model:search',
+        7,
+        'Pending',
+        scanRow({ poi: { detected: true, reason: 'Last verdict.' } }),
+        '2026-10-06T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({
+      poi: { detected: true, reason: 'Last verdict.', source: 'web search', status: 'Pending' },
+      minor: null,
+    });
+  });
+
+  it('reads a non-boolean detected as no verdict instead of failing the query', async () => {
+    await insert([
+      [
+        'Model',
+        7,
+        'Succeeded',
+        scanRow({ poi: { detected: 'yes', reason: 'Odd.' } }),
+        '2026-10-01T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(7)).toMatchObject({ poi: { detected: null, reason: 'Odd.' } });
+  });
+
+  it('is null when no row carries a poi/minor verdict', async () => {
+    await insert([
+      [
+        'Model',
+        3,
+        'Succeeded',
+        scanRow({ nsfw: { level: 'none', reason: 'Clean.' } }),
+        '2026-10-03T00:00:00Z',
+      ],
+      [
+        'Image',
+        1,
+        'Succeeded',
+        scanRow({ poi: { detected: true, reason: 'x' } }),
+        '2026-10-04T00:00:00Z',
+      ],
+    ]);
+    expect(await scanFor(3)).toBeNull();
+    expect(await scanFor(1)).toBeNull();
   });
 });

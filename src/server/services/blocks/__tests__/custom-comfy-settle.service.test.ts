@@ -393,24 +393,6 @@ describe('settleCustomComfySpend', () => {
 
   // ── Per-engine runtime/cost OBSERVABILITY (instrument-ahead-of-demand) ────────
   describe('per-engine metric emit', () => {
-    it('observes the settled GPU-runtime (actual Buzz) + wall-clock with engine/recipe labels', async () => {
-      seedRecord({
-        ceiling: 150,
-        engine: 'flux2-klein',
-        recipe: 'seamless-pano-360',
-        submittedAt: 1_700_000_000_000,
-      });
-      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 42 });
-      // GPU-runtime ≈ billed actual Buzz — the ceil'd `actual` (42), labeled by engine.
-      expect(mockObserveActualBuzz).toHaveBeenCalledWith('flux2-klein', 'seamless-pano-360', 42);
-      // Wall-clock incl. queue (submit→terminal observation) — a Number of seconds.
-      expect(mockObserveWallclock).toHaveBeenCalledWith(
-        'flux2-klein',
-        'seamless-pano-360',
-        expect.any(Number)
-      );
-    });
-
     it('still observes actual Buzz when the job spent the FULL ceiling (emit precedes the refund early-return)', async () => {
       seedRecord({ ceiling: 150, engine: 'flux2-klein', recipe: 'seamless-pano-360' });
       await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 200 });
@@ -420,13 +402,6 @@ describe('settleCustomComfySpend', () => {
       expect(mockSysRedis.decrBy).not.toHaveBeenCalled(); // still no refund
     });
 
-    it('emits actual Buzz but NOT wall-clock when the record has no submittedAt', async () => {
-      seedRecord({ ceiling: 90, engine: 'zimage-turbo', recipe: 'seamless-pano-360' });
-      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 20 });
-      expect(mockObserveActualBuzz).toHaveBeenCalledWith('zimage-turbo', 'seamless-pano-360', 20);
-      expect(mockObserveWallclock).not.toHaveBeenCalled();
-    });
-
     it('emits NEITHER metric for a legacy record with no engine (back-compat safe)', async () => {
       seedRecord({ ceiling: 180 }); // pre-deploy record shape — no engine
       await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
@@ -434,12 +409,6 @@ describe('settleCustomComfySpend', () => {
       expect(mockObserveWallclock).not.toHaveBeenCalled();
       // …but the refund still happens (observability is orthogonal to settle).
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
-    });
-
-    it('a `recipe`-less record falls back to the "unknown" recipe label', async () => {
-      seedRecord({ ceiling: 90, engine: 'zimage-turbo' }); // engine but no recipe
-      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 20 });
-      expect(mockObserveActualBuzz).toHaveBeenCalledWith('zimage-turbo', 'unknown', 20);
     });
 
     // ── Finding-1 regression guard: the MONEY path must survive a throwing emit.

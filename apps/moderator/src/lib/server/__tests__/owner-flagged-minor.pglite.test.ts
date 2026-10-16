@@ -52,6 +52,7 @@ CREATE TABLE "BountyEntry" ("id" INTEGER PRIMARY KEY, "bountyId" INTEGER);
 CREATE TABLE "Model3DReview" ("id" INTEGER PRIMARY KEY, "model3dId" INTEGER);
 CREATE TABLE "Announcement" ("id" INTEGER PRIMARY KEY, "userId" INTEGER);
 CREATE TABLE "GameFrameGame" ("id" INTEGER PRIMARY KEY, "url" TEXT);
+CREATE TABLE "ServiceOffering" ("id" INTEGER PRIMARY KEY, "sellerId" INTEGER);
 ${REPORT_ENTITIES.map(
   ({ reportTable, fk }) =>
     `CREATE TABLE "${reportTable}" ("reportId" INTEGER NOT NULL, "${fk}" INTEGER NOT NULL);`

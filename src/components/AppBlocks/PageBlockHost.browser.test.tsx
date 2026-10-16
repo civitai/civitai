@@ -9,6 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // which the repo's `consistent-type-imports` rule forbids (this file was the
 // last lint error in src/components/AppBlocks).
 import type * as MantineNotifications from '@mantine/notifications';
+import type * as AuthHelpers from '~/utils/auth-helpers';
 
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge,
 // which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
@@ -29,6 +30,14 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
   const actual = await importOriginal<typeof MantineNotifications>();
   return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
 });
+
+// A signed-out viewer's un-grantable REQUEST_CONSENT opens the sign-in popup
+// instead of the toast; spy on it rather than open a real window.
+const openLoginPopupSpy = vi.fn();
+vi.mock('~/utils/auth-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuthHelpers>()),
+  openLoginPopup: (...args: unknown[]) => openLoginPopupSpy(...args),
+}));
 
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (pulled into PageBlockHost's real render graph) statically
@@ -433,6 +442,7 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     // dialogStore is a module-level zustand store shared across tests — reset it.
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
   });
 
   test('after BLOCK_READY, REQUEST_CONSENT opens the consent dialog with the server-known missing set', async () => {
@@ -551,6 +561,8 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     });
     // No consent dialog is opened for an un-grantable scope.
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // Signed in (`viewer` is set): the toast, never the sign-in popup.
+    expect(openLoginPopupSpy).not.toHaveBeenCalled();
   });
 
   /**
@@ -734,6 +746,66 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
       await new Promise((r) => setTimeout(r, 150));
       expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(0);
       expect(showNotificationSpy).not.toHaveBeenCalled();
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('ANONYMOUS viewer: BLOCK_INIT / TOKEN_REFRESH advertise only the SIGNED scopes, and a REQUEST_CONSENT for a stripped gated scope is refused, not dropped', async () => {
+    // The anon mint strips every consent-gated scope but reports
+    // `missingScopes: []` / `needsConsent: false` — anon cannot consent. Before
+    // `signedScopes`, the host advertised `declared − []`, i.e. the gated scope
+    // too, and then read it as "already granted" so the request was dropped.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['apps:storage:read', 'apps:storage:publish']}
+        missingScopes={[]}
+        signedScopes={['apps:storage:read']}
+        needsConsent={false}
+        viewer={null}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    // BLOCK_INIT is re-posted until BLOCK_READY, so subscribe BEFORE acking.
+    await pollFor('iframe mount', () => !!iframeElQuery()?.contentWindow);
+    const posts = listenForHostPosts();
+    try {
+      await vi.waitFor(() => expect(posts.of('BLOCK_INIT').length).toBeGreaterThan(0));
+      const initScopes = (posts.of('BLOCK_INIT')[0].payload as { token?: { scopes?: string[] } })
+        .token?.scopes;
+      expect(initScopes).toEqual(['apps:storage:read']);
+
+      await driveToReady();
+
+      // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      // A rotation push shares the message type, so assert on the post(s) AFTER the
+      // request rather than on `[0]`.
+      const refreshesBefore = posts.of('TOKEN_REFRESH').length;
+      postFromBlock('REQUEST_TOKEN', {});
+      await vi.waitFor(() =>
+        expect(posts.of('TOKEN_REFRESH').length).toBeGreaterThan(refreshesBefore)
+      );
+      for (const m of posts.of('TOKEN_REFRESH').slice(refreshesBefore)) {
+        expect((m.payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
+          'apps:storage:read',
+        ]);
+      }
+
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage:publish'],
+      });
+      // Signed out: the host offers sign-in (it would make the scope grantable),
+      // never the "isn't available here" toast.
+      expect(openLoginPopupSpy).toHaveBeenCalledTimes(1);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      // Invariant guard, not regression coverage: with `missingScopes: []` no modal
+      // can open on main either.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);
     } finally {
       posts.stop();

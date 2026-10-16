@@ -128,6 +128,11 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 > (`/api/v1/blocks/models`, `/api/v1/blocks/images`) serve public, maturity-clamped
 > data and accept any valid block token for its signed `maxBrowsingLevel` claim, not
 > for authorization (`catalog:read` was added in #2671 and retired the next day).
+> `/api/v1/blocks/models?owner=mine` narrows the same public data to the signed-in
+> viewer's own models, taken from the token `sub` (anon gets 401). It is a filter,
+> not a viewer, so it needs no scope and shows no unpublished or Private-availability
+> versions. `modelVersionIds=1,2,3` (max 100) rehydrates saved cards by version id
+> under the same rules.
 
 ## Routes
 
@@ -365,7 +370,9 @@ for something the API could serve.
 `src/components/AppBlocks/hostHandlerParity.ts`** — a compile-time-enforced
 inventory of every block→host message, which hosts must handle it, and whether
 it is REQUEST-style (awaits a `*_RESULT`/ack reply — an unhandled one hangs the
-block) or fire-and-forget. Rather than duplicate a list here that will re-drift,
+block) or fire-and-forget. For a request it also records the top-level payload keys
+of the success and error replies (`replyKeys` / `errorKeys`), which the host tests
+check against real replies. Rather than duplicate a list here that will re-drift,
 read that file. As of this writing the families are:
 
 - **Lifecycle** (fire-and-forget): `BLOCK_READY`, `BLOCK_ERROR`, `RESIZE_IFRAME`.

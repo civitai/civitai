@@ -52,7 +52,7 @@ const processedVideo = {
   metadata: { width: 64, height: 48, hash: 'LKO2', duration: 1, audio: false, size: 1 },
 };
 
-async function dropVideo() {
+async function dropVideo(fileMeta?: Record<string, unknown>) {
   const onComplete = vi.fn<(props: MediaUploadOnCompleteProps) => void>();
   let upload!: ReturnType<typeof useMediaUpload>['upload'];
   function Harness() {
@@ -61,7 +61,9 @@ async function dropVideo() {
   }
   const root = createRoot(document.createElement('div'));
   await act(async () => root.render(React.createElement(Harness)));
-  await act(async () => upload([{ file: new File([], 'clip.mp4', { type: 'video/mp4' }) }]));
+  await act(async () =>
+    upload([{ file: new File([], 'clip.mp4', { type: 'video/mp4' }), meta: fileMeta }])
+  );
   await act(async () => root.unmount());
   return onComplete;
 }
@@ -93,5 +95,40 @@ describe('useMediaUpload with a video carrying generation meta', () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added', meta: videoMeta });
     expect(uploadToS3).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useMediaUpload with an on-site generated video', () => {
+  const generatorMeta = {
+    prompt: 'the prompt the user typed',
+    steps: 20,
+    civitaiResources: [{ modelVersionId: 3216500 }],
+  };
+  const workerTags = {
+    Model: '/mnt/resources/Default/urn:air:minimaxh3:diffusionmodel:civitai:2821932@3216500',
+    engine: 'ComfyUI',
+    comfy: '{"prompt":{}}',
+    prompt: 'the worker expanded prompt',
+    steps: 60,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(preprocessFile).mockResolvedValue({ ...processedVideo, meta: workerTags } as never);
+    vi.mocked(auditMetaData).mockResolvedValue({ blockedFor: [], success: true } as never);
+  });
+
+  it("keeps the generator's meta and drops the file's embedded ComfyUI meta", async () => {
+    const onComplete = await dropVideo(generatorMeta);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added' });
+    expect(onComplete.mock.calls[0][0].meta).toEqual(generatorMeta);
+    expect(auditMetaData).not.toHaveBeenCalled();
+  });
+
+  it('still reads embedded meta from a video posted without generator meta', async () => {
+    const onComplete = await dropVideo();
+    expect(onComplete.mock.calls[0][0].meta).toEqual(workerTags);
+    expect(auditMetaData).toHaveBeenCalledWith(workerTags, false);
   });
 });

@@ -1,18 +1,35 @@
 import { submitWorkflow } from '@civitai/client';
+import {
+  MODEL_RULE_LIMITS,
+  modelRuleAliasesField,
+  modelRuleDescriptionField,
+  modelRuleSubjectField,
+} from '@civitai/moderation/model-rules';
 import pLimit from 'p-limit';
 import * as z from 'zod';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
+import { TEXT_SCAN_FLAG_LABELS } from '~/server/services/text-scan/flag-snapshot';
 import { MIN_SEGMENT_CHARS } from '~/server/services/text-scan/segment';
 import { mergeTextScanOutputs } from '~/server/services/text-scan/merge';
 import { parseTextScanSteps, textScanStepsBySegment } from '~/server/services/text-scan/parse';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
 import {
+  isTextScanWebSearchEntityType,
+  readTextScanLabelModes,
   readTextScanRollouts,
   readTextScanWebSearchRollouts,
+  TEXT_SCAN_WEB_SEARCH_LABELS,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
+import {
+  applyModelRuleOverrides,
+  getModelRulesForPrompt,
+  type ModelRuleOverride,
+} from '~/server/services/text-scan/model-rules';
+import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
+import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -23,6 +40,7 @@ import {
   MAX_SEGMENTS_LIMIT,
   MissingTextScanPromptError,
   setTextScanConfig,
+  setTextScanLabelMode,
   setTextScanRollout,
   setTextScanWebSearchRollout,
   subjectTextLength,
@@ -48,6 +66,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'putConfig',
   'putModes',
   'putWebSearchModes',
+  'putLabelModes',
   'scanEntity',
   'batchEntities',
   'sampleShadow',
@@ -62,6 +81,31 @@ export const isTextScanHarnessAction = (action: unknown) =>
 
 const promptContent = z.string().refine((s) => s.trim().length > 0, 'empty prompt');
 const promptOverrides = z.record(z.string().regex(TEXT_SCAN_PROMPT_KEY), promptContent).optional();
+
+const ruleOverrides = z
+  .array(
+    z.object({
+      id: z
+        .number()
+        .int()
+        .refine((id) => id !== 0, 'rule id 0 is not a rule'),
+      subject: modelRuleSubjectField(),
+      description: modelRuleDescriptionField,
+      aliases: modelRuleAliasesField,
+      enabled: z.boolean(),
+    })
+  )
+  .max(MODEL_RULE_LIMITS.rulesPerTry)
+  .refine(
+    (rules) => new Set(rules.map((rule) => rule.id)).size === rules.length,
+    'duplicate rule id in ruleOverrides'
+  )
+  .optional();
+/**
+ * `main` is the plain scan of every profile label. `web-search` runs only the poi/minor labels the
+ * way production's web-search pass does (same tool, steps, prompts), for entity types that have one.
+ */
+const harnessPass = z.enum(['main', 'web-search']).default('main');
 const entityType = z
   .string()
   .refine(isTextScanEntityType, 'unknown text-scan entity type')
@@ -141,7 +185,12 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     action: z.literal('putPrompt'),
     key: z.string().regex(TEXT_SCAN_PROMPT_KEY),
     content: promptContent,
-    note: z.string().min(1),
+    note: z
+      .string()
+      .max(2000)
+      .optional()
+      .transform((note) => note?.trim() || undefined),
+    baseId: z.number().int().positive().nullable().optional(),
     createdById: moderatorId.optional(),
   }),
   z.object({
@@ -183,10 +232,18 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     allowActive: z.boolean().default(false),
   }),
   z.object({
+    action: z.literal('putLabelModes'),
+    label: z.enum(TEXT_SCAN_FLAG_LABELS),
+    /** `review` holds the label's detections for a moderator; `auto` removes the field. */
+    mode: z.enum(['auto', 'review']),
+  }),
+  z.object({
     action: z.literal('scanEntity'),
     entityType,
     entityId: z.number().int().positive(),
+    pass: harnessPass,
     promptOverrides,
+    ruleOverrides,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
     wait: waitSecondsSchema,
@@ -196,6 +253,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       action: z.literal('batchEntities'),
       entityType,
       entityIds: z.array(z.number().int().positive()).min(1).max(50),
+      pass: harnessPass,
       promptOverrides,
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
@@ -220,6 +278,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     action: z.literal('quoteEntities'),
     entityType,
     entityIds: z.array(z.number().int().positive()).min(1).max(50),
+    pass: harnessPass,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
     concurrency: z.number().int().min(1).max(8).default(3),
@@ -234,7 +293,9 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       action: z.literal('scanTexts'),
       entityType,
       texts,
+      pass: harnessPass,
       promptOverrides,
+      ruleOverrides,
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
@@ -247,6 +308,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     action: z.literal('quoteTexts'),
     entityType,
     texts,
+    pass: harnessPass,
     promptOverrides,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
@@ -271,27 +333,59 @@ async function loadSubject(entityType: TextScanEntityType, entityId: number) {
   return { ok: true as const, profile, subject };
 }
 
+type HarnessPass = z.infer<typeof harnessPass>;
+
+const isSearchLabel = (label: TextScanLabel) =>
+  (TEXT_SCAN_WEB_SEARCH_LABELS as readonly TextScanLabel[]).includes(label);
+
+function requirePassSupported(entityType: TextScanEntityType, pass: HarnessPass) {
+  if (pass === 'web-search' && !isTextScanWebSearchEntityType(entityType))
+    throwBadRequestError(`${entityType} has no web-search pass`);
+}
+
+/** The labels one pass asks for; the web-search pass narrows to the labels production searches. */
+function labelsForPass(profile: TextScanProfile, pass: HarnessPass) {
+  return pass === 'web-search' ? profile.labels.filter(isSearchLabel) : profile.labels;
+}
+
 type ComposeInput = {
   subject: TextScanSubject;
   profile: TextScanProfile;
+  pass?: HarnessPass;
   promptOverrides?: Record<string, string>;
+  ruleOverrides?: ModelRuleOverride[];
   model?: string;
   thinking?: boolean;
 };
 
-async function composeSteps({ subject, profile, promptOverrides, model, thinking }: ComposeInput) {
-  const [config, active] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
+async function composeSteps({
+  subject,
+  profile,
+  pass = 'main',
+  promptOverrides,
+  ruleOverrides,
+  model,
+  thinking,
+}: ComposeInput) {
+  const [config, active, liveRules] = await Promise.all([
+    getTextScanConfig(),
+    getActiveTextScanPrompts(),
+    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+  ]);
+  const modelRules = liveRules && applyModelRuleOverrides(liveRules, ruleOverrides);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
 
+  const labels = labelsForPass(profile, pass);
   let composed: ReturnType<typeof composeTextScanMessages>;
   try {
     composed = composeTextScanMessages({
       prompts,
-      labels: profile.labels,
+      labels,
       subject,
       maxInputChars: config.maxInputChars,
+      modelRules,
       maxSegments: config.maxSegments,
     });
   } catch (e) {
@@ -303,13 +397,17 @@ async function composeSteps({ subject, profile, promptOverrides, model, thinking
   return {
     ok: true as const,
     composed,
+    modelRules,
+    labels,
+    pass,
     thinking: useThinking,
     steps: buildTextScanSteps({
       system: composed.system,
       segments: composed.segments,
       model: model ?? config.model,
-      labels: profile.labels,
+      labels,
       thinking: useThinking,
+      webSearch: pass === 'web-search',
     }),
   };
 }
@@ -380,7 +478,12 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
   });
   if (!data?.id) return { ok: false as const, error: workflowErrorText(error, 'no workflow id') };
 
-  const workflow = data as { id: string; status?: string; steps?: unknown };
+  const workflow = data as {
+    id: string;
+    status?: string;
+    steps?: unknown;
+    cost?: { total?: number };
+  };
   const bySegment = textScanStepsBySegment(workflow.steps);
   const stepList = [...bySegment.values()];
   const failedStep = stepList.find((step) => step.status !== 'succeeded') ?? stepList[0];
@@ -398,12 +501,14 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
     inputChars: ctx.composed.inputChars,
     inputCut: ctx.composed.inputCut,
   };
-  const parsed = parseTextScanSteps(workflow.steps, input.profile.labels, ctx.steps.length);
+  const parsed = parseTextScanSteps(workflow.steps, ctx.labels, ctx.steps.length);
   if (!parsed.ok)
     return {
       ok: true as const,
       workflowId: data.id,
       promptIds: ctx.composed.promptIds,
+      pass: ctx.pass,
+      labels: ctx.labels,
       thinking: ctx.thinking,
       parse: {
         ok: false as const,
@@ -416,16 +521,26 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
       elapsedMs: Date.now() - startedAt,
       ...segmentInfo,
     };
-  const merged = mergeTextScanOutputs(parsed.outputs, input.profile.labels);
+  const merged = mergeTextScanOutputs(parsed.outputs, ctx.labels);
   return {
     ok: true as const,
     workflowId: data.id,
     promptIds: ctx.composed.promptIds,
+    pass: ctx.pass,
+    labels: ctx.labels,
+    ...(typeof workflow.cost?.total === 'number' ? { costTotal: workflow.cost.total } : {}),
     thinking: ctx.thinking,
     parse: { ok: true as const, output: merged.output },
-    outcome: evaluateTextScan(merged.output, input.subject.declared, input.profile.labels),
+    outcome: evaluateTextScan(merged.output, input.subject.declared, ctx.labels),
     flaggedSegments: merged.flaggedSegments,
     elapsedMs: Date.now() - startedAt,
+    system: ctx.composed.system,
+    ...(ctx.modelRules
+      ? {
+          rules: ctx.modelRules.map(({ id, subject }) => ({ id, subject })),
+          literalRuleIds: findLiteralHitsInSubject(input.subject, ctx.modelRules),
+        }
+      : {}),
     ...segmentInfo,
   };
 }
@@ -444,6 +559,7 @@ async function quoteComposed(input: ComposeInput) {
   const { system, segments } = ctx.composed;
   return {
     ok: true as const,
+    pass: ctx.pass,
     chars: segments.reduce((sum, segment) => sum + system.length + segment.length, 0),
     segments: segments.length,
     costTotal,
@@ -508,9 +624,36 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
+// Lab reads model text regardless of visibility; production profiles stay public-only.
+const LAB_LOADERS: Partial<Record<TextScanEntityType, TextScanProfile['load']>> = {
+  ModelRules: (ids) => loadModelScanSubjects(ids),
+};
+
+/** Up to 50 results share one system prompt and rule list, so a request carries them once. */
+function hoistSharedPrompt<T extends object>(results: T[]) {
+  const shared: { system: string | null; rules: { id: number; subject: string }[] | null } = {
+    system: null,
+    rules: null,
+  };
+  const slim: Omit<T, 'system' | 'rules'>[] = [];
+  for (const result of results) {
+    const { system, rules, ...rest } = result as T & {
+      system?: string;
+      rules?: { id: number; subject: string }[];
+    };
+    if (system !== undefined && shared.system === null) {
+      shared.system = system;
+      shared.rules = rules ?? null;
+    }
+    slim.push(rest as Omit<T, 'system' | 'rules'>);
+  }
+  return { ...shared, results: slim };
+}
+
 async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {
   const profile = requireProfile(entityType);
-  const [subjects, config] = await Promise.all([profile.load(entityIds), getTextScanConfig()]);
+  const load = LAB_LOADERS[entityType] ?? profile.load;
+  const [subjects, config] = await Promise.all([load(entityIds), getTextScanConfig()]);
   const results = entityIds.map((entityId) => {
     const subject = subjects.get(entityId);
     if (!subject) return { entityId, ok: false as const, error: 'entity not found' };
@@ -550,6 +693,10 @@ type ShadowRow = {
 function verdictSummary(verdict: TextScanOutput[TextScanLabel] | undefined) {
   if (!verdict) return null;
   if ('level' in verdict) return verdict.level;
+  if ('matched' in verdict)
+    return verdict.matched.length
+      ? `matched: ${verdict.matched.map((m) => m.ruleId).join(', ')}`
+      : 'clear';
   if ('names' in verdict)
     return verdict.detected ? `detected: ${verdict.names.join(', ')}` : 'clear';
   return verdict.detected ? 'detected' : 'clear';
@@ -600,7 +747,10 @@ async function sampleShadow(input: ShadowSampleInput) {
       scannedAt: new Date(row.updatedAt).toISOString(),
       triggered: row.triggeredLabels.includes(input.label),
       verdict: verdictSummary(verdict),
-      reason: verdict?.reason ?? null,
+      reason:
+        verdict && 'matched' in verdict
+          ? verdict.matched.map((m) => `[${m.ruleId}] ${m.reason}`).join(' | ') || null
+          : verdict?.reason ?? null,
       declared: (subject?.declared ?? null) as TextScanDeclared | null,
       promptIds: row.result.promptIds,
       model: row.result.model,
@@ -614,6 +764,7 @@ async function sampleShadow(input: ShadowSampleInput) {
               promptIds: row.result.promptIds,
               model: row.result.model,
               thinking: config.thinking,
+              rulesFingerprint: row.result.modelRules?.fingerprint,
               segmentBudget: config,
             }) !== row.contentHash,
     };
@@ -677,35 +828,48 @@ function requireModeratorId(id: number | undefined) {
   return id;
 }
 
-/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body. */
+/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body; `putLabelModes` accepts only the session id. */
 export async function runTextScanHarnessAction(
   input: TextScanHarnessInput,
   actor: { moderatorId?: number }
 ): Promise<TextScanHarnessResult> {
   switch (input.action) {
     case 'getPrompts': {
-      const [active, config, modes, webSearchModes] = await Promise.all([
+      // Primary, not replica: the lab reloads straight after a save and would list the previous version as newest.
+      const [active, config, modes, webSearchModes, labelModes, latestRows] = await Promise.all([
         getActiveTextScanPrompts(),
         getTextScanConfig(),
         readTextScanRollouts(),
         readTextScanWebSearchRollouts(),
+        readTextScanLabelModes(),
+        dbWrite.$queryRaw<
+          { key: string; id: number; createdAt: Date; createdById: number | null }[]
+        >`
+          SELECT DISTINCT ON ("key") "key", id, "createdAt", "createdById"
+          FROM "TextScanPrompt"
+          ORDER BY "key", id DESC
+        `,
       ]);
       const history = input.history
-        ? await dbRead.textScanPrompt.findMany({
+        ? await dbWrite.textScanPrompt.findMany({
             where: { key: input.history },
             orderBy: { id: 'desc' },
             take: input.limit,
           })
         : undefined;
-      return { kind: 'json', body: { active, config, modes, webSearchModes, history } };
+      const latest = Object.fromEntries(latestRows.map(({ key, ...row }) => [key, row]));
+      return {
+        kind: 'json',
+        body: { active, config, modes, webSearchModes, labelModes, history, latest },
+      };
     }
 
     case 'putPrompt': {
-      const { key, content, note } = input;
+      const { key, content, note, baseId } = input;
       const createdById = requireModeratorId(actor.moderatorId ?? input.createdById);
       return {
         kind: 'json',
-        body: await insertTextScanPrompt({ key, content, note, createdById }),
+        body: await insertTextScanPrompt({ key, content, note, createdById, baseId }),
       };
     }
 
@@ -732,18 +896,29 @@ export async function runTextScanHarnessAction(
       return { kind: 'json', body: { webSearchModes } };
     }
 
+    case 'putLabelModes': {
+      const id = requireModeratorId(actor.moderatorId);
+      const labelModes = await setTextScanLabelMode(input.label, input.mode, { moderatorId: id });
+      return { kind: 'json', body: { labelModes } };
+    }
+
     case 'scanEntity': {
       requireProfile(input.entityType);
+      requirePassSupported(input.entityType, input.pass);
       return { kind: 'json', body: await scanEntitySync(input) };
     }
 
     case 'batchEntities': {
       requireProfile(input.entityType);
+      requirePassSupported(input.entityType, input.pass);
       const limit = pLimit(input.concurrency);
       const results = await Promise.all(
         input.entityIds.map((entityId) => limit(() => scanEntitySync({ ...input, entityId })))
       );
-      return { kind: 'json', body: summarizeScans(input.entityType, results) };
+      return {
+        kind: 'json',
+        body: { ...summarizeScans(input.entityType, results), ...hoistSharedPrompt(results) },
+      };
     }
 
     case 'sampleShadow': {
@@ -755,6 +930,7 @@ export async function runTextScanHarnessAction(
 
     case 'quoteEntities': {
       requireProfile(input.entityType);
+      requirePassSupported(input.entityType, input.pass);
       const limit = pLimit(input.concurrency);
       const results = await Promise.all(
         input.entityIds.map((entityId) =>
@@ -765,6 +941,7 @@ export async function runTextScanHarnessAction(
               entityId,
               ...(await quoteComposed({
                 ...loaded,
+                pass: input.pass,
                 model: input.model,
                 thinking: input.thinking,
               })),
@@ -780,6 +957,7 @@ export async function runTextScanHarnessAction(
 
     case 'scanTexts': {
       const profile = requireProfile(input.entityType);
+      requirePassSupported(input.entityType, input.pass);
       const limit = pLimit(input.concurrency);
       const results = await Promise.all(
         input.texts.map(({ key, fields }) =>
@@ -791,11 +969,15 @@ export async function runTextScanHarnessAction(
           })
         )
       );
-      return { kind: 'json', body: summarizeScans(input.entityType, results) };
+      return {
+        kind: 'json',
+        body: { ...summarizeScans(input.entityType, results), ...hoistSharedPrompt(results) },
+      };
     }
 
     case 'quoteTexts': {
       const profile = requireProfile(input.entityType);
+      requirePassSupported(input.entityType, input.pass);
       const limit = pLimit(input.concurrency);
       const results = await Promise.all(
         input.texts.map(({ key, fields }) =>

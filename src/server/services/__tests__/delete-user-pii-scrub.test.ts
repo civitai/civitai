@@ -287,3 +287,17 @@ describe('deleteUser — payment-provider ids', () => {
     expect(dbWriteCallsMentioning('customerId')).toEqual(['dbWrite.$executeRaw']);
   });
 });
+
+describe('deleteUser — the User row survives', () => {
+  // Creator Services deals RESTRICT deletes of their buyer and seller: they are the record of
+  // Buzz held and paid. If you are about to make account deletion a hard delete, it will fail for
+  // every user with a deal, and the retention decision for those records is not yours to make here.
+  it('anonymises the row and never deletes it', async () => {
+    await deleteUser();
+
+    expect(softDeleteIndex()).toBeGreaterThanOrEqual(0);
+    expect(dbMock.dbWrite.user.delete).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.user.deleteMany).not.toHaveBeenCalled();
+    expect(dbWriteCallsMentioning('DELETE FROM "User"')).toEqual([]);
+  });
+});

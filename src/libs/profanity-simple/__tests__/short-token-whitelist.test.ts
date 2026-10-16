@@ -141,18 +141,23 @@ describe('the other static-list consumers', () => {
     expect(filter.evaluateContent(text).shouldMarkNSFW).toBe(true);
   });
 
-  /**
-   * `clean()` consults no whitelist at all, so `RenderHtml` censors shipped whitelist entries
-   * like `fukushima` and `futari` too. Pre-existing; sharing `analyze()`'s filter would change
-   * rendered output for every whitelist entry.
-   */
   it.each([
-    ['fu manchu mustache', '** manchu mustache'],
-    ['fukushima', '***ushima'],
-    ['futari', '****ri'],
-  ])('clean() still censors %s, though analyze() clears it', (text, censored) => {
+    ['fu manchu mustache', 'fu manchu mustache'],
+    ['fukushima', 'fukushima'],
+    ['futari', 'futari'],
+  ])('clean() leaves whitelisted %s intact, matching analyze()', (text, expected) => {
     const filter = createProfanityFilter();
     expect(filter.analyze(text).isProfane).toBe(false);
-    expect(filter.clean(text)).toBe(censored);
+    expect(filter.clean(text)).toBe(expected);
+  });
+
+  it('clean() still censors a profane word next to a whitelisted one', () => {
+    const filter = createProfanityFilter();
+    expect(filter.clean('fukushima fuck')).toBe('fukushima ****');
+  });
+
+  it('clean() still censors a match inside a larger non-whitelisted token', () => {
+    const filter = createProfanityFilter();
+    expect(filter.clean('fukushima fukushimafuck')).toBe('fukushima ***ushima****');
   });
 });

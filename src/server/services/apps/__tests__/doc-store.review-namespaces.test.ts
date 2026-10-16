@@ -1,9 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { DocStore, DocStoreClient, DocStoreDb } from '~/server/services/apps/doc-store';
-import { createDocStore, reviewNamespace } from '~/server/services/apps/doc-store';
+import type {
+  DocStore,
+  DocStoreMaintenance,
+  DocStoreClient,
+  DocStoreDb,
+} from '~/server/services/apps/doc-store';
+import {
+  createDocStore,
+  createDocStoreMaintenance,
+  reviewNamespace,
+} from '~/server/services/apps/doc-store';
 import { createPgliteHarness, type Harness } from './doc-store.harness';
 import {
   assertUsageConsistent,
+  snapshot,
   BOARD,
   ctx,
   expectCode,
@@ -54,17 +64,6 @@ async function rowsByTable(
 
 const NONE = Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0]));
 
-/** A full snapshot of one app id's rows, for "untouched" comparisons. */
-async function snapshot(h: Harness, appId: string) {
-  const out: Record<string, unknown[]> = {};
-  for (const t of APPDATA_TABLES) {
-    out[t] = await h.raw(`SELECT * FROM appdata.${t} WHERE app_id = $1 ORDER BY 1, 2, 3, 4, 5`, [
-      appId,
-    ]);
-  }
-  return out;
-}
-
 /** Every kind of row a moderator can create: private + shared docs, an index row, a counter,
  * a counter-created doc, a mark, and a tombstone. */
 async function seedModerator(store: DocStore, publishRequestId: string, uid: number) {
@@ -81,9 +80,11 @@ async function seedModerator(store: DocStore, publishRequestId: string, uid: num
 function defineReviewSuite(makeHarness: () => Promise<Harness>) {
   let h: Harness;
   let store: DocStore;
+  let maint: DocStoreMaintenance;
   beforeAll(async () => {
     h = await makeHarness();
     store = createDocStore({ db: h.db });
+    maint = createDocStoreMaintenance({ db: h.db });
   });
   afterAll(async () => {
     await h?.close();
@@ -174,7 +175,7 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       const keepOther = await snapshot(h, other);
       const keepApp = await snapshot(h, app);
 
-      const out = await store.purgeReview(pr);
+      const out = await maint.purgeReview(pr);
       // Index rows go by the document delete's foreign-key cascade, so the count omits them.
       const total = Object.values(before).reduce((a, b) => a + b, 0);
       expect(out.rows).toBe(total - before.doc_index);
@@ -195,9 +196,9 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
     it('is idempotent: a second purge deletes nothing, and a request with no review data is a no-op', async () => {
       const pr = freshRequest('TWICE');
       await seedModerator(store, pr, MOD_1);
-      expect((await store.purgeReview(pr)).rows).toBeGreaterThan(0);
-      expect(await store.purgeReview(pr)).toEqual({ rows: 0 });
-      expect(await store.purgeReview(freshRequest('NEVER'))).toEqual({ rows: 0 });
+      expect((await maint.purgeReview(pr)).rows).toBeGreaterThan(0);
+      expect(await maint.purgeReview(pr)).toEqual({ rows: 0 });
+      expect(await maint.purgeReview(freshRequest('NEVER'))).toEqual({ rows: 0 });
     });
 
     it('is one transaction: a failure on the last table leaves every row in place, and a retry finishes', async () => {
@@ -219,11 +220,11 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
           return client;
         },
       };
-      await expect(createDocStore({ db: failing }).purgeReview(pr)).rejects.toThrow(
+      await expect(createDocStoreMaintenance({ db: failing }).purgeReview(pr)).rejects.toThrow(
         'injected purge failure'
       );
       expect(await rowsByTable(h, pr)).toEqual(before);
-      expect((await store.purgeReview(pr)).rows).toBeGreaterThan(0);
+      expect((await maint.purgeReview(pr)).rows).toBeGreaterThan(0);
       expect(await rowsByTable(h, pr)).toEqual(NONE);
     });
   });
@@ -241,7 +242,7 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       const seen: string[] = [];
       let after = '';
       for (;;) {
-        const page = await store.listReviewAppIds({ after, limit: 2 });
+        const page = await maint.listReviewAppIds({ after, limit: 2 });
         if (page.length === 0) break;
         seen.push(...page);
         after = page[page.length - 1];
@@ -251,13 +252,13 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       // A document whose usage_app row is gone (a write that overlapped a purge) still lists.
       await h.raw(`DELETE FROM appdata.usage_app WHERE app_id = $1`, [ids[2]]);
       expect(
-        (await store.listReviewAppIds({ after: `pubreq_${tag}`, limit: 10 })).filter((id) =>
+        (await maint.listReviewAppIds({ after: `pubreq_${tag}`, limit: 10 })).filter((id) =>
           id.startsWith(`pubreq_${tag}`)
         )
       ).toEqual(ids);
       // A request whose review data is purged no longer lists.
-      await store.purgeReview(ids[1]);
-      const again = await store.listReviewAppIds({ after: `pubreq_${tag}`, limit: 10 });
+      await maint.purgeReview(ids[1]);
+      const again = await maint.listReviewAppIds({ after: `pubreq_${tag}`, limit: 10 });
       expect(again.filter((id) => id.startsWith(`pubreq_${tag}`))).toEqual([ids[0], ids[2]]);
     });
   });
@@ -281,5 +282,8 @@ describe('review namespaces on PGlite — appdata_rw, RLS disabled: the module p
 });
 
 it('a store with no connection refuses the purge as storage_disabled', async () => {
-  await expectCode(createDocStore({ db: null }).purgeReview('pubreq_NODB'), 'storage_disabled');
+  await expectCode(
+    createDocStoreMaintenance({ db: null }).purgeReview('pubreq_NODB'),
+    'storage_disabled'
+  );
 });

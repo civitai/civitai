@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as CfUploadMod from '~/hooks/useCFImageUpload';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
@@ -242,17 +243,23 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     replies.stop();
   });
 
-  test('a persist refused by the publish bucket replies its message once and polls no scan', async () => {
-    h.persist.mockRejectedValueOnce(new Error('Rate limit exceeded, please retry shortly.'));
+  test('a persist refused by a rate limit replies its message once and polls no scan', async () => {
+    h.persist.mockRejectedValueOnce(
+      new Error('This app is handling too many uploads right now, please retry shortly.')
+    );
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_bucket', bytes: pngBytes() });
     await vi.waitFor(() =>
       expect(repliesFor(replies, 'rq_bucket')).toEqual([
-        { requestId: 'rq_bucket', error: 'Rate limit exceeded, please retry shortly.' },
+        {
+          requestId: 'rq_bucket',
+          error: 'This app is handling too many uploads right now, please retry shortly.',
+        },
       ])
     );
+    expectReplyKeys('OPEN_IMAGE_UPLOAD', 'error', ['error'], repliesFor(replies, 'rq_bucket')[0]);
     await settle();
     expect(repliesFor(replies, 'rq_bucket')).toHaveLength(1);
     expect(h.uploadToCF).toHaveBeenCalledTimes(1);

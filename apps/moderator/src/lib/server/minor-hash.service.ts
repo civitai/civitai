@@ -9,6 +9,19 @@ import {
   type AppealGroup,
   type AppealSource,
 } from '$lib/minor-flags/appeal-filters';
+import {
+  DEFAULT_REDETECTED_FILTERS,
+  type RedetectedFilters,
+  type RedetectedFlag,
+} from '$lib/minor-flags/redetected-filters';
+import type {
+  FlagLabel,
+  FlagRulingView,
+  LatestScan,
+  LatestScanSource,
+  PriorClearView,
+  RedetectionView,
+} from '$lib/minor-flags/text-scan-verdicts';
 
 /**
  * The read half of the main app's `/moderator/minor-hash-matches`, ported per
@@ -236,6 +249,7 @@ export type MinorFlagAppealRow = {
   minor: boolean;
   poi: boolean;
   textScanFlags: unknown;
+  latestScan: LatestScan | null;
   flaggedAt: Date | null;
   flagSource: string | null;
   flagConfirmedFrom: string | null;
@@ -260,6 +274,118 @@ export type AppealQuery = Page & { filters?: AppealFilters };
 const APPEAL_TRAINED_WORDS_CAP = 8;
 const APPEAL_TAGS_CAP = 12;
 const APPEAL_COVER_COUNT = 4;
+
+/** The model's first few images, joined to a CTE named `pg` that carries "modelId" and "userId".
+ *  Shared by every queue that shows a model's pictures, so they load the same way. */
+const coverImagesJoin = sql`
+LEFT JOIN LATERAL (
+  SELECT jsonb_agg(
+           jsonb_build_object('id', c.id, 'url', c.url)
+           ORDER BY c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
+                    c."imageIndex" ASC NULLS LAST, c.id
+         ) AS images
+  FROM (
+    -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
+    -- unpublished or draft model with no images at all.
+    SELECT i.id, i.url, p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
+           p.id AS "postId", i.index AS "imageIndex"
+    FROM "ModelVersion" mv
+    JOIN "Post" p ON p."modelVersionId" = mv.id
+    JOIN "Image" i ON i."postId" = p.id
+    WHERE mv."modelId" = pg."modelId"
+      AND p."userId" = pg."userId"
+      AND i.type::text = 'image'
+    ORDER BY unpublished, mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
+    LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
+  ) c
+) ci ON TRUE
+`;
+
+/** Latest version's base model and trigger words, plus the model's tags, joined to a CTE named `pg`
+ *  with "modelId". Bounded by the page, like the cover images. */
+const modelFactsJoin = sql`
+LEFT JOIN LATERAL (
+  SELECT mv."baseModel", mv."trainedWords"[1:${sql.raw(
+    String(APPEAL_TRAINED_WORDS_CAP)
+  )}] AS "trainedWords", cardinality(mv."trainedWords") AS "trainedWordCount"
+  FROM "ModelVersion" mv
+  WHERE mv."modelId" = pg."modelId"
+  ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
+  LIMIT 1
+) v ON TRUE
+LEFT JOIN LATERAL (
+  SELECT array_agg(x.name ORDER BY x.name) AS tags,
+         (SELECT count(*)::int FROM "TagsOnModels" tc WHERE tc."modelId" = pg."modelId") AS "tagCount"
+  FROM (
+    SELECT tg.name::text AS name
+    FROM "TagsOnModels" tom
+    JOIN "Tag" tg ON tg.id = tom."tagId"
+    WHERE tom."modelId" = pg."modelId"
+    ORDER BY tg.name
+    LIMIT ${sql.raw(String(APPEAL_TAGS_CAP))}
+  ) x
+) t ON TRUE
+`;
+
+/** How many other flagged models the uploader has; `pg` carries "userId" and "modelId". */
+const uploaderFlagsJoin = sql`
+LEFT JOIN LATERAL (
+  SELECT count(*)::int AS "otherFlaggedModels"
+  FROM "Model" o
+  WHERE o."userId" = pg."userId" AND o.id <> pg."modelId" AND (o.minor OR o.poi)
+) up ON TRUE
+`;
+
+/** The uploader's appeals by outcome; `exclude` drops the appeal being viewed, if any. */
+const pastAppealsJoin = (exclude: RawBuilder<unknown>) => sql`
+LEFT JOIN LATERAL (
+  SELECT count(*) FILTER (WHERE pa.status::text = 'Approved')::int AS approved,
+         count(*) FILTER (WHERE pa.status::text = 'Rejected')::int AS rejected,
+         count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
+         count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
+  FROM "Appeal" pa
+  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' ${exclude}
+) ap ON TRUE
+`;
+
+const TEXT_SCAN_SEARCH_ENTITY_TYPE = 'Model:search';
+
+type ScanRowAlias = 'sm' | 'ss';
+const SCAN_ROW_SOURCE: Record<ScanRowAlias, LatestScanSource> = { sm: 'main', ss: 'web search' };
+
+const scanLabelValue = (row: ScanRowAlias, label: FlagLabel) =>
+  sql`${sql.raw(row)}.result->'labels'->${sql.lit(label)}`;
+
+const scanCarriesLabel = (row: ScanRowAlias, label: FlagLabel) =>
+  sql`COALESCE(jsonb_typeof(${scanLabelValue(row, label)}) = 'object', FALSE)`;
+
+// `updatedAt` is a UTC timestamp without time zone. jsonb renders it with no offset and the
+// TIMESTAMP parser that appends Z only reaches plain columns, so it is formatted as UTC here.
+const scanLabelSql = (row: ScanRowAlias, label: FlagLabel) => {
+  const value = scanLabelValue(row, label);
+  const r = sql.raw(row);
+  return sql`jsonb_build_object(
+    'detected', CASE WHEN jsonb_typeof(${value}->'detected') = 'boolean'
+                     THEN (${value}->>'detected')::boolean END,
+    'reason', ${value}->>'reason', 'source', ${sql.lit(SCAN_ROW_SOURCE[row])},
+    'status', ${r}.status::text,
+    'updatedAt', to_char(${r}."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  )`;
+};
+
+/** Per label: the newest Succeeded row that carries it, else whichever row carries it. Once web
+ *  search is active the main pass is submitted without poi/minor, but its row keeps the poi/minor it
+ *  last carried, and search mode can fall back to off, so neither row wins outright. */
+const latestScanLabelSql = (label: FlagLabel) => {
+  const rank = (row: ScanRowAlias) =>
+    sql`(${sql.raw(row)}.status::text = 'Succeeded', ${sql.raw(row)}."updatedAt")`;
+  return sql`CASE
+    WHEN ${scanCarriesLabel('ss', label)}
+     AND (NOT ${scanCarriesLabel('sm', label)} OR ${rank('ss')} >= ${rank('sm')})
+      THEN ${scanLabelSql('ss', label)}
+    WHEN ${scanCarriesLabel('sm', label)} THEN ${scanLabelSql('sm', label)}
+  END`;
+};
 
 /** A text-scan real-person flag sets `poi` and `meta.textScanFlags.poi` but writes no snapshot, so the
  *  snapshot source alone would file it under "No flag record". One expression feeds the list predicate,
@@ -357,50 +483,15 @@ export async function getMinorFlagAppealsForReview({
            COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
            fb.username AS "flaggedByUsername", fb."createdAt" AS "flaggedByAt",
            COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+           CASE WHEN ls.poi IS NULL AND ls.minor IS NULL THEN NULL
+                ELSE jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
            jsonb_build_object(
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
            ) AS "pastAppeals"
     FROM pg
-    LEFT JOIN LATERAL (
-      SELECT mv."baseModel", mv."trainedWords"[1:${sql.raw(
-        String(APPEAL_TRAINED_WORDS_CAP)
-      )}] AS "trainedWords", cardinality(mv."trainedWords") AS "trainedWordCount"
-      FROM "ModelVersion" mv
-      WHERE mv."modelId" = pg."modelId"
-      ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
-      LIMIT 1
-    ) v ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT array_agg(x.name ORDER BY x.name) AS tags,
-             (SELECT count(*)::int FROM "TagsOnModels" tc WHERE tc."modelId" = pg."modelId") AS "tagCount"
-      FROM (
-        SELECT tg.name::text AS name
-        FROM "TagsOnModels" tom
-        JOIN "Tag" tg ON tg.id = tom."tagId"
-        WHERE tom."modelId" = pg."modelId"
-        ORDER BY tg.name
-        LIMIT ${sql.raw(String(APPEAL_TAGS_CAP))}
-      ) x
-    ) t ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT jsonb_agg(
-               jsonb_build_object('id', c.id, 'url', c.url)
-               ORDER BY c."versionIndex" ASC NULLS LAST, c."postId", c."imageIndex" ASC NULLS LAST, c.id
-             ) AS images
-      FROM (
-        SELECT i.id, i.url, mv.index AS "versionIndex", p.id AS "postId",
-               i.index AS "imageIndex"
-        FROM "ModelVersion" mv
-        JOIN "Post" p ON p."modelVersionId" = mv.id AND p."publishedAt" IS NOT NULL
-        JOIN "Image" i ON i."postId" = p.id
-        WHERE mv."modelId" = pg."modelId"
-          AND p."userId" = pg."userId"
-          AND i.type::text = 'image'
-        ORDER BY mv.index ASC NULLS LAST, p.id ASC, i.index ASC NULLS LAST, i.id ASC
-        LIMIT ${sql.raw(String(APPEAL_COVER_COUNT))}
-      ) c
-    ) ci ON TRUE
+    ${modelFactsJoin}
+    ${coverImagesJoin}
     LEFT JOIN LATERAL (
       SELECT ma."createdAt", su.username
       FROM "ModActivity" ma
@@ -412,19 +503,15 @@ export async function getMinorFlagAppealsForReview({
       ORDER BY ma."createdAt" DESC
       LIMIT 1
     ) fb ON TRUE
+    ${uploaderFlagsJoin}
+    LEFT JOIN "EntityModeration" sm
+      ON sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
+    LEFT JOIN "EntityModeration" ss
+      ON ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE} AND ss."entityId" = pg."modelId"
     LEFT JOIN LATERAL (
-      SELECT count(*)::int AS "otherFlaggedModels"
-      FROM "Model" o
-      WHERE o."userId" = pg."userId" AND o.id <> pg."modelId" AND (o.minor OR o.poi)
-    ) up ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT count(*) FILTER (WHERE pa.status::text = 'Approved')::int AS approved,
-             count(*) FILTER (WHERE pa.status::text = 'Rejected')::int AS rejected,
-             count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
-             count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
-      FROM "Appeal" pa
-      WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.id <> pg."appealId"
-    ) ap ON TRUE
+      SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
+    ) ls ON TRUE
+    ${pastAppealsJoin(sql`AND pa.id <> pg."appealId"`)}
     ORDER BY ${outer}
   `.execute(dbRead);
 
@@ -448,6 +535,151 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
     GROUP BY 1, 2, 3
   `.execute(dbRead);
   return rows.rows;
+}
+
+export type RedetectedRow = {
+  modelId: number;
+  modelName: string;
+  userId: number;
+  username: string | null;
+  status: string;
+  minor: boolean;
+  poi: boolean;
+  label: FlagLabel;
+  detectedAt: Date | null;
+  redetected: RedetectionView;
+  granted: PriorClearView | null;
+  grantedByUsername: string | null;
+  rulings: FlagRulingView[] | null;
+  hasPendingAppeal: boolean;
+  modelType: string;
+  modelCreatedAt: Date;
+  baseModel: string | null;
+  trainedWords: string[];
+  trainedWordCount: number;
+  tags: string[];
+  tagCount: number;
+  coverImages: AppealCoverImage[];
+  otherFlaggedModels: number;
+  pastAppeals: { approved: number; rejected: number; void: number; pending: number };
+};
+
+export type RedetectedQuery = Page & { filters?: RedetectedFilters };
+
+/** MUST match the predicate of the partial index `Model_textScanRedetected_idx` (see its migration)
+ *  character for character. The sidebar count runs on every page load, so a mismatch turns each
+ *  load into a seq scan of "Model". Every query over the queue repeats this fragment. */
+const redetectedIndexPredicate = sql`
+  (m.meta->'textScanFlags'->'minor' ? 'redetected'
+    OR m.meta->'textScanFlags'->'poi' ? 'redetected')
+`;
+
+/** A row per label: the same model can wait on `minor` and `poi` separately. */
+const redetectedLabelsJoin = sql`
+  CROSS JOIN LATERAL (VALUES
+    ('minor', m.meta->'textScanFlags'->'minor'),
+    ('poi', m.meta->'textScanFlags'->'poi')
+  ) AS l(label, entry)
+`;
+
+/** Detections the text scan held for a moderator: a re-detection after a human clear, or a first
+ *  detection in review mode. Nothing was
+ *  flagged and the owner was not told, so this list is the only place the detection surfaces.
+ *  A row per model and label; oldest detection first by default so nothing starves.
+ *
+ *  The page is cut first (CTE) so the cover-image LATERAL is bounded by limit. */
+export async function getRedetectedModels({
+  limit,
+  offset = 0,
+  search,
+  filters = DEFAULT_REDETECTED_FILTERS,
+}: RedetectedQuery) {
+  const detectedAt = sql`(l.entry->'redetected'->>'at')::timestamptz`;
+  const [inner, outer] =
+    filters.sort === 'newest'
+      ? [
+          sql`${detectedAt} DESC NULLS LAST, m.id DESC, l.label`,
+          sql`pg."detectedAt" DESC NULLS LAST, pg."modelId" DESC, pg.label`,
+        ]
+      : [
+          sql`${detectedAt} NULLS LAST, m.id, l.label`,
+          sql`pg."detectedAt" NULLS LAST, pg."modelId", pg.label`,
+        ];
+
+  const rows = await sql<RedetectedRow>`
+    WITH pg AS (
+      SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+             m.status::text AS status, m.minor, m.poi, l.label,
+             m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
+             ${detectedAt} AS "detectedAt",
+             l.entry->'redetected' AS redetected, l.entry->'appealGranted' AS granted,
+             gu.username AS "grantedByUsername", l.entry->'rulings' AS rulings,
+             -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
+             -- a ruling while the model has a Pending appeal.
+             EXISTS (
+               SELECT 1 FROM "Appeal" a
+               WHERE a."entityType" = 'Model' AND a."entityId" = m.id AND a.status::text = 'Pending'
+             ) AS "hasPendingAppeal"
+      FROM "Model" m
+      ${redetectedLabelsJoin}
+      LEFT JOIN "User" u ON u.id = m."userId"
+      LEFT JOIN "User" gu ON gu.id = CASE
+        WHEN jsonb_typeof(l.entry->'appealGranted'->'by') = 'number'
+          THEN (l.entry->'appealGranted'->>'by')::int
+      END
+      WHERE ${redetectedIndexPredicate}
+        AND l.entry ? 'redetected'
+        AND ${filters.flag === 'all' ? sql`TRUE` : sql`l.label = ${filters.flag}`}
+        AND ${searchPredicate(search, {
+          modelId: 'm.id',
+          userId: 'm.userId',
+          username: 'u.username',
+        })}
+      ORDER BY ${inner}
+      LIMIT ${limit + 1} OFFSET ${offset}
+    )
+    SELECT pg.*,
+           v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
+           COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
+           COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
+           COALESCE(ci.images, '[]'::jsonb) AS "coverImages",
+           COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
+           jsonb_build_object(
+             'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
+             'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
+           ) AS "pastAppeals"
+    FROM pg
+    ${modelFactsJoin}
+    ${coverImagesJoin}
+    ${uploaderFlagsJoin}
+    ${pastAppealsJoin(sql``)}
+    ORDER BY ${outer}
+  `.execute(dbRead);
+
+  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
+}
+
+/** Labels waiting on a ruling. With no arguments it is the whole queue, which the tab badge shows;
+ *  given the list's search and flag filter it is that list's total, over the same predicates. */
+export async function getRedetectedCount({
+  search,
+  flag = 'all',
+}: { search?: MinorSearch; flag?: RedetectedFlag } = {}) {
+  const result = await sql<{ count: number }>`
+    SELECT count(*)::int AS count
+    FROM "Model" m
+    ${redetectedLabelsJoin}
+    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
+    WHERE ${redetectedIndexPredicate}
+      AND l.entry ? 'redetected'
+      AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
+      AND ${searchPredicate(search, {
+        modelId: 'm.id',
+        userId: 'm.userId',
+        username: 'u.username',
+      })}
+  `.execute(dbRead);
+  return result.rows[0]?.count ?? 0;
 }
 
 export type ModelMinorState = {

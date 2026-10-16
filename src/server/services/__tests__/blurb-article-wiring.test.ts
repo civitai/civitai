@@ -66,7 +66,12 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
   };
 });
 
-import { applyArticleContentChange, upsertArticle } from '~/server/services/article.service';
+import {
+  applyArticleContentChange,
+  rescanArticle,
+  upsertArticle,
+} from '~/server/services/article.service';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 
 const ARTICLE_ID = 21;
 const CREATED_ID = 99;
@@ -105,6 +110,14 @@ const upsert = (input: Record<string, unknown> = {}) =>
     ...input,
   } as never);
 
+const savedArticle = {
+  id: ARTICLE_ID,
+  userId: OWNER_ID,
+  publishedAt: null,
+  status: 'Draft',
+  scheduledAt: null,
+};
+
 /** Every `article.update` whose payload carries the content column. */
 function contentWrites() {
   return dbMock.dbWrite.article.update.mock.calls
@@ -132,16 +145,14 @@ beforeEach(() => {
   submitTextModeration.mockResolvedValue(undefined);
   dbMock.dbWrite.article.findUnique.mockResolvedValue(storedArticle);
   dbMock.dbRead.article.findUnique.mockResolvedValue(storedArticle);
-  dbMock.dbWrite.article.update.mockResolvedValue({
-    id: ARTICLE_ID,
-    userId: OWNER_ID,
-    publishedAt: null,
-  });
+  dbMock.dbWrite.article.update.mockResolvedValue(savedArticle);
   dbMock.dbWrite.article.create.mockResolvedValue({
     id: CREATED_ID,
     userId: OWNER_ID,
     coverId: null,
     content: EXPANDED_HTML,
+    status: 'Draft',
+    scheduledAt: null,
   });
 });
 
@@ -246,7 +257,8 @@ describe('upsertArticle — blurb expansion', () => {
 
 describe('upsertArticle — blurb reconciliation', () => {
   it('reconciles inside the write transaction, before the post-commit moderation submit', async () => {
-    await upsert();
+    dbMock.dbWrite.article.update.mockResolvedValue({ ...savedArticle, status: 'Published' });
+    await upsert({ status: 'Published' });
 
     expect(reconcileBlurbReferences).toHaveBeenCalledWith({
       entityType: 'Article',
@@ -317,6 +329,8 @@ describe('applyArticleContentChange', () => {
       title: 'Stored title',
       content: 'stored content',
       coverId: null,
+      status: 'Published',
+      scheduledAt: null,
     });
   });
 
@@ -365,6 +379,167 @@ describe('applyArticleContentChange', () => {
 
     expect(submitTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID })
+    );
+  });
+});
+
+describe('article text scan — public content only', () => {
+  it('does not scan a draft save, on either path', async () => {
+    await upsert();
+
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['publishes', { status: 'Published', scheduledAt: null }],
+    ['submits for processing', { status: 'Processing', scheduledAt: null }],
+    ['schedules', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
+  ])('scans once when the save %s', async (_name, saved) => {
+    dbMock.dbWrite.article.update.mockResolvedValue({ ...savedArticle, ...saved });
+
+    await upsert({ status: saved.status });
+
+    expect(submitTextModerationOrScan).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID })
+    );
+    expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID, rearmRetries: true })
+    );
+  });
+
+  it('does not scan a draft on create', async () => {
+    await upsert({ id: undefined });
+
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+  });
+
+  it('scans an article created published', async () => {
+    dbMock.dbWrite.article.create.mockResolvedValue({
+      id: CREATED_ID,
+      userId: OWNER_ID,
+      coverId: null,
+      content: EXPANDED_HTML,
+      status: 'Published',
+      scheduledAt: null,
+    });
+
+    await upsert({ id: undefined, status: 'Published' });
+
+    expect(submitTextModerationOrScan).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'Article', entityId: CREATED_ID })
+    );
+    expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: CREATED_ID, rearmRetries: true })
+    );
+  });
+
+  describe('ordering against the ingestion recompute', () => {
+    let events: string[];
+
+    beforeEach(() => {
+      // Captured per test: an unawaited submit settles after its own test has ended.
+      const log: string[] = [];
+      events = log;
+      submitTextModeration.mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        log.push('submitted');
+      });
+      dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: string[]) => {
+        // The lock is taken twice per recompute; the first marks when it starts.
+        const locks = strings.join('?').includes('pg_advisory_xact_lock');
+        if (locks && !log.includes('recompute')) log.push('recompute');
+        return 0;
+      });
+    });
+
+    const storeAs = (state: { status: string; scheduledAt: Date | null }) =>
+      dbMock.dbWrite.article.findUnique.mockResolvedValue({
+        userId: OWNER_ID,
+        title: 'Stored title',
+        content: 'stored content',
+        coverId: null,
+        ...state,
+      });
+
+    // A verdict for the text before this save would otherwise count, and take the article live.
+    it.each([
+      ['processing', { status: 'Processing', scheduledAt: null }],
+      ['scheduled', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
+    ])('records the submit before recomputing a %s article', async (_name, state) => {
+      storeAs(state);
+
+      await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
+
+      expect(events).toEqual(['submitted', 'recompute']);
+    });
+
+    it('does not hold a published article save on the submit', async () => {
+      storeAs({ status: 'Published', scheduledAt: null });
+
+      await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
+
+      expect(events).toEqual(['recompute']);
+      expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ entityId: ARTICLE_ID, rearmRetries: true })
+      );
+    });
+
+    it('records the submit before recomputing on the save that submits for processing', async () => {
+      dbMock.dbWrite.article.update.mockResolvedValue({ ...savedArticle, status: 'Processing' });
+
+      await upsert({ status: 'Processing' });
+
+      expect(events).toEqual(['submitted', 'recompute']);
+    });
+  });
+
+  it('does not scan a draft whose blurb was re-materialized', async () => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      title: 'Stored title',
+      content: 'stored content',
+      coverId: null,
+      status: 'Draft',
+      scheduledAt: null,
+    });
+
+    await applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: EXPANDED_HTML });
+
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+  });
+});
+
+describe('rescanArticle — public content only', () => {
+  const storeAs = (state: { status: string; scheduledAt: Date | null }) => {
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+  };
+
+  it('does not rescan a draft, on either path', async () => {
+    storeAs({ status: 'Draft', scheduledAt: null });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  it('force-rescans a published article on both paths', async () => {
+    storeAs({ status: 'Published', scheduledAt: null });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(submitTextModerationOrScan).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ entityType: 'Article', entityId: ARTICLE_ID, force: true })
+    );
+    expect(submitTextModeration).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        entityType: 'Article',
+        entityId: ARTICLE_ID,
+        forceRescan: true,
+        rearmRetries: true,
+      })
     );
   });
 });

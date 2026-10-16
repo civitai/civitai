@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -31,7 +32,7 @@
     customUntil ? (Number.isNaN(Date.parse(customUntil)) ? '' : new Date(customUntil).toISOString()) : ''
   );
 
-  const support = $derived(browser ? fetchSupport(identity.id, version) : null);
+  const support = $derived(browser ? fetchSupport(identity.id, version) : SSR_PENDING);
 
   const form = new FormState({
     reload: true,

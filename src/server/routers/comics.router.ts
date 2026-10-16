@@ -78,6 +78,7 @@ import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import { keepOwnReactorIds } from '~/server/utils/reaction-identity';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -6318,6 +6319,7 @@ export const comicsRouter = router({
         },
       });
 
+      if (!ctx.user?.isModerator) keepOwnReactorIds(thread, ctx.user?.id);
       return thread;
     }),
 

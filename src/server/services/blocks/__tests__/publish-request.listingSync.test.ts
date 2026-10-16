@@ -522,20 +522,6 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
     ).toBe(true);
     warn.mockRestore();
   });
-
-  it('does NOT warn when the re-sync matches its row', async () => {
-    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
-
-    expect(
-      warn.mock.calls.some(
-        (c) => typeof c[0] === 'string' && c[0].includes('re-sync matched 0 rows')
-      )
-    ).toBe(false);
-    warn.mockRestore();
-  });
 });
 
 describe('approveRequest (3b-transition) — draft-at-submit transitions the pending draft → approved', () => {

@@ -26,7 +26,10 @@
     "./json-ld": "./src/json-ld.ts",
     "./resolution-reasons": "./src/resolution-reasons.ts",
     "./post-scheduling": "./src/post-scheduling.ts",
-    "./platform-feedback-version": "./src/platform-feedback-version.ts"
+    "./platform-feedback-version": "./src/platform-feedback-version.ts",
+    "./reaction-privacy": "./src/reaction-privacy.ts",
+    "./merge-permission": "./src/merge-permission.ts",
+    "./service-offering-takedown": "./src/service-offering-takedown.ts"
   },
   "scripts": {
     "test": "vitest run",

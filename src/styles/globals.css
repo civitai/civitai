@@ -1140,6 +1140,13 @@ div[data-youtube-video] > iframe {
   color: #1971c2 !important;
 }
 
+/* Admiral's injected "Do Not Sell" footer link (the only <a> directly inside our <footer>) and its
+   floating button, hidden until detectPrivacyUi sets `data-privacy-ui="visible"`. */
+html:not([data-privacy-ui='visible']) footer[data-app-footer] > a,
+html:not([data-privacy-ui='visible']) body > div:has(> #whisper-anchor) {
+  display: none !important;
+}
+
 #adconsent-usp-banner-optout input:checked + .adconsent-usp-slider {
   background-color: #1971c2 !important;
 }

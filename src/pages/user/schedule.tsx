@@ -24,6 +24,7 @@ type PlannerElement = HTMLElement & { host?: PlannerHost; location?: PlannerLoca
 function hrefFor(loc: PlannerLocation): string {
   const params = new URLSearchParams({ view: loc.view, anchor: loc.anchor });
   if (loc.modelVersionId) params.set('mv', String(loc.modelVersionId));
+  if (loc.tag) params.set('tag', loc.tag);
   return `/user/schedule?${params}`;
 }
 
@@ -41,7 +42,8 @@ function locationFromQuery(query: ParsedUrlQuery): PlannerLocation | undefined {
   if (!VIEWS.has(view as PlannerView) || !isCalendarDay(anchor)) return undefined;
   const mv =
     typeof query.mv === 'string' && /^\d{1,12}$/.test(query.mv) ? Number(query.mv) : undefined;
-  return { view: view as PlannerView, anchor, modelVersionId: mv };
+  const tag = typeof query.tag === 'string' ? query.tag.trim().slice(0, 100) : '';
+  return { view: view as PlannerView, anchor, modelVersionId: mv, tag: tag || undefined };
 }
 
 /** Mantine's CSS keys off the `data-mantine-color-scheme` attribute on `<html>`; mirroring that

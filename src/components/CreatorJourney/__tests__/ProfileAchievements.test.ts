@@ -321,6 +321,36 @@ describe('achievements tab', () => {
     expect(grids(el)).toHaveLength(1);
   });
 
+  it('shows the score split under the ladder, as shares, leaving out empty categories', () => {
+    mocks.viewer = null;
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: { ...data, scoreSplit: { models: 57, images: 24, articles: 0, users: 19 } },
+        userId: OWNER,
+      })
+    );
+    const split = el.querySelector<HTMLElement>('[data-testid="score-split"]') as HTMLElement;
+    expect(split.textContent).toBe(
+      'Where this Creator Score comes fromModels 57%Images 24%Followers 19%'
+    );
+    expect(split.parentElement?.querySelector('[data-tier-ladder]')).not.toBeNull();
+    const ladderBand = el.querySelector('[data-tier-ladder]') as HTMLElement;
+    expect(
+      ladderBand.compareDocumentPosition(split) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it('shows no score split when the server sends none', () => {
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: { ...data, scoreSplit: null },
+        userId: OWNER,
+      })
+    );
+    expect(el.querySelector('[data-tier-ladder]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="score-split"]')).toBeNull();
+  });
+
   it('shows the held tiers on the ladder while the public ladder loads', () => {
     mocks.ladderPending = true;
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));

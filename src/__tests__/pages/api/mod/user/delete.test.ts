@@ -193,6 +193,20 @@ describe('user.delete — it delegates, it does not reimplement', () => {
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
   });
 
+  // A muted account can't close itself through `user.delete`; a support ticket routes it here. If
+  // this path refused muted accounts too, that person would have no way left to be erased.
+  it('deletes a MUTED account', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({
+      id: TARGET,
+      username: NAME,
+      deletedAt: null,
+      muted: true,
+    });
+    const { status } = await call({ userId: TARGET, username: NAME });
+    expect(status).toBe(200);
+    expect(deleteUser).toHaveBeenCalledWith(expect.objectContaining({ id: TARGET }));
+  });
+
   // Stored and typed values are identical here; the trim case below is what pins that the STORED
   // one is sent.
   it('passes the username to the service', async () => {

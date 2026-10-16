@@ -30,6 +30,7 @@ describe('clickhouseLeaderboardPopulation without a ClickHouse client', () => {
       query: 'WITH clickhouse_x AS (SELECT 1) SELECT 1',
       includesCTE: true,
       addDays: 0,
+      excludedUserIds: [],
     });
     expect(result).toBe(false);
     expect(pgDbWrite.query).not.toHaveBeenCalled();
@@ -48,7 +49,7 @@ describe('markLeaderboardPopulated writer contract', () => {
 });
 
 describe('populateLeaderboard marking', () => {
-  const base = { jobContext: {} as never, addDays: 0 };
+  const base = { jobContext: {} as never, addDays: 0, excludedUserIds: [] };
   const getRange = vi.fn(async () => [1, 2] as [number, number]);
 
   beforeEach(() => {

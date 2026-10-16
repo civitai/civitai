@@ -433,9 +433,10 @@ stay as-is — the swap happens inside the service layer, so UI churn is near ze
 **Phase 0 — measure & decide.** Prod queries (blocked from this session, need a human or an
 allowed session): row counts for `Comment`/`CommentV2`/`Thread`; v1 depth distribution (rows with
 `parentId` whose parent also has `parentId` — believed unreachable in UI); Thread orphan count
-(all entity FKs null — note `Thread.imageId` and `Thread.challengeId` have **no FK constraint in
-prod**, an accepted drift in `schema-drift/drift-baseline.json`, so orphans pointing at deleted
-images/challenges are expected, not hypothetical); per-entityType comment volume; `Thread` rows for
+(all entity FKs null — note `Thread.challengeId` has **no FK constraint in prod**, an accepted
+drift in `schema-drift/drift-baseline.json`, so orphans pointing at deleted challenges are
+expected, not hypothetical; `Thread.imageId` had none either until a validated FK landed before
+the 2026-10-16 catalog recapture); per-entityType comment volume; `Thread` rows for
 dead surfaces (`clubPostId`, `questionId`/`answerId`). Two schema facts to confirm:
 `Thread.modelId`/`challengeId`/`model3dId` are declared `@unique` but their back-relations are
 lists (`Model.threads Thread[]` etc.) — verify they are truly 1:1 in prod before assuming one
@@ -780,7 +781,7 @@ paths are deleted with Phase 6. Pre-existing dead link to note while in there:
 triggers `update_thread_comment_count`, `trg_moderation_comment`/`trg_moderation_commentv2`, and
 `comment_reaction_count_update`. Drop order: reaction/report join tables first (they FK-reference
 the comment tables), then `Comment`/`CommentV2`, then `Thread`. Also:
-- Remove the two `Thread` entries (`missing-foreign-key|Thread|imageId/challengeId`) from
+- Remove the `Thread` entry (`missing-foreign-key|Thread|challengeId`) from
   `schema-drift/drift-baseline.json` and update the remediation plan + its
   `production-plan.test.ts`, or the drift gate fails on a table that no longer exists.
 - **Leave the `Comment`/`CommentV2` values in the `EntityType` pg enum permanently.** Removing a pg

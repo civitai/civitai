@@ -1,3 +1,4 @@
+import { NsfwLevel } from '@civitai/shared';
 import { describe, expect, it } from 'vitest';
 import type { PlannerPost } from '../../host';
 import {
@@ -170,17 +171,42 @@ describe('formatRangeLabel', () => {
 });
 
 describe('shouldBlur', () => {
-  it('never blurs PG media and always honours a per-item unblur', async () => {
-    const { shouldBlur, PG_LEVEL } = await import('../../parts/media');
-    expect(shouldBlur(PG_LEVEL, 1, false, false)).toBe(false);
-    expect(shouldBlur(32, 1, false, true)).toBe(false);
+  it('never blurs PG or PG-13 media and always honours a per-item unblur', async () => {
+    const { shouldBlur } = await import('../../parts/media');
+    expect(shouldBlur(NsfwLevel.PG, 1, false, false)).toBe(false);
+    expect(shouldBlur(NsfwLevel.PG13, 1, false, false)).toBe(false);
+    expect(shouldBlur(NsfwLevel.PG | NsfwLevel.PG13, 1, false, false)).toBe(false);
+    expect(shouldBlur(NsfwLevel.XXX, 1, false, true)).toBe(false);
   });
 
-  it('blurs everything above PG while Show mature is off, and above the browsing level while on', async () => {
+  it('blurs R and above while Show mature is off, and above the browsing level while on', async () => {
     const { shouldBlur } = await import('../../parts/media');
-    expect(shouldBlur(4, 32, false, false)).toBe(true);
-    expect(shouldBlur(4, 32, true, false)).toBe(false);
-    expect(shouldBlur(32, 4, true, false)).toBe(true);
+    expect(shouldBlur(NsfwLevel.R, 31, false, false)).toBe(true);
+    expect(shouldBlur(NsfwLevel.PG13 | NsfwLevel.R, 31, false, false)).toBe(true);
+    expect(shouldBlur(NsfwLevel.R, 31, true, false)).toBe(false);
+    expect(shouldBlur(NsfwLevel.XXX, NsfwLevel.R, true, false)).toBe(true);
+  });
+});
+
+describe('isMatureLevel', () => {
+  it('is R and up, so the Show-mature toggle stays hidden for PG-13 posts', async () => {
+    const { isMatureLevel } = await import('../../parts/media');
+    expect(isMatureLevel(0)).toBe(false);
+    expect(isMatureLevel(NsfwLevel.PG13)).toBe(false);
+    expect(isMatureLevel(NsfwLevel.R)).toBe(true);
+    expect(isMatureLevel(NsfwLevel.PG13 | NsfwLevel.X)).toBe(true);
+  });
+});
+
+describe('mediaUrl', () => {
+  it('asks the image CDN for a still of a video and the plain width for an image', async () => {
+    const { mediaUrl } = await import('../../parts/media');
+    expect(mediaUrl('https://img.test/', { url: 'abc', type: 'image' }, 48)).toBe(
+      'https://img.test/abc/width=48'
+    );
+    expect(mediaUrl('https://img.test', { url: 'abc', type: 'video' }, 96)).toBe(
+      'https://img.test/abc/anim=false,transcode=true,width=96/abc.jpeg'
+    );
   });
 });
 

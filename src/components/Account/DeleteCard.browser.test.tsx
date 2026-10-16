@@ -3,13 +3,15 @@ import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
-const { mutateAsync, logout } = vi.hoisted(() => ({
+const { mutateAsync, logout, currentUser } = vi.hoisted(() => ({
   mutateAsync: vi.fn(async () => undefined),
   logout: vi.fn(async () => undefined),
+  currentUser: { value: { id: 7, muted: false } },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => currentUser.value }));
 vi.mock('~/components/CivitaiWrapped/AccountProvider', () => ({
   useAccountContext: () => ({ logout }),
 }));
@@ -18,15 +20,14 @@ vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
 // so a consumer elsewhere in the tree doesn't get `undefined` and silently collect zero tests.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    subscriptions: {
-      getAllUserSubscriptions: { useQuery: () => ({ data: [], isLoading: false }) },
-    },
-    user: { delete: { useMutation: () => ({ mutateAsync }) } },
-  },
+  trpc: makeTrpcProxy({
+    'subscriptions.getAllUserSubscriptions': { useQuery: () => ({ data: [], isLoading: false }) },
+    'user.delete': { useMutation: () => ({ mutateAsync }) },
+  }),
 }));
 
 import { DeleteCard } from '~/components/Account/DeleteCard';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 
 /** Renders the card and opens the "what happens to your content?" step. */
 async function openContentModal() {
@@ -47,6 +48,31 @@ async function completeFlow(modelsLabel: string, imagesLabel: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  currentUser.value = { id: 7, muted: false };
+});
+
+// The server refuses a muted account too; this pins that the card says so up front. Every other
+// case here renders an unmuted user with the button enabled, which is the control.
+describe('DeleteCard for a muted account', () => {
+  test('disables the button and points to the support portal', async () => {
+    currentUser.value = { id: 7, muted: true };
+    renderWithProviders(<DeleteCard />);
+
+    await expect.element(page.getByRole('button', { name: 'Delete your account' })).toBeDisabled();
+    await expect
+      .element(page.getByRole('link', { name: 'open a ticket through our support portal' }))
+      .toHaveAttribute('href', SUPPORT_LINKS.portal);
+  });
+
+  test('the settings-page variant is disabled too', async () => {
+    currentUser.value = { id: 7, muted: true };
+    renderWithProviders(<DeleteCard flat />);
+
+    await expect.element(page.getByRole('button', { name: 'Delete account' })).toBeDisabled();
+    await expect
+      .element(page.getByRole('link', { name: 'open a ticket through our support portal' }))
+      .toHaveAttribute('href', SUPPORT_LINKS.portal);
+  });
 });
 
 describe('DeleteCard content step', () => {

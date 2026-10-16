@@ -47,7 +47,8 @@ import '~/__tests__/mocks/logging.mock';
 const SUPERNOVA = { id: '100000000000000001', name: 'Supernova' };
 const LEGEND = { id: '100000000000000002', name: 'Legend' };
 const UNRELATED = { id: '100000000000000003', name: 'Creator' };
-const ROLES = [SUPERNOVA, LEGEND, UNRELATED];
+const MYTHIC = { id: '100000000000000004', name: 'Mythic' };
+const ROLES = [SUPERNOVA, LEGEND, UNRELATED, MYTHIC];
 const CONFIG = { supernovaRoleId: SUPERNOVA.id, legendRoleId: LEGEND.id };
 
 type Row = {
@@ -70,6 +71,10 @@ const supernova = (userId: number, providerAccountId: string, isModerator = fals
 const legend = (userId: number, providerAccountId: string, isModerator = false): Row[] => [
   supernova(userId, providerAccountId, isModerator),
   { milestoneKey: 'score:legend', userId, isModerator, providerAccountId },
+];
+const mythic = (userId: number, providerAccountId: string): Row[] => [
+  ...legend(userId, providerAccountId),
+  { milestoneKey: 'score:mythic', userId, isModerator: false, providerAccountId },
 ];
 
 // Same decoding as apply-discord-roles.test.ts: only a grant binds the role as a JSON array.
@@ -138,6 +143,35 @@ describe('applyDiscordCreatorJourneyRoles — grants', () => {
     expect(mockDiscord.addRoleToUser).toHaveBeenCalledWith('111', LEGEND.id);
     expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith('222', LEGEND.id);
     expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith(expect.anything(), UNRELATED.id);
+  });
+
+  it('grants a Mythic all three roles, and the Mythic role to nobody else', async () => {
+    mockConfig.mockResolvedValue({ ...CONFIG, mythicRoleId: MYTHIC.id });
+    holderRows = [...mythic(1, '111'), ...legend(2, '222'), supernova(3, '333')];
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(idsWritten('grant', 'Supernova')).toEqual(['111', '222', '333']);
+    expect(idsWritten('grant', 'Legend')).toEqual(['111', '222']);
+    expect(idsWritten('grant', 'Mythic')).toEqual(['111']);
+    expect(mockDiscord.addRoleToUser).toHaveBeenCalledWith('111', MYTHIC.id);
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith('222', MYTHIC.id);
+  });
+
+  it('skips only the Mythic pass while no Mythic role is configured', async () => {
+    holderRows = [...mythic(1, '111')];
+    await applyDiscordCreatorJourneyRoles(ROLES);
+    expect(idsWritten('grant', 'Legend')).toEqual(['111']);
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith(expect.anything(), MYTHIC.id);
+  });
+
+  it('takes the Mythic role from an account that no longer holds Mythic', async () => {
+    mockConfig.mockResolvedValue({ ...CONFIG, mythicRoleId: MYTHIC.id });
+    holderRows = [...mythic(1, '111'), ...legend(2, '222')];
+    accountsInRole = { Mythic: ['111', '222'] };
+    await applyDiscordCreatorJourneyRoles(ROLES);
+    expect(mockDiscord.removeRoleFromUser).toHaveBeenCalledWith('222', MYTHIC.id);
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalledWith('111', MYTHIC.id);
   });
 
   it('does not re-grant an account that already holds the role', async () => {
@@ -267,6 +301,17 @@ describe('applyDiscordCreatorJourneyRoles — config and inputs', () => {
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
   });
 
+  it('touches nothing when Mythic points at the Legend role', async () => {
+    mockConfig.mockResolvedValue({ ...CONFIG, mythicRoleId: LEGEND.id });
+    holderRows = [...mythic(1, '111'), ...legend(2, '222')];
+    accountsInRole = { Legend: ['111', '222'] };
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+  });
+
   it('makes no Discord call when the metric-excluded list cannot be read', async () => {
     mockExcluded.mockRejectedValue(new Error('clickhouse unavailable'));
     accountsInRole = { Supernova: ['111'] };
@@ -299,6 +344,8 @@ describe('applyDiscordCreatorJourneyRoles — config and inputs', () => {
     expect(sql).toContain('s."expiresAt" > $3::timestamp');
     expect(sql).toContain('NOT u.muted');
     expect(sql).toContain('"UserStrike"');
+    expect(sql).toContain('SUM(s.points)');
+    expect(sql).toMatch(/, 0\) < 2(?!\d)/);
     expect(params).toEqual([
       ['score:supernova', 'score:legend'],
       [42, 43],

@@ -82,7 +82,7 @@ const COUNT_KEY_ALIASES: Record<string, string> = {
   imageTags: 'tags',
   imageRatings: 'ratings',
   newUser: 'newUsers',
-  reported: 'reportedImages',
+  'report:image': 'reportedImages',
   'report:model': 'models',
   'report:comment': 'comments',
   'report:commentV2': 'commentV2',

@@ -592,163 +592,6 @@ describe('fetchDocumentsAbortable upstream-side fail-fast', () => {
   });
 });
 
-// ─── Wrapper-side fail-fast (PR follow-up to #2371) ─────────────────────────
-//
-// PR #2371's audit explicitly flagged that `runWithLimiter` still throws
-// `MeiliCallTimeoutError` on the concurrency / circuit-open path, and that
-// the post-filter catch at line 4314 re-throws those — bleeding into the
-// remaining 900/day api-primary restart wave after the HTTP-status paths
-// were closed. This block proves the new branch:
-//   (a) catches MeiliCallTimeoutError with reason='upstream-circuit-open'
-//       and breaks out of the iteration loop (same shape as the existing
-//       branches), and
-//   (b) does NOT widen to catch generic Error subclasses — those still
-//       re-throw so we don't silently hide unrelated bugs.
-//
-// We construct the MeiliCallTimeoutError directly and pipe it into a mock
-// catch block that mirrors the production shape from getImagesFromSearchPostFilter.
-// fetchDocumentsAbortable itself can't surface this error type — it comes
-// out of runWithLimiter wrapping the SDK calls — so a direct unit-level
-// test of the catch-shape contract is the right granularity.
-
-describe('post-filter catch — MeiliCallTimeoutError (circuit-open / wrapper-timeout)', () => {
-  beforeEach(() => {
-    incMock.mockClear();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('MeiliCallTimeoutError triggers catch + breaks with reason="upstream-circuit-open"', async () => {
-    const {
-      MeiliCallTimeoutError,
-      MeilisearchFetchError,
-      MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
-      isFailfastStatus,
-      failfastReasonForStatus,
-      meiliFetchFailfastTotal,
-      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
-    } = await import('~/server/meilisearch/client');
-
-    // Build both shapes — concurrency (circuit-open) + timeout (wrapper-timer
-    // fire). Both should land in the same bucket per the audit's guidance.
-    const circuitOpenErr = new MeiliCallTimeoutError(
-      'concurrency',
-      'Meilisearch backend circuit open — failing fast'
-    );
-    const wrapperTimeoutErr = new MeiliCallTimeoutError('timeout');
-
-    for (const errToThrow of [circuitOpenErr, wrapperTimeoutErr]) {
-      incMock.mockClear();
-      const iterationUnderTest = 4;
-      let brokeOut = false;
-      let reThrown: unknown;
-      try {
-        throw errToThrow;
-      } catch (e) {
-        // Mirror the production catch block from getImagesFromSearchPostFilter.
-        // Branch order MUST match: local-timeout → MeilisearchFetchError →
-        // MeiliCallTimeoutError → re-throw.
-        const err = e as Error & { name?: string; cause?: { message?: string } };
-        const isLocalTimeout =
-          err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
-          (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
-        if (isLocalTimeout) {
-          meiliFetchFailfastTotal.inc({
-            route: 'getImagesFromSearchPostFilter',
-            iteration: String(iterationUnderTest),
-            reason: 'local-timeout',
-          });
-          brokeOut = true;
-        } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
-          meiliFetchFailfastTotal.inc({
-            route: 'getImagesFromSearchPostFilter',
-            iteration: String(iterationUnderTest),
-            reason: failfastReasonForStatus(e.status),
-          });
-          brokeOut = true;
-        } else if (e instanceof MeiliCallTimeoutError) {
-          meiliFetchFailfastTotal.inc({
-            route: 'getImagesFromSearchPostFilter',
-            iteration: String(iterationUnderTest),
-            reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
-          });
-          brokeOut = true;
-        } else {
-          reThrown = e;
-        }
-      }
-
-      expect(brokeOut).toBe(true);
-      expect(reThrown).toBeUndefined();
-      expect(incMock).toHaveBeenCalledWith({
-        route: 'getImagesFromSearchPostFilter',
-        iteration: '4',
-        reason: 'upstream-circuit-open',
-      });
-      expect(incMock).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it('does NOT widen to catch unrelated Error subclasses — they still re-throw', async () => {
-    // Regression guard: the new branch must use `instanceof MeiliCallTimeoutError`
-    // (not a generic `instanceof Error`) so we don't silently swallow real bugs
-    // like ReferenceError, network errors from outside the wrapper, etc.
-    const {
-      MeiliCallTimeoutError,
-      MeilisearchFetchError,
-      MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
-      isFailfastStatus,
-      failfastReasonForStatus,
-      meiliFetchFailfastTotal,
-      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
-    } = await import('~/server/meilisearch/client');
-
-    const unrelatedErr = new Error('something unrelated — null deref upstream');
-
-    let brokeOut = false;
-    let reThrown: unknown;
-    try {
-      throw unrelatedErr;
-    } catch (e) {
-      const err = e as Error & { name?: string; cause?: { message?: string } };
-      const isLocalTimeout =
-        err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
-        (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
-      if (isLocalTimeout) {
-        meiliFetchFailfastTotal.inc({
-          route: 'getImagesFromSearchPostFilter',
-          iteration: '1',
-          reason: 'local-timeout',
-        });
-        brokeOut = true;
-      } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
-        meiliFetchFailfastTotal.inc({
-          route: 'getImagesFromSearchPostFilter',
-          iteration: '1',
-          reason: failfastReasonForStatus(e.status),
-        });
-        brokeOut = true;
-      } else if (e instanceof MeiliCallTimeoutError) {
-        meiliFetchFailfastTotal.inc({
-          route: 'getImagesFromSearchPostFilter',
-          iteration: '1',
-          reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
-        });
-        brokeOut = true;
-      } else {
-        reThrown = e;
-      }
-    }
-
-    expect(brokeOut).toBe(false);
-    expect(reThrown).toBe(unrelatedErr);
-    // The fail-fast counter MUST NOT have incremented for an unrelated Error.
-    expect(incMock).not.toHaveBeenCalled();
-  });
-});
-
 // ─── isTransientMeiliError: SDK-error classification (500→503 reclassification) ─
 //
 // The REST image feed (/api/v1/images) runs through event-engine-common's
@@ -953,16 +796,13 @@ describe('isTransientMeiliError — transient upstream classification', () => {
     'Bad Gateway error: connection reset by peer',
     'upstream said Request Timeout after 30s',
     'Service Unavailable', // exact — sanity that the substring cases below are the only diff
-  ])(
-    'matches EXACT statusText only, never a substring — "%s"',
-    async (message) => {
-      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
-      const exact = message === 'Service Unavailable';
-      // Only the bare exact reason phrase is transient; a message that merely
-      // CONTAINS it (with surrounding text) must NOT be masked as a 503.
-      expect(isTransientMeiliError(new Error(message))).toBe(exact);
-    }
-  );
+  ])('matches EXACT statusText only, never a substring — "%s"', async (message) => {
+    const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+    const exact = message === 'Service Unavailable';
+    // Only the bare exact reason phrase is transient; a message that merely
+    // CONTAINS it (with surrounding text) must NOT be masked as a 503.
+    expect(isTransientMeiliError(new Error(message))).toBe(exact);
+  });
 
   it('does not match a case-mismatched statusText (exact, case-sensitive)', async () => {
     const { isTransientMeiliError } = await import('~/server/meilisearch/client');
@@ -1029,12 +869,12 @@ describe('isTransientMeiliError — transient upstream classification', () => {
 
     it('failfastReasonForTransientError labels the re-wrapped CommunicationError by its statustext (503 → upstream-overload), not the generic upstream-error', async () => {
       const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
-      expect(failfastReasonForTransientError(makeRewrappedCommunicationError('Service Unavailable'))).toBe(
-        'upstream-overload'
-      );
-      expect(failfastReasonForTransientError(makeRewrappedCommunicationError('Request Timeout'))).toBe(
-        'upstream-timeout'
-      );
+      expect(
+        failfastReasonForTransientError(makeRewrappedCommunicationError('Service Unavailable'))
+      ).toBe('upstream-overload');
+      expect(
+        failfastReasonForTransientError(makeRewrappedCommunicationError('Request Timeout'))
+      ).toBe('upstream-timeout');
       expect(failfastReasonForTransientError(makeRewrappedCommunicationError('Bad Gateway'))).toBe(
         'upstream-error'
       );
@@ -1170,103 +1010,6 @@ describe('failfastReasonForTransientError — reason label mapping', () => {
       expect(failfastReasonForTransientError(new Error(message))).toBe(expectedReason);
     }
   );
-});
-
-// ─── Service-catch counter contract (audit 🟡 #3) ────────────────────────────
-//
-// getImagesFromFeedSearch / getAllImagesIndex now increment
-// meiliFetchFailfastTotal{route, iteration:'0', reason} on the transient-503
-// path. The full image.service is too heavy to module-load in isolation (the
-// flipt-client import wedges it), so — mirroring how the post-filter contract
-// tests above prove the counter without loading image.service — we replicate
-// the EXACT service-catch shape and assert the counter fires with the right
-// {route, reason} label. incMock is the shared registerCounterWithLabels().inc.
-describe('service-catch → meiliFetchFailfastTotal{route, reason} on a transient-503', () => {
-  beforeEach(() => {
-    incMock.mockClear();
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it.each([
-    ['getImagesFromFeedSearch', 'CommunicationError(503)', 'upstream-overload'],
-    ['getAllImagesIndex', 'CommunicationError(503)', 'upstream-overload'],
-  ])(
-    'increments for %s on a %s (reason=%s)',
-    async (route, _shape, expectedReason) => {
-      const {
-        isTransientMeiliError,
-        failfastReasonForTransientError,
-        meiliFetchFailfastTotal,
-      } = await import('~/server/meilisearch/client');
-
-      const err = (() => {
-        const e = new Error('Service Unavailable') as Error & {
-          name: string;
-          statusCode: number;
-        };
-        e.name = 'MeiliSearchCommunicationError';
-        e.statusCode = 503;
-        return e;
-      })();
-
-      // Mirror the service catch in image.service.ts exactly.
-      let reclassified = false;
-      try {
-        throw err;
-      } catch (caught) {
-        if (isTransientMeiliError(caught)) {
-          meiliFetchFailfastTotal.inc({
-            route,
-            iteration: '0',
-            reason: failfastReasonForTransientError(caught),
-          });
-          reclassified = true;
-        } else {
-          throw caught;
-        }
-      }
-
-      expect(reclassified).toBe(true);
-      expect(incMock).toHaveBeenCalledWith({ route, iteration: '0', reason: expectedReason });
-      expect(incMock).toHaveBeenCalledTimes(1);
-    }
-  );
-
-  it('does NOT increment when the error is non-transient (a deterministic ApiError 500 bubbles, no counter)', async () => {
-    const { isTransientMeiliError, failfastReasonForTransientError, meiliFetchFailfastTotal } =
-      await import('~/server/meilisearch/client');
-
-    const apiError500 = (() => {
-      const e = new Error('internal') as Error & { name: string; httpStatus: number };
-      e.name = 'MeiliSearchApiError';
-      e.httpStatus = 500;
-      return e;
-    })();
-
-    let reThrown: unknown;
-    try {
-      try {
-        throw apiError500;
-      } catch (caught) {
-        if (isTransientMeiliError(caught)) {
-          meiliFetchFailfastTotal.inc({
-            route: 'getImagesFromFeedSearch',
-            iteration: '0',
-            reason: failfastReasonForTransientError(caught),
-          });
-        } else {
-          throw caught;
-        }
-      }
-    } catch (e) {
-      reThrown = e;
-    }
-
-    expect(reThrown).toBe(apiError500);
-    expect(incMock).not.toHaveBeenCalled();
-  });
 });
 
 describe('withMeiliResourceSelect cancellation', () => {

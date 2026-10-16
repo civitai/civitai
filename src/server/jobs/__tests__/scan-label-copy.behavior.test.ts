@@ -30,6 +30,8 @@ const MIGRATIONS = [
   '20261022130000_scan_label_queue',
   '20261022140000_scan_label_outcomes',
   '20261023130000_scan_label_reasons_copy',
+  '20261023140000_scan_label_copy_sweep',
+  '20261024130000_scan_label_copy_removed_at',
 ].map((dir) =>
   path.resolve(
     __dirname,

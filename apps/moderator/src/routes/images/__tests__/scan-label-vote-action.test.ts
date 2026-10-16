@@ -62,8 +62,17 @@ describe('vote action', () => {
     });
     expect(applyMajorityBlocks).toHaveBeenCalledExactlyOnceWith(
       { requester: 7, ip: '1.2.3.4', userAgent: 'ua' },
-      { block: blockImage, isModerationBlocked }
+      { block: expect.any(Function), isModerationBlocked }
     );
+    // The voting majority is the second opinion, so the sweep's block skips the re-removal hold.
+    const { block } = applyMajorityBlocks.mock.calls[0][1];
+    blockImage.mockResolvedValue({});
+    await block({ imageId: 3, userId: 7 });
+    expect(blockImage).toHaveBeenCalledExactlyOnceWith({
+      imageId: 3,
+      userId: 7,
+      skipAppealCheck: true,
+    });
   });
 
   it('keeps the comment for "other"', async () => {

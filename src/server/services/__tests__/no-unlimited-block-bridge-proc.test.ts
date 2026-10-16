@@ -100,6 +100,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPollRateLimit: 'poll',
   checkBlockTrainingDatasetRateLimit: 'training-dataset',
   checkBlockEstimateCellsRateLimit: 'estimate-cells',
+  checkBlockUploadAppRateLimit: 'upload-app',
 });
 
 type Decision = {
@@ -196,8 +197,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
   },
   persistAppUploadImage: {
-    buckets: ['publish'],
-    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token from the per-install publish bucket that publishGenerationOutputs also draws on, before the row is created.',
+    buckets: ['upload-app'],
+    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN app-wide bucket keyed on appId, shared by every viewer and install of the app. NOT the per-install publish bucket: a page app install id is shared by every viewer, so charging it let one viewer’s uploads use up the allowance publishGenerationOutputs and post creation draw on. No per-viewer upload bucket: the 60/h per-user rateLimit is tighter for every prod non-moderator, and the host’s 8-per-60-s bytes window holds a single-page moderator to 40 per 300 s.',
   },
   previewQuoteGrant: {
     buckets: ['catalog'],
@@ -213,7 +214,7 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   publishGenerationOutputs: {
     buckets: ['publish'],
-    why: 'Image-WEIGHTED: each image is a fetch + S3 upload + scan, so the cost is per image, not per call; pre-existing.',
+    why: 'Image-WEIGHTED: each image is a fetch + S3 upload + scan, so the cost is per image, not per call; pre-existing. Keyed per INSTALL, so on a page app every viewer shares it.',
   },
   queryAppWorkflows: {
     buckets: ['catalog'],
@@ -453,6 +454,20 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
       .map(([name]) => name)
       .sort();
     expect(pollers).toEqual(['pollWorkflow']);
+  });
+
+  it('an upload charges the app-wide upload bucket and NOT the per-install publish bucket', () => {
+    // Pinned as a relationship: "is it limited at all" passes just as well if an upload charges
+    // the install-only publish bucket, which every viewer of a page app shares.
+    expect(derived.get('persistAppUploadImage')).toEqual(['upload-app']);
+    const chargers = (bucket: string) =>
+      [...derived.entries()]
+        .filter(([, buckets]) => buckets.includes(bucket))
+        .map(([name]) => name)
+        .sort();
+    expect(chargers('upload-app')).toEqual(['persistAppUploadImage']);
+    // Shared per install: what a post adopts and what a publish creates.
+    expect(chargers('publish')).toEqual(['createPostFromApp', 'publishGenerationOutputs']);
   });
 
   it('the two cancel procedures agree — criterion 3, pinned as a relationship', () => {

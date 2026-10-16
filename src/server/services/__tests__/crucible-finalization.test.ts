@@ -337,6 +337,18 @@ describe('finalizeCrucible — completion', () => {
     });
   });
 
+  it('awards nothing for a 0-Buzz place, and still completes', async () => {
+    setupCrucible({ entryFee: 0 });
+
+    await finalizeCrucible(1);
+
+    expect(createPrizes).not.toHaveBeenCalled();
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, status: CrucibleStatus.Active },
+      data: { status: CrucibleStatus.Completed },
+    });
+  });
+
   it('awards the prizes before it claims Completed, and pays none of them itself', async () => {
     setupCrucible({ entryFee: 100 });
     await finalizeCrucible(1);

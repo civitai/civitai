@@ -1,8 +1,9 @@
-import { Button, Group, Text } from '@mantine/core';
-import { IconBarbell } from '@tabler/icons-react';
+import { Anchor, Button, Group, Text } from '@mantine/core';
+import { IconBarbell, IconSparkles } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { isStudioToggleAvailable } from '~/components/Training/Form/studioAudioNotice';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
@@ -72,6 +73,37 @@ export function SwitchToTrainingStudioAlert({
         </Button>
       </Group>
     </AlertWithIcon>
+  );
+}
+
+export function Flux3StudioNotice() {
+  const features = useFeatureFlags();
+  const canSwitch = useCanSwitchToTrainingStudio();
+  const { switchTo, switching } = useTrainingStudioSwitch();
+  if (!canSwitch || !features.flux3KleinTraining) return null;
+
+  return (
+    <DismissibleAlert
+      id="flux3-klein-training-studio"
+      color="blue"
+      size="sm"
+      icon={<IconSparkles size={16} />}
+      title="Flux.3 Klein is here — in Training Studio"
+    >
+      <Text size="sm">
+        Flux.3 Klein LoRAs train only in our new <b>Training Studio</b> (Beta).{' '}
+        <Anchor
+          component="button"
+          type="button"
+          size="sm"
+          disabled={switching}
+          onClick={() => switchTo(true, '/training-studio?view=new')}
+        >
+          Switch to Training Studio
+        </Anchor>{' '}
+        to try it. You can switch back at any time.
+      </Text>
+    </DismissibleAlert>
   );
 }
 

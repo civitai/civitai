@@ -117,6 +117,55 @@ describe('WorkflowData unrated outputs', () => {
     expect(wf.displayOutput.map((x) => x.id)).toEqual(['blob-1']);
   });
 
+  describe('video from an engine the orchestrator never rates', () => {
+    const buildStep = (
+      $type: string,
+      output: Record<string, unknown>,
+      stepMetadata: Record<string, unknown>,
+      workflowParams: Record<string, unknown> = {}
+    ) =>
+      new WorkflowData(
+        {
+          id: 'wf-1',
+          status: 'succeeded',
+          allowMatureContent: false,
+          metadata: { params: workflowParams },
+          steps: [
+            { $type, name: '$0', status: 'succeeded', metadata: stepMetadata, output: [output] },
+          ],
+        } as any,
+        { domain: { green: true } as any, nsfwEnabled: true, holdUnrated: true }
+      );
+    const held = (wf: WorkflowData) => wf.steps[0].output[0].pendingRating;
+    const video = blob({ type: 'video' });
+
+    it.each(['Grok', 'Kling', 'Veo3', 'Vidu'])('shows %s video unrated', (ecosystem) => {
+      const wf = buildStep('videoGen', video, { params: { ecosystem } });
+
+      expect(held(wf)).toBe(false);
+      expect(wf.succeededOutput.map((x) => x.id)).toEqual(['blob-1']);
+    });
+
+    it('reads the ecosystem from the workflow when the step has no params', () => {
+      expect(held(buildStep('videoGen', video, {}, { ecosystem: 'Kling' }))).toBe(false);
+    });
+
+    it('still holds images, rated engines, and upscales of a never-rated video', () => {
+      expect(held(buildStep('videoGen', blob(), { params: { ecosystem: 'Kling' } }))).toBe(true);
+      expect(held(buildStep('videoGen', video, { params: { ecosystem: 'MiniMaxH3' } }))).toBe(true);
+      // An enhancement step stores its source generation's params, ecosystem included.
+      expect(held(buildStep('videoUpscaler', video, { params: { ecosystem: 'Kling' } }))).toBe(
+        true
+      );
+    });
+
+    it('ignores the workflow ecosystem when the step has its own complete params', () => {
+      const wf = buildStep('videoGen', video, { params: { prompt: 'x' } }, { ecosystem: 'Veo3' });
+
+      expect(held(wf)).toBe(true);
+    });
+  });
+
   it('keeps an orchestrator block on an unrated output', () => {
     const wf = build([blob({ blockedReason: 'NSFWLevel' })]);
 

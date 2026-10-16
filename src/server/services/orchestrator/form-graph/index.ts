@@ -16,8 +16,10 @@ import { createFluxKontextInput } from './flux-kontext.handler';
 import { createFlux2Input } from './flux2.handler';
 import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
+import { createFlux3KleinInput } from './flux3-klein.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
+import { createKrea3Input } from './krea3.handler';
 import { createImagen4Input } from './imagen4.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
@@ -38,7 +40,6 @@ import { createNanoBananaInput } from './nano-banana.handler';
 import { createWanImageInput } from './wan-image.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 import { createMochiInput } from './mochi.handler';
-import { createSoraInput } from './sora.handler';
 import { createHunyuanInput } from './hunyuan.handler';
 import { createFlux3VideoInput } from './flux3-video.handler';
 import { createMiniMaxInput } from './minimax.handler';
@@ -72,8 +73,10 @@ export { createFluxKontextInput } from './flux-kontext.handler';
 export { createFlux2Input } from './flux2.handler';
 export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
+export { createFlux3KleinInput } from './flux3-klein.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
+export { createKrea3Input } from './krea3.handler';
 export { createImagen4Input } from './imagen4.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
@@ -94,7 +97,6 @@ export { createNanoBananaInput } from './nano-banana.handler';
 export { createWanImageInput } from './wan-image.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 export { createMochiInput } from './mochi.handler';
-export { createSoraInput } from './sora.handler';
 export { createHunyuanInput } from './hunyuan.handler';
 export { createFlux3VideoInput } from './flux3-video.handler';
 export { createMiniMaxInput } from './minimax.handler';
@@ -178,11 +180,17 @@ function createStep(
     case 'Flux2Klein_4B_base':
       return createFlux2KleinInput(data, handlerCtx);
 
+    case 'Flux3Klein':
+    case 'Flux3Klein_base':
+      return createFlux3KleinInput(data, handlerCtx);
+
     case 'Boogu':
       return createBooguInput(data, handlerCtx);
 
     case 'Krea2':
       return createKrea2Input(data, handlerCtx);
+    case 'Krea3':
+      return createKrea3Input(data, handlerCtx);
 
     case 'Imagen4':
       return createImagen4Input(data, handlerCtx);
@@ -259,9 +267,6 @@ function createStep(
 
     case 'Mochi':
       return createMochiInput(data, handlerCtx);
-
-    case 'Sora2':
-      return createSoraInput(data, handlerCtx);
 
     case 'HyV1':
       return createHunyuanInput(data, handlerCtx);

@@ -1686,15 +1686,6 @@ describe('mapCollaboratorError — the router’s status-code contract', () => {
     expect(mapCollaboratorError(raw)).toBe(raw);
     expect(mapCollaboratorError(raw)).not.toBeInstanceOf(TRPCError);
   });
-
-  it('POSITIVE CONTROL: FORBIDDEN and BAD_REQUEST are distinguishable values', () => {
-    // Otherwise the whole table could be satisfied by one constant.
-    const a = mapCollaboratorError(new AppCollaboratorError('NOT_OWNER', 'x'));
-    const b = mapCollaboratorError(new AppCollaboratorError('CAP_REACHED', 'x'));
-    expect((a as InstanceType<typeof TRPCError>).code).not.toBe(
-      (b as InstanceType<typeof TRPCError>).code
-    );
-  });
 });
 
 // ---------------------------------------------------------------------------

@@ -5,9 +5,13 @@ import { requiresGrant } from '$lib/server/access';
 import {
   CSAM_CONTENTS,
   CSAM_CONTENT_KEYS,
+  getDatasetItemStates,
   getTrainingVersionDetail,
+  getTrainingWorkflowDetail,
   moderateTrainingData,
   reportTrainingDataCsam,
+  type TrainingVersionDetail,
+  type WorkflowDataset,
 } from '$lib/server/training-moderation.service';
 
 const idSchema = z.coerce.number().int().positive().max(2_147_483_647);
@@ -19,8 +23,35 @@ export const load: PageServerLoad = async ({ params }) => {
   const detail = await getTrainingVersionDetail(versionId.data);
   if (!detail) error(404, 'Model version not found.');
 
-  return { detail, csamContents: CSAM_CONTENTS };
+  const studioDataset = loadStudioDataset(detail);
+  return {
+    detail,
+    csamContents: CSAM_CONTENTS,
+    studioDataset,
+    studioItemStates: studioDataset.then((loaded) =>
+      loaded?.ok ? getDatasetItemStates(loaded.dataset) : {}
+    ),
+  };
 };
+
+type StudioDataset =
+  | { ok: true; workflowId: string; dataset: WorkflowDataset }
+  | { ok: false; error: string };
+
+/** Never rejects: `studioItemStates` chains off it, and a rejection there has no reader. */
+async function loadStudioDataset({
+  studioWorkflowId,
+}: TrainingVersionDetail): Promise<StudioDataset | null> {
+  if (!studioWorkflowId) return null;
+  try {
+    const loaded = await getTrainingWorkflowDetail(studioWorkflowId);
+    if (!loaded.ok) return { ok: false, error: loaded.error };
+    return { ok: true, workflowId: loaded.detail.workflowId, dataset: loaded.detail.dataset };
+  } catch (e) {
+    console.error('[training-data] studio dataset read failed', e);
+    return { ok: false, error: 'The training workflow could not be read.' };
+  }
+}
 
 const rule = async (event: RequestEvent, approve: boolean) => {
   const versionId = idSchema.safeParse(event.params.versionId);

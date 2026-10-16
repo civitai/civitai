@@ -11,6 +11,7 @@ import {
 } from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { scanLabelCopyJob } from '~/server/jobs/scan-label-copy';
+import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
@@ -83,6 +84,8 @@ import { createDisconnectHandler } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
+import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs';
+import { creatorServiceDealFileJobs } from '~/server/jobs/creator-service-deal-file-jobs';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -269,6 +272,8 @@ export const jobs: Job[] = [
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
   ...placementJobs,
+  ...creatorServiceDealJobs,
+  ...creatorServiceDealFileJobs,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,
@@ -286,6 +291,7 @@ export const jobs: Job[] = [
   appealDecisionRecordsJob,
   appealTrainingCopyJob,
   scanLabelCopyJob,
+  scanLabelCopySweepJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
   ...crucibleJobs,

@@ -12,6 +12,7 @@ import type { PlannerActions } from './props';
 
 export interface DrawerProps {
   host: PlannerHost;
+  activeTag: string | undefined;
   post: PlannerPost;
   detail: PlannerPostDetail | null;
   detailLoading: boolean;
@@ -46,13 +47,31 @@ export function renderDrawer(props: DrawerProps): TemplateResult {
             ${formatDateTime(new Date(post.publishedAt))}
           </div>
         </div>
-        <civitai-button
-          variant="subtle"
-          size="sm"
-          aria-label="Close"
-          @click=${() => actions.close()}
-          >✕</civitai-button
-        >
+        <div class="drawer-nav">
+          <civitai-button
+            variant="subtle"
+            size="sm"
+            aria-label="Previous post"
+            ?disabled=${!props.prev}
+            @click=${() => props.prev && actions.open(props.prev)}
+            >‹</civitai-button
+          >
+          <civitai-button
+            variant="subtle"
+            size="sm"
+            aria-label="Next post"
+            ?disabled=${!props.next}
+            @click=${() => props.next && actions.open(props.next)}
+            >›</civitai-button
+          >
+          <civitai-button
+            variant="subtle"
+            size="sm"
+            aria-label="Close"
+            @click=${() => actions.close()}
+            >✕</civitai-button
+          >
+        </div>
       </div>
 
       ${renderMediaStrip({
@@ -122,7 +141,16 @@ export function renderDrawer(props: DrawerProps): TemplateResult {
         ? html`<div class="section">
             <h4>Tags</h4>
             <div class="pills">
-              ${detail.tags.map((t) => html`<span class="pill">#${t}</span>`)}
+              ${detail.tags.map(
+                (t) => html`<button
+                  type="button"
+                  class="plain pill tag"
+                  aria-pressed=${t === props.activeTag ? 'true' : 'false'}
+                  @click=${() => actions.setTag(t === props.activeTag ? undefined : t)}
+                >
+                  #${t}
+                </button>`
+              )}
             </div>
           </div>`
         : nothing}
@@ -168,19 +196,6 @@ export function renderDrawer(props: DrawerProps): TemplateResult {
                 >View post →</a
               >`}
         </div>
-      </div>
-
-      <div class="nav-posts">
-        ${props.prev
-          ? html`<button class="plain more" @click=${() => actions.open(props.prev!)}>
-              ‹ Previous post
-            </button>`
-          : html`<span></span>`}
-        ${props.next
-          ? html`<button class="plain more" @click=${() => actions.open(props.next!)}>
-              Next post ›
-            </button>`
-          : html`<span></span>`}
       </div>
     </aside>
   `;
@@ -293,6 +308,17 @@ export const drawerStyles = css`
     background: var(--civitai-color-surface-2);
     border: 1px solid var(--civitai-color-border);
   }
+  button.pill.tag {
+    cursor: pointer;
+  }
+  button.pill.tag:hover {
+    border-color: var(--civitai-color-primary);
+  }
+  button.pill.tag[aria-pressed='true'] {
+    color: var(--civitai-color-primary);
+    border-color: var(--civitai-color-primary);
+    background: color-mix(in srgb, var(--civitai-color-primary) 12%, transparent);
+  }
   .description {
     white-space: pre-wrap;
     color: var(--civitai-color-text);
@@ -333,10 +359,11 @@ export const drawerStyles = css`
     gap: 12px;
     font-size: 13px;
   }
-  .nav-posts {
+  .drawer-nav {
     display: flex;
-    justify-content: space-between;
-    font-size: 13px;
+    flex: none;
+    align-items: center;
+    gap: 2px;
   }
 
   @media (max-width: 1023px) {

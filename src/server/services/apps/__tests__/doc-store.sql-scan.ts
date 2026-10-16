@@ -7,11 +7,14 @@
 // writes `$1, $2` into them. A reference to an unknown appdata relation, or one
 // that is not in a FROM / JOIN / UPDATE / INTO position, is itself a violation.
 //
-// The one exception, REVIEW MAINTENANCE: a SELECT or DELETE whose every alias carries
+// Two exceptions. REVIEW MAINTENANCE: a SELECT or DELETE whose every alias carries
 // `<alias>.ns LIKE 'rev:%'` in place of `ns = $2`. It must still carry `app_id = $1`,
 // except a SELECT reading `usage_app` / `doc` (the sweep's listing). Such a statement only
 // works inside the store's maintenance transaction (RLS admits nothing else);
 // `isReviewMaintenanceStatement` names them so the isolation test can pin where they live.
+// ACCOUNT-WIPE ENUMERATION: a SELECT on `usage_user` / `doc_mark` only, whose every alias
+// carries `<alias>.user_id = $1::int` in place of the app and namespace predicates. It only
+// works inside the store's account-wipe transaction; `isAccountWipeStatement` names it.
 
 export const APPDATA_TABLES = [
   'doc',
@@ -23,8 +26,11 @@ export const APPDATA_TABLES = [
   'usage_user',
 ] as const;
 
-/** `appdata.app_id` / `appdata.ns` / `appdata.review_maintenance` are RLS settings, not relations. */
-const SETTING_NAMES = new Set(['app_id', 'ns', 'review_maintenance']);
+/** The RLS settings (`appdata.<name>`), which are not relations. */
+const SETTING_NAMES = new Set(['app_id', 'ns', 'review_maintenance', 'account_wipe_uid']);
+
+/** The two tables that record which namespaces a user has rows in. */
+const ACCOUNT_WIPE_TABLES = new Set(['usage_user', 'doc_mark']);
 
 const NOT_AN_ALIAS = new Set([
   'where',
@@ -55,7 +61,7 @@ export function scanStatement(sql: string): string[] {
     /\bappdata\b/i.test(
       sql
         .replace(/appdata\.(?:[a-z_]+)/g, '')
-        .replace(/'appdata\.(?:app_id|ns|review_maintenance)'/g, '')
+        .replace(/'appdata\.(?:app_id|ns|review_maintenance|account_wipe_uid)'/g, '')
     )
   ) {
     violations.push('appdata referenced in a non-canonical spelling');
@@ -107,6 +113,16 @@ export function scanStatement(sql: string): string[] {
       }
       continue;
     }
+    if (new RegExp(`\\b${a}\\.user_id\\s*=\\s*\\$1::int\\b`).test(sql)) {
+      // Account-wipe enumeration: read only, and only the two per-user tables.
+      if (!/^\s*SELECT\b/i.test(sql)) {
+        violations.push(`account-wipe statement on appdata.${table} is not a SELECT`);
+      }
+      if (!ACCOUNT_WIPE_TABLES.has(table)) {
+        violations.push(`account-wipe statement reads appdata.${table}`);
+      }
+      continue;
+    }
     if (!new RegExp(`\\b${a}\\.app_id\\s*=\\s*\\$1(?![0-9])`).test(sql)) {
       violations.push(`appdata.${table} ${alias} lacks ${alias}.app_id = $1`);
     }
@@ -120,4 +136,9 @@ export function scanStatement(sql: string): string[] {
 /** A statement written in the review-maintenance shape (`ns LIKE 'rev:%'`). */
 export function isReviewMaintenanceStatement(sql: string): boolean {
   return /\.ns\s+LIKE\s+'rev:%'/.test(sql);
+}
+
+/** A statement written in the account-wipe enumeration shape (`user_id = $1::int`). */
+export function isAccountWipeStatement(sql: string): boolean {
+  return /\.user_id\s*=\s*\$1::int\b/.test(sql);
 }

@@ -28,6 +28,7 @@ export function StickerInventoryCard({ flat }: { flat?: boolean } = {}) {
   if (flat && features.stickerBook && currentUser?.username)
     return (
       <PointerCard
+        id="stickers"
         icon={<IconSticker size={18} />}
         title="Your sticker inventory"
         description="Browse and manage your stickers in the Stickerbook."

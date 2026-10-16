@@ -17,7 +17,7 @@ packages/civitai-db-schema/src/schema-drift/drift-baseline.json
 # same failure it prevents: prettier collapses short arrays in a way JSON.stringify will not
 # reproduce, so with prettier owning the format a re-dump of this file was a 21,522-line diff
 # — while the gate's own STALE message instructs the operator to run exactly that command.
-packages/civitai-db-schema/src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json
+packages/civitai-db-schema/src/schema-drift/__tests__/fixtures/catalog-production-*.json
 
 # Prisma generate owns the format of these. Prettier re-wraps the long
 # `export type X = (typeof X)[keyof typeof X];` lines it emits, which makes every

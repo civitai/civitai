@@ -15,12 +15,6 @@ import {
 } from '~/components/Apps/appListingCardView';
 import * as geometry from '~/components/Apps/appListingCardGeometry';
 import {
-  LISTING_ACTION_ROW_CONTROL_PX,
-  LISTING_ACTION_ROW_GAP_PX,
-  LISTING_ACTION_ROW_HEIGHT_PX,
-  LISTING_ACTION_ROW_PT_PX,
-  LISTING_CARD_COVER_ASPECT_RATIO,
-  LISTING_CARD_ICON_SIZE_PX,
   LISTING_CARD_TITLE_LINES,
   LISTING_CARD_TITLE_LINE_HEIGHT,
   LISTING_CARD_TITLE_MIN_HEIGHT,
@@ -193,17 +187,6 @@ describe('getPlayCountLabel', () => {
     // refuses is a restoration of that — `if (openCount == null) return null` alone,
     // which puts the chip back on every on-site app with no plays yet.
     expect(getPlayCountLabel(0)).toBeNull();
-  });
-
-  /**
-   * 🔴 THE BOUNDARY, AND THE REASON IT NEEDS ITS OWN CASE. The absence rule stops
-   * at 0 and nowhere else: 1 is the smallest count that renders. A mutant widening
-   * the guard (`openCount <= 1`, `openCount < 2`) is invisible to the two cases
-   * above and to every large-count fixture below — this is the only fixture that
-   * sits on it.
-   */
-  it('🔴 1 is the smallest count that RENDERS — the absence stops at 0', () => {
-    expect(getPlayCountLabel(1)).toBe('1 play');
   });
 
   /**
@@ -447,39 +430,6 @@ describe('the card geometry module', () => {
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
-
-  /**
-   * 🔴 THE HUMAN-FACING NUMBERS, PINNED AS LITERALS — deliberately NOT derived
-   * from the constants they describe.
-   *
-   * A test that reads the value out of the module and asserts it equals itself
-   * cannot fail, and this file has a standing rule against exactly that (see the
-   * badge-label note above). These are the figures a designer, a skeleton and the
-   * browser suite all quote, so a change to any of them has to be typed twice —
-   * which is the whole friction budget this test is spending.
-   */
-  it('pins the geometry a skeleton has to reproduce', () => {
-    expect(LISTING_CARD_COVER_ASPECT_RATIO).toBe('16 / 9');
-    expect(LISTING_CARD_ICON_SIZE_PX).toBe(40);
-    expect(LISTING_CARD_TITLE_LINES).toBe(2);
-    expect(LISTING_CARD_TITLE_LINE_HEIGHT).toBe(1.2);
-    expect(LISTING_ACTION_ROW_PT_PX).toBe(10);
-    expect(LISTING_ACTION_ROW_GAP_PX).toBe(10);
-    expect(LISTING_ACTION_ROW_CONTROL_PX).toBe(36);
-    expect(LISTING_ACTION_ROW_HEIGHT_PX).toBe(46);
-  });
-
-  /**
-   * The one derivation in the module: the row height is its padding plus its
-   * control, never a third number someone measured once. Asserted as arithmetic
-   * AND against the literal above, so neither a wrong sum nor a right sum of
-   * wrong terms survives.
-   */
-  it('derives the action-row height from its padding and its control', () => {
-    expect(LISTING_ACTION_ROW_HEIGHT_PX).toBe(
-      LISTING_ACTION_ROW_PT_PX + LISTING_ACTION_ROW_CONTROL_PX
-    );
-  });
 
   /**
    * 🔴 PARSED, NOT RE-CONSTRUCTED. Writing

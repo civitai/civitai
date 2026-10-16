@@ -11,32 +11,17 @@ import type * as GameFrame from '$lib/server/game-frame';
 const setReportStatus = vi.fn();
 const getReports = vi.fn(async () => ({ items: [], totalItems: 0, page: 1, limit: 20 }));
 const updateReportNotes = vi.fn();
-const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
-const removePlacement = vi.fn();
 const canAccess = vi.fn(() => true);
 
 const getReportedGame = vi.fn();
-const getReportedModelId = vi.fn();
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
+  getReportStatusCounts: vi.fn(async () => ({})),
   setReportStatus,
   updateReportNotes,
   getReportedGame,
-  getReportedModelId,
-  getReportedModelStates: vi.fn(async () => []),
   getGameMirrors: vi.fn(async () => []),
 }));
-vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
-vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
-const modelActions = {
-  unpublishReportedModel: vi.fn(),
-  takeDownReportedModel: vi.fn(),
-  bringBackReportedModel: vi.fn(),
-  setReportedModelSfwOnly: vi.fn(),
-  setReportedModelMinor: vi.fn(),
-  unsetReportedModelMinor: vi.fn(),
-};
-vi.mock('$lib/server/model-moderation.service', () => modelActions);
 const delistGame = vi.fn();
 vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   ...(await importOriginal<typeof GameFrame>()),
@@ -55,7 +40,7 @@ let grants: Record<string, true> = {};
 
 /**
  * A REAL `FormData`, not a Map: `Map.get` gives `undefined` where `FormData.get` gives `null`, and
- * `Number()` maps those to NaN and 0 — opposite sides of `removePlacement`'s `Number.isInteger`.
+ * `Number()` maps those to NaN and 0 — opposite sides of an action's `Number.isInteger` check.
  */
 const event = (form: Record<string, string> = {}, slug = 'image') => {
   const data = new FormData();
@@ -131,91 +116,6 @@ describe('setStatus action', () => {
 
     expect(failure(result).status).toBe(400);
     expect(setReportStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('actionResolvedPosts action', () => {
-  it('counts what actually changed, not how many ids it looped over', async () => {
-    getResolvedPostReportIds.mockResolvedValue([1, 2, 3]);
-    setReportStatus
-      .mockResolvedValueOnce({ ok: true, changed: true })
-      .mockResolvedValueOnce({ ok: true, changed: false })
-      .mockResolvedValueOnce({ ok: false, error: 'gone' });
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(result).toMatchObject({ success: true, actioned: 1, skipped: 2, found: 3 });
-  });
-
-  it('sweeps as Actioned — the content was removed, so the reports were right', async () => {
-    getResolvedPostReportIds.mockResolvedValue([1]);
-
-    await actions.actionResolvedPosts(event());
-
-    expect(setReportStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ status: ReportStatus.Actioned })
-    );
-  });
-
-  it('flags a full batch as probably having more behind it', async () => {
-    getResolvedPostReportIds.mockResolvedValue(Array.from({ length: 500 }, (_, i) => i + 1));
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(result).toMatchObject({ more: true, found: 500 });
-  });
-
-  it('does not claim a sweep when there was nothing to sweep', async () => {
-    getResolvedPostReportIds.mockResolvedValue([]);
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(failure(result).status).toBe(400);
-    expect(setReportStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('removePlacement action', () => {
-  it('is gated on /reports even though the page load is not', async () => {
-    canAccess.mockReturnValue(false);
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(canAccess).toHaveBeenCalledWith(MOD, '/reports');
-    expect(failure(result).status).toBe(403);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('delegates to the service so escrow settles in one place', async () => {
-    removePlacement.mockResolvedValue({ ok: true });
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(removePlacement).toHaveBeenCalledWith({ placementId: 5, moderatorId: 7 });
-    expect(result).toMatchObject({ success: true, placementRemoved: 5 });
-  });
-
-  it('rejects a non-positive placement id without reaching the service', async () => {
-    const result = await actions.removePlacement(event({ placementId: '0' }));
-
-    expect(failure(result).status).toBe(400);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('rejects a missing placement id — absent reads as 0, not as NaN', async () => {
-    const result = await actions.removePlacement(event());
-
-    expect(failure(result).status).toBe(400);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('surfaces an escrow failure rather than reporting the placement removed', async () => {
-    // A refusal here is money that did not move.
-    removePlacement.mockResolvedValue({ ok: false, error: 'Escrow already settled.' });
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(failure(result)).toEqual({ status: 400, error: 'Escrow already settled.' });
   });
 });
 
@@ -302,98 +202,5 @@ describe('delistGame action', () => {
     getReportedGame.mockResolvedValue(null);
     expect(failure(await delist()).status).toBe(410);
     expect(delistGame).not.toHaveBeenCalled();
-  });
-});
-
-describe('moderateModel action', () => {
-  const moderate = (form: Record<string, string>, slug = 'model') =>
-    actions.moderateModel(event({ id: '55', ...form }, slug));
-
-  beforeEach(() => {
-    grants = { 'model.takeDown': true };
-    getReportedModelId.mockResolvedValue(4201);
-    for (const fn of Object.values(modelActions)) fn.mockResolvedValue({ ok: true });
-  });
-
-  it('acts on the model the REPORT names, and never touches the report', async () => {
-    // A posted modelId is ignored: a stale tab must not act on one model while a moderator believes
-    // they are looking at another.
-    const result = await moderate({ modelAction: 'takeDown', modelId: '99' });
-
-    expect(getReportedModelId).toHaveBeenCalledWith(55);
-    expect(modelActions.takeDownReportedModel).toHaveBeenCalledWith(4201);
-    // Closing the report is the Report status buttons' job. Actioned pays the reporters, which must
-    // not happen as a side effect of a model button.
-    expect(setReportStatus).not.toHaveBeenCalled();
-    expect(result).toEqual({ success: true, moderated: 'Taken down model #4201' });
-  });
-
-  it.each([
-    ['setMinor', 'setReportedModelMinor', [4201], 'Flagged as minor'],
-    ['unsetMinor', 'unsetReportedModelMinor', [4201], 'Unflagged as minor'],
-    ['setSfwOnly', 'setReportedModelSfwOnly', [4201, true], 'Set as SFW-only'],
-    ['unsetSfwOnly', 'setReportedModelSfwOnly', [4201, false], 'Allowed NSFW on'],
-    ['bringBack', 'bringBackReportedModel', [4201], 'Brought back'],
-  ] as const)('%s calls %s', async (modelAction, fn, args, done) => {
-    const result = await moderate({ modelAction });
-    expect(modelActions[fn]).toHaveBeenCalledWith(...args);
-    expect(result).toEqual({ success: true, moderated: `${done} model #4201` });
-  });
-
-  it.each(['takeDown', 'bringBack'])('%s needs model.takeDown — both directions, one grant', async (modelAction) => {
-    grants = {};
-    expect(failure(await moderate({ modelAction }))).toEqual({
-      status: 403,
-      error: 'This action requires the “Take down a model (ownership / claim)” permission.',
-    });
-    expect(modelActions.takeDownReportedModel).not.toHaveBeenCalled();
-    expect(modelActions.bringBackReportedModel).not.toHaveBeenCalled();
-  });
-
-  it('has no republish: undoing a violation unpublish is an appeal, not a report button', async () => {
-    expect(failure(await moderate({ modelAction: 'republish' })).status).toBe(400);
-  });
-
-  it('has no delete: a report is answered by taking a model down, never by destroying it', async () => {
-    expect(failure(await moderate({ modelAction: 'delete' })).status).toBe(400);
-    expect(setReportStatus).not.toHaveBeenCalled();
-  });
-
-  it('passes a refusal from the main app straight through', async () => {
-    modelActions.takeDownReportedModel.mockResolvedValue({ ok: false, error: 'Take down returned 500.' });
-
-    expect(failure(await moderate({ modelAction: 'takeDown' }))).toEqual({
-      status: 400,
-      error: 'Take down returned 500.',
-    });
-  });
-
-  it('flags as minor only for a minor reason the moderator left ticked', async () => {
-    await moderate({ modelAction: 'unpublish', reason: 'mature-underage', alsoFlagMinor: 'on' });
-    expect(modelActions.unpublishReportedModel).toHaveBeenLastCalledWith({
-      modelId: 4201,
-      reason: 'mature-underage',
-      customMessage: undefined,
-      alsoFlagMinor: true,
-    });
-
-    // A forged tick on a reason that says nothing about minors is dropped.
-    await moderate({ modelAction: 'unpublish', reason: 'spam', alsoFlagMinor: 'on' });
-    expect(modelActions.unpublishReportedModel).toHaveBeenLastCalledWith(
-      expect.objectContaining({ reason: 'spam', alsoFlagMinor: false })
-    );
-  });
-
-  it('refuses an unpublish without a reason, or "other" without a message', async () => {
-    expect(failure(await moderate({ modelAction: 'unpublish', reason: 'bogus' })).status).toBe(400);
-    expect(failure(await moderate({ modelAction: 'unpublish', reason: 'other' })).status).toBe(400);
-    expect(modelActions.unpublishReportedModel).not.toHaveBeenCalled();
-  });
-
-  it("only runs on the model queue, and refuses a report that is not a model's", async () => {
-    expect(failure(await moderate({ modelAction: 'takeDown' }, 'image')).status).toBe(403);
-    getReportedModelId.mockResolvedValue(null);
-    expect(failure(await moderate({ modelAction: 'takeDown' })).status).toBe(410);
-    expect(modelActions.takeDownReportedModel).not.toHaveBeenCalled();
   });
 });

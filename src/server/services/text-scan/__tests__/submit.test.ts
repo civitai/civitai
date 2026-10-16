@@ -245,6 +245,20 @@ describe('scanEntity', () => {
     expect(em.upsert).not.toHaveBeenCalled();
   });
 
+  it('resubmits unchanged text whose row was parked Failed, re-arming its retries', async () => {
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    const hash = vi.mocked(em.upsert).mock.calls[0][0].update.contentHash;
+    vi.clearAllMocks();
+    em.findUnique.mockResolvedValue(row({ status: 'Failed', contentHash: hash, retryCount: 9 }));
+    expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toMatchObject({
+      status: 'submitted',
+    });
+    expect(vi.mocked(em.upsert).mock.calls[0][0].update).toMatchObject({
+      status: 'Pending',
+      retryCount: 0,
+    });
+  });
+
   it('skips text already in flight, unless forced or retried', async () => {
     await scanEntity({ entityType: 'Post', entityId: 7 });
     const hash = vi.mocked(em.upsert).mock.calls[0][0].update.contentHash;

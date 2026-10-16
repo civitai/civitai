@@ -1,8 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import {
@@ -21,13 +19,13 @@
     rows,
     canEdit,
     error,
-    saved,
+    notice,
   }: {
     windowDays: number;
     rows: QuotaRow[];
     canEdit: boolean;
     error: string | null;
-    saved: number | null;
+    notice: string | null;
   } = $props();
 
   const STATUS_CLASS: Record<QuotaStatus, string> = {
@@ -41,16 +39,6 @@
   const days = $derived(rows[0]?.days.map((d) => d.day) ?? []);
   const count = (row: QuotaRow, status: QuotaStatus) =>
     row.days.filter((d) => d.status === status).length;
-
-  let active = $state(true);
-
-  // The default reset clears the inputs but not `active`, which is component state.
-  const afterSave: SubmitFunction =
-    () =>
-    async ({ result, update }) => {
-      await update();
-      if (result.type === 'success') active = true;
-    };
 </script>
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -74,6 +62,7 @@
             {#each days as day (day)}
               <TableHead class="text-right text-xs">{day.slice(5)}</TableHead>
             {/each}
+            {#if canEdit}<TableHead><span class="sr-only">Remove</span></TableHead>{/if}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -91,6 +80,16 @@
                   <span class={['rounded px-1.5 py-0.5', STATUS_CLASS[d.status]]}>{d.votes}</span>
                 </TableCell>
               {/each}
+              {#if canEdit}
+                <TableCell class="text-right">
+                  {#if row.onRoster}
+                    <form method="POST" action="?/removeParticipant" use:enhance>
+                      <input type="hidden" name="userId" value={row.userId} />
+                      <Button type="submit" size="sm" variant="outline">Remove</Button>
+                    </form>
+                  {/if}
+                </TableCell>
+              {/if}
             </TableRow>
           {/each}
         </TableBody>
@@ -99,10 +98,10 @@
   {/if}
 
   {#if canEdit}
-    <form method="POST" action="?/setQuota" use:enhance={afterSave} class="mt-4 flex flex-wrap items-end gap-3">
+    <form method="POST" action="?/setQuota" use:enhance class="mt-4 flex flex-wrap items-end gap-3">
       <div>
-        <Label for="quota-user" class="text-xs text-dark-2">User id</Label>
-        <Input id="quota-user" name="userId" inputmode="numeric" required class="mt-1 w-36" />
+        <Label for="quota-user" class="text-xs text-dark-2">User id or username</Label>
+        <Input id="quota-user" name="user" required class="mt-1 w-48" />
       </div>
       <div>
         <Label for="quota-votes" class="text-xs text-dark-2">Daily votes</Label>
@@ -116,16 +115,16 @@
           class="mt-1 w-28"
         />
       </div>
-      <div class="flex items-center gap-2 pb-2">
-        <Checkbox id="quota-active" name="active" bind:checked={active} />
-        <Label for="quota-active" class="text-sm text-dark-2">On the roster</Label>
-      </div>
-      <Button type="submit" size="sm">Save quota</Button>
+      <Button type="submit" size="sm">Add participant</Button>
     </form>
+    <p class="mt-2 text-xs text-dark-2">
+      Adding someone opens the Scan Labels page for them; Remove closes it. Adding someone already on
+      the roster updates their daily votes.
+    </p>
     {#if error}
       <ErrorAlert message={error} class="mt-2" />
-    {:else if saved}
-      <p class="mt-2 text-sm text-emerald-300">Saved quota for #{saved}.</p>
+    {:else if notice}
+      <p class="mt-2 text-sm text-emerald-300">{notice}</p>
     {/if}
   {/if}
 </section>

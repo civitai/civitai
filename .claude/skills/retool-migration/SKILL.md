@@ -259,7 +259,9 @@ Two blind spots in the export itself, both of which need a screenshot to close:
 **Read [`apps/moderator/CLAUDE.md`](../../../apps/moderator/CLAUDE.md) first** — Svelte 5 idiom, shadcn
 usage, styling tokens and component placement are defined there and apply to every page in the app,
 whether it came from Retool or the main app. What follows is only the Retool-specific part. A
-neighbouring route (`routes/reports`, `routes/blocklists`) is a good model.
+neighbouring route (`routes/reports`, `routes/blocklists`) is a good model. A **report queue** is not
+modelled on a neighbour but built to [`docs/moderator-app/report-queue-pattern.md`](../../../docs/moderator-app/report-queue-pattern.md),
+under `routes/reports/<type>` rather than `routes/retool/`.
 
 - **Route**: `apps/moderator/src/routes/retool/<slug>/+page.server.ts` + `+page.svelte`
 - **Data**: `load` calls a service in `$lib/server/<domain>.service.ts`; queries go through

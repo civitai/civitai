@@ -19,6 +19,7 @@ import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
 
 const SUPERNOVA = 'score:supernova';
 export const LEGEND = 'score:legend';
+export const MYTHIC = 'score:mythic';
 
 type ShowcaseCandidate = {
   userId: number;
@@ -31,14 +32,18 @@ type ShowcaseCandidate = {
 
 type ShowcaseRow = Omit<ShowcaseCandidate, 'achievedMonth'>;
 
+/** Tiers listed for as long as the holder is in good standing, not only the month they cross. */
+const ALL_TIME = [MYTHIC, LEGEND];
+
 const utcMonth = (now: Date) => now.toISOString().slice(0, 7);
 
 const utcPreviousMonthStart = (now: Date) =>
   new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
 
 /**
- * Every Legend, and every observed Supernova crossing since the start of last UTC month, so a read at
- * any point in the cache's life can apply its own month's window. A silent backfill grant is not new.
+ * Every Mythic and Legend, and every observed Supernova crossing since the start of last UTC month, so
+ * a read at any point in the cache's life can apply its own month's window. A silent backfill grant
+ * is not new.
  */
 async function getShowcaseCandidates(pg: AugmentedPool, now: Date) {
   const query = await pg.cancellableQuery<ShowcaseCandidate>(
@@ -47,7 +52,7 @@ async function getShowcaseCandidates(pg: AugmentedPool, now: Date) {
       to_char(ucm."achievedAt", 'YYYY-MM') AS "achievedMonth", m."cosmeticId" AS "badgeId"
     FROM "UserCreatorMilestone" ucm
     JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
-    WHERE ucm."milestoneKey" = $1
+    WHERE ucm."milestoneKey" = ANY($1::text[])
       OR (
         ucm."milestoneKey" = $2
         AND ucm."achievedAt" >= $3::timestamp
@@ -55,7 +60,7 @@ async function getShowcaseCandidates(pg: AugmentedPool, now: Date) {
       )
     ORDER BY ucm."achievedAt", ucm."userId"
     `,
-    [LEGEND, SUPERNOVA, toUtcTimestamp(utcPreviousMonthStart(now))]
+    [ALL_TIME, SUPERNOVA, toUtcTimestamp(utcPreviousMonthStart(now))]
   );
   return query.result();
 }
@@ -84,9 +89,9 @@ async function getShowcaseStanding(
 }
 
 /**
- * Every Legend, and the Supernovas whose crossing was observed this UTC month, held by creators in good
- * standing who show the tier's badge. Standing and privacy are read live, so only the candidate list
- * can be stale.
+ * Every Mythic and Legend, and the Supernovas whose crossing was observed this UTC month, held by
+ * creators in good standing who show the tier's badge. Standing and privacy are read live, so only
+ * the candidate list can be stale.
  */
 export async function getShowcaseRows(
   pg: AugmentedPool,
@@ -98,7 +103,7 @@ export async function getShowcaseRows(
 ) {
   const month = utcMonth(now);
   const inWindow = (candidates ?? (await getShowcaseCandidates(pg, now))).filter(
-    (row) => row.milestoneKey === LEGEND || row.achievedMonth === month
+    (row) => ALL_TIME.includes(row.milestoneKey) || row.achievedMonth === month
   );
   const standing = inWindow.length
     ? await getShowcaseStanding(pg, [...new Set(inWindow.map((row) => row.userId))], {
@@ -116,6 +121,7 @@ export async function getShowcaseRows(
   return {
     newSupernovas: rows.filter((row) => row.milestoneKey === SUPERNOVA).reverse(),
     legends: rows.filter((row) => row.milestoneKey === LEGEND),
+    mythics: rows.filter((row) => row.milestoneKey === MYTHIC),
   };
 }
 
@@ -148,8 +154,8 @@ export function toLegendStatus(legend: { achievedAt: Date; seenAt: Date | null }
 }
 
 export async function getCreatorShowcase(source: ShowcaseSource = {}) {
-  const { newSupernovas, legends } = await getVisibleShowcaseRows(source);
-  const userIds = [...new Set([...newSupernovas, ...legends].map((row) => row.userId))];
+  const { newSupernovas, legends, mythics } = await getVisibleShowcaseRows(source);
+  const userIds = [...new Set([...newSupernovas, ...legends, ...mythics].map((row) => row.userId))];
   const [users, profilePictures, cosmetics] = await Promise.all([
     userBasicCache.fetch(userIds),
     getProfilePicturesForUsers(userIds),
@@ -169,5 +175,6 @@ export async function getCreatorShowcase(source: ShowcaseSource = {}) {
       achievedAt: row.achievedAt,
     })),
     legends: legends.map((row) => ({ user: withUser(row), ...toLegendStatus(row) })),
+    mythics: mythics.map((row) => ({ user: withUser(row), ...toLegendStatus(row) })),
   };
 }

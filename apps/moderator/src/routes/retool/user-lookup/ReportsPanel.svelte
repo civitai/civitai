@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { LayoutData } from './$types';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -34,7 +35,7 @@
   // holding them up. `statusFilter` is part of the derived expression, so changing it rebuilds the
   // promise and the template re-awaits — no state to go stale.
   let statusFilter = $state<string[]>([]);
-  const reports = $derived(browser ? fetchUserReports(userId, statusFilter) : null);
+  const reports = $derived(browser ? fetchUserReports(userId, statusFilter) : SSR_PENDING);
 
   // Retool's select13 (Reason) and select47 (ReportType), both client-side over the fetched rows.
   let receivedFilters = $state<Record<string, string>>({});

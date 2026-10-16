@@ -32,7 +32,7 @@ const signals = $derived(
   browser ? fetch(`/api/user-signals/${userId}`).then((r): Promise<Signals> => {
     if (!r.ok) throw new Error(String(r.status));
     return r.json();
-  }) : null
+  }) : SSR_PENDING // never `: null` — see below
 );
 
 {#await signals}
@@ -47,6 +47,17 @@ const signals = $derived(
 A new `userId` produces a new promise and the template re-awaits it, so there is no state to go stale.
 `browser` keeps SSR from issuing the request. **Every `{#await}` needs a `{:catch}`** — without one a
 rejection is silent and the panel just never fills in.
+
+**The server half must be a promise that never settles, not `null`.** The moderator app exports one as
+`SSR_PENDING` from `$lib/ssr-pending`; elsewhere `new Promise(() => {})` is the whole of it. With `null`
+the server renders `{:then}` — null is not a promise — while the browser hydrates `pending`, and Svelte
+does not reconcile the two: what the browser renders lands outside the block, so when a parent `{#key}` or
+`{#if}` later swaps the panel out, its content stays on the page and the replacement renders beneath it.
+That was the model reports "stuck preview" (2026-10-14), pinned in
+`apps/moderator/src/lib/__tests__/ssr-pending.test.ts`. Wrapping the await in `{#if x}` with `: null` is
+also correct — Svelte does repair a mismatched `{#if}` — and is the form for a panel that should render
+nothing at all without JS. Neither holds once `experimental.async` is on: async SSR awaits the promise,
+and a never-settling one hangs the request.
 
 To refetch after a write, bump a counter (`?v=${version}`) — it is part of the derived expression, so
 the promise rebuilds. Don't reach for `invalidateAll()` when the data didn't come from `load`.

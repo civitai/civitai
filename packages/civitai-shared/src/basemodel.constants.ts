@@ -202,6 +202,8 @@ export const ECO = {
   // `Flux3` is the Image release, not the family root; the Dev backbone needs its own key.
   Flux3Video: 79,
   Flux3: 92,
+  Flux3Klein: 94,
+  Flux3Klein_base: 95,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -228,6 +230,7 @@ export const ECO = {
 
   // Krea AI
   Krea2: 70,
+  Krea3: 93,
 
   // Microsoft
   MAI: 71,
@@ -343,11 +346,25 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 8,
   },
   {
+    id: ECO.Flux3Klein,
+    key: 'Flux3Klein',
+    displayName: 'Flux.3 Klein',
+    familyId: 1,
+    sortOrder: 9,
+  },
+  {
+    id: ECO.Flux3Klein_base,
+    key: 'Flux3Klein_base',
+    displayName: 'Flux.3 Klein Base',
+    familyId: 1,
+    sortOrder: 10,
+  },
+  {
     id: ECO.Flux3Video,
     key: 'Flux3Video',
     displayName: 'Flux 3 Video',
     familyId: 1,
-    sortOrder: 9,
+    sortOrder: 11,
   },
 
   // Stable Diffusion Family (familyId: 2)
@@ -683,6 +700,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 20,
     sortOrder: 150,
   },
+  {
+    id: ECO.Krea3,
+    key: 'Krea3',
+    displayName: 'Krea 3',
+    familyId: 20,
+    sortOrder: 151,
+  },
 
   // Microsoft Family (familyId: 21)
   {
@@ -1001,6 +1025,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'ZImageTurbo',
   'ZImageBase',
   'Qwen',
+  'Flux3Klein',
+  'Flux3Klein_base',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1196,6 +1222,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   },
   { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
+  { ecosystemId: ECO.Krea3, supportType: 'generation', modelTypes: checkpointOnly },
+
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1210,9 +1238,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
-
-  // Sora2 - checkpoint only
-  { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Mochi - checkpoint only
   // { ecosystemId: ECO.Mochi, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1236,6 +1261,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Flux.3 - checkpoint only (FLUX 3 Image, BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3, supportType: 'generation', modelTypes: checkpointOnly },
+  // Flux.3 Klein - open weights, checkpoint and LoRA
+  { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1422,6 +1450,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Krea2,
     defaults: {
       model: { id: 3072329 },
+    },
+  },
+  {
+    ecosystemId: ECO.Krea3,
+    defaults: {
+      model: { id: 3405360 },
+      modelLocked: true,
     },
   },
   {
@@ -1655,7 +1690,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.OpenAI,
     defaults: {
-      model: { id: 1733399 },
+      model: { id: 2880272 },
       modelLocked: true,
     },
   },
@@ -1699,13 +1734,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
-    ecosystemId: ECO.Sora2,
-    defaults: {
-      model: { id: 2320065 },
-      modelLocked: true,
-    },
-  },
-  {
     ecosystemId: ECO.Vidu,
     defaults: {
       model: { id: 2623839 },
@@ -1742,6 +1770,20 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Flux3,
     defaults: {
       model: { id: 3376170 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3Klein,
+    defaults: {
+      model: { id: 3407486 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3Klein_base,
+    defaults: {
+      model: { id: 3407485 },
       modelLocked: true,
     },
   },
@@ -2192,6 +2234,14 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: loraOnly,
     support: 'partial',
   },
+  // Flux3 Klein has partial support for Flux3 Klein-base
+  {
+    sourceEcosystemId: ECO.Flux3Klein_base,
+    targetEcosystemId: ECO.Flux3Klein,
+    supportType: 'generation',
+    modelTypes: loraOnly,
+    support: 'partial',
+  },
 
   // ==========================================================================
   // AuraFlow ↔ PonyV7 (parent ↔ child)
@@ -2341,6 +2391,9 @@ export const BM = {
   Ideogram45: 111,
   Flux3: 112,
   Krea2Turbo: 113,
+  Krea3: 114,
+  Flux3Klein: 115,
+  Flux3Klein_base: 116,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2675,6 +2728,24 @@ export const licenses: LicenseRecord[] = [
     url: 'https://ideogram.ai/legal/tos',
     disableMature: true,
   },
+  {
+    id: 48,
+    // Separate from id 28: that is Krea's hosted-service ToS, this is the 22 Jun 2026
+    // open-weights licence the Krea 2 Raw and Turbo checkpoints ship under.
+    name: 'Krea 2 Community License Agreement',
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+  },
+  {
+    id: 49,
+    name: 'FLUX Kommunity License',
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/55d9cc2b0d33255ccd4fe1c9724bc3754de0ae96/LICENSE.md',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2967,6 +3038,22 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 39,
   },
   {
+    id: BM.Flux3Klein,
+    name: 'Flux.3 Klein',
+    description: 'Flux.3 Klein 5.6 billion parameter distilled model',
+    type: 'image',
+    ecosystemId: ECO.Flux3Klein,
+    licenseId: 49,
+  },
+  {
+    id: BM.Flux3Klein_base,
+    name: 'Flux.3 Klein-base',
+    description: 'Flux.3 Klein 5.6 billion parameter base model',
+    type: 'image',
+    ecosystemId: ECO.Flux3Klein_base,
+    licenseId: 49,
+  },
+  {
     id: BM.Flux3Video,
     name: 'Flux 3 Video',
     description: "Black Forest Labs' FLUX 3 video generation model with native audio",
@@ -3099,7 +3186,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Krea AI's in-house image generation model",
     type: 'image',
     ecosystemId: ECO.Krea2,
-    licenseId: 28,
+    licenseId: 48,
   },
   {
     id: BM.Krea2Turbo,
@@ -3107,6 +3194,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Krea 2 with Turbo distillation for reduced steps',
     type: 'image',
     ecosystemId: ECO.Krea2,
+    licenseId: 48,
+  },
+  {
+    id: BM.Krea3,
+    name: 'Krea 3',
+    description: "Krea AI's image model for reference-driven generation and editing",
+    type: 'image',
+    ecosystemId: ECO.Krea3,
+    hidden: true,
     licenseId: 28,
   },
 
@@ -4559,6 +4655,13 @@ export const ecosystemGroups: EcosystemGroup[] = [
     ],
     defaultEcosystemId: ECO.Flux2Klein_9B,
     sortOrder: 22,
+  },
+  {
+    id: 'Flux3Klein',
+    displayName: 'Flux.3 Klein',
+    ecosystemIds: [ECO.Flux3Klein, ECO.Flux3Klein_base],
+    defaultEcosystemId: ECO.Flux3Klein,
+    sortOrder: 23,
   },
   {
     id: 'LTXV',

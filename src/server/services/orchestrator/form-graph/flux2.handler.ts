@@ -9,7 +9,7 @@ import type {
   Flux2MaxImageGenInput,
   Flux2ProImageGenInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { flux2ModeOf, type Flux2Mode } from '~/shared/form-graph/generation/image/flux2.graph';
 import { defineHandler } from '../handlers/handler-factory';
@@ -48,7 +48,7 @@ export const createFlux2Input = defineHandler<EcosystemData<'Flux2'>, [ImageGenS
           width: data.aspectRatio?.width,
           height: data.aspectRatio?.height,
           guidanceScale: data.cfgScale,
-          numInferenceSteps: data.steps,
+          steps: data.steps,
           quantity: data.quantity ?? 1,
           seed: data.seed,
           loras: loras.length > 0 ? loras : undefined,

@@ -34,16 +34,16 @@
     reportReasonLabels,
     reportStatusBadgeClass,
     getReportItemUrl,
-    reportedPlacementId,
     reportDetail,
     gameFrameReportImage,
   } from '$lib/reports';
+  import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
+  import { browsingLevelLabels } from '@civitai/shared';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
-  import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
-  import type { ActionData, PageData } from './$types';
+  import type { PageData } from './$types';
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data }: { data: PageData } = $props();
 
   /**
    * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
@@ -73,8 +73,6 @@
     onSettled: reloadIfGone,
   });
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
-  const placementForm = new FormState({ onSuccess: null, reload: true });
-  const sweepForm = new FormState({ onSuccess: null, reload: true });
   const delistForm = new FormState({
     onSuccess: (result) => {
       confirmingDelist = null;
@@ -88,10 +86,26 @@
   // Where the chosen row sat when it was chosen. Not derived from `selectedId`: it is needed exactly
   // when that row is no longer in the list to look up.
   let selectedIndex = $state(0);
-  // Armed per placement id, so closing the panel and opening another report cannot leave a live
-  // destructive button pointed at the previous one.
-  let confirmingPlacement = $state<number | null>(null);
   let confirmingDelist = $state<number | null>(null);
+  const storylineForm = new FormState({
+    onSuccess: (result) => {
+      confirmingTakedown = null;
+      toast.success(String(result?.storylineTakedown ?? 'Done'));
+    },
+    reload: true,
+    onSettled: reloadIfGone,
+  });
+  let confirmingTakedown = $state<number | null>(null);
+  const offeringForm = new FormState({
+    onSuccess: (result) => {
+      confirmingOfferingTakedown = null;
+      toast.success(String(result?.serviceOfferingTakedown ?? 'Done'));
+    },
+    reload: true,
+    onSettled: reloadIfGone,
+  });
+  let confirmingOfferingTakedown = $state<number | null>(null);
+  let offeringReason = $state<string>('');
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
   const reportComment = (r: { details: unknown }) =>
@@ -109,10 +123,6 @@
       data.items[Math.min(selectedIndex, data.items.length - 1)] ??
       null
   );
-
-  const ownerFlaggedMinor = $derived(new Set(data.ownerFlaggedMinor));
-  const isOwnerFlaggedMinor = (entityId: number | null) =>
-    entityId != null && ownerFlaggedMinor.has(entityId);
 
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
   const fmtDate = dateTime;
@@ -164,9 +174,13 @@
   function clearPanelState() {
     statusForm.error = null;
     notesForm.error = null;
-    placementForm.error = null;
     delistForm.error = null;
     confirmingDelist = null;
+    storylineForm.error = null;
+    confirmingTakedown = null;
+    offeringForm.error = null;
+    confirmingOfferingTakedown = null;
+    offeringReason = '';
   }
 
   // The row is the target, but it also holds links (the item, the reporter) that must keep doing
@@ -190,26 +204,6 @@
   <p>{data.totalItems} reports</p>
 </header>
 
-<!-- Retool's `ActionAllPostReports`. Only meaningful here: the query keys on every image in the post
-     already being blocked, which is a post-shaped question. -->
-{#if data.type === 'post'}
-  <form method="POST" action="?/actionResolvedPosts" use:enhance={sweepForm.enhance} class="mb-4">
-    <Button type="submit" variant="outline" size="sm">Action reports already resolved by content</Button>
-    <span class="ml-2 text-xs text-muted-foreground">
-      Pending reports whose post is entirely blocked already.
-    </span>
-  </form>
-  <!-- A bulk action that reports nothing is indistinguishable from one that did nothing. -->
-  {#if form && 'actioned' in form && form.actioned != null}
-    <p class="mb-4 text-sm text-green-300" role="status">
-      Actioned {form.actioned} of {form.found}{form.skipped ? `, ${form.skipped} already handled` : ''}{form.more ? ' — more remain, run it again.' : ''}
-    </p>
-  {/if}
-{/if}
-
-{#if sweepForm.error}
-  <p class="mb-4 text-sm text-red-300" role="alert">{sweepForm.error}</p>
-{/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
   <div class="flex flex-col gap-1">
@@ -270,7 +264,7 @@
         <TableBody>
           {#each data.items as report (report.id)}
             {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, report.entityId, report.contextUrl)}
-            <!-- Striped, and the open row marked with the same blue as post-reports' queue. The stripe is
+            <!-- Striped, and the open row marked with the same blue as the report queues. The stripe is
                  dropped on the open row rather than layered under it, so which one wins never depends
                  on Tailwind's variant order. -->
             <TableRow
@@ -290,9 +284,6 @@
                   <a href={itemUrl} target="_blank" rel="noreferrer" class="link">#{report.entityId}</a>
                 {:else}
                   #{report.entityId}
-                {/if}
-                {#if isOwnerFlaggedMinor(report.entityId)}
-                  <OwnerFlaggedMinorBadge />
                 {/if}
               </TableCell>
               <TableCell>{report.reason}</TableCell>
@@ -385,7 +376,6 @@
     </h2>
     {#if selected}
       {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, selected.entityId, selected.contextUrl)}
-      {@const placementId = reportedPlacementId(selected.details, selected.reason)}
       <div class="flex flex-col gap-5 px-4 pb-6">
         {#if itemUrl}
           <a href={itemUrl} target="_blank" rel="noreferrer" class="link inline-flex items-center gap-1">
@@ -393,10 +383,6 @@
               #{selected.entityId}{/if}
             <IconExternalLink size={14} />
           </a>
-        {/if}
-
-        {#if isOwnerFlaggedMinor(selected.entityId)}
-          <div><OwnerFlaggedMinorBadge /></div>
         {/if}
 
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
@@ -420,41 +406,6 @@
             )}</pre>
         {/if}
 
-        <!-- A sticker report has always carried which placement it is about; until main added this
-             (#3766) nothing consumed it, so a moderator read the id out of the details dump above and
-             had no way to act on it. Removal is not reversible and settles escrow, so it confirms. -->
-        {#if placementId !== null}
-          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-            <p class="mb-2 text-sm">
-              This report is about sticker placement <code>#{placementId}</code>. Removing it takes the
-              sticker off the image for everyone.
-            </p>
-            {#if confirmingPlacement === placementId}
-              <form method="POST" action="?/removePlacement" use:enhance={placementForm.enhance} class="flex flex-wrap gap-2">
-                <input type="hidden" name="placementId" value={placementId} />
-                <Button type="submit" size="sm" variant="destructive" disabled={placementForm.submitting}>
-                  Yes, remove it
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onclick={() => (confirmingPlacement = null)}
-                >
-                  Cancel
-                </Button>
-              </form>
-            {/if}
-            {#if placementForm.error}
-              <p class="mt-2 text-sm text-red-300" role="alert">{placementForm.error}</p>
-            {/if}
-            {#if confirmingPlacement !== placementId}
-              <Button size="sm" variant="destructive" onclick={() => (confirmingPlacement = placementId)}>
-                Remove placement
-              </Button>
-            {/if}
-          </div>
-        {/if}
 
         {#if data.type === 'gameFrameGame'}
           {@const game = data.games.find((g) => g.id === selected.entityId)}
@@ -509,6 +460,170 @@
             {/if}
             {#if delistForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{delistForm.error}</p>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'storyline'}
+          {@const storyline = data.storylines.find((st) => st.id === selected.entityId)}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            {#if storyline}
+              <p class="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-medium">{storyline.title}</span>
+                {#if storyline.tosViolationByModerator}
+                  <Badge variant="outline">taken down by a moderator</Badge>
+                {/if}
+                {#if storyline.tosViolationByScan}
+                  <Badge variant="outline">taken down by title scan</Badge>
+                {/if}
+              </p>
+            {:else}
+              <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+            {/if}
+            {#if storyline && !storyline.tosViolationByModerator}
+              <p class="mb-2 text-sm">
+                Taking it down hides the storyline from everyone but its owner and moderators, then sets this report
+                Actioned. A later clean scan of its title does not bring it back.
+                {#if storyline.tosViolationByScan}
+                  Its title scan already keeps it down; this holds it down after the scan lifts.
+                {/if}
+              </p>
+              {#if confirmingTakedown === selected.id}
+                <form method="POST" action="?/takeDownStoryline" use:enhance={storylineForm.enhance} class="flex flex-wrap gap-2">
+                  <input type="hidden" name="id" value={selected.id} />
+                  <Button type="submit" size="sm" variant="destructive" disabled={storylineForm.submitting}>
+                    Yes, take it down
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onclick={() => (confirmingTakedown = null)}>
+                    Cancel
+                  </Button>
+                </form>
+              {:else}
+                <Button size="sm" variant="destructive" onclick={() => (confirmingTakedown = selected.id)}>
+                  Take down storyline
+                </Button>
+              {/if}
+            {:else if storyline}
+              {#if storyline.tosViolationByScan}
+                <p class="mb-2 text-sm">
+                  Restoring lifts the moderator takedown only. Its title scan still keeps it down.
+                </p>
+              {/if}
+              <form method="POST" action="?/restoreStoryline" use:enhance={storylineForm.enhance}>
+                <input type="hidden" name="id" value={selected.id} />
+                <Button type="submit" size="sm" variant="outline" disabled={storylineForm.submitting}>
+                  Restore storyline
+                </Button>
+              </form>
+            {/if}
+            {#if storylineForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{storylineForm.error}</p>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'serviceOffering'}
+          {@const offering = data.serviceOfferings.find((o) => o.id === selected.entityId)}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            {#if offering}
+              <p class="mb-1 flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-medium">{offering.title}</span>
+                <Badge variant="outline">{offering.status}</Badge>
+                <Badge variant="outline">
+                  {(browsingLevelLabels as Record<number, string | undefined>)[offering.maxNsfwLevel] ??
+                    `rating ${offering.maxNsfwLevel}`}
+                </Badge>
+                {#if offering.removedReason}
+                  <Badge variant="outline">taken down by a moderator</Badge>
+                {/if}
+              </p>
+              <p class="mb-1 text-sm text-dark-2">
+                by {offering.sellerUsername ?? `user #${offering.sellerId}`}
+              </p>
+              <p class="mb-2 whitespace-pre-wrap text-sm">{offering.description}</p>
+              {#if offering.removedReason}
+                <p class="mb-2 text-sm">
+                  Reason: {serviceOfferingTakedownReasons[
+                    offering.removedReason as keyof typeof serviceOfferingTakedownReasons
+                  ]?.optionLabel ?? offering.removedReason}{offering.removedDetails
+                    ? `: ${offering.removedDetails}`
+                    : ''}
+                </p>
+              {/if}
+            {:else}
+              <p class="mb-2 text-sm text-muted-foreground">This service no longer exists.</p>
+            {/if}
+            {#if offering && !offering.removedReason}
+              <p class="mb-2 text-sm">
+                Taking it down removes the service from its seller's shop for good and tells the seller why, then
+                sets this report Actioned. Its open deals carry on; a request not yet accepted can only be declined.
+              </p>
+              {#if confirmingOfferingTakedown === selected.id}
+                <form
+                  method="POST"
+                  action="?/takeDownServiceOffering"
+                  use:enhance={offeringForm.enhance}
+                  class="flex flex-col gap-2"
+                >
+                  <input type="hidden" name="id" value={selected.id} />
+                  <select
+                    name="reason"
+                    class="h-8 rounded-md border bg-background px-2 text-sm"
+                    bind:value={offeringReason}
+                    required
+                  >
+                    <option value="" disabled>Reason</option>
+                    {#each Object.entries(serviceOfferingTakedownReasons) as [key, reason] (key)}
+                      <option value={key}>{reason.optionLabel}</option>
+                    {/each}
+                  </select>
+                  <Textarea
+                    name="details"
+                    maxlength={1000}
+                    required={offeringReason === 'other'}
+                    placeholder={offeringReason === 'other'
+                      ? 'What is wrong (sent to the seller)'
+                      : 'Note for moderators (optional, not sent to the seller)'}
+                  />
+                  <!-- Shown as text too: a typed note hides the placeholder, and Other sends it. -->
+                  <p class="text-xs text-dark-2">
+                    {offeringReason === 'other'
+                      ? 'This text is sent to the seller as the reason.'
+                      : 'Kept with the takedown for moderators; the seller sees only the reason.'}
+                  </p>
+                  <div class="flex flex-wrap gap-2">
+                    <Button type="submit" size="sm" variant="destructive" disabled={offeringForm.submitting}>
+                      Yes, take it down
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onclick={() => {
+                        confirmingOfferingTakedown = null;
+                        offeringReason = '';
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              {:else}
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onclick={() => {
+                    // A reason is picked per report, never carried over from the last one.
+                    offeringReason = '';
+                    confirmingOfferingTakedown = selected.id;
+                  }}
+                >
+                  Take down service
+                </Button>
+              {/if}
+            {/if}
+            {#if offeringForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{offeringForm.error}</p>
             {/if}
           </div>
         {/if}

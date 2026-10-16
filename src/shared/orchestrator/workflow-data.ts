@@ -49,13 +49,66 @@ export const PENDING_RATING = 'pendingRating';
 export const NSFW_CAPPED = 'nsfwCapped';
 
 /**
+ * Video engines the orchestrator never rates (the provider moderates its own output), so a hold
+ * on them never releases. Remove once it writes `nsfwLevel: 'na'` on unscanned outputs.
+ */
+const NEVER_RATED_VIDEO_ECOSYSTEMS = new Set(['Grok', 'Kling', 'Veo3', 'Vidu']);
+
+type StepParamsSource = {
+  $type?: string;
+  metadata?: Pick<NormalizedStep['metadata'], 'params' | 'partialParams'> | null;
+};
+
+/**
+ * A step's effective form params. The server flags whether `step.metadata.params` is a partial
+ * DELTA vs a complete snapshot, so this never has to *decide* — it just applies the directive:
+ *
+ * - `partialParams` set (wildcard/snippet variant): `params` is a small overlay (e.g. the
+ *   substituted prompt). Spread it over the workflow-level form snapshot to reconstruct the
+ *   variant's effective params. The server sends only the delta — we complete it here, which
+ *   keeps the API payload small (no full params duplicated per variant).
+ * - otherwise: either/or. A complete snapshot (enhancement steps store the *source*
+ *   generation here) is used verbatim; an absent one falls back to workflow params. We must
+ *   NOT spread in this case, or the enhancement form's fields (`images`, `upscaler`, the
+ *   `img2img:*` workflow key) would leak into a remix of the original.
+ *
+ * See docs/generation-metadata-architecture.md.
+ */
+export function resolveStepParams(
+  stepMetadata: StepParamsSource['metadata'],
+  wfParams: NormalizedWorkflowMetadata['params'] | null | undefined
+): Partial<NormalizedWorkflowMetadata['params']> {
+  const stepParams = stepMetadata?.params;
+  if (stepMetadata?.partialParams && stepParams && Object.keys(stepParams).length > 0) {
+    return { ...wfParams, ...stepParams };
+  }
+  if (stepParams && Object.keys(stepParams).length > 0) return stepParams;
+  return wfParams ?? {};
+}
+
+/**
+ * Whether a step is one of those engines generating video. An upscale or interpolation step
+ * carries its source's ecosystem in its params, but the orchestrator scans what it produces.
+ */
+export function isNeverRatedVideoStep(
+  step: StepParamsSource,
+  wfParams: NormalizedWorkflowMetadata['params'] | null | undefined
+) {
+  if (step.$type !== 'videoGen') return false;
+  const ecosystem = resolveStepParams(step.metadata, wfParams).ecosystem;
+  return typeof ecosystem === 'string' && NEVER_RATED_VIDEO_ECOSYSTEMS.has(ecosystem);
+}
+
+/**
  * An image or video reported available before it is rated. Audio is never rated, and a 3D mesh
  * takes its rating from its preview images, so neither counts.
  */
 export function isUnratedOutput(
-  output: Pick<NormalizedWorkflowStepOutput, 'type' | 'available' | 'nsfwLevel' | 'blockedReason'>
+  output: Pick<NormalizedWorkflowStepOutput, 'type' | 'available' | 'nsfwLevel' | 'blockedReason'>,
+  neverRatedVideoStep = false
 ) {
   if (output.type !== 'image' && output.type !== 'video') return false;
+  if (output.type === 'video' && neverRatedVideoStep) return false;
   if (!output.available || output.nsfwLevel != null) return false;
   return !output.blockedReason || output.blockedReason === 'none';
 }
@@ -203,27 +256,7 @@ export class StepData {
   }
 
   get params(): Partial<NormalizedWorkflowMetadata['params']> {
-    const stepParams = this.metadata.params;
-    const wfParams = this.#workflow.metadata?.params;
-
-    // The server flags whether `step.metadata.params` is a partial DELTA vs a complete snapshot,
-    // so this getter never has to *decide* — it just applies the directive:
-    //
-    // - `partialParams` set (wildcard/snippet variant): `params` is a small overlay (e.g. the
-    //   substituted prompt). Spread it over the workflow-level form snapshot to reconstruct the
-    //   variant's effective params. The server sends only the delta — we complete it here, which
-    //   keeps the API payload small (no full params duplicated per variant).
-    // - otherwise: either/or. A complete snapshot (enhancement steps store the *source*
-    //   generation here) is used verbatim; an absent one falls back to workflow params. We must
-    //   NOT spread in this case, or the enhancement form's fields (`images`, `upscaler`, the
-    //   `img2img:*` workflow key) would leak into a remix of the original.
-    //
-    // See docs/generation-metadata-architecture.md.
-    if (this.metadata.partialParams && stepParams && Object.keys(stepParams).length > 0) {
-      return { ...wfParams, ...stepParams };
-    }
-    if (stepParams && Object.keys(stepParams).length > 0) return stepParams;
-    return wfParams ?? {};
+    return resolveStepParams(this.metadata, this.#workflow.metadata?.params);
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;
@@ -392,7 +425,8 @@ export abstract class BlobData {
     if (!this.blockedReason) {
       // Stored as a blockedReason so every `!blockedReason` check downstream treats the output as
       // not yet shown.
-      if (holdUnrated && isUnratedOutput(data)) {
+      const neverRated = isNeverRatedVideoStep(step, step.workflow?.metadata?.params);
+      if (holdUnrated && isUnratedOutput(data, neverRated)) {
         this.blockedReason = PENDING_RATING;
       } else if (nsfwCap && exceedsNsfwLevel(data.nsfwLevel, nsfwCap)) {
         // The orchestrator reports these available but serves a placeholder in their place.

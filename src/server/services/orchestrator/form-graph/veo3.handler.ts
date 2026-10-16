@@ -1,6 +1,6 @@
 /** Veo 3 handler for the form-graph lane — fast/standard modes on one engine. */
 
-import type { Veo3VideoGenInput, VideoGenStepTemplate } from '@civitai/client';
+import type { Veo3VideoGenInput, VideoGenStepTemplate } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { veo3AspectRatios, veo3VersionIds } from '~/shared/form-graph/generation/video/veo3.graph';
@@ -63,7 +63,7 @@ export const createVeo3Input = defineHandler<EcosystemData<'Veo3'>, [VideoGenSte
           quantity: data.quantity ?? 1,
           seed: data.seed,
           // Veo 3.1 requires it, so it isn't offered as a control.
-          enablePromptEnhancer: true,
+          enhancePrompt: true,
           loras: loras.length > 0 ? loras : undefined,
         }) as Veo3VideoGenInput,
       },

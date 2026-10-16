@@ -322,6 +322,12 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     } else onSubmit(defaultValues);
   };
 
+  // The box is hidden while merges are off; clear it so re-allowing merges does not bring back a
+  // stale tick the creator cannot see.
+  useEffect(() => {
+    if (!allowDerivatives) form.setValue('allowDifferentLicense', false);
+  }, [allowDerivatives]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const subscription = form.watch((value, { name }) => {
       if (

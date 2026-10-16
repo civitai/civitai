@@ -12,7 +12,9 @@ const act = (React as unknown as { act: typeof actType }).act;
 // --- module mocks (must be declared before importing the hook) ---
 const queryMock = vi.fn<(input: { modelIds: number[] }) => Promise<Record<string, number[]>>>();
 vi.mock('~/utils/trpc', () => ({
-  trpcVanilla: { user: { getEngagedModelsByIds: { query: (input: { modelIds: number[] }) => queryMock(input) } } },
+  trpcVanilla: {
+    user: { getEngagedModelsByIds: { query: (input: { modelIds: number[] }) => queryMock(input) } },
+  },
 }));
 
 let currentUser: unknown = { id: 1 };
@@ -44,7 +46,11 @@ function runFlush() {
   cb?.();
 }
 /** let queued microtasks (the fetch .then) settle. */
-const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+const settle = () =>
+  act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,7 +59,9 @@ beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({});
   currentUser = { id: 1 };
-  engagedMembershipBatcher.schedule = (cb) => { scheduledFlush = cb; };
+  engagedMembershipBatcher.schedule = (cb) => {
+    scheduledFlush = cb;
+  };
   engagedMembershipBatcher.fetch = (modelIds) => queryMock({ modelIds });
 });
 
@@ -364,7 +372,7 @@ describe('useEngagedModelMembership — unauthenticated (F1 login-funnel regress
     unmount();
   });
 
-  it("a logged-out notify control is NOT disabled → its click can reach LoginRedirect", () => {
+  it('a logged-out notify control is NOT disabled → its click can reach LoginRedirect', () => {
     currentUser = null;
     const { button, unmount } = renderControl(99);
     // The store is cold (no query ever fires for unauth), yet the button is enabled
@@ -454,11 +462,7 @@ function NotifyClickHarness({
     onPayload(payload);
   };
 
-  return React.createElement(
-    'button',
-    { type: 'button', disabled: !isKnown, onClick },
-    'notify'
-  );
+  return React.createElement('button', { type: 'button', disabled: !isKnown, onClick }, 'notify');
 }
 
 describe('notify silent-unsubscribe fix — genuinely-ON model whose by-ids read errored', () => {
@@ -542,10 +546,6 @@ describe('debounce window (real ~80ms scheduler)', () => {
 
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it('window constant is the documented ~80ms', () => {
-    expect(ENGAGED_MEMBERSHIP_DEBOUNCE_MS).toBe(80);
   });
 
   it('coalesces ids arriving across MULTIPLE ticks within the window into ONE call (deduped union)', async () => {

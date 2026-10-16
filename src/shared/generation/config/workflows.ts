@@ -62,6 +62,8 @@ const EDIT_IMG_IDS = [
   ECO.Flux2Klein_9B_base,
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
+  ECO.Flux3Klein,
+  ECO.Flux3Klein_base,
   ECO.Flux1Kontext,
   ECO.Grok,
   ECO.WanImage27,
@@ -73,6 +75,7 @@ const EDIT_IMG_IDS = [
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Krea2,
+  ECO.Krea3,
   ECO.Ming,
 ];
 
@@ -94,6 +97,8 @@ const TXT2IMG_IDS = [
   ECO.Flux2Klein_9B_base,
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
+  ECO.Flux3Klein,
+  ECO.Flux3Klein_base,
   // Other image ecosystems
   ECO.Anima,
   ECO.Chroma,
@@ -116,6 +121,7 @@ const TXT2IMG_IDS = [
   ECO.Ideogram,
   ECO.Lens,
   ECO.Krea2,
+  ECO.Krea3,
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,
@@ -137,7 +143,6 @@ const TXT2VID_IDS = [
   ECO.WanVideo27,
   ECO.WanVideo30,
   ECO.Veo3,
-  ECO.Sora2,
   ECO.Vidu,
   ECO.MiniMaxH3,
   ECO.Kling,
