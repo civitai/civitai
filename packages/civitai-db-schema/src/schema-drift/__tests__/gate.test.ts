@@ -33,12 +33,9 @@ const catalog = JSON.parse(readFileSync(snapshot, 'utf8')) as DbCatalog;
 const schemaSource = readFileSync(realSchema, 'utf8');
 const report = compareSchemaToCatalog(parsePrismaSchema(schemaSource), catalog);
 
-// The PREVIOUS production capture, kept as a fixture because it is the only real catalog
-// that is BEHIND the schema. The gate's logic tests below need a real backlog with pending
-// findings (missing columns, a missing FK on a not-yet-migrated column) and no ON DELETE/UPDATE
-// data. The 2026-10-16 recapture has neither: every declared column is now live, so it
-// produces zero pending findings and cannot exercise the pending tier, the escalation guard,
-// or the "referential actions not compared" path at all.
+// 2026-08-03 is the only real catalog BEHIND the schema (missing columns, no ON DELETE/UPDATE
+// data). The gate-logic tests below need that backlog; the current capture has zero pending
+// findings and cannot exercise the pending tier, escalation, or the actions-not-compared path.
 const legacySnapshotRelative =
   'src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json';
 const legacyCatalog = JSON.parse(
@@ -119,6 +116,20 @@ describe('fingerprint', () => {
     expect(fingerprint(cascade)).toBe(fingerprint(restrict));
   });
 
+  it('DOES fold the actions into a referential-action fingerprint', () => {
+    // 58 inert ON UPDATE mismatches are baselined; an ON DELETE flip on one of those relations
+    // is a new hazard and must not inherit the entry's pass.
+    const onUpdateOnly = finding({
+      kind: 'referential-action',
+      columns: ['appBlockId'],
+      field: 'appBlock',
+      declared: 'ON DELETE SetNull ON UPDATE Cascade',
+      actual: 'ON DELETE SetNull ON UPDATE NoAction',
+    });
+    const onDeleteToo = { ...onUpdateOnly, declared: 'ON DELETE Cascade ON UPDATE Cascade' };
+    expect(fingerprint(onDeleteToo)).not.toBe(fingerprint(onUpdateOnly));
+  });
+
   it('separates findings that differ only in column order', () => {
     const ab = finding({ kind: 'uniqueness', columns: ['a', 'b'], field: undefined });
     const ba = finding({ kind: 'uniqueness', columns: ['b', 'a'], field: undefined });
@@ -138,6 +149,7 @@ describe('tierOf', () => {
   it('treats nullability and uniqueness as enforced', () => {
     expect(tierOf(finding({ kind: 'nullability' }), catalog)).toBe('enforced');
     expect(tierOf(finding({ kind: 'uniqueness' }), catalog)).toBe('enforced');
+    expect(tierOf(finding({ kind: 'referential-action' }), catalog)).toBe('enforced');
   });
 
   it('splits a missing foreign key on whether the database has the columns', () => {
@@ -324,9 +336,8 @@ describe('evaluateGate against the real schema and the 2026-08-03 backlog', () =
   });
 
   it('reports no referential-action finding, because this catalog cannot support one', () => {
-    // The 45 live ON UPDATE drifts are absorbed by being structurally unmeasurable here, not
-    // by being waved through — and the count of what could not be compared is carried into
-    // the result so the verdict can say so instead of printing a clean zero.
+    // Unmeasurable here, not waved through: the uncompared count is carried into the result so
+    // the verdict cannot print a clean zero.
     const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(baseline.entries.some((e) => e.kind === 'referential-action')).toBe(false);
     expect(result.referentialActionUnknown).toBeGreaterThan(400);
@@ -527,13 +538,13 @@ describe('snapshotAge', () => {
 });
 
 describe('absorbedEscalations', () => {
-  const baseline = buildBaseline(report, catalog, snapshotRelative);
+  const baseline = buildBaseline(legacyReport, legacyCatalog, legacySnapshotRelative);
 
   it('reports a pending -> enforced transition a refresh would swallow', () => {
     const target = baseline.entries.find((e) => e.tier === 'enforced');
     expect(target).toBeDefined();
     const previous: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) =>
         e.fingerprint === target?.fingerprint ? { ...e, tier: 'pending' as const } : e
       ),
@@ -549,13 +560,16 @@ describe('absorbedEscalations', () => {
 
   it('does not report enforced -> pending, or an entry that is merely new', () => {
     const flipped: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) => ({ ...e, tier: 'enforced' as const })),
     };
     // every pending entry became enforced above, so the reverse direction must be silent
+    expect(baseline.entries.some((e) => e.tier === 'pending')).toBe(true);
     expect(absorbedEscalations(flipped, baseline)).toEqual([]);
     // an entry absent from the previous baseline is new, not escalated
-    expect(absorbedEscalations({ catalog: snapshotRelative, entries: [] }, baseline)).toEqual([]);
+    expect(absorbedEscalations({ catalog: legacySnapshotRelative, entries: [] }, baseline)).toEqual(
+      []
+    );
   });
 });
 
@@ -614,6 +628,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
   let dir: string;
   let driftedSchema: string;
   let pendingSchema: string;
+  let onDeleteSchema: string;
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'drift-gate-cli-'));
@@ -636,14 +651,25 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
         '  description         String?\n  gateProbeNewColumn  String?'
       )
     );
+
+    // An ON DELETE change on a relation whose ON UPDATE mismatch is already baselined.
+    onDeleteSchema = join(dir, 'on-delete.prisma');
+    writeFileSync(
+      onDeleteSchema,
+      schemaSource.replace(
+        'appBlock              AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: SetNull)',
+        'appBlock              AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: Cascade)'
+      )
+    );
   });
 
-  it('the two probe schemas actually differ from the real one', () => {
+  it('the probe schemas actually differ from the real one', () => {
     // Positive control on every CLI assertion below: a `.replace` that matched nothing would
     // write the unmodified schema and the "blocks" test would pass or fail for reasons that
     // have nothing to do with the gate.
     expect(readFileSync(driftedSchema, 'utf8')).not.toBe(schemaSource);
     expect(readFileSync(pendingSchema, 'utf8')).not.toBe(schemaSource);
+    expect(readFileSync(onDeleteSchema, 'utf8')).not.toBe(schemaSource);
   });
 
   it('exits 0 on the committed schema, and says what it reproduced', async () => {
@@ -660,6 +686,13 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
     expect(result.stdout).toMatch(/NEW, enforced \(blocking\)\s+: 1/);
     expect(result.stdout).toMatch(/nullability\s+Model\.description/);
     expect(result.stderr).toMatch(/BLOCKED/);
+  });
+
+  it('exits 1 on an ON DELETE change to a relation already baselined for ON UPDATE', async () => {
+    const result = await gate(['--schema', onDeleteSchema]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toMatch(/NEW, enforced \(blocking\)\s+: 1/);
+    expect(result.stdout).toMatch(/referential-action\s+app_block_publish_requests\.app_block_id/);
   });
 
   it('exits 0 but warns when the change only adds drift awaiting a migration', async () => {

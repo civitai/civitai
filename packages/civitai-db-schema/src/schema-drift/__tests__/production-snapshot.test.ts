@@ -182,13 +182,9 @@ describe('production catalog snapshot (2026-08-03)', () => {
 });
 
 /**
- * The 2026-10-16 recapture — the pair the CI gate actually runs (`gate-cli.ts` default).
- *
- * Kept separate from the 2026-08-03 block above rather than replacing it: that capture is the
- * only real catalog BEHIND the schema (missing columns, no ON DELETE/UPDATE data), and the
- * assertions above document what the differ reports against one. This one is the opposite
- * case — every declared column is live and every foreign key carries its actions — so it pins
- * what a recapture is supposed to change. Containment, not totals, for the same reason.
+ * The current capture: every declared column live, every FK carrying its actions — the opposite
+ * case to 2026-08-03 above, so it pins what a recapture should change. Containment, not totals,
+ * for the same reason.
  */
 describe('production catalog snapshot (2026-10-16)', () => {
   const current = JSON.parse(

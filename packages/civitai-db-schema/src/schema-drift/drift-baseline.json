@@ -486,7 +486,7 @@
       "field": "updatedAt"
     },
     {
-      "fingerprint": "referential-action|app_block_publish_requests|app_block_id|AppBlockPublishRequest|appBlock",
+      "fingerprint": "referential-action|app_block_publish_requests|app_block_id|AppBlockPublishRequest|appBlock|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_block_publish_requests",
@@ -497,7 +497,7 @@
       "field": "appBlock"
     },
     {
-      "fingerprint": "referential-action|app_block_publish_requests|reviewed_by_user_id|AppBlockPublishRequest|reviewedBy",
+      "fingerprint": "referential-action|app_block_publish_requests|reviewed_by_user_id|AppBlockPublishRequest|reviewedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_block_publish_requests",
@@ -508,7 +508,7 @@
       "field": "reviewedBy"
     },
     {
-      "fingerprint": "referential-action|app_block_publish_requests|submitted_by_user_id|AppBlockPublishRequest|submittedBy",
+      "fingerprint": "referential-action|app_block_publish_requests|submitted_by_user_id|AppBlockPublishRequest|submittedBy|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_block_publish_requests",
@@ -519,7 +519,7 @@
       "field": "submittedBy"
     },
     {
-      "fingerprint": "referential-action|app_blocks|app_id|AppBlock|app",
+      "fingerprint": "referential-action|app_blocks|app_id|AppBlock|app|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_blocks",
@@ -530,7 +530,7 @@
       "field": "app"
     },
     {
-      "fingerprint": "referential-action|app_collaborators|app_listing_id|AppCollaborator|appListing",
+      "fingerprint": "referential-action|app_collaborators|app_listing_id|AppCollaborator|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_collaborators",
@@ -541,7 +541,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_collaborators|invited_by|AppCollaborator|inviter",
+      "fingerprint": "referential-action|app_collaborators|invited_by|AppCollaborator|inviter|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_collaborators",
@@ -552,7 +552,7 @@
       "field": "inviter"
     },
     {
-      "fingerprint": "referential-action|app_collaborators|user_id|AppCollaborator|user",
+      "fingerprint": "referential-action|app_collaborators|user_id|AppCollaborator|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_collaborators",
@@ -563,7 +563,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|app_listing_metrics|app_listing_id|AppListingMetric|appListing",
+      "fingerprint": "referential-action|app_listing_metrics|app_listing_id|AppListingMetric|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_metrics",
@@ -574,7 +574,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_listing_moderation_events|actor_user_id|AppListingModerationEvent|actor",
+      "fingerprint": "referential-action|app_listing_moderation_events|actor_user_id|AppListingModerationEvent|actor|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_moderation_events",
@@ -585,7 +585,7 @@
       "field": "actor"
     },
     {
-      "fingerprint": "referential-action|app_listing_moderation_events|app_listing_id|AppListingModerationEvent|appListing",
+      "fingerprint": "referential-action|app_listing_moderation_events|app_listing_id|AppListingModerationEvent|appListing|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_moderation_events",
@@ -596,7 +596,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_listing_moderation_events|report_id|AppListingModerationEvent|report",
+      "fingerprint": "referential-action|app_listing_moderation_events|report_id|AppListingModerationEvent|report|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_moderation_events",
@@ -607,7 +607,7 @@
       "field": "report"
     },
     {
-      "fingerprint": "referential-action|app_listing_publish_requests|app_listing_id|AppListingPublishRequest|appListing",
+      "fingerprint": "referential-action|app_listing_publish_requests|app_listing_id|AppListingPublishRequest|appListing|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_publish_requests",
@@ -618,7 +618,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_listing_publish_requests|reviewed_by_user_id|AppListingPublishRequest|reviewedBy",
+      "fingerprint": "referential-action|app_listing_publish_requests|reviewed_by_user_id|AppListingPublishRequest|reviewedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_publish_requests",
@@ -629,7 +629,7 @@
       "field": "reviewedBy"
     },
     {
-      "fingerprint": "referential-action|app_listing_publish_requests|submitted_by_user_id|AppListingPublishRequest|submittedBy",
+      "fingerprint": "referential-action|app_listing_publish_requests|submitted_by_user_id|AppListingPublishRequest|submittedBy|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_publish_requests",
@@ -640,7 +640,7 @@
       "field": "submittedBy"
     },
     {
-      "fingerprint": "referential-action|app_listing_reports|app_listing_id|AppListingReport|appListing",
+      "fingerprint": "referential-action|app_listing_reports|app_listing_id|AppListingReport|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_reports",
@@ -651,7 +651,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_listing_reports|reporter_user_id|AppListingReport|reporter",
+      "fingerprint": "referential-action|app_listing_reports|reporter_user_id|AppListingReport|reporter|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_reports",
@@ -662,7 +662,7 @@
       "field": "reporter"
     },
     {
-      "fingerprint": "referential-action|app_listing_reports|resolved_by_user_id|AppListingReport|resolvedBy",
+      "fingerprint": "referential-action|app_listing_reports|resolved_by_user_id|AppListingReport|resolvedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_reports",
@@ -673,7 +673,7 @@
       "field": "resolvedBy"
     },
     {
-      "fingerprint": "referential-action|app_listing_reviews|app_listing_id|AppListingReview|appListing",
+      "fingerprint": "referential-action|app_listing_reviews|app_listing_id|AppListingReview|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_reviews",
@@ -684,7 +684,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_listing_reviews|user_id|AppListingReview|user",
+      "fingerprint": "referential-action|app_listing_reviews|user_id|AppListingReview|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_reviews",
@@ -695,7 +695,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|app_listing_screenshots|app_listing_id|AppListingScreenshot|appListing",
+      "fingerprint": "referential-action|app_listing_screenshots|app_listing_id|AppListingScreenshot|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_screenshots",
@@ -706,7 +706,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_listing_screenshots|image_id|AppListingScreenshot|image",
+      "fingerprint": "referential-action|app_listing_screenshots|image_id|AppListingScreenshot|image|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listing_screenshots",
@@ -717,7 +717,7 @@
       "field": "image"
     },
     {
-      "fingerprint": "referential-action|app_listings|app_block_id|AppListing|appBlock",
+      "fingerprint": "referential-action|app_listings|app_block_id|AppListing|appBlock|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listings",
@@ -728,7 +728,7 @@
       "field": "appBlock"
     },
     {
-      "fingerprint": "referential-action|app_listings|connect_client_id|AppListing|connectClient",
+      "fingerprint": "referential-action|app_listings|connect_client_id|AppListing|connectClient|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listings",
@@ -739,7 +739,7 @@
       "field": "connectClient"
     },
     {
-      "fingerprint": "referential-action|app_listings|cover_id|AppListing|cover",
+      "fingerprint": "referential-action|app_listings|cover_id|AppListing|cover|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listings",
@@ -750,7 +750,7 @@
       "field": "cover"
     },
     {
-      "fingerprint": "referential-action|app_listings|icon_id|AppListing|icon",
+      "fingerprint": "referential-action|app_listings|icon_id|AppListing|icon|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listings",
@@ -761,7 +761,7 @@
       "field": "icon"
     },
     {
-      "fingerprint": "referential-action|app_listings|revision_of_id|AppListing|revisionOf",
+      "fingerprint": "referential-action|app_listings|revision_of_id|AppListing|revisionOf|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listings",
@@ -772,7 +772,7 @@
       "field": "revisionOf"
     },
     {
-      "fingerprint": "referential-action|app_listings|user_id|AppListing|user",
+      "fingerprint": "referential-action|app_listings|user_id|AppListing|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_listings",
@@ -783,7 +783,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|app_ownership_events|actor_user_id|AppOwnershipEvent|actor",
+      "fingerprint": "referential-action|app_ownership_events|actor_user_id|AppOwnershipEvent|actor|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_ownership_events",
@@ -794,7 +794,7 @@
       "field": "actor"
     },
     {
-      "fingerprint": "referential-action|app_ownership_events|app_listing_id|AppOwnershipEvent|appListing",
+      "fingerprint": "referential-action|app_ownership_events|app_listing_id|AppOwnershipEvent|appListing|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_ownership_events",
@@ -805,7 +805,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_ownership_events|target_user_id|AppOwnershipEvent|target",
+      "fingerprint": "referential-action|app_ownership_events|target_user_id|AppOwnershipEvent|target|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_ownership_events",
@@ -816,7 +816,7 @@
       "field": "target"
     },
     {
-      "fingerprint": "referential-action|app_ownership_transfers|app_listing_id|AppOwnershipTransfer|appListing",
+      "fingerprint": "referential-action|app_ownership_transfers|app_listing_id|AppOwnershipTransfer|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_ownership_transfers",
@@ -827,7 +827,7 @@
       "field": "appListing"
     },
     {
-      "fingerprint": "referential-action|app_ownership_transfers|from_user_id|AppOwnershipTransfer|fromUser",
+      "fingerprint": "referential-action|app_ownership_transfers|from_user_id|AppOwnershipTransfer|fromUser|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_ownership_transfers",
@@ -838,7 +838,7 @@
       "field": "fromUser"
     },
     {
-      "fingerprint": "referential-action|app_ownership_transfers|to_user_id|AppOwnershipTransfer|toUser",
+      "fingerprint": "referential-action|app_ownership_transfers|to_user_id|AppOwnershipTransfer|toUser|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_ownership_transfers",
@@ -849,7 +849,7 @@
       "field": "toUser"
     },
     {
-      "fingerprint": "referential-action|app_review_agent_reports|prior_report_id|AppReviewAgentReport|priorReport",
+      "fingerprint": "referential-action|app_review_agent_reports|prior_report_id|AppReviewAgentReport|priorReport|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_review_agent_reports",
@@ -860,7 +860,7 @@
       "field": "priorReport"
     },
     {
-      "fingerprint": "referential-action|app_sub_listing_parents|parent_listing_id|AppSubListingParent|parentListing",
+      "fingerprint": "referential-action|app_sub_listing_parents|parent_listing_id|AppSubListingParent|parentListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_sub_listing_parents",
@@ -871,7 +871,7 @@
       "field": "parentListing"
     },
     {
-      "fingerprint": "referential-action|app_sub_listings|author_user_id|AppSubListing|author",
+      "fingerprint": "referential-action|app_sub_listings|author_user_id|AppSubListing|author|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_sub_listings",
@@ -882,7 +882,7 @@
       "field": "author"
     },
     {
-      "fingerprint": "referential-action|app_sub_listings|image_id|AppSubListing|image",
+      "fingerprint": "referential-action|app_sub_listings|image_id|AppSubListing|image|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_sub_listings",
@@ -893,7 +893,7 @@
       "field": "image"
     },
     {
-      "fingerprint": "referential-action|app_sub_listings|moderated_by_id|AppSubListing|moderatedBy",
+      "fingerprint": "referential-action|app_sub_listings|moderated_by_id|AppSubListing|moderatedBy|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_sub_listings",
@@ -904,7 +904,7 @@
       "field": "moderatedBy"
     },
     {
-      "fingerprint": "referential-action|app_sub_listings|parent_listing_id|AppSubListing|parentListing",
+      "fingerprint": "referential-action|app_sub_listings|parent_listing_id|AppSubListing|parentListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_sub_listings",
@@ -915,7 +915,7 @@
       "field": "parentListing"
     },
     {
-      "fingerprint": "referential-action|app_sub_listings|pending_image_id|AppSubListing|pendingImage",
+      "fingerprint": "referential-action|app_sub_listings|pending_image_id|AppSubListing|pendingImage|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "app_sub_listings",
@@ -926,7 +926,7 @@
       "field": "pendingImage"
     },
     {
-      "fingerprint": "referential-action|block_attribution_payout|app_owner_user_id|BlockAttributionPayout|appOwner",
+      "fingerprint": "referential-action|block_attribution_payout|app_owner_user_id|BlockAttributionPayout|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_attribution_payout",
@@ -937,7 +937,7 @@
       "field": "appOwner"
     },
     {
-      "fingerprint": "referential-action|block_buzz_attribution|app_block_id|BlockBuzzAttribution|appBlock",
+      "fingerprint": "referential-action|block_buzz_attribution|app_block_id|BlockBuzzAttribution|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_buzz_attribution",
@@ -948,7 +948,7 @@
       "field": "appBlock"
     },
     {
-      "fingerprint": "referential-action|block_buzz_attribution|app_id|BlockBuzzAttribution|app",
+      "fingerprint": "referential-action|block_buzz_attribution|app_id|BlockBuzzAttribution|app|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_buzz_attribution",
@@ -959,7 +959,7 @@
       "field": "app"
     },
     {
-      "fingerprint": "referential-action|block_buzz_attribution|app_owner_user_id|BlockBuzzAttribution|appOwner",
+      "fingerprint": "referential-action|block_buzz_attribution|app_owner_user_id|BlockBuzzAttribution|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_buzz_attribution",
@@ -970,7 +970,7 @@
       "field": "appOwner"
     },
     {
-      "fingerprint": "referential-action|block_buzz_attribution|user_id|BlockBuzzAttribution|user",
+      "fingerprint": "referential-action|block_buzz_attribution|user_id|BlockBuzzAttribution|user|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_buzz_attribution",
@@ -981,7 +981,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|block_spend_attribution|app_block_id|BlockSpendAttribution|appBlock",
+      "fingerprint": "referential-action|block_spend_attribution|app_block_id|BlockSpendAttribution|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_spend_attribution",
@@ -992,7 +992,7 @@
       "field": "appBlock"
     },
     {
-      "fingerprint": "referential-action|block_spend_attribution|app_id|BlockSpendAttribution|app",
+      "fingerprint": "referential-action|block_spend_attribution|app_id|BlockSpendAttribution|app|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_spend_attribution",
@@ -1003,7 +1003,7 @@
       "field": "app"
     },
     {
-      "fingerprint": "referential-action|block_spend_attribution|app_owner_user_id|BlockSpendAttribution|appOwner",
+      "fingerprint": "referential-action|block_spend_attribution|app_owner_user_id|BlockSpendAttribution|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_spend_attribution",
@@ -1014,7 +1014,7 @@
       "field": "appOwner"
     },
     {
-      "fingerprint": "referential-action|block_spend_attribution|user_id|BlockSpendAttribution|user",
+      "fingerprint": "referential-action|block_spend_attribution|user_id|BlockSpendAttribution|user|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_spend_attribution",
@@ -1025,7 +1025,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|block_subscription_attribution|app_block_id|BlockSubscriptionAttribution|appBlock",
+      "fingerprint": "referential-action|block_subscription_attribution|app_block_id|BlockSubscriptionAttribution|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_subscription_attribution",
@@ -1036,7 +1036,7 @@
       "field": "appBlock"
     },
     {
-      "fingerprint": "referential-action|block_subscription_attribution|app_id|BlockSubscriptionAttribution|app",
+      "fingerprint": "referential-action|block_subscription_attribution|app_id|BlockSubscriptionAttribution|app|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_subscription_attribution",
@@ -1047,7 +1047,7 @@
       "field": "app"
     },
     {
-      "fingerprint": "referential-action|block_subscription_attribution|app_owner_user_id|BlockSubscriptionAttribution|appOwner",
+      "fingerprint": "referential-action|block_subscription_attribution|app_owner_user_id|BlockSubscriptionAttribution|appOwner|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_subscription_attribution",
@@ -1058,7 +1058,7 @@
       "field": "appOwner"
     },
     {
-      "fingerprint": "referential-action|block_subscription_attribution|user_id|BlockSubscriptionAttribution|user",
+      "fingerprint": "referential-action|block_subscription_attribution|user_id|BlockSubscriptionAttribution|user|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_subscription_attribution",
@@ -1069,7 +1069,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|block_user_settings|user_id|BlockUserSettings|user",
+      "fingerprint": "referential-action|block_user_settings|user_id|BlockUserSettings|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_user_settings",
@@ -1080,7 +1080,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|block_user_subscriptions|app_block_id|BlockUserSubscription|appBlock",
+      "fingerprint": "referential-action|block_user_subscriptions|app_block_id|BlockUserSubscription|appBlock|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_user_subscriptions",
@@ -1091,7 +1091,7 @@
       "field": "appBlock"
     },
     {
-      "fingerprint": "referential-action|block_user_subscriptions|user_id|BlockUserSubscription|user",
+      "fingerprint": "referential-action|block_user_subscriptions|user_id|BlockUserSubscription|user|ON DELETE Cascade ON UPDATE Cascade|ON DELETE Cascade ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "block_user_subscriptions",
@@ -1102,7 +1102,7 @@
       "field": "user"
     },
     {
-      "fingerprint": "referential-action|platform_default_blocks|app_block_id|PlatformDefaultBlock|appBlock",
+      "fingerprint": "referential-action|platform_default_blocks|app_block_id|PlatformDefaultBlock|appBlock|ON DELETE Restrict ON UPDATE Cascade|ON DELETE Restrict ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "platform_default_blocks",
@@ -1113,7 +1113,7 @@
       "field": "appBlock"
     },
     {
-      "fingerprint": "referential-action|platform_default_blocks|promoted_by|PlatformDefaultBlock|promoter",
+      "fingerprint": "referential-action|platform_default_blocks|promoted_by|PlatformDefaultBlock|promoter|ON DELETE SetNull ON UPDATE Cascade|ON DELETE SetNull ON UPDATE NoAction",
       "kind": "referential-action",
       "tier": "enforced",
       "table": "platform_default_blocks",

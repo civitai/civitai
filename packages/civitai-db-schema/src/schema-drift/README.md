@@ -141,9 +141,9 @@ The differ is pure so it can be driven from fixtures, including deliberately dam
 pnpm --filter @civitai/db-schema test
 ```
 
-`__tests__/fixtures/` holds a small curated schema and two catalogs — one aligned with it,
-one carrying exactly one seeded defect per drift class. A dump of the real catalog would be
-226 KB and would make the expectations unreadable.
+`__tests__/fixtures/` holds a small curated schema and two curated catalogs — one aligned
+with it, one carrying exactly one seeded defect per drift class — plus two real production
+captures used by `production-snapshot.test.ts` and the gate.
 
 The suite includes both controls at two levels — the differ and the command people
 actually run — because a detector that returns nothing is indistinguishable from one wired
@@ -170,8 +170,7 @@ against a real server. Check that by running the tool.
 ## The current snapshot, 2026-10-16
 
 `__tests__/fixtures/catalog-production-2026-10-16.json` is what the CI gate compares against
-(`gate-cli.ts`'s default). It was captured with `drift --dump-catalog`, read-only, from a
-read replica. It is the first capture that includes `ON DELETE`/`ON UPDATE` and `validated`
+(`gate-cli.ts`'s default). It was captured read-only with `drift --dump-catalog`. It is the first capture that includes `ON DELETE`/`ON UPDATE` and `validated`
 for each foreign key. Reproduce with:
 
 ```bash
@@ -203,7 +202,7 @@ baseline (67 entries), 22 dropped out and 59 were added:
 - **Added (59).** 58 are `referential-action` findings that the old snapshot could not
   measure. Each one is declared `ON UPDATE Cascade` while the database has `NoAction`, on the
   hand-written App Blocks tables. Ids are never updated, so these are inert in practice
-  (see "What this gate does not measure" below). The other one is
+  (see "Referential actions: measured since 2026-10-16" below). The other one is
   `AnnouncementSpend(announcementId)`. Its migration creates a partial unique index
   (`WHERE "announcementId" IS NOT NULL`), the schema comment calls that deliberate, and the
   differ reads only total unique indexes. Postgres treats NULLs as distinct, so the
@@ -269,7 +268,7 @@ a **dev bootstrap DDL, not a production mirror**. It defines 195 tables against 
 342, omits 178 production foreign keys, and — the part that matters — declares 25 foreign
 keys production does **not** have.
 
-Compared against the 37 missing foreign keys documented above, that dump would:
+Compared against the 37 missing foreign keys in the 2026-08-03 baseline, that dump would:
 
 |                | count |                                                  |
 | -------------- | ----- | ------------------------------------------------ |
@@ -383,7 +382,9 @@ in, because they _are_ the finding rather than prose about it:
 - **nullability direction**, so flipping a field to required against a NULLABLE column cannot
   inherit the old entry's pass;
 - **a missing foreign key's referenced table**, so repointing a relation from `Image` to `Post`
-  — same model, same field, same constrained column — cannot either.
+  — same model, same field, same constrained column — cannot either;
+- **a referential-action finding's declared and actual actions**, so changing `onDelete` on a
+  relation already accepted for an inert `ON UPDATE` mismatch is a new finding, not a match.
 
 The file is in `.prettierignore`. Prettier and the generator disagree about its formatting by
 246 lines, so with both formatting it a no-op refresh produced a ~250-line reformat that buried
@@ -449,11 +450,15 @@ There are **58** findings, up from 45 on the first live run, and every one is th
 Blocks foreign key. `ON DELETE` matches on all of them. Ids are never updated, so they are
 inert in practice.
 
-All 58 are accepted in the baseline. That is a triage decision, not a bulk accept:
-`production-snapshot.test.ts` asserts that every referential-action finding in the current
-snapshot differs on `ON UPDATE` only. An `ON DELETE` disagreement is a live hazard. That test
-is pinned to this snapshot, so the next recapture has to carry the assertion over to the new
-fixture. If it does not, an `ON DELETE` mismatch could be accepted along with the rest.
+All 58 are accepted in the baseline. That was a triage decision, not a bulk accept, and two
+things keep it from hiding a live `ON DELETE` hazard:
+
+- **At PR time:** a referential-action fingerprint includes both action pairs. Changing
+  `onDelete` on one of these relations therefore produces a NEW enforced finding, and the gate
+  exits 1.
+- **At recapture time:** `production-snapshot.test.ts` asserts that every referential-action
+  finding in the current snapshot differs on `ON UPDATE` only. That test is pinned to this
+  snapshot, so the next recapture has to carry it over to the new fixture.
 
 ### What a developer sees
 
@@ -471,8 +476,10 @@ the PR description.
   without failing; `drift:baseline` prunes it.
 - **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit. The
   catalog and the baseline are a pair and the gate enforces that they stay one. Diff the old
-  baseline against the new one and list what dropped and what was added in the PR. Every
-  addition is drift that showed up in the database since the previous capture. Move the
+  baseline against the new one and list what dropped and what was added in the PR. Explain
+  every addition: drift that appeared since the previous capture, drift the old capture
+  could not measure, or a finding the differ cannot read correctly (the 2026-10-16 recapture
+  had all three). Move the
   2026-10-16 block in `production-snapshot.test.ts` (the ON UPDATE-only check) onto the new
   fixture, and keep the 2026-08-03 fixture: the backlog tests need a catalog that lags the
   schema.

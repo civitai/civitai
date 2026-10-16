@@ -5,7 +5,7 @@
  *
  * WHAT THIS GATE IS FOR. The detector reports the drift that exists; a gate has to answer a
  * narrower question — did THIS change make it worse? Blocking on the whole report would be
- * red on every run (there are 63 findings on `main` today) and a permanently-red gate just
+ * red on every run (there are 104 findings on `main` today) and a permanently-red gate just
  * teaches everyone to click through it. So the shape here is the one this org already runs
  * in its infrastructure repo: block only a PASS->FAIL regression the change introduces,
  * warn about everything that was already broken, and never block on a pre-existing finding.
@@ -32,13 +32,10 @@
  * them for columns it found in the catalog. `missing-foreign-key` is the only kind that can
  * be either, and it is decided by looking its constrained columns up in the catalog.
  *
- * WHAT THIS GATE DOES NOT MEASURE. Referential actions. The committed catalog snapshot
- * carries no `ON DELETE`/`ON UPDATE` data, so all ~408 comparable foreign keys read as "not
- * comparable" and this gate can produce no `referential-action` finding at all. A live run
- * does measure them and found 45 — every one an `ON UPDATE` Cascade-vs-NoAction on a
- * hand-written App Blocks foreign key, zero `ON DELETE` mismatches. Those are absorbed here
- * by being structurally unmeasurable rather than by being waved through, and the gate says
- * so on its own line rather than printing a clean zero. See `assertMeasuredSomething`.
+ * REFERENTIAL ACTIONS are measured only when the catalog carries `ON DELETE`/`ON UPDATE`
+ * (the 2026-10-16 capture does). A `referential-action` finding is always ENFORCED. A catalog
+ * without action data reports them as "not compared" on their own line rather than as a
+ * clean zero. See `assertMeasuredSomething`.
  */
 import type { CatalogColumn, DbCatalog, DriftFinding, DriftReport } from './types';
 
@@ -78,11 +75,9 @@ export interface GateResult {
    * enforceable. The fingerprint is unchanged, so without this the escalation is absorbed
    * into `matched` and the run reports `NEW enforced: 0, NEW pending: 0, exit 0`.
    *
-   * PURELY FORWARD-LOOKING TODAY, and worth stating rather than implying: escalation needs an
-   * entry that is BOTH `pending` and `missing-foreign-key`, and the current baseline has ZERO
-   * of those. All 12 pending entries are `missing-column`, which `tierWith` hardcodes to
-   * `pending` and which therefore can never rise. So this guard cannot fire on anything in
-   * the baseline as it stands; it fires on relations accepted from here on.
+   * PURELY FORWARD-LOOKING: escalation needs an entry that is BOTH `pending` and
+   * `missing-foreign-key`, and since the 2026-10-16 recapture the baseline has no pending
+   * entries at all. It fires on relations accepted from here on.
    */
   escalated: EscalatedFinding[];
   /** Baseline entries the current run no longer reports — remediated, or gone stale. */
@@ -125,6 +120,10 @@ export function blocking(result: GateResult): DriftFinding[] {
  * from `Image` to `Post` keeps the same field and the same constrained column, so without
  * this the fingerprint is unchanged and a semantically catastrophic edit inherits the old
  * entry's pass with no mention in the output. The actions stay out; only the target goes in.
+ *
+ * A referential-action finding folds in both action pairs, because for that kind the actions
+ * ARE the finding. Without them, flipping `onDelete` on a relation already accepted for an
+ * inert `ON UPDATE` mismatch would inherit that entry's pass.
  */
 export function fingerprint(finding: DriftFinding): string {
   const parts = [
@@ -136,6 +135,7 @@ export function fingerprint(finding: DriftFinding): string {
   ];
   if (finding.kind === 'nullability') parts.push(finding.declared);
   if (finding.kind === 'missing-foreign-key') parts.push(referencedTarget(finding) ?? '?');
+  if (finding.kind === 'referential-action') parts.push(finding.declared, finding.actual);
   return parts.join('|');
 }
 
