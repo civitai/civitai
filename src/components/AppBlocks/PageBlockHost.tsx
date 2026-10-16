@@ -4591,9 +4591,10 @@ export function PageBlockHost({
   // consent is the consent-gated `social:react:self` grant, refused here as `needs-consent`
   // while missing and refused again by the server if this check ever regressed.
   //
-  // REQUEST-style ⇒ every path replies exactly once (`createReactionReplyLatch`) with a
-  // `result` or a closed-set `error`. `trpcUtils.client` rather than a `useMutation` so no
-  // render-time hook is added to a component two dozen suites mock by hand.
+  // REQUEST-style ⇒ every path with a usable `requestId` replies exactly once
+  // (`createReactionReplyLatch`) with a `result` or a closed-set `error`; one without is dropped,
+  // there is nothing to reply to. `trpcUtils.client` rather than a `useMutation` so no
+  // render-time hook is added to a component that tests mock by hand.
   useEffect(() => {
     const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
       const gate = resolveSetEntityReactionRequest({

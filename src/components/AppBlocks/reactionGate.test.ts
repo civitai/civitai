@@ -65,6 +65,25 @@ describe('resolveSetEntityReactionRequest', () => {
     });
   });
 
+  it.each([
+    ['a zero id', { entityId: 0 }],
+    ['a fractional id', { entityId: 1.5 }],
+    ['a non-string requestId', { requestId: 7 }],
+    ['a ticket one over the cap', { ticket: 'x'.repeat(257) }],
+  ])('refuses or drops %s', (label, change) => {
+    const gate = resolveSetEntityReactionRequest({ raw: { ...SET, ...change }, ...ok });
+    if (label === 'a non-string requestId') expect(gate).toEqual({ kind: 'drop' });
+    else expect(gate).toMatchObject({ kind: 'refuse', error: 'invalid-request' });
+  });
+
+  it('accepts a ticket exactly at the cap', () => {
+    const gate = resolveSetEntityReactionRequest({
+      raw: { ...SET, ticket: 'x'.repeat(256) },
+      ...ok,
+    });
+    expect(gate.kind).toBe('proceed');
+  });
+
   it('passes a missing ticket through — the SERVER owns the provenance refusal', () => {
     const { ticket: _t, ...noTicket } = SET;
     const gate = resolveSetEntityReactionRequest({ raw: noTicket, ...ok });
@@ -84,6 +103,17 @@ describe('resolveGetEntityReactionsRequest', () => {
     ).toEqual({
       kind: 'proceed',
       request: { requestId: 'r2', entityType: 'image', ids: [1, 2], tickets: { '1': 't1' } },
+    });
+  });
+
+  it.each([
+    ['empty ids', { ids: [] }],
+    ['tickets given as an array', { tickets: ['t1'] }],
+    ['a non-string ticket for a requested id', { tickets: { '1': 5 } }],
+  ])('refuses %s as invalid-request', (_l, change) => {
+    expect(resolveGetEntityReactionsRequest({ raw: { ...GET, ...change }, ...ok })).toMatchObject({
+      kind: 'refuse',
+      error: 'invalid-request',
     });
   });
 

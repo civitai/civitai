@@ -86,8 +86,9 @@ function isTicket(v: unknown): v is string {
 
 /**
  * The refusals both messages share, in order: review mode, then the handshake, then the
- * viewer, then consent. Identity before payload, as on the follow bridge, so an anonymous
- * caller is refused as anonymous rather than as malformed.
+ * viewer. Identity before payload, as on the follow bridge, so an anonymous caller is refused
+ * as anonymous rather than as malformed. Consent is checked by each resolver AFTER payload
+ * validation, so a malformed request without the grant reads `invalid-request`.
  */
 function preflight(
   obj: Record<string, unknown>,

@@ -30,7 +30,7 @@ vi.mock('~/server/middleware.trpc', async () => {
   };
 });
 
-import { reactionRouter } from '../reaction.router';
+import { appRouter } from '../index';
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -42,7 +42,7 @@ beforeEach(() => {
 
 describe('reaction.toggle — the site half of the shared reaction quota', () => {
   it('charges reactionRateLimits under its PATH-derived key (no sharedKey)', async () => {
-    const caller = reactionRouter.createCaller({
+    const caller = appRouter.createCaller({
       acceptableOrigin: true,
       user: { id: 42, isModerator: false, onboarding: 0xffff, muted: false },
       apiKeyId: null,
@@ -52,10 +52,15 @@ describe('reaction.toggle — the site half of the shared reaction quota', () =>
       cache: { edgeTTL: 0 },
       features: {},
     } as never);
-    await caller.toggle({ entityType: 'image', entityId: 1, reaction: 'Heart' });
+    // Through the REAL app router, so the recorded path is the mounted one the limiter keys on.
+    await caller.reaction.toggle({ entityType: 'image', entityId: 1, reaction: 'Heart' });
     expect(h.toggle).toHaveBeenCalledTimes(1);
     expect(h.runs).toHaveLength(1);
     expect(h.runs[0].limits).toBe(reactionRateLimits);
     expect(h.runs[0].options).toBeUndefined();
+    // The mounted path — `reaction.toggle` — is what the real middleware turns into the key
+    // `reaction:toggle` (`block-reaction.rate-limit-key.test.ts`). A renamed mount or procedure
+    // fails here instead of silently splitting the quota.
+    expect(h.runs[0].path).toBe('reaction.toggle');
   });
 });

@@ -33,11 +33,13 @@ type ToggleHandler = (args: {
 }) => Promise<'created' | 'removed' | 'noop'>;
 
 /**
- * Does the viewer hold this reaction right now?
+ * Does the viewer hold this reaction right now? Read on the PRIMARY, so a reaction the viewer
+ * made a moment ago is seen and a matching request is a true no-op.
  *
- * Read on the PRIMARY. A replica that lags a reaction the viewer just made would answer "not
- * reacted", and the toggle would then REMOVE the reaction the app asked to keep — the inverse of
- * the request. One indexed single-row read is the price of not flipping the wrong way.
+ * ⚠️ This read decides only WHETHER to toggle, not which way the toggle goes: the site's
+ * `toggleReaction` makes its own existence check (on the replica outside a lag incident). So a
+ * concurrent request, or replica lag, can make the toggle go the other way or match nothing. That
+ * is why `setImageReactionFromApp` checks the toggle's RESULT against the requested state below.
  */
 async function viewerHoldsReaction(
   userId: number,
@@ -51,11 +53,16 @@ async function viewerHoldsReaction(
   return row != null;
 }
 
+/** Does a toggle result leave the reaction in the requested state? */
+function resultMatches(result: 'created' | 'removed' | 'noop', reacted: boolean): boolean {
+  return reacted ? result === 'created' : result === 'removed';
+}
+
 export type SetImageReactionOutcome =
-  /** Already in the requested state. Nothing was written. */
+  /** Nothing was written: already in the requested state, or the toggle matched no row. */
   | { changed: false }
-  /** The toggle ran. `result` is what the site handler reported. */
-  | { changed: true; result: 'created' | 'removed' | 'noop' };
+  /** The reaction was created or removed as requested. */
+  | { changed: true };
 
 export async function setImageReactionFromApp(opts: {
   ctx: ProtectedContext;
@@ -67,11 +74,35 @@ export async function setImageReactionFromApp(opts: {
 }): Promise<SetImageReactionOutcome> {
   const holds = await viewerHoldsReaction(opts.userId, opts.imageId, opts.reaction);
   if (holds === opts.reacted) return { changed: false };
-  const result = await opts.toggle({
-    ctx: opts.ctx,
-    input: { entityType: 'image', entityId: opts.imageId, reaction: opts.reaction },
+  const toggle = () =>
+    opts.toggle({
+      ctx: opts.ctx,
+      input: { entityType: 'image', entityId: opts.imageId, reaction: opts.reaction },
+    });
+  const first = await toggle();
+  if (resultMatches(first, opts.reacted)) return { changed: true };
+  // 'noop': the site's delete matched no row (its replica saw a reaction the primary no longer
+  // has). Nothing changed, so nothing is reported or audited as changed.
+  if (first === 'noop') return { changed: false };
+  // The toggle went the OTHER way — a concurrent request (a double-tap, a retry) landed between
+  // the read above and the site's own check. Toggle once more to restore what was asked for, the
+  // same thing a viewer re-clicking on the site would do; a second miss is an error, never a
+  // silent inversion.
+  const second = await toggle();
+  if (resultMatches(second, opts.reacted)) return { changed: true };
+  throw new Error('reaction state changed concurrently, please retry');
+}
+
+/** The viewer's reactions on one image, read on the PRIMARY — the state right after a write. */
+export async function readViewerImageReactionsOnPrimary(
+  userId: number,
+  imageId: number
+): Promise<ReviewReactions[]> {
+  const rows = await dbWrite.imageReaction.findMany({
+    where: { imageId, userId },
+    select: { reaction: true },
   });
-  return { changed: true, result };
+  return rows.map((r) => r.reaction);
 }
 
 /**

@@ -799,7 +799,9 @@ async function authorizeBlockReactionRequest(
   assertBlockSubjectIsSessionUser(userId, sessionUserId);
   await assertAppBlocksEnabledForTokenUser(userId);
   const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  if (!subjectUser) {
+  // Spelled `== null`, not `!subjectUser`: that exact text is the post preamble's anchor in
+  // `scripts/compiled-branch-watchlist.mjs`, which must match one line only.
+  if (subjectUser == null) {
     throw new TRPCError({
       code: 'UNAUTHORIZED',
       message: 'reacting subject could not be resolved, please try again',
@@ -816,7 +818,7 @@ async function authorizeBlockReactionRequest(
  * The audit row for one reaction an app CHANGED. Not written for a no-op set — nothing happened
  * on the viewer's account — and not before the gates admit the call, so a refused app cannot
  * fill the viewer's Activity feed. Best-effort, like the post audit: a failed audit write never
- * fails a reaction that already landed.
+ * fails a reaction that already landed (it is awaited, so it does add one write of latency).
  */
 async function recordBlockReactionInvocation(opts: {
   claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
@@ -851,7 +853,7 @@ async function recordBlockReactionInvocation(opts: {
       privateRun: opts.claims.privateRun === true,
     });
   } catch {
-    /* best-effort: an audit failure never breaks (or slows) a reaction that landed */
+    /* best-effort: an audit failure never breaks a reaction that landed */
   }
 }
 
@@ -6038,7 +6040,8 @@ export const blocksRouter = router({
    * notifications and the public reactors list behave exactly as a click on the site does.
    * What this wrapper adds is what a direct `reaction.toggle` call cannot carry:
    *
-   *   - WHICH APP — the token, so every change gets a `block_scope_invocations` row;
+   *   - WHICH APP — the token, so every change is audited in `block_scope_invocations`
+   *     (best-effort: a failed audit write does not fail the reaction);
    *   - PROVENANCE — a ticket the serving block endpoint signed for (image, app, viewer). An
    *     app cannot react to an image it was never shown, nor reuse another app's or another
    *     viewer's ticket;
@@ -6086,11 +6089,13 @@ export const blocksRouter = router({
         throw new TRPCError({ code: 'FORBIDDEN', message: APP_REACTION_SERVER_ERRORS.ticket });
       }
 
-      const [{ toggleReactionHandler }, { setImageReactionFromApp, readImageReactionStates }] =
-        await Promise.all([
-          import('~/server/controllers/reaction.controller'),
-          import('~/server/services/blocks/block-reaction.service'),
-        ]);
+      const [
+        { toggleReactionHandler },
+        { setImageReactionFromApp, readImageReactionStates, readViewerImageReactionsOnPrimary },
+      ] = await Promise.all([
+        import('~/server/controllers/reaction.controller'),
+        import('~/server/services/blocks/block-reaction.service'),
+      ]);
 
       let outcome;
       try {
@@ -6124,14 +6129,20 @@ export const blocksRouter = router({
         });
       }
 
-      const states = await readImageReactionStates({ userId, imageIds: [input.entityId] });
+      // Counts come from the metric store, which updates asynchronously, so right after a change
+      // they can lag by one; the viewer's own reactions are read on the PRIMARY so the block is
+      // told the state it just set, not a lagging replica's.
+      const [states, viewerReactions] = await Promise.all([
+        readImageReactionStates({ userId, imageIds: [input.entityId] }),
+        readViewerImageReactionsOnPrimary(userId, input.entityId),
+      ]);
       const state = states[input.entityId];
       return {
         entityType: input.entityType,
         entityId: input.entityId,
         changed: outcome.changed,
         counts: state.counts,
-        viewerReactions: state.viewerReactions,
+        viewerReactions,
         statsUnknown: state.statsUnknown,
       };
     }),

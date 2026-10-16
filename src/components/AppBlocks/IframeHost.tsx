@@ -3218,7 +3218,8 @@ export function IframeHost({
   // is constant false here.
   //
   // No confirm dialog: the consent-gated `social:react:self` grant is the consent. Every path
-  // replies exactly once; `trpcUtils.client` so no render-time hook is added.
+  // with a usable `requestId` replies exactly once; `trpcUtils.client` so no render-time hook
+  // is added.
   useEffect(() => {
     const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
       const gate = resolveSetEntityReactionRequest({

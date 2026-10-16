@@ -247,6 +247,15 @@ describe('PageBlockHost SET_ENTITY_REACTION / GET_ENTITY_REACTIONS', () => {
     replies.stop();
   });
 
+  test('with no block token the host replies not-ready instead of dropping the request', async () => {
+    const replies = await mount({ token: undefined } as never);
+    postFromBlock('SET_ENTITY_REACTION', SET);
+    const out = await settled(replies, 'ENTITY_REACTION_RESULT');
+    expect(out.map((m) => m.payload)).toEqual([{ requestId: 'rq_set', error: 'not-ready' }]);
+    expect(setMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
   test('a payload with no requestId is dropped — no reply, no call', async () => {
     const replies = await mount();
     const { requestId: _r, ...noId } = SET;

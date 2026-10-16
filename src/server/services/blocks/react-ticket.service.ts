@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
-import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
+import { USER_SUB_RE } from '~/server/services/block-token-subject';
 import {
   REACT_TICKET_MAX_LENGTH,
   REACT_TICKET_TTL_SECONDS,
@@ -117,13 +117,8 @@ export function reactTicketForImage(
   imageId: number,
   opts?: { secret?: string; nowSeconds?: number }
 ): string | undefined {
-  let userId: number | null;
-  try {
-    userId = parseSubjectUserId(claims.sub);
-  } catch {
-    return undefined;
-  }
-  if (userId == null || !claims.appBlockId) return undefined;
+  // The subject grammar the token verifier enforces; `anon` (and anything malformed) fails it.
+  if (!USER_SUB_RE.test(claims.sub) || !claims.appBlockId) return undefined;
   try {
     return signReactTicket(
       { entityType: 'image', entityId: imageId, appBlockId: claims.appBlockId, sub: claims.sub },

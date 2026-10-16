@@ -180,6 +180,8 @@ beforeEach(() => {
   );
   h.getUserReactionsForImages.mockResolvedValue({ [IMAGE_ID]: ['Heart'] });
   viewerHolds(false);
+  // The post-write state of the viewer's reactions, read on the PRIMARY.
+  dbMock.dbWrite.imageReaction.findMany.mockResolvedValue([{ reaction: 'Heart' }]);
 });
 
 const MISMATCH = 'this app session belongs to a different account; reload the page to continue';
@@ -387,6 +389,46 @@ describe('setReactionFromApp — set semantics', () => {
     expect(h.toggle).toHaveBeenCalledTimes(1);
   });
 
+  it('a toggle that matched no row is NOT reported or audited as a change', async () => {
+    h.toggle.mockResolvedValue('noop');
+    const result = await caller().setReactionFromApp(setInput() as never);
+    expect(result.changed).toBe(false);
+    expect(h.recordScopeInvocation).not.toHaveBeenCalled();
+  });
+
+  it('a toggle that went the OTHER way (concurrent request) is toggled back once, then audited', async () => {
+    // Asked for reacted:true; a racing request made the site handler REMOVE instead.
+    h.toggle.mockResolvedValueOnce('removed').mockResolvedValueOnce('created');
+    const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
+    expect(h.toggle).toHaveBeenCalledTimes(2);
+    expect(result.changed).toBe(true);
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.objectContaining({ outcome: 'ok', reacted: true }) })
+    );
+  });
+
+  it('a second wrong-way toggle is an error, never a silent inversion', async () => {
+    h.toggle.mockResolvedValue('removed');
+    await expect(caller().setReactionFromApp(setInput({ reacted: true }) as never)).rejects.toThrow(
+      'reaction state changed concurrently'
+    );
+    expect(h.toggle).toHaveBeenCalledTimes(2);
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.objectContaining({ outcome: 'failed' }) })
+    );
+  });
+
+  it('reports the viewer reactions read on the PRIMARY after the write', async () => {
+    dbMock.dbWrite.imageReaction.findMany.mockResolvedValue([
+      { reaction: 'Heart' },
+      { reaction: 'Like' },
+    ]);
+    // The replica still lags: it would answer with nothing.
+    h.getUserReactionsForImages.mockResolvedValue({});
+    const result = await caller().setReactionFromApp(setInput() as never);
+    expect(result.viewerReactions).toEqual(['Heart', 'Like']);
+  });
+
   it('writes ONE audit row for a change, naming the app, the image and the reaction', async () => {
     await caller().setReactionFromApp(setInput() as never);
     expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1);
@@ -407,6 +449,28 @@ describe('setReactionFromApp — set semantics', () => {
         }),
       })
     );
+  });
+
+  it('marks the audit row with the dev and private-run claims of the token', async () => {
+    h.authorize.mockResolvedValue(claims({ dev: true, privateRun: true }));
+    await caller().setReactionFromApp(setInput() as never);
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ dev: true, privateRun: true })
+    );
+    h.recordScopeInvocation.mockClear();
+    h.authorize.mockResolvedValue(claims());
+    await caller().setReactionFromApp(setInput() as never);
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ dev: false, privateRun: false })
+    );
+  });
+
+  it('a failing audit write never fails a reaction that landed', async () => {
+    h.recordScopeInvocation.mockRejectedValue(new Error('audit db down'));
+    await expect(caller().setReactionFromApp(setInput() as never)).resolves.toMatchObject({
+      changed: true,
+    });
+    expect(h.toggle).toHaveBeenCalledTimes(1);
   });
 
   it('audits a FAILED write and still surfaces the error', async () => {
@@ -456,6 +520,42 @@ describe('getReactionsForApp — ticketed reads', () => {
       statsUnknown: false,
     });
     // The viewer's own reactions were read for the TICKETED id only.
+    expect(h.getUserReactionsForImages).toHaveBeenCalledWith({
+      imageIds: [IMAGE_ID],
+      userId: VIEWER_ID,
+    });
+  });
+
+  it.each([
+    ['no ticket', () => undefined],
+    ['a ticket for ANOTHER image', () => ticketFor({ entityId: IMAGE_ID + 1 })],
+    ['a ticket for ANOTHER APP', () => ticketFor({ appBlockId: 'apb_other' })],
+    ['a ticket for ANOTHER VIEWER', () => ticketFor({ sub: `user:${OTHER_USER_ID}` })],
+    [
+      'an EXPIRED ticket',
+      () => ticketFor({ nowSeconds: Math.floor(Date.now() / 1000) - 2 * 24 * 60 * 60 }),
+    ],
+  ])('does not answer an id carrying %s — and never reads its reactions', async (_l, make) => {
+    const ticket = make();
+    const result = await caller().getReactionsForApp({
+      blockToken: 'tok',
+      entityType: 'image',
+      ids: [IMAGE_ID],
+      ...(ticket ? { tickets: { [String(IMAGE_ID)]: ticket } } : {}),
+    });
+    expect(result.unavailable).toEqual([IMAGE_ID]);
+    expect(result.byId).toEqual({});
+    expect(h.getUserReactionsForImages).not.toHaveBeenCalled();
+  });
+
+  it('dedupes ids and charges the catalog bucket of THIS install', async () => {
+    await caller().getReactionsForApp({
+      blockToken: 'tok',
+      entityType: 'image',
+      ids: [IMAGE_ID, IMAGE_ID],
+      tickets: { [String(IMAGE_ID)]: ticketFor() },
+    });
+    expect(h.catalogRate).toHaveBeenCalledWith('page_apb_alpha');
     expect(h.getUserReactionsForImages).toHaveBeenCalledWith({
       imageIds: [IMAGE_ID],
       userId: VIEWER_ID,

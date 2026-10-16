@@ -63,6 +63,20 @@ describe('react tickets', () => {
     expect(verifyReactTicket(ticket, SUBJECT, { secret: SECRET, nowSeconds: NOW }).ok).toBe(false);
   });
 
+  it.each([
+    // A well-formed ticket whose signature is SHORTER or LONGER than a real one: reaches the
+    // length check before the constant-time compare, which would otherwise throw.
+    ['v1.1900000000.short', 'mismatch'],
+    [`v1.1900000000.${'a'.repeat(100)}`, 'mismatch'],
+    // Over the wire cap, but otherwise well-formed: refused by the length cap itself.
+    [`v1.1900000000.${'a'.repeat(260)}`, 'malformed'],
+  ])('refuses %s as %s without throwing', (input, reason) => {
+    expect(verifyReactTicket(input, SUBJECT, { secret: SECRET, nowSeconds: NOW })).toEqual({
+      ok: false,
+      reason,
+    });
+  });
+
   it.each([undefined, '', 123, 'v1.abc.def', 'v2.1900000000.sig', 'x'.repeat(300)])(
     'never throws on malformed input %#',
     (input) => {
