@@ -1,11 +1,8 @@
+import type { OpenAiGpt2CreateImageInput, OpenAiGpt2EditImageInput } from '@civitai/client';
 import type {
-  OpenAiGpt1CreateImageInput,
-  OpenAiGpt1EditImageInput,
-  OpenAiGpt1ImageGenInput,
-  OpenAiGpt2CreateImageInput,
-  OpenAiGpt2EditImageInput,
-} from '@civitai/client';
-import type {
+  OpenAiGpt15CreateImageInput,
+  OpenAiGpt15EditImageInput,
+  OpenAiGpt15ImageGenInput,
   OpenAiGpt25FlareCreateImageInput,
   OpenAiGpt25FlareEditImageInput,
   OpenAiGpt25SunburstCreateImageInput,
@@ -64,8 +61,8 @@ export const openaiConfig = ImageGenConfig({
     params,
     resources,
   }):
-    | OpenAiGpt1CreateImageInput
-    | OpenAiGpt1EditImageInput
+    | OpenAiGpt15CreateImageInput
+    | OpenAiGpt15EditImageInput
     | OpenAiGpt2CreateImageInput
     | OpenAiGpt2EditImageInput
     | OpenAiGpt25FlareCreateImageInput
@@ -119,18 +116,18 @@ export const openaiConfig = ImageGenConfig({
       quantity: params.quantity,
       quality: params.quality,
       size: `${params.width}x${params.height}`,
-    } as Omit<OpenAiGpt1ImageGenInput, 'operation'>;
+    } as Omit<OpenAiGpt15ImageGenInput, 'operation'>;
     if (!params.images?.length) {
       return {
         ...baseData,
         operation: 'createImage',
-      } as OpenAiGpt1CreateImageInput;
+      } as OpenAiGpt15CreateImageInput;
     } else {
       return {
         ...baseData,
         operation: 'editImage',
         images: params.images.map((x) => x.url),
-      } as OpenAiGpt1EditImageInput;
+      } as OpenAiGpt15EditImageInput;
     }
   },
 });
