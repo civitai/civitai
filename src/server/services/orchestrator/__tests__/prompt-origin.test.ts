@@ -23,6 +23,7 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
 import { MAX_SOURCE_IMAGES } from '~/server/utils/source-image-ids';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import {
   REPLACE_ENTRY_BY_ID,
@@ -448,6 +449,85 @@ describe('REPLACE_ENTRY_BY_ID', () => {
   it('builds the needle the stored entry carries', () => {
     expect(blockedEntryIdNeedle('0b8f')).toBe('"id":"0b8f"');
     expect(JSON.stringify({ id: '0b8f', prompt: 'x' })).toContain(blockedEntryIdNeedle('0b8f'));
+  });
+});
+
+describe('REPLACE_ENTRY_BY_ID, run in Lua', () => {
+  const KEY = 'generation:blocked-prompts:9';
+  const stored = (id: string) => JSON.stringify({ id, prompt: `p-${id}` });
+  let lua: LuaRedis;
+  const replace = (id: string, next: string) =>
+    lua.eval(REPLACE_ENTRY_BY_ID, { keys: [KEY], arguments: [blockedEntryIdNeedle(id), next] });
+
+  beforeEach(() => {
+    lua = createLuaRedis(0, { integerArgs: true });
+  });
+
+  it('swaps the element carrying the id in place and leaves the rest alone', async () => {
+    lua.setList(KEY, [stored('a'), stored('b'), stored('c')]);
+    expect(await replace('b', 'NEW')).toBe(1);
+    expect(lua.list(KEY)).toEqual([stored('a'), 'NEW', stored('c')]);
+  });
+
+  it('replaces only the first match', async () => {
+    lua.setList(KEY, [stored('a'), stored('a')]);
+    expect(await replace('a', 'NEW')).toBe(1);
+    expect(lua.list(KEY)).toEqual(['NEW', stored('a')]);
+  });
+
+  it('does not match an id that only shares a prefix', async () => {
+    lua.setList(KEY, [stored('entry-10')]);
+    expect(await replace('entry-1', 'NEW')).toBe(0);
+    expect(lua.list(KEY)).toEqual([stored('entry-10')]);
+  });
+
+  it('scans only the 50 newest elements', async () => {
+    const items = Array.from({ length: 51 }, (_, i) => stored(`e${i}`));
+    lua.setList(KEY, items);
+    expect(await replace('e50', 'NEW')).toBe(0);
+    expect(await replace('e49', 'NEW')).toBe(1);
+    expect(lua.list(KEY)?.[49]).toBe('NEW');
+    expect(lua.list(KEY)?.[50]).toBe(stored('e50'));
+  });
+
+  it('returns 0 on a missing list', async () => {
+    expect(await replace('a', 'NEW')).toBe(0);
+    expect(lua.list(KEY)).toBeUndefined();
+  });
+
+  it('writes the built origin onto the stored entry through attachPromptOrigin', async () => {
+    const entry: BlockedPromptEntry = {
+      id: 'entry-1',
+      prompt: SOURCE,
+      negativePrompt: '',
+      source: 'Regex',
+      imageId: null,
+      remixOfId: null,
+      origin: { incomplete: true },
+      time: '2026-01-01T00:00:00.000Z',
+    };
+    lua.setList(KEY, [JSON.stringify(entry), stored('older')]);
+    redisMock.sysRedis.eval.mockImplementation((script: string, options: never) =>
+      lua.eval(script, options)
+    );
+    mockMetaFetch.mockResolvedValue(metaFor(5, SOURCE));
+
+    await attachPromptOrigin({
+      userId: 9,
+      entry,
+      redisKey: KEY,
+      prompt: SOURCE,
+      sourceImageIds: [5],
+    });
+
+    const [head, rest] = lua.list(KEY) ?? [];
+    expect(JSON.parse(head)).toEqual({
+      ...entry,
+      origin: { remix: { imageId: 5, verified: true, promptMatch: 'identical', score: 1 } },
+    });
+    expect(rest).toBe(stored('older'));
+    expect(lua.errors).toEqual([]);
+    expect(mockReplaceTriggerOrigin).not.toHaveBeenCalled();
   });
 });
 
