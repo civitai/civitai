@@ -63,8 +63,8 @@ Decisions & prerequisites:
       (`commentId` stays `SET NULL`; `challengeId` has no FK in prod, so it is added after
       deleting its dangling threads) — approved 2026-10-16; built on
       `fix/thread-entity-fk-cascade` (migration `20261101120000_thread_entity_fk_cascade`:
-      `NOT VALID` then `VALIDATE`). Tick when: PR merged, release deployed, migration applied by
-      hand, all 16 constraints validated. Then run the purge by hand
+      `NOT VALID` then `VALIDATE`). Safe either side of the deploy. Tick when: PR merged,
+      migration applied by hand, all 16 constraints validated. Then run the purge by hand
 - [ ] **(review)** After the migration is applied: recapture the prod catalog, run
       `drift:baseline` (the 15 Thread `referential-action` entries and
       `missing-foreign-key|Thread|challengeId` drop out), and delete the `inFlightThreadCascade`

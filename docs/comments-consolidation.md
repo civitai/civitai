@@ -261,9 +261,10 @@ NOT VALID` and validates it. The drift baseline carries the 15 `referential-acti
 - **`Thread.commentId` stays `SET NULL`.** Flipping it would make a v2 comment delete destroy
   other users' replies (the v1 behaviour D6 rejected). The dead-parent class keeps growing
   slowly (3.8K comments so far) until V3 tombstones replace hard-deletes; the backfill skips it.
-- Order (decided): deploy the release carrying the regenerated client → apply the migration by
-  hand → run the purge. Flipping first means the purge removes a closed set instead of chasing a
-  stream; the purge query is unaffected either way.
+- Order (decided): apply the migration by hand → run the purge. The migration can go either side
+  of the deploy: the client never emulates delete actions (`relationMode` is `foreignKeys`), so
+  no code depends on it landing first. Flipping before purging means the purge removes a closed
+  set instead of chasing a stream; the purge query is unaffected either way.
 
 ### Drift since 2026-09-01
 
