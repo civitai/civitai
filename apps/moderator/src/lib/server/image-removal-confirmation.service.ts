@@ -78,7 +78,7 @@ export type DecideResult =
   | { ok: true; status: RemovalConfirmationStatus; note?: string }
   | { ok: false; error: string };
 
-const NOT_PENDING = 'Another moderator already decided this removal. Reload.';
+const NOT_PENDING = 'This removal was decided or changed since the page loaded. Reload.';
 
 /**
  * Confirms a held removal and runs it. The requester cannot confirm their own: the hold exists so a
@@ -118,7 +118,8 @@ export async function confirmRemoval({
     : null;
   const status: RemovalConfirmationStatus = voidNote ? 'Void' : 'Confirmed';
 
-  // Claimed in one statement so two confirmers cannot both run the removal.
+  // Claimed in one statement so two confirmers cannot both run the removal. A removal that joined
+  // the request since the read above moved its appeal or added reports: refused, or read back here.
   const claimed = await dbWrite
     .updateTable('ImageRemovalConfirmation')
     .set({
@@ -130,8 +131,10 @@ export async function confirmRemoval({
     .where('id', '=', id)
     .where('status', '=', 'Pending')
     .where('requestedById', '<>', userId)
+    .where('appealId', '=', row.appealId)
+    .returning('reportIds')
     .executeTakeFirst();
-  if (!claimed.numUpdatedRows) return { ok: false, error: NOT_PENDING };
+  if (!claimed) return { ok: false, error: NOT_PENDING };
   if (voidNote === 'A later appeal was approved') return { ok: true, status, note: voidNote };
 
   if (!voidNote)
@@ -153,7 +156,7 @@ export async function confirmRemoval({
       throw e;
     }
   // The image is down either way, so the reports the removal answered are actioned.
-  for (const reportId of row.reportIds)
+  for (const reportId of claimed.reportIds)
     await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId });
   await recordModActivity({
     userId,

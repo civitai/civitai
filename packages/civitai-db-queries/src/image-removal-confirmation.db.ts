@@ -68,8 +68,14 @@ export function loadRemovalEvents(query: ClickhouseQuery, imageIds: number[]) {
   `;
 }
 
-/** The label of the last removal at or before the approval: the one the appeal overturned. */
-export function overturnedRemovalLabel(events: RemovalEvent[], approvedAt: Date): string | null {
+/**
+ * The label of the last removal at or before the approval: the one the appeal overturned. Null when
+ * that removal carries no label, undefined when there is no such removal.
+ */
+export function overturnedRemovalLabel(
+  events: RemovalEvent[],
+  approvedAt: Date
+): string | null | undefined {
   let last: { at: number; label: string | null } | undefined;
   for (const e of events) {
     // ClickHouse `DateTime` renders as 'YYYY-MM-DD hh:mm:ss' in UTC.
@@ -77,7 +83,7 @@ export function overturnedRemovalLabel(events: RemovalEvent[], approvedAt: Date)
     if (Number.isNaN(at) || at > approvedAt.getTime()) continue;
     if (!last || at >= last.at) last = { at, label: e.label };
   }
-  return last?.label || null;
+  return last ? last.label || null : undefined;
 }
 
 /**
@@ -142,6 +148,8 @@ export async function holdSameReasonRemovals(opts: {
         .where('id', 'in', [...appeals.keys()])
         .where('ingestion', '=', 'Blocked')
         .where('blockedFor', '=', 'moderated')
+        // An account-deletion grace block looks the same but is undone if the account is restored.
+        .where(sql<boolean>`("metadata" -> 'accountDeletionPriorIngestion') IS NULL`)
         .execute()
     ).map((r) => r.id)
   );
@@ -172,17 +180,18 @@ export async function holdSameReasonRemovals(opts: {
       proceed.push(request.imageId);
       continue;
     }
-    const overturned = eventsRead
-      ? overturnedRemovalLabel(eventsByImage.get(request.imageId) ?? [], appeal.approvedAt) ??
-        appeal.removalLabel
+    const event = eventsRead
+      ? overturnedRemovalLabel(eventsByImage.get(request.imageId) ?? [], appeal.approvedAt)
       : null;
+    const overturned = event === undefined ? appeal.removalLabel : event;
     if (isSameRemovalReason(overturned, request.violationType, knownReasons))
       toHold.push({ request, appeal });
     else proceed.push(request.imageId);
   }
   if (!toHold.length) return { held: [], proceed };
 
-  // A removal that joins a pending request adds its reports to it, so confirming actions them all.
+  // A removal that joins a pending request adds its reports to it, so confirming actions them all,
+  // and moves it to the appeal it was checked against, so a confirmation weighs the latest one.
   const rows = await db
     .insertInto('ImageRemovalConfirmation')
     .values(
@@ -201,6 +210,7 @@ export async function holdSameReasonRemovals(opts: {
         .column('imageId')
         .where('status', '=', 'Pending')
         .doUpdateSet({
+          appealId: sql<number>`excluded."appealId"`,
           reportIds: sql<
             number[]
           >`ARRAY(SELECT DISTINCT unnest("ImageRemovalConfirmation"."reportIds" || excluded."reportIds"))`,

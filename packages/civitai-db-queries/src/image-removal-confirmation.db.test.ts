@@ -39,7 +39,13 @@ describe('overturnedRemovalLabel', () => {
     // One second after the approval in UTC; read as local time it would land on the wrong side in
     // any zone east of UTC.
     const events = [{ imageId: 1, time: '2026-10-14 16:59:46', label: 'gore' }];
+    expect(overturnedRemovalLabel(events, approvedAt)).toBeUndefined();
+  });
+
+  it('tells a removal with no label apart from no removal at all', () => {
+    const events = [{ imageId: 1, time: '2026-09-20 17:30:11', label: '' }];
     expect(overturnedRemovalLabel(events, approvedAt)).toBeNull();
+    expect(overturnedRemovalLabel([], approvedAt)).toBeUndefined();
   });
 });
 

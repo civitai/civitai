@@ -258,6 +258,45 @@ describe('a removal of an image approved on appeal', () => {
     expect([...rows[0].reportIds].sort()).toEqual([7, 8]);
   });
 
+  it('moves a pending request to the latest appeal when a new removal joins it', async () => {
+    await approve();
+    await blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'animatedMinorNsfw' });
+    // The image came down and went back up on a second approved appeal; the old request lingered.
+    const latest = await approve({ resolvedAt: '2026-10-15 09:00:00' });
+    const joined = await blockImage({
+      imageId: IMAGE,
+      userId: APPROVER,
+      violationType: 'animatedMinorNsfw',
+    });
+    expect(joined.held?.created).toBe(false);
+
+    // Confirming weighs the appeal the joining removal was checked against, so it runs.
+    const [row] = await confirmations();
+    expect(await confirmRemoval({ id: row.id, userId: CONFIRMER })).toMatchObject({
+      status: 'Confirmed',
+    });
+    expect(
+      (await db.query<{ appealId: number }>(`SELECT "appealId" FROM "ImageRemovalConfirmation"`))
+        .rows[0].appealId
+    ).toBe(latest);
+    expect((await image()).ingestion).toBe('Blocked');
+  });
+
+  it('holds an image under an account-deletion grace block, which is not a removal', async () => {
+    await approve();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated',
+         metadata = '{"accountDeletionPriorIngestion": "Scanned"}' WHERE id = $1`,
+      [IMAGE]
+    );
+    const result = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+    });
+    expect(result.held).toBeDefined();
+  });
+
   it('applies to an image that is already removed rather than holding it', async () => {
     await approve();
     await db.query(
@@ -311,6 +350,17 @@ describe('a removal of an image approved on appeal', () => {
         violationType: 'schoolNsfw',
       });
       expect(same.held).toBeDefined();
+    });
+
+    it('holds when the overturned removal carries no label, whatever the record says', async () => {
+      await approve({ label: 'gore' });
+      chQuery.mockResolvedValue([{ imageId: IMAGE, time: '2026-09-20 17:30:11', label: null }]);
+      const result = await blockImage({
+        imageId: IMAGE,
+        userId: REQUESTER,
+        violationType: 'schoolNsfw',
+      });
+      expect(result.held).toBeDefined();
     });
 
     it('holds when ClickHouse cannot answer', async () => {
