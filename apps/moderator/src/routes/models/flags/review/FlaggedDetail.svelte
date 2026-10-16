@@ -28,14 +28,18 @@
     detectionCopy,
     detectionKind,
     detectionSections,
+    latestScanDisagrees,
+    scanVerdictProvenance,
+    scanVerdictText,
   } from '$lib/minor-flags/text-scan-verdicts';
-  import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
+  import { FLAG_REVIEW_RULING_CHOICES, HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
   import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
   import type { FlaggedRow } from '$lib/server/minor-hash.service';
   import type { Outcome } from '$lib/triage/queue';
+  import type { RulingChoice } from '$lib/ruling-choices';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
 
-  type Verdict = ResolutionVerdict<'heldDetection'>;
+  type Verdict = ResolutionVerdict<'heldDetection'> | ResolutionVerdict<'flagReview'>;
 
   let {
     row,
@@ -56,7 +60,7 @@
   } = $props();
 
   // Mirrors the main app's refusal: an open appeal blocks keeping a flag, and blocks a re-detection
-  // ruling either way. Lifting a hash row is allowed. Change with `flaggedDecisionEnabled`.
+  // ruling either way. Lifting a hash or text-scan row is allowed. Change with `flaggedDecisionEnabled`.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
   const blocked = $derived(row.hasPendingAppeal);
   const enabled = $derived(flaggedDecisionEnabled(row));
@@ -76,20 +80,40 @@
     { action: 'keepFlag', label: 'Keep flag', outcome: 'Flag kept' },
     { action: 'liftFlag', label: 'Lift flag', outcome: 'Flag lifted' },
   ] as const;
-  const HELD_DECISIONS = {
-    Kept: { action: 'keepFlag', label: 'Keep flag' },
-    Dismissed: { action: 'liftFlag', label: 'Lift flag' },
-  } as const;
+  // Re-detections and text-scan flags rule with an inline reason; hash flags submit straight away.
+  const reasoned = $derived(row.source !== 'hash');
+  const choices: readonly RulingChoice<Verdict>[] = $derived(
+    row.source === 'text-scan' ? FLAG_REVIEW_RULING_CHOICES : HELD_DETECTION_RULING_CHOICES
+  );
+  const decisionFor = (verdict: Verdict) =>
+    verdict === 'Kept'
+      ? ({ action: 'keepFlag', label: 'Keep flag' } as const)
+      : ({ action: 'liftFlag', label: 'Lift flag' } as const);
+  const reasonError = (verdict: Verdict) =>
+    row.source === 'text-scan'
+      ? resolutionReasonError(
+          'flagReview',
+          verdict as ResolutionVerdict<'flagReview'>,
+          draft.reason,
+          draft.note,
+          [row.label]
+        )
+      : resolutionReasonError(
+          'heldDetection',
+          verdict as ResolutionVerdict<'heldDetection'>,
+          draft.reason,
+          draft.note,
+          [row.label]
+        );
+  const scanEntry = $derived(row.scanEntry);
+  const latest = $derived(row.latestScan?.[row.label] ?? null);
+  const labelName = $derived(row.label === 'poi' ? 'real person' : 'minor');
   const FIELDS_GRID = 'grid gap-2 sm:grid-cols-[minmax(14rem,22rem)_1fr_auto]';
 
-  const chosen = $derived(HELD_DETECTION_RULING_CHOICES.find((c) => c.verdict === draft.verdict));
+  const chosen = $derived(choices.find((c) => c.verdict === draft.verdict));
   const unrecordable = $derived(
     chosen
-      ? (!enabled[chosen.verdict === 'Kept' ? 0 : 1]
-          ? APPEAL_FIRST
-          : resolutionReasonError('heldDetection', chosen.verdict, draft.reason, draft.note, [
-              row.label,
-            ]))
+      ? (!enabled[chosen.verdict === 'Kept' ? 0 : 1] ? APPEAL_FIRST : reasonError(chosen.verdict))
       : null
   );
   const choose = (verdict: Verdict) => (draft = chooseVerdict(draft, verdict));
@@ -115,8 +139,8 @@
 {/snippet}
 
 {#snippet buttons()}
-  {#if row.source === 'redetected'}
-    {#each HELD_DETECTION_RULING_CHOICES as c, i (c.verdict)}
+  {#if reasoned}
+    {#each choices as c, i (c.verdict)}
       {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
       <TriageKeyButton
         key={i + 1}
@@ -126,7 +150,7 @@
         title={unavailable ?? undefined}
         onclick={() => choose(c.verdict)}
       >
-        {HELD_DECISIONS[c.verdict].label}
+        {decisionFor(c.verdict).label}
       </TriageKeyButton>
     {/each}
   {:else}
@@ -157,19 +181,29 @@
   {#if chosen}
     <form
       method="POST"
-      action={actionHref(HELD_DECISIONS[chosen.verdict].action)}
+      action={actionHref(decisionFor(chosen.verdict).action)}
       use:enhance={submit((form) => (form.get('status') === 'Kept' ? 'Flagged' : 'Not flagged'))}
       class={FIELDS_GRID}
     >
       {@render verdictFields()}
       <input type="hidden" name="status" value={chosen.verdict} />
-      <InlineReasonFields
-        subject="heldDetection"
-        verdict={chosen.verdict}
-        labels={[row.label]}
-        bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
-        bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
-      />
+      {#if row.source === 'text-scan'}
+        <InlineReasonFields
+          subject="flagReview"
+          verdict={chosen.verdict as ResolutionVerdict<'flagReview'>}
+          labels={[row.label]}
+          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
+          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
+        />
+      {:else}
+        <InlineReasonFields
+          subject="heldDetection"
+          verdict={chosen.verdict as ResolutionVerdict<'heldDetection'>}
+          labels={[row.label]}
+          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
+          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
+        />
+      {/if}
       <Button
         type="submit"
         size="lg"
@@ -182,7 +216,7 @@
     </form>
   {:else}
     <div class={FIELDS_GRID}>
-      <InlineReasonFields subject="heldDetection" verdict={null} />
+      <InlineReasonFields subject={row.source === 'text-scan' ? 'flagReview' : 'heldDetection'} verdict={null} />
     </div>
   {/if}
 {/snippet}
@@ -233,6 +267,61 @@
         showRulings={sections.rulings}
         pastAppeals={row.pastAppeals}
       />
+    {:else if row.source === 'text-scan'}
+      <div
+        class={scanEntry?.names?.length ? 'grid gap-4 md:grid-cols-[1fr_minmax(320px,380px)]' : ''}
+      >
+        <TriageCard title="Why it was flagged">
+          <div class="space-y-2 text-base text-dark-0">
+            <p class="m-0">
+              Text scan: {labelName}
+              {#if row.flaggedAt}
+                <span class="text-sm text-dark-2" title={dateTime(row.flaggedAt)}>
+                  · flagged {ago(row.flaggedAt)}
+                </span>
+              {/if}
+            </p>
+            <p class="m-0 text-sm">{scanEntry?.reason ?? 'No reason recorded.'}</p>
+            <p class="m-0 text-sm text-dark-2">
+              The scan flagged this automatically; no moderator has ruled on it.
+            </p>
+            {#if latest}
+              {@const provenance = scanVerdictProvenance(latest)}
+              <div class="rounded-md bg-dark-6 p-3 text-sm">
+                <p class="m-0 font-medium text-white">Latest scan</p>
+                <p class="m-0 mt-1">{scanVerdictText(latest)}</p>
+                <p class="m-0 text-dark-2">
+                  {provenance.source} ·
+                  {#if provenance.note}
+                    <span title={dateTime(latest.updatedAt)}>{provenance.note}</span>
+                  {:else}
+                    <span title={dateTime(latest.updatedAt)}>{ago(latest.updatedAt)}</span>
+                  {/if}
+                </p>
+                {#if latestScanDisagrees(row.latestScan, row.label)}
+                  <p
+                    class="m-0 mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-200"
+                  >
+                    Latest scan: not detected. Keeping the flag is still your call.
+                  </p>
+                {/if}
+              </div>
+            {/if}
+            {#if blocked}{@render appealNotice()}{/if}
+          </div>
+        </TriageCard>
+        {#if scanEntry?.names?.length}
+          <ScannedNamesCard names={scanEntry.names} />
+        {/if}
+      </div>
+      <PriorRulingsCard
+        granted={null}
+        grantedByUsername={null}
+        rulings={row.rulings}
+        showPriorClear={false}
+        showRulings={(row.rulings?.length ?? 0) > 0}
+        pastAppeals={row.pastAppeals}
+      />
     {:else}
       <div class="grid gap-4 lg:grid-cols-2">
         <TriageCard title="Why it was flagged">
@@ -277,7 +366,7 @@
     </div>
   {/snippet}
   {#snippet actions()}
-    {#if row.source === 'redetected'}
+    {#if reasoned}
       <TriageDecisionBar
         {buttons}
         {fields}

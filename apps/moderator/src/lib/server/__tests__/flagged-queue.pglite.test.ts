@@ -3,7 +3,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
-/** Runs the Flagged queue SQL (hash auto-flags and re-detections) on real Postgres: a predicate that compiles can still select the wrong rows. */
+/** Runs the Flagged queue SQL (hash auto-flags, text-scan auto-flags and re-detections) on real Postgres: a predicate that compiles can still select the wrong rows. */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
@@ -24,6 +24,7 @@ const {
   getFlaggedCount,
   getFlaggedModels,
   getRedetectedCount,
+  getTextScanFlaggedCount,
   reviewDaysLeft,
 } = await import('../minor-hash.service');
 
@@ -52,6 +53,10 @@ CREATE TABLE "Image" (
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
   "activity" TEXT NOT NULL, "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE TABLE "EntityModeration" (
+  "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, "status" TEXT NOT NULL DEFAULT 'Succeeded',
+  "result" JSONB, "updatedAt" TIMESTAMP NOT NULL DEFAULT now()
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -475,6 +480,145 @@ describe('hash auto-flags and the merged queue', () => {
     expect(await getFlaggedCount({ flag: 'poi' })).toBe(0);
     expect(await getFlaggedCount({ search: { modelOrUserId: 1 } })).toBe(2);
     expect(await getFlaggedCount({ search: { username: 'other' } })).toBe(1);
+  });
+});
+
+describe('text-scan auto-flags', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+  const entry = (at: string, extra: object = {}) => ({
+    workflowId: 'wf',
+    reason: 'why',
+    names: ['petite schoolgirl'],
+    textHash: 'h-1',
+    at,
+    ...extra,
+  });
+  const seed = (
+    id: number,
+    userId: number,
+    flags: { minor?: boolean; poi?: boolean },
+    meta: object
+  ) =>
+    pg.query(
+      `INSERT INTO "Model" (id, name, "userId", minor, poi, meta) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, `model ${id}`, userId, !!flags.minor, !!flags.poi, JSON.stringify(meta)]
+    );
+  const keys = async (filters: Partial<Parameters<typeof getFlaggedModels>[0]> = {}) =>
+    (await getFlaggedModels({ limit: 20, ...filters })).items.map((r) => r.key);
+  const onlyTextScan = { source: 'text-scan', flag: 'all', sort: 'oldest' } as const;
+
+  beforeEach(async () => {
+    // Both labels open on one model: a row per label.
+    await seed(
+      30,
+      1,
+      { minor: true, poi: true },
+      {
+        textScanFlags: { minor: entry(daysAgo(5)), poi: entry(daysAgo(4), { textHash: 'h-2' }) },
+      }
+    );
+    // A hash sweep also flagged this minor flag: the hash row wins, the poi text-scan row stays.
+    await seed(
+      31,
+      2,
+      { minor: true, poi: true },
+      {
+        minorFlagSnapshot: { source: 'auto', at: daysAgo(3), prevNsfw: false },
+        textScanFlags: { minor: entry(daysAgo(6)), poi: entry(daysAgo(6)) },
+      }
+    );
+    // Not waiting: ruled (upheld, granted), held for review, lifted column, a stub with no workflow.
+    await seed(
+      32,
+      1,
+      { minor: true },
+      { textScanFlags: { minor: entry(daysAgo(7), { appealUpheld: {} }) } }
+    );
+    await seed(
+      33,
+      1,
+      { minor: true },
+      { textScanFlags: { minor: entry(daysAgo(7), { appealGranted: {} }) } }
+    );
+    await seed(
+      34,
+      1,
+      { minor: true },
+      {
+        textScanFlags: {
+          minor: entry(daysAgo(7), { redetected: { workflowId: 'w', textHash: 'n' } }),
+        },
+      }
+    );
+    await seed(35, 1, {}, { textScanFlags: { minor: entry(daysAgo(7)) } });
+    await seed(36, 1, { minor: true }, { textScanFlags: { minor: { rulings: [] } } });
+  });
+
+  it('lists a row per open label, with the entry, and leaves the ruled and lifted ones out', async () => {
+    const { items } = await getFlaggedModels({ limit: 20 });
+    expect(items.map((r) => r.key)).toEqual([
+      '31:poi:text-scan',
+      '30:minor:text-scan',
+      '30:poi:text-scan',
+      '31:minor:hash',
+      // Held for review rather than flagged: the re-detection branch lists it, not this one.
+      '34:minor:redetected',
+    ]);
+    const row = items.find((r) => r.key === '30:poi:text-scan')!;
+    expect(row).toMatchObject({
+      source: 'text-scan',
+      textHash: 'h-2',
+      daysLeft: null,
+      redetected: null,
+      scanEntry: expect.objectContaining({ reason: 'why', names: ['petite schoolgirl'] }),
+    });
+    expect(new Date(row.flaggedAt!).toISOString()).toBe(new Date(row.scanEntry!.at!).toISOString());
+  });
+
+  it('lists a hash-flagged model once for minor, and still lists its poi text-scan row', async () => {
+    const keysFor31 = (await keys()).filter((k) => k.startsWith('31:'));
+    expect(keysFor31).toEqual(['31:poi:text-scan', '31:minor:hash']);
+    expect(await keys({ filters: onlyTextScan })).not.toContain('31:minor:text-scan');
+  });
+
+  it('filters by source and by flag', async () => {
+    expect(await keys({ filters: onlyTextScan })).toEqual([
+      '31:poi:text-scan',
+      '30:minor:text-scan',
+      '30:poi:text-scan',
+    ]);
+    expect(await keys({ filters: { ...onlyTextScan, flag: 'poi' } })).toEqual([
+      '31:poi:text-scan',
+      '30:poi:text-scan',
+    ]);
+    expect(await keys({ filters: { source: 'hash', flag: 'all', sort: 'oldest' } })).toEqual([
+      '31:minor:hash',
+    ]);
+  });
+
+  it('shows the latest scan for the label on a text-scan row only', async () => {
+    await pg.exec(`INSERT INTO "EntityModeration" ("entityType", "entityId", "result")
+      VALUES ('Model', 30, '{"labels":{"minor":{"detected":false,"reason":"gone"}}}')`);
+    const { items } = await getFlaggedModels({ limit: 20 });
+    const byKey = Object.fromEntries(items.map((r) => [r.key, r.latestScan]));
+    expect(byKey['30:minor:text-scan']?.minor).toMatchObject({
+      detected: false,
+      reason: 'gone',
+      source: 'main',
+    });
+    expect(byKey['30:poi:text-scan']?.poi).toBeNull();
+    expect(byKey['31:minor:hash']).toBeNull();
+  });
+
+  it('counts the same population the list shows', async () => {
+    expect(await getTextScanFlaggedCount()).toBe(3);
+    expect(await getTextScanFlaggedCount({ flag: 'poi' })).toBe(2);
+    expect(await getTextScanFlaggedCount({ search: { modelOrUserId: 1 } })).toBe(2);
+    expect(await getTextScanFlaggedCount({ search: { username: 'other' } })).toBe(1);
+    expect(await getFlaggedCount()).toBe(5);
+    expect(await getFlaggedCount({ source: 'text-scan' })).toBe(3);
+    expect(await getFlaggedCount({ source: 'hash' })).toBe(1);
+    expect(await getFlaggedCount({ source: 'text-scan', flag: 'minor' })).toBe(1);
   });
 });
 

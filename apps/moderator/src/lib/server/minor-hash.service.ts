@@ -19,6 +19,7 @@ import type {
   FlagRulingView,
   LatestScan,
   LatestScanSource,
+  TextScanFlagView,
   PriorClearView,
   RedetectionView,
 } from '$lib/minor-flags/text-scan-verdicts';
@@ -87,8 +88,8 @@ const hashFlaggedPredicate = (search?: MinorSearch) => sql`
   AND NOT ${humanConfirmedPredicate}
   AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
   AND ((m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}${
-    search && 'modelOrUserId' in search ? sql` OR m.id = ${search.modelOrUserId}` : sql``
-  })
+  search && 'modelOrUserId' in search ? sql` OR m.id = ${search.modelOrUserId}` : sql``
+})
 `;
 
 const minorSrcCte = sql`
@@ -538,7 +539,7 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
   return rows.rows;
 }
 
-export type FlaggedSource = 'hash' | 'redetected';
+export type FlaggedSource = 'hash' | 'redetected' | 'text-scan';
 
 /** One waiting item of the Flagged tab, whatever raised it. A model can appear once per label and
  *  source, so the key is the triple. Text-scan auto-flags with no ruling join as a third `source`. */
@@ -553,12 +554,16 @@ export type FlaggedRow = {
   poi: boolean;
   label: FlagLabel;
   source: FlaggedSource;
-  /** The detected text a re-detection ruling is bound to; null for hash flags. */
+  /** The detected text a ruling is bound to; null for hash flags. */
   textHash: string | null;
   flaggedAt: Date | null;
   /** Hash flags only: days until the review window closes and the flag is presumed correct. */
   daysLeft: number | null;
   redetected: RedetectionView | null;
+  /** Text-scan flags only: the flag entry as the scan wrote it (reason, names, hash). */
+  scanEntry: TextScanFlagView | null;
+  /** Text-scan flags only: what the latest scan rows say now. */
+  latestScan: LatestScan | null;
   granted: PriorClearView | null;
   grantedByUsername: string | null;
   rulings: FlagRulingView[] | null;
@@ -606,7 +611,8 @@ const hashBranch = (search: MinorSearch | undefined) => sql`
          'minor'::text AS label, 'hash'::text AS source, NULL::text AS "textHash",
          m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
          (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
-         NULL::jsonb AS redetected, NULL::jsonb AS granted, NULL::text AS "grantedByUsername",
+         NULL::jsonb AS redetected, NULL::jsonb AS "scanEntry",
+         NULL::jsonb AS granted, NULL::text AS "grantedByUsername",
          m.meta->'textScanFlags'->'minor'->'rulings' AS rulings,
          (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
          (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
@@ -623,7 +629,8 @@ const redetectedBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) =>
          l.entry->'redetected'->>'textHash' AS "textHash",
          m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
          ${redetectedAt} AS "flaggedAt",
-         l.entry->'redetected' AS redetected, l.entry->'appealGranted' AS granted,
+         l.entry->'redetected' AS redetected, NULL::jsonb AS "scanEntry",
+         l.entry->'appealGranted' AS granted,
          gu.username AS "grantedByUsername", l.entry->'rulings' AS rulings,
          NULL::boolean AS "prevNsfw", NULL::int AS "prevGalleryLevel"
   FROM "Model" m
@@ -639,10 +646,51 @@ const redetectedBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) =>
     AND ${searchPredicate(search, userRefs)}
 `;
 
+/** The predicate a partial index on text-scan flags would carry, repeated in every query so that the
+ *  index (not yet migrated: `CREATE INDEX CONCURRENTLY "Model_textScanFlagged_idx" ON "Model" (id)
+ *  WHERE <this>`) is picked up the moment it exists. Without it the queries scan "Model". */
+const textScanIndexPredicate = sql`
+  (m.meta->'textScanFlags'->'minor' ? 'workflowId'
+    OR m.meta->'textScanFlags'->'poi' ? 'workflowId')
+`;
+
+/** A text-scan flag is waiting for a ruling while its entry has a workflow and no ruling stub, and
+ *  the live column still carries it. A minor flag a hash sweep also raised is listed by the hash
+ *  branch, so it is left out here (the poi label has no hash twin). */
+const textScanFlaggedPredicate = (search: MinorSearch | undefined) => sql`
+  ${textScanIndexPredicate}
+  AND l.entry ? 'workflowId'
+  AND NOT l.entry ? 'appealUpheld'
+  AND NOT l.entry ? 'appealGranted'
+  AND NOT l.entry ? 'redetected'
+  AND CASE WHEN l.label = 'minor' THEN m.minor ELSE m.poi END
+  AND NOT (l.label = 'minor' AND ${hashFlaggedPredicate(search)})
+`;
+
+const textScanBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
+  SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+         m.status::text AS status, m.minor, m.poi,
+         l.label::text AS label, 'text-scan'::text AS source,
+         l.entry->>'textHash' AS "textHash",
+         m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
+         (l.entry->>'at')::timestamptz AS "flaggedAt",
+         NULL::jsonb AS redetected, l.entry AS "scanEntry",
+         NULL::jsonb AS granted, NULL::text AS "grantedByUsername",
+         l.entry->'rulings' AS rulings,
+         NULL::boolean AS "prevNsfw", NULL::int AS "prevGalleryLevel"
+  FROM "Model" m
+  ${redetectedLabelsJoin}
+  LEFT JOIN "User" u ON u.id = m."userId"
+  WHERE ${textScanFlaggedPredicate(search)}
+    AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
+    AND ${searchPredicate(search, userRefs)}
+`;
+
 /** Which branches a filter selects. Hash flags are minor flags, so a real-person filter excludes them. */
 const flaggedBranches = ({ source, flag }: Pick<FlaggedFilters, 'source' | 'flag'>) => ({
-  hash: source !== 'redetected' && flag !== 'poi',
-  redetected: source !== 'hash',
+  hash: (source === 'all' || source === 'hash') && flag !== 'poi',
+  redetected: source === 'all' || source === 'redetected',
+  textScan: source === 'all' || source === 'text-scan',
 });
 
 const msPerDay = 86_400_000;
@@ -667,6 +715,7 @@ export async function getFlaggedModels({
   const branches = [
     ...(use.hash ? [hashBranch(search)] : []),
     ...(use.redetected ? [redetectedBranch(search, filters.flag)] : []),
+    ...(use.textScan ? [textScanBranch(search, filters.flag)] : []),
   ];
   if (!branches.length) return { items: [] as FlaggedRow[], hasMore: false };
 
@@ -703,8 +752,18 @@ export async function getFlaggedModels({
            jsonb_build_object(
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
-           ) AS "pastAppeals"
+           ) AS "pastAppeals",
+           CASE WHEN pg.source = 'text-scan'
+                THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan"
     FROM pg
+    LEFT JOIN "EntityModeration" sm
+      ON pg.source = 'text-scan' AND sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
+    LEFT JOIN "EntityModeration" ss
+      ON pg.source = 'text-scan' AND ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}
+         AND ss."entityId" = pg."modelId"
+    LEFT JOIN LATERAL (
+      SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
+    ) ls ON TRUE
     ${modelFactsJoin}
     ${coverImagesJoin}
     ${uploaderFlagsJoin}
@@ -740,11 +799,30 @@ export async function getFlaggedCount({
   flag = 'all',
 }: { search?: MinorSearch } & Partial<Pick<FlaggedFilters, 'source' | 'flag'>> = {}) {
   const use = flaggedBranches({ source, flag });
-  const [hash, redetected] = await Promise.all([
+  const [hash, redetected, textScan] = await Promise.all([
     use.hash ? getAutoFlaggedCount({ search }) : 0,
     use.redetected ? getRedetectedCount({ search, flag }) : 0,
+    use.textScan ? getTextScanFlaggedCount({ search, flag }) : 0,
   ]);
-  return hash + redetected;
+  return hash + redetected + textScan;
+}
+
+/** Text-scan flags waiting on a ruling, both labels. No index serves the predicate, so this scans
+ *  "Model"; callers on a hot path bound it. */
+export async function getTextScanFlaggedCount({
+  search,
+  flag = 'all',
+}: { search?: MinorSearch; flag?: FlaggedFlag } = {}) {
+  const result = await sql<{ count: number }>`
+    SELECT count(*)::int AS count
+    FROM "Model" m
+    ${redetectedLabelsJoin}
+    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
+    WHERE ${textScanFlaggedPredicate(search)}
+      AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
+      AND ${searchPredicate(search, userRefs)}
+  `.execute(dbRead);
+  return result.rows[0]?.count ?? 0;
 }
 
 /** Labels waiting on a ruling. With no arguments it is the whole queue, which the tab badge shows;

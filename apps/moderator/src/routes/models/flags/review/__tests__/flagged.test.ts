@@ -3,14 +3,21 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { resolveRedetection, confirmMinorFlag, revertMinorFlag, getFlaggedModels, getFlaggedCount } =
-  vi.hoisted(() => ({
-    resolveRedetection: vi.fn(),
-    confirmMinorFlag: vi.fn(),
-    revertMinorFlag: vi.fn(),
-    getFlaggedModels: vi.fn(),
-    getFlaggedCount: vi.fn(),
-  }));
+const {
+  resolveRedetection,
+  ruleTextScanFlag,
+  confirmMinorFlag,
+  revertMinorFlag,
+  getFlaggedModels,
+  getFlaggedCount,
+} = vi.hoisted(() => ({
+  ruleTextScanFlag: vi.fn(),
+  resolveRedetection: vi.fn(),
+  confirmMinorFlag: vi.fn(),
+  revertMinorFlag: vi.fn(),
+  getFlaggedModels: vi.fn(),
+  getFlaggedCount: vi.fn(),
+}));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
@@ -26,6 +33,7 @@ vi.mock('$lib/server/minor-flag.service', () => ({
   resolveMinorFlagAppealPerLabel: vi.fn(),
   resolveRedetection,
   revertMinorFlag,
+  ruleTextScanFlag,
   setModelMinorFlag: vi.fn(),
 }));
 
@@ -43,6 +51,7 @@ const run = (name: string, fields: Record<string, string>) =>
 beforeEach(() => {
   vi.clearAllMocks();
   resolveRedetection.mockResolvedValue({ ok: true, resolved: 'kept' });
+  ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'kept', label: 'minor', modelId: 42 });
   confirmMinorFlag.mockResolvedValue({ ok: true });
   revertMinorFlag.mockResolvedValue({ ok: true });
   getFlaggedModels.mockResolvedValue({ items: [], hasMore: false });
@@ -184,6 +193,64 @@ describe('re-detection actions', () => {
     };
     expect(result.status).toBe(400);
     expect(result.data).toMatchObject({ error: 'Reload the queue.', modelId: 42 });
+  });
+});
+
+describe('text-scan flag actions', () => {
+  const textScan = { modelId: '42', label: 'minor', source: 'text-scan', textHash: 'h-1' };
+
+  it('keep rules the flag on the text the moderator saw', async () => {
+    expect(await run('keepFlag', { ...textScan, ...kept, internalNotes: 'clear' })).toMatchObject({
+      success: true,
+      modelId: 42,
+      label: 'minor',
+      resolved: 'kept',
+    });
+    expect(ruleTextScanFlag).toHaveBeenCalledWith({
+      modelId: 42,
+      label: 'minor',
+      keep: true,
+      textHash: 'h-1',
+      reason: { resolvedReason: 'detection-correct', internalNotes: 'clear' },
+    });
+    expect(resolveRedetection).not.toHaveBeenCalled();
+    expect(confirmMinorFlag).not.toHaveBeenCalled();
+  });
+
+  it('lift records a Lifted reason for the label and reports it', async () => {
+    ruleTextScanFlag.mockResolvedValue({ ok: true, ruled: 'lifted', label: 'poi', modelId: 42 });
+    expect(
+      await run('liftFlag', { ...textScan, label: 'poi', resolvedReason: 'not-a-real-person' })
+    ).toMatchObject({
+      success: true,
+      label: 'poi',
+      resolved: 'lifted',
+    });
+    expect(ruleTextScanFlag).toHaveBeenCalledWith({
+      modelId: 42,
+      label: 'poi',
+      keep: false,
+      textHash: 'h-1',
+      reason: { resolvedReason: 'not-a-real-person', internalNotes: undefined },
+    });
+  });
+
+  it.each([
+    ['no reason', textScan],
+    ['a lift reason on a keep', { ...textScan, ...dismissed }],
+    ['no text hash', { modelId: '42', label: 'minor', source: 'text-scan', ...kept }],
+    ['no label', { modelId: '42', source: 'text-scan', textHash: 'h-1', ...kept }],
+  ])('refuses %s before calling the main app', async (_name, fields) => {
+    expect(await run('keepFlag', fields)).toMatchObject({ status: 400 });
+    expect(ruleTextScanFlag).not.toHaveBeenCalled();
+  });
+
+  it("shows the main app's refusal against the model", async () => {
+    ruleTextScanFlag.mockResolvedValue({ ok: false, error: 'Owner appeal is open.' });
+    expect(await run('keepFlag', { ...textScan, ...kept })).toMatchObject({
+      status: 400,
+      data: { error: 'Owner appeal is open.', modelId: 42, subject: 'Model #42' },
+    });
   });
 });
 

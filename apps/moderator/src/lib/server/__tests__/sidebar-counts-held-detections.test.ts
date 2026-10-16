@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getRedetectedCount, getAutoFlaggedCount, countStrikeReview } = vi.hoisted(() => ({
-  getRedetectedCount: vi.fn(),
-  getAutoFlaggedCount: vi.fn(),
-  countStrikeReview: vi.fn(),
-}));
+const { getRedetectedCount, getAutoFlaggedCount, getTextScanFlaggedCount, countStrikeReview } =
+  vi.hoisted(() => ({
+    getTextScanFlaggedCount: vi.fn(),
+    getRedetectedCount: vi.fn(),
+    getAutoFlaggedCount: vi.fn(),
+    countStrikeReview: vi.fn(),
+  }));
 
 vi.mock('../cache', () => ({
   createCache: ({ fetch }: { fetch: () => Promise<unknown> }) => ({ get: () => fetch() }),
@@ -37,6 +39,7 @@ vi.mock('../minor-hash.service', () => ({
   getMinorQueueCounts: async () => ({ pending: 1 }),
   getRedetectedCount,
   getAutoFlaggedCount,
+  getTextScanFlaggedCount,
 }));
 
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
@@ -46,16 +49,18 @@ const { getSidebarCounts } = await import('../sidebar-counts.service');
 beforeEach(() => {
   vi.clearAllMocks();
   getAutoFlaggedCount.mockResolvedValue(0);
+  getTextScanFlaggedCount.mockResolvedValue(0);
 });
 
 describe('sidebar counts for Model Flags', () => {
-  it('adds the hash auto-flags to the held detections under Flagged, and the pending queue to File matches', async () => {
+  it('adds the hash and text-scan auto-flags to the held detections under Flagged, and the pending queue to File matches', async () => {
     getRedetectedCount.mockResolvedValue(5);
     getAutoFlaggedCount.mockResolvedValue(7);
+    getTextScanFlaggedCount.mockResolvedValue(3);
     const counts = await getSidebarCounts();
     expect(counts).toMatchObject({
       modelFlagsAppeals: 4,
-      modelFlagsReview: 12,
+      modelFlagsReview: 15,
       modelFlagsMatches: 1,
     });
     expect(counts).not.toHaveProperty('heldDetections');
@@ -65,6 +70,7 @@ describe('sidebar counts for Model Flags', () => {
   it.each([
     ['held detections', getRedetectedCount, getAutoFlaggedCount],
     ['hash auto-flags', getAutoFlaggedCount, getRedetectedCount],
+    ['text-scan auto-flags', getTextScanFlaggedCount, getRedetectedCount],
   ])(
     'drops Flagged, without blanking the other badges, when the %s fail',
     async (_name, failing, working) => {

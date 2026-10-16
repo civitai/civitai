@@ -17,6 +17,8 @@
   <MetaChip {size} tone={kind === 'first' ? 'violet' : 'amber'}>
     {detectionCopy(kind).badge.toLowerCase()}
   </MetaChip>
+{:else if row.source === 'text-scan'}
+  <MetaChip {size} tone="violet">text-scan</MetaChip>
 {:else}
   <MetaChip {size} tone="blue">hash</MetaChip>
 {/if}

@@ -35,6 +35,7 @@ import {
   resolveMinorFlagAppealPerLabel,
   resolveRedetection,
   revertMinorFlag,
+  ruleTextScanFlag,
   setModelMinorFlag,
 } from '$lib/server/minor-flag.service';
 
@@ -182,7 +183,7 @@ const flaggedAction =
     const modelId = Number(form.get('modelId'));
     const posted = form.get('label');
     const label = z.enum(['minor', 'poi']).safeParse(posted);
-    const source = z.enum(['hash', 'redetected']).safeParse(form.get('source'));
+    const source = z.enum(['hash', 'redetected', 'text-scan']).safeParse(form.get('source'));
     if (!(modelId > 0) || !source.success)
       return fail(400, { error: 'Missing model id, label or source.' });
     const refusal = (error: string) =>
@@ -201,6 +202,22 @@ const flaggedAction =
     if (!label.success) return fail(400, { error: 'Missing model id, label or source.' });
     const textHash = z.string().min(1).max(200).safeParse(form.get('textHash'));
     if (!textHash.success) return fail(400, { error: 'Missing text hash.' });
+    if (source.data === 'text-scan') {
+      const reason = rulingReasonFromForm('flagReview', keep ? 'Kept' : 'Lifted', form, [
+        label.data,
+      ]);
+      if (typeof reason === 'string') return refusal(reason);
+      const result = await ruleTextScanFlag({
+        modelId,
+        label: label.data,
+        keep,
+        textHash: textHash.data,
+        reason,
+      });
+      if (!result.ok) return refusal(result.error);
+      return { success: true, modelId, label: label.data, resolved: result.ruled };
+    }
+
     const reason = rulingReasonFromForm('heldDetection', keep ? 'Kept' : 'Dismissed', form, [
       label.data,
     ]);

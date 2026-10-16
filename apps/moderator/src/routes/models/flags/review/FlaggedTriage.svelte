@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
-  import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
+  import { FLAG_REVIEW_RULING_CHOICES, HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
@@ -37,7 +37,7 @@
     form,
   }: { data: FlaggedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
 
-  type Verdict = ResolutionVerdict<'heldDetection'>;
+  type Verdict = ResolutionVerdict<'heldDetection'> | ResolutionVerdict<'flagReview'>;
 
   let current = $state<string | null>(null);
   const ruling = rulingDraft<Verdict>(() => current);
@@ -45,7 +45,7 @@
   // The `data-triage-action` of each hash row's two forms, in key order.
   const HASH_ACTIONS = ['keepFlag', 'liftFlag'] as const;
 
-  const parseKey = (raw: string) => (/^\d+:(minor|poi):(hash|redetected)$/.test(raw) ? raw : null);
+  const parseKey = (raw: string) => (/^\d+:(minor|poi):(hash|redetected|text-scan)$/.test(raw) ? raw : null);
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
@@ -94,8 +94,10 @@
   } satisfies ChipGroup);
 
   const ondecision = (row: FlaggedRow, index: number) => {
-    if (row.source === 'redetected') {
-      const verdict = HELD_DETECTION_RULING_CHOICES[index]?.verdict;
+    if (row.source !== 'hash') {
+      const choices: readonly { verdict: Verdict }[] =
+        row.source === 'text-scan' ? FLAG_REVIEW_RULING_CHOICES : HELD_DETECTION_RULING_CHOICES;
+      const verdict = choices[index]?.verdict;
       if (verdict) ruling.choose(verdict);
       return;
     }

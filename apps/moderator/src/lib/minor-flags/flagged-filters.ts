@@ -1,4 +1,4 @@
-export const FLAGGED_SOURCES = ['all', 'hash', 'redetected'] as const;
+export const FLAGGED_SOURCES = ['all', 'hash', 'text-scan', 'redetected'] as const;
 export const FLAGGED_FLAGS = ['all', 'minor', 'poi'] as const;
 export const FLAGGED_SORTS = ['oldest', 'newest'] as const;
 
@@ -21,6 +21,7 @@ export const DEFAULT_FLAGGED_FILTERS: FlaggedFilters = {
 export const FLAGGED_SOURCE_LABELS: Record<FlaggedSourceFilter, string> = {
   all: 'All',
   hash: 'Hash match',
+  'text-scan': 'Text scan',
   redetected: 'Re-detected',
 };
 

@@ -16,6 +16,7 @@ import { countStrikeReview } from './strike-review.service';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getAutoFlaggedCount,
+  getTextScanFlaggedCount,
   getMinorFlagAppealGroups,
   getMinorQueueCounts,
   getRedetectedCount,
@@ -48,6 +49,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     modelFlagAppealGroups,
     heldDetections,
     autoFlagged,
+    textScanFlagged,
     strikeReview,
   ] = await Promise.all([
     getImageReviewCounts(),
@@ -92,6 +94,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(getRedetectedCount),
     // Its own cheap count, not the ~10s Pending one, so it survives that count dropping at the bound above.
     bounded(getAutoFlaggedCount),
+    // No index serves the text-scan predicate yet, so it scans "Model"; bounded for that reason.
+    bounded(getTextScanFlaggedCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
   ]);
@@ -108,9 +112,9 @@ async function fetchCounts(): Promise<SidebarCounts> {
     removedAppeals,
     reRemovals,
     modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
-    // Both or neither: one source alone would label the tab with a number that reads as "all clear".
-    ...(heldDetections != null && autoFlagged != null
-      ? { modelFlagsReview: heldDetections + autoFlagged }
+    // All sources or none: one source alone would label the tab with a number that reads as "all clear".
+    ...(heldDetections != null && autoFlagged != null && textScanFlagged != null
+      ? { modelFlagsReview: heldDetections + autoFlagged + textScanFlagged }
       : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
     ...(minorQueue != null ? { modelFlagsMatches: minorQueue.pending } : {}),
