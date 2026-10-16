@@ -6,6 +6,6 @@
 --
 -- Both rows must show indisvalid = true.
 --
--- Apply after 20261101120300_appeal_category_queue_idx.
+-- Apply after 20261102120300_appeal_category_queue_idx.
 -- RUN OUTSIDE ANY TRANSACTION (CONCURRENTLY).
 DROP INDEX CONCURRENTLY IF EXISTS "Appeal_entityType_entityId_userId_pending_key";

@@ -18,11 +18,11 @@ const read = (name: string) =>
 
 const PRE_EXISTING = '20261002200000_appeal_one_pending_per_entity';
 const SITE_APPEAL_MIGRATIONS = [
-  '20261101120000_appeal_category',
-  '20261101120100_appeal_inapp_pending_key',
-  '20261101120200_appeal_category_pending_key',
-  '20261101120300_appeal_category_queue_idx',
-  '20261101120400_appeal_drop_old_pending_key',
+  '20261102120000_appeal_category',
+  '20261102120100_appeal_inapp_pending_key',
+  '20261102120200_appeal_category_pending_key',
+  '20261102120300_appeal_category_queue_idx',
+  '20261102120400_appeal_drop_old_pending_key',
 ];
 
 let db: PGlite;
