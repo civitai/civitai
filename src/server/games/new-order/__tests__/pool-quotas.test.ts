@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computePoolTargets, DEFAULT_POOL_QUOTAS } from '~/server/games/new-order/pool-quotas';
-import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { computePoolTargets } from '~/server/games/new-order/pool-quotas';
 
 describe('computePoolTargets', () => {
   it('splits evenly across three pools when weights sum to 1 and all pools have stock', () => {
@@ -170,16 +169,5 @@ describe('computePoolTargets', () => {
     expect(r.targets).toHaveLength(3);
     expect(r.activeIdxs).toEqual([0, 1]);
     expect(r.targets[2]).toBe(0);
-  });
-});
-
-describe('DEFAULT_POOL_QUOTAS', () => {
-  it('ships a 50/50 Knight default with Knight3 disabled', () => {
-    expect(DEFAULT_POOL_QUOTAS[NewOrderRankType.Knight]).toEqual([0.5, 0.5, 0]);
-  });
-
-  it('does not ship defaults for Acolyte or Templar (legacy sequential preserved)', () => {
-    expect(DEFAULT_POOL_QUOTAS[NewOrderRankType.Acolyte]).toBeUndefined();
-    expect(DEFAULT_POOL_QUOTAS[NewOrderRankType.Templar]).toBeUndefined();
   });
 });

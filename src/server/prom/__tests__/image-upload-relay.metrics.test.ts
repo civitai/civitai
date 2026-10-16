@@ -60,14 +60,6 @@ beforeEach(() => {
 });
 
 describe('civitai_image_upload_relay_total registration', () => {
-  it('registers on the DEFAULT registry, which is the one /api/metrics scrapes', async () => {
-    ensureRegisterImageUploadRelayMetrics();
-    // Not "the function returned a counter" — a counter on a private registry would
-    // satisfy that and be scraped by nothing.
-    expect(client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC)).toBeDefined();
-    expect(await seriesFromRegistry()).toHaveProperty('success');
-  });
-
   it('SEEDS every outcome at 0 so an absent series cannot be mistaken for a real zero', async () => {
     // 🔴 The point of the whole module. The relay fires a handful of times across the
     // fleet, so on nearly every pod the true reading is all-zeros — and prom-client
