@@ -44,25 +44,23 @@ const { getSidebarCounts } = await import('../sidebar-counts.service');
 beforeEach(() => vi.clearAllMocks());
 
 describe('sidebar counts for Model Flags', () => {
-  it('splits the minor queue across Flagged (auto) and File matches (pending)', async () => {
+  it('counts only held detections under Flagged, and the pending queue under File matches', async () => {
     getRedetectedCount.mockResolvedValue(5);
     const counts = await getSidebarCounts();
     expect(counts).toMatchObject({
       modelFlagsAppeals: 4,
-      modelFlagsReview: 7,
+      modelFlagsReview: 5,
       modelFlagsMatches: 1,
     });
     expect(counts).not.toHaveProperty('heldDetections');
     expect(counts).not.toHaveProperty('minorHashMatches');
   });
 
-  it('keeps Flagged at the auto count, without blanking the other badges, when held detections fail', async () => {
+  it('drops Flagged, without blanking the other badges, when held detections fail', async () => {
     getRedetectedCount.mockRejectedValue(new Error('db down'));
-    expect(await getSidebarCounts()).toMatchObject({
-      modelFlagsAppeals: 4,
-      modelFlagsReview: 2,
-      modelFlagsMatches: 1,
-    });
+    const counts = await getSidebarCounts();
+    expect(counts).not.toHaveProperty('modelFlagsReview');
+    expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsMatches: 1 });
   });
 });
 

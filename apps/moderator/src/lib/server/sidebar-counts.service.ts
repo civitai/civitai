@@ -104,10 +104,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     removedAppeals,
     reRemovals,
     modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
-    // Either source failing must not blank the badge for the other.
-    ...(heldDetections != null || minorQueue != null
-      ? { modelFlagsReview: (heldDetections ?? 0) + (minorQueue?.auto ?? 0) }
-      : {}),
+    // Slice 3 adds the hash auto-flags and text-scan auto-flags here, once the Flagged page lists them.
+    ...(heldDetections != null ? { modelFlagsReview: heldDetections } : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
     ...(minorQueue != null ? { modelFlagsMatches: minorQueue.pending } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),

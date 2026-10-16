@@ -99,7 +99,7 @@
   // on every page render to label two tabs.
   let counts = $state<{ pending: number; auto: number } | null>(null);
   $effect(() => {
-    if (!data.tabs) return;
+    if (!data.tabs && data.tab !== 'pending') return;
     fetch('/api/minor-queue-counts')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => (counts = d))
