@@ -79,10 +79,20 @@ export type RestrictionQuery = {
   restrictionId?: number;
   /** `remix`: some trigger came from a remix. `typed`: every prompt trigger recorded its origin and none came from a remix or the prompt enhancer. `unchanged-remix`: some trigger's remixed prompt matched the source image's stored prompt. */
   origin?: OriginFilter;
+  /** Omitted means `defaultSortFor(status)`. */
+  sort?: SortOrder;
 };
 
 export const ORIGIN_FILTERS = ['remix', 'typed', 'unchanged-remix'] as const;
 export type OriginFilter = (typeof ORIGIN_FILTERS)[number];
+
+export const SORT_ORDERS = ['oldest', 'newest'] as const;
+export type SortOrder = (typeof SORT_ORDERS)[number];
+
+// The account is muted while its row is Pending, so that queue is worked oldest first: newest first
+// left month-old mutes on the last page. A history view reads newest first.
+export const defaultSortFor = (status: UserRestrictionStatus | undefined): SortOrder =>
+  status === 'Pending' ? 'oldest' : 'newest';
 
 // `triggers` is an array, or a single object on rows from before the backfill. jsonpath's default lax
 // mode unwraps an array when a member is accessed on it, so one path covers both shapes.
@@ -163,6 +173,7 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     userId,
     restrictionId,
     origin,
+    sort = defaultSortFor(status),
   } = query;
 
   // 🔴 The type predicate is what separates one review queue from another, and it is applied for every
@@ -181,9 +192,7 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`))
     .$if(!!origin, (qb) => qb.where(originPredicate(origin!)));
 
-  // The account is muted while its row is Pending, so the queue is worked oldest first: newest first
-  // left month-old mutes on the last page. A history view reads newest first.
-  const direction = status === 'Pending' ? 'asc' : 'desc';
+  const direction = sort === 'oldest' ? 'asc' : 'desc';
 
   const [rows, count] = await Promise.all([
     base

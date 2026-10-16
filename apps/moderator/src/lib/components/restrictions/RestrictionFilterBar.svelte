@@ -14,6 +14,8 @@
     fallbackType,
     status,
     origin,
+    sort,
+    defaultSort,
     facets,
     q,
   }: {
@@ -22,6 +24,9 @@
     fallbackType: RestrictionType;
     status: string;
     origin: string | null;
+    /** The order the URL names; null means `defaultSort`. */
+    sort: string | null;
+    defaultSort: string;
     facets: RestrictionFacets;
     q: string;
   } = $props();
@@ -39,6 +44,10 @@
     { value: 'typed', label: 'Typed', count: facets.origin.typed },
     { value: 'unchanged-remix', label: 'Unchanged remix', count: facets.origin['unchanged-remix'] },
   ]);
+  const sorts: Chip[] = [
+    { value: 'oldest', label: 'Oldest first' },
+    { value: 'newest', label: 'Newest first' },
+  ];
   const typeChips = $derived<Chip[]>(types.map((t) => ({ value: t, label: RESTRICTION_TYPE_LABELS[t] })));
 
   // Page and selection index into the result set being replaced.
@@ -59,6 +68,13 @@
         fallback: fallbackType,
       },
       { key: 'status', label: 'Status', chips: statuses, current: status, fallback: 'Pending' },
+      {
+        key: 'sort',
+        label: 'Order',
+        chips: sorts,
+        current: sort ?? defaultSort,
+        fallback: defaultSort,
+      },
       { key: 'origin', label: 'Origin', chips: origins, current: origin ?? '', fallback: null },
     ].filter((g) => !!g)
   );
@@ -103,7 +119,7 @@
   <!-- Keyed on q: the Input's value is bindable, so a one-way prop would latch on what was typed. -->
   {#key q}
     <form method="GET" class="ml-auto flex w-full max-w-[24rem] items-center gap-2">
-      {#each [['type', type === fallbackType ? '' : type], ['status', status === 'Pending' ? '' : status], ['origin', origin ?? '']] as [name, value] (name)}
+      {#each [['type', type === fallbackType ? '' : type], ['status', status === 'Pending' ? '' : status], ['origin', origin ?? ''], ['sort', sort ?? '']] as [name, value] (name)}
         {#if value}<input type="hidden" {name} {value} />{/if}
       {/each}
       <Input

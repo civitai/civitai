@@ -36,6 +36,8 @@
     type: RestrictionType;
     status: string;
     origin: string | null;
+    sort: string | null;
+    defaultSort: string;
     q: string;
     civitaiUrl: string;
     grants: Record<string, boolean | undefined>;
@@ -72,6 +74,7 @@
       type: data.type === fallbackType ? undefined : data.type,
       status: data.status === 'Pending' ? undefined : data.status,
       origin: data.origin ?? undefined,
+      sort: data.sort ?? undefined,
       q: data.q,
       page: data.page > 1 ? data.page : undefined,
     });
@@ -86,9 +89,18 @@
     row.status === 'Pending' && !unwiredRulingReason(row.type);
 
   const clearFiltersHref = $derived(
-    urlWith(page.url, { status: null, origin: null, q: null, page: null, selected: null })
+    urlWith(page.url, {
+      status: null,
+      origin: null,
+      sort: null,
+      q: null,
+      page: null,
+      selected: null,
+    })
   );
-  const filtersActive = $derived(data.status !== 'Pending' || !!data.origin || !!data.q);
+  const filtersActive = $derived(
+    data.status !== 'Pending' || !!data.origin || !!data.sort || !!data.q
+  );
 </script>
 
 <RestrictionFilterBar
@@ -97,6 +109,8 @@
   {fallbackType}
   status={data.status}
   origin={data.origin}
+  sort={data.sort}
+  defaultSort={data.defaultSort}
   facets={data.facets}
   q={data.q}
 />
