@@ -677,14 +677,14 @@ export const MODEL_CARDS: ModelCard[] = [
         key: 'acestep_15',
         label: '1.5 (3.5B)',
         air: 'urn:air:ace:checkpoint:civitai:2549270@2864864',
-        baseModel: 'ACE-Step',
+        baseModel: 'ACE Audio',
         ecosystem: 'ace_step_15',
       },
       {
         key: 'acestep_15_xl_base',
         label: 'XL Base (4B)',
         air: 'urn:air:ace:checkpoint:civitai:2549270@2864892',
-        baseModel: 'ACE-Step',
+        baseModel: 'ACE Audio',
         ecosystem: 'ace_step_15_xl',
         modelVariant: 'base',
       },
@@ -692,7 +692,7 @@ export const MODEL_CARDS: ModelCard[] = [
         key: 'acestep_15_xl_sft',
         label: 'XL SFT (4B)',
         air: 'urn:air:ace:checkpoint:civitai:2549270@2864917',
-        baseModel: 'ACE-Step',
+        baseModel: 'ACE Audio',
         ecosystem: 'ace_step_15_xl',
         modelVariant: 'sft',
       },
@@ -1461,11 +1461,17 @@ export interface ExtraParamDefaults {
 const SD_FAMILY_ECOSYSTEMS = new Set(['sd1', 'sdxl']);
 
 /** The recommended values for the extra fields — the Review seed and the "Reset" target. Independent
- *  of the dataset's label mode: an unsupported field keeps its default and is zeroed at submit. */
-export function extraParamDefaults(card: ModelCard, versionKey: string): ExtraParamDefaults {
+ *  of the dataset's label mode: an unsupported field keeps its default and is zeroed at submit. With a
+ *  trigger word the trigger leads every caption, so shuffling the rest while keeping the first tag is
+ *  recommended, as the in-app trainer does. */
+export function extraParamDefaults(
+  card: ModelCard,
+  versionKey: string,
+  hasTrigger = false
+): ExtraParamDefaults {
   return {
-    shuffleTokens: false,
-    keepTokens: 0,
+    shuffleTokens: hasTrigger,
+    keepTokens: hasTrigger ? 1 : 0,
     minSnrGamma: 5,
     noiseOffset: paramsForVersion(card, versionKey).noiseOffset,
     flipAugmentation: false,

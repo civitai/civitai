@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconSparkles, IconX, IconMusic } from '@tabler/icons-svelte';
+  import { IconChevronLeft, IconChevronRight, IconSparkles, IconX, IconMusic } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -18,6 +18,8 @@
     trigger,
     tagVocab,
     onRelabel,
+    position,
+    onStep,
   }: {
     open: boolean;
     editing: Img | undefined;
@@ -25,6 +27,9 @@
     trigger: string;
     tagVocab: string[];
     onRelabel: (id: number) => void;
+    /** Where `editing` sits in the grid's sequence; `index` is -1 when it isn't in it. */
+    position: { index: number; total: number };
+    onStep: (delta: -1 | 1) => void;
   } = $props();
 
   let newTag = $state('');
@@ -34,6 +39,23 @@
   $effect(() => {
     if (open) newTag = '';
   });
+
+  const canPrev = $derived(position.index > 0);
+  const canNext = $derived(position.index >= 0 && position.index < position.total - 1);
+
+  // A half-typed tag is committed rather than dropped: moving on is how a tagging pass ends an image.
+  function step(delta: -1 | 1) {
+    if (delta === -1 ? !canPrev : !canNext) return;
+    if (labelMode === 'tag' && newTag.trim()) addTag();
+    newTag = '';
+    onStep(delta);
+  }
+  // Alt+arrows, so plain arrows still move the caret in the tag input and caption textarea.
+  function stepKeydown(e: KeyboardEvent) {
+    if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    step(e.key === 'ArrowLeft' ? -1 : 1);
+  }
 
   // Accept one tag or a paste of comma/newline-separated tags; trim, drop blanks, dedupe against what's
   // already there and within the paste.
@@ -94,130 +116,145 @@
 {/snippet}
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-2xl" portalProps={portalProps()}>
+  <Dialog.Content class="sm:max-w-2xl" portalProps={portalProps()} onkeydown={stepKeydown}>
     {#if editing}
       <Dialog.Header>
         <Dialog.Title>{labelMode === 'tag' ? 'Edit tags' : 'Edit caption'}</Dialog.Title>
         <Dialog.Description>{editing.name}</Dialog.Description>
       </Dialog.Header>
+      {#if position.total > 1 && position.index >= 0}
+        <div class="flex items-center justify-between gap-2">
+          <Button variant="outline" size="xs" onclick={() => step(-1)} disabled={!canPrev} title="Previous (Alt+←)">
+            <IconChevronLeft size={13} stroke={2} class="mr-1 inline" />Previous
+          </Button>
+          <span class="font-mono text-xs text-dark-2" aria-live="polite">
+            {position.index + 1} / {position.total}
+          </span>
+          <Button variant="outline" size="xs" onclick={() => step(1)} disabled={!canNext} title="Next (Alt+→)">
+            Next<IconChevronRight size={13} stroke={2} class="ml-1 inline" />
+          </Button>
+        </div>
+      {/if}
+      {#key editing.id}
 
-      {#if labelMode === 'tag'}
-        <div class="grid gap-4 sm:grid-cols-[200px_1fr]" use:autofocusInput>
-          {@render mediaPreview(editing, 'max-h-48 w-full object-cover sm:max-h-none')}
-          <div>
-            <div class="mb-2 flex items-center justify-between gap-2">
-              <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
-              <div class="flex items-center gap-1">
+        {#if labelMode === 'tag'}
+          <div class="grid gap-4 sm:grid-cols-[200px_1fr]" use:autofocusInput>
+            {@render mediaPreview(editing, 'max-h-48 w-full object-cover sm:max-h-none')}
+            <div>
+              <div class="mb-2 flex items-center justify-between gap-2">
+                <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
+                <div class="flex items-center gap-1">
+                  <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
+                    <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
+                      ? 'labeling…'
+                      : 'Re-run'}
+                  </Button>
+                  {#if editing.tags.length > 0}
+                    <Button variant="ghost" size="xs" onclick={clearTags}>Clear all</Button>
+                  {/if}
+                </div>
+              </div>
+
+              {#if triggerText && !tagsHaveTrigger(trigger, editing.tags)}
+                <div class="mb-2 flex items-center gap-2 text-xs text-dark-2">
+                  <span class="rounded border border-buzz/30 bg-buzz/10 px-2 py-0.5 font-mono text-buzz">
+                    {triggerText}
+                  </span>
+                  <span class="font-mono">auto-prepended to every tag</span>
+                </div>
+              {/if}
+
+              <div class="flex min-h-[64px] flex-wrap content-start gap-1.5 rounded border border-dark-4 bg-dark-7 p-2.5">
+                {#if editing.tags.length === 0}
+                  <span class="self-center font-mono text-xs text-dark-2">
+                    No tags yet — type below, paste comma-separated, or re-run auto-label.
+                  </span>
+                {/if}
+                {#each editing.tags as t (t)}
+                  <span
+                    class="inline-flex items-center gap-0.5 rounded border py-1 pl-2 pr-1 font-mono text-xs {isTriggerTag(
+                      trigger,
+                      t
+                    )
+                      ? 'border-buzz/30 bg-buzz/10 text-buzz'
+                      : 'border-dark-4 bg-dark-6 text-dark-0'}"
+                  >
+                    {t}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${t}`}
+                      onclick={() => removeTag(t)}
+                      class="grid h-5 w-5 place-items-center rounded text-dark-1 hover:bg-red-500/20 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <IconX size={12} stroke={2} />
+                    </button>
+                  </span>
+                {/each}
+              </div>
+
+              <form
+                class="mt-2 flex gap-2"
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  addTag();
+                }}
+              >
+                <Input
+                  bind:value={newTag}
+                  onkeydown={tagKeydown}
+                  placeholder="Add or paste tags…"
+                  class="min-w-0 flex-1 font-mono"
+                />
+                <Button type="submit" variant="outline">Add</Button>
+              </form>
+
+              {#if suggestions.length > 0}
+                <div class="mt-2">
+                  <div class="mb-1 font-mono text-xs uppercase tracking-wider text-dark-2">From this dataset</div>
+                  <div class="flex flex-wrap gap-1">
+                    {#each suggestions as s (s)}
+                      <button
+                        type="button"
+                        onclick={() => {
+                          newTag = s;
+                          addTag();
+                        }}
+                        class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-xs text-dark-1 hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        + {s}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </div>
+        {:else}
+          <div class="flex flex-col gap-3" use:autofocusInput>
+            {@render mediaPreview(editing, 'max-h-72 w-full object-contain')}
+            <div>
+              <div class="mb-2 flex items-center justify-between gap-2">
+                <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
                 <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
                   <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
                     ? 'labeling…'
                     : 'Re-run'}
                 </Button>
-                {#if editing.tags.length > 0}
-                  <Button variant="ghost" size="xs" onclick={clearTags}>Clear all</Button>
+              </div>
+              <Textarea bind:value={editing.caption} rows={6} placeholder="Describe the image…" />
+              <p class="mt-2 text-xs text-dark-2">
+                {#if !triggerText}
+                  No trigger word set.
+                {:else if captionTriggerHit(trigger, editing.caption)}
+                  Trigger <span class="text-buzz">{triggerText}</span> is highlighted where it appears.
+                {:else}
+                  Trigger <span class="text-buzz">{triggerText}</span> is prepended automatically.
                 {/if}
-              </div>
+              </p>
             </div>
-
-            {#if triggerText && !tagsHaveTrigger(trigger, editing.tags)}
-              <div class="mb-2 flex items-center gap-2 text-xs text-dark-2">
-                <span class="rounded border border-buzz/30 bg-buzz/10 px-2 py-0.5 font-mono text-buzz">
-                  {triggerText}
-                </span>
-                <span class="font-mono">auto-prepended to every tag</span>
-              </div>
-            {/if}
-
-            <div class="flex min-h-[64px] flex-wrap content-start gap-1.5 rounded border border-dark-4 bg-dark-7 p-2.5">
-              {#if editing.tags.length === 0}
-                <span class="self-center font-mono text-xs text-dark-2">
-                  No tags yet — type below, paste comma-separated, or re-run auto-label.
-                </span>
-              {/if}
-              {#each editing.tags as t (t)}
-                <span
-                  class="inline-flex items-center gap-0.5 rounded border py-1 pl-2 pr-1 font-mono text-xs {isTriggerTag(
-                    trigger,
-                    t
-                  )
-                    ? 'border-buzz/30 bg-buzz/10 text-buzz'
-                    : 'border-dark-4 bg-dark-6 text-dark-0'}"
-                >
-                  {t}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${t}`}
-                    onclick={() => removeTag(t)}
-                    class="grid h-5 w-5 place-items-center rounded text-dark-1 hover:bg-red-500/20 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  >
-                    <IconX size={12} stroke={2} />
-                  </button>
-                </span>
-              {/each}
-            </div>
-
-            <form
-              class="mt-2 flex gap-2"
-              onsubmit={(e) => {
-                e.preventDefault();
-                addTag();
-              }}
-            >
-              <Input
-                bind:value={newTag}
-                onkeydown={tagKeydown}
-                placeholder="Add or paste tags…"
-                class="min-w-0 flex-1 font-mono"
-              />
-              <Button type="submit" variant="outline">Add</Button>
-            </form>
-
-            {#if suggestions.length > 0}
-              <div class="mt-2">
-                <div class="mb-1 font-mono text-xs uppercase tracking-wider text-dark-2">From this dataset</div>
-                <div class="flex flex-wrap gap-1">
-                  {#each suggestions as s (s)}
-                    <button
-                      type="button"
-                      onclick={() => {
-                        newTag = s;
-                        addTag();
-                      }}
-                      class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-xs text-dark-1 hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      + {s}
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
           </div>
-        </div>
-      {:else}
-        <div class="flex flex-col gap-3" use:autofocusInput>
-          {@render mediaPreview(editing, 'max-h-72 w-full object-contain')}
-          <div>
-            <div class="mb-2 flex items-center justify-between gap-2">
-              <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
-              <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
-                <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
-                  ? 'labeling…'
-                  : 'Re-run'}
-              </Button>
-            </div>
-            <Textarea bind:value={editing.caption} rows={6} placeholder="Describe the image…" />
-            <p class="mt-2 text-xs text-dark-2">
-              {#if !triggerText}
-                No trigger word set.
-              {:else if captionTriggerHit(trigger, editing.caption)}
-                Trigger <span class="text-buzz">{triggerText}</span> is highlighted where it appears.
-              {:else}
-                Trigger <span class="text-buzz">{triggerText}</span> is prepended automatically.
-              {/if}
-            </p>
-          </div>
-        </div>
-      {/if}
+        {/if}
+      {/key}
     {/if}
   </Dialog.Content>
 </Dialog.Root>
