@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAppBlockId, isCopyOf, newAppKey } from '~/components/Apps/AppAssistant/appKey';
+import { isAppBlockId, newAppKey } from '~/components/Apps/AppAssistant/appKey';
 
 describe('isAppBlockId (the slug rule a dev tunnel needs)', () => {
   it.each([
@@ -22,6 +22,8 @@ describe('newAppKey', () => {
   it.each([
     ['Tip Calculator', 'tip-calculator'],
     ['  Café   Menu!! ', 'cafe-menu'],
+    // Accents inside a word, where dropping the mark (not splitting at it) matters.
+    ['Crème brûlée', 'creme-brulee'],
     ['3D Model Viewer', 'app-3d-model-viewer'],
     ['my_cool app', 'my-cool-app'],
     ['🎲 dice roller', 'dice-roller'],
@@ -67,34 +69,5 @@ describe('newAppKey', () => {
     const first = newAppKey(name, []);
     expect(isAppBlockId(first)).toBe(true);
     expect(isAppBlockId(newAppKey(name, [first]))).toBe(true);
-  });
-});
-
-describe('isCopyOf (is this app the one, or a numbered copy of the one, the name asks for)', () => {
-  it.each([
-    ['tip-calculator', 'Tip calculator', true],
-    ['tip-calculator-2', 'Tip calculator', true],
-    ['tip-calculator-12', 'Tip calculator', true],
-    ['tip-calculators', 'Tip calculator', false],
-    ['tip-calculator-x', 'Tip calculator', false],
-    ['quiz-game', 'Tip calculator', false],
-    ['tip', 'Tip calculator', false],
-    // A name ending in a number is read as written; its copies number after it.
-    ['game-2', 'Game 2', true],
-    ['game-2-2', 'Game 2', true],
-    ['game', 'Game 2', false],
-    // …so a copy of "Game" and an app named "Game 2" share a key, and either counts for "Game".
-    ['game-2', 'Game', true],
-    ['my-app-3', '', true],
-  ])('%j for %j → %s', (key, name, copy) => {
-    expect(isCopyOf(key, name)).toBe(copy);
-  });
-
-  it('knows a copy of a long name, which is cut short to fit its number', () => {
-    const name = 'A really quite long name for a small budgeting app';
-    const second = newAppKey(name, [newAppKey(name, [])]);
-    expect(second).toBe('a-really-quite-long-name-for-a-small-b-2');
-    expect(isCopyOf(second, name)).toBe(true);
-    expect(isCopyOf(second, 'A really quite long name for a small')).toBe(false);
   });
 });

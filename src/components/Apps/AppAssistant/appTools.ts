@@ -1,5 +1,5 @@
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
-import { isCopyOf, newAppKey } from '~/components/Apps/AppAssistant/appKey';
+import { appKeyBase, newAppKey } from '~/components/Apps/AppAssistant/appKey';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
 
@@ -50,6 +50,9 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
   let pending: Promise<CreateResult> | null = null;
   // Retrying cannot clear a limit within a reply, and a running-limit retry pauses the user's apps again.
   let limited: string | null = null;
+  // The name each app this page created was asked for, as a key: a numbered copy's key alone cannot
+  // be told from a name that ends in digits ("Room 101").
+  const askedFor = new Map<string, string>();
 
   const openOrExplain = async (app: string) => {
     try {
@@ -65,8 +68,10 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     const list = apps();
     if (!list) throw new Error(APPS_LOADING);
     const openNow = current();
-    // Asked again for the app that is open, or a numbered copy of it: keep it rather than make another.
-    if (openNow && isCopyOf(openNow.app, name)) {
+    const base = appKeyBase(name);
+    // Asked again for the app that is open: keep it rather than make another. An app opened from the
+    // list matches only by its exact key; failing that a new app is made, which overwrites nothing.
+    if (openNow && (openNow.app === base || askedFor.get(openNow.app) === base)) {
       if (openNow.state !== 'suspended')
         return {
           app: openNow.app,
@@ -94,6 +99,7 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
       list.map((s) => s.app)
     );
     const opened = await openOrExplain(app);
+    askedFor.set(app, base);
     const { sandbox, created } = opened;
     // The list it was named against can be stale, and the service finds before it creates.
     if (!created)

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { newAppKey } from '~/components/Apps/AppAssistant/appKey';
 import { NO_APP_REFUSAL, createAppTools } from '~/components/Apps/AppAssistant/appTools';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -120,35 +121,65 @@ describe('create_app', () => {
     expect(result).toMatchObject({ app: 'tip-calculator', existed: true });
   });
 
-  it('keeps a numbered open app too, rather than making a third copy', async () => {
-    const open = vi.fn();
-    const openApp = sandbox('tip-calculator-2', 'running');
-    const result = await run(
-      tool([sandbox('tip-calculator', 'suspended'), openApp], open, openApp),
-      'Tip calculator'
-    );
-    expect(open).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ app: 'tip-calculator-2', existed: true });
+  /** The page as create_app sees it: opening an app lists it and makes it the open one. */
+  function page(list: Sandbox[], open: Sandbox | null = null) {
+    const state = { list: [...list], open };
+    const service = vi.fn(async (app: string) => {
+      const sandbox_ = sandbox(app, 'starting');
+      state.list = [...state.list.filter((s) => s.app !== app), sandbox_];
+      state.open = sandbox_;
+      return { sandbox: sandbox_, created: true };
+    });
+    const t = createAppTools({
+      apps: () => state.list,
+      current: () => state.open,
+      open: service as never,
+    }).tools.create_app;
+    return { state, service, create: (name: string) => run(t, name) };
+  }
+
+  it('keeps a copy it made when asked again, even after the original is deleted', async () => {
+    const p = page([sandbox('tip-calculator', 'suspended')]);
+    await p.create('Tip calculator');
+    expect(p.state.open?.app).toBe('tip-calculator-2');
+    p.state.list = p.state.list.filter((s) => s.app !== 'tip-calculator');
+    const again = await p.create('Tip calculator');
+    expect(p.service.mock.calls).toEqual([['tip-calculator-2']]);
+    expect(again).toMatchObject({ app: 'tip-calculator-2', existed: true });
   });
 
-  it('keeps an open copy after the original was deleted', async () => {
-    const open = vi.fn();
-    const second = sandbox('tip-calculator-2', 'running');
-    const result = await run(tool([second], open, second), 'Tip calculator');
-    expect(open).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ app: 'tip-calculator-2', existed: true });
+  it('keeps a long-named copy it made, whose name was cut short to fit its number', async () => {
+    const name = 'A really quite long name for a small budgeting app';
+    const p = page([sandbox(newAppKey(name, []), 'suspended')]);
+    await p.create(name);
+    expect(p.state.open?.app).toBe('a-really-quite-long-name-for-a-small-b-2');
+    await p.create(name);
+    expect(p.service).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps an open third copy when only the original is left', async () => {
-    const open = vi.fn();
-    const third = sandbox('tip-calculator-3', 'running');
-    const result = await run(
-      tool([sandbox('tip-calculator', 'suspended'), third], open, third),
-      'Tip calculator'
-    );
-    expect(open).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ app: 'tip-calculator-3', existed: true });
+  it('keeps an app opened from the list when asked for its exact name', async () => {
+    const opened = sandbox('tip-calculator', 'running');
+    const p = page([opened], opened);
+    const result = await p.create('Tip calculator');
+    expect(p.service).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ app: 'tip-calculator', existed: true });
   });
+
+  it.each([
+    ['room-101', 'Room', 'room'],
+    ['game-2048', 'Game', 'game'],
+    ['area-51', 'Area', 'area'],
+    // Opened from the list, a numbered app is not known to be a copy of anything.
+    ['game-2', 'Game', 'game'],
+  ])(
+    'makes a new app for a shorter name while %j, opened from the list, is open',
+    async (openKey, name, made) => {
+      const opened = sandbox(openKey, 'running');
+      const p = page([opened], opened);
+      await p.create(name);
+      expect(p.service.mock.calls).toEqual([[made]]);
+    }
+  );
 
   it('tells the assistant a paused app it resumed was in fact gone, and is new and empty', async () => {
     const open = vi.fn(async (app: string) => ({

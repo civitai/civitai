@@ -31,7 +31,7 @@ export function appKeyBase(name: string): string {
 }
 
 /** The `n`th copy's key: the base, cut to leave room, then `-n`. */
-export function numberedAppKey(base: string, n: number): string {
+function numberedAppKey(base: string, n: number): string {
   const suffix = `-${n}`;
   return `${slugify(base, BLOCK_ID_MAX - suffix.length)}${suffix}`;
 }
@@ -48,16 +48,4 @@ export function newAppKey(name: string, taken: Iterable<string>): string {
     const key = numberedAppKey(base, n);
     if (!used.has(key)) return key;
   }
-}
-
-/**
- * Whether `key` is what `newAppKey` gives `name`, or one of its numbered copies, whatever else the user
- * has. A name that itself ends in a number is read as written: "Game 2" is `game-2` and its copies, so
- * `game-2` also counts as a copy of "Game".
- */
-export function isCopyOf(key: string, name: string): boolean {
-  const base = appKeyBase(name);
-  if (key === base) return true;
-  const number = /-(\d+)$/.exec(key)?.[1];
-  return !!number && numberedAppKey(base, Number(number)) === key;
 }
