@@ -18,7 +18,12 @@ import {
 import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
-import { findInlineMediaPath, inlineMediaMessage } from '~/server/schema/blocks/inline-media';
+import {
+  findInlineMediaPath,
+  INLINE_MEDIA_TOO_MANY_VALUES,
+  inlineMediaMessage,
+  tooManyValuesMessage,
+} from '~/server/schema/blocks/inline-media';
 import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
@@ -656,18 +661,22 @@ const blockPassThroughStepShape = {
 };
 
 /**
- * First inline-media path under `fields`. `continue: false` suppresses the byte-cap issue, which
- * an inline photo usually also trips; only this message names the fix.
+ * Refuses at the first inline-media path under `fields`. `continue: false` suppresses the
+ * byte-cap issue, which an inline photo usually also trips; only this message names the fix.
  */
 function refuseInlineMedia<T extends Record<string, unknown>>(
   fields: (body: T) => [InlineMediaPath, unknown][]
 ) {
   return (body: T, ctx: z.RefinementCtx) => {
+    const budget = { visits: 0 };
     for (const [prefix, value] of fields(body)) {
-      const hit = findInlineMediaPath(value);
+      const hit = findInlineMediaPath(value, budget);
       if (!hit) continue;
-      const path = [...prefix, ...hit];
-      ctx.addIssue({ code: 'custom', path, message: inlineMediaMessage(path), continue: false });
+      const [path, message] =
+        hit === INLINE_MEDIA_TOO_MANY_VALUES
+          ? [prefix, tooManyValuesMessage(prefix)]
+          : [[...prefix, ...hit], inlineMediaMessage([...prefix, ...hit])];
+      ctx.addIssue({ code: 'custom', path, message, continue: false });
       return;
     }
   };

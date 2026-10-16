@@ -222,10 +222,20 @@ describe("kind: 'step' pass-through — inline media is refused", () => {
     ]);
   });
 
-  it('behind padding that still fits inside the byte cap', () => {
-    const input = { pad: new Array(130_000).fill(0), photo: tinyJpeg };
+  // Sized from the cap, so raising the cap without the value budget turns this red.
+  it('behind as much padding as fits inside the byte cap', () => {
+    const pad = new Array(Math.floor(PASS_THROUGH_INPUT_BYTES_MAX / 2) - 64).fill(0);
+    const input = { pad, photo: tinyJpeg };
     expect(JSON.stringify(input).length).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
     expect(issuesOf(input).map(([path]) => path)).toEqual([['input', 'photo']]);
+  });
+
+  // `undefined` properties survive the wire transformer and count zero bytes toward the cap.
+  it('refuses padding the byte cap cannot see, instead of giving up the search', () => {
+    const pad = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined]));
+    const input = { ...pad, photo: tinyJpeg };
+    expect(JSON.stringify(input).length).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
+    expect(issuesOf(input)).toEqual([[['input'], 'input holds more than 262144 values']]);
   });
 
   it('accepts hosted urls, short strings, long prose and a $ref object', () => {

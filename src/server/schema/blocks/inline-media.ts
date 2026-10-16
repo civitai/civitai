@@ -12,12 +12,19 @@ export const INLINE_MEDIA_RAW_BASE64_REGEX = /^[A-Za-z0-9+/]+={0,2}$/;
 export const INLINE_MEDIA_RAW_BASE64_MIN_CHARS = 4096;
 
 /**
- * Values searched before giving up (fail open). Every JSON value serialises to at least one
- * byte, so this covers any input inside the 256 KiB byte cap; a larger one is refused by it.
+ * Values one body may hold before it is refused outright. Twice what fits in a plain-JSON
+ * body inside the byte cap; a body past it is padding, often with properties that hold
+ * `undefined` (which the byte cap counts as zero bytes), so the search fails closed.
  */
 export const INLINE_MEDIA_MAX_VISITS = 262_144;
 
 export type InlineMediaPath = (string | number)[];
+
+/** Shared by every field of one body, so many fields cannot each spend a full budget. */
+export type InlineMediaBudget = { visits: number };
+
+/** Returned when the body holds more than `INLINE_MEDIA_MAX_VISITS` values. */
+export const INLINE_MEDIA_TOO_MANY_VALUES = 'too-many-values';
 
 export function isInlineMediaString(value: string): boolean {
   if (INLINE_MEDIA_DATA_URI_REGEX.test(value)) return true;
@@ -38,9 +45,12 @@ function pathOf(frame: Frame): InlineMediaPath {
  * The JSON path of the first string in `value`, in document order, that carries inline
  * media, or `null`. Iterative, so nesting depth cannot overflow the stack.
  */
-export function findInlineMediaPath(value: unknown): InlineMediaPath | null {
+export function findInlineMediaPath(
+  value: unknown,
+  budget: InlineMediaBudget = { visits: 0 }
+): InlineMediaPath | null | typeof INLINE_MEDIA_TOO_MANY_VALUES {
   const stack: Frame[] = [{ value, key: null, parent: null }];
-  let visits = 1;
+  if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
   while (stack.length > 0) {
     const frame = stack.pop() as Frame;
     const node = frame.value;
@@ -52,13 +62,13 @@ export function findInlineMediaPath(value: unknown): InlineMediaPath | null {
     const children: Frame[] = [];
     if (Array.isArray(node)) {
       for (let i = 0; i < node.length; i++) {
-        if (++visits > INLINE_MEDIA_MAX_VISITS) return null;
+        if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
         children.push({ value: node[i], key: i, parent: frame });
       }
     } else {
       for (const key in node) {
         if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
-        if (++visits > INLINE_MEDIA_MAX_VISITS) return null;
+        if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
         children.push({ value: (node as Record<string, unknown>)[key], key, parent: frame });
       }
     }
@@ -82,4 +92,8 @@ export function inlineMediaMessage(path: InlineMediaPath): string {
     `useImageUpload({ purpose: 'generationSource' }) or pick it with useImagePicker ` +
     `and pass the returned url`
   );
+}
+
+export function tooManyValuesMessage(path: InlineMediaPath): string {
+  return `${formatInlineMediaPath(path)} holds more than ${INLINE_MEDIA_MAX_VISITS} values`;
 }

@@ -178,6 +178,19 @@ describe("kind:'workflow' — inline media is refused", () => {
     ]);
   });
 
+  it('spends one value budget across all steps, so many steps cannot each hide padding', () => {
+    const pad = () =>
+      Object.fromEntries(Array.from({ length: 100_000 }, (_, i) => [`k${i}`, undefined]));
+    const steps = [
+      { $type: 'imageGen', input: pad() },
+      { $type: 'imageGen', input: pad() },
+      { $type: 'imageGen', input: { ...pad(), photo: tinyPng } },
+    ];
+    expect(issuesOf(body({ steps }))).toEqual([
+      [['steps', 2, 'input'], 'steps[2].input holds more than 262144 values'],
+    ]);
+  });
+
   it('over the byte cap, reports ONLY the inline-media issue', () => {
     const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
     expect(photo.length).toBeGreaterThan(WORKFLOW_INPUT_BYTES_MAX);

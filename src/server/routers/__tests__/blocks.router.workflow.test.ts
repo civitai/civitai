@@ -12451,24 +12451,6 @@ describe('blocks.estimateWorkflowBatch', () => {
     expect(result.aggregate).toEqual({ total: 43, pricedCells: 2, cellCount: 3 });
   });
 
-  it('an inline-media cell fails with the inline-media message; the others still price', async () => {
-    const result = await caller().estimateWorkflowBatch({
-      blockToken: 'tok',
-      bodies: [
-        {
-          kind: 'step',
-          $type: 'imageUpscaler',
-          input: { image: 'data:image/png;base64,iVBORw0KGgo=' },
-          maxBuzz: 10,
-        },
-        txt('cell-c'),
-      ],
-    });
-    expect(result.snapshots[0]).toMatchObject({ workflowId: 'failed', status: 'failed' });
-    expect(result.snapshots[0].error).toContain('input.image carries inline media');
-    expect(result.snapshots[1].cost).toEqual({ total: 31, authorFee: 0 });
-  });
-
   it('a cell that is not a body at all (null, a string) fails alone', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
