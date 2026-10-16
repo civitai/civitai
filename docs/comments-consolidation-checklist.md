@@ -58,6 +58,9 @@ Decisions & prerequisites:
 - [x] **(review)** Second orphan class measured: 2,867 reply threads whose parent comment was
       hard-deleted (`Thread.commentId` SET NULL), 3,843 comments — purged with the rest, skipped
       by the backfill
+- [ ] **(review)** Stop the leak now: flip the 17 `Thread` entity FKs to `ON DELETE CASCADE`
+      (PR + hand-applied migration, `NOT VALID` then `VALIDATE`; `commentId` stays `SET NULL`) —
+      proposed in the plan (_Stopping the leak now_), Briant to approve
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
       (2026-10-16)
 

@@ -219,8 +219,35 @@ enqueues afterwards.
 **Why purge at all, given the backfill skips orphans anyway.** It removes ~280K rows from the
 backfill and parity checks, drops 5.7K dead reports from a queue, and gives the archive a
 real-world rehearsal of the "entity delete cascades comments" semantics before V3 enforces them.
-It does not stop the leak — that needs the V3 triggers, or (not proposed) flipping the 17 `Thread`
-entity FKs to `ON DELETE CASCADE` now.
+It does not stop the leak — that needs the V3 triggers, or the FK flip below.
+
+### Stopping the leak now — proposed (2026-10-16)
+
+The leak is 17 foreign keys on `Thread` declared `ON DELETE SET NULL`. Flipping them to
+`ON DELETE CASCADE` gives the current schema the semantics V3 was decided to have: an entity
+hard-delete takes its thread, and `CommentV2` → reactions → report links → mutes already cascade
+from there. It is a schema change, so it is a PR with a migration file applied by hand, separate
+from the purge (data only, chat SQL).
+
+- **Every lookup the cascade needs is indexed in prod** (checked 2026-10-16): each entity column
+  on `Thread` is `@unique`, `parentThreadId` and `rootThreadId` have btree indexes (the
+  `parentThreadId` one exists in prod but not in the Prisma schema — add it there while here),
+  `CommentV2.threadId`, `CommentV2Reaction.commentId`, `CommentV2Report.commentV2Id` and
+  `ThreadMute.threadId` all have one. No `replyToId`-style scan.
+- **Migration shape**, per FK: `DROP CONSTRAINT` + `ADD CONSTRAINT … ON DELETE CASCADE NOT VALID`
+  in one short `ALTER TABLE` under a `lock_timeout`, then `VALIDATE CONSTRAINT` separately
+  (takes only `SHARE UPDATE EXCLUSIVE`, so writes continue during the 5.7M-row scan). Prisma:
+  `onDelete: Cascade` on the 17 relations in `schema.full.prisma`; the default `relationMode`
+  is `foreignKeys`, so nothing in the client emulates the action.
+- **What changes for users**: deleting an image, post, review, article, bounty, model, … now
+  deletes its comments, their reactions and their report links. `Report` rows for those comments
+  stay, targetless — the same as any hard-deleted comment today. Account deletion cascades one
+  level further than before. Costs are the V3 benchmark's: sub-second for the largest article.
+- **`Thread.commentId` stays `SET NULL`.** Flipping it would make a v2 comment delete destroy
+  other users' replies (the v1 behaviour D6 rejected). The dead-parent class keeps growing
+  slowly (3.8K comments so far) until V3 tombstones replace hard-deletes; the backfill skips it.
+- Order: purge first (removes the 288K existing orphans), then the FK flip (no new ones). The
+  flip first is also fine — the purge query is unaffected by it.
 
 ### Drift since 2026-09-01
 
