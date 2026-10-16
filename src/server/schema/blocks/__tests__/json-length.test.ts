@@ -42,6 +42,13 @@ const corpus: [string, unknown][] = [
     { when: { toJSON: (k: string) => k.repeat(3) }, list: [{ toJSON: (k: string) => k }] },
   ],
   ['an invalid date', [new Date(NaN)]],
+  ['a toJSON that returns a Date', { a: { toJSON: () => new Date(0) } }],
+  [
+    'a toJSON that returns an object with its own toJSON',
+    { a: { toJSON: () => ({ toJSON: () => 'x'.repeat(50) }) } },
+  ],
+  ['a toJSON that returns a boxed string', { a: { toJSON: () => new String('boxed') } }],
+  ['a top-level toJSON', { toJSON: (k: string) => `key:${k}` }],
   ['a shared object, three times', [shared, shared, { again: shared }]],
   ['a top-level string', 'top "level"\n'],
   ['a top-level number', -0.5],
@@ -154,14 +161,14 @@ describe('request size caps on a repeated value', () => {
     error?: { issues: { path: unknown; message: string }[] };
   }) => (r.success ? [] : r.error?.issues.map((i) => [i.path, i.message]));
 
-  it('refuses a pass-through input without serialising it', () => {
+  it('refuses a pass-through input without building a value-sized string', () => {
     const body = { kind: 'step', $type: 'echo', input: repeated, maxBuzz: 10 };
     const r = serialisedDuring(() => blockPassThroughStepBodySchema.safeParse(body));
     expect(issues(r)).toEqual([[['input'], 'step input exceeds the 262144-byte limit']]);
     expect(stringified).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
   });
 
-  it('refuses a multi-step workflow without serialising it', () => {
+  it('refuses a multi-step workflow without building a value-sized string', () => {
     const body = {
       kind: 'workflow',
       steps: [{ $type: 'echo', input: { small: 1 } }],
@@ -190,7 +197,7 @@ describe('request size caps on a repeated value', () => {
     ]);
   });
 
-  it('refuses an inline graph without serialising it', () => {
+  it('refuses an inline graph without building a value-sized string', () => {
     const body = {
       kind: 'customComfy',
       mode: 'inline',
@@ -203,7 +210,7 @@ describe('request size caps on a repeated value', () => {
     expect(stringified).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
   });
 
-  it('refuses subscription settings without serialising them', () => {
+  it('refuses subscription settings without building a value-sized string', () => {
     const body = {
       appBlockId: 'block',
       scope: 'viewer_personal',

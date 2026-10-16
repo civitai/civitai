@@ -76,13 +76,16 @@ function serialisedValue(value: unknown, key: string): unknown {
  * Adds the JSON length of `value` to `meter.chars`, counting 0 for a top-level value
  * `JSON.stringify` returns `undefined` for. Returns `false` as soon as the total passes
  * `limit` or the value budget runs out, leaving the rest unread. Throws the `TypeError`
- * `JSON.stringify` throws for a bigint or a cycle it reaches first.
+ * `JSON.stringify` throws for a bigint or a cycle it reaches first. `resolved` marks a
+ * top-level value that is already a `toJSON` result, which `JSON.stringify` does not
+ * resolve again.
  */
 function addJsonLength(
   value: unknown,
   limit: number,
   unit: JsonLengthUnit,
-  meter: JsonLengthMeter
+  meter: JsonLengthMeter,
+  resolved = false
 ): boolean {
   // Containers that have written an entry, so the next one is preceded by a comma.
   const written = new Set<JsonWalkFrame>();
@@ -94,7 +97,10 @@ function addJsonLength(
     while (open.length > 0 && open[open.length - 1] !== parent) {
       onPath.delete((open.pop() as JsonWalkFrame).value);
     }
-    const node = serialisedValue(frame.value, key === null ? '' : String(key));
+    const node =
+      resolved && parent === null
+        ? frame.value
+        : serialisedValue(frame.value, key === null ? '' : String(key));
     const omitted = node === undefined || typeof node === 'function' || typeof node === 'symbol';
     // An object leaves such a property out and the top level writes nothing; an array
     // writes `null` in its place.
@@ -126,7 +132,7 @@ function addJsonLength(
       // `toJSON` returned a different object: it is measured in place of this one.
       meter.chars += length;
       length = 0;
-      if (meter.chars > limit || !addJsonLength(node, limit, unit, meter)) return 'stop';
+      if (meter.chars > limit || !addJsonLength(node, limit, unit, meter, true)) return 'stop';
     }
     meter.chars += length;
     return meter.chars > limit ? 'stop' : verdict;

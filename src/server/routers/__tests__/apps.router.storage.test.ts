@@ -827,7 +827,7 @@ describe('apps.storage.set', () => {
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
 
-  it('refuses a value that repeats one string past the cap without serialising it', async () => {
+  it('refuses a value that repeats one string past the cap without building a value-sized string', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     const text = 'word '.repeat(20_000);
     const value = { items: new Array(1_000).fill(text) }; // ~100 MB once serialised
