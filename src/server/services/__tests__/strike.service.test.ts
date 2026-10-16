@@ -139,7 +139,7 @@ function txClient(
       ),
     },
   };
-  return { tx, queryRaw, userUpdate };
+  return { tx, queryRaw, userUpdate, executeRaw: tx.$executeRaw };
 }
 
 function mockTransactionForEscalation(
@@ -150,13 +150,13 @@ function mockTransactionForEscalation(
   const { lastStrikeAt = new Date('2026-06-01'), openCase } = opts;
   // Two reads in the transaction now: the locked point sum, then the last strike date the acceptance
   // check compares against.
-  const { tx, queryRaw, userUpdate } = txClient(
+  const { tx, queryRaw, userUpdate, executeRaw } = txClient(
     user,
     [[{ sum: pointsSum }], [{ last: lastStrikeAt }]],
     { openCase }
   );
   mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
-  return { queryRaw, userUpdate };
+  return { queryRaw, userUpdate, executeRaw };
 }
 
 // Prisma tagged templates hand the raw SQL over as a TemplateStringsArray.
@@ -663,7 +663,7 @@ describe('strike.service', () => {
     });
 
     it('void 3 -> 2 points: clears the review flag only, the mute stays', async () => {
-      const { userUpdate } = mockTransactionForEscalation(2, {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(2, {
         muted: true,
         mutedAt: null,
         muteExpiresAt: null,
@@ -673,18 +673,21 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1);
 
       expect(result).toEqual({ totalPoints: 2, action: 'none' });
-      expect(userUpdate).toHaveBeenCalledTimes(1);
-      expect(userUpdate.mock.calls[0][0]).toEqual({
-        where: { id: 1 },
-        data: { meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: false } },
-      });
+      // The flag alone, set in SQL: no full-row write that could carry a stale `meta` or the mute.
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      const [strings, userId] = executeRaw.mock.calls[0];
+      expect(sqlOf([strings])).toMatch(
+        /SET meta = jsonb_set\(COALESCE\(meta, '\{\}'::jsonb\), '\{strikeFlaggedForReview\}', 'false'::jsonb\)\s+WHERE id =\s*$/
+      );
+      expect(userId).toBe(1);
       expect(mockCreateNotification).not.toHaveBeenCalled();
       expect(mockInvalidateSession).not.toHaveBeenCalled();
       expect(mockRefreshSession).not.toHaveBeenCalled();
     });
 
     it('void 2 -> 2 points, not flagged: writes nothing', async () => {
-      const { userUpdate } = mockTransactionForEscalation(2, {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(2, {
         muted: true,
         mutedAt: null,
         muteExpiresAt: null,
@@ -695,10 +698,11 @@ describe('strike.service', () => {
 
       expect(result).toEqual({ totalPoints: 2, action: 'none' });
       expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).not.toHaveBeenCalled();
     });
 
     it('void 4 -> 3 points: still flagged, writes nothing', async () => {
-      const { userUpdate } = mockTransactionForEscalation(3, {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(3, {
         muted: true,
         mutedAt: null,
         muteExpiresAt: null,
@@ -709,6 +713,7 @@ describe('strike.service', () => {
 
       expect(result).toEqual({ totalPoints: 3, action: 'none' });
       expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).not.toHaveBeenCalled();
     });
 
     it('<2 points, user not muted: no action', async () => {

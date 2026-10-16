@@ -426,12 +426,15 @@ export async function evaluateStrikeEscalation(
         // the next job run, which is what happened before this flag existed.
         if (!allowMute) {
           // The mute stands, but the review flag still follows the points: a void from 3 to 2 must
-          // take the account out of the moderators' review queue.
+          // take the account out of the moderators' review queue. `jsonb_set`, not a spread of
+          // `currentMeta`: the User row is not locked here, and writing the stale copy back would
+          // restore a `muteReason` that a concurrent unmute had just removed.
           if (currentMeta.strikeFlaggedForReview)
-            await tx.user.update({
-              where: { id: userId },
-              data: { meta: { ...currentMeta, strikeFlaggedForReview: false } },
-            });
+            await tx.$executeRaw`
+              UPDATE "User"
+              SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)
+              WHERE id = ${userId}
+            `;
           return { totalPoints, action: 'none', notify: false };
         }
 
