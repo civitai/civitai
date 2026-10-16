@@ -20,6 +20,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { ModelSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 /**
  * GET /api/v1/blocks/models
@@ -69,7 +70,9 @@ import { constants } from '~/server/common/constants';
  *   modelVersionIds=1,2,3 — up to 100 positive ids; returns the models those versions belong to,
  *     each narrowed to the requested versions, so a block can rehydrate saved cards by id. Same
  *     clamp, Published-only and Public-only rules; a requested version that fails them is
- *     omitted, and a model left with no version is omitted.
+ *     omitted, and a model left with no version is omitted. Send it WITHOUT `query`: a text
+ *     query intersects the ids with that query's top-N Meilisearch hits, so a rehydrate that
+ *     also carries `query` can come back sparse or empty.
  *
  * Every response keeps only Public-availability versions (`publicVersionsOnly`), whichever
  * filters are set.
@@ -111,24 +114,9 @@ const blockModelsSchema = z.object({
   owner: z.enum(['mine', 'any']).default('any'),
   // `1,2,3` or repeated params. Each a positive int4 (the column type, so an out-of-range id is a
   // 400 here rather than a database error), at most MAX_MODEL_VERSION_IDS of them.
-  modelVersionIds: z
-    .union([z.string(), z.string().array()])
-    .optional()
-    .transform((v) =>
-      v === undefined ? undefined : (Array.isArray(v) ? v : [v]).flatMap((s) => s.split(','))
-    )
-    .pipe(
-      z
-        .array(
-          z
-            .string()
-            .regex(/^[1-9]\d{0,9}$/)
-            .transform(Number)
-            .refine((n) => n <= PG_INT4_MAX)
-        )
-        .max(MAX_MODEL_VERSION_IDS)
-        .optional()
-    ),
+  modelVersionIds: commaDelimitedNumberArray(
+    z.number().int().positive().max(PG_INT4_MAX).array().max(MAX_MODEL_VERSION_IDS)
+  ).optional(),
 });
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {

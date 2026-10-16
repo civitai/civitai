@@ -24,12 +24,15 @@ import { isDefined } from '~/utils/type-guards';
  * Shared model-search + response-shaping body extracted verbatim from
  * `/api/v1/models/index.ts` so the public endpoint AND the block-scoped
  * catalog endpoint (`/api/v1/blocks/models.ts`) build the SAME response from
- * the SAME query path. The ONLY behavioral lever is `browsingLevel` (and the
+ * the SAME query path. The behavioral levers are `browsingLevel` (and the
  * `nsfwImagePassthrough` flag that mirrors the public endpoint's pre-refactor
- * `parsedParams.data.nsfw` image-filter widening) — both supplied by the
- * caller. The public endpoint passes its existing values UNCHANGED; the block
- * endpoint passes a server-clamped `browsingLevel` and `nsfwImagePassthrough:
- * false` so a SFW-domain block can never widen the image filter.
+ * `parsedParams.data.nsfw` image-filter widening) plus two block-only ctx
+ * filters, `ownerUserId` and `publicVersionsOnly` — all supplied by the
+ * caller. The public endpoint passes its existing values UNCHANGED and sets
+ * neither filter; the block endpoint passes a server-clamped `browsingLevel`,
+ * `nsfwImagePassthrough: false` so a SFW-domain block can never widen the image
+ * filter, `publicVersionsOnly: true`, and `ownerUserId` (from the token `sub`)
+ * only for `owner=mine`.
  *
  * Maturity policy is NOT decided here — this helper is a pure executor. The
  * caller is the single place that derives the effective `browsingLevel`.
@@ -344,7 +347,12 @@ export async function runModelSearch(
                 .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
+                    getDownloadFilename({
+                      model,
+                      modelVersion: version,
+                      file,
+                      versionFiles: castedFiles,
+                    })
                   ),
                   hashes: hashesAsObject(hashes),
                   downloadUrl: `${baseUrlOrigin}${createModelFileDownloadUrl({

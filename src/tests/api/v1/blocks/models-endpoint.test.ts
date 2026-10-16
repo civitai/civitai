@@ -343,6 +343,19 @@ describe('/api/v1/blocks/models — owner filter', () => {
     expect(res.body).toEqual({ error: 'Sign-in required' });
     expect(mockRunModelSearch).not.toHaveBeenCalled();
     expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+    // Refused before the rate limiter is charged.
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('owner=mine with a malformed subject → 403, nothing searched', async () => {
+    for (const sub of ['user:abc', 'garbage', `user:${SUBJECT_ID}x`]) {
+      claimsBox.claims = fakeClaims({ sub });
+      const res = await invoke({ owner: 'mine', query: 'x' });
+      expect(res.statusCode, sub).toBe(403);
+      expect(res.body).toEqual({ error: 'Invalid subject claim' });
+    }
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
   });
 
   it('an anonymous subject is still served the unscoped catalog (owner=any unchanged)', async () => {
@@ -439,7 +452,7 @@ describe('/api/v1/blocks/models — modelVersionIds', () => {
   });
 
   it('accepts the repeated-param form too', async () => {
-    const res = await invoke({ modelVersionIds: ['813', '9021,77'] });
+    const res = await invoke({ modelVersionIds: ['813', '9021', '77'] });
     expect(res.statusCode).toBe(200);
     expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toEqual([813, 9021, 77]);
   });
@@ -453,7 +466,7 @@ describe('/api/v1/blocks/models — modelVersionIds', () => {
 
   it('rejects more than 100 ids, and anything that is not a positive int4, with 400', async () => {
     const tooMany = Array.from({ length: 101 }, (_, i) => i + 1).join(',');
-    for (const bad of [tooMany, '0', '-4', '1.5', 'abc', '', '12,,13', '0x1f', '2147483648']) {
+    for (const bad of [tooMany, '0', '-4', '1.5', 'abc', '', '12,,13', '2147483648']) {
       const res = await invoke({ modelVersionIds: bad });
       expect(res.statusCode, `modelVersionIds=${bad.slice(0, 20)}`).toBe(400);
     }

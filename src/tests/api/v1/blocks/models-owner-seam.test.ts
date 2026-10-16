@@ -34,6 +34,7 @@ const THEIRS_MODEL = 620;
 const MINE_PRIVATE_V = 6101;
 const MINE_PUBLIC_A = 6102;
 const MINE_PUBLIC_B = 6103;
+const MINE_DRAFT_V = 6104;
 const THEIRS_PUBLIC_V = 6201;
 
 const {
@@ -140,18 +141,24 @@ vi.mock('~/server/redis/caches', () => ({
 // Static import: model.service's cold transform belongs in collection, not in one test's budget
 // (see get-models-raw.transient-503.test.ts).
 import handler from '~/pages/api/v1/blocks/models';
+import { resolveModelSearchIds } from '~/server/services/model-search.service';
 
 const MODEL_ROWS = [
   { id: MINE_MODEL, userId: OWNER_ID },
   { id: THEIRS_MODEL, userId: OTHER_ID },
 ];
 
-function version(id: number, index: number, availability: 'Public' | 'Private') {
+function version(
+  id: number,
+  index: number,
+  availability: 'Public' | 'Private',
+  status: 'Published' | 'Draft' = 'Published'
+) {
   return {
     id,
     index,
     name: `v${id}`,
-    status: 'Published',
+    status,
     baseModel: 'SD 1.5',
     nsfwLevel: 1,
     availability,
@@ -170,6 +177,8 @@ const MODEL_DATA: Record<number, unknown> = {
       version(MINE_PRIVATE_V, 0, 'Private'),
       version(MINE_PUBLIC_A, 1, 'Public'),
       version(MINE_PUBLIC_B, 2, 'Public'),
+      // Public but unpublished: must stay out on every path (Published-only).
+      version(MINE_DRAFT_V, 3, 'Public', 'Draft'),
     ],
   },
   [THEIRS_MODEL]: {
@@ -408,9 +417,17 @@ describe('/api/v1/blocks/models modelVersionIds — through the real search chai
     expect(res.statusCode).toBe(200);
     expect(versionIds(res.body, MINE_MODEL)).toEqual([MINE_PUBLIC_B]);
     expect(versionIds(res.body, THEIRS_MODEL)).toEqual([THEIRS_PUBLIC_V]);
+    // The fake does not evaluate this clause, so pin its whole shape — including the
+    // correlation, without which any model would match as soon as one listed version exists.
     const { text, values } = capturedSql[0];
-    expect(text).toMatch(/WHERE mv\."id" IN \(\$\d+,\$\d+\)/);
-    expect(values).toEqual(expect.arrayContaining([MINE_PUBLIC_B, THEIRS_PUBLIC_V]));
+    const clause = text.match(
+      /EXISTS \(\s*SELECT 1 FROM "ModelVersion" mv\s*WHERE mv\."id" IN \(\$(\d+),\$(\d+)\)\s*AND mv\."modelId" = mm\."modelId"\s*\)/
+    );
+    expect(clause, text).not.toBeNull();
+    expect([values[Number(clause![1]) - 1], values[Number(clause![2]) - 1]]).toEqual([
+      MINE_PUBLIC_B,
+      THEIRS_PUBLIC_V,
+    ]);
   });
 
   it('never rehydrates a Private-availability version, even when asked for it by id', async () => {
@@ -420,9 +437,14 @@ describe('/api/v1/blocks/models modelVersionIds — through the real search chai
   });
 
   it('a request for a Private version alone returns no model at all', async () => {
-    const res = await invoke({ modelVersionIds: String(MINE_PRIVATE_V), query: 'anything' });
+    const res = await invoke({ modelVersionIds: String(MINE_PRIVATE_V) });
     expect(res.statusCode).toBe(200);
     expect(itemIds(res.body)).not.toContain(MINE_MODEL);
+  });
+
+  it('never rehydrates an unpublished version, even when asked for it by id', async () => {
+    const res = await invoke({ modelVersionIds: `${MINE_DRAFT_V},${MINE_PUBLIC_A}` });
+    expect(versionIds(res.body, MINE_MODEL)).toEqual([MINE_PUBLIC_A]);
   });
 
   it("composes with owner=mine: another owner's version is not returned", async () => {
@@ -432,5 +454,28 @@ describe('/api/v1/blocks/models modelVersionIds — through the real search chai
     });
     expect(itemIds(res.body)).toEqual([MINE_MODEL]);
     expect(versionIds(res.body, MINE_MODEL)).toEqual([MINE_PUBLIC_A]);
+  });
+});
+
+describe('resolveModelSearchIds ownerUserId guard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    primeIo();
+  });
+
+  // The id is interpolated into the Meili filter string, so anything but an integer is refused
+  // before the search is sent.
+  it('refuses a non-integer owner id without searching', async () => {
+    for (const bad of [Number.NaN, 1.5, Number.POSITIVE_INFINITY]) {
+      await expect(
+        resolveModelSearchIds({ query: 'x', limit: 10, browsingLevel: 1, ownerUserId: bad })
+      ).rejects.toThrow('ownerUserId must be an integer');
+    }
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: an integer owner id is searched with', async () => {
+    await resolveModelSearchIds({ query: 'x', limit: 10, browsingLevel: 1, ownerUserId: OWNER_ID });
+    expect(meiliFilter()).toContain(`user.id = ${OWNER_ID}`);
   });
 });
