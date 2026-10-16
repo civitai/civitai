@@ -60,7 +60,9 @@ Decisions & prerequisites:
       by the backfill
 - [ ] **(review)** Stop the leak now: flip the 17 `Thread` entity FKs to `ON DELETE CASCADE`
       (PR + hand-applied migration, `NOT VALID` then `VALIDATE`; `commentId` stays `SET NULL`) —
-      proposed in the plan (_Stopping the leak now_), Briant to approve
+      approved by Justin 2026-10-16; built on `fix/thread-entity-fk-cascade` (migration
+      `20261101120000_thread_entity_fk_cascade`); apply after that release deploys, then run the
+      purge by hand
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
       (2026-10-16)
 
