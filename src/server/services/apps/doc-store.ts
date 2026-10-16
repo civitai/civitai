@@ -42,7 +42,7 @@
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
-// `kind: 'log'` and `maxEntries`.
+// `kind: 'log'`, `maxEntries` and `dailyWritesPerAuthor`.
 // The `expires_at` column and its index exist in the schema so TTL needs no
 // second manual migration; nothing here reads or writes it.
 //

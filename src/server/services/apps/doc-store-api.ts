@@ -602,8 +602,8 @@ async function moderate(
 /**
  * Failures that are OUR fault, refunded without charging the caller's rejection bucket: the
  * store or a dependency was unavailable, the store timed out on a lock other writers held, or
- * anything that is not a `DocStoreError` at all. Every other refusal raised inside
- * `withSharedWriteBudget` is charged as a rejection.
+ * anything that is not a `DocStoreError` at all. Every other refusal `fn` raises before the
+ * write lands is charged as a rejection.
  *
  * ⚠️ THE DEFAULT IS THE OPPOSITE OF THE LEGACY SURFACE'S. `apps-shared.router.ts` refunds only
  * the statements it marks as plumbing (`asTransactionFault`: connection, BEGIN, COMMIT) and
