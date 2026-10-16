@@ -330,6 +330,39 @@ describe('createDraftModelFromWorkflow', () => {
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
   });
 
+  it("carries the run's LoRA type as the category tag and trainingDetails.type", async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'My Style', loraType: 'style' } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].tagsOnModels).toEqual([
+      { name: 'style', isCategory: true },
+    ]);
+    expect(mockUpsertModelVersion.mock.calls[0][0].trainingDetails.type).toBe('Style');
+  });
+
+  it.each([undefined, 'foo'])('leaves the category unset for LoRA type %s', async (loraType) => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'Run', loraType } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].tagsOnModels).toBeUndefined();
+    expect(mockUpsertModelVersion.mock.calls[0][0].trainingDetails.type).toBe('Character');
+  });
+
+  it('writes a published base model for an ACE-Step run', async () => {
+    const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
+    base.steps[0].input = { ...base.steps[0].input, ecosystem: 'ace_step_15' };
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: base as unknown as Workflow,
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('ACE Audio');
+  });
+
   it('falls back to the last available epoch when the selected number has no blob', async () => {
     await createDraftModelFromWorkflow({
       user: USER,
