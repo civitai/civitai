@@ -5,20 +5,19 @@
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
-  import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import { userLookupUrl } from '$lib/entity-url';
-  import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
+  import { LINK_CLASS } from '$lib/format';
   import {
-    clearViaLabel,
     detectionCopy,
     detectionKind,
     detectionSections,
-    rulingText,
   } from '$lib/minor-flags/text-scan-verdicts';
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
-  import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
+  import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
+  import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
+  import ScannedTextCard from '$lib/components/minor-flags/ScannedTextCard.svelte';
   import RulingForm, { type RulingDraft } from '$lib/components/RulingForm.svelte';
   import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
   import type { Outcome } from '$lib/triage/queue';
@@ -44,11 +43,9 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-
   // Mirrors the main app's refusal in resolveTextScanRedetection: any Pending appeal on the model, for
   // either label, blocks a ruling. Change both together.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
-  const ago = (value: string) => `${shortAge(value)} ago`;
   const appealsHref = $derived(`${MODEL_FLAGS_APPEALS_PATH}?q=${row.modelId}`);
   const kind = $derived(detectionKind(row.redetected));
   const copy = $derived(detectionCopy(kind));
@@ -92,74 +89,25 @@
       </div>
     </header>
 
-    <AppealImages images={row.coverImages} />
+    <PreviewImagesCard
+      images={row.coverImages}
+      modelHref="{civitaiUrl}/models/{row.modelId}?view=basic"
+    />
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <TriageCard title="Why it was held">
-        <div class="space-y-2 text-base text-dark-0">
-          <p class="m-0">
-            Text scan: {row.label === 'poi' ? 'real person' : 'minor'}
-            {#if row.redetected.at}
-              <span class="text-sm text-dark-2" title={dateTime(row.redetected.at)}>
-                · detected {ago(row.redetected.at)}
-              </span>
-            {/if}
-          </p>
-          <p class="m-0 text-sm">{row.redetected.reason ?? 'No reason recorded.'}</p>
-          {#if row.redetected.names?.length}
-            <p class="m-0 text-sm">Names: {row.redetected.names.join(', ')}</p>
-          {/if}
-          <p class="m-0 text-sm">
-            Now:
-            <span class={flagged ? 'font-medium text-red-300' : 'font-medium text-emerald-300'}>
-              {flagged ? 'Currently flagged' : 'Not flagged'}
-            </span>
-          </p>
-          <p class="m-0 text-sm text-dark-2">
-            {copy.explanation}
-          </p>
-        </div>
-      </TriageCard>
-
-      {#if sections.priorClear}
-        <TriageCard title="Previously cleared">
-          <div class="space-y-2 text-base text-dark-0">
-            {#if row.granted}
-              <p class="m-0">
-                {clearViaLabel(row.granted.via)}
-                {#if row.grantedByUsername}
-                  by <span class="font-medium text-white">{row.grantedByUsername}</span>
-                {:else if row.granted.by}
-                  by user #{row.granted.by}
-                {/if}
-                {#if row.granted.at}
-                  <span class="text-sm text-dark-2" title={dateTime(row.granted.at)}>
-                    · {ago(row.granted.at)}
-                  </span>
-                {/if}
-              </p>
-            {:else}
-              <p class="m-0">No clearing record.</p>
-            {/if}
-          </div>
-        </TriageCard>
-      {/if}
-
-      {#if sections.rulings}
-        <TriageCard title="Earlier rulings">
-          <div class="space-y-1 text-sm text-dark-0">
-            {#each row.rulings ?? [] as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}
-              <p class="m-0">
-                {rulingText(ruling.decision, ruling.via)}
-                {#if ruling.by}by user #{ruling.by}{/if}
-                {#if ruling.at}
-                  <span class="text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
-                {/if}
-              </p>
-            {/each}
-          </div>
-        </TriageCard>
-      {/if}
+      <ScannedTextCard
+        title="Why it was held"
+        label={row.label}
+        detection={row.redetected}
+        {flagged}
+        explanation={copy.explanation}
+      />
+      <PriorRulingsCard
+        granted={row.granted}
+        grantedByUsername={row.grantedByUsername}
+        rulings={row.rulings}
+        showPriorClear={sections.priorClear}
+      />
     </div>
 
     <ModelFactsCard {row} />

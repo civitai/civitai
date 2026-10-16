@@ -12,7 +12,7 @@
   import { failureMessage, nextUndecided, step, type Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
 
-  type QueueForm = { error?: string; modelId?: number } | null;
+  type QueueForm = { error?: string; subject?: string } | null;
   type RowState = {
     id: string;
     selected: boolean;
@@ -232,7 +232,7 @@
 <svelte:window {onkeydown} />
 
 {#if form?.error && errors.size === 0}
-  <ErrorAlert message={form.modelId ? `Model #${form.modelId}: ${form.error}` : form.error} />
+  <ErrorAlert message={form.subject ? `${form.subject}: ${form.error}` : form.error} />
 {/if}
 {@render notice?.({ unpicked: selectedKey === null })}
 

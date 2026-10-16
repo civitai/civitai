@@ -132,6 +132,9 @@ export async function loadRedetectedQueue(url: URL) {
 
 export type RedetectedQueueData = Awaited<ReturnType<typeof loadRedetectedQueue>>;
 
+/** The shell prefixes a refusal with this so a moderator knows which item it was about. */
+const modelSubject = (modelId: number) => `Model #${modelId}`;
+
 const modelIdFrom = async (event: RequestEvent) => {
   const form = await event.request.formData();
   const modelId = Number(form.get('modelId'));
@@ -148,7 +151,12 @@ const run = async (
   if (!modelId) return fail(400, { error: 'Missing model id.' });
 
   const result = await action(modelId);
-  if (!result.ok) return fail(400, { error: result.error ?? 'Action failed.', modelId });
+  if (!result.ok)
+    return fail(400, {
+      error: result.error ?? 'Action failed.',
+      modelId,
+      subject: modelSubject(modelId),
+    });
   return { success: true, modelId, rescanQueued: result.rescanQueued === true };
 };
 
@@ -171,10 +179,12 @@ const redetectionAction =
     const reason = rulingReasonFromForm('heldDetection', keep ? 'Kept' : 'Dismissed', form, [
       label.data,
     ]);
-    if (typeof reason === 'string') return fail(400, { error: reason, modelId });
+    if (typeof reason === 'string')
+      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
 
     const result = await resolveRedetection(modelId, label.data, keep, textHash.data, reason);
-    if (!result.ok) return fail(400, { error: result.error, modelId });
+    if (!result.ok)
+      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
     return { success: true, modelId, label: label.data, resolved: result.resolved };
   };
 
@@ -190,10 +200,12 @@ const wholeAppealAction =
     const modelId = Number(form.get('modelId'));
     if (!(modelId > 0)) return fail(400, { error: 'Missing model id.' });
     const reason = rulingReasonFromForm('flagAppeal', uphold ? 'Rejected' : 'Approved', form);
-    if (typeof reason === 'string') return fail(400, { error: reason, modelId });
+    if (typeof reason === 'string')
+      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
 
     const result = await resolveMinorFlagAppeal(modelId, uphold, reason);
-    if (!result.ok) return fail(400, { error: result.error, modelId });
+    if (!result.ok)
+      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
     return { success: true, modelId, rescanQueued: result.rescanQueued === true };
   };
 
@@ -218,14 +230,16 @@ export const appealActions: Actions = {
       form,
       lifted.length ? lifted : undefined
     );
-    if (typeof reason === 'string') return fail(400, { error: reason, modelId });
+    if (typeof reason === 'string')
+      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
 
     const result = await resolveMinorFlagAppealPerLabel(
       modelId,
       { minor: minor.data, poi: poi.data },
       reason
     );
-    if (!result.ok) return fail(400, { error: result.error, modelId });
+    if (!result.ok)
+      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
     return { success: true, modelId, rescanQueued: result.rescanQueued };
   },
 };
