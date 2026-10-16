@@ -46,6 +46,7 @@ import {
   APP_STATUS,
   AppError,
   AppMenu,
+  appsError,
   YourAppsList,
 } from '~/components/Apps/AppAssistant/YourApps';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
@@ -368,17 +369,7 @@ export function AppAssistantWorkspace({
           </Group>
         </Alert>
       )}
-      {!drawerOpen && (
-        <AppError
-          error={
-            sandboxes.open.error ??
-            sandboxes.suspend.error ??
-            sandboxes.remove.error ??
-            // A failed poll keeps the last list, which is still right to show.
-            (sandboxes.list.data ? null : sandboxes.list.error)
-          }
-        />
-      )}
+      {!drawerOpen && <AppError error={appsError(sandboxes)} />}
 
       {active && (
         <SegmentedControl

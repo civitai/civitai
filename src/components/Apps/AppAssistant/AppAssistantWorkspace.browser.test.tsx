@@ -209,6 +209,9 @@ describe('AppAssistantWorkspace with no apps', () => {
     await mount();
     await expect.element(page.getByRole('button', { name: /^Your apps/ })).toBeVisible();
     expect(document.body.textContent).not.toMatch(/could not be reached/);
+    await page.getByRole('button', { name: /^Your apps/ }).click();
+    await expect.element(page.getByRole('dialog').getByText('Start a new app')).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/could not be reached/);
   });
 
   test('a list that fails to load is reported, not shown as having no apps', async () => {

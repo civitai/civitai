@@ -19,6 +19,11 @@ export const APP_STATUS: Record<Sandbox['state'], string> = {
   suspended: 'Paused',
 };
 
+/** The apps' latest failure. A failed poll keeps the last list, so its error shows only when there is none. */
+export function appsError({ list, open, suspend, remove }: SandboxesState): unknown {
+  return open.error ?? suspend.error ?? remove.error ?? (list.data ? null : list.error);
+}
+
 export function AppError({ error }: { error: unknown }) {
   if (!error) return null;
   // openApp already suspends the others and retries, so this is the retry refused: another tab started one in between.
@@ -129,8 +134,7 @@ export function YourAppsList({
   onRemoved,
   onNewApp,
 }: AppActions & { activeName: string | null; onNewApp: () => void }) {
-  const { list, open, suspend, remove } = sandboxes;
-  const apps = list.data ?? [];
+  const apps = sandboxes.list.data ?? [];
 
   return (
     <Stack gap="md">
@@ -142,7 +146,7 @@ export function YourAppsList({
       >
         Start a new app
       </Button>
-      <AppError error={open.error ?? suspend.error ?? remove.error ?? list.error} />
+      <AppError error={appsError(sandboxes)} />
       <Stack gap={4} component="ul" className="m-0 list-none p-0">
         {apps.map((sandbox) => {
           const isActive = sandbox.name === activeName;
