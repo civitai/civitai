@@ -24,6 +24,7 @@ const {
   textScanTextHash,
 } = await import('~/server/services/text-scan/prompt');
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
+const { TEXT_SCAN_LABELS } = await import('~/server/services/text-scan/types');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { hashContent } = await import('~/server/services/entity-moderation.service');
 
@@ -427,6 +428,13 @@ describe('insertTextScanPrompt', () => {
       insertTextScanPrompt({ key: 'label:hate', content: 'x', createdById: 5 })
     ).rejects.toThrow();
     expect(dbMock.dbWrite.textScanPrompt.create).not.toHaveBeenCalled();
+  });
+
+  it.each(TEXT_SCAN_LABELS)('accepts a prompt for the %s label', async (label) => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.textScanPrompt.create.mockResolvedValue({ id: 3, key: `label:${label}` });
+    await insertTextScanPrompt({ key: `label:${label}`, content: 'x', createdById: 5 });
+    expect(dbMock.dbWrite.textScanPrompt.create).toHaveBeenCalled();
   });
 
   it('rejects a createdById that is not an active moderator', async () => {

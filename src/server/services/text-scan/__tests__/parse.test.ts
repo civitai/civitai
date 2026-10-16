@@ -60,6 +60,17 @@ describe('parseTextScanStep', () => {
     const result = parseTextScanStep(step(JSON.stringify({ nsfw: good.nsfw })), ['nsfw', 'poi']);
     expect(result).toEqual({ ok: false, reason: 'missing_label', detail: 'poi' });
   });
+
+  it('accepts a csam verdict and rejects one without a detected flag', () => {
+    const csam = { detected: true, reason: 'test' };
+    expect(parseTextScanStep(step(JSON.stringify({ csam })), ['csam'])).toEqual({
+      ok: true,
+      output: { csam },
+    });
+    expect(
+      parseTextScanStep(step(JSON.stringify({ csam: { reason: 'test' } })), ['csam'])
+    ).toMatchObject({ ok: false, reason: 'malformed' });
+  });
 });
 
 describe('parseTextScanStep — modelRules', () => {

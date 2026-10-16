@@ -195,6 +195,68 @@ describe('text-scan harness with segmented text', () => {
   });
 });
 
+describe('a labels override', () => {
+  const scanTexts = (extra: Record<string, unknown>) =>
+    run({
+      action: 'scanTexts',
+      entityType: 'Post',
+      texts: [{ key: 'a', fields: [{ heading: 'Title', text: 'placeholder' }] }],
+      ...extra,
+    });
+
+  it('scans the requested labels instead of the profile labels', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue({
+      data: {
+        id: 'wf-1',
+        status: 'succeeded',
+        steps: [
+          {
+            $type: 'chatCompletion',
+            name: 'textScan',
+            metadata: { segment: 0 },
+            status: 'succeeded',
+            output: {
+              choices: [{ message: { content: '{}' }, finishReason: 'stop' }],
+              parsed: { csam: { detected: true, reason: 'test' } },
+            },
+          },
+        ],
+      },
+    } as never);
+    const res = await scanTexts({
+      labels: ['csam'],
+      promptOverrides: { 'label:csam': 'CSAM DEF' },
+    });
+    expect(res.results[0]).toMatchObject({
+      ok: true,
+      labels: ['csam'],
+      outcome: { triggeredLabels: ['csam'] },
+    });
+    expect(sentSteps()[0].system).toContain('CSAM DEF');
+    expect(sentSteps()[0].system).not.toContain('NSFW DEF');
+  });
+
+  it('fails the item when a requested label has no prompt', async () => {
+    const res = await scanTexts({ labels: ['csam'] });
+    expect(res.results[0]).toMatchObject({ ok: false, missingPrompts: ['label:csam'] });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown, empty or repeated label list', () => {
+    const parse = (labels: unknown) =>
+      textScanHarnessSchema.safeParse({
+        action: 'batchEntities',
+        entityType: 'Post',
+        entityIds: [1],
+        labels,
+      }).success;
+    expect(parse(['csam'])).toBe(true);
+    expect(parse(['hate'])).toBe(false);
+    expect(parse([])).toBe(false);
+    expect(parse(['csam', 'csam'])).toBe(false);
+  });
+});
+
 describe('putLabelModes', () => {
   const parse = (extra: Record<string, unknown> = {}) =>
     textScanHarnessSchema.parse({

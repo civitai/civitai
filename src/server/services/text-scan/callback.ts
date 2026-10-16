@@ -339,6 +339,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     poi: outcome.poi?.detected,
     minor: outcome.minor?.detected,
     scam: outcome.scam?.detected,
+    csam: outcome.csam?.detected,
     tags: [
       ...outcome.triggeredLabels,
       ...(outcome.modelRules?.matched.map((m) => `modelRules:${m.ruleId}`) ?? []),

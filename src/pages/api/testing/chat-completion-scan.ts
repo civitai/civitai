@@ -71,6 +71,7 @@
  *     per-label firing counts. Text below the profile's minChars is not sent, and an
  *     item whose prompt key is missing counts as `missing_prompt`. Refused when
  *     ceil(ids / concurrency) * wait exceeds the harness budget, as for scanTexts over its texts.
+ *     `"labels"?: ["csam", ...]` replaces the profile's labels (web-search still narrows them).
  *
  *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
  *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
@@ -88,6 +89,7 @@
  *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
  *     Free text declares nothing, so the outcome is what would fire on an entity that
  *     declares nothing. A missing prompt key comes back as that item's error.
+ *     `"labels"?` replaces the profile's labels, as for batchEntities.
  *
  *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
  *     "model"?, "thinking"? }

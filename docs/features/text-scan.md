@@ -207,7 +207,10 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
   returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
   (`sampleShadow`). `scanEntity` and `scanTexts` also take lab-only `ruleOverrides` (a positive id
-  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it). A scan
+  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it).
+  `batchEntities` and `scanTexts` take an optional `labels` list that replaces the profile's labels,
+  so a label no profile requests yet can be scanned; a label without a prompt row or override comes
+  back as that item's missing-prompt error. A scan
   returns the `system` prompt it sent and, for `ModelRules`, the `rules` listed and the
   `literalRuleIds`; `batchEntities` and `scanTexts` return `{ results, system, rules, ... }`, carrying
   `system` and `rules` once for all results. `scanEntity`, `batchEntities` and `scanTexts` refuse a

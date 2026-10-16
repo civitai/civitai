@@ -106,6 +106,12 @@ const ruleOverrides = z
  * way production's web-search pass does (same tool, steps, prompts), for entity types that have one.
  */
 const harnessPass = z.enum(['main', 'web-search']).default('main');
+/** Replaces the profile's labels, so a label no profile requests yet can be scanned in the lab. */
+const labelsOverride = z
+  .array(z.enum(TEXT_SCAN_LABELS))
+  .min(1)
+  .refine((labels) => new Set(labels).size === labels.length, 'duplicate label in labels')
+  .optional();
 const entityType = z
   .string()
   .refine(isTextScanEntityType, 'unknown text-scan entity type')
@@ -254,6 +260,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       entityType,
       entityIds: z.array(z.number().int().positive()).min(1).max(50),
       pass: harnessPass,
+      labels: labelsOverride,
       promptOverrides,
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
@@ -294,6 +301,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       entityType,
       texts,
       pass: harnessPass,
+      labels: labelsOverride,
       promptOverrides,
       ruleOverrides,
       model: z.string().min(1).optional(),
@@ -319,7 +327,12 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
 export type TextScanHarnessInput = z.infer<typeof textScanHarnessSchema>;
 export type TextScanHarnessResult = { kind: 'json'; body: unknown } | { kind: 'csv'; body: string };
 
-type ScanEntitySyncInput = Omit<Extract<TextScanHarnessInput, { action: 'scanEntity' }>, 'action'>;
+type ScanEntitySyncInput = Omit<
+  Extract<TextScanHarnessInput, { action: 'scanEntity' }>,
+  'action'
+> & {
+  labels?: TextScanLabel[];
+};
 
 function isTooShort(subject: TextScanSubject, profile: TextScanProfile) {
   return subjectTextLength(subject) < (profile.minChars ?? 1);
@@ -344,14 +357,16 @@ function requirePassSupported(entityType: TextScanEntityType, pass: HarnessPass)
 }
 
 /** The labels one pass asks for; the web-search pass narrows to the labels production searches. */
-function labelsForPass(profile: TextScanProfile, pass: HarnessPass) {
-  return pass === 'web-search' ? profile.labels.filter(isSearchLabel) : profile.labels;
+function labelsForPass(profile: TextScanProfile, pass: HarnessPass, override?: TextScanLabel[]) {
+  const labels = override ?? profile.labels;
+  return pass === 'web-search' ? labels.filter(isSearchLabel) : labels;
 }
 
 type ComposeInput = {
   subject: TextScanSubject;
   profile: TextScanProfile;
   pass?: HarnessPass;
+  labels?: TextScanLabel[];
   promptOverrides?: Record<string, string>;
   ruleOverrides?: ModelRuleOverride[];
   model?: string;
@@ -362,22 +377,23 @@ async function composeSteps({
   subject,
   profile,
   pass = 'main',
+  labels: labelsOverride,
   promptOverrides,
   ruleOverrides,
   model,
   thinking,
 }: ComposeInput) {
+  const labels = labelsForPass(profile, pass, labelsOverride);
   const [config, active, liveRules] = await Promise.all([
     getTextScanConfig(),
     getActiveTextScanPrompts(),
-    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+    labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
   ]);
   const modelRules = liveRules && applyModelRuleOverrides(liveRules, ruleOverrides);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
 
-  const labels = labelsForPass(profile, pass);
   let composed: ReturnType<typeof composeTextScanMessages>;
   try {
     composed = composeTextScanMessages({
