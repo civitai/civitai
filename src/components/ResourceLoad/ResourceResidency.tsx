@@ -210,11 +210,7 @@ const RESIDENCY_BY_READINESS: Record<ResidencyReadiness, Residency> = {
   ready: READY,
 };
 
-/**
- * Top-left because `GenerateButton` owns the right corner for its price badge. Shows no download
- * progress: a download already running still means Create will not start now, and the version
- * details row names that state.
- */
+/** Top-left because `GenerateButton` owns the right corner for its price badge. */
 export function LoadedCornerBadge({ readiness }: { readiness: GeneratorReadiness }) {
   const residency = RESIDENCY_BY_READINESS[readiness];
   return (
