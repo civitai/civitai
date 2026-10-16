@@ -2,11 +2,11 @@
   import { page } from '$app/state';
   import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
-  import TriageRow from '$lib/components/minor-flags/TriageRow.svelte';
-  import TriageShell from '$lib/components/minor-flags/TriageShell.svelte';
+  import TriageRow from '$lib/components/triage/TriageRow.svelte';
+  import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
-  import { formActionHref } from '$lib/minor-flags/appeal-triage';
   import { detectionKind } from '$lib/minor-flags/text-scan-verdicts';
+  import { formActionHref } from '$lib/triage/queue';
   import { redetectedFilterParams } from '$lib/minor-flags/redetected-filters';
   import type { RedetectedQueueData } from '$lib/server/minor-flag-queue';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
@@ -61,8 +61,7 @@
   selectionParam="item"
   queueLabel="Held detections queue"
   itemLabel="Detection"
-  canKeep={(row) => !row.hasPendingAppeal}
-  canUnflag={(row) => !row.hasPendingAppeal}
+  decisionEnabled={(row) => [!row.hasPendingAppeal, !row.hasPendingAppeal]}
   outcomeFor={(result, outcome) =>
     result.type === 'success' && result.data?.resolved === 'closed' ? 'Already flagged' : outcome}
   pageNumber={data.page}

@@ -1,9 +1,12 @@
 import type { UserRestrictionStatus } from '@civitai/db-schema/enums';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
+import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getSysRedis } from './redis';
 
 import { RESTRICTION_TYPE, type RestrictionType } from '$lib/restriction-types';
+import type { MediaType } from '../media/edge-url';
+import type { TriggerOrigin } from '$lib/restrictions/origin';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
 // live in a client-safe module because the filter component needs them as values — see the note there.
@@ -27,6 +30,8 @@ export type RestrictionTrigger = {
   matchedRegex?: string;
   imageId?: number | null;
   remixOfId?: number | null;
+  /** Absent on rows written before origin was recorded. */
+  origin?: TriggerOrigin;
   inputImages?: string[];
   inputVideo?: string;
   time?: string;
@@ -43,6 +48,7 @@ export type RestrictionRow = {
   id: number;
   userId: number;
   username: string | null;
+  userCreatedAt: Date;
   /** Read back rather than assumed: a by-id lookup is type-agnostic, so the caller cannot infer it. */
   type: string;
   status: UserRestrictionStatus;
@@ -71,7 +77,56 @@ export type RestrictionQuery = {
   username?: string;
   userId?: number;
   restrictionId?: number;
+  /** `remix`: some trigger came from a remix. `typed`: every prompt trigger recorded its origin and none came from a remix or the prompt enhancer. `unchanged-remix`: some trigger's remixed prompt matched the source image's stored prompt. */
+  origin?: OriginFilter;
 };
+
+export const ORIGIN_FILTERS = ['remix', 'typed', 'unchanged-remix'] as const;
+export type OriginFilter = (typeof ORIGIN_FILTERS)[number];
+
+// `triggers` is an array, or a single object on rows from before the backfill. jsonpath's default lax
+// mode unwraps an array when a member is accessed on it, so one path covers both shapes.
+// A legacy `remixOfId` beside enhancer evidence is read as an enhancer output by the screen, so it is
+// not counted as a remix here either.
+const jsonPath = (path: string) => sql`${sql.lit(path)}::jsonpath`;
+const REMIX_SQL = sql<boolean>`(
+  jsonb_path_exists(ur."triggers", ${jsonPath('$.origin.remix')})
+  or jsonb_path_exists(ur."triggers", ${jsonPath(
+    '$[*] ? (!exists(@.origin.enhancer) && @.remixOfId > 0)'
+  )})
+)`;
+const ENHANCER_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
+  '$.origin.enhancer'
+)})`;
+// A prompt trigger is one with a non-empty `prompt`. `$[*]` wraps the legacy single-object shape too.
+const PROMPT_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
+  '$[*] ? (@.prompt like_regex ".")'
+)})`;
+const UNRECORDED_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
+  '$[*] ? (@.prompt like_regex "." && (!exists(@.origin) || @.origin == null))'
+)})`;
+// A failed lookup proves nothing about where the prompt came from, so it can never count as typed.
+const INCOMPLETE_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
+  '$[*] ? (@.origin.incomplete == true)'
+)})`;
+// Typed needs positive evidence: a row recorded before origin tracking has none, and neither does a
+// row whose triggers are not prompts (a manual mute), so neither may be called typed.
+const TYPED_SQL = sql<boolean>`(
+  ${PROMPT_SQL} and not (${UNRECORDED_SQL} or ${REMIX_SQL} or ${ENHANCER_SQL} or ${INCOMPLETE_SQL})
+)`;
+
+// `promptMatch` is a server-side comparison against the source image's stored prompt, so this holds
+// whether or not the moderator-facing verification has run.
+const UNCHANGED_REMIX_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
+  '$[*] ? (@.origin.remix.promptMatch == "identical")'
+)})`;
+
+const ORIGIN_PREDICATES: Record<OriginFilter, ReturnType<typeof sql<boolean>>> = {
+  remix: REMIX_SQL,
+  typed: TYPED_SQL,
+  'unchanged-remix': UNCHANGED_REMIX_SQL,
+};
+const originPredicate = (origin: OriginFilter) => ORIGIN_PREDICATES[origin];
 
 const asTriggerArray = (value: unknown): RestrictionTrigger[] => {
   if (Array.isArray(value)) return value as RestrictionTrigger[];
@@ -99,7 +154,16 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
   items: RestrictionRow[];
   totalCount: number;
 }> {
-  const { page, limit, type = RESTRICTION_TYPE, status, username, userId, restrictionId } = query;
+  const {
+    page,
+    limit,
+    type = RESTRICTION_TYPE,
+    status,
+    username,
+    userId,
+    restrictionId,
+    origin,
+  } = query;
 
   // 🔴 The type predicate is what separates one review queue from another, and it is applied for every
   // value of `type` except the explicit `'any'`. It is written as a `$if` on a NEGATIVE so that
@@ -114,7 +178,8 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     .$if(!!status, (qb) => qb.where('ur.status', '=', status!))
     .$if(!!userId, (qb) => qb.where('ur.userId', '=', userId!))
     .$if(!!restrictionId, (qb) => qb.where('ur.id', '=', restrictionId!))
-    .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`));
+    .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`))
+    .$if(!!origin, (qb) => qb.where(originPredicate(origin!)));
 
   // The account is muted while its row is Pending, so the queue is worked oldest first: newest first
   // left month-old mutes on the last page. A history view reads newest first.
@@ -126,6 +191,7 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
         'ur.id',
         'ur.userId',
         'u.username',
+        'u.createdAt as userCreatedAt',
         'ur.type',
         'ur.status',
         'ur.triggers',
@@ -189,4 +255,92 @@ export async function saveSuspiciousMatches(
   await redis.lTrim(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, 999);
 
   return matches.length;
+}
+
+export type RestrictionFacets = {
+  /** By status, under the current origin filter. `any` is the sum. */
+  status: Record<string, number>;
+  /** By origin, under the current status filter. */
+  origin: Record<'all' | OriginFilter, number>;
+};
+
+/**
+ * Counts for the queue's filter chips. Each facet ignores its own filter, so a chip shows what picking
+ * it would give rather than the size of what is already on screen.
+ */
+export async function getRestrictionFacets(
+  query: Pick<RestrictionQuery, 'type' | 'status' | 'username' | 'userId' | 'origin'>
+): Promise<RestrictionFacets> {
+  const { type = RESTRICTION_TYPE, status, username, userId, origin } = query;
+
+  const base = dbRead
+    .selectFrom('UserRestriction as ur')
+    .innerJoin('User as u', 'u.id', 'ur.userId')
+    .$if(type !== 'any', (qb) => qb.where('ur.type', '=', type))
+    .where('u.deletedAt', 'is', null)
+    .$if(!!userId, (qb) => qb.where('ur.userId', '=', userId!))
+    .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`));
+
+  const [byStatus, byOrigin] = await Promise.all([
+    base
+      .$if(!!origin, (qb) => qb.where(originPredicate(origin!)))
+      .select(['ur.status', (eb) => eb.fn.countAll<string>().as('count')])
+      .groupBy('ur.status')
+      .execute(),
+    base
+      .$if(!!status, (qb) => qb.where('ur.status', '=', status!))
+      .select((eb) => [
+        eb.fn.countAll<string>().as('all'),
+        sql<string>`count(*) filter (where ${REMIX_SQL})`.as('remix'),
+        sql<string>`count(*) filter (where ${TYPED_SQL})`.as('typed'),
+        sql<string>`count(*) filter (where ${UNCHANGED_REMIX_SQL})`.as('unchangedRemix'),
+      ])
+      .executeTakeFirst(),
+  ]);
+
+  const statusCounts: Record<string, number> = {
+    any: 0,
+    Pending: 0,
+    Upheld: 0,
+    Overturned: 0,
+  };
+  for (const row of byStatus) {
+    statusCounts[row.status] = Number(row.count);
+    statusCounts.any += Number(row.count);
+  }
+
+  return {
+    status: statusCounts,
+    origin: {
+      all: Number(byOrigin?.all ?? 0),
+      remix: Number(byOrigin?.remix ?? 0),
+      typed: Number(byOrigin?.typed ?? 0),
+      'unchanged-remix': Number(byOrigin?.unchangedRemix ?? 0),
+    },
+  };
+}
+
+export type RemixSource = {
+  id: number;
+  url: string;
+  type: MediaType;
+  nsfwLevel: number;
+  /** The stored generation prompt, for the diff against what was submitted. */
+  prompt: string | null;
+};
+
+export async function getRemixSources(ids: readonly number[]): Promise<RemixSource[]> {
+  if (!ids.length) return [];
+  const rows = await dbRead
+    .selectFrom('Image as i')
+    .select([
+      'i.id',
+      'i.url',
+      'i.type',
+      'i.nsfwLevel',
+      sql<string | null>`i."meta" ->> 'prompt'`.as('prompt'),
+    ])
+    .where('i.id', 'in', [...ids])
+    .execute();
+  return rows.map((r) => ({ ...r, type: r.type as MediaType }));
 }

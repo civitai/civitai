@@ -4,8 +4,8 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
-  import TriageCard from '$lib/components/minor-flags/TriageCard.svelte';
-  import TriageDetailFrame from '$lib/components/minor-flags/TriageDetailFrame.svelte';
+  import TriageCard from '$lib/components/triage/TriageCard.svelte';
+  import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';

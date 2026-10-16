@@ -10,6 +10,7 @@
     title,
     meta,
     coverUrl,
+    cover = true,
     verdict,
     error,
     onselect,
@@ -21,7 +22,9 @@
     title: string;
     /** Short text on the right of the title, e.g. how long it has waited. */
     meta: string;
-    coverUrl: string | undefined;
+    coverUrl?: string | undefined;
+    /** False for items with no image, which drops the thumbnail slot. */
+    cover?: boolean;
     verdict: string | undefined;
     error: string | undefined;
     onselect: () => void;
@@ -46,11 +49,13 @@
       verdict && 'opacity-50'
     )}
   >
-    <div class="size-11 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-7">
-      {#if coverUrl}
-        <EdgeMedia src={coverUrl} type="image" width={96} class="size-full object-cover" />
-      {/if}
-    </div>
+    {#if cover}
+      <div class="size-11 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-7">
+        {#if coverUrl}
+          <EdgeMedia src={coverUrl} type="image" width={96} class="size-full object-cover" />
+        {/if}
+      </div>
+    {/if}
     <div class="min-w-0 flex-1">
       <div class="flex items-baseline justify-between gap-2">
         <span class="truncate text-sm font-medium text-white">{title}</span>

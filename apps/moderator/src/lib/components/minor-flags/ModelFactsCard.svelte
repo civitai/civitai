@@ -2,7 +2,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { dateTime, shortAge } from '$lib/format';
   import { clipList } from '$lib/minor-flags/appeal-row';
-  import TriageCard from './TriageCard.svelte';
+  import TriageCard from '$lib/components/triage/TriageCard.svelte';
 
   let {
     row,
