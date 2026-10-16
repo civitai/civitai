@@ -90,7 +90,7 @@ vi.mock('~/components/Post/Detail/PostContestCollectionInfoAlert', () => ({
 }));
 
 const { PostImages } = await import('~/components/Post/Detail/PostImages');
-const { getEventDecorationClearLeftCss } = await import(
+const { getEventDecorationClearLeftCss, getHatLayout } = await import(
   '~/components/Cosmetics/EventDecoration/event-decoration-placement'
 );
 
@@ -142,10 +142,11 @@ describe('the post page wears each image hat on that image, as the cards do', ()
     const hat = hats()[0];
     expect(hat.closest('[data-worn-on]')?.getAttribute('data-worn-on')).toBe('2');
     expect(frameOf(2)?.contains(hat)).toBe(true);
-    // Inside the corner, not hanging off it: the image's frame clips at its edge. A corner hat is
-    // positioned with a calc() that follows its container's allowance.
-    expect((hat as HTMLElement).style.left).not.toContain('calc');
+    // Inside the corner, not hanging off it: the image's frame clips at its edge.
     const hatData = h.image(2, true).eventDecoration!.data;
+    const hatLeft = (hat as HTMLElement).style.left;
+    expect(hatLeft).toMatch(/^[0-9.]+px$/);
+    expect(parseFloat(hatLeft)).toBeCloseTo(getHatLayout('inside', undefined).left, 3);
     expect(badgeClearance(2)).toBe(getEventDecorationClearLeftCss(hatData, 'inside'));
     expect(badgeClearance(2)).toMatch(/^[1-9][0-9]*px$/);
     // The clearance only moves the badges if their position reads it.
