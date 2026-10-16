@@ -15,6 +15,7 @@ import { countRemovedAppeals } from './removed-appeals.service';
 import { countStrikeReview } from './strike-review.service';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
+  getAutoFlaggedCount,
   getMinorFlagAppealGroups,
   getMinorQueueCounts,
   getRedetectedCount,
@@ -46,6 +47,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     minorQueue,
     modelFlagAppealGroups,
     heldDetections,
+    autoFlagged,
     strikeReview,
   ] = await Promise.all([
     getImageReviewCounts(),
@@ -88,6 +90,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     getMinorFlagAppealGroups({}),
     // Index-served (see `redetectedIndexPredicate`), but a failure must not blank the other badges.
     bounded(getRedetectedCount),
+    // Not `minorQueue.auto`: that rides on the ~10s Pending count and drops with it at the bound above.
+    bounded(getAutoFlaggedCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
   ]);
@@ -104,8 +108,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     removedAppeals,
     reRemovals,
     modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
-    // Slice 3 adds the hash auto-flags and text-scan auto-flags here, once the Flagged page lists them.
-    ...(heldDetections != null ? { modelFlagsReview: heldDetections } : {}),
+    // Both or neither: one source alone would label the tab with a number that reads as "all clear".
+    ...(heldDetections != null && autoFlagged != null
+      ? { modelFlagsReview: heldDetections + autoFlagged }
+      : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
     ...(minorQueue != null ? { modelFlagsMatches: minorQueue.pending } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),

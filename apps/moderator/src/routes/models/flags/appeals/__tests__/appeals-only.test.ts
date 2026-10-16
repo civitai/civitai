@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getRedetectedModels, getRedetectedCount, getMinorFlagAppealsForReview } = vi.hoisted(
-  () => ({
-    getRedetectedModels: vi.fn(),
-    getRedetectedCount: vi.fn(),
-    getMinorFlagAppealsForReview: vi.fn(),
-  })
-);
+const { getFlaggedModels, getFlaggedCount, getMinorFlagAppealsForReview } = vi.hoisted(() => ({
+  getFlaggedModels: vi.fn(),
+  getFlaggedCount: vi.fn(),
+  getMinorFlagAppealsForReview: vi.fn(),
+}));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
@@ -15,8 +13,8 @@ vi.mock('$lib/server/minor-hash.service', () => ({
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview: vi.fn(),
   getModelMinorState: vi.fn(),
-  getRedetectedModels,
-  getRedetectedCount,
+  getFlaggedModels,
+  getFlaggedCount,
 }));
 vi.mock('$lib/server/minor-flag.service', () => ({
   confirmMinorFlag: vi.fn(),
@@ -43,8 +41,8 @@ describe('Model Flag Appeals', () => {
         url: new URL(`http://x/models/flags/appeals${query}`),
       });
       expect(getMinorFlagAppealsForReview).toHaveBeenCalledTimes(1);
-      expect(getRedetectedModels).not.toHaveBeenCalled();
-      expect(getRedetectedCount).not.toHaveBeenCalled();
+      expect(getFlaggedModels).not.toHaveBeenCalled();
+      expect(getFlaggedCount).not.toHaveBeenCalled();
     }
   );
 

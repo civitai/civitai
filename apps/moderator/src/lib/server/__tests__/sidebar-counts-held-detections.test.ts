@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getRedetectedCount, countStrikeReview } = vi.hoisted(() => ({
+const { getRedetectedCount, getAutoFlaggedCount, countStrikeReview } = vi.hoisted(() => ({
   getRedetectedCount: vi.fn(),
+  getAutoFlaggedCount: vi.fn(),
   countStrikeReview: vi.fn(),
 }));
 
@@ -35,33 +36,45 @@ vi.mock('../minor-hash.service', () => ({
   getMinorFlagAppealGroups: async () => [{ count: 4 }],
   getMinorQueueCounts: async () => ({ pending: 1, auto: 2 }),
   getRedetectedCount,
+  getAutoFlaggedCount,
 }));
 
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  getAutoFlaggedCount.mockResolvedValue(0);
+});
 
 describe('sidebar counts for Model Flags', () => {
-  it('counts only held detections under Flagged, and the pending queue under File matches', async () => {
+  it('adds the hash auto-flags to the held detections under Flagged, and the pending queue to File matches', async () => {
     getRedetectedCount.mockResolvedValue(5);
+    getAutoFlaggedCount.mockResolvedValue(7);
     const counts = await getSidebarCounts();
     expect(counts).toMatchObject({
       modelFlagsAppeals: 4,
-      modelFlagsReview: 5,
+      modelFlagsReview: 12,
       modelFlagsMatches: 1,
     });
     expect(counts).not.toHaveProperty('heldDetections');
     expect(counts).not.toHaveProperty('minorHashMatches');
   });
 
-  it('drops Flagged, without blanking the other badges, when held detections fail', async () => {
-    getRedetectedCount.mockRejectedValue(new Error('db down'));
-    const counts = await getSidebarCounts();
-    expect(counts).not.toHaveProperty('modelFlagsReview');
-    expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsMatches: 1 });
-  });
+  it.each([
+    ['held detections', getRedetectedCount, getAutoFlaggedCount],
+    ['hash auto-flags', getAutoFlaggedCount, getRedetectedCount],
+  ])(
+    'drops Flagged, without blanking the other badges, when the %s fail',
+    async (_name, failing, working) => {
+      failing.mockRejectedValue(new Error('db down'));
+      working.mockResolvedValue(3);
+      const counts = await getSidebarCounts();
+      expect(counts).not.toHaveProperty('modelFlagsReview');
+      expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsMatches: 1 });
+    }
+  );
 });
 
 describe('sidebar count strikeReview', () => {

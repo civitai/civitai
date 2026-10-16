@@ -1,50 +1,66 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
-  import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
+  import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
-  import { detectionKind } from '$lib/minor-flags/text-scan-verdicts';
+  import { flaggedDecisionEnabled } from '$lib/minor-flags/flagged-decision';
+  import { flaggedFilterParams } from '$lib/minor-flags/flagged-filters';
   import { formActionHref } from '$lib/triage/queue';
-  import { redetectedFilterParams } from '$lib/minor-flags/redetected-filters';
-  import type { RedetectedQueueData } from '$lib/server/minor-flag-queue';
-  import type { RedetectedRow } from '$lib/server/minor-hash.service';
+  import type { FlaggedQueueData } from '$lib/server/minor-flag-queue';
+  import type { FlaggedRow } from '$lib/server/minor-hash.service';
   import { urlWith } from '$lib/url';
-  import HeldDetectionDetail from './HeldDetectionDetail.svelte';
+  import FlaggedDetail from './FlaggedDetail.svelte';
 
-  type QueueForm = { error?: string; modelId?: number } | null;
+  type QueueForm = { error?: string; subject?: string } | null;
 
   let {
     data,
     form,
-  }: { data: RedetectedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
+  }: { data: FlaggedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
 
   type Verdict = ResolutionVerdict<'heldDetection'>;
 
   let current = $state<string | null>(null);
   const ruling = rulingDraft<Verdict>(() => current);
 
-  // A model can wait on both labels, so a row is identified by the pair.
-  const rowKey = (row: RedetectedRow) => `${row.modelId}:${row.label}`;
-  const parseKey = (raw: string) => (/^\d+:(minor|poi)$/.test(raw) ? raw : null);
+  // The `data-triage-action` of each hash row's two forms, in key order.
+  const HASH_ACTIONS = ['keepFlag', 'liftFlag'] as const;
+
+  const parseKey = (raw: string) => (/^\d+:(minor|poi):(hash|redetected)$/.test(raw) ? raw : null);
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
     formActionHref(action, {
-      ...redetectedFilterParams(data.redetectedFilters),
+      ...flaggedFilterParams(data.flaggedFilters),
       q: data.q || undefined,
       page: data.page > 1 ? data.page : undefined,
       limit: page.url.searchParams.get('limit') ?? undefined,
     });
 
   const clearFiltersHref = $derived(
-    urlWith(page.url, { flag: null, sort: null, q: null, page: null, item: null })
+    urlWith(page.url, { source: null, flag: null, sort: null, q: null, page: null, item: null })
   );
-  const filtersActive = $derived(Object.keys(redetectedFilterParams(data.redetectedFilters)).length > 0);
+  const filtersActive = $derived(Object.keys(flaggedFilterParams(data.flaggedFilters)).length > 0);
+
+  const ondecision = (row: FlaggedRow, index: number) => {
+    if (row.source === 'redetected') {
+      const verdict = HELD_DETECTION_RULING_CHOICES[index]?.verdict;
+      if (verdict) ruling.choose(verdict);
+      return;
+    }
+    // A hash flag has no reason to write, so the key submits straight away.
+    document
+      .querySelector<HTMLFormElement>(
+        `[data-triage-actions] form[data-triage-action="${HASH_ACTIONS[index]}"]`
+      )
+      ?.requestSubmit();
+  };
 </script>
 
 {#snippet empty()}
@@ -52,9 +68,9 @@
     {#if data.q}
       <p class="m-0">Nothing matches "{data.q}".</p>
     {:else if filtersActive}
-      <p class="m-0">No detections match these filters.</p>
+      <p class="m-0">No flags match these filters.</p>
     {:else}
-      <p class="m-0">No detections are waiting on a ruling.</p>
+      <p class="m-0">No automatic flags are waiting on a ruling.</p>
     {/if}
     {#if filtersActive || data.q}
       <a href={clearFiltersHref} class="mt-2 inline-block {LINK_CLASS}">Clear filters</a>
@@ -64,16 +80,13 @@
 
 <TriageShell
   rows={data.items}
-  {rowKey}
+  rowKey={(row: FlaggedRow) => row.key}
   {parseKey}
   selectionParam="item"
-  queueLabel="Held detections queue"
-  itemLabel="Detection"
-  decisionEnabled={(row) => [!row.hasPendingAppeal, !row.hasPendingAppeal]}
-  ondecision={(_row, index) => {
-    const verdict = HELD_DETECTION_RULING_CHOICES[index]?.verdict;
-    if (verdict) ruling.choose(verdict);
-  }}
+  queueLabel="Flagged queue"
+  itemLabel="Flag"
+  decisionEnabled={flaggedDecisionEnabled}
+  {ondecision}
   bind:current
   outcomeFor={(result, outcome) =>
     result.type === 'success' && result.data?.resolved === 'closed' ? 'Already flagged' : outcome}
@@ -90,7 +103,7 @@
       href={state.href}
       selected={state.selected}
       title={row.modelName}
-      meta={row.redetected.at ? `detected ${shortAge(row.redetected.at)} ago` : 'detected'}
+      meta={row.flaggedAt ? `flagged ${shortAge(row.flaggedAt)} ago` : 'flagged'}
       coverUrl={row.coverImages[0]?.url}
       verdict={state.verdict}
       error={state.error}
@@ -98,12 +111,18 @@
     >
       {#snippet badges()}
         <FlagBadge label={row.label} />
-        <DetectionKindBadge kind={detectionKind(row.redetected)} />
+        <FlaggedSourceBadge {row} />
+        {#if row.hasPendingAppeal}
+          <Badge variant="outline" class="h-5 px-2 text-xs">also in Appeals</Badge>
+        {/if}
+        {#if row.daysLeft !== null}
+          <span class="text-xs text-dark-2 tabular-nums">{row.daysLeft} d left</span>
+        {/if}
       {/snippet}
     </TriageRow>
   {/snippet}
   {#snippet detail(row, state)}
-    <HeldDetectionDetail
+    <FlaggedDetail
       {row}
       civitaiUrl={data.civitaiUrl}
       verdict={state.verdict}

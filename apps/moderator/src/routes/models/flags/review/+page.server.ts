@@ -1,6 +1,6 @@
 import type { Actions, PageServerLoad } from './$types';
-import { loadRedetectedQueue, redetectionActions } from '$lib/server/minor-flag-queue';
+import { flaggedActions, loadFlaggedQueue } from '$lib/server/minor-flag-queue';
 
-export const load: PageServerLoad = ({ url }) => loadRedetectedQueue(url);
+export const load: PageServerLoad = ({ url }) => loadFlaggedQueue(url);
 
-export const actions: Actions = redetectionActions;
+export const actions: Actions = flaggedActions;

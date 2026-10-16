@@ -3,37 +3,47 @@
     type FilterGroup,
   } from '$lib/components/minor-flags/QueueFilterBar.svelte';
   import {
-    DEFAULT_REDETECTED_FILTERS,
-    REDETECTED_FLAGS,
-    REDETECTED_FLAG_LABELS,
-    REDETECTED_SORTS,
-    REDETECTED_SORT_LABELS,
-    redetectedFilterParams,
-  } from '$lib/minor-flags/redetected-filters';
+    DEFAULT_FLAGGED_FILTERS,
+    FLAGGED_FLAGS,
+    FLAGGED_FLAG_LABELS,
+    FLAGGED_SORTS,
+    FLAGGED_SORT_LABELS,
+    FLAGGED_SOURCES,
+    FLAGGED_SOURCE_LABELS,
+    flaggedFilterParams,
+  } from '$lib/minor-flags/flagged-filters';
   import ModelFlagsTabs from '../ModelFlagsTabs.svelte';
-  import HeldDetectionTriage from './HeldDetectionTriage.svelte';
+  import FlaggedTriage from './FlaggedTriage.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const groups = $derived.by(() => {
-    const f = data.redetectedFilters;
+    const f = data.flaggedFilters;
     return [
+      {
+        key: 'source',
+        label: 'Source',
+        values: FLAGGED_SOURCES,
+        labels: FLAGGED_SOURCE_LABELS,
+        active: f.source,
+        defaultValue: DEFAULT_FLAGGED_FILTERS.source,
+      },
       {
         key: 'flag',
         label: 'Flag',
-        values: REDETECTED_FLAGS,
-        labels: REDETECTED_FLAG_LABELS,
+        values: FLAGGED_FLAGS,
+        labels: FLAGGED_FLAG_LABELS,
         active: f.flag,
-        defaultValue: DEFAULT_REDETECTED_FILTERS.flag,
+        defaultValue: DEFAULT_FLAGGED_FILTERS.flag,
       },
       {
         key: 'sort',
         label: 'Sort',
-        values: REDETECTED_SORTS,
-        labels: REDETECTED_SORT_LABELS,
+        values: FLAGGED_SORTS,
+        labels: FLAGGED_SORT_LABELS,
         active: f.sort,
-        defaultValue: DEFAULT_REDETECTED_FILTERS.sort,
+        defaultValue: DEFAULT_FLAGGED_FILTERS.sort,
       },
     ] satisfies FilterGroup[];
   });
@@ -45,9 +55,9 @@
   <QueueFilterBar
     {groups}
     q={data.q}
-    searchLabel="Search detections"
-    searchParams={redetectedFilterParams(data.redetectedFilters)}
+    searchLabel="Search flags"
+    searchParams={flaggedFilterParams(data.flaggedFilters)}
     selectionParam="item"
   />
-  <HeldDetectionTriage {data} {form} />
+  <FlaggedTriage {data} {form} />
 </div>

@@ -9,8 +9,8 @@ import {
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview,
   getModelMinorState,
-  getRedetectedCount,
-  getRedetectedModels,
+  getFlaggedCount,
+  getFlaggedModels,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
 import {
@@ -22,11 +22,12 @@ import {
   type AppealFilters,
 } from '$lib/minor-flags/appeal-filters';
 import {
-  DEFAULT_REDETECTED_FILTERS,
-  REDETECTED_FLAGS,
-  REDETECTED_SORTS,
-  type RedetectedFilters,
-} from '$lib/minor-flags/redetected-filters';
+  DEFAULT_FLAGGED_FILTERS,
+  FLAGGED_FLAGS,
+  FLAGGED_SORTS,
+  FLAGGED_SOURCES,
+  type FlaggedFilters,
+} from '$lib/minor-flags/flagged-filters';
 import { MAX_INT4 } from '$lib/server/users.service';
 import {
   confirmMinorFlag,
@@ -52,9 +53,10 @@ const appealFilterSchema = z.object({
   sort: z.enum(APPEAL_SORTS).catch(DEFAULT_APPEAL_FILTERS.sort),
 });
 
-const redetectedFilterSchema = z.object({
-  flag: z.enum(REDETECTED_FLAGS).catch(DEFAULT_REDETECTED_FILTERS.flag),
-  sort: z.enum(REDETECTED_SORTS).catch(DEFAULT_REDETECTED_FILTERS.sort),
+const flaggedFilterSchema = z.object({
+  source: z.enum(FLAGGED_SOURCES).catch(DEFAULT_FLAGGED_FILTERS.source),
+  flag: z.enum(FLAGGED_FLAGS).catch(DEFAULT_FLAGGED_FILTERS.flag),
+  sort: z.enum(FLAGGED_SORTS).catch(DEFAULT_FLAGGED_FILTERS.sort),
 });
 
 function parsePaging(url: URL) {
@@ -116,21 +118,23 @@ export async function loadAppealQueue(url: URL) {
 
 export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 
-export async function loadRedetectedQueue(url: URL) {
+export async function loadFlaggedQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
-  const redetectedFilters: RedetectedFilters = parseQuery(url, redetectedFilterSchema);
+  const flaggedFilters: FlaggedFilters = parseQuery(url, flaggedFilterSchema);
   const [queue, total] = await Promise.all([
-    getRedetectedModels({ limit, offset, search, filters: redetectedFilters }),
+    getFlaggedModels({ limit, offset, search, filters: flaggedFilters }),
     // The footer's "of N" is decoration; a failure here must not take the list down with it.
-    getRedetectedCount({ search, flag: redetectedFilters.flag }).catch((err) => {
-      console.error('Re-detected total failed', err);
-      return undefined;
-    }),
+    getFlaggedCount({ search, source: flaggedFilters.source, flag: flaggedFilters.flag }).catch(
+      (err) => {
+        console.error('Flagged total failed', err);
+        return undefined;
+      }
+    ),
   ]);
-  return { limit, page, offset, q, redetectedFilters, total, ...queue, fullBleed: true };
+  return { limit, page, offset, q, flaggedFilters, total, ...queue, fullBleed: true };
 }
 
-export type RedetectedQueueData = Awaited<ReturnType<typeof loadRedetectedQueue>>;
+export type FlaggedQueueData = Awaited<ReturnType<typeof loadFlaggedQueue>>;
 
 /** The shell prefixes a refusal with this so a moderator knows which item it was about. */
 const modelSubject = (modelId: number) => `Model #${modelId}`;
@@ -167,30 +171,41 @@ export const minorHashActions: Actions = {
   dismiss: (event) => run(event, dismissMinorHashMatch),
 };
 
-const redetectionAction =
+const flaggedAction =
   (keep: boolean): Actions[string] =>
   async (event) => {
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
     const label = z.enum(['minor', 'poi']).safeParse(form.get('label'));
+    const source = z.enum(['hash', 'redetected']).safeParse(form.get('source'));
+    if (!(modelId > 0) || !label.success || !source.success)
+      return fail(400, { error: 'Missing model id, label or source.' });
+    const refusal = (error: string) =>
+      fail(400, { error, modelId, subject: modelSubject(modelId) });
+
+    if (source.data === 'hash') {
+      // The main app's confirm and revert endpoints take no reason yet, so none is read or recorded.
+      const result = await (keep ? confirmMinorFlag : revertMinorFlag)(modelId);
+      if (!result.ok) return refusal(result.error ?? 'Action failed.');
+      return { success: true, modelId, label: label.data, resolved: keep ? 'kept' : 'dismissed' };
+    }
+
     const textHash = z.string().min(1).max(200).safeParse(form.get('textHash'));
-    if (!(modelId > 0) || !label.success || !textHash.success)
-      return fail(400, { error: 'Missing model id, label or text hash.' });
+    if (!textHash.success) return fail(400, { error: 'Missing text hash.' });
     const reason = rulingReasonFromForm('heldDetection', keep ? 'Kept' : 'Dismissed', form, [
       label.data,
     ]);
-    if (typeof reason === 'string')
-      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
+    if (typeof reason === 'string') return refusal(reason);
 
     const result = await resolveRedetection(modelId, label.data, keep, textHash.data, reason);
-    if (!result.ok)
-      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
+    if (!result.ok) return refusal(result.error);
     return { success: true, modelId, label: label.data, resolved: result.resolved };
   };
 
-export const redetectionActions: Actions = {
-  keepRedetected: redetectionAction(true),
-  dismissRedetected: redetectionAction(false),
+/** Keep or lift a flag from the Flagged tab, whatever raised it. */
+export const flaggedActions: Actions = {
+  keepFlag: flaggedAction(true),
+  liftFlag: flaggedAction(false),
 };
 
 const wholeAppealAction =

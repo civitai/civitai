@@ -10,10 +10,10 @@ import {
   type AppealSource,
 } from '$lib/minor-flags/appeal-filters';
 import {
-  DEFAULT_REDETECTED_FILTERS,
-  type RedetectedFilters,
-  type RedetectedFlag,
-} from '$lib/minor-flags/redetected-filters';
+  DEFAULT_FLAGGED_FILTERS,
+  type FlaggedFilters,
+  type FlaggedFlag,
+} from '$lib/minor-flags/flagged-filters';
 import type {
   FlagLabel,
   FlagRulingView,
@@ -44,7 +44,7 @@ const MINOR_HASH_ACCEPTED_KEY = 'minorHashAccepted';
 
 /** Kept as a literal, not a bind: `make_interval` takes int4 and a bound JS number arrives as int8,
  *  which fails to resolve the function (42883) and 500s every query using it. */
-const AUTO_FLAG_REVIEW_WINDOW_DAYS = 30;
+export const AUTO_FLAG_REVIEW_WINDOW_DAYS = 30;
 const reviewWindowCutoff = sql`now() - make_interval(days => ${sql.raw(
   String(AUTO_FLAG_REVIEW_WINDOW_DAYS)
 )})`;
@@ -77,6 +77,15 @@ const humanConfirmedPredicate = sql`
       AND ma.activity = 'setMinor'
       AND ma."createdAt" > (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz
   )
+`;
+
+/** The scan hook's flags still inside the review window and not yet affirmed by a human. */
+const hashFlaggedPredicate = sql`
+  m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+  AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
+  AND NOT ${humanConfirmedPredicate}
+  AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
+  AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
 `;
 
 const minorSrcCte = sql`
@@ -218,11 +227,7 @@ export async function getAutoFlaggedMinorModels({ limit, offset = 0, search }: P
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
     FROM "Model" m
     LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
-      AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
-      AND NOT ${humanConfirmedPredicate}
-      AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
-      AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
+    WHERE ${hashFlaggedPredicate}
       AND ${searchPredicate(search, {
         modelId: 'm.id',
         userId: 'm.userId',
@@ -537,7 +542,12 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
   return rows.rows;
 }
 
-export type RedetectedRow = {
+export type FlaggedSource = 'hash' | 'redetected';
+
+/** One waiting item of the Flagged tab, whatever raised it. A model can appear once per label and
+ *  source, so the key is the triple. Text-scan auto-flags with no ruling join as a third `source`. */
+export type FlaggedRow = {
+  key: string;
   modelId: number;
   modelName: string;
   userId: number;
@@ -546,11 +556,18 @@ export type RedetectedRow = {
   minor: boolean;
   poi: boolean;
   label: FlagLabel;
-  detectedAt: Date | null;
-  redetected: RedetectionView;
+  source: FlaggedSource;
+  /** The detected text a re-detection ruling is bound to; null for hash flags. */
+  textHash: string | null;
+  flaggedAt: Date | null;
+  /** Hash flags only: days until the review window closes and the flag is presumed correct. */
+  daysLeft: number | null;
+  redetected: RedetectionView | null;
   granted: PriorClearView | null;
   grantedByUsername: string | null;
   rulings: FlagRulingView[] | null;
+  prevNsfw: boolean | null;
+  prevGalleryLevel: number | null;
   hasPendingAppeal: boolean;
   modelType: string;
   modelCreatedAt: Date;
@@ -564,7 +581,7 @@ export type RedetectedRow = {
   pastAppeals: { approved: number; rejected: number; void: number; pending: number };
 };
 
-export type RedetectedQuery = Page & { filters?: RedetectedFilters };
+export type FlaggedQuery = Page & { filters?: FlaggedFilters };
 
 /** MUST match the predicate of the partial index `Model_textScanRedetected_idx` (see its migration)
  *  character for character. The sidebar count runs on every page load, so a mismatch turns each
@@ -582,63 +599,106 @@ const redetectedLabelsJoin = sql`
   ) AS l(label, entry)
 `;
 
-/** Detections the text scan held for a moderator: a re-detection after a human clear, or a first
- *  detection in review mode. Nothing was
- *  flagged and the owner was not told, so this list is the only place the detection surfaces.
- *  A row per model and label; oldest detection first by default so nothing starves.
+const redetectedAt = sql`(l.entry->'redetected'->>'at')::timestamptz`;
+
+const userRefs = { modelId: 'm.id', userId: 'm.userId', username: 'u.username' };
+
+/** Both branches select the same columns, in this order, so they can be UNIONed and paged once. */
+const hashBranch = (search: MinorSearch | undefined) => sql`
+  SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+         m.status::text AS status, m.minor, m.poi,
+         'minor'::text AS label, 'hash'::text AS source, NULL::text AS "textHash",
+         m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
+         (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
+         NULL::jsonb AS redetected, NULL::jsonb AS granted, NULL::text AS "grantedByUsername",
+         m.meta->'textScanFlags'->'minor'->'rulings' AS rulings,
+         (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
+         (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
+  FROM "Model" m
+  LEFT JOIN "User" u ON u.id = m."userId"
+  WHERE ${hashFlaggedPredicate}
+    AND ${searchPredicate(search, userRefs)}
+`;
+
+const redetectedBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
+  SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+         m.status::text AS status, m.minor, m.poi,
+         l.label::text AS label, 'redetected'::text AS source,
+         l.entry->'redetected'->>'textHash' AS "textHash",
+         m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
+         ${redetectedAt} AS "flaggedAt",
+         l.entry->'redetected' AS redetected, l.entry->'appealGranted' AS granted,
+         gu.username AS "grantedByUsername", l.entry->'rulings' AS rulings,
+         NULL::boolean AS "prevNsfw", NULL::int AS "prevGalleryLevel"
+  FROM "Model" m
+  ${redetectedLabelsJoin}
+  LEFT JOIN "User" u ON u.id = m."userId"
+  LEFT JOIN "User" gu ON gu.id = CASE
+    WHEN jsonb_typeof(l.entry->'appealGranted'->'by') = 'number'
+      THEN (l.entry->'appealGranted'->>'by')::int
+  END
+  WHERE ${redetectedIndexPredicate}
+    AND l.entry ? 'redetected'
+    AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
+    AND ${searchPredicate(search, userRefs)}
+`;
+
+/** Which branches a filter selects. Hash flags are minor flags, so a real-person filter excludes them. */
+const flaggedBranches = ({ source, flag }: Pick<FlaggedFilters, 'source' | 'flag'>) => ({
+  hash: source !== 'redetected' && flag !== 'poi',
+  redetected: source !== 'hash',
+});
+
+const msPerDay = 86_400_000;
+export const reviewDaysLeft = (flaggedAt: Date | string, now = Date.now()) =>
+  Math.max(
+    0,
+    Math.ceil(AUTO_FLAG_REVIEW_WINDOW_DAYS - (now - new Date(flaggedAt).getTime()) / msPerDay)
+  );
+
+/** Hash auto-flags in their review window and held re-detections, merged in SQL so one query pages,
+ *  sorts and counts across both. Oldest flag first by default so nothing starves; an item with no
+ *  timestamp sorts last either way.
  *
- *  The page is cut first (CTE) so the cover-image LATERAL is bounded by limit. */
-export async function getRedetectedModels({
+ *  The page is cut first (CTE) so the per-model LATERALs are bounded by limit. */
+export async function getFlaggedModels({
   limit,
   offset = 0,
   search,
-  filters = DEFAULT_REDETECTED_FILTERS,
-}: RedetectedQuery) {
-  const detectedAt = sql`(l.entry->'redetected'->>'at')::timestamptz`;
+  filters = DEFAULT_FLAGGED_FILTERS,
+}: FlaggedQuery) {
+  const use = flaggedBranches(filters);
+  const branches = [
+    ...(use.hash ? [hashBranch(search)] : []),
+    ...(use.redetected ? [redetectedBranch(search, filters.flag)] : []),
+  ];
+  if (!branches.length) return { items: [] as FlaggedRow[], hasMore: false };
+
   const [inner, outer] =
     filters.sort === 'newest'
       ? [
-          sql`${detectedAt} DESC NULLS LAST, m.id DESC, l.label`,
-          sql`pg."detectedAt" DESC NULLS LAST, pg."modelId" DESC, pg.label`,
+          sql`"flaggedAt" DESC NULLS LAST, "modelId" DESC, label, source`,
+          sql`pg."flaggedAt" DESC NULLS LAST, pg."modelId" DESC, pg.label, pg.source`,
         ]
       : [
-          sql`${detectedAt} NULLS LAST, m.id, l.label`,
-          sql`pg."detectedAt" NULLS LAST, pg."modelId", pg.label`,
+          sql`"flaggedAt" NULLS LAST, "modelId", label, source`,
+          sql`pg."flaggedAt" NULLS LAST, pg."modelId", pg.label, pg.source`,
         ];
 
-  const rows = await sql<RedetectedRow>`
+  const rows = await sql<Omit<FlaggedRow, 'key' | 'daysLeft'>>`
     WITH pg AS (
-      SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-             m.status::text AS status, m.minor, m.poi, l.label,
-             m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
-             ${detectedAt} AS "detectedAt",
-             l.entry->'redetected' AS redetected, l.entry->'appealGranted' AS granted,
-             gu.username AS "grantedByUsername", l.entry->'rulings' AS rulings,
-             -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
-             -- a ruling while the model has a Pending appeal.
-             EXISTS (
-               SELECT 1 FROM "Appeal" a
-               WHERE a."entityType" = 'Model' AND a."entityId" = m.id AND a.status::text = 'Pending'
-             ) AS "hasPendingAppeal"
-      FROM "Model" m
-      ${redetectedLabelsJoin}
-      LEFT JOIN "User" u ON u.id = m."userId"
-      LEFT JOIN "User" gu ON gu.id = CASE
-        WHEN jsonb_typeof(l.entry->'appealGranted'->'by') = 'number'
-          THEN (l.entry->'appealGranted'->>'by')::int
-      END
-      WHERE ${redetectedIndexPredicate}
-        AND l.entry ? 'redetected'
-        AND ${filters.flag === 'all' ? sql`TRUE` : sql`l.label = ${filters.flag}`}
-        AND ${searchPredicate(search, {
-          modelId: 'm.id',
-          userId: 'm.userId',
-          username: 'u.username',
-        })}
+      SELECT * FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
       ORDER BY ${inner}
       LIMIT ${limit + 1} OFFSET ${offset}
     )
     SELECT pg.*,
+           -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
+           -- a ruling while the model has a Pending appeal.
+           EXISTS (
+             SELECT 1 FROM "Appeal" a
+             WHERE a."entityType" = 'Model' AND a."entityId" = pg."modelId"
+               AND a.status::text = 'Pending'
+           ) AS "hasPendingAppeal",
            v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
            COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
            COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
@@ -656,7 +716,39 @@ export async function getRedetectedModels({
     ORDER BY ${outer}
   `.execute(dbRead);
 
-  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
+  const now = Date.now();
+  const items: FlaggedRow[] = rows.rows.slice(0, limit).map((row) => ({
+    ...row,
+    key: `${row.modelId}:${row.label}:${row.source}`,
+    daysLeft: row.source === 'hash' && row.flaggedAt ? reviewDaysLeft(row.flaggedAt, now) : null,
+  }));
+  return { items, hasMore: rows.rows.length > limit };
+}
+
+/** Hash auto-flags still waiting on a human. Cheap enough for the sidebar, unlike the Pending count. */
+export async function getAutoFlaggedCount({ search }: { search?: MinorSearch } = {}) {
+  const result = await sql<{ count: number }>`
+    SELECT count(*)::int AS count
+    FROM "Model" m
+    ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
+    WHERE ${hashFlaggedPredicate}
+      AND ${searchPredicate(search, userRefs)}
+  `.execute(dbRead);
+  return result.rows[0]?.count ?? 0;
+}
+
+/** The Flagged list's total, over the same predicates as `getFlaggedModels`. */
+export async function getFlaggedCount({
+  search,
+  source = 'all',
+  flag = 'all',
+}: { search?: MinorSearch } & Partial<Pick<FlaggedFilters, 'source' | 'flag'>> = {}) {
+  const use = flaggedBranches({ source, flag });
+  const [hash, redetected] = await Promise.all([
+    use.hash ? getAutoFlaggedCount({ search }) : 0,
+    use.redetected ? getRedetectedCount({ search, flag }) : 0,
+  ]);
+  return hash + redetected;
 }
 
 /** Labels waiting on a ruling. With no arguments it is the whole queue, which the tab badge shows;
@@ -664,7 +756,7 @@ export async function getRedetectedModels({
 export async function getRedetectedCount({
   search,
   flag = 'all',
-}: { search?: MinorSearch; flag?: RedetectedFlag } = {}) {
+}: { search?: MinorSearch; flag?: FlaggedFlag } = {}) {
   const result = await sql<{ count: number }>`
     SELECT count(*)::int AS count
     FROM "Model" m
@@ -893,11 +985,7 @@ async function fetchCounts(): Promise<MinorQueueCounts> {
     sql<{ auto: number }>`
       SELECT
         (SELECT count(*)::int FROM "Model" m
-          WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
-            AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
-            AND NOT ${humanConfirmedPredicate}
-            AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
-            AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
+          WHERE ${hashFlaggedPredicate}
         ) AS auto
     `.execute(dbRead),
   ]);
