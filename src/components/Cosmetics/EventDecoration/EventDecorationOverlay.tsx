@@ -54,24 +54,29 @@ export function EventDecorationOverlay({
   return null;
 }
 
-type WornDecoration = { data: EventDecorationData } | null | undefined;
+export type WornDecoration = { data: EventDecorationData } | null | undefined;
 
 /**
  * One image's own hat, inside its media's corner: the media clips at its edge, so the hat stays
- * inside it. For views that show one image's media (a gallery post's slides, the post page).
+ * inside it. For views that show one image's media (a gallery post's slides, the post page, the
+ * image detail).
  */
 export function ImageMediaHat({
   imageId,
   decoration,
+  cardWidth,
 }: {
   imageId: number;
   decoration: WornDecoration;
+  /** The media's drawn width; a picture narrower than a feed card wears the hat scaled down. */
+  cardWidth?: number;
 }) {
   if (!decoration) return null;
   return (
     <EventDecorationOverlay
       decoration={decoration.data}
       placement="inside"
+      cardWidth={cardWidth}
       wornOn={{ entityType: 'Image', entityId: imageId }}
     />
   );

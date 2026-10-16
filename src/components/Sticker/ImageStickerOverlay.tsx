@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
+import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
 import { DraftStickerLayer } from '~/components/Sticker/DraftStickerLayer';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
@@ -116,7 +116,11 @@ export function ImageStickerOverlay({ imageId }: { imageId: number }) {
   if (!active) return null;
 
   return (
-    <div ref={hostRef} className="pointer-events-none absolute inset-0">
+    <div
+      ref={hostRef}
+      {...{ [MEDIA_OVERLAY_ATTR]: '' }}
+      className="pointer-events-none absolute inset-0"
+    >
       {box && (
         <div ref={setSurfaceEl} className="pointer-events-none absolute isolate" style={box}>
           {placements.length > 0 && (

@@ -3,6 +3,8 @@ import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
+import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
+import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
@@ -33,6 +35,7 @@ type ImageProps = {
   type: MediaType;
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
+  eventDecoration?: WornDecoration;
 };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
@@ -343,6 +346,7 @@ function ImageContent({
             />
           )}
           {safe && <ImageStickerOverlay imageId={image.id} />}
+          <DrawnMediaHat imageId={image.id} decoration={image.eventDecoration} />
         </div>
       )}
     </ImageGuardContent>

@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { offsetWithin } from '~/components/Sticker/CardStickerOverlay';
 import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 
+/** Marks an overlay host, so the next overlay's host looks past it for the media. */
+export const MEDIA_OVERLAY_ATTR = 'data-media-overlay';
+
 export type DrawnMediaBox = { width: number; height: number; left: number; top: number };
 
 const same = (a: DrawnMediaBox | null, b: DrawnMediaBox) =>
@@ -22,8 +25,9 @@ const same = (a: DrawnMediaBox | null, b: DrawnMediaBox) =>
  * somewhere else. The media element is the only thing that is always the box the
  * picture is drawn in.
  *
- * The host expects to be the sibling directly AFTER the media (or the media's wrapper)
- * inside a positioned parent, which is how `ImageContent` lays it out.
+ * The host expects to come AFTER the media (or the media's wrapper) inside a positioned parent,
+ * which is how `ImageContent` lays it out, with only other hosts carrying MEDIA_OVERLAY_ATTR
+ * between them.
  */
 export function useDrawnMediaBox(active: boolean) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -73,7 +77,10 @@ export function useDrawnMediaBox(active: boolean) {
     };
 
     const findMedia = () => {
-      const before = host.previousElementSibling as HTMLElement | null;
+      let before = host.previousElementSibling as HTMLElement | null;
+      // Other overlays on the same media (stickers, a hat) sit between it and this host.
+      while (before?.hasAttribute(MEDIA_OVERLAY_ATTR))
+        before = before.previousElementSibling as HTMLElement | null;
       if (!before) return null;
       if (before.matches('img, video')) return before;
       // Falls back to the sibling itself for an embed with no `img`/`video` in

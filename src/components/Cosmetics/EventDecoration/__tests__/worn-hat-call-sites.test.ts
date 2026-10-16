@@ -46,11 +46,12 @@ const CALL_SITES: [file: string, expected: string][] = [
   ],
 ];
 
-// Draw one image's hat on its media through ImageMediaHat, which names it an Image itself; each use
-// must pair the image's id with that same image's decoration.
-const IMAGE_MEDIA_HAT_SITES = [
-  'src/components/Image/AsPosts/ImagesAsPostsCard.tsx',
-  'src/components/Post/Detail/PostImages.tsx',
+// Draw one image's hat on its media through ImageMediaHat or DrawnMediaHat, which name it an Image
+// themselves; each use must pair the image's id with that same image's decoration.
+const IMAGE_MEDIA_HAT_SITES: [file: string, tag: string][] = [
+  ['src/components/Image/AsPosts/ImagesAsPostsCard.tsx', 'ImageMediaHat'],
+  ['src/components/Post/Detail/PostImages.tsx', 'ImageMediaHat'],
+  ['src/components/Image/DetailV2/ImageDetailCarousel.tsx', 'DrawnMediaHat'],
 ];
 
 // Draw a hat with no content behind it (a fit sample, a try-on, the event page's own thumbs).
@@ -65,6 +66,7 @@ const NO_CONTENT = [
 const WRAPPERS = [
   'src/components/TwCosmeticWrapper/TwCosmeticWrapper.tsx',
   'src/components/Cosmetics/EventDecoration/EventDecorationOverlay.tsx',
+  'src/components/Cosmetics/EventDecoration/DrawnMediaHat.tsx',
   'src/components/MasonryGrid/MasonryCard.tsx',
 ];
 
@@ -77,7 +79,7 @@ const TEMPLATES = [
 ];
 
 const DRAWS_A_HAT = new RegExp(
-  String.raw`\beventDecoration=\{|<EventDecorationOverlay\b|<WornHatPopover\b|<ImageMediaHat\b`
+  String.raw`\beventDecoration=\{|<EventDecorationOverlay\b|<WornHatPopover\b|<ImageMediaHat\b|<DrawnMediaHat\b`
 );
 
 const tsxFiles = (dir: string): string[] =>
@@ -94,13 +96,12 @@ describe('worn hat call sites', () => {
     expect(read(file).split(expected).length - 1).toBe(1);
   });
 
-  it.each(IMAGE_MEDIA_HAT_SITES)('%s pairs each image hat with its own image', (file) => {
+  it.each(IMAGE_MEDIA_HAT_SITES)('%s pairs each image hat with its own image', (file, tag) => {
     const src = read(file);
-    const uses = src.split('<ImageMediaHat').length - 1;
+    const uses = src.split(`<${tag}`).length - 1;
     expect(uses).toBeGreaterThan(0);
     expect(
-      src.split('<ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />').length -
-        1
+      src.split(`<${tag} imageId={image.id} decoration={image.eventDecoration} />`).length - 1
     ).toBe(uses);
   });
 
@@ -117,7 +118,7 @@ describe('worn hat call sites', () => {
     expect(drawing.sort()).toEqual(
       [
         ...CALL_SITES.map(([f]) => f),
-        ...IMAGE_MEDIA_HAT_SITES,
+        ...IMAGE_MEDIA_HAT_SITES.map(([f]) => f),
         ...NO_CONTENT,
         ...WRAPPERS,
         ...TEMPLATES,
