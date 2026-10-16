@@ -471,8 +471,30 @@ describe('setReactionFromApp — set semantics', () => {
     });
     h.toggle.mockRejectedValue(new TRPCError({ code: 'CONFLICT', message: 'x', cause: p2002 }));
     const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
+    // The toggle WAS attempted (so the rejection path was reached), and wrote nothing.
+    expect(h.toggle).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ changed: false, reacted: true });
     expect(h.recordScopeInvocation).not.toHaveBeenCalled();
+  });
+
+  it('a DIFFERENT Prisma error (not a unique violation) is not swallowed', async () => {
+    // Negative control for the classifier: only P2002 means "the row already existed".
+    viewerHolds(true);
+    afterWrite([]);
+    const p2003 = new Prisma.PrismaClientKnownRequestError('Foreign key constraint failed', {
+      code: 'P2003',
+      clientVersion: 'test',
+    });
+    h.toggle.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone', cause: p2003 }));
+    await expect(
+      caller().setReactionFromApp(setInput({ reacted: false }) as never)
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1);
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detail: expect.objectContaining({ outcome: 'failed', reacted: false }),
+      })
+    );
   });
 
   it('any other handler error is rethrown and audited ONCE as failed — even if the state moved', async () => {

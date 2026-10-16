@@ -815,10 +815,12 @@ async function authorizeBlockReactionRequest(
 }
 
 /**
- * The audit row for one reaction an app CHANGED. Not written for a no-op set — nothing happened
- * on the viewer's account — and not before the gates admit the call, so a refused app cannot
- * fill the viewer's Activity feed. Best-effort, like the post audit: a failed audit write never
- * fails a reaction that already landed (it is awaited, so it does add one write of latency).
+ * The audit row for one reaction attempt an app made: a change it actually wrote (`ok`, with
+ * the direction written) or an attempt the site handler refused or failed (`failed`, with the
+ * direction requested). Not written for a no-op set — nothing happened on the viewer's account —
+ * nor before the gates admit the call, so a refused app cannot fill the viewer's Activity feed.
+ * Best-effort, like the post audit: a failed audit write never fails a reaction that already
+ * landed (it is awaited, so it does add one write of latency).
  */
 async function recordBlockReactionInvocation(opts: {
   claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
