@@ -269,6 +269,25 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     });
   });
 
+  test('an app create_app made and the page then deleted is not reused by name', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { app: 'game', state: 'suspended' })];
+    await mount();
+    await m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
+    expect(m.open).toHaveBeenLastCalledWith('game-2');
+    const made = m.list.find((s) => s.app === 'game-2')!;
+    await page.getByRole('button', { name: 'Actions for game-2' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith(made.name);
+
+    // The same app shows up again (listed late) and is opened from the list.
+    m.list = [...m.list, made];
+    await openFromYourApps('game-2');
+    m.open.mockClear();
+    await m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
+    expect(m.open).toHaveBeenCalledWith('game-3');
+  });
+
   test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
     m.list = [];
     await mount();

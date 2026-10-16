@@ -121,22 +121,72 @@ describe('create_app', () => {
     expect(result).toMatchObject({ app: 'tip-calculator', existed: true });
   });
 
-  /** The page as create_app sees it: opening an app lists it and makes it the open one. */
-  function page(list: Sandbox[], open: Sandbox | null = null) {
+  /**
+   * The page as create_app sees it: opening an app lists it and makes it the open one. The service
+   * creates each app (at a new time) unless `found` already holds one under that key.
+   */
+  function page(list: Sandbox[], open: Sandbox | null = null, found: Record<string, Sandbox> = {}) {
     const state = { list: [...list], open };
+    let clock = 0;
     const service = vi.fn(async (app: string) => {
-      const sandbox_ = sandbox(app, 'starting');
+      const existing = found[app];
+      const sandbox_ = existing ?? { ...sandbox(app, 'starting'), createdAt: `t${++clock}` };
       state.list = [...state.list.filter((s) => s.app !== app), sandbox_];
       state.open = sandbox_;
-      return { sandbox: sandbox_, created: true };
+      return { sandbox: sandbox_, created: !existing };
     });
-    const t = createAppTools({
+    const tools = createAppTools({
       apps: () => state.list,
       current: () => state.open,
       open: service as never,
-    }).tools.create_app;
-    return { state, service, create: (name: string) => run(t, name) };
+    });
+    return { state, service, tools, create: (name: string) => run(tools.tools.create_app, name) };
   }
+
+  it('does not take an app the service found (the user’s own) for one it made', async () => {
+    const theirs = { ...sandbox('game-2', 'running'), createdAt: 'elsewhere' };
+    const p = page([sandbox('game', 'suspended')], null, { 'game-2': theirs });
+    expect(await p.create('Game')).toMatchObject({ app: 'game-2', existed: true });
+    // "No, make me a new one."
+    await p.create('Game');
+    expect(p.service.mock.calls).toEqual([['game-2'], ['game-3']]);
+  });
+
+  it('does not take a different app later made under the same key for the one it made', async () => {
+    const p = page([sandbox('game', 'suspended')]);
+    await p.create('Game');
+    const made = p.state.open!;
+    expect(made.app).toBe('game-2');
+    // Deleted elsewhere and made again: same key, a new creation.
+    const other = { ...made, createdAt: 'later' };
+    p.state.list = p.state.list.map((s) => (s.name === made.name ? other : s));
+    p.state.open = other;
+    await p.create('Game');
+    expect(p.service.mock.calls).toEqual([['game-2'], ['game-3']]);
+  });
+
+  it('forgets an app the page deleted', async () => {
+    const p = page([sandbox('game', 'suspended')]);
+    await p.create('Game');
+    const made = p.state.open!;
+    p.tools.forget(made.name);
+    await p.create('Game');
+    expect(p.service.mock.calls).toEqual([['game-2'], ['game-3']]);
+  });
+
+  it('forgets an app that leaves the list', async () => {
+    const p = page([sandbox('game', 'suspended')]);
+    await p.create('Game');
+    const made = p.state.open!;
+    p.state.list = p.state.list.filter((s) => s.name !== made.name);
+    p.state.open = null;
+    await p.create('Quiz');
+    // Back in the list (listed late, or another tab), and opened from there.
+    p.state.list = [...p.state.list, made];
+    p.state.open = made;
+    await p.create('Game');
+    expect(p.service.mock.calls).toEqual([['game-2'], ['quiz'], ['game-3']]);
+  });
 
   it('keeps a copy it made when asked again, even after the original is deleted', async () => {
     const p = page([sandbox('tip-calculator', 'suspended')]);

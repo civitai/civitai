@@ -266,6 +266,7 @@ export function AppAssistantWorkspace({
     });
   };
   const onRemoved = (name: string) => {
+    appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };
   const startNewApp = () => {

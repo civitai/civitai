@@ -42,6 +42,8 @@ export interface AppTools {
   refusal(name: string): string | null;
   /** A new reply began; a limit hit in the last one may be worth trying again. */
   newReply(): void;
+  /** The page deleted this sandbox. */
+  forget(name: string): void;
 }
 
 export function createAppTools({ apps, current, open }: AppToolsOptions): AppTools {
@@ -51,8 +53,13 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
   // Retrying cannot clear a limit within a reply, and a running-limit retry pauses the user's apps again.
   let limited: string | null = null;
   // The name each app this page created was asked for, as a key: a numbered copy's key alone cannot
-  // be told from a name that ends in digits ("Room 101").
-  const askedFor = new Map<string, string>();
+  // be told from a name that ends in digits ("Room 101"). Kept per sandbox and creation time, so a
+  // different app later made under the same key is not mistaken for it.
+  const askedFor = new Map<string, { base: string; createdAt: string | null }>();
+  const recordedBase = (sandbox: Sandbox) => {
+    const record = askedFor.get(sandbox.name);
+    return record && record.createdAt === sandbox.createdAt ? record.base : undefined;
+  };
 
   const openOrExplain = async (app: string) => {
     try {
@@ -69,9 +76,12 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     if (!list) throw new Error(APPS_LOADING);
     const openNow = current();
     const base = appKeyBase(name);
+    const listed = new Set(list.map((s) => s.name));
+    // Gone from the list: deleted, perhaps elsewhere.
+    for (const key of askedFor.keys()) if (!listed.has(key)) askedFor.delete(key);
     // Asked again for the app that is open: keep it rather than make another. An app opened from the
     // list matches only by its exact key; failing that a new app is made, which overwrites nothing.
-    if (openNow && (openNow.app === base || askedFor.get(openNow.app) === base)) {
+    if (openNow && (openNow.app === base || recordedBase(openNow) === base)) {
       if (openNow.state !== 'suspended')
         return {
           app: openNow.app,
@@ -99,8 +109,9 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
       list.map((s) => s.app)
     );
     const opened = await openOrExplain(app);
-    askedFor.set(app, base);
     const { sandbox, created } = opened;
+    // Only what this page made: an app the service found is the user's own, made elsewhere.
+    if (created) askedFor.set(sandbox.name, { base, createdAt: sandbox.createdAt });
     // The list it was named against can be stale, and the service finds before it creates.
     if (!created)
       return {
@@ -143,6 +154,9 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     refusal: (name) => (name === CREATE_APP ? limited : null),
     newReply: () => {
       limited = null;
+    },
+    forget: (name) => {
+      askedFor.delete(name);
     },
   };
 }
