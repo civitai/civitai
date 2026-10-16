@@ -175,7 +175,9 @@ async function fillWithinDebounce(input: ReturnType<typeof page.getByLabelText>,
 }
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function openModal(props: { sources?: BlockImagePickerSource[]; max?: number | null } = {}) {
+function openModal(
+  props: { sources?: BlockImagePickerSource[]; max?: number | null; publicOnly?: boolean } = {}
+) {
   const onResolved = vi.fn();
   renderWithProviders(<DialogProvider />);
   dialogStore.trigger({
@@ -184,6 +186,7 @@ function openModal(props: { sources?: BlockImagePickerSource[]; max?: number | n
     props: {
       sources: props.sources ?? ['posted', 'generated'],
       max: props.max ?? null,
+      ...(props.publicOnly !== undefined ? { publicOnly: props.publicOnly } : {}),
       onResolved,
     },
   });
@@ -368,6 +371,23 @@ describe('BlockImagePickerModal', () => {
     expect(onResolved).toHaveBeenCalledWith([
       { source: 'generated', url: blobUrl('mature'), width: 832, height: 1216, nsfwLevel: 4 },
     ]);
+  });
+
+  test('posted: asks the server for public posts only when the app asked for publicOnly', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'], publicOnly: true });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({ publicOnly: true });
+  });
+
+  test('posted: without publicOnly the server is asked exactly as before', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'], publicOnly: false });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    expect(mocks.postedQuery).toHaveBeenCalled();
+    for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({});
   });
 
   test('posted: lists what the server returned, whatever its level', async () => {

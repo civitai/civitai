@@ -410,12 +410,17 @@ read that file. As of this writing the families are:
   scope): `OPEN_IMAGE_PICKER` (→ `IMAGE_PICKER_RESULT`) lets the viewer pick from
   images they posted and images they made with the on-site generator. The app
   never lists the library; it receives only the pick. Request
-  `{ requestId, sources?, multiple? }`: `sources` is a non-empty list of
+  `{ requestId, sources?, multiple?, publicOnly? }`: `sources` is a non-empty list of
   `'posted'` / `'generated'` (omitted = both), `multiple: { max }` asks for
-  several (`max` above 20 is clamped to 20). A single pick answers
+  several (`max` above 20 is clamped to 20), and `publicOnly: true` lists posted
+  images only from posts that are not `Private` (for an app handing the pick to a
+  surface everyone sees, such as an App Store card, which refuses an image from a
+  Private post; generated images are unaffected; omitted or `false` lists as
+  before). A single pick answers
   `{ requestId, selected? }` (no `selected` on dismiss); a multi pick answers
-  `{ requestId, selectedImages }` (`[]` on dismiss). An invalid `sources` or `max`
-  is answered `{ requestId, error }` and the picker does not open. Each pick is
+  `{ requestId, selectedImages }` (`[]` on dismiss). An invalid `sources` or `max`,
+  or a `publicOnly` that is not a boolean, is answered `{ requestId, error }` and
+  the picker does not open. Each pick is
   `{ source, url, width, height, nsfwLevel, imageId? }`. `imageId` is present for
   a posted pick only (a generator output has no `Image` row). `nsfwLevel` is never
   0 and may be a mature level.
@@ -424,7 +429,10 @@ read that file. As of this writing the families are:
   decision: the viewer is choosing among their own images). Posted: the viewer's
   own images in a published post, scan complete, with no `needsReview` /
   `tosViolation` / `poi` / `minor` flag, rated at a level their browsing level
-  includes; an unrated image (level 0) is not listed. The rule is one query
+  includes; an unrated image (level 0) is not listed. With `publicOnly`, the post
+  must also not be `Private` (`publicPostImageWhere`, the Prisma form of the
+  store's `IMAGE_POST_PUBLIC_SQL`; the picker keeps `publishedAt <= now`, the
+  store `< now()`). The rule is one query
   filter (`postedPickableWhere`), and the level is read server-side from the
   session and request domain (`getRequestBrowsingLevel`), never from the input.
   Generated: the viewer's succeeded generator image outputs as the generator
@@ -726,6 +734,7 @@ same page host, so the owner sees the same confirm.
    within the per-job limit.
 
    Three things to know as an author:
+
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
      quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
      cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
@@ -733,10 +742,11 @@ same page host, so the owner sees the same confirm.
    - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
      plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
      `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
-     body.input.<path> is a Date`), at the estimate and at the submit.
+body.input.<path> is a Date`), at the estimate and at the submit.
    - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
      refused with `a training step type cannot run as a confirmed step — use
-     kind:'training'`. Training runs have their own kind, with its own dataset and checks.
+kind:'training'`. Training runs have their own kind, with its own dataset and checks.
+
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session

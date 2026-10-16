@@ -53,6 +53,23 @@ describe('postedPickableWhere', () => {
     });
   });
 
+  it('publicOnly also leaves out images whose post is Private, and changes nothing else', () => {
+    const now = new Date('2026-03-04T05:06:07.000Z');
+    const { post, ...rest } = postedPickableWhere(8123, 7, { publicOnly: true });
+    expect(post).toEqual({ publishedAt: { lte: now }, availability: { not: 'Private' } });
+    const { post: _defaultPost, ...defaultRest } = postedPickableWhere(8123, 7);
+    expect(rest).toEqual(defaultRest);
+  });
+
+  it('without publicOnly, or with it false, the post may be Private: the query is unchanged', () => {
+    const before = { post: { publishedAt: { lte: new Date('2026-03-04T05:06:07.000Z') } } };
+    expect(postedPickableWhere(8123, 7)).toMatchObject(before);
+    expect(postedPickableWhere(8123, 7, { publicOnly: false })).toEqual(
+      postedPickableWhere(8123, 7)
+    );
+    expect(postedPickableWhere(8123, 7).post).not.toHaveProperty('availability');
+  });
+
   it.each([
     [1, [1]],
     [3, [1, 2]],

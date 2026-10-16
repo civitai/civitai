@@ -64,7 +64,9 @@ export const PARENT_LINK_TEMPLATE_SQL = Prisma.sql`(to_jsonb(sp) ->> 'link_templ
 /**
  * The image's post, aliased `p`, is published and not Private: what a card needs before it shows
  * an item image. NULL, so false, for an image with no post. The one definition behind both the
- * card render (`hydrateSubListingCards`) and the publish check (`isImageInPublicPost`).
+ * card render (`hydrateSubListingCards`) and the publish check (`isImageInPublicPost`). The image
+ * picker's `publicOnly` list uses the Prisma form, `publicPostImageWhere` (`image.selector.ts`),
+ * which differs only at the boundary instant (`<=` there, `<` here).
  */
 const IMAGE_POST_PUBLIC_SQL = Prisma.sql`(p."publishedAt" < now() AND p."availability"::text <> 'Private')`;
 
