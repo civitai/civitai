@@ -13,6 +13,7 @@ import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
 import { countStrikeReview } from './strike-review.service';
+import { countPendingCsamHolds } from './csam-holds.queries';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getMinorFlagAppealGroups,
@@ -47,6 +48,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     modelFlagAppealGroups,
     heldDetections,
     strikeReview,
+    csamTextHolds,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -90,6 +92,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(getRedetectedCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
+    bounded(countPendingCsamHolds),
   ]);
   return {
     ...modes,
@@ -106,6 +109,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     modelFlagAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
     ...(heldDetections != null ? { heldDetections } : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
+    ...(csamTextHolds != null ? { csamTextHolds } : {}),
     ...(minorQueue != null ? { minorHashMatches: minorQueue.pending + minorQueue.auto } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),

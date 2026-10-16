@@ -92,6 +92,6 @@ export async function loadModelScanSubjects(
 
 registerTextScanProfile({
   entityType: 'Model',
-  labels: ['nsfw', 'poi', 'minor'],
+  labels: ['nsfw', 'poi', 'minor', 'csam'],
   load: (ids) => loadModelScanSubjects(ids, { publicVersionsOnly: true }),
 });
