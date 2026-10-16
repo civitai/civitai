@@ -25,13 +25,26 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const packageRoot = join(here, '../../..');
 const gateCli = join(packageRoot, 'src/schema-drift/gate-cli.ts');
 const realSchema = join(packageRoot, 'prisma/schema.full.prisma');
-const snapshotRelative = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json';
+const snapshotRelative = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-10-16.json';
 const snapshot = join(packageRoot, snapshotRelative);
 const baselineRelative = 'src/schema-drift/drift-baseline.json';
 
 const catalog = JSON.parse(readFileSync(snapshot, 'utf8')) as DbCatalog;
 const schemaSource = readFileSync(realSchema, 'utf8');
 const report = compareSchemaToCatalog(parsePrismaSchema(schemaSource), catalog);
+
+// The PREVIOUS production capture, kept as a fixture because it is the only real catalog
+// that is BEHIND the schema. The gate's logic tests below need a real backlog with pending
+// findings (missing columns, a missing FK on a not-yet-migrated column) and no ON DELETE/UPDATE
+// data. The 2026-10-16 recapture has neither: every declared column is now live, so it
+// produces zero pending findings and cannot exercise the pending tier, the escalation guard,
+// or the "referential actions not compared" path at all.
+const legacySnapshotRelative =
+  'src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json';
+const legacyCatalog = JSON.parse(
+  readFileSync(join(packageRoot, legacySnapshotRelative), 'utf8')
+) as DbCatalog;
+const legacyReport = compareSchemaToCatalog(parsePrismaSchema(schemaSource), legacyCatalog);
 
 function finding(overrides: Partial<DriftFinding> & Pick<DriftFinding, 'kind'>): DriftFinding {
   return {
@@ -279,11 +292,11 @@ describe('tierOf', () => {
   });
 });
 
-describe('evaluateGate against the real schema and snapshot', () => {
-  const baseline = buildBaseline(report, catalog, snapshotRelative);
+describe('evaluateGate against the real schema and the 2026-08-03 backlog', () => {
+  const baseline = buildBaseline(legacyReport, legacyCatalog, legacySnapshotRelative);
 
   it('reproduces the whole baseline and reports nothing new', () => {
-    const result = evaluateGate(report, catalog, baseline);
+    const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(result.newEnforced).toEqual([]);
     expect(result.newPending).toEqual([]);
     expect(result.resolved).toEqual([]);
@@ -294,7 +307,7 @@ describe('evaluateGate against the real schema and snapshot', () => {
   });
 
   it('tiers the 2026-08-03 backlog the way the README describes it', () => {
-    const known = new Set(catalog.columns.map((c) => `${c.table} ${c.column}`));
+    const known = new Set(legacyCatalog.columns.map((c) => `${c.table} ${c.column}`));
     // Pending is "the snapshot has no column to hang a constraint on": every missing column,
     // plus any missing FK still waiting on one of its own columns. Nullability and uniqueness
     // are emitted only for surface the differ found, so they are never pending.
@@ -314,17 +327,17 @@ describe('evaluateGate against the real schema and snapshot', () => {
     // The 45 live ON UPDATE drifts are absorbed by being structurally unmeasurable here, not
     // by being waved through — and the count of what could not be compared is carried into
     // the result so the verdict can say so instead of printing a clean zero.
-    const result = evaluateGate(report, catalog, baseline);
+    const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(baseline.entries.some((e) => e.kind === 'referential-action')).toBe(false);
     expect(result.referentialActionUnknown).toBeGreaterThan(400);
   });
 
   it('blocks a NEW finding on a column the database already has', () => {
     const trimmed: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.filter((e) => e.kind !== 'uniqueness'),
     };
-    const result = evaluateGate(report, catalog, trimmed);
+    const result = evaluateGate(legacyReport, legacyCatalog, trimmed);
     expect(result.newEnforced).toHaveLength(1);
     expect(result.newEnforced[0].kind).toBe('uniqueness');
     expect(result.newPending).toEqual([]);
@@ -332,10 +345,10 @@ describe('evaluateGate against the real schema and snapshot', () => {
 
   it('only warns about a NEW finding whose column is not in the snapshot', () => {
     const trimmed: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.filter((e) => e.kind !== 'missing-column'),
     };
-    const result = evaluateGate(report, catalog, trimmed);
+    const result = evaluateGate(legacyReport, legacyCatalog, trimmed);
     expect(result.newEnforced).toEqual([]);
     expect(result.newPending.length).toBeGreaterThan(0);
     expect(new Set(result.newPending.map((f) => f.kind))).toEqual(new Set(['missing-column']));
@@ -343,7 +356,7 @@ describe('evaluateGate against the real schema and snapshot', () => {
 
   it('lists a baseline entry the run no longer reports, without blocking', () => {
     const withGhost: Baseline = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: [
         ...baseline.entries,
         {
@@ -357,7 +370,7 @@ describe('evaluateGate against the real schema and snapshot', () => {
         },
       ],
     };
-    const result = evaluateGate(report, catalog, withGhost);
+    const result = evaluateGate(legacyReport, legacyCatalog, withGhost);
     expect(result.resolved.map((e) => e.table)).toEqual(['NoSuchTable']);
     expect(result.newEnforced).toEqual([]);
   });
@@ -368,7 +381,7 @@ describe('referencedTarget parses compare.ts output', () => {
   // `declared` string that compare.ts formats. If that format ever changes, the parse returns
   // null, every missing-FK fingerprint collapses to `?`, and distinct findings silently merge
   // into one. This makes that a red suite instead of a silent degradation.
-  const missingFks = report.findings.filter((f) => f.kind === 'missing-foreign-key');
+  const missingFks = legacyReport.findings.filter((f) => f.kind === 'missing-foreign-key');
 
   it('resolves a target for EVERY missing foreign key in the real report', () => {
     expect(missingFks.length).toBeGreaterThanOrEqual(37); // positive control on the loop below
@@ -380,7 +393,7 @@ describe('referencedTarget parses compare.ts output', () => {
     // Schema tables count too: a relation to a table created after the snapshot was captured
     // is a real target, not a fragment.
     const tables = new Set([
-      ...catalog.tables,
+      ...legacyCatalog.tables,
       ...parsePrismaSchema(schemaSource).models.map((m) => m.table),
     ]);
     const targets = new Set(missingFks.map((f) => referencedTarget(f) as string));
@@ -397,7 +410,7 @@ describe('referencedTarget parses compare.ts output', () => {
 });
 
 describe('tier escalation', () => {
-  const baseline = buildBaseline(report, catalog, snapshotRelative);
+  const baseline = buildBaseline(legacyReport, legacyCatalog, legacySnapshotRelative);
 
   it('blocks a baseline finding whose tier rose from pending to enforced', () => {
     // The migration-landed-without-its-constraint case: the finding was accepted while its
@@ -406,13 +419,13 @@ describe('tier escalation', () => {
     const enforcedEntry = baseline.entries.find((e) => e.tier === 'enforced');
     expect(enforcedEntry).toBeDefined();
     const downgraded = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) =>
         e.fingerprint === enforcedEntry?.fingerprint ? { ...e, tier: 'pending' as const } : e
       ),
     };
 
-    const result = evaluateGate(report, catalog, downgraded);
+    const result = evaluateGate(legacyReport, legacyCatalog, downgraded);
     expect(result.escalated).toHaveLength(1);
     expect(result.escalated[0].from).toBe('pending');
     expect(result.escalated[0].to).toBe('enforced');
@@ -424,7 +437,7 @@ describe('tier escalation', () => {
   });
 
   it('does not treat an unchanged tier as an escalation', () => {
-    const result = evaluateGate(report, catalog, baseline);
+    const result = evaluateGate(legacyReport, legacyCatalog, baseline);
     expect(result.escalated).toEqual([]);
     expect(blocking(result)).toEqual([]);
   });
@@ -433,12 +446,12 @@ describe('tier escalation', () => {
     const pendingEntry = baseline.entries.find((e) => e.tier === 'pending');
     expect(pendingEntry).toBeDefined();
     const upgraded = {
-      catalog: snapshotRelative,
+      catalog: legacySnapshotRelative,
       entries: baseline.entries.map((e) =>
         e.fingerprint === pendingEntry?.fingerprint ? { ...e, tier: 'enforced' as const } : e
       ),
     };
-    expect(evaluateGate(report, catalog, upgraded).escalated).toEqual([]);
+    expect(evaluateGate(legacyReport, legacyCatalog, upgraded).escalated).toEqual([]);
   });
 });
 
@@ -732,7 +745,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
   it('prints the snapshot capture date on every run, not only when it is stale', async () => {
     const result = await gate([]);
     expect(result.code).toBe(0);
-    expect(result.stdout).toMatch(/catalog snapshot captured\s+: 2026-08-03 \(\d+ day\(s\) old\)/);
+    expect(result.stdout).toMatch(/catalog snapshot captured\s+: 2026-10-16 \(\d+ day\(s\) old\)/);
   });
 
   it('warns loudly when the snapshot carries no capture date', async () => {
@@ -879,7 +892,7 @@ describe('drift-gate CLI', { timeout: 60_000 }, () => {
     it('prints the snapshot age, which is the command run right after a recapture', async () => {
       const path = freshCopy(committed.entries);
       const result = await gate(['--update-baseline', '--baseline', path]);
-      expect(result.stdout).toMatch(/catalog snapshot captured: 2026-08-03 \(\d+ day\(s\) old\)/);
+      expect(result.stdout).toMatch(/catalog snapshot captured: 2026-10-16 \(\d+ day\(s\) old\)/);
     });
   });
 

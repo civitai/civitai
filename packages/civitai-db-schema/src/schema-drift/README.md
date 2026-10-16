@@ -167,7 +167,53 @@ already-parsed JavaScript arrays, which is precisely how the `name[]` bug above 
 invisible to it — so a green suite here is not a claim that the queries behave correctly
 against a real server. Check that by running the tool.
 
-## Measured against the committed snapshot, 2026-08-05
+## The current snapshot, 2026-10-16
+
+`__tests__/fixtures/catalog-production-2026-10-16.json` is what the CI gate compares against
+(`gate-cli.ts`'s default). It was captured with `drift --dump-catalog`, read-only, from a
+read replica. It is the first capture that includes `ON DELETE`/`ON UPDATE` and `validated`
+for each foreign key. Reproduce with:
+
+```bash
+pnpm --filter @civitai/db-schema drift \
+  --catalog src/schema-drift/__tests__/fixtures/catalog-production-2026-10-16.json
+```
+
+```
+declared owning-side relations : 600
+checked against the database   : 571
+skipped (view / absent table)  : 29
+MISSING foreign key            : 33
+wrong referential action       : 58  (all ON UPDATE; ON DELETE agrees on every one)
+MISSING column                 : 0
+nullability checked            : 3200
+nullability drift              : 11
+uniqueness declarations checked: 155
+missing unique index           : 2
+```
+
+That makes 104 findings, and `drift-baseline.json` accepts all 104. Against the 2026-08-03
+baseline (67 entries), 22 dropped out and 59 were added:
+
+- **Dropped (22).** Five missing foreign keys are now in place, each one validated:
+  `ImageTagForReview.imageId`, `ImageTool.imageId`, `ImageTechnique.imageId`,
+  `Thread.imageId` and `UserProfile.sfwCoverImageId`. Fourteen were missing columns that have
+  since been migrated. The last three were nullability findings that no longer reproduce:
+  `Chat.hash`, `CosmeticShopItem.cosmeticId` and `UserCosmeticShopPurchases.cosmeticId`.
+- **Added (59).** 58 are `referential-action` findings that the old snapshot could not
+  measure. Each one is declared `ON UPDATE Cascade` while the database has `NoAction`, on the
+  hand-written App Blocks tables. Ids are never updated, so these are inert in practice
+  (see "What this gate does not measure" below). The other one is
+  `AnnouncementSpend(announcementId)`. Its migration creates a partial unique index
+  (`WHERE "announcementId" IS NOT NULL`), the schema comment calls that deliberate, and the
+  differ reads only total unique indexes. Postgres treats NULLs as distinct, so the
+  behaviour is the same and this is not a real gap.
+
+The 2026-08-03 capture below is kept as a test fixture. It is the only real catalog that
+lags the schema, so it is the only one that exercises the pending tier, the escalation
+guard and the "referential actions not compared" path. Tests for those use it explicitly.
+
+## Measured against the previous snapshot, 2026-08-05
 
 `__tests__/fixtures/catalog-production-2026-08-03.json` is a point-in-time capture of the
 production constraint catalogs — table and column names, nullability, foreign-key and
@@ -320,11 +366,11 @@ signal, not an interlock. Adding `Schema drift gate` to the required checks is w
 
 ### Why a baseline and not `--strict`
 
-`--strict` fails on any finding, and there are 63 on `main` today. A gate red on every run
+`--strict` fails on any finding, and there are 104 on `main` today. A gate red on every run
 teaches everyone to click through it, so it would be switched off within a week — the same
 reasoning behind the report-only ESLint and Prettier steps in `.github/workflows/lint.yml`.
 
-`drift-baseline.json`, next to this README, records those 63 as accepted. The gate reports
+`drift-baseline.json`, next to this README, records those 104 as accepted. The gate reports
 only what is **not** in it. The baseline is committed, so accepting new drift is a reviewable
 act: the gate tells you the exact command, and the resulting diff shows a reviewer precisely
 which constraint the change gave up on.
@@ -377,11 +423,11 @@ compares the current tier against the tier recorded in the baseline and reports
 `pending -> enforced` as a failure. Without that, the escalation is absorbed into the matched
 count and the run exits 0.
 
-That guard is **nearly forward-looking**. Escalation needs an entry that is both `pending` and
-`missing-foreign-key`; the baseline has exactly **one** — `UserProfile.sfwCoverImageId`, added
-with the profile SFW override columns. Every other pending entry is a `missing-column`, which is
-hardcoded `pending` and can never rise. So the guard fires on that one relation, and on ones
-accepted from here on, and on nothing else already in the baseline.
+That guard is **entirely forward-looking**. Escalation needs an entry that is both `pending`
+and `missing-foreign-key`. Since the 2026-10-16 recapture the baseline has **no** pending
+entries at all. The only one it ever had, `UserProfile.sfwCoverImageId`, went away because the
+column and its foreign key both landed. So the guard can fire only on entries accepted from
+here on.
 
 It also has a bypass worth knowing about: a catalog only gains a column via a **recapture**,
 and the documented procedure for a recapture is to refresh the baseline in the same commit —
@@ -393,19 +439,21 @@ An enforced finding is a hazard the moment it merges: declaring `@unique` on a l
 with no unique index, or flipping a live NULLABLE column to required, makes Prisma hand
 callers a type the database does not back.
 
-### What this gate does not measure
+### Referential actions: measured since 2026-10-16
 
-**Referential actions.** The committed snapshot carries no `ON DELETE`/`ON UPDATE` data, so
-all ~408 comparable foreign keys read as "not comparable" and this gate can produce no
-`referential-action` finding at all. A live run does measure them and found **45** — every one
-an `ON UPDATE` `Cascade`-vs-`NoAction` on a hand-written App Blocks foreign key, with zero
-`ON DELETE` mismatches. Since `id` is never updated, they are inert in practice.
+Until the 2026-10-16 recapture, the committed snapshot had no `ON DELETE`/`ON UPDATE` data.
+All ~408 comparable foreign keys read as "not comparable", and the gate could not produce a
+`referential-action` finding. The recapture includes those actions, so they are now compared.
+There are **58** findings, up from 45 on the first live run, and every one is the same shape:
+`ON UPDATE` is declared `Cascade` but the database has `NoAction`, on a hand-written App
+Blocks foreign key. `ON DELETE` matches on all of them. Ids are never updated, so they are
+inert in practice.
 
-They are absorbed here by being structurally unmeasurable, not by being waved through, and the
-verdict prints the count of what it could not compare on its own line rather than a clean
-zero. Recapturing the snapshot from a live database — `drift --dump-catalog` — would bring
-them into scope, at which point all 45 need a baseline entry or a fix before the gate can
-stay green.
+All 58 are accepted in the baseline. That is a triage decision, not a bulk accept:
+`production-snapshot.test.ts` asserts that every referential-action finding in the current
+snapshot differs on `ON UPDATE` only. An `ON DELETE` disagreement is a live hazard. That test
+is pinned to this snapshot, so the next recapture has to carry the assertion over to the new
+fixture. If it does not, an `ON DELETE` mismatch could be accepted along with the rest.
 
 ### What a developer sees
 
@@ -422,7 +470,9 @@ the PR description.
 - **After the drift is genuinely fixed:** the gate lists the entry under "no longer reports"
   without failing; `drift:baseline` prunes it.
 - **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit. The
-  catalog and the baseline are a pair and the gate enforces that they stay one. Budget for it:
-  a recapture from a live database brings referential actions into scope for the first time,
-  which is ~45 new `enforced` findings arriving at once. Triage them — they are the inert
-  `ON UPDATE` batch described above — rather than accepting the batch in one commit.
+  catalog and the baseline are a pair and the gate enforces that they stay one. Diff the old
+  baseline against the new one and list what dropped and what was added in the PR. Every
+  addition is drift that showed up in the database since the previous capture. Move the
+  2026-10-16 block in `production-snapshot.test.ts` (the ON UPDATE-only check) onto the new
+  fixture, and keep the 2026-08-03 fixture: the backlog tests need a catalog that lags the
+  schema.
