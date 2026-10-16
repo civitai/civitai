@@ -502,6 +502,38 @@ describe('upsertCatalogSubListing — item images', () => {
     expect(mockGetImage).not.toHaveBeenCalled();
   });
 
+  it('a withdrawn item republished with an image is checked, then goes back to review with it', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ status: 'withdrawn' }));
+    await expectError(put({ ...BODY, imageId: CREATOR_IMAGE }), 403, 'image_not_yours');
+    nothingWritten();
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(write.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: 'pending',
+      imageId: OWNER_IMAGE,
+    });
+  });
+
+  it('a hidden item stays locked: a new image is neither checked nor written', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(itemRow({ status: 'hidden' }));
+    await expect(put({ ...BODY, imageId: CREATOR_IMAGE })).resolves.toMatchObject({
+      status: 'hidden',
+      pendingEdit: false,
+    });
+    expect(mockGetImage).not.toHaveBeenCalled();
+    nothingWritten();
+  });
+
+  it('a rate-limited PUT does not read the image', async () => {
+    mockSyncRate.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    await expectError(put({ ...BODY, imageId: OWNER_IMAGE }), 429, 'rate_limited');
+    expect(mockGetImage).not.toHaveBeenCalled();
+    // Positive control: the same PUT under the limit does read it.
+    await put({ ...BODY, imageId: OWNER_IMAGE });
+    expect(mockGetImage).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['approved', 'pending'])(
     'an identical re-sync of a %s item with an image writes nothing and checks nothing',
     async (status) => {
