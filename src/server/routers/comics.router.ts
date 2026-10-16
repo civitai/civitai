@@ -6376,12 +6376,6 @@ export const comicsRouter = router({
       });
       queueScamScan({ entityType: 'CommentV2', entityId: comment.id });
 
-      // Increment comment count
-      await dbWrite.thread.update({
-        where: { id: thread.id },
-        data: { commentCount: { increment: 1 } },
-      });
-
       // Notify the comic project owner (if commenter is not the owner)
       const project = await dbRead.comicProject.findUnique({
         where: { id: input.projectId },
