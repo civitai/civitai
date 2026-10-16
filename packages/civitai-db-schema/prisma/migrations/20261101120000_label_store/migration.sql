@@ -18,8 +18,9 @@
 -- Those paths catch their own errors into `record_failure`, which is the count to watch.
 -- `submit_prediction` is for pipelines and raises, so a caller learns its input was refused.
 --
--- Apply order: any time. Then run `SELECT * FROM label_store.backfill()` once for the rows that predate
--- the triggers; it is idempotent.
+-- Apply order: after the scan label migrations (20261022130000 onwards) and the appeal decision record
+-- (20261020120000, 20261021120000), whose tables it hooks into. Then run
+-- `SELECT * FROM label_store.backfill()` once for the rows that predate the triggers; it is idempotent.
 --
 -- 🔴 CREATE OR REPLACE TRIGGER takes a SHARE ROW EXCLUSIVE lock on its table (blocks writes, not reads).
 -- Apply one statement at a time and re-run on lock timeout.
