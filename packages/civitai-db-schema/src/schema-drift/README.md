@@ -205,8 +205,11 @@ baseline (67 entries), 22 dropped out and 59 were added:
   (see "Referential actions: measured since 2026-10-16" below). The other one is
   `AnnouncementSpend(announcementId)`. Its migration creates a partial unique index
   (`WHERE "announcementId" IS NOT NULL`), the schema comment calls that deliberate, and the
-  differ reads only total unique indexes. Postgres treats NULLs as distinct, so the
-  behaviour is the same and this is not a real gap.
+  differ reads only total unique indexes. Postgres treats NULLs as distinct, so duplicates
+  are still rejected. It is not the same as a full index, though: `ON CONFLICT
+  ("announcementId")` cannot use a partial index, so a Prisma `upsert` keyed on
+  `announcementId` would type-check and then fail at runtime. The only writer today is a
+  plain `create`.
 
 The 2026-08-03 capture below is kept as a test fixture. It is the only real catalog that
 lags the schema, so it is the only one that exercises the pending tier, the escalation
