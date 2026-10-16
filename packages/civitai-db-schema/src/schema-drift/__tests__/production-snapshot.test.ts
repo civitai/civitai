@@ -180,3 +180,76 @@ describe('production catalog snapshot (2026-08-03)', () => {
     );
   });
 });
+
+/**
+ * The current capture: every declared column live, every FK carrying its actions — the opposite
+ * case to 2026-08-03 above, so it pins what a recapture should change. Containment, not totals,
+ * for the same reason.
+ */
+describe('production catalog snapshot (2026-10-16)', () => {
+  const current = JSON.parse(
+    readFileSync(join(here, 'fixtures/catalog-production-2026-10-16.json'), 'utf8')
+  ) as DbCatalog;
+  const currentReport = compareSchemaToCatalog(schema, current);
+  const currentFound = (kind: DriftKind) =>
+    currentReport.findings
+      .filter((f) => f.kind === kind)
+      .map((f) => `${f.table}.${f.columns.join('+')}`);
+
+  it('is a catalog the differ could actually read, captured with a real instant', () => {
+    expect(() => assertCatalogSanity(current)).not.toThrow();
+    expect(assessCoverage(currentReport)).toEqual([]);
+    expect(current.capturedAt).toBe('2026-10-16T02:45:53.108Z');
+  });
+
+  it('compares every referential action (a live capture carries them)', () => {
+    expect(currentReport.counts.referentialActionUnknown).toBe(0);
+    // Positive control on that zero: comparisons happened, and some disagreed.
+    expect(currentReport.counts.relationsChecked).toBeGreaterThan(500);
+    expect(currentReport.counts.referentialActionDrifts).toBeGreaterThan(0);
+  });
+
+  it('finds referential-action drift on ON UPDATE only, never ON DELETE', () => {
+    // The accepted batch is declared `ON UPDATE Cascade` against a database `NoAction` on the
+    // hand-written App Blocks tables. Inert while ids are never updated. An ON DELETE
+    // disagreement is a different, live hazard and must not hide inside this batch.
+    const actions = currentReport.findings.filter((f) => f.kind === 'referential-action');
+    const onDelete = (s: string) => /ON DELETE (\w+)/.exec(s)?.[1];
+    const onUpdate = (s: string) => /ON UPDATE (\w+)/.exec(s)?.[1];
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions.filter((f) => onDelete(f.declared) !== onDelete(f.actual))).toEqual([]);
+    expect(actions.every((f) => onUpdate(f.declared) !== onUpdate(f.actual))).toBe(true);
+    // Every one parsed — an unparseable string reads `undefined === undefined` above.
+    expect(actions.every((f) => onDelete(f.actual) && onUpdate(f.actual))).toBe(true);
+  });
+
+  it('no longer reports the four image relations repaired since 2026-08-03', () => {
+    const repaired = [
+      'ImageTagForReview.imageId',
+      'ImageTool.imageId',
+      'ImageTechnique.imageId',
+      'Thread.imageId',
+    ];
+    // Positive control: all four WERE reported against the earlier capture...
+    expect(found('missing-foreign-key')).toEqual(expect.arrayContaining(repaired));
+    // ...the constraint is in this one, validated...
+    const fks = current.foreignKeys.filter(
+      (k) => repaired.includes(`${k.table}.${k.columns.join('+')}`) && k.refTable === 'Image'
+    );
+    expect(fks.map((k) => `${k.table}.${k.columns.join('+')}`).sort()).toEqual(
+      [...repaired].sort()
+    );
+    expect(fks.every((k) => k.validated === true)).toBe(true);
+    // ...and missing-FK detection is still running on image relations in general.
+    expect(currentFound('missing-foreign-key')).toEqual(
+      expect.arrayContaining(['ImageResource.imageId', 'TagsOnImageNew.imageId'])
+    );
+    expect(currentFound('missing-foreign-key').filter((r) => repaired.includes(r))).toEqual([]);
+  });
+
+  it('reports no missing columns: every declared column was live at capture', () => {
+    expect(currentFound('missing-column')).toEqual([]);
+    // Control that the kind still fires against a catalog that is behind the schema.
+    expect(found('missing-column').length).toBeGreaterThan(0);
+  });
+});
