@@ -12,6 +12,9 @@ The text-scan callback writes a hold when the `csam` label is in review mode and
 positive; nothing else happens to the content or its author. See the hold paragraph in
 [text-scan.md](text-scan.md).
 
+Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
+must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
+
 ## Decisions
 
 - **Dismiss** (with an optional moderator-only note, up to 500 characters) sets the hold to

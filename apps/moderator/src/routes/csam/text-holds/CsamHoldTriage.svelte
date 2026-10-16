@@ -4,29 +4,19 @@
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
-  import type { CsamHoldRow } from '$lib/server/csam-holds.service';
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import CsamHoldDetail from './CsamHoldDetail.svelte';
-  import { entityLabel } from './hold-entity';
-
-  type QueueForm = { error?: string; key?: number } | null;
+  import { entityLabel, holdPreview } from './hold-entity';
+  import type { ActionData, PageData } from './$types';
 
   let {
     data,
     form,
     canDismiss,
   }: {
-    data: {
-      items: CsamHoldRow[];
-      entityType: string | null;
-      page: number;
-      hasMore: boolean;
-      offset: number;
-      total: number | undefined;
-      civitaiUrl: string;
-    };
-    form: QueueForm | undefined;
+    data: PageData;
+    form: ActionData;
     canDismiss: boolean;
   } = $props();
 
@@ -85,6 +75,7 @@
       {#snippet badges()}
         <Badge variant="secondary">{entityLabel(row.entityType)}</Badge>
         <code class="text-xs text-dark-2">#{row.entityId}</code>
+        <span class="block w-full truncate text-xs text-dark-2">{holdPreview(row.text)}</span>
       {/snippet}
     </TriageRow>
   {/snippet}

@@ -146,11 +146,38 @@ describe('dismissCsamHold', () => {
   });
 
   it('passes the main app refusal through', async () => {
-    callModEndpoint.mockResolvedValue({ ok: false, error: 'Dismiss hold: already decided' });
+    callModEndpoint.mockResolvedValue({
+      ok: false,
+      error: 'Dismiss hold: already decided',
+      status: 409,
+    });
     expect(await dismissCsamHold({ holdId: 3 })).toEqual({
       ok: false,
       error: 'Dismiss hold: already decided',
     });
+  });
+
+  it('passes a request that never left through as a plain failure', async () => {
+    callModEndpoint.mockResolvedValue({
+      ok: false,
+      error: 'Dismiss hold failed.',
+      requestNeverSent: true,
+    });
+    expect(await dismissCsamHold({ holdId: 3 })).toEqual({
+      ok: false,
+      error: 'Dismiss hold failed.',
+    });
+  });
+
+  it('says the dismissal may have completed when the response was lost', async () => {
+    callModEndpoint.mockResolvedValue({
+      ok: false,
+      error: 'Dismiss hold failed.',
+      requestNeverSent: false,
+    });
+    const result = await dismissCsamHold({ holdId: 3 });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok === false && result.error).toMatch(/may already have completed.*reload/i);
   });
 
   it('treats a success that did not dismiss the hold as a failure', async () => {

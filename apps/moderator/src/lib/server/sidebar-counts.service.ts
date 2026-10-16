@@ -13,6 +13,7 @@ import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
 import { countStrikeReview } from './strike-review.service';
+import { countPendingCsamHolds } from './csam-holds.queries';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getMinorFlagAppealGroups,
@@ -26,18 +27,6 @@ const counts = createCache({ name: 'sidebar-counts:v1', fetch: fetchCounts, ttlS
 
 export function getSidebarCounts(): Promise<SidebarCounts> {
   return counts.get({});
-}
-
-// Same predicate as `csam-holds.service`'s count, which is not imported: that module reaches
-// `$app/server`, which the node test suites that load this one cannot resolve.
-async function countPendingCsamHolds(): Promise<number> {
-  const row = await dbRead
-    .selectFrom('TextScanHold')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('label', '=', 'csam')
-    .where('status', '=', 'Pending')
-    .executeTakeFirst();
-  return Number(row?.count ?? 0);
 }
 
 async function fetchCounts(): Promise<SidebarCounts> {

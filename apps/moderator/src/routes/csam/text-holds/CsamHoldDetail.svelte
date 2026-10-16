@@ -40,7 +40,7 @@
         <Badge variant="secondary" class="h-6 px-2.5 text-sm">{entityLabel(row.entityType)}</Badge>
         {#if entityHref}
           <a href={entityHref} target="_blank" rel="noreferrer" class="text-lg font-semibold {LINK_CLASS}">
-            #{row.entityId} ↗
+            #{row.entityId} ↗<span class="sr-only"> (opens in new tab)</span>
           </a>
         {:else}
           <code class="text-lg text-dark-0">#{row.entityId}</code>
@@ -59,14 +59,19 @@
         </span>
         {#if row.userId}
           <a href={csamReportUrl(civitaiUrl, row.userId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
-            File CSAM report ↗
+            File CSAM report ↗<span class="sr-only"> (opens in new tab)</span>
           </a>
         {/if}
       </div>
     </header>
 
     <TriageCard title="Held text">
+      <!-- Focusable so a keyboard user can scroll long text (WCAG 2.1.1, scrollable region). -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <pre
+        tabindex="0"
+        role="region"
+        aria-label="Held text"
         class="m-0 max-h-96 overflow-y-auto font-sans text-sm whitespace-pre-wrap break-words text-dark-2">{row.text}</pre>
     </TriageCard>
 

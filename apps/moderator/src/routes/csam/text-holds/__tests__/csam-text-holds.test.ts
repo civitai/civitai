@@ -14,6 +14,7 @@ vi.mock('$lib/server/csam-holds.service', () => ({
 }));
 
 const { actions, load } = await import('../+page.server');
+const { holdPreview } = await import('../hold-entity');
 
 type LoadEvent = Parameters<typeof load>[0];
 type ActionEvent = Parameters<NonNullable<typeof actions>[string]>[0];
@@ -112,5 +113,16 @@ describe('csam text holds dismiss', () => {
       status: 400,
       data: { error: 'already decided or missing', key: 12 },
     });
+  });
+});
+
+describe('csam hold row preview', () => {
+  it('collapses the held text onto one line', () => {
+    expect(holdPreview('  first line\n\n\tsecond   line  ')).toBe('first line second line');
+  });
+
+  it('cuts long text with an ellipsis, never through a surrogate pair', () => {
+    const preview = holdPreview(`${'a'.repeat(89)}😀 and more after the cut`);
+    expect(preview).toBe(`${'a'.repeat(89)}😀…`);
   });
 });

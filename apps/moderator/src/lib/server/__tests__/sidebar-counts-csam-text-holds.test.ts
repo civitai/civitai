@@ -1,17 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { countCsamHolds } = vi.hoisted(() => ({ countCsamHolds: vi.fn() }));
+const { countPendingCsamHolds } = vi.hoisted(() => ({ countPendingCsamHolds: vi.fn() }));
 
 vi.mock('../cache', () => ({
   createCache: ({ fetch }: { fetch: () => Promise<unknown> }) => ({ get: () => fetch() }),
 }));
 vi.mock('../db', () => ({
   dbRead: {
-    selectFrom: (table: string) => {
+    selectFrom: () => {
       const chain: Record<string, unknown> = {};
       for (const m of ['innerJoin', 'select', 'where']) chain[m] = () => chain;
-      chain.executeTakeFirst = async () =>
-        table === 'TextScanHold' ? { count: await countCsamHolds() } : { count: 0 };
+      chain.executeTakeFirst = async () => ({ count: 0 });
       return chain;
     },
   },
@@ -35,6 +34,7 @@ vi.mock('../minor-hash.service', () => ({
   getRedetectedCount: async () => 5,
 }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 }));
+vi.mock('../csam-holds.queries', () => ({ countPendingCsamHolds }));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
 
@@ -42,12 +42,12 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('sidebar count csamTextHolds', () => {
   it('is the pending csam hold total', async () => {
-    countCsamHolds.mockResolvedValue('3');
+    countPendingCsamHolds.mockResolvedValue(3);
     expect(await getSidebarCounts()).toMatchObject({ csamTextHolds: 3, heldDetections: 5 });
   });
 
   it('is dropped, without blanking the other badges, when its query fails', async () => {
-    countCsamHolds.mockRejectedValue(new Error('db down'));
+    countPendingCsamHolds.mockRejectedValue(new Error('db down'));
     const counts = await getSidebarCounts();
     expect(counts).not.toHaveProperty('csamTextHolds');
     expect(counts).toMatchObject({ heldDetections: 5, modelFlagAppeals: 4 });
