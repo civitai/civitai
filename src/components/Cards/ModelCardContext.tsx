@@ -1,9 +1,10 @@
 import type { SaleDiscountKind } from '@civitai/buzz';
+import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useMemo, useRef } from 'react';
 import { MODEL_SALE_IDS_PER_REQUEST } from '~/server/schema/model-sale.schema';
 import { chunkIds } from '~/utils/array-helpers';
-import { trpc } from '~/utils/trpc';
+import { trpc, trpcVanilla } from '~/utils/trpc';
 
 /**
  * `discountType` is `SaleDiscountKind` from the package the server declares this procedure's output
@@ -50,23 +51,87 @@ export const useModelCardContext = () => {
  * edge. Same shape as how cosmetics and version images are already fetched after the fact.
  */
 /**
+ * How long the single-card batcher waits after the FIRST id before asking. Cards on one surface mount
+ * in one commit, but a page of home blocks or a related-models row resolves its own data at different
+ * moments, so a few tens of ms folds several of those surfaces into one request. The badge already
+ * appears a beat after its card; this adds at most this much to that beat.
+ */
+export const MODEL_SALE_BATCH_WINDOW_MS = 50;
+
+/**
+ * Test/injection seam, same shape as the engaged-models batcher in `~/hooks/useEngagedModelMembership`.
+ * Production asks the vanilla client and flushes on a timer; a test swaps in a recorder.
+ */
+export const modelSaleBatcher = {
+  fetch: (ids: number[]) => trpcVanilla.model.getActiveSales.query({ ids }),
+  schedule: (cb: () => void): void => {
+    setTimeout(cb, MODEL_SALE_BATCH_WINDOW_MS);
+  },
+};
+
+type SaleWaiter = { resolve: (sale: ModelSale | null) => void; reject: (error: unknown) => void };
+const pendingSales = new Map<number, SaleWaiter[]>();
+let saleFlushScheduled = false;
+
+function flushSales() {
+  saleFlushScheduled = false;
+  const waiting = new Map(pendingSales);
+  pendingSales.clear();
+  // Same chunk as the provider path, so one flush can never exceed the procedure's cap.
+  for (const ids of chunkIds([...waiting.keys()], MODEL_SALE_IDS_PER_REQUEST)) {
+    modelSaleBatcher.fetch(ids).then(
+      (sales) => {
+        const byId = (sales ?? {}) as SalesByModelId;
+        for (const id of ids) for (const w of waiting.get(id) ?? []) w.resolve(byId[id] ?? null);
+      },
+      (error) => {
+        for (const id of ids) for (const w of waiting.get(id) ?? []) w.reject(error);
+      }
+    );
+  }
+}
+
+/** One model's sale, coalesced with every other card asking within the window. `null` = no sale. */
+function loadModelSale(modelId: number): Promise<ModelSale | null> {
+  return new Promise((resolve, reject) => {
+    const waiters = pendingSales.get(modelId);
+    if (waiters) waiters.push({ resolve, reject });
+    else pendingSales.set(modelId, [{ resolve, reject }]);
+    if (!saleFlushScheduled) {
+      saleFlushScheduled = true;
+      modelSaleBatcher.schedule(flushSales);
+    }
+  });
+}
+
+/** Test helper: clear the module-level batcher between tests. */
+export function __resetModelSaleBatcher() {
+  pendingSales.clear();
+  saleFlushScheduled = false;
+}
+
+/**
  * The sale for ONE model, for a card rendered outside any provider — home blocks, collections, related
  * models, search results.
  *
- * ⚠️ This is one request PER CARD. tRPC only batches for an authenticated browser (see shouldBatch in
- * utils/trpc.ts), so an anonymous grid issues one XHR each, and even when batched the URL cap fits about
- * 24 ops. A container that can supply the map should pass `salesByModelId` and skip this entirely —
- * that is why the skip flag is "a provider owns this", not "the provider's data has arrived".
+ * Each card still owns a query (keyed per model, so two cards for one model share it), but the
+ * queries resolve through `loadModelSale`, which coalesces every card that asks within
+ * `MODEL_SALE_BATCH_WINDOW_MS` into ONE `getActiveSales` call. tRPC only batches for some
+ * authenticated browsers (see shouldBatch in utils/trpc.ts), and its batches are capped by URL length,
+ * so before this a grid of N provider-less cards issued N single-id calls. A container that can supply
+ * the map should still pass `salesByModelId` and skip this entirely — that is why the skip flag is
+ * "a provider owns this", not "the provider's data has arrived".
  */
 export const useModelSaleBadge = (modelId: number, skip: boolean) => {
-  const { data } = trpc.model.getActiveSales.useQuery(
-    { ids: [modelId] },
-    { enabled: !skip, staleTime: 60_000 }
-  );
-  const sale = data?.[modelId];
+  const { data } = useQuery({
+    queryKey: ['model.getActiveSales.byModel', modelId],
+    queryFn: () => loadModelSale(modelId),
+    enabled: !skip,
+    staleTime: 60_000,
+  });
   // Same end-edge re-check as the batched hook — a card outside a provider caches its answer for
   // `staleTime` too, so the badge must not outlive the window it is advertising.
-  return sale && stillRunning(sale, Date.now()) ? sale : undefined;
+  return data && stillRunning(data, Date.now()) ? data : undefined;
 };
 
 /**
