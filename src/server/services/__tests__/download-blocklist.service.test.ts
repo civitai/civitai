@@ -157,6 +157,13 @@ describe('getDownloadBlocklistValue', () => {
     expect(findUnique).toHaveBeenCalledTimes(1);
   });
 
+  // The test above times itself off the constant, so it cannot notice the constant growing back
+  // towards the Redis socket timeout this deadline exists to undercut.
+  it('pins the cache deadline at 500 ms or less', () => {
+    expect(DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS).toBeGreaterThan(0);
+    expect(DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS).toBeLessThanOrEqual(500);
+  });
+
   it('propagates a database error unchanged instead of resolving to an empty list', async () => {
     const dbError = new Error('replica unreachable');
     findUnique.mockRejectedValue(dbError as never);
