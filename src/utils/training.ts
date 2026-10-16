@@ -23,6 +23,7 @@ export const studioModelFlagFeatures = {
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',
   'flux3-klein-training': 'flux3KleinTraining',
+  'moss-image-training': 'mossImageTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
 } as const satisfies Record<string, FeatureFlagKey>;
 

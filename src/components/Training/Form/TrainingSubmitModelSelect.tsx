@@ -15,7 +15,7 @@ import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { Flux3StudioNotice } from '~/components/Training/TrainingStudioSwitch';
+import { StudioOnlyModelsNotice } from '~/components/Training/TrainingStudioSwitch';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/shared/constants/training.constants';
@@ -598,7 +598,7 @@ export const ModelSelect = ({
                   <CustomMarkdown>{announcement.message}</CustomMarkdown>
                 </AlertWithIcon>
               )}
-              {mediaType === 'image' && <Flux3StudioNotice />}
+              {mediaType === 'image' && <StudioOnlyModelsNotice />}
               {mediaType === 'image' && (
                 <>
                   <ModelSelector
