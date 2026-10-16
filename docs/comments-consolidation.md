@@ -146,7 +146,8 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
   comment on a live entity.
 
   **Purging today's orphans in prod: approved 2026-10-16** — procedure under _Orphan purge_
-  below; run by hand after the FK-flip migration is applied. The chat SQL is not yet written.
+  below; run by hand after the FK-flip migration is applied. Written as migration
+  `20261101130000_purge_orphaned_comment_threads` (data only, hand-applied).
 
 Decided 2026-10-16:
 
@@ -156,10 +157,13 @@ Decided 2026-10-16:
   model, backfill consequence above.
 - **Purge and FK flip** — approved; sections below.
 
-### Orphan purge — procedure (reviewed and approved 2026-10-16; SQL not yet written)
+### Orphan purge — procedure (approved 2026-10-16)
 
-One-off, by hand on the primary, in chat-supplied SQL rather than a migration file (data fix,
-not schema). Everything is reversible until the archive is dropped in Phase 6.
+One-off, by hand on the primary, as migration `20261101130000_purge_orphaned_comment_threads`
+(data only; the Prisma schema does not change). Run with autocommit, one step at a time: the
+batched delete is a `DO` block that `COMMIT`s per batch. Everything is reversible until the
+archive is dropped in Phase 6. With the migration's own set definition the prod replica held
+333,997 threads and 281,417 comments on 2026-10-16, after the FK cascade was applied.
 
 **What goes, and how** (prod FKs and triggers verified 2026-10-16):
 
@@ -234,7 +238,7 @@ are `ON DELETE SET NULL` and `challengeId` has no FK at all. Approved 2026-10-16
 become `ON DELETE CASCADE`, so the current schema gets the semantics V3 was decided to have: an
 entity hard-delete takes its thread, and `CommentV2` → reactions → report links → mutes already
 cascade from there. It is a schema change, so it is a PR with a migration file applied by hand,
-separate from the purge (data only, chat SQL).
+separate from the purge migration (data only).
 
 - **Every lookup the cascade needs is indexed in prod** (checked 2026-10-16): each single-column
   entity link on `Thread` is `@unique`, `parentThreadId` and `rootThreadId` have btree indexes

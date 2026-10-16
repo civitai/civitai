@@ -54,17 +54,17 @@ Decisions & prerequisites:
       `replyToId` index, 59 s without — index added to the DDL
 - [ ] **(review)** Prod purge of today's orphans — approved 2026-10-16; procedure written up in
       the plan (_Orphan purge_: archive schema, explicit `Report`/`EntityModeration`/`JobQueue`
-      deletes, batched thread deletes, rollback traps). Remaining: write the SQL, run it by hand
-      **after** the FK-flip migration is applied
+      deletes, batched thread deletes, rollback traps); written as migration
+      `20261101130000_purge_orphaned_comment_threads` on `chore/purge-orphaned-comment-threads`.
+      Tick when applied in prod and step 6 reports zero set rows left
 - [x] **(review)** Second orphan class measured: 2,867 reply threads whose parent comment was
       hard-deleted (`Thread.commentId` SET NULL), 3,843 comments — purged with the rest, skipped
       by the backfill
-- [ ] **(review)** Stop the leak now: flip the 16 `Thread` entity FKs to `ON DELETE CASCADE`
-      (`commentId` stays `SET NULL`; `challengeId` has no FK in prod, so it is added after
-      deleting its dangling threads) — approved 2026-10-16; built on
-      `fix/thread-entity-fk-cascade` (migration `20261101120000_thread_entity_fk_cascade`:
-      `NOT VALID` then `VALIDATE`). Safe either side of the deploy. Tick when: PR merged,
-      migration applied by hand, all 16 constraints validated. Then run the purge by hand
+- [x] **(review)** Stop the leak now: flip the 16 `Thread` entity FKs to `ON DELETE CASCADE`
+      (`commentId` stays `SET NULL`; `challengeId` had no FK in prod, so it was added after
+      deleting its dangling threads) — PR #6155 merged and migration
+      `20261101120000_thread_entity_fk_cascade` applied in prod 2026-10-16; all 18 cascade keys
+      validated
 - [ ] **(review)** After the migration is applied: recapture the prod catalog, run
       `drift:baseline` (the 15 Thread `referential-action` entries and
       `missing-foreign-key|Thread|challengeId` drop out), and delete the `inFlightThreadCascade`
@@ -74,8 +74,8 @@ Decisions & prerequisites:
 
 **Gate:** all measurements recorded in the plan doc; the orphan, depth-clamp, purge and FK-flip
 decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured items,
-`ComicChapter` surrogate id, flip order, the ltree infra sign-off, the purge SQL and the
-migration apply.
+`ComicChapter` surrogate id, flip order, the ltree infra sign-off, the purge apply and the
+baseline recapture.
 
 ## Phase 1 — Schema (expand)
 
