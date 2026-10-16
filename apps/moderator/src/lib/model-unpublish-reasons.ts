@@ -33,6 +33,10 @@ export type ModelUnpublishReason = (typeof MODEL_UNPUBLISH_REASONS)[number]['val
 export const isModelUnpublishReason = (v: string): v is ModelUnpublishReason =>
   MODEL_UNPUBLISH_REASONS.some((r) => r.value === v);
 
+/** A stored reason key in the site's own words; an unknown key (an older reason) as it was stored. */
+export const modelUnpublishReasonLabel = (key: string) =>
+  MODEL_UNPUBLISH_REASONS.find((r) => r.value === key)?.label ?? key;
+
 /**
  * Reasons that are also a statement about what the model IS: unpublishing for one of these flags the
  * model as depicting a minor first, as the main app's `UnpublishModal` does. An unflagged model keeps

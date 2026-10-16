@@ -14,7 +14,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   requireAccess(locals.user, url.pathname);
   const [roles, grants] = await Promise.all([grantableRoles(), readPageAccessGrants()]);
   if (!roles) error(503, NO_ROLE_CATALOGUE);
-  return { roles, ...pageAccessState({ grants, roles }) };
+  // `wide`: one column per hub role, and the role count only grows — capped at reading width the
+  // matrices scrolled sideways long before the screen ran out.
+  return { roles, ...pageAccessState({ grants, roles }), wide: true };
 };
 
 const changesSchema = z.record(z.string(), z.array(z.string()));

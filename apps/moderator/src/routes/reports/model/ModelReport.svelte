@@ -14,11 +14,13 @@
     MODEL_UNPUBLISH_REASONS,
     MINOR_UNPUBLISH_REASONS,
     type ModelUnpublishReason,
+    modelUnpublishReasonLabel,
+    isModelUnpublishReason,
   } from '$lib/model-unpublish-reasons';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { getReportItemUrl, reportStatuses } from '$lib/reports';
   import { denied } from '$lib/permissions';
-  import { hasOpenReport, nextItemId, reportsForItem } from '$lib/report-queue';
-  import { clearPaging } from '$lib/paging';
+  import { hasOpenReport, reportsForItem, advanceAfterRuling, itemHref, QUEUE_NAV } from '$lib/report-queue';
   import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
   import ReportList from '$lib/components/report-queue/ReportList.svelte';
   import type { ActionResult } from '@sveltejs/kit';
@@ -61,39 +63,27 @@
   // submit because the reload replaces the list before `onSuccess` runs.
   let statusChange: { id: number; status: string } | null = null;
   let pendingId = $state<number | null>(null);
-  let formerIndex = -1;
+  const moveOn = advanceAfterRuling({
+    items: () => data.items,
+    currentId: () => item?.modelId,
+    hasOpen: () => hasOpenReport(reports),
+    open: (id) => goto(itemHref(`/reports/model/${id}`, page.url.search), QUEUE_NAV),
+  });
   const statusForm = new FormState({
     onSubmit: ({ formData }) => {
       statusChange = { id: Number(formData.get('id')), status: String(formData.get('status')) };
       pendingId = statusChange.id;
-      formerIndex = data.items.findIndex((r) => r.entityId === item?.modelId);
+      moveOn.capture();
     },
     onSuccess: () => {
       if (statusChange) toast.success(`Report #${statusChange.id} set to ${statusChange.status}`);
-      if (!item || hasOpenReport(reports)) return;
-      const next = nextItemId(data.items, formerIndex, item.modelId);
-      if (next == null) return;
-      const params = new URLSearchParams(page.url.search);
-      params.delete('report');
-      clearPaging(params);
-      goto(`/reports/model/${next}${params.size ? `?${params}` : ''}`, {
-        noScroll: true,
-        keepFocus: true,
-      });
+      moveOn.advance();
     },
     reload: true,
     onSettled: (result) => {
       pendingId = null;
       reloadIfGone(result);
     },
-  });
-  // `reset: false`: the box is filled from the report's stored notes, and a reset would empty it over
-  // a column that still holds text (see `FormState`).
-  const notesForm = new FormState({
-    onSuccess: () => toast.success('Notes saved'),
-    reload: true,
-    reset: false,
-    onSettled: reloadIfGone,
   });
   // A model action leaves its reports on screen (ruling on them is their own buttons), so the panel
   // shows the result in place. Its own state is cleared on success all the same: an unpublish reason
@@ -118,8 +108,7 @@
     down: 'border-red-500/30 bg-red-500/10',
     neutral: 'border-amber-500/30 bg-amber-500/10',
   };
-  const reasonLabel = (key: string | null) =>
-    MODEL_UNPUBLISH_REASONS.find((r) => r.value === key)?.label ?? key;
+  const reasonLabel = (key: string | null) => (key ? modelUnpublishReasonLabel(key) : key);
   const onDate = (iso: string | null) => (iso ? ` on ${fmtDate(iso)}` : '');
 
   /**
@@ -172,7 +161,6 @@
   // A refusal belongs to the model it was raised on; showing another must not inherit it.
   function clearPanelState() {
     statusForm.error = null;
-    notesForm.error = null;
     moderateForm.error = null;
     unpublishReason = '';
     confirmingModel = null;
@@ -267,7 +255,7 @@
 
     {#snippet actions()}
       <!-- 1. The reports: what was said, by whom, and the ruling on each. A report's internal notes go
-           with the report they are about. -->
+           with the report they are about (`ReportList` renders them). -->
       <ReportList
         {reports}
         canRule
@@ -336,28 +324,6 @@
               {/if}
             </section>
           {/if}
-          <form
-            method="POST"
-            action="?/saveNotes"
-            use:enhance={notesForm.enhance}
-            class="flex flex-col gap-2"
-          >
-            <input type="hidden" name="id" value={r.id} />
-            <span class="text-xs font-medium text-muted-foreground">Internal notes</span>
-            <Textarea name="internalNotes" rows={2} value={r.internalNotes ?? ''} />
-            <Button
-              type="submit"
-              size="sm"
-              variant="outline"
-              class="self-end"
-              disabled={notesForm.submitting}
-            >
-              Save notes
-            </Button>
-            {#if notesForm.error}
-              <p class="m-0 text-sm text-red-300" role="alert">{notesForm.error}</p>
-            {/if}
-          </form>
         {/snippet}
         {#snippet empty()}
           <p class="m-0 text-sm text-muted-foreground">No open reports on this model.</p>
@@ -424,17 +390,23 @@
                   Takes the model off the site and tells the owner why, using the reason below.
                 </p>
               </div>
-              <select
-                name="reason"
-                bind:value={unpublishReason}
-                aria-label="Unpublish reason"
-                class="h-8 rounded-md border bg-background px-2 text-sm"
+              <!-- A hidden input rather than `Select.Root name=`: an unset reason must post nothing,
+                   and the primitive would post an empty string. -->
+              {#if unpublishReason}<input type="hidden" name="reason" value={unpublishReason} />{/if}
+              <Select.Root
+                type="single"
+                bind:value={() => unpublishReason,
+                (v) => (unpublishReason = isModelUnpublishReason(v ?? '') ? (v as ModelUnpublishReason) : '')}
               >
-                <option value="" disabled>Pick a reason…</option>
-                {#each MODEL_UNPUBLISH_REASONS as r (r.value)}
-                  <option value={r.value}>{r.label}</option>
-                {/each}
-              </select>
+                <Select.Trigger aria-label="Unpublish reason" class="w-full">
+                  {unpublishReason ? modelUnpublishReasonLabel(unpublishReason) : 'Pick a reason…'}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each MODEL_UNPUBLISH_REASONS as r (r.value)}
+                    <Select.Item value={r.value}>{r.label}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
               {#if unpublishReason}
                 <Textarea
                   name="customMessage"

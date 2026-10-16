@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PageData } from './$types';
   import AccountView from '../../AccountView.svelte';
+  import { reportActionGrants } from '$lib/report-queue';
 
   let { data }: { data: PageData } = $props();
 </script>
@@ -10,5 +11,6 @@
   items={data.items}
   canAct={data.canAct}
   canBan={data.canBan}
+  can={reportActionGrants(data.grants)}
   civitaiUrl={data.civitaiUrl}
 />

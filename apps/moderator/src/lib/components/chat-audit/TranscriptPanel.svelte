@@ -4,16 +4,26 @@
   import { userLookupUrl } from '$lib/entity-url';
   import MessageMeta from './MessageMeta.svelte';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
-  import type { PageData } from './$types';
+  import type { ChatMemberRow, getTranscript } from '$lib/server/chat-audit.service';
 
-  type Result = NonNullable<PageData['transcript']>;
-  type Members = NonNullable<PageData['members']>;
-
+  // One chat's transcript and members — Chat Audit's open chat, and the chat report queue's evidence.
   let {
     chatId,
     transcript,
     members,
-  }: { chatId: number; transcript: Result; members: Members } = $props();
+    reportedIds = [],
+    reporterIds = [],
+  }: {
+    chatId: number;
+    transcript: Awaited<ReturnType<typeof getTranscript>>;
+    members: ChatMemberRow[];
+    /** The report queue's: the member a report is about, marked on their messages and in the list. */
+    reportedIds?: number[];
+    /** The report queue's: who filed the open reports. */
+    reporterIds?: number[];
+  } = $props();
+  const reported = $derived(new Set(reportedIds));
+  const reporters = $derived(new Set(reporterIds));
 
   // Retool's select2 (participant) and textInput1 (content), both client-side over the loaded
   // transcript. In a 300-message chat, "what did THIS person say" and "find the message containing X"
@@ -67,8 +77,14 @@
       <ul class="space-y-2 text-sm">
         {#each shown as m (m.id)}
           {@const edits = transcript.edits?.[m.id]}
-          <li class={m.deletedAt ? 'rounded-md border-l-2 border-red-500/50 pl-2' : ''}>
-            <MessageMeta {...m} />
+          <li
+            class={m.deletedAt
+              ? 'rounded-md border-l-2 border-red-500/50 pl-2'
+              : reported.has(m.userId)
+              ? 'rounded-md border-l-2 border-amber-400/60 pl-2'
+              : ''}
+          >
+            <MessageMeta {...m} reported={reported.has(m.userId)} />
             <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>
 
             {#if m.editedAt}
@@ -126,6 +142,8 @@
             <a href={userLookupUrl(m.userId)} class={LINK_CLASS}>
               {m.username ?? `#${m.userId}`}
             </a>
+            {#if reported.has(m.userId)}<Badge variant="destructive">reported</Badge>{/if}
+            {#if reporters.has(m.userId)}<Badge variant="secondary">reporter</Badge>{/if}
             {#if m.isOwner}<Badge variant="secondary">owner</Badge>{/if}
             {#if m.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
             {#if m.kickedAt}<Badge variant="destructive">kicked</Badge>{/if}

@@ -4,12 +4,12 @@
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import ReportQueueColumn from '$lib/components/report-queue/ReportQueueColumn.svelte';
+  import ReportRowMeta from '$lib/components/report-queue/ReportRowMeta.svelte';
   import { fetchQueueImageCounts } from './image-counts';
   import type { LayoutData } from './$types';
   import { dateTime, num } from '$lib/format';
-  import { reportReasonLabel, reportStatusBadgeClass } from '$lib/reports';
   import { userLookupUrl, userReportUrl } from '$lib/entity-url';
-  import { clearPaging } from '$lib/paging';
+  import { itemHref, QUEUE_NAV } from '$lib/report-queue';
   import { SSR_PENDING } from '$lib/ssr-pending';
 
   let { data, suspectId }: { data: LayoutData; suspectId: number | null } = $props();
@@ -35,11 +35,7 @@
   // survive: it indexes the previous account's grid.
   function open(r: LayoutData['items'][number]) {
     if (r.entityId == null) return;
-    const params = new URLSearchParams(page.url.search);
-    params.delete('report');
-    clearPaging(params);
-    const query = params.size ? `?${params}` : '';
-    goto(`${userReportUrl(r.entityId, page.params.tab)}${query}`, { noScroll: true, keepFocus: true });
+    goto(itemHref(userReportUrl(r.entityId, page.params.tab), page.url.search), QUEUE_NAV);
   }
 </script>
 
@@ -75,25 +71,7 @@
         {dateTime(r.createdAt)}
       </span>
     </div>
-    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <Badge class={reportStatusBadgeClass[r.status]}>{r.status}</Badge>
-      <span>{reportReasonLabel(r.details, r.reason)}</span>
-      <span class="text-muted-foreground">
-        by
-        {#if r.reportedByUsername}
-          <a href={userLookupUrl(r.reportedByUsername)} class="link">{r.reportedByUsername}</a>
-        {:else}
-          —
-        {/if}
-        {#if r.alsoReportedByCount}
-          <span
-            class="tabular-nums"
-            title={`Also reported by ${r.alsoReportedByCount} other ${r.alsoReportedByCount === 1 ? 'user' : 'users'}`}
-          >
-            +{num(r.alsoReportedByCount)}
-          </span>
-        {/if}
-      </span>
+    <ReportRowMeta report={r}>
       {#await imageCounts then counts}
         {@const c = counts?.[String(r.entityId)]}
         {#if c}
@@ -102,6 +80,6 @@
       {:catch}
         <span class="text-muted-foreground">image counts unavailable</span>
       {/await}
-    </div>
+    </ReportRowMeta>
   {/snippet}
 </ReportQueueColumn>

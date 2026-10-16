@@ -21,7 +21,8 @@ import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 // The table queues. Users, models and posts have their own routes (`/reports/user`, `/reports/model`,
 // `/reports/post`), each a queue layout with the open item in the path, and images theirs
 // (`/reports/image`, the image queues' card grid); a static route wins over this one, so none of those
-// slugs reaches here.
+// slugs reaches here. Articles, chats, collections, bounties and bounty entries share the same layout at
+// `/reports/[queue=entityQueue]`, whose matcher outranks this plain param.
 export const load: PageServerLoad = async ({ params, url }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');

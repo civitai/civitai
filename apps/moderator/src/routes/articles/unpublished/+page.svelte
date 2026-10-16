@@ -20,9 +20,9 @@
   import {
     articleStatusFilters,
     articleStatusBadge,
-    humanizeUnpublishReason,
     articleUrl,
   } from '$lib/articles';
+  import { articleUnpublishReasonLabel } from '$lib/article-unpublish-reasons';
   import { userUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -161,7 +161,7 @@
               <span class="font-semibold">Reason:</span>
               {article.metadata.unpublishedReason === 'other'
                 ? (article.metadata.customMessage ?? '—')
-                : humanizeUnpublishReason(article.metadata.unpublishedReason)}
+                : articleUnpublishReasonLabel(article.metadata.unpublishedReason)}
             </div>
           {/if}
 

@@ -20,11 +20,12 @@ const imageQueueActions = {
   bulkResolveAppeal: verb(),
 };
 vi.mock('$lib/server/image-queue', () => ({ loadImageQueue, imageQueueActions }));
+const removePlacement = verb();
 vi.mock('$lib/server/sticker-placement-actions', () => ({
-  stickerPlacementActions: { removePlacement: verb() },
+  stickerPlacementActions: { removePlacement },
 }));
-const canAccess = vi.fn(() => true);
-vi.mock('$lib/server/access', () => ({ canAccess }));
+const verbs = { ...imageQueueActions, removePlacement };
+vi.mock('$lib/server/access', () => ({ denied: (id: string) => `needs ${id}` }));
 
 const { load, actions } = await import('../+page.server');
 const { load: imagesLoad } = await import('../../../images/[slug]/+page.server');
@@ -37,7 +38,7 @@ describe('/reports/image', () => {
   it('loads the reported view of the image queue', async () => {
     const data = await load({
       url: url('/reports/image?level=1'),
-      locals: { user: { id: 1 } },
+      locals: { user: { id: 1 }, grants: { 'image.moderate': true } },
     } as never);
     expect(loadImageQueue).toHaveBeenCalledWith('reported', expect.any(URL));
     expect(data).toMatchObject({ kind: 'reported', title: 'Image reports', canAct: true });
@@ -61,10 +62,12 @@ describe('/reports/image', () => {
   });
 });
 
-// Reaching the queue is the shared Reports grant; its writes remove images and settle escrow, so
-// they need `/users`, as the user and post queues' do. Without it the verb is never reached.
+// Reaching the queue is the shared Reports grant; its writes remove images and settle escrow, so they
+// need the `image.moderate` action grant, as every page making those writes does. Without it the verb
+// is never reached.
 describe('acting on /reports/image', () => {
-  const event = { locals: { user: { id: 1 } } } as never;
+  const event = (held: boolean) =>
+    ({ locals: { user: { id: 1 }, grants: held ? { 'image.moderate': true } : {} } } as never);
 
   it.each([
     'accept',
@@ -75,21 +78,25 @@ describe('acting on /reports/image', () => {
     'setFlag',
     'setRating',
     'unpublishModel3d',
-  ] as const)('%s needs /users', async (name) => {
-    canAccess.mockReturnValue(false);
-    const result = (await actions[name](event)) as { status: number };
+  ] as const)('%s needs image.moderate', async (name) => {
+    const result = (await actions[name](event(false))) as {
+      status: number;
+      data: { error: string };
+    };
     expect(result.status).toBe(403);
-    expect(canAccess).toHaveBeenCalledWith({ id: 1 }, '/users');
+    expect(result.data.error).toBe('needs image.moderate');
 
-    canAccess.mockReturnValue(true);
-    await actions[name](event);
+    expect(verbs[name]).not.toHaveBeenCalled();
+    await actions[name](event(true));
+    expect(verbs[name]).toHaveBeenCalledTimes(1);
   });
 
-  it('says it is read-only to a viewer without /users', async () => {
-    canAccess.mockReturnValue(false);
-    const data = await load({ url: url('/reports/image'), locals: { user: { id: 1 } } } as never);
+  it('says it is read-only to a viewer without image.moderate', async () => {
+    const data = await load({
+      url: url('/reports/image'),
+      locals: { user: { id: 1 }, grants: {} },
+    } as never);
     expect(data).toMatchObject({ canAct: false });
-    canAccess.mockReturnValue(true);
   });
 });
 
