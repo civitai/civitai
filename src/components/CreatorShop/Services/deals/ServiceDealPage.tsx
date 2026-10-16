@@ -20,6 +20,7 @@ import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealAc
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
+import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { Gated } from '~/components/Gated/Gated';
 import {
   dealPageState,
@@ -138,6 +139,7 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
               {dealStatusLabel[deal.status]}
             </Badge>
             <ServiceRatingBadge rating={deal.maxNsfwLevel} />
+            {deal.viewerRole === 'buyer' && <ReportServiceButton offeringId={deal.offering.id} />}
           </Group>
           <Text size="sm" c="dimmed">
             {deal.viewerRole === 'seller' ? 'Requested by' : 'With'}{' '}

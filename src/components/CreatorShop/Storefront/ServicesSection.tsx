@@ -2,6 +2,7 @@ import { Badge, Button, Group, Stack } from '@mantine/core';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
+import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { sectionIcons } from '~/components/CreatorShop/section-meta';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -45,22 +46,24 @@ export function ServicesSection({
                     </Badge>
                   )}
                   {!isOwner && (
-                    <LoginRedirect reason="perform-action">
-                      <Button
-                        color="yellow"
-                        size="xs"
-                        ml="auto"
-                        disabled={full}
-                        onClick={() =>
-                          dialogStore.trigger({
-                            component: ServiceRequestModal,
-                            props: { offering, sellerUsername: username },
-                          })
-                        }
-                      >
-                        Request
-                      </Button>
-                    </LoginRedirect>
+                    <Group gap={4} ml="auto" wrap="nowrap">
+                      <ReportServiceButton offeringId={offering.id} />
+                      <LoginRedirect reason="perform-action">
+                        <Button
+                          color="yellow"
+                          size="xs"
+                          disabled={full}
+                          onClick={() =>
+                            dialogStore.trigger({
+                              component: ServiceRequestModal,
+                              props: { offering, sellerUsername: username },
+                            })
+                          }
+                        >
+                          Request
+                        </Button>
+                      </LoginRedirect>
+                    </Group>
                   )}
                 </Group>
               }

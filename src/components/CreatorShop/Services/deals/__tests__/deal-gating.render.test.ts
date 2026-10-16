@@ -47,6 +47,11 @@ vi.mock('~/providers/AppProvider', () => ({
   useServerDomains: () => ({ green: 'civitai.com', blue: 'civitai.red', red: 'civitai.red' }),
 }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
+// Stands in for the button so the test can read which offering it would report.
+vi.mock('~/components/CreatorShop/Services/ReportServiceButton', () => ({
+  ReportServiceButton: ({ offeringId }: { offeringId: number }) =>
+    createElement('span', { 'data-report-offering': offeringId }, 'Report'),
+}));
 
 const { ServiceDealPage } = await import('~/components/CreatorShop/Services/deals/ServiceDealPage');
 const { ServiceDealsList } = await import(
@@ -56,14 +61,14 @@ const { ServiceDealsList } = await import(
 const render = (node: ReturnType<typeof createElement>) =>
   renderToStaticMarkup(createElement(MantineProvider, null, node));
 
-const deal = (maxNsfwLevel: number) => ({
+const deal = (maxNsfwLevel: number, viewerRole = 'buyer') => ({
   id: 7,
   maxNsfwLevel,
   status: 'InProgress',
-  viewerRole: 'buyer',
+  viewerRole,
   seller: { username: 'seller' },
   buyer: { username: 'buyer' },
-  offering: { title: 'Portrait commission' },
+  offering: { id: 42, title: 'Portrait commission' },
   requestedAt: new Date('2026-10-01T00:00:00Z'),
   deliveryDays: 7,
   revisionsUsed: 0,
@@ -99,6 +104,21 @@ describe('deal page gate', () => {
     expect(render(createElement(ServiceDealPage, { dealId: 7 }))).toMatch(/>X<\/span>/);
     mocks.deal = deal(2);
     expect(render(createElement(ServiceDealPage, { dealId: 7 }))).not.toMatch(/>PG-13<\/span>/);
+  });
+});
+
+describe('deal page: reporting the service', () => {
+  it('lets the buyer report the service, and not the seller or a moderator', () => {
+    // The offering's id (42), never the deal's (7).
+    const report = /<section data-gate="2">[\s\S]*data-report-offering="42"[\s\S]*<\/section>/;
+    mocks.deal = deal(2, 'buyer');
+    expect(render(createElement(ServiceDealPage, { dealId: 7 }))).toMatch(report);
+    for (const role of ['seller', 'moderator']) {
+      mocks.deal = deal(2, role);
+      expect(render(createElement(ServiceDealPage, { dealId: 7 }))).not.toContain(
+        'data-report-offering'
+      );
+    }
   });
 });
 
