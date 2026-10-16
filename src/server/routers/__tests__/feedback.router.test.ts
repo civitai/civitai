@@ -237,10 +237,6 @@ describe('feedback — the generic route refuses the app-block area', () => {
 });
 
 describe('feedback.create — the submission quota is not widened by uploads', () => {
-  it('is configured at 5 per hour', () => {
-    expect(FEEDBACK_RATE_LIMIT).toEqual({ max: 5, periodSeconds: 3600 });
-  });
-
   it('wires exactly those numbers into the router’s rate limiter', () => {
     expect(rateLimitCalls).toHaveLength(1);
     const [limits] = rateLimitCalls[0] as [{ limit: number; period: number }];

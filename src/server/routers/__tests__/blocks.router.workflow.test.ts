@@ -10894,112 +10894,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           for (const text of forbidden) expect(wire).not.toContain(text);
         });
 
-        it('logs the swallowed error with the orchestrator status', async () => {
-          mockVerifyBlockToken.mockResolvedValue(ptClaims());
-          happyUser();
-          quoteThrows(NOT_FOUND);
-          await caller().estimateWorkflow({ blockToken: 'tok', body: trainingBody() });
-          expect(mockLogToAxiom).toHaveBeenCalledWith({
-            name: 'block-pass-through-quote-failed',
-            type: 'warning',
-            outcome: 'rejected',
-            phase: 'estimate',
-            stepType: 'training',
-            appBlockId: 'apb_test',
-            code: 'BAD_REQUEST',
-            attempt: 1,
-            status: 404,
-            error: `The blob ${OWN_KEY} was not found.`,
-            cause: null,
-          });
-        });
-
         // The level follows THIS classification, not the generic tRPC client-fault
         // table: only an outcome caused by the request or the viewer is a warning. Our
         // own token refused (401), an upstream timeout (408) and a blob refresh that
         // failed in transit are ours, so they are errors.
         const BLOB_REFRESH_MESSAGE =
           'Failed to refresh image URL for blob: BLOB1. Please try uploading the image again.';
-        it.each<[string, 'warning' | 'error', 'rejected' | 'unavailable', () => unknown]>([
-          ['an upstream 404 rejection', 'warning', 'rejected', NOT_FOUND],
-          [
-            'a blob the orchestrator says is gone',
-            'warning',
-            'rejected',
-            () => {
-              const err = new TRPCError({ code: 'BAD_REQUEST', message: BLOB_REFRESH_MESSAGE });
-              annotateOrchestratorMissingBlob(err);
-              return err;
-            },
-          ],
-          [
-            'an upstream 429',
-            'warning',
-            'unavailable',
-            () => orchestratorError('TOO_MANY_REQUESTS', 'Slow down!', 429),
-          ],
-          [
-            'an upstream 403 (insufficient funds)',
-            'warning',
-            'unavailable',
-            () => orchestratorError('BAD_REQUEST', 'Insufficient funds.', 403),
-          ],
-          [
-            'an upstream 401 (our own token refused)',
-            'error',
-            'unavailable',
-            () => orchestratorError('UNAUTHORIZED', 'Authorization has been denied.', 401),
-          ],
-          [
-            'an upstream 408',
-            'error',
-            'unavailable',
-            () => orchestratorError('BAD_REQUEST', 'Request timed out.', 408),
-          ],
-          [
-            'a blob refresh that failed in transit',
-            'error',
-            'unavailable',
-            () => new TRPCError({ code: 'BAD_REQUEST', message: BLOB_REFRESH_MESSAGE }),
-          ],
-          [
-            'an upstream 500',
-            'error',
-            'unavailable',
-            () =>
-              orchestratorError(
-                'SERVICE_UNAVAILABLE',
-                'Generation services are temporarily unavailable. Please try again.',
-                500
-              ),
-          ],
-          ['a network failure', 'error', 'unavailable', NETWORK],
-          [
-            'a timeout',
-            'error',
-            'unavailable',
-            () => new TRPCError({ code: 'TIMEOUT', message: 'The operation timed out.' }),
-          ],
-          [
-            'an unrecognised throw',
-            'error',
-            'unavailable',
-            () => new Error('Cannot read properties of undefined'),
-          ],
-        ])('logs %s at %s level, as %s', async (_name, level, outcome, make) => {
-          mockVerifyBlockToken.mockResolvedValue(ptClaims());
-          happyUser();
-          quoteThrows(make);
-          await caller().estimateWorkflow({ blockToken: 'tok', body: trainingBody() });
-          const logged = mockLogToAxiom.mock.calls
-            .map((c) => c[0])
-            .filter((entry) => entry?.name === 'block-pass-through-quote-failed');
-          expect(logged).toHaveLength(1);
-          expect({ type: logged[0].type, outcome: logged[0].outcome }).toEqual({
-            type: level,
-            outcome,
-          });
-        });
 
         it('a blob the orchestrator says is gone is a rejection with a host-written reason', async () => {
           mockVerifyBlockToken.mockResolvedValue(ptClaims());

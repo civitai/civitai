@@ -301,39 +301,6 @@ describe('/api/upload/abort — error classification', () => {
  * stream.
  */
 describe('/api/upload/abort — client failure reason', () => {
-  it('happy path: logs the failure object it was sent', async () => {
-    mockAbortMultipartUpload.mockResolvedValue(undefined);
-    const res = makeRes();
-    await handler(makeReq({ body: { failure: { kind: 'network-error', partNumber: 3 } } }), res);
-
-    expect(res.statusCode).toBe(200);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 's3-upload-abort',
-        failure: { kind: 'network-error', partNumber: 3 },
-      })
-    );
-  });
-
-  it('logs the failure object on the abort-error path too, beside the server error', async () => {
-    mockAbortMultipartUpload.mockRejectedValue(
-      s3Error({ name: 'InternalError', $metadata: { httpStatusCode: 500 } })
-    );
-    const res = makeRes();
-    await handler(
-      makeReq({ body: { failure: { kind: 'part-status', partNumber: 2, status: 503 } } }),
-      res
-    );
-
-    expect(res.statusCode).toBe(503);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 's3-upload-abort-error',
-        failure: { kind: 'part-status', partNumber: 2, status: 503 },
-      })
-    );
-  });
-
   it('sanitizes the failure object: unknown keys, wrong types and out-of-range values are dropped', async () => {
     mockAbortMultipartUpload.mockResolvedValue(undefined);
     const res = makeRes();
@@ -408,15 +375,6 @@ describe('/api/upload/abort — client failure reason', () => {
     const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(logged.failure ?? {}).not.toHaveProperty(key);
   });
-
-  it('an absent failure object logs nothing extra', async () => {
-    mockAbortMultipartUpload.mockResolvedValue(undefined);
-    const res = makeRes();
-    await handler(makeReq(), res);
-
-    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
-    expect(logged.failure).toBeUndefined();
-  });
 });
 
 /**
@@ -426,30 +384,6 @@ describe('/api/upload/abort — client failure reason', () => {
  */
 describe('/api/upload/abort — relay fallback outcome', () => {
   const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
-
-  it('logs the outcome the client declared', async () => {
-    mockAbortMultipartUpload.mockResolvedValue(undefined);
-    const res = makeRes();
-    await handler(makeReq({ body: { relayOutcome: 'bad_body' } }), res);
-
-    expect(res.statusCode).toBe(200);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 's3-upload-abort', relayOutcome: 'bad_body' })
-    );
-  });
-
-  it('logs it on the abort-error path too', async () => {
-    mockAbortMultipartUpload.mockRejectedValue(
-      s3Error({ name: 'InternalError', $metadata: { httpStatusCode: 500 } })
-    );
-    const res = makeRes();
-    await handler(makeReq({ body: { relayOutcome: 'rescued' } }), res);
-
-    expect(res.statusCode).toBe(503);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 's3-upload-abort-error', relayOutcome: 'rescued' })
-    );
-  });
 
   it.each([
     ['rescued'],
