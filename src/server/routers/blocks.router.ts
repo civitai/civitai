@@ -6116,15 +6116,16 @@ export const blocksRouter = router({
         });
         throw err;
       }
-      // Audited from what HAPPENED (read back on the primary), not from what was asked: a racing
-      // request can make the site toggle go the other way, and the audit trail must say so.
+      // Audited from what THIS REQUEST wrote, not from what was asked and not from a before/after
+      // diff: a racing request can make the site toggle go the other way, and the audit trail
+      // must name the direction this app actually caused.
       if (outcome.changed) {
         await recordBlockReactionInvocation({
           claims,
           userId,
           imageId: input.entityId,
           reaction: input.reaction,
-          reacted: outcome.reacted,
+          reacted: outcome.wroteReacted,
           outcome: 'ok',
         });
       }

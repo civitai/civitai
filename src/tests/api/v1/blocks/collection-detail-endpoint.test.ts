@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as GatedImagesLogic from '~/server/services/blocks/block-gated-images.logic';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
@@ -353,4 +353,9 @@ describe('GET /api/v1/blocks/collections/[id] — reactTicket (app reactions pro
       ).toBe(false);
     }
   });
+});
+
+// The ticket cases stub a signing secret; hand it back so no case added later inherits one.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });

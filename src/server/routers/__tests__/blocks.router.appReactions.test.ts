@@ -419,14 +419,53 @@ describe('setReactionFromApp — set semantics', () => {
     expect(h.recordScopeInvocation).not.toHaveBeenCalled();
   });
 
-  it('never toggles twice — a concurrent winner is reported, not fought', async () => {
-    // Asked to REMOVE; a racing request already re-created it. One toggle, then the truth.
+  it('never toggles twice — a toggle that went the other way is reported and audited as such', async () => {
+    // Asked to REMOVE; the site's replica check missed the row, so the toggle CREATED instead.
     viewerHolds(true);
     afterWrite([{ reaction: 'Heart' }]);
     h.toggle.mockResolvedValue('created');
     const result = await caller().setReactionFromApp(setInput({ reacted: false }) as never);
     expect(h.toggle).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ changed: false, reacted: true });
+    expect(result).toMatchObject({ changed: true, reacted: true });
+    // The audit names what THIS request wrote — a create — not what it asked for.
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.objectContaining({ reacted: true, outcome: 'ok' }) })
+    );
+  });
+
+  it('a concurrent change made by SOMEONE ELSE is not audited against this app', async () => {
+    // Already held, so no toggle; the viewer un-reacted on the site before the read-back.
+    viewerHolds(true);
+    afterWrite([]);
+    const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
+    expect(h.toggle).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ changed: false, reacted: false });
+    expect(h.recordScopeInvocation).not.toHaveBeenCalled();
+  });
+
+  it('a create this request made IS audited even if a racing removal undid it before the read-back', async () => {
+    viewerHolds(false);
+    afterWrite([]);
+    h.toggle.mockResolvedValue('created');
+    const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
+    // The reply tells the truth (not reacted); the audit records the reward-paying create.
+    expect(result).toMatchObject({ changed: true, reacted: false });
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.objectContaining({ reacted: true, outcome: 'ok' }) })
+    );
+  });
+
+  it('a site-handler error AFTER its write landed is reported as the change it made', async () => {
+    viewerHolds(false);
+    afterWrite([{ reaction: 'Heart' }]);
+    h.toggle.mockRejectedValue(new Error('tracker read failed'));
+    await expect(caller().setReactionFromApp(setInput() as never)).resolves.toMatchObject({
+      changed: true,
+      reacted: true,
+    });
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.objectContaining({ reacted: true, outcome: 'ok' }) })
+    );
   });
 
   it('reads the post-write state on the PRIMARY, for this viewer and image', async () => {
@@ -486,6 +525,8 @@ describe('setReactionFromApp — set semantics', () => {
   });
 
   it('audits a FAILED write and still surfaces the error', async () => {
+    // Nothing landed: the read-back still shows no reaction.
+    afterWrite([]);
     h.toggle.mockRejectedValue(new Error('You cannot react to this entity.'));
     await expect(caller().setReactionFromApp(setInput() as never)).rejects.toThrow(
       'You cannot react to this entity.'

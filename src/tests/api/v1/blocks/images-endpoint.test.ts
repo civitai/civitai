@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { TRPCError } from '@trpc/server';
 
@@ -488,4 +488,9 @@ describe('/api/v1/blocks/images — reactTicket (app reactions provenance)', () 
     expect(res.statusCode).toBe(200);
     for (const item of res.body.items) expect(item).not.toHaveProperty('reactTicket');
   });
+});
+
+// The ticket cases stub a signing secret; hand it back so no case added later inherits one.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
