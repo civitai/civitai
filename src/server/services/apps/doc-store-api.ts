@@ -1,7 +1,8 @@
 // The REST layer of the App Blocks document store: `/api/v1/blocks/storage/…`, served by
 // one catch-all page (`src/pages/api/v1/blocks/storage/[[...path]].ts`). It resolves the
 // caller (`doc-store-access.ts`), runs the gates the store leaves to its caller — scopes,
-// consent, the min-trust gate, rate limits, moderation — calls the store, and presents the
+// consent, a collection's `ownedModelVersions` rule (`doc-store-ownership.ts`), the
+// min-trust gate, rate limits, moderation — calls the store, and presents the
 // result. Every refusal leaves through `sendError`, the one place a `DocStoreError` code
 // becomes an HTTP status.
 //
@@ -42,6 +43,7 @@ import {
 } from '~/server/services/apps/doc-store';
 import { resolveStorageAccess, type StorageAccess } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import type {
   DocAuthor,
   DocCollection,
@@ -179,6 +181,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   not_eligible: 403,
   not_author: 403,
   write_policy: 403,
+  resource_not_owned: 403,
   not_found: 404,
   collection_not_declared: 404,
   version_conflict: 409,
@@ -734,6 +737,11 @@ async function run(
       const created = route.op === 'create' ? parseBody(createBody, body) : null;
       const putIn = route.op === 'put' ? parseBody(putBody, body) : null;
       const deleteVersion = route.op === 'delete' ? deleteIfVersion(req) : undefined;
+      // The manifest's ownership rule, on every write that sets `data` (create and put are
+      // the only two). Before any rate limit, write budget, trust lookup or moderation scan,
+      // so a refused version costs the caller nothing and the platform no scan.
+      const newData = created?.data ?? putIn?.data;
+      if (newData) await assertOwnedModelVersions(decl, newData, uid);
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         if (created) {
           if (user) await moderate(access, user, 'append', '', { data: created.data });

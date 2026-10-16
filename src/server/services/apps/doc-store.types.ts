@@ -126,6 +126,7 @@ export type DocStoreErrorCode =
   | 'not_eligible'
   | 'not_author'
   | 'write_policy'
+  | 'resource_not_owned'
   | 'not_found'
   | 'collection_not_declared'
   | 'version_conflict'

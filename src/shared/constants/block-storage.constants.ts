@@ -104,6 +104,31 @@ export const APP_STORAGE_LOG_MAX_ENTRIES = 10_000;
 export const APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR = 1_000;
 
 /**
+ * `ownedModelVersions`: JSON Pointers (RFC 6901) into a document's `data`, each naming a
+ * field that, when present, must hold a model version id the writing viewer owns. The server
+ * checks them on every document create and update (`doc-store-ownership.ts`).
+ *
+ * A pointer is 1 to 4 segments, each `/` followed by 1 to 64 characters, where `/` and `~`
+ * appear only as the escapes `~1` and `~0`. The root pointer `""` and empty segments are
+ * refused: the root is the whole `data` object, never an id. A numeric segment indexes an
+ * array. Kept as a string because the schema's `pattern` must equal it byte for byte, and a
+ * `RegExp`'s `.source` escapes `/`.
+ */
+export const APP_STORAGE_OWNED_POINTER_PATTERN = '^(/([^/~]|~[01]){1,64}){1,4}$';
+export const APP_STORAGE_OWNED_POINTER_RE = new RegExp(APP_STORAGE_OWNED_POINTER_PATTERN, 'u');
+/** Most pointers one collection may declare in `ownedModelVersions`. */
+export const APP_STORAGE_MAX_OWNED_MODEL_VERSIONS = 4;
+/**
+ * The write policies under which `ownedModelVersions` may be declared: the ones where the
+ * viewer making a write is always the document's author (a private collection, or a shared
+ * one with `write: "own"`). Under `anyone` a viewer could put their own version into another
+ * viewer's document; under `owner` and `none` no viewer writes `data` at all.
+ */
+export const APP_STORAGE_OWNED_MODEL_VERSIONS_WRITE_POLICIES: readonly AppStorageWritePolicy[] = [
+  'own',
+];
+
+/**
  * Most errors one parse reports; the rest are summarised in one final line. The errors are
  * joined into the submit response, so without a cap a crafted manifest can turn into a
  * multi-megabyte error message.
@@ -156,6 +181,8 @@ export type DeclaredStorageCollection = {
   ttlSeconds?: number;
   maxEntries?: number;
   dailyWritesPerAuthor?: number;
+  /** JSON Pointers into `data` that must name the author's own model versions. */
+  ownedModelVersions?: readonly string[];
 };
 
 /**
@@ -186,6 +213,7 @@ const COLLECTION_KEYS = new Set([
   'ttlSeconds',
   'maxEntries',
   'dailyWritesPerAuthor',
+  'ownedModelVersions',
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -494,6 +522,24 @@ function parseCollection(
     }
   }
 
+  let ownedModelVersions: string[] | null = null;
+  if (raw.ownedModelVersions !== undefined) {
+    if (
+      shared &&
+      !(write === undefined || APP_STORAGE_OWNED_MODEL_VERSIONS_WRITE_POLICIES.includes(write))
+    ) {
+      errors.push(
+        `${at}.ownedModelVersions applies only to private collections and shared collections with write "own" — the viewer writing a document must be its author`
+      );
+    } else {
+      ownedModelVersions = parseOwnedPointers(
+        `${at}.ownedModelVersions`,
+        raw.ownedModelVersions,
+        errors
+      );
+    }
+  }
+
   if (errors.length > before) return null;
   const collection: DeclaredStorageCollection = {
     kind,
@@ -508,7 +554,38 @@ function parseCollection(
   if (raw.maxEntries !== undefined) collection.maxEntries = raw.maxEntries as number;
   if (raw.dailyWritesPerAuthor !== undefined)
     collection.dailyWritesPerAuthor = raw.dailyWritesPerAuthor as number;
+  if (ownedModelVersions) collection.ownedModelVersions = ownedModelVersions;
   return collection;
+}
+
+/** Parses `ownedModelVersions`. Returns the pointers, or null when the list is unusable. */
+function parseOwnedPointers(at: string, raw: unknown, errors: string[]): string[] | null {
+  if (!Array.isArray(raw)) {
+    errors.push(`${at} must be an array of JSON Pointers`);
+    return null;
+  }
+  // An empty list would read as a declared ownership rule that checks nothing.
+  if (raw.length === 0 || raw.length > APP_STORAGE_MAX_OWNED_MODEL_VERSIONS) {
+    errors.push(
+      `${at} must declare 1 to ${APP_STORAGE_MAX_OWNED_MODEL_VERSIONS} pointers (found ${raw.length})`
+    );
+    return null;
+  }
+  const seen: string[] = [];
+  for (const [index, pointer] of raw.entries()) {
+    if (typeof pointer !== 'string' || !APP_STORAGE_OWNED_POINTER_RE.test(pointer)) {
+      errors.push(
+        `${at}[${index}] must be a JSON Pointer into the document's data, such as "/workflow/modelVersionId": 1 to 4 segments, each "/" then 1 to 64 characters, with "~" and "/" written as "~0" and "~1"`
+      );
+      return null;
+    }
+    if (seen.includes(pointer)) {
+      errors.push(`${at}[${index}] duplicates an earlier pointer (${quoteName(pointer)})`);
+      return null;
+    }
+    seen.push(pointer);
+  }
+  return seen;
 }
 
 function parse(

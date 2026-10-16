@@ -15,6 +15,8 @@ import {
   APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR,
   APP_STORAGE_MAX_INDEXES,
   APP_STORAGE_MAX_MARKS,
+  APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
+  APP_STORAGE_OWNED_POINTER_PATTERN,
   APP_STORAGE_RESERVED_INDEX_NAMES,
   APP_STORAGE_TALLY_NAME_RE,
   APP_STORAGE_TTL_MAX_SECONDS,
@@ -110,6 +112,19 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['`constructor` collection', { collections: { constructor: { visibility: 'private' } } }, true],
   ['write none with counters', shared({ write: 'none', counters: ['plays'] }), true],
   ['write none with marks only', shared({ write: 'none', marks: ['vote'] }), true],
+  [
+    'ownedModelVersions on shared own',
+    shared({ ownedModelVersions: ['/workflow/modelVersionId'] }),
+    true,
+  ],
+  ['ownedModelVersions on private', priv({ ownedModelVersions: ['/v'] }), true],
+  [
+    '4 ownedModelVersions pointers, 4 segments, 64-char segment',
+    shared({ ownedModelVersions: ['/a', '/b/0', '/c/d/e/f', `/${'x'.repeat(64)}`] }),
+    true,
+  ],
+  ['ownedModelVersions escapes ~0 ~1', shared({ ownedModelVersions: ['/a~1b/c~0d'] }), true],
+  ['ownedModelVersions non-ASCII segment', shared({ ownedModelVersions: ['/ワーク'] }), true],
   // accept, but phased
   ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true, true],
   ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true, true],
@@ -202,6 +217,36 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     false,
   ],
   ['showAuthor string', shared({ showAuthor: 'yes' }), false],
+  // reject — ownedModelVersions
+  ['ownedModelVersions not an array', shared({ ownedModelVersions: '/v' }), false],
+  ['ownedModelVersions empty', shared({ ownedModelVersions: [] }), false],
+  ['5 ownedModelVersions pointers', shared({ ownedModelVersions: names(5, '/p') }), false],
+  ['duplicate pointer', shared({ ownedModelVersions: ['/v', '/v'] }), false],
+  ['root pointer ""', shared({ ownedModelVersions: [''] }), false],
+  ['pointer without leading slash', shared({ ownedModelVersions: ['workflow/id'] }), false],
+  ['pointer "/"', shared({ ownedModelVersions: ['/'] }), false],
+  ['empty segment', shared({ ownedModelVersions: ['/a//b'] }), false],
+  ['trailing slash', shared({ ownedModelVersions: ['/a/'] }), false],
+  ['bad escape ~2', shared({ ownedModelVersions: ['/a~2'] }), false],
+  ['bare ~', shared({ ownedModelVersions: ['/a~'] }), false],
+  ['65-char segment', shared({ ownedModelVersions: [`/${'x'.repeat(65)}`] }), false],
+  ['5 segments', shared({ ownedModelVersions: ['/a/b/c/d/e'] }), false],
+  ['non-string pointer', shared({ ownedModelVersions: [1] }), false],
+  [
+    'ownedModelVersions with write none',
+    shared({ write: 'none', counters: ['plays'], ownedModelVersions: ['/v'] }),
+    false,
+  ],
+  [
+    'ownedModelVersions with write owner',
+    shared({ write: 'owner', counters: ['plays'], ownedModelVersions: ['/v'] }),
+    false,
+  ],
+  [
+    'ownedModelVersions with write anyone',
+    shared({ write: 'anyone', ownedModelVersions: ['/v'] }),
+    false,
+  ],
 ];
 
 /**
@@ -270,6 +315,15 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
       1,
       APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR,
     ]);
+    expect(p.ownedModelVersions.type).toBe('array');
+    expect([p.ownedModelVersions.minItems, p.ownedModelVersions.maxItems]).toEqual([
+      1,
+      APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
+    ]);
+    expect(p.ownedModelVersions.uniqueItems).toBe(true);
+    expect((p.ownedModelVersions.items as SchemaObject).pattern).toBe(
+      APP_STORAGE_OWNED_POINTER_PATTERN
+    );
   });
 
   it('the evaluator refuses a keyword it does not implement', () => {

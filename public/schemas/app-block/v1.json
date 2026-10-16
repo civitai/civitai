@@ -468,6 +468,17 @@
                   "description": "RESERVED — civitai.com refuses this field until per-collection write budgets are enabled, so do not declare it yet. Intended meaning: for a shared collection that viewers write (`write` \"own\" or \"anyone\"; refused with \"owner\" or \"none\"), the per-viewer daily budget for creating and updating documents in this collection in place of the platform default, from 1 to 1000, shown to the moderator at review. The bounds are provisional and may change before the field is enabled.",
                   "minimum": 1,
                   "maximum": 1000
+                },
+                "ownedModelVersions": {
+                  "type": "array",
+                  "description": "Fields of a document's `data` that, when present, must hold a Civitai model version id owned by the viewer writing the document — for example [\"/workflow/modelVersionId\"] for a collection where viewers publish their own workflows. Each entry is a JSON Pointer (RFC 6901) of 1 to 4 segments, each \"/\" then 1 to 64 characters, with \"~\" and \"/\" written as \"~0\" and \"~1\"; a numeric segment indexes an array. 1 to 4 distinct pointers. On every create and update the server resolves each pointer in the new `data`: a field that is absent is allowed; a field that is present must be a positive integer naming a model version whose model the writer owns, and is otherwise refused with 403 `resource_not_owned` — a version that is someone else's, missing or deleted, and a value that is not a positive integer, are all refused the same way. The check runs before moderation and before any rate limit or write budget is spent. Private collections, and shared collections with `write` \"own\" only.",
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(/([^/~]|~[01]){1,64}){1,4}$"
+                  }
                 }
               },
               "allOf": [
@@ -503,6 +514,14 @@
                     "properties": { "write": { "enum": ["owner", "none"] } }
                   },
                   "then": { "properties": { "dailyWritesPerAuthor": false } }
+                },
+                {
+                  "$comment": "ownedModelVersions checks the version against the viewer WRITING the document, so it is declared only where that viewer is always the author: private collections and write:\"own\".",
+                  "if": {
+                    "required": ["write"],
+                    "properties": { "write": { "enum": ["anyone", "owner", "none"] } }
+                  },
+                  "then": { "properties": { "ownedModelVersions": false } }
                 },
                 {
                   "$comment": "A write:\"none\" collection is written only through counters and marks, so it must declare at least one.",
