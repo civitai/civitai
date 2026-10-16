@@ -187,7 +187,7 @@ describe("kind:'workflow' — inline media is refused", () => {
       { $type: 'imageGen', input: { ...pad(), photo: tinyPng } },
     ];
     expect(issuesOf(body({ steps }))).toEqual([
-      [['steps', 2, 'input'], 'steps[2].input holds more than 262144 values'],
+      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
     ]);
   });
 

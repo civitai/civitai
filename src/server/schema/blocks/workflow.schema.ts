@@ -20,9 +20,9 @@ import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimat
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 import {
   findInlineMediaPath,
+  INLINE_MEDIA_MAX_VISITS,
   INLINE_MEDIA_TOO_MANY_VALUES,
   inlineMediaMessage,
-  tooManyValuesMessage,
 } from '~/server/schema/blocks/inline-media';
 import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
 
@@ -661,22 +661,24 @@ const blockPassThroughStepShape = {
 };
 
 /**
- * Refuses at the first inline-media path under `fields`. `continue: false` suppresses the
- * byte-cap issue, which an inline photo usually also trips; only this message names the fix.
+ * Refuses at the first inline-media path under `fields`, or at `overflow` once the body's
+ * shared value budget runs out. `continue: false` suppresses the byte-cap issue, which an
+ * inline photo usually also trips; only this message names the fix.
  */
 function refuseInlineMedia<T extends Record<string, unknown>>(
-  fields: (body: T) => [InlineMediaPath, unknown][]
+  fields: (body: T) => [InlineMediaPath, unknown][],
+  overflow: { path: InlineMediaPath; message: string }
 ) {
   return (body: T, ctx: z.RefinementCtx) => {
     const budget = { visits: 0 };
     for (const [prefix, value] of fields(body)) {
       const hit = findInlineMediaPath(value, budget);
       if (!hit) continue;
-      const [path, message] =
+      const issue =
         hit === INLINE_MEDIA_TOO_MANY_VALUES
-          ? [prefix, tooManyValuesMessage(prefix)]
-          : [[...prefix, ...hit], inlineMediaMessage([...prefix, ...hit])];
-      ctx.addIssue({ code: 'custom', path, message, continue: false });
+          ? overflow
+          : { path: [...prefix, ...hit], message: inlineMediaMessage([...prefix, ...hit]) };
+      ctx.addIssue({ code: 'custom', ...issue, continue: false });
       return;
     }
   };
@@ -685,7 +687,12 @@ function refuseInlineMedia<T extends Record<string, unknown>>(
 export const blockPassThroughStepBodySchema = z
   .object(blockPassThroughStepShape)
   .strict()
-  .superRefine(refuseInlineMedia((b) => [[['input'], b.input]]))
+  .superRefine(
+    refuseInlineMedia((b) => [[['input'], b.input]], {
+      path: ['input'],
+      message: `step input holds more than ${INLINE_MEDIA_MAX_VISITS} values`,
+    })
+  )
   .refine((b) => JSON.stringify(b.input).length <= PASS_THROUGH_INPUT_BYTES_MAX, {
     path: ['input'],
     message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
@@ -737,10 +744,19 @@ export const blockMultiStepWorkflowBodySchema = z
   .strict()
   // `arguments` too: a step input can `$ref` it, so it reaches the orchestrator the same way.
   .superRefine(
-    refuseInlineMedia((b) => [
-      ...b.steps.map((step, i): [InlineMediaPath, unknown] => [['steps', i, 'input'], step.input]),
-      [['arguments'], b.arguments],
-    ])
+    refuseInlineMedia(
+      (b) => [
+        ...b.steps.map((step, i): [InlineMediaPath, unknown] => [
+          ['steps', i, 'input'],
+          step.input,
+        ]),
+        [['arguments'], b.arguments],
+      ],
+      {
+        path: ['steps'],
+        message: `step inputs and arguments hold more than ${INLINE_MEDIA_MAX_VISITS} values in total`,
+      }
+    )
   )
   .refine(
     (b) =>

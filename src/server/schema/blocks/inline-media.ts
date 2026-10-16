@@ -43,7 +43,8 @@ function pathOf(frame: Frame): InlineMediaPath {
 
 /**
  * The JSON path of the first string in `value`, in document order, that carries inline
- * media, or `null`. Iterative, so nesting depth cannot overflow the stack.
+ * media; `null` if none; `INLINE_MEDIA_TOO_MANY_VALUES` once `budget` is spent. Iterative,
+ * so nesting depth cannot overflow the stack.
  */
 export function findInlineMediaPath(
   value: unknown,
@@ -92,8 +93,4 @@ export function inlineMediaMessage(path: InlineMediaPath): string {
     `useImageUpload({ purpose: 'generationSource' }) or pick it with useImagePicker ` +
     `and pass the returned url`
   );
-}
-
-export function tooManyValuesMessage(path: InlineMediaPath): string {
-  return `${formatInlineMediaPath(path)} holds more than ${INLINE_MEDIA_MAX_VISITS} values`;
 }
