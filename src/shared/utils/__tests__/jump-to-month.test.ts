@@ -46,7 +46,10 @@ describe.each(['Asia/Tokyo', 'America/Los_Angeles'])('picker month in %s', (tz) 
 // Strict: the patch merges over pending filters, so an absent key keeps the old value.
 describe('jumpToPatch / periodPatch', () => {
   it('drops the relative period when a month is picked, and keeps it when the month is cleared', () => {
-    expect(jumpToPatch('2025-03', 'AllTime')).toStrictEqual({ jumpTo: '2025-03', period: 'AllTime' });
+    expect(jumpToPatch('2025-03', 'AllTime')).toStrictEqual({
+      jumpTo: '2025-03',
+      period: 'AllTime',
+    });
     expect(jumpToPatch(undefined, 'AllTime')).toStrictEqual({ jumpTo: undefined });
   });
 
