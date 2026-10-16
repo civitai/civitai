@@ -66,6 +66,9 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *     afterwards and pages would come back sparse or empty.
  *     It deliberately does NOT reuse getModelsRaw's `username` filter, which serves profile pages:
  *     that one throws NotFound for an unknown name and has its own version-visibility rules.
+ *     Every 200 echoes the applied mode as `metadata.owner` (`'mine'` or `'any'`; `'any'` when
+ *     the param is absent). A response without `metadata.owner` came from a server that predates
+ *     the param and ignored it, so its items are NOT owner-filtered.
  *
  *   modelVersionIds=1,2,3 — up to 100 positive ids; returns the models those versions belong to,
  *     each narrowed to the requested versions, so a block can rehydrate saved cards by id. Same
@@ -75,7 +78,7 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *     also carries `query` can come back sparse or empty.
  *
  * Every response keeps only Public-availability versions (`publicVersionsOnly`), whichever
- * filters are set.
+ * filters are set. The block tool route (`blocks/tools.ts`, `search_models`) passes the same flag.
  *
  * NOTE (advisory until #2670 merges): the authoritative `maxBrowsingLevel`
  * claim is MINTED by PR #2670 (color-domain maturity). Until #2670 lands,
@@ -247,7 +250,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
     res.status(200).json({
       items,
-      metadata: { nextCursor: effectiveNextCursor, nextPage },
+      // `owner` echoes the filter this server APPLIED, so a client can tell an owner-filtered
+      // page from one served by a server that does not know the param and ignored it.
+      metadata: { nextCursor: effectiveNextCursor, nextPage, owner: parsed.data.owner },
       // Echo the applied ceiling so the in-block selector can render an honest
       // "SFW only" affordance. Advisory only — the clamp is authoritative.
       maturity: { browsingLevel, sfwOnly: isSfwCeiling },

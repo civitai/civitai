@@ -132,7 +132,10 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 > viewer's own models, taken from the token `sub` (anon gets 401). It is a filter,
 > not a viewer, so it needs no scope and shows no unpublished or Private-availability
 > versions. `modelVersionIds=1,2,3` (max 100) rehydrates saved cards by version id
-> under the same rules.
+> under the same rules. Every 200 echoes the applied filter as `metadata.owner`
+> (`mine` or `any`); a response without it came from a server that ignored `owner`, so
+> it is not owner-filtered. `/api/v1/blocks/models` and the `search_models` tool
+> on `/api/v1/blocks/tools` both keep only Public-availability versions.
 
 ## Routes
 
