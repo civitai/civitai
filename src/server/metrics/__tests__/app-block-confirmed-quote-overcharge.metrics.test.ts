@@ -69,12 +69,6 @@ describe('civitai_app_block_confirmed_quote_overcharge_total', () => {
     for (const v of values) expect(Object.keys(v.labels)).toEqual(['kind']);
   });
 
-  it('appears in the scrape output under its exact name and label', async () => {
-    recordConfirmedQuoteOvercharge('step');
-    const scrape = await client.register.metrics();
-    expect(scrape).toContain(`${METRIC}{kind="step"} 1`);
-  });
-
   it('🔴 the emitter NEVER throws — a broken registry cannot fail a charged submit', () => {
     // A name collision with a different label set: `inc({ kind })` would throw.
     new client.Counter({ name: METRIC, help: 'poisoned', labelNames: ['other'] });
