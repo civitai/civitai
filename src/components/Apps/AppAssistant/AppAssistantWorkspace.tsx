@@ -8,7 +8,6 @@ import {
   Group,
   Loader,
   Paper,
-  ScrollArea,
   SegmentedControl,
   Stack,
   Text,
@@ -16,12 +15,18 @@ import {
 } from '@mantine/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
+import type {
+  ChatMcpServer,
+  ChatToolGate,
+  CivitaiChat,
+} from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
+import { NO_APP_REFUSAL, createAppTools } from '~/components/Apps/AppAssistant/appTools';
 import {
   SANDBOX_SERVER_ID,
+  SET_CHECKLIST,
   createAssistantGate,
 } from '~/components/Apps/AppAssistant/assistantGate';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
@@ -36,16 +41,21 @@ import {
   createSandboxClient,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
-import { SandboxError, SandboxPanel } from '~/components/Apps/AppAssistant/SandboxPanel';
 import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
+import {
+  APP_STATUS,
+  AppError,
+  AppMenu,
+  YourAppsList,
+} from '~/components/Apps/AppAssistant/YourApps';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
 
 const NO_MCP_SERVERS: ChatMcpServer[] = [];
-/** The sandbox's tools are added only once it runs, so a message sent before then would go without them. */
-export const SANDBOX_STARTING_HOLD = 'The sandbox is starting…';
+/** The app's tools are added only once it runs, so a message sent before then would go without them. */
+export const APP_STARTING_HOLD = 'Your app is starting…';
 
 function EnableCard({
   onEnable,
@@ -62,10 +72,11 @@ function EnableCard({
         <Stack gap="sm">
           <Title order={3}>Turn on App Assistant</Title>
           <Text size="sm">
-            The assistant builds your app in a sandbox of your own, and can make images and other
-            media for it with your Buzz, up to {numberWithCommas(APP_ASSISTANT_DAILY_BUZZ_CAP)} Buzz
-            a day. You can change that limit or turn the assistant off at any time under connected
-            apps in your account settings.
+            Describe an app in your own words and the assistant builds it for you, in a private
+            workspace of your own. It can make images and other media for your app with your Buzz,
+            up to {numberWithCommas(APP_ASSISTANT_DAILY_BUZZ_CAP)} Buzz a day. You can change that
+            limit or turn the assistant off at any time under connected apps in your account
+            settings.
           </Text>
           {!!error && (
             <Alert color="red" variant="light">
@@ -73,7 +84,7 @@ function EnableCard({
             </Alert>
           )}
           <Group justify="flex-end">
-            <Button onClick={onEnable} loading={pending}>
+            <Button onClick={onEnable} loading={pending} className="min-h-11">
               Turn on App Assistant
             </Button>
           </Group>
@@ -124,23 +135,28 @@ export function AppAssistantWorkspace({
     [sandboxUrl, tokens, access.isSuccess, revoked]
   );
   const sandboxes = useSandboxes(sandboxClient);
+  const apps = sandboxes.list.data ?? [];
 
   const [activeName, setActiveName] = useState<string | null>(null);
-  const active = sandboxes.list.data?.find((s) => s.name === activeName) ?? null;
+  const active = apps.find((s) => s.name === activeName) ?? null;
   const [session, setSession] = useState<PreviewSession | null>(null);
   const [tab, setTab] = useState<'chat' | 'preview'>('chat');
+  const shownTab = active ? tab : 'chat';
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const chatRef = useRef<CivitaiChat | null>(null);
 
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
 
   // The chat reads tools and instructions through these on every call, so neither has to be rebuilt.
-  const live = useRef({ active, session, canPreview });
-  live.current = { active, session, canPreview };
+  const live = useRef({ active, session, canPreview, apps: sandboxes.list.data });
+  live.current = { active, session, canPreview, apps: sandboxes.list.data };
   const stopRef = useRef(stopDevTunnel.mutateAsync);
   stopRef.current = stopDevTunnel.mutateAsync;
   const startRef = useRef(startDevTunnel.mutateAsync);
   startRef.current = startDevTunnel.mutateAsync;
+  const openRef = useRef(sandboxes.open.mutateAsync);
+  openRef.current = sandboxes.open.mutateAsync;
 
   const stopPreview = useCallback(() => {
     const current = live.current.session;
@@ -171,15 +187,35 @@ export function AppAssistantWorkspace({
           if (next) setTab('preview');
         },
       }),
+      ...createAppTools({
+        apps: () => live.current.apps,
+        open: async (app) => {
+          const { sandbox } = await openRef.current(app);
+          // The assistant's next call (set_checklist) can come before the next render.
+          live.current.active = sandbox;
+          setActiveName(sandbox.name);
+          return sandbox;
+        },
+      }),
       ...gate.tools,
     }),
     [canPreview, gate]
+  );
+
+  // The features are built in an app, so they are not planned before one exists.
+  const beforeToolCall = useCallback<ChatToolGate>(
+    (name, input, context) =>
+      name === SET_CHECKLIST && !live.current.active
+        ? { refuse: NO_APP_REFUSAL }
+        : gate.beforeToolCall(name, input, context),
+    [gate]
   );
 
   const instructions = useCallback(
     () =>
       buildAssistantInstructions({
         sandbox: live.current.active,
+        apps: (live.current.apps ?? []).map((s) => s.app),
         canPreview: live.current.canPreview,
         previewHost: live.current.session?.host ?? null,
       }),
@@ -198,7 +234,8 @@ export function AppAssistantWorkspace({
             {
               id: SANDBOX_SERVER_ID,
               url: mcpUrl,
-              label: 'Sandbox',
+              // The chat names it in "Connecting to …" and when it cannot be reached.
+              label: 'your app',
               token: () => tokens.getToken({ purpose: 'sandbox' }),
             },
           ]
@@ -217,15 +254,28 @@ export function AppAssistantWorkspace({
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
 
-  const openSandbox = (sandbox: Sandbox) => {
-    setActiveName(sandbox.name);
+  const openApp = (app: string) => {
+    if (active?.app === app && active.state !== 'suspended') return setDrawerOpen(false);
+    sandboxes.open.mutate(app, {
+      onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+        setActiveName(sandbox.name);
+        setDrawerOpen(false);
+      },
+    });
+  };
+  const onRemoved = (name: string) => {
+    if (name === activeName) setActiveName(null);
+  };
+  const startNewApp = () => {
+    setActiveName(null);
+    chatRef.current?.newChat();
     setDrawerOpen(false);
   };
 
   if (!sandboxUrl)
     return (
       <Alert color="yellow" variant="light">
-        Sandboxes are not configured on this deployment, so App Assistant can’t build apps here yet.
+        App Assistant can’t build apps on this deployment yet.
       </Alert>
     );
   if (access.isPending)
@@ -256,6 +306,7 @@ export function AppAssistantWorkspace({
             size="compact-sm"
             variant="light"
             color="red"
+            className="min-h-11"
             loading={access.isFetching}
             onClick={() => void access.refetch()}
           >
@@ -265,84 +316,90 @@ export function AppAssistantWorkspace({
       </Alert>
     );
 
-  const panel = (
-    <SandboxPanel
-      sandboxes={sandboxes}
-      activeName={activeName}
-      onOpened={openSandbox}
-      onRemoved={(name) => {
-        if (name === activeName) setActiveName(null);
-      }}
-    />
-  );
-
   return (
     <div className={clsx('flex flex-col gap-3', classes.workspace)}>
-      <Group justify="space-between" wrap="nowrap" gap="sm" className="shrink-0">
-        {active ? (
-          <Group gap="xs" wrap="nowrap" className="min-w-0">
-            <Text fw={600} truncate>
-              {active.app}
+      {(active || apps.length > 0) && (
+        <Group justify="space-between" wrap="nowrap" gap="sm" className="shrink-0">
+          {active ? (
+            <Group gap={4} wrap="nowrap" className="min-w-0">
+              <div className="min-w-0">
+                <Text fw={600} truncate>
+                  {active.app}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {APP_STATUS[active.state]}
+                </Text>
+              </div>
+              <AppMenu
+                sandbox={active}
+                sandboxes={sandboxes}
+                onOpen={openApp}
+                onRemoved={onRemoved}
+              />
+            </Group>
+          ) : (
+            <Text size="sm" c="dimmed">
+              Describe a new app, or open one of yours.
             </Text>
-            <Badge size="sm" variant="light" color={active.state === 'running' ? 'green' : 'gray'}>
-              {active.state}
-            </Badge>
-          </Group>
-        ) : (
-          <Text size="sm" c="dimmed">
-            Open a sandbox to start building.
-          </Text>
-        )}
-        <Group gap={6} wrap="nowrap">
-          {active && active.state !== 'suspended' && (
-            <Button
-              size="compact-sm"
-              variant="default"
-              loading={sandboxes.suspend.isPending}
-              onClick={() => sandboxes.suspend.mutate(active.name)}
-            >
-              Suspend
-            </Button>
           )}
-          {active?.state === 'suspended' && (
+          <Button
+            variant="default"
+            className="min-h-11 shrink-0"
+            rightSection={
+              <Badge size="sm" variant="light" circle>
+                {apps.length}
+              </Badge>
+            }
+            onClick={() => setDrawerOpen(true)}
+          >
+            Your apps
+          </Button>
+        </Group>
+      )}
+      {active?.state === 'suspended' && (
+        <Alert color="gray" variant="light" className="shrink-0" py="xs">
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Text size="sm">This app is paused, so the assistant can’t work on it.</Text>
             <Button
-              size="compact-sm"
+              className="min-h-11 shrink-0"
               loading={sandboxes.open.isPending}
-              onClick={() => sandboxes.open.mutate(active.app)}
+              onClick={() => openApp(active.app)}
             >
               Resume
             </Button>
-          )}
-          <Button size="compact-sm" variant="light" onClick={() => setDrawerOpen(true)}>
-            Sandboxes
-          </Button>
-        </Group>
-      </Group>
-      {/* With a sandbox open the panel lives in the closed drawer, so header actions report here. */}
-      {active && !drawerOpen && (
-        <div className="shrink-0">
-          <SandboxError error={sandboxes.open.error ?? sandboxes.suspend.error} />
-        </div>
+          </Group>
+        </Alert>
+      )}
+      {!drawerOpen && (
+        <AppError
+          error={sandboxes.open.error ?? sandboxes.suspend.error ?? sandboxes.remove.error}
+        />
       )}
 
-      <SegmentedControl
-        className="shrink-0 md:hidden"
-        fullWidth
-        value={tab}
-        onChange={(value) => setTab(value as 'chat' | 'preview')}
-        data={[
-          { value: 'chat', label: 'Chat' },
-          { value: 'preview', label: active ? 'Preview' : 'Sandboxes' },
-        ]}
-      />
+      {active && (
+        <SegmentedControl
+          className="shrink-0 md:hidden"
+          fullWidth
+          size="md"
+          classNames={{ label: 'min-h-11 flex items-center justify-center' }}
+          value={shownTab}
+          onChange={(value) => setTab(value as 'chat' | 'preview')}
+          data={[
+            { value: 'chat', label: 'Chat' },
+            { value: 'preview', label: 'Preview' },
+          ]}
+        />
+      )}
 
       <div className="flex min-h-0 flex-1 gap-3">
         <Paper
           withBorder
           radius="md"
+          data-testid="app-assistant-chat-pane"
           className={clsx(
-            'min-h-0 flex-col overflow-hidden md:flex md:w-5/12 md:shrink-0',
-            tab === 'chat' ? 'flex w-full' : 'hidden'
+            'min-h-0 flex-col overflow-hidden',
+            active ? 'md:flex md:w-5/12 md:shrink-0' : 'w-full',
+            shownTab === 'chat' ? 'flex w-full' : 'hidden'
           )}
         >
           <AppAssistantChat
@@ -350,37 +407,41 @@ export function AppAssistantWorkspace({
             tools={tools}
             instructions={instructions}
             mcpServers={mcpServers}
-            holdReason={active?.state === 'starting' ? SANDBOX_STARTING_HOLD : undefined}
-            beforeToolCall={gate.beforeToolCall}
+            holdReason={active?.state === 'starting' ? APP_STARTING_HOLD : undefined}
+            beforeToolCall={beforeToolCall}
             onToolResult={gate.onToolResult}
+            chatRef={chatRef}
           />
         </Paper>
-        <Paper
-          withBorder
-          radius="md"
-          className={clsx(
-            'min-h-0 flex-1 flex-col overflow-hidden md:flex',
-            tab === 'preview' ? 'flex' : 'hidden'
-          )}
-        >
-          {active ? (
+        {active && (
+          <Paper
+            withBorder
+            radius="md"
+            data-testid="app-assistant-preview-pane"
+            className={clsx(
+              'min-h-0 flex-1 flex-col overflow-hidden md:flex',
+              shownTab === 'preview' ? 'flex' : 'hidden'
+            )}
+          >
             <AppAssistantPreview canPreview={canPreview} session={session} />
-          ) : (
-            <ScrollArea className="h-full" p="md">
-              {panel}
-            </ScrollArea>
-          )}
-        </Paper>
+          </Paper>
+        )}
       </div>
 
       <Drawer
         opened={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         position="right"
-        title="Sandboxes"
+        title="Your apps"
         size="md"
       >
-        {panel}
+        <YourAppsList
+          sandboxes={sandboxes}
+          activeName={activeName}
+          onOpen={openApp}
+          onRemoved={onRemoved}
+          onNewApp={startNewApp}
+        />
       </Drawer>
     </div>
   );

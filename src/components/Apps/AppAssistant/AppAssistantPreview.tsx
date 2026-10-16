@@ -37,7 +37,7 @@ export function AppAssistantPreview({
     return (
       <EmptyState>
         Live preview isn’t enabled for your account yet. The assistant can still build and test your
-        app in its sandbox.
+        app.
       </EmptyState>
     );
   if (!session)

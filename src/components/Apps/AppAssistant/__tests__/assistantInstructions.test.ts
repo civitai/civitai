@@ -8,15 +8,43 @@ import {
 const running = { name: 'sbx-0123456789ab', app: 'my-app', state: 'running' as const };
 
 describe('buildAssistantInstructions', () => {
-  it('without a sandbox, says there are no sandbox tools and gives no build steps', () => {
-    const text = buildAssistantInstructions({ sandbox: null, canPreview: true, previewHost: null });
-    expect(text).toMatch(/No sandbox is open/);
-    expect(text).not.toMatch(/start_preview/);
+  it('without an app, has the assistant create one for a build request, and gives no build steps', () => {
+    const text = buildAssistantInstructions({
+      sandbox: null,
+      apps: [],
+      canPreview: true,
+      previewHost: null,
+    });
+    expect(text).toContain(
+      'No app is open, so you have no sandbox tools. When the user describes an app to build, call create_app with a short name for it, then set_checklist; the sandbox tools arrive with your next reply. Answer a question that builds nothing without create_app.'
+    );
+    expect(text).not.toMatch(/start_preview|Sandboxes panel|other apps/);
+  });
+
+  it('names the user’s other apps, so the assistant points them there instead of making a copy', () => {
+    const none = buildAssistantInstructions({
+      sandbox: null,
+      apps: ['tip-calculator', 'moodboard'],
+      canPreview: true,
+      previewHost: null,
+    });
+    expect(none).toMatch(
+      /other apps are tip-calculator, moodboard; to keep working on one of those, they open it under Your apps/
+    );
+    const open = buildAssistantInstructions({
+      sandbox: { ...running, app: 'tip-calculator' },
+      apps: ['tip-calculator', 'moodboard'],
+      canPreview: true,
+      previewHost: null,
+    });
+    expect(open).toMatch(/When the user asks for a different, new app, call create_app/);
+    expect(open).toMatch(/other apps are moodboard;/);
   });
 
   it('gives the three preview steps in order, with the namespaced sandbox tool names', () => {
     const text = buildAssistantInstructions({
       sandbox: running,
+      apps: ['my-app'],
       canPreview: true,
       previewHost: null,
     });
@@ -35,6 +63,7 @@ describe('buildAssistantInstructions', () => {
   it('scaffolds through npx, because a sandbox cannot install the CLI globally', () => {
     const text = buildAssistantInstructions({
       sandbox: running,
+      apps: ['my-app'],
       canPreview: true,
       previewHost: null,
     });
@@ -47,6 +76,7 @@ describe('buildAssistantInstructions', () => {
   it('starts the dev server from the project directory, since the tool starts in /workspace', () => {
     const text = buildAssistantInstructions({
       sandbox: running,
+      apps: ['my-app'],
       canPreview: true,
       previewHost: null,
     });
@@ -58,6 +88,7 @@ describe('buildAssistantInstructions', () => {
   it('names the running preview host', () => {
     const text = buildAssistantInstructions({
       sandbox: running,
+      apps: ['my-app'],
       canPreview: true,
       previewHost: 'dev-0123456789abcdef.civit.ai',
     });
@@ -67,6 +98,7 @@ describe('buildAssistantInstructions', () => {
   it('tells the assistant not to start a preview when the account cannot', () => {
     const text = buildAssistantInstructions({
       sandbox: running,
+      apps: ['my-app'],
       canPreview: false,
       previewHost: null,
     });
@@ -81,6 +113,7 @@ describe('buildAssistantInstructions', () => {
   ] as const)('explains a %s sandbox', (state, note) => {
     const text = buildAssistantInstructions({
       sandbox: { ...running, state },
+      apps: ['my-app'],
       canPreview: true,
       previewHost: null,
     });
@@ -103,6 +136,7 @@ describe('buildAssistantSystemPrompt', () => {
         '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
         '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
         '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
+        '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
       ].join('\n')
     );

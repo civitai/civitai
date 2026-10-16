@@ -10,6 +10,16 @@ export function shouldRetrySandboxList(failureCount: number, error: unknown): bo
   return failureCount < 3;
 }
 
+/**
+ * Creates or resumes the sandbox for `app`, first suspending any other that runs: the service lets
+ * one run at a time and refuses the open otherwise.
+ */
+export async function openApp(client: SandboxClient, app: string) {
+  const others = (await client.list()).filter((s) => s.app !== app && s.state !== 'suspended');
+  for (const sandbox of others) await client.suspend(sandbox.name);
+  return client.open(app);
+}
+
 /** The caller's sandboxes, polled quickly while one is starting. */
 export function useSandboxes(client: SandboxClient | null) {
   const queryClient = useQueryClient();
@@ -27,7 +37,7 @@ export function useSandboxes(client: SandboxClient | null) {
   });
 
   const open = useMutation({
-    mutationFn: (app: string) => (client as SandboxClient).open(app),
+    mutationFn: (app: string) => openApp(client as SandboxClient, app),
     onSettled: refresh,
   });
   const suspend = useMutation({

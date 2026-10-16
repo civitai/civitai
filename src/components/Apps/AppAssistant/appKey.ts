@@ -1,20 +1,41 @@
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 
-/** The hosted sandbox service accepts an app key of 1–200 characters and nothing stricter. */
-export const APP_KEY_MAX_LENGTH = 200;
-
-/** Why `key` would be refused, or `null` when the sandbox service accepts it. */
-export function appKeyError(key: string): string | null {
-  if (key.trim().length === 0) return 'Enter a name for the app';
-  if (key.length > APP_KEY_MAX_LENGTH)
-    return `Keep it to ${APP_KEY_MAX_LENGTH} characters or fewer`;
-  return null;
-}
+const BLOCK_ID_MIN = 3;
+const BLOCK_ID_MAX = 40;
+const FALLBACK_APP_KEY = 'my-app';
 
 /**
  * Whether `key` can also be the app's `blockId`, which a live preview needs: the same rule submit
  * and the dev tunnel enforce on a slug.
  */
 export function isAppBlockId(key: string): boolean {
-  return key.length >= 3 && key.length <= 40 && SLUG_REGEX.test(key);
+  return key.length >= BLOCK_ID_MIN && key.length <= BLOCK_ID_MAX && SLUG_REGEX.test(key);
+}
+
+function slugify(name: string, maxLength: number): string {
+  const words = name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  // A blockId starts with a letter.
+  const slug = /^[0-9]/.test(words) ? `app-${words}` : words;
+  return slug.slice(0, maxLength).replace(/-+$/, '');
+}
+
+/**
+ * A readable key for a new app named `name`, unused among `taken`. It is always a valid `blockId`, so
+ * the app can be previewed under the same name.
+ */
+export function newAppKey(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken);
+  let base = slugify(name, BLOCK_ID_MAX);
+  if (base.length < BLOCK_ID_MIN) base = FALLBACK_APP_KEY;
+  if (!used.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`;
+    const key = `${slugify(base, BLOCK_ID_MAX - suffix.length)}${suffix}`;
+    if (!used.has(key)) return key;
+  }
 }
