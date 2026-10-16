@@ -261,81 +261,45 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
 export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | null;
 
 /**
- * The app's shared item stored under `key`, including a hidden one: from the App Blocks document
- * store when a shared document there holds the key, else from the app's legacy shared storage
- * (`shared_kv`). During the move to the document store an app's items can be in either, or in
- * both with the same key and author; the document store wins.
- *
- * A key held by more than one of the app's shared collections is ambiguous and reads as not
- * found: the card cannot say which item it is for. A document with no user author (an app- or
- * counter-created one) carries `authorUserId: null`, which matches no publisher.
- *
- * A store that cannot be read (either one) is a 503, never "not found": it cannot prove the
- * item is missing. The legacy store is read only when the document store has no match.
+ * The app's shared item stored under `key`, hidden included, from the document store or the
+ * legacy shared storage (`resolveSharedItem`). A key that does not name one item reads as not
+ * found. A document with no user author has `authorUserId: null`, which matches no publisher.
+ * A store that cannot be read is a 503, never "not found".
  */
 export async function readSharedItemForSubListing(
   appBlockId: string,
   key: string
 ): Promise<SharedItemRead> {
-  const unavailable = (err: unknown) => {
-    // An unprovisioned schema or an unavailable store cannot prove the item exists.
+  try {
+    const block = await dbRead.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: { blockId: true, manifest: true },
+    });
+    if (!block) return null;
+    const { resolveSharedItem } = await import('~/server/services/apps/shared-item-key');
+    const item = await resolveSharedItem({
+      appBlockId,
+      blockId: block.blockId,
+      manifest: block.manifest,
+      key,
+    });
+    if (item.kind === 'ambiguous') {
+      logToAxiom({
+        name: 'app-sub-listing-shared-key-ambiguous',
+        type: 'warning',
+        appBlockId,
+      }).catch(() => null);
+    }
+    return item.kind === 'found' ? { authorUserId: item.authorUid, hidden: item.hidden } : null;
+  } catch (err) {
+    // A store we cannot read cannot prove the item is missing.
     logToAxiom({
       name: 'app-sub-listing-shared-read-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
     }).catch(() => null);
-    return new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
-  };
-
-  let block: { blockId: string; manifest: unknown } | null;
-  try {
-    block = await dbRead.appBlock.findUnique({
-      where: { id: appBlockId },
-      select: { blockId: true, manifest: true },
-    });
-  } catch (err) {
-    throw unavailable(err);
+    throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
   }
-  if (!block) return null;
-
-  const { resolveDocStoreSharedItem } = await import(
-    '~/server/services/apps/doc-store-shared-item'
-  );
-  let doc: Awaited<ReturnType<typeof resolveDocStoreSharedItem>>;
-  try {
-    doc = await resolveDocStoreSharedItem({ appBlockId, manifest: block.manifest, key });
-  } catch (err) {
-    throw unavailable(err);
-  }
-  if (doc.kind === 'found') return { authorUserId: doc.authorUid, hidden: doc.hidden };
-  if (doc.kind === 'ambiguous') {
-    logToAxiom({
-      name: 'app-sub-listing-shared-key-ambiguous',
-      type: 'warning',
-      appBlockId,
-    }).catch(() => null);
-    return null;
-  }
-
-  const { sanitizeAppSlug, appSchemaIdent } = await import('~/server/utils/apps-slug');
-  const slug = sanitizeAppSlug(block.blockId);
-  if (!slug) return null;
-  const { requireAppsDb } = await import('~/server/db/appsDb');
-  let rows: { author_user_id: number; hidden: boolean }[];
-  try {
-    rows = (
-      await requireAppsDb().query<{ author_user_id: number; hidden: boolean }>(
-        `SELECT author_user_id, hidden_at IS NOT NULL AS hidden FROM ${appSchemaIdent(
-          slug
-        )}.shared_kv WHERE key = $1 LIMIT 1`,
-        [key]
-      )
-    ).rows;
-  } catch (err) {
-    throw unavailable(err);
-  }
-  const row = rows[0];
-  return row ? { authorUserId: row.author_user_id, hidden: row.hidden } : null;
 }
 
 /**
@@ -1281,7 +1245,10 @@ export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
   itemKey: string;
   change: 'withdrawn' | 'hidden';
-  /** For `withdrawn`: only the author's own item follows their withdraw. */
+  /**
+   * Only this author's card follows. Required for `withdrawn`; for `hidden`, given when the key
+   * alone may name another author's item (the document store: one key in several collections).
+   */
   authorUserId?: number;
   /** For `hidden`: the moderator who hid the shared row. */
   moderatorId?: number;
@@ -1306,7 +1273,7 @@ export async function syncSubListingForSharedRow(
     const where: Prisma.AppSubListingWhereInput = {
       parentListingId: parent.id,
       itemKey: args.itemKey,
-      ...(args.change === 'withdrawn' ? { authorUserId: args.authorUserId } : {}),
+      ...(args.authorUserId != null ? { authorUserId: args.authorUserId } : {}),
     };
     // Moves a store-hidden row's version so a restore that read the shared row as live fails
     // its compare-and-set. Best-effort on its own: a failed touch must not stop the transition.

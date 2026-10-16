@@ -31,7 +31,10 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimit>()),
   checkSubListingWriteRateLimit: mockRateLimit,
 }));
-vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQuery }) }));
+vi.mock('~/server/db/appsDb', () => ({
+  appsDb: {},
+  requireAppsDb: () => ({ query: mockPoolQuery }),
+}));
 vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
 // The App Blocks document store's server lookup (its SQL is covered against a real Postgres in
 // `shared-item-doc-store.pglite.test.ts`).
@@ -142,7 +145,7 @@ beforeEach(() => {
   // The app's block and approved manifest: no document-store collections, so the shared item
   // is read from the legacy store unless a case declares some.
   read.appBlock.findUnique.mockResolvedValue({ blockId: 'custom-generators', manifest: null });
-  mockFindShared.mockResolvedValue([]);
+  mockFindShared.mockResolvedValue({ matches: [], deleted: false });
   // The pre-visibility-check read (owner only). Kept answering "yours" so a regression to an
   // ownership-only check would ACCEPT the unpublished image below rather than fail for an
   // unrelated reason.
@@ -263,34 +266,42 @@ describe('upsertSubListing — refusals', () => {
         },
       },
     };
+    const docHit = (authorUid: number | null, hidden = false) => ({
+      matches: [{ collection: 'generators', authorUid, hidden }],
+      deleted: false,
+    });
     beforeEach(() => {
       read.appBlock.findUnique.mockResolvedValue({
         blockId: 'custom-generators',
         manifest: DOC_MANIFEST,
       });
+      mockPoolQuery.mockResolvedValue({ rows: [] });
     });
 
     it('publishes an item that exists only in the document store', async () => {
-      mockFindShared.mockResolvedValueOnce([
-        { collection: 'generators', authorUid: AUTHOR, hidden: false },
-      ]);
-      mockPoolQuery.mockResolvedValue({ rows: [] });
+      mockFindShared.mockResolvedValueOnce(docHit(AUTHOR));
       await expect(upsert()).resolves.toMatchObject({ status: 'pending', pendingEdit: false });
       // Asked for the calling app, its SHARED collections only, and the item's key.
       expect(mockFindShared).toHaveBeenCalledWith('apb_1', ['generators'], 'gen-1');
-      expect(mockPoolQuery).not.toHaveBeenCalled();
     });
 
     it("refuses a document-store item that is hidden, or that is someone else's", async () => {
-      mockFindShared.mockResolvedValueOnce([
-        { collection: 'generators', authorUid: AUTHOR, hidden: true },
-      ]);
+      mockFindShared.mockResolvedValueOnce(docHit(AUTHOR, true));
       await expectError(upsert(), 404, 'item_not_found');
-      mockFindShared.mockResolvedValueOnce([
-        { collection: 'generators', authorUid: 7, hidden: false },
-      ]);
+      mockFindShared.mockResolvedValueOnce(docHit(7));
       await expectError(upsert(), 403, 'not_your_item');
       expect(write.appSubListing.create).not.toHaveBeenCalled();
+    });
+
+    it('an app that declares no shared collection is read from the legacy store, with no document-store query', async () => {
+      read.appBlock.findUnique.mockResolvedValue({
+        blockId: 'custom-generators',
+        manifest: { storage: { collections: { drafts: { visibility: 'private' } } } },
+      });
+      mockPoolQuery.mockResolvedValue({ rows: [{ author_user_id: AUTHOR, hidden: false }] });
+      await expect(upsert()).resolves.toMatchObject({ status: 'pending' });
+      expect(mockFindShared).not.toHaveBeenCalled();
+      expect(mockPoolQuery).toHaveBeenCalledTimes(1);
     });
 
     it('a document-store read failure is a 503, not a fall back to the legacy store', async () => {
@@ -758,6 +769,21 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
     expect(casWrite(1).data).toMatchObject({ status: 'hidden', moderatedById: 9 });
   });
 
+  it("a moderator hide naming the item's author hides only that author's card", async () => {
+    await syncSubListingForSharedRow({
+      appBlockId: 'apb_1',
+      itemKey: 'gen-1',
+      change: 'hidden',
+      authorUserId: AUTHOR,
+      moderatorId: 9,
+    });
+    const wheres = write.appSubListing.updateMany.mock.calls.map((c) => c[0].where);
+    expect(wheres).toHaveLength(3);
+    for (const where of wheres) {
+      expect(where).toMatchObject({ itemKey: 'gen-1', authorUserId: AUTHOR });
+    }
+  });
+
   // A store-side restore reads the shared row, then compare-and-sets the hidden row. Moving the
   // hidden row's version here makes a restore that read the row just before this change fail.
   it.each(['hidden', 'withdrawn'] as const)(
@@ -940,7 +966,7 @@ describe('moderateSubListing', () => {
 
   it('restore is refused when the parent listing has no backing block', async () => {
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
-    read.appListing.findUnique.mockResolvedValueOnce({ appBlock: null });
+    read.appListing.findUnique.mockResolvedValueOnce({ kind: 'onsite', appBlockId: null });
     await expectError(mod({ id: 'asl_x', action: 'restore' }), 409, 'invalid_transition');
     expect(mockPoolQuery).not.toHaveBeenCalled();
     expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
@@ -962,13 +988,19 @@ describe('moderateSubListing', () => {
       },
     });
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
-    mockFindShared.mockResolvedValueOnce([
-      { collection: 'generators', authorUid: AUTHOR, hidden: true },
-    ]);
+    mockFindShared.mockResolvedValueOnce({
+      matches: [{ collection: 'generators', authorUid: AUTHOR, hidden: true }],
+      deleted: false,
+    });
     // A stale legacy copy of the item is still visible: the document store's state decides.
     mockPoolQuery.mockResolvedValue({ rows: [{ author_user_id: AUTHOR, hidden: false }] });
     await expectError(mod({ id: 'asl_x', action: 'restore' }), 409, 'invalid_transition');
     expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+    // The parent listing's own app, its shared collection and the card's key.
+    expect(read.appBlock.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'apb_1' } })
+    );
+    expect(mockFindShared).toHaveBeenCalledWith('apb_1', ['generators'], 'gen-1');
   });
 
   it('restore fails closed when the app storage cannot be read', async () => {

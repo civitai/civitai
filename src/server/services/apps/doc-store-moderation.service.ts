@@ -35,13 +35,14 @@ import type {
   ReportedDocRow,
 } from '~/server/services/apps/doc-store';
 import { logToAxiom } from '~/server/logging/client';
+import { PUBLISHED_NS } from '~/server/services/apps/doc-store';
 import { getDocStoreModeration } from '~/server/services/apps/doc-store-moderation.instance';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 
 /** The namespace moderators act in. */
-export const MOD_NS = 'prod';
+export const MOD_NS = PUBLISHED_NS;
 
 /** Per-app store transactions in flight at once while building the queue. */
 export const MOD_APP_CONCURRENCY = 4;
@@ -294,7 +295,9 @@ async function audited<T extends Record<string, unknown>>(
     key: string;
     expectedRevision?: number;
   },
-  run: (ifRevision: number) => Promise<T>
+  run: (ifRevision: number) => Promise<T>,
+  /** Awaited once the action has applied, with the snapshot it acted on. */
+  applied?: (before: ModeratedDoc) => Promise<void>
 ): Promise<T & { auditEventId: string }> {
   const { app, collection, key } = args;
   // The snapshot is what the moderator acted on; a missing or changed document refuses the
@@ -368,6 +371,7 @@ async function audited<T extends Record<string, unknown>>(
       },
     })
     .catch(() => undefined);
+  await applied?.(before);
   return { ...result, auditEventId: id };
 }
 
@@ -382,7 +386,7 @@ export async function setModeratedDocHidden(input: {
   revision?: number;
 }) {
   const app = await resolveApp(input.appBlockId);
-  const result = await audited(
+  return audited(
     { ...input, app, action: input.hidden ? 'hide' : 'unhide', expectedRevision: input.revision },
     async (ifRevision) =>
       getDocStoreModeration().setHidden(
@@ -393,12 +397,11 @@ export async function setModeratedDocHidden(input: {
         input.hidden,
         input.actorUserId,
         { ifRevision }
-      )
+      ),
+    // Unhide leaves the card as it is: a moderator restores it from the store queue, which
+    // re-checks that the item is live.
+    input.hidden ? (before) => hideStoreCard(app.appBlockId, before, input.actorUserId) : undefined
   );
-  // Unhide leaves the card as it is: a moderator restores it from the store queue, which
-  // re-checks that the item is live. The legacy shared storage has no unhide either.
-  if (input.hidden) await hideStoreCard(app.appBlockId, input.key, input.actorUserId);
-  return result;
 }
 
 /** Hard-delete one shared document (irreversible). */
@@ -411,23 +414,34 @@ export async function deleteModeratedDoc(input: {
   revision?: number;
 }) {
   const app = await resolveApp(input.appBlockId);
-  const result = await audited(
+  return audited(
     { ...input, app, action: 'delete', expectedRevision: input.revision },
     async (ifRevision) =>
       getDocStoreModeration().delete(app.appBlockId, MOD_NS, input.collection, input.key, {
         ifRevision,
-      })
+      }),
+    (before) => hideStoreCard(app.appBlockId, before, input.actorUserId)
   );
-  await hideStoreCard(app.appBlockId, input.key, input.actorUserId);
-  return result;
 }
 
 /**
- * Hidden or deleted in the app ⇒ the item's App Store card is hidden too, as the legacy
- * shared-storage moderator hide does — also when the document was already hidden. Best-effort.
+ * Hides the card of the item the document is: its author's card for the key, also when the
+ * document was already hidden. The same key in another collection may be another author's
+ * item, so the author is part of the match; a document no user authored backs no card.
  */
-function hideStoreCard(appBlockId: string, key: string, moderatorId: number): Promise<void> {
-  return syncStoreItem({ appBlockId, itemKey: key, change: 'hidden', moderatorId });
+async function hideStoreCard(
+  appBlockId: string,
+  doc: ModeratedDoc,
+  moderatorId: number
+): Promise<void> {
+  if (doc.authorKind !== 'user' || doc.authorUid == null) return;
+  await syncStoreItem({
+    appBlockId,
+    itemKey: doc.key,
+    change: 'hidden',
+    authorUserId: doc.authorUid,
+    moderatorId,
+  });
 }
 
 /** Dismiss the open reports on a document reviewed and kept; later reports re-open it. */

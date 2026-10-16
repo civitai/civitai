@@ -743,7 +743,14 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
 
 describe("the item's App Store card follows a moderator hide or delete, as for legacy shared rows", () => {
   const A1 = { appBlockId: APP_A.id, collection: 'posts', key: 'a1' };
-  const hidden = { appBlockId: APP_A.id, itemKey: 'a1', change: 'hidden', moderatorId: MOD.id };
+  // Scoped to the document's author: the same key in another collection may be another item.
+  const hidden = {
+    appBlockId: APP_A.id,
+    itemKey: 'a1',
+    change: 'hidden',
+    authorUserId: VIEWER_1,
+    moderatorId: MOD.id,
+  };
   beforeEach(() => {
     cardSync.calls = [];
     cardSync.fail = false;

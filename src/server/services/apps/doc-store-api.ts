@@ -752,9 +752,8 @@ async function run(
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
         const result = await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion });
-        // The author removed a published item: its App Store card follows, as it does for a
-        // legacy shared-storage withdraw. Production only — a dev namespace's key is not the
-        // published item's. Best-effort; never fails the delete.
+        // The author removed a published item: its App Store card follows. Production only: a
+        // dev namespace's key is not the published item's.
         if (result.deleted && shared && ctx.ns === PUBLISHED_NS) {
           await syncStoreItem({
             appBlockId: ctx.appId,

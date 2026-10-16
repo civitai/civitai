@@ -36,6 +36,8 @@ const h = vi.hoisted(() => ({
   lookup: undefined as unknown,
   legacy: new Map<string, { author: number; hidden: boolean }>(),
   legacyCalls: 0,
+  /** Error code the legacy store fails with (null: it answers). */
+  legacyFailure: null as string | null,
 }));
 
 vi.mock('~/server/services/apps/doc-store-lookup.instance', () => ({
@@ -44,9 +46,12 @@ vi.mock('~/server/services/apps/doc-store-lookup.instance', () => ({
 // The legacy per-app shared store: rows keyed by "<schema>/<key>". The attribution read asks
 // for visible rows only (`hidden_at IS NULL`); the sub-listing read for any row.
 vi.mock('~/server/db/appsDb', () => ({
+  appsDb: {},
   requireAppsDb: () => ({
     query: async (sql: string, params: unknown[]) => {
       h.legacyCalls += 1;
+      if (h.legacyFailure)
+        throw Object.assign(new Error('legacy store'), { code: h.legacyFailure });
       const schema = /FROM\s+("[a-z0-9_]+")\.shared_kv/.exec(sql)?.[1];
       const row = h.legacy.get(`${schema}/${String(params[0])}`);
       if (!row || (row.hidden && sql.includes('hidden_at IS NULL'))) return { rows: [] };
@@ -79,6 +84,12 @@ const MANIFEST = {
       tallies: { visibility: 'shared', write: 'none', counters: ['plays'] },
     },
   },
+};
+
+/** A storage declaration the parser refuses. */
+const BROKEN_MANIFEST = { storage: { collections: { posts: { visibility: 'bogus' } } } };
+const BOARD_ONLY_MANIFEST = {
+  storage: { collections: { board: { visibility: 'shared', write: 'own' } } },
 };
 
 let appSeq = 0;
@@ -125,6 +136,7 @@ function defineSuite(rls: boolean) {
       h.lookup = docStore.createDocStoreLookup?.({ db });
       h.legacy.clear();
       h.legacyCalls = 0;
+      h.legacyFailure = null;
       dbMock.dbRead.appBlock.findUnique.mockImplementation(
         async ({ where }: { where: { id: string } }) => apps.get(where.id) ?? null
       );
@@ -136,14 +148,13 @@ function defineSuite(rls: boolean) {
       mod.setHidden(app, NS_PROD, coll.name, key, true, MOD);
 
     describe('readSharedItemForSubListing', () => {
-      it('a document-store item resolves to its author, without reading the legacy store', async () => {
+      it('a document-store item resolves to its author', async () => {
         const app = freshApp();
         await put(app, POSTS, 'item-1', DOC_AUTHOR);
         expect(await subListing(app, 'item-1')).toEqual({
           authorUserId: DOC_AUTHOR,
           hidden: false,
         });
-        expect(h.legacyCalls).toBe(0);
       });
 
       it('a hidden document-store item reads as hidden, as a hidden legacy row does', async () => {
@@ -153,11 +164,44 @@ function defineSuite(rls: boolean) {
         expect(await subListing(app, 'item-2')).toEqual({ authorUserId: DOC_AUTHOR, hidden: true });
       });
 
-      it('during the move, the document store wins over a legacy row with the same key', async () => {
+      it('during the move, an item copied with its author resolves once; hidden in either store is hidden', async () => {
         const app = freshApp();
         await put(app, POSTS, 'both', DOC_AUTHOR);
-        legacyRow(app, 'both', LEGACY_AUTHOR);
+        legacyRow(app, 'both', DOC_AUTHOR);
         expect(await subListing(app, 'both')).toEqual({ authorUserId: DOC_AUTHOR, hidden: false });
+        legacyRow(app, 'both', DOC_AUTHOR, true);
+        expect(await subListing(app, 'both')).toEqual({ authorUserId: DOC_AUTHOR, hidden: true });
+      });
+
+      it("a document under a legacy item's key by another author is not that item", async () => {
+        const app = freshApp();
+        legacyRow(app, 'taken', LEGACY_AUTHOR);
+        await put(app, POSTS, 'taken', OTHER_AUTHOR);
+        expect(await subListing(app, 'taken')).toBeNull();
+      });
+
+      it('an item deleted from the document store is gone, though its legacy copy remains', async () => {
+        const app = freshApp();
+        await put(app, POSTS, 'gone', DOC_AUTHOR);
+        legacyRow(app, 'gone', DOC_AUTHOR);
+        await store.delete(ctx(app, NS_PROD, DOC_AUTHOR), POSTS, 'gone');
+        expect(await subListing(app, 'gone')).toBeNull();
+        // Positive control: re-created, it resolves again.
+        await put(app, POSTS, 'gone', DOC_AUTHOR);
+        expect(await subListing(app, 'gone')).toEqual({ authorUserId: DOC_AUTHOR, hidden: false });
+      });
+
+      it('a document-store item of an app with no legacy schema resolves; a legacy outage is a 503', async () => {
+        const app = freshApp();
+        await put(app, POSTS, 'new-only', DOC_AUTHOR);
+        h.legacyFailure = '42P01';
+        expect(await subListing(app, 'new-only')).toEqual({
+          authorUserId: DOC_AUTHOR,
+          hidden: false,
+        });
+        h.legacyFailure = '57P01';
+        const err = await subListing(app, 'new-only').catch((e: unknown) => e);
+        expect(err).toMatchObject({ status: 503, code: 'unavailable' });
       });
 
       it('no document: the legacy row resolves, hidden state included (unchanged behaviour)', async () => {
@@ -239,6 +283,21 @@ function defineSuite(rls: boolean) {
         h.lookup = docStore.createDocStoreLookup?.({ db: null });
         expect(await subListing(app, 'k')).toEqual({ authorUserId: LEGACY_AUTHOR, hidden: false });
       });
+
+      it('an approved manifest that does not parse is a 503, not a fall back to the legacy store', async () => {
+        const app = freshApp(BROKEN_MANIFEST);
+        legacyRow(app, 'k', LEGACY_AUTHOR);
+        const err = await subListing(app, 'k').catch((e: unknown) => e);
+        expect(err).toMatchObject({ status: 503, code: 'unavailable' });
+        expect(h.legacyCalls).toBe(0);
+      });
+
+      it('a collection the approved manifest no longer declares is not read', async () => {
+        const app = freshApp();
+        await put(app, POSTS, 'undeclared', DOC_AUTHOR);
+        apps.set(app, { blockId: app, manifest: BOARD_ONLY_MANIFEST });
+        expect(await subListing(app, 'undeclared')).toBeNull();
+      });
     });
 
     describe('resolvePublishedContentAuthorUserId', () => {
@@ -256,11 +315,37 @@ function defineSuite(rls: boolean) {
         expect(await attribution(app, 'gen-2')).toBeNull();
       });
 
-      it('during the move, the document store wins over a legacy row with the same key', async () => {
+      it('during the move, an item copied with its author resolves; hidden in either store is nobody', async () => {
         const app = freshApp();
         await put(app, POSTS, 'both', DOC_AUTHOR);
-        legacyRow(app, 'both', LEGACY_AUTHOR);
+        legacyRow(app, 'both', DOC_AUTHOR);
         expect(await attribution(app, 'both')).toBe(DOC_AUTHOR);
+        legacyRow(app, 'both', DOC_AUTHOR, true);
+        expect(await attribution(app, 'both')).toBeNull();
+      });
+
+      it("a document under a legacy item's key by another author attributes nobody", async () => {
+        const app = freshApp();
+        legacyRow(app, 'taken', LEGACY_AUTHOR);
+        await put(app, POSTS, 'taken', OTHER_AUTHOR);
+        expect(await attribution(app, 'taken')).toBeNull();
+      });
+
+      it('an item deleted from the document store attributes nobody, though its legacy copy remains', async () => {
+        const app = freshApp();
+        await put(app, POSTS, 'gone', DOC_AUTHOR);
+        legacyRow(app, 'gone', DOC_AUTHOR);
+        await store.delete(ctx(app, NS_PROD, DOC_AUTHOR), POSTS, 'gone');
+        expect(await attribution(app, 'gone')).toBeNull();
+      });
+
+      it('a document-store item of an app with no legacy schema resolves; a legacy outage is nobody', async () => {
+        const app = freshApp();
+        await put(app, POSTS, 'new-only', DOC_AUTHOR);
+        h.legacyFailure = '42P01';
+        expect(await attribution(app, 'new-only')).toBe(DOC_AUTHOR);
+        h.legacyFailure = '57P01';
+        expect(await attribution(app, 'new-only')).toBeNull();
       });
 
       it('no document: a visible legacy row resolves, a hidden one does not (unchanged behaviour)', async () => {
@@ -337,6 +422,13 @@ function defineSuite(rls: boolean) {
         h.lookup = docStore.createDocStoreLookup?.({ db: null });
         expect(await attribution(app, 'k')).toBe(LEGACY_AUTHOR);
       });
+
+      it('an approved manifest that does not parse attributes nobody and does not read the legacy store', async () => {
+        const app = freshApp(BROKEN_MANIFEST);
+        legacyRow(app, 'k', LEGACY_AUTHOR);
+        expect(await attribution(app, 'k')).toBeNull();
+        expect(h.legacyCalls).toBe(0);
+      });
     });
   });
 }
@@ -352,9 +444,9 @@ describe('the cross-collection lookup is reachable from the two key resolvers on
       'server/services/apps/doc-store-lookup.instance.ts',
     ]);
     expect(importersOf('server/services/apps/doc-store-lookup.instance')).toEqual([
-      'server/services/apps/doc-store-shared-item.ts',
+      'server/services/apps/shared-item-key.ts',
     ]);
-    expect(importersOf('server/services/apps/doc-store-shared-item')).toEqual([
+    expect(importersOf('server/services/apps/shared-item-key')).toEqual([
       'server/services/blocks/app-sub-listing.service.ts',
       'server/services/blocks/buzz-attribution.service.ts',
     ]);

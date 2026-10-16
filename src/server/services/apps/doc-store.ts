@@ -567,11 +567,11 @@ const SQL_SHARE_LOCK_DOC = `SELECT 1 AS ok FROM appdata.doc d
     AND ${VISIBLE}
   FOR KEY SHARE`;
 
-// Server-side lookup of one key across the app's SHARED collections (see `createDocStoreLookup`).
-// Hidden rows included, so the caller can tell hidden from missing. Each `coll = ANY` element is
-// a primary-key probe. LIMIT 2 is enough to tell one match from several. Only a user-authored
-// document has an author here: a counter document's `author_uid` is whoever incremented it
-// first, which is not authorship. $1 app, $2 ns, $3 collection names, $4 key
+// Server-side lookup of one key across the app's SHARED collections. Hidden rows included, so
+// the caller can tell hidden from missing. LIMIT 2 is enough to tell one match from several.
+// Only a user-authored document has an author here: a counter document's `author_uid` is
+// whoever incremented it first, which is not authorship. $1 app, $2 ns, $3 collection names,
+// $4 key
 const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
     CASE WHEN d.author_kind = 'user' THEN d.author_uid END AS author_uid,
     d.hidden_at IS NOT NULL AS hidden
@@ -580,6 +580,14 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
     AND d.key = $4
   ORDER BY d.coll
   LIMIT 2`;
+
+// Whether a shared document under the key was deleted (author, moderator or account wipe): the
+// key then names a removed item. Read only when no document holds the key, so a re-created
+// document wins. $1 app, $2 ns, $3 collection names, $4 key
+const SQL_LOOKUP_SHARED_TOMB = `SELECT 1 AS ok FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = ANY($3::text[]) AND tb.scope_uid = 0
+    AND tb.key = $4
+  LIMIT 1`;
 
 // The kind is a literal: this statement can only ever write a counter row.
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
@@ -983,9 +991,7 @@ export type DocStoreMaintenance = ReturnType<typeof createDocStoreMaintenance>;
 
 /**
  * SERVER LOOKUP — resolve an app-supplied shared key to its document's author and hidden state,
- * for server code that checks a published item (App Store sub-listings, spend attribution). A
- * separate object from the viewer store; only `doc-store-lookup.instance.ts` builds one in
- * production.
+ * for server code that checks a published item (App Store sub-listings, spend attribution).
  */
 export function createDocStoreLookup(deps: DocStoreDeps) {
   return buildDocStore(deps).lookup;
@@ -1001,6 +1007,13 @@ export type SharedKeyMatch = {
   /** Null for a document no user authored (an `app` or `counter` document). */
   authorUid: number | null;
   hidden: boolean;
+};
+
+export type SharedKeyLookup = {
+  /** At most two. */
+  matches: SharedKeyMatch[];
+  /** No document holds the key, but one did and was deleted. */
+  deleted: boolean;
 };
 
 function buildDocStore(deps: DocStoreDeps) {
@@ -1840,29 +1853,33 @@ function buildDocStore(deps: DocStoreDeps) {
     limits,
   };
   /**
-   * The shared documents of `appId` stored under `key` in any of `collections`, in the
-   * production namespace (`PUBLISHED_NS`), hidden ones included. At most two are returned: enough
-   * for the caller to tell one match from several (the primary key includes the collection, so
-   * one key can exist in more than one collection). A key the store could never hold, or no
-   * collections, returns `[]` without a query.
+   * Shared documents of `appId` under `key` in any of `collections`, production namespace only,
+   * hidden included: at most two, enough to tell one match from several. With none, whether one
+   * was deleted. Nothing is queried when there is no valid collection or key.
    */
   async function findSharedByKey(
     appId: string,
     collections: readonly string[],
     key: string
-  ): Promise<SharedKeyMatch[]> {
+  ): Promise<SharedKeyLookup> {
     const names = collections.filter((n) => B.collectionName.test(n));
-    if (names.length === 0 || !B.key.test(key) || DOT_ONLY_KEY.test(key)) return [];
+    if (names.length === 0 || !B.key.test(key) || DOT_ONLY_KEY.test(key)) {
+      return { matches: [], deleted: false };
+    }
     const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
-    const rows = await withTx(
-      ctx,
-      async (c) => (await c.query(SQL_LOOKUP_SHARED_KEY, [ctx.appId, ctx.ns, names, key])).rows
-    );
-    return rows.map((r) => ({
-      collection: r.coll as string,
-      authorUid: r.author_uid === null || r.author_uid === undefined ? null : Number(r.author_uid),
-      hidden: r.hidden === true,
-    }));
+    return withTx(ctx, async (c) => {
+      const params = [ctx.appId, ctx.ns, names, key];
+      const rows = (await c.query(SQL_LOOKUP_SHARED_KEY, params)).rows;
+      const matches = rows.map((r) => ({
+        collection: r.coll as string,
+        authorUid:
+          r.author_uid === null || r.author_uid === undefined ? null : Number(r.author_uid),
+        hidden: r.hidden === true,
+      }));
+      const deleted =
+        matches.length === 0 && (await c.query(SQL_LOOKUP_SHARED_TOMB, params)).rows.length > 0;
+      return { matches, deleted };
+    });
   }
 
   return {

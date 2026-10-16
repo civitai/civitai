@@ -35,7 +35,7 @@ import {
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
-import { reviewNamespace } from '~/server/services/apps/doc-store';
+import { PUBLISHED_NS, reviewNamespace } from '~/server/services/apps/doc-store';
 import type { DocStoreContext } from '~/server/services/apps/doc-store.types';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import type { SessionUser } from '~/types/session';
@@ -170,7 +170,7 @@ export async function resolveStorageAccess(
   }
   if (viewerUid !== null) await assertRunEnabled(viewerUid);
 
-  let ns = 'prod';
+  let ns = PUBLISHED_NS;
   if (claims.dev === true) {
     // The dev namespace is per developer, so it needs one.
     if (viewerUid === null) throw new DocStoreError('sign_in_required', 'sign in required');

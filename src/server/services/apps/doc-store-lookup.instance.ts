@@ -1,6 +1,6 @@
-// The process's document-store SERVER LOOKUP (`findSharedByKey`), on the same least-privilege
-// pool as the viewer store but as a separate object, so the block-token routes' store carries no
-// cross-collection read. Used by `doc-store-shared-item.ts`.
+// The process's document-store SERVER LOOKUP (`findSharedByKey`): the same least-privilege pool as
+// the viewer store, but a separate object, so the block-token routes' store carries no
+// cross-collection read.
 import { appdataDb } from '~/server/db/appdataDb';
 import { logToAxiom } from '~/server/logging/client';
 import type { DocStoreLookup } from '~/server/services/apps/doc-store';
