@@ -646,25 +646,26 @@ const redetectedBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) =>
     AND ${searchPredicate(search, userRefs)}
 `;
 
-/** The predicate a partial index on text-scan flags would carry, repeated in every query so that the
- *  index (not yet migrated: `CREATE INDEX CONCURRENTLY "Model_textScanFlagged_idx" ON "Model" (id)
- *  WHERE <this>`) is picked up the moment it exists. Without it the queries scan "Model". */
+/** The predicate of the partial index `Model_textScanFlagged_idx` (hand-applied migration
+ *  `20261101130000_model_text_scan_flagged_idx`), repeated in every query so the index is used. Until
+ *  it is applied in prod these queries scan "Model", and the bounded sidebar count absorbs that. */
 const textScanIndexPredicate = sql`
   (m.meta->'textScanFlags'->'minor' ? 'workflowId'
     OR m.meta->'textScanFlags'->'poi' ? 'workflowId')
 `;
 
 /** A text-scan flag is waiting for a ruling while its entry has a workflow and no ruling stub, and
- *  the live column still carries it. A minor flag a hash sweep also raised is listed by the hash
- *  branch, so it is left out here (the poi label has no hash twin). */
-const textScanFlaggedPredicate = (search: MinorSearch | undefined) => sql`
+ *  the live column still carries it. A minor flag the hash sweep owns (any snapshot, whatever its
+ *  window or source) is ruled through the hash branch and never relisted here, even after it was
+ *  confirmed, accepted or aged out. The poi label has no hash twin. */
+const textScanFlaggedPredicate = sql`
   ${textScanIndexPredicate}
   AND l.entry ? 'workflowId'
   AND NOT l.entry ? 'appealUpheld'
   AND NOT l.entry ? 'appealGranted'
   AND NOT l.entry ? 'redetected'
   AND CASE WHEN l.label = 'minor' THEN m.minor ELSE m.poi END
-  AND NOT (l.label = 'minor' AND ${hashFlaggedPredicate(search)})
+  AND NOT (l.label = 'minor' AND m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY})
 `;
 
 const textScanBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
@@ -681,7 +682,7 @@ const textScanBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => s
   FROM "Model" m
   ${redetectedLabelsJoin}
   LEFT JOIN "User" u ON u.id = m."userId"
-  WHERE ${textScanFlaggedPredicate(search)}
+  WHERE ${textScanFlaggedPredicate}
     AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
     AND ${searchPredicate(search, userRefs)}
 `;
@@ -818,7 +819,7 @@ export async function getTextScanFlaggedCount({
     FROM "Model" m
     ${redetectedLabelsJoin}
     ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
-    WHERE ${textScanFlaggedPredicate(search)}
+    WHERE ${textScanFlaggedPredicate}
       AND ${flag === 'all' ? sql`TRUE` : sql`l.label = ${flag}`}
       AND ${searchPredicate(search, userRefs)}
   `.execute(dbRead);

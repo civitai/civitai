@@ -56,6 +56,10 @@ and `2` pick the verdict and the reason fields take focus; rows that record no r
 - The grants for the new paths are copied from the three old pages by a **hand-applied** migration,
   `packages/civitai-db-schema/prisma/migrations/20261101120000_moderator_model_flags_pages/`. Apply it before the
   release that ships the section; it is idempotent and leaves the old rows in place for rollback.
+- `20261101130000_model_text_scan_flagged_idx` is a hand-applied partial index on
+  `Model (id) WHERE meta->'textScanFlags'->'minor' ? 'workflowId' OR meta->'textScanFlags'->'poi' ? 'workflowId'`
+  for the text-scan Flagged branch. The queries repeat its predicate; until it is applied they scan
+  `"Model"` (about 1 s on dev), so the sidebar count stays bounded.
 
 ## Old URLs
 
@@ -80,7 +84,4 @@ tab is its own key):
 
 ## Not yet built
 
-- An index for the text-scan Flagged branch. The queries repeat the predicate of a future partial index on
-  `Model (id) WHERE meta->'textScanFlags'->'minor' ? 'workflowId' OR meta->'textScanFlags'->'poi' ? 'workflowId'`,
-  but until that migration is applied they scan `"Model"` (about 1 s on dev), so the sidebar count is bounded.
 - Reasons on the set-minor, dismiss, confirm and revert endpoints.

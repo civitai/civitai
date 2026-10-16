@@ -581,6 +581,66 @@ describe('text-scan auto-flags', () => {
     expect(await keys({ filters: onlyTextScan })).not.toContain('31:minor:text-scan');
   });
 
+  describe('a minor flag the hash sweep owns', () => {
+    const textScan = async () => ({
+      keys: await keys({ filters: onlyTextScan }),
+      count: await getTextScanFlaggedCount(),
+    });
+
+    it('is not relisted once its snapshot is past the review window', async () => {
+      await seed(
+        40,
+        1,
+        { minor: true },
+        {
+          minorFlagSnapshot: { source: 'auto', at: daysAgo(40), prevNsfw: true },
+          textScanFlags: { minor: entry(daysAgo(41)) },
+        }
+      );
+      const { keys: listed, count } = await textScan();
+      expect(listed).not.toContain('40:minor:text-scan');
+      expect(count).toBe(3);
+    });
+
+    it('is not relisted once a moderator confirmed it', async () => {
+      await seed(
+        41,
+        1,
+        { minor: true },
+        {
+          minorFlagSnapshot: { source: 'manual', at: daysAgo(2), prevNsfw: true },
+          textScanFlags: { minor: entry(daysAgo(3)) },
+        }
+      );
+      const { keys: listed, count } = await textScan();
+      expect(listed).not.toContain('41:minor:text-scan');
+      expect(count).toBe(3);
+    });
+
+    it('still lists the poi row of a model whose minor flag the hash sweep owns', async () => {
+      await seed(
+        42,
+        1,
+        { minor: true, poi: true },
+        {
+          minorFlagSnapshot: { source: 'auto', at: daysAgo(40), prevNsfw: true },
+          textScanFlags: { minor: entry(daysAgo(41)), poi: entry(daysAgo(41)) },
+        }
+      );
+      const { keys: listed, count } = await textScan();
+      expect(listed).toContain('42:poi:text-scan');
+      expect(listed).not.toContain('42:minor:text-scan');
+      expect(count).toBe(4);
+    });
+
+    it('lists a plain text-scan minor flag with no snapshot', async () => {
+      await seed(43, 1, { minor: true }, { textScanFlags: { minor: entry(daysAgo(3)) } });
+      const { keys: listed, count } = await textScan();
+      expect(listed).toContain('43:minor:text-scan');
+      expect(count).toBe(4);
+    });
+  });
+
   it('filters by source and by flag', async () => {
     expect(await keys({ filters: onlyTextScan })).toEqual([
       '31:poi:text-scan',
