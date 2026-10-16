@@ -205,7 +205,8 @@ const blockTextToImageBodySchema = z.object({
   // Optional GENERIC published-content-author attribution basis. The opaque
   // shared-storage `key` of the cross-user published content this generation
   // is running on behalf of — the app supplies it out-of-band from its own
-  // shared storage (`app_<slug>.shared_kv`). When present, the server resolves
+  // shared data (a document in one of its shared document-store collections, or a
+  // legacy `app_<slug>.shared_kv` row). When present, the server resolves
   // it (SERVER-SIDE, off the submit critical path) to the content's AUTHOR and
   // records that user as the payout basis on the spend-attribution row. Purely
   // opaque + advisory here: this is NEVER trusted as an author (the author is

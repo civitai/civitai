@@ -228,7 +228,6 @@ type ResolvedParent = {
   id: string;
   slug: string;
   contentRating: string | null;
-  blockId: string;
   enabled: boolean;
   maxPerAuthor: number;
 };
@@ -242,7 +241,7 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
         id: true,
         slug: true,
         contentRating: true,
-        appBlock: { select: { blockId: true } },
+        appBlock: { select: { id: true } },
         subListingParent: { select: { enabled: true, maxPerAuthor: true } },
       },
     });
@@ -251,7 +250,6 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
       id: listing.id,
       slug: listing.slug,
       contentRating: listing.contentRating,
-      blockId: listing.appBlock.blockId,
       enabled: listing.subListingParent?.enabled ?? false,
       maxPerAuthor: listing.subListingParent?.maxPerAuthor ?? 0,
     };
@@ -260,15 +258,67 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
   }
 }
 
-export type SharedItemRead = { authorUserId: number; hidden: boolean } | null;
+export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | null;
 
-/** The app's shared-storage row for `key`, including a hidden one. */
+/**
+ * The app's shared item stored under `key`, including a hidden one: from the App Blocks document
+ * store when a shared document there holds the key, else from the app's legacy shared storage
+ * (`shared_kv`). During the move to the document store an app's items can be in either, or in
+ * both with the same key and author; the document store wins.
+ *
+ * A key held by more than one of the app's shared collections is ambiguous and reads as not
+ * found: the card cannot say which item it is for. A document with no user author (an app- or
+ * counter-created one) carries `authorUserId: null`, which matches no publisher.
+ *
+ * A store that cannot be read (either one) is a 503, never "not found": it cannot prove the
+ * item is missing. The legacy store is read only when the document store has no match.
+ */
 export async function readSharedItemForSubListing(
-  blockId: string,
+  appBlockId: string,
   key: string
 ): Promise<SharedItemRead> {
+  const unavailable = (err: unknown) => {
+    // An unprovisioned schema or an unavailable store cannot prove the item exists.
+    logToAxiom({
+      name: 'app-sub-listing-shared-read-failed',
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    }).catch(() => null);
+    return new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
+  };
+
+  let block: { blockId: string; manifest: unknown } | null;
+  try {
+    block = await dbRead.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: { blockId: true, manifest: true },
+    });
+  } catch (err) {
+    throw unavailable(err);
+  }
+  if (!block) return null;
+
+  const { resolveDocStoreSharedItem } = await import(
+    '~/server/services/apps/doc-store-shared-item'
+  );
+  let doc: Awaited<ReturnType<typeof resolveDocStoreSharedItem>>;
+  try {
+    doc = await resolveDocStoreSharedItem({ appBlockId, manifest: block.manifest, key });
+  } catch (err) {
+    throw unavailable(err);
+  }
+  if (doc.kind === 'found') return { authorUserId: doc.authorUid, hidden: doc.hidden };
+  if (doc.kind === 'ambiguous') {
+    logToAxiom({
+      name: 'app-sub-listing-shared-key-ambiguous',
+      type: 'warning',
+      appBlockId,
+    }).catch(() => null);
+    return null;
+  }
+
   const { sanitizeAppSlug, appSchemaIdent } = await import('~/server/utils/apps-slug');
-  const slug = sanitizeAppSlug(blockId);
+  const slug = sanitizeAppSlug(block.blockId);
   if (!slug) return null;
   const { requireAppsDb } = await import('~/server/db/appsDb');
   let rows: { author_user_id: number; hidden: boolean }[];
@@ -282,13 +332,7 @@ export async function readSharedItemForSubListing(
       )
     ).rows;
   } catch (err) {
-    // An unprovisioned schema or an unavailable apps database cannot prove the item exists.
-    logToAxiom({
-      name: 'app-sub-listing-shared-read-failed',
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
-    throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
+    throw unavailable(err);
   }
   const row = rows[0];
   return row ? { authorUserId: row.author_user_id, hidden: row.hidden } : null;
@@ -361,7 +405,7 @@ export async function upsertSubListing(args: {
     );
   }
 
-  const item = await readSharedItemForSubListing(parent.blockId, itemKey);
+  const item = await readSharedItemForSubListing(args.appBlockId, itemKey);
   if (!item || item.hidden) throw new SubListingError(404, 'item_not_found', 'Item not found');
   if (item.authorUserId !== user.id) {
     throw new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
@@ -1439,12 +1483,12 @@ async function isSharedItemLive(row: {
 }): Promise<boolean> {
   const parent = await dbRead.appListing.findUnique({
     where: { id: row.parentListingId },
-    select: { kind: true, appBlock: { select: { blockId: true } } },
+    select: { kind: true, appBlockId: true },
   });
   // An off-site parent's items have no shared row: its platform withdraws them instead.
   if (parent?.kind === 'offsite') return true;
-  if (!parent?.appBlock) return false;
-  const item = await readSharedItemForSubListing(parent.appBlock.blockId, row.itemKey);
+  if (!parent?.appBlockId) return false;
+  const item = await readSharedItemForSubListing(parent.appBlockId, row.itemKey);
   // Same author as the card: a key the app reused for someone else's item is not this item.
   return item != null && !item.hidden && item.authorUserId === row.authorUserId;
 }

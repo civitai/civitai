@@ -85,7 +85,7 @@ const ALL_FEATURES = Object.fromEntries(
 const loggedUnparseable = new Set<string>();
 
 /** The declared collections, or a retryable 503 (logged once per app, counted every time). */
-function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
+export function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
   const parsed = parseManifestStorage(manifest, ALL_FEATURES);
   if (parsed.errors.length === 0) return parsed.collections;
   recordStorageManifestUnparseable();

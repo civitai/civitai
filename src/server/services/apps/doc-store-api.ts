@@ -37,6 +37,7 @@ import {
 import {
   assertCollection,
   assertShareWritable,
+  PUBLISHED_NS,
   refuseReportWithdrawal,
   type DocStore,
 } from '~/server/services/apps/doc-store';
@@ -63,6 +64,7 @@ import {
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
@@ -749,7 +751,19 @@ async function run(
           return ok(await presentDoc(doc, decl));
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
-        return ok(await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion }));
+        const result = await store.delete(ctx, coll, route.key, { ifVersion: deleteVersion });
+        // The author removed a published item: its App Store card follows, as it does for a
+        // legacy shared-storage withdraw. Production only — a dev namespace's key is not the
+        // published item's. Best-effort; never fails the delete.
+        if (result.deleted && shared && ctx.ns === PUBLISHED_NS) {
+          await syncStoreItem({
+            appBlockId: ctx.appId,
+            itemKey: route.key,
+            change: 'withdrawn',
+            authorUserId: uid,
+          });
+        }
+        return ok(result);
       };
       if (!shared || route.op === 'delete') {
         await charge('write', access, req);
