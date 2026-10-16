@@ -38,15 +38,18 @@ const h = vi.hoisted(() => ({
   legacyCalls: 0,
   /** Error code the legacy store fails with (null: it answers). */
   legacyFailure: null as string | null,
+  appsConfigured: true,
 }));
 
 vi.mock('~/server/services/apps/doc-store-lookup.instance', () => ({
   getDocStoreLookup: () => h.lookup,
 }));
-// The legacy per-app shared store: rows keyed by "<schema>/<key>". The attribution read asks
-// for visible rows only (`hidden_at IS NULL`); the sub-listing read for any row.
+// The legacy per-app shared store: rows keyed by "<schema>/<key>". `appsDb` is null when the
+// environment has no apps datastore.
 vi.mock('~/server/db/appsDb', () => ({
-  appsDb: {},
+  get appsDb() {
+    return h.appsConfigured ? {} : null;
+  },
   requireAppsDb: () => ({
     query: async (sql: string, params: unknown[]) => {
       h.legacyCalls += 1;
@@ -54,7 +57,7 @@ vi.mock('~/server/db/appsDb', () => ({
         throw Object.assign(new Error('legacy store'), { code: h.legacyFailure });
       const schema = /FROM\s+("[a-z0-9_]+")\.shared_kv/.exec(sql)?.[1];
       const row = h.legacy.get(`${schema}/${String(params[0])}`);
-      if (!row || (row.hidden && sql.includes('hidden_at IS NULL'))) return { rows: [] };
+      if (!row) return { rows: [] };
       return { rows: [{ author_user_id: row.author, hidden: row.hidden }] };
     },
   }),
@@ -137,6 +140,7 @@ function defineSuite(rls: boolean) {
       h.legacy.clear();
       h.legacyCalls = 0;
       h.legacyFailure = null;
+      h.appsConfigured = true;
       dbMock.dbRead.appBlock.findUnique.mockImplementation(
         async ({ where }: { where: { id: string } }) => apps.get(where.id) ?? null
       );
@@ -180,25 +184,24 @@ function defineSuite(rls: boolean) {
         expect(await subListing(app, 'taken')).toBeNull();
       });
 
-      it('an item deleted from the document store is gone, though its legacy copy remains', async () => {
-        const app = freshApp();
-        await put(app, POSTS, 'gone', DOC_AUTHOR);
-        legacyRow(app, 'gone', DOC_AUTHOR);
-        await store.delete(ctx(app, NS_PROD, DOC_AUTHOR), POSTS, 'gone');
-        expect(await subListing(app, 'gone')).toBeNull();
-        // Positive control: re-created, it resolves again.
-        await put(app, POSTS, 'gone', DOC_AUTHOR);
-        expect(await subListing(app, 'gone')).toEqual({ authorUserId: DOC_AUTHOR, hidden: false });
-      });
-
       it('a document-store item of an app with no legacy schema resolves; a legacy outage is a 503', async () => {
         const app = freshApp();
         await put(app, POSTS, 'new-only', DOC_AUTHOR);
-        h.legacyFailure = '42P01';
+        for (const unprovisioned of ['42P01', '3F000']) {
+          h.legacyFailure = unprovisioned;
+          expect(await subListing(app, 'new-only')).toEqual({
+            authorUserId: DOC_AUTHOR,
+            hidden: false,
+          });
+        }
+        // No apps datastore in this environment at all.
+        h.legacyFailure = '57P01';
+        h.appsConfigured = false;
         expect(await subListing(app, 'new-only')).toEqual({
           authorUserId: DOC_AUTHOR,
           hidden: false,
         });
+        h.appsConfigured = true;
         h.legacyFailure = '57P01';
         const err = await subListing(app, 'new-only').catch((e: unknown) => e);
         expect(err).toMatchObject({ status: 503, code: 'unavailable' });
@@ -332,19 +335,17 @@ function defineSuite(rls: boolean) {
         expect(await attribution(app, 'taken')).toBeNull();
       });
 
-      it('an item deleted from the document store attributes nobody, though its legacy copy remains', async () => {
-        const app = freshApp();
-        await put(app, POSTS, 'gone', DOC_AUTHOR);
-        legacyRow(app, 'gone', DOC_AUTHOR);
-        await store.delete(ctx(app, NS_PROD, DOC_AUTHOR), POSTS, 'gone');
-        expect(await attribution(app, 'gone')).toBeNull();
-      });
-
       it('a document-store item of an app with no legacy schema resolves; a legacy outage is nobody', async () => {
         const app = freshApp();
         await put(app, POSTS, 'new-only', DOC_AUTHOR);
-        h.legacyFailure = '42P01';
+        for (const unprovisioned of ['42P01', '3F000']) {
+          h.legacyFailure = unprovisioned;
+          expect(await attribution(app, 'new-only')).toBe(DOC_AUTHOR);
+        }
+        h.legacyFailure = '57P01';
+        h.appsConfigured = false;
         expect(await attribution(app, 'new-only')).toBe(DOC_AUTHOR);
+        h.appsConfigured = true;
         h.legacyFailure = '57P01';
         expect(await attribution(app, 'new-only')).toBeNull();
       });

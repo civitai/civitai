@@ -145,7 +145,7 @@ beforeEach(() => {
   // The app's block and approved manifest: no document-store collections, so the shared item
   // is read from the legacy store unless a case declares some.
   read.appBlock.findUnique.mockResolvedValue({ blockId: 'custom-generators', manifest: null });
-  mockFindShared.mockResolvedValue({ matches: [], deleted: false });
+  mockFindShared.mockResolvedValue([]);
   // The pre-visibility-check read (owner only). Kept answering "yours" so a regression to an
   // ownership-only check would ACCEPT the unpublished image below rather than fail for an
   // unrelated reason.
@@ -266,10 +266,9 @@ describe('upsertSubListing — refusals', () => {
         },
       },
     };
-    const docHit = (authorUid: number | null, hidden = false) => ({
-      matches: [{ collection: 'generators', authorUid, hidden }],
-      deleted: false,
-    });
+    const docHit = (authorUid: number | null, hidden = false) => [
+      { collection: 'generators', authorUid, hidden },
+    ];
     beforeEach(() => {
       read.appBlock.findUnique.mockResolvedValue({
         blockId: 'custom-generators',
@@ -988,10 +987,9 @@ describe('moderateSubListing', () => {
       },
     });
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
-    mockFindShared.mockResolvedValueOnce({
-      matches: [{ collection: 'generators', authorUid: AUTHOR, hidden: true }],
-      deleted: false,
-    });
+    mockFindShared.mockResolvedValueOnce([
+      { collection: 'generators', authorUid: AUTHOR, hidden: true },
+    ]);
     // A stale legacy copy of the item is still visible: the document store's state decides.
     mockPoolQuery.mockResolvedValue({ rows: [{ author_user_id: AUTHOR, hidden: false }] });
     await expectError(mod({ id: 'asl_x', action: 'restore' }), 409, 'invalid_transition');

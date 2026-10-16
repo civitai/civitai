@@ -330,6 +330,8 @@ describe('recordSpendAttribution — content-author basis (G5)', () => {
     );
     const [sql, params] = mockAppsQuery.mock.calls[0];
     expect(sql).toContain('"app_blk_test".shared_kv');
+    // The row's hidden state is read, so a hidden item is excluded by the resolver.
+    expect(sql).toContain('hidden_at IS NOT NULL AS hidden');
     expect(params).toEqual([CONTENT_KEY]);
   });
 

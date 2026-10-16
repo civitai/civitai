@@ -57,6 +57,7 @@ import {
   ctx as sctx,
   NS_PROD,
   POSTS,
+  TALLIES,
   VIEWER_1,
   VIEWER_2,
 } from '~/server/services/apps/__tests__/doc-store.functional';
@@ -774,6 +775,15 @@ describe("the item's App Store card follows a moderator hide or delete, as for l
     await seedQueue();
     await caller().delete({ ...A1, reason: 'illegal content' });
     expect(cardSync.calls).toEqual([hidden]);
+  });
+
+  it('a document no user authored backs no card: hiding or deleting it touches none', async () => {
+    // A counter document's recorded uid is its first incrementer, not an author.
+    await h.store.increment(v(APP_A), TALLIES, 'a1', 'plays', 1);
+    const counter = { appBlockId: APP_A.id, collection: 'tallies', key: 'a1' };
+    await caller().setHidden({ ...counter, hidden: true, reason: 'spam report' });
+    await caller().delete({ ...counter, reason: 'illegal content' });
+    expect(cardSync.calls).toEqual([]);
   });
 
   it('an action that did not happen touches no card', async () => {

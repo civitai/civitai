@@ -15,13 +15,15 @@ export type SharedItem =
    * store's primary key includes the collection), or the two stores name different authors.
    */
   | { kind: 'ambiguous' }
-  /** No item, including one deleted from the document store whose legacy copy remains. */
   | { kind: 'none' };
 
 /**
- * The item `key` names, hidden included. The document store decides when it holds the key or
- * deleted a document under it; the legacy store is the fallback otherwise. A document is
- * accepted only if a legacy row under the same key, if any, has the same author.
+ * The item `key` names, hidden included. The document store decides when it holds the key; the
+ * legacy store is the fallback otherwise. A document is accepted only if a legacy row under the
+ * same key, if any, has the same author.
+ *
+ * A document deleted from the document store is not remembered: a legacy copy of it, if one
+ * remains, resolves again (the store's tombstones are short-lived and carry no author).
  *
  * Throws when a store or the manifest cannot be read: the caller then cannot tell found from
  * missing. A document store that is not configured counts as empty.
@@ -37,7 +39,6 @@ export async function resolveSharedItem(args: {
 }): Promise<SharedItem> {
   const doc = await findInDocStore(args);
   if (doc.kind === 'ambiguous') return doc;
-  if (doc.kind === 'deleted') return { kind: 'none' };
   if (doc.kind === 'absent') {
     const legacy = await readLegacySharedItem(args.blockId, args.key);
     return legacy ? { kind: 'found', ...legacy } : { kind: 'none' };
@@ -52,7 +53,6 @@ export async function resolveSharedItem(args: {
 type DocStoreResult =
   | { kind: 'found'; authorUid: number | null; hidden: boolean }
   | { kind: 'ambiguous' }
-  | { kind: 'deleted' }
   | { kind: 'absent' };
 
 async function findInDocStore(args: {
@@ -67,18 +67,17 @@ async function findInDocStore(args: {
   if (shared.length === 0) return { kind: 'absent' };
 
   const { getDocStoreLookup } = await import('~/server/services/apps/doc-store-lookup.instance');
-  let found;
+  let matches;
   try {
-    found = await getDocStoreLookup().findSharedByKey(args.appBlockId, shared, args.key);
+    matches = await getDocStoreLookup().findSharedByKey(args.appBlockId, shared, args.key);
   } catch (err) {
     // No store here (unconfigured, or a role that bypasses RLS): fall back to the legacy store.
     if (isDocStoreError(err, 'storage_disabled')) return { kind: 'absent' };
     throw err;
   }
-  const { matches, deleted } = found;
   if (matches.length > 1) return { kind: 'ambiguous' };
   if (matches.length === 1) return { kind: 'found', ...matches[0] };
-  return { kind: deleted ? 'deleted' : 'absent' };
+  return { kind: 'absent' };
 }
 
 type LegacyItem = { authorUid: number; hidden: boolean };
