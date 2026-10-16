@@ -605,6 +605,7 @@ export async function confirmMinorHashAutoFlag({
   reason,
   note,
   textHash,
+  recordTextScanRuling = true,
 }: {
   modelId: number;
   userId: number;
@@ -612,6 +613,8 @@ export async function confirmMinorHashAutoFlag({
   note?: string;
   /** Stamp the ruling only while the flag still carries the text the moderator saw. */
   textHash?: string;
+  /** False when the caller has already recorded the ruling and only wants the sign-off. */
+  recordTextScanRuling?: boolean;
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -637,6 +640,8 @@ export async function confirmMinorHashAutoFlag({
     entityId: modelId,
     activity: 'setMinor',
   });
+
+  if (!recordTextScanRuling) return { hadVerdict: true, stamped: true };
 
   // Affirming the flag is a ruling on the text-scan verdict too. A hash-only flag has no verdict to
   // rule on, and the sign-off above has already happened, so a failed stamp is only logged.

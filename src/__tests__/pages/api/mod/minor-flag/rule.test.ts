@@ -116,13 +116,22 @@ describe('minorFlag.rule', () => {
       internalNotes: 'clear',
     });
     expect(res.status).toBe(200);
+    expect(m.stamp).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      decision: 'appealUpheld',
+      labels: ['minor'],
+      via: 'moderator',
+      reason: 'detection-correct',
+      note: 'clear',
+      expectTextHash: 'h-1',
+    });
     expect(m.confirm).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      reason: 'detection-correct',
-      note: 'clear',
-      textHash: 'h-1',
+      recordTextScanRuling: false,
     });
+    expect(m.stamp.mock.invocationCallOrder[0]).toBeLessThan(m.confirm.mock.invocationCallOrder[0]);
     expect(res.payload).toMatchObject({ ruled: 'kept', label: 'minor', modelId: 42 });
   });
 
@@ -154,11 +163,21 @@ describe('minorFlag.rule', () => {
     expect(m.revert).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      recordTextScanRuling: true,
+      recordTextScanRuling: false,
+    });
+    expect(m.stamp).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      decision: 'appealGranted',
+      labels: ['minor'],
+      grantHashes: { minor: 'h-1' },
+      via: 'moderator',
       reason: 'not-a-minor',
       note: undefined,
-      textHash: 'h-1',
+      expectTextHash: 'h-1',
     });
+    expect(m.revert.mock.invocationCallOrder[0]).toBeLessThan(m.stamp.mock.invocationCallOrder[0]);
+    expect(m.stamp.mock.invocationCallOrder[0]).toBeLessThan(m.settle.mock.invocationCallOrder[0]);
     expect(m.setMinor).not.toHaveBeenCalled();
     expect(res.payload).toMatchObject({ ruled: 'lifted' });
   });
@@ -171,10 +190,25 @@ describe('minorFlag.rule', () => {
       minor: false,
       userId: 7,
       isModerator: true,
-      recordTextScanRuling: true,
-      reason: 'terms-misread',
-      note: undefined,
-      textHash: 'h-1',
+      recordTextScanRuling: false,
+    });
+    expect(m.stamp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'appealGranted',
+        labels: ['minor'],
+        grantHashes: { minor: 'h-1' },
+        reason: 'terms-misread',
+        expectTextHash: 'h-1',
+      })
+    );
+    expect(m.setMinor.mock.invocationCallOrder[0]).toBeLessThan(
+      m.stamp.mock.invocationCallOrder[0]
+    );
+    expect(m.settle).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      liftedLabels: ['minor'],
+      recordRulings: false,
     });
     expect(m.revert).not.toHaveBeenCalled();
   });
@@ -213,9 +247,7 @@ describe('minorFlag.rule', () => {
     dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 1 });
     const res = await call({ ...body, label: 'minor', keep: false });
     expect(res.status).toBe(200);
-    expect(m.revert).toHaveBeenCalledWith(
-      expect.objectContaining({ recordTextScanRuling: true, textHash: 'h-1' })
-    );
+    expect(m.revert).toHaveBeenCalled();
     expect(res.payload).toMatchObject({ ruled: 'lifted', label: 'minor' });
   });
 
@@ -312,7 +344,25 @@ describe('minorFlag.rule', () => {
     const res = await call({ ...body, label: 'minor', keep: false });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.payload).not.toMatchObject({ ruled: 'lifted' });
+    expect(m.stamp).not.toHaveBeenCalled();
+    expect(m.settle).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['with a snapshot', { minorFlagSnapshot: { source: 'auto' } }],
+    ['without a snapshot', {}],
+  ])(
+    'says the flag was lifted but not recorded when the post-lift stamp misses (%s)',
+    async (_, extra) => {
+      dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor', extra));
+      m.stamp.mockResolvedValue(0);
+      const res = await call({ ...body, label: 'minor', keep: false });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(errorOf(res)).toContain('lifted but the ruling was not recorded');
+      expect(res.payload).not.toMatchObject({ ruled: 'lifted' });
+      expect(m.settle).not.toHaveBeenCalled();
+    }
+  );
 
   it('refuses a poi keep whose stamp touched no row', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
@@ -322,18 +372,13 @@ describe('minorFlag.rule', () => {
     expect(res.payload).not.toMatchObject({ ruled: 'kept' });
   });
 
-  it('refuses a minor keep whose ruling could not be recorded', async () => {
+  it('refuses a minor keep whose guarded stamp changed no row, without signing the flag off', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
-    m.confirm.mockResolvedValue({ hadVerdict: true, stamped: false });
+    m.stamp.mockResolvedValue(0);
     const res = await call({ ...body, label: 'minor', keep: true });
     expect(res.status).toBe(400);
-    expect(errorOf(res)).toContain('could not be recorded');
-  });
-
-  it('keeps a minor flag that has no verdict to stamp', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
-    m.confirm.mockResolvedValue({ hadVerdict: false, stamped: false });
-    expect((await call({ ...body, label: 'minor', keep: true })).status).toBe(200);
+    expect(errorOf(res)).toContain('changed while you were ruling');
+    expect(m.confirm).not.toHaveBeenCalled();
   });
 
   it.each([

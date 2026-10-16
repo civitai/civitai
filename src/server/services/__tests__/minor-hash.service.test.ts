@@ -1013,6 +1013,14 @@ describe('confirmMinorHashAutoFlag — text-scan ruling', () => {
     });
 
     expect(mockTrackModActivity).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ name: 'text-scan' }));
+  });
+
+  it('leaves the verdict alone when the caller records the ruling itself', async () => {
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4, recordTextScanRuling: false });
+
+    expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+    expect(mockTrackModActivity).toHaveBeenCalled();
   });
 });
 

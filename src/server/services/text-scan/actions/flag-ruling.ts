@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   confirmMinorHashAutoFlag,
   revertMinorHashAutoFlag,
@@ -76,44 +77,32 @@ async function rule({
   if (keep && (await hasOpenModelAppeal(modelId)))
     throw throwBadRequestError("Rule the owner's open appeal from Appeals instead.");
 
+  // Minor: the flag is changed before the ruling is recorded, and a keep stamps before it signs off,
+  // so a refused or failed step never leaves a ruling that contradicts the flag's state.
   if (keep) {
-    if (label === 'minor') {
-      const { hadVerdict, stamped } = await confirmMinorHashAutoFlag({
-        modelId,
-        userId,
-        reason,
-        note,
-        textHash,
-      });
-      if (hadVerdict && !stamped)
-        throw throwBadRequestError('The ruling could not be recorded. Try again.');
-    } else {
-      const stamped = await stampModelTextScanAppeal({
-        modelId,
-        userId,
-        decision: 'appealUpheld',
-        labels: ['poi'],
-        via: 'moderator',
-        reason,
-        note,
-        expectTextHash: textHash,
-      });
-      if (!stamped) throw throwBadRequestError(FLAG_CHANGED);
-    }
+    const stamped = await stampModelTextScanAppeal({
+      modelId,
+      userId,
+      decision: 'appealUpheld',
+      labels: [label],
+      via: 'moderator',
+      reason,
+      note,
+      expectTextHash: textHash,
+    });
+    if (!stamped) throw throwBadRequestError(FLAG_CHANGED);
+    if (label === 'minor')
+      await confirmMinorHashAutoFlag({ modelId, userId, recordTextScanRuling: false });
     return { ruled: 'kept' as const, label, modelId };
   }
 
   if (label === 'minor') {
     const meta = model.meta as Record<string, unknown> | null;
     if (meta?.[MINOR_FLAG_SNAPSHOT_KEY]) {
-      // The rollback reports per-row failures instead of throwing, after the ruling is stamped.
       const report = await revertMinorHashAutoFlag({
         modelId,
         userId,
-        recordTextScanRuling: true,
-        reason,
-        note,
-        textHash,
+        recordTextScanRuling: false,
       });
       if (report.rolledBack !== 1)
         throw throwBadRequestError('The flag could not be lifted. Reload and try again.');
@@ -123,11 +112,37 @@ async function rule({
         minor: false,
         userId,
         isModerator: true,
-        recordTextScanRuling: true,
-        reason,
-        note,
-        textHash,
+        recordTextScanRuling: false,
       });
+    // A failed record leaves the lift in place and the appeal open: the flag state is the safer one.
+    const stamped = await stampModelTextScanAppeal({
+      modelId,
+      userId,
+      decision: 'appealGranted',
+      labels: ['minor'],
+      grantHashes: { minor: textHash },
+      via: 'moderator',
+      reason,
+      note,
+      expectTextHash: textHash,
+    });
+    if (!stamped) {
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: 'minor flag lifted but the moderator ruling was not recorded',
+        modelId,
+      }).catch(() => null);
+      throw throwBadRequestError(
+        'The flag was lifted but the ruling was not recorded: the text changed meanwhile. Reload to review it.'
+      );
+    }
+    await settleFlagAppealsAfterModeratorLift({
+      modelId,
+      userId,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
   } else {
     const granted = await grantModelTextScanPoi({
       modelId,
