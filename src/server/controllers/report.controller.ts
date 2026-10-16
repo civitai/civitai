@@ -62,7 +62,7 @@ export async function createReportHandler({
       });
     }
 
-    return result;
+    return null;
   } catch (e) {
     // The reported entity was deleted between the client rendering it and the
     // report landing, so the entity-report FK has nothing to point at. Search
@@ -205,9 +205,8 @@ export async function getRecentAppealsHandler({
 }) {
   const sessionUser = ctx.user;
   try {
-    const userId = input.userId ?? sessionUser.id;
     const count = await getAppealCount({
-      userId,
+      userId: sessionUser.id,
       status: [AppealStatus.Pending, AppealStatus.Rejected],
       startDate: input.startDate ?? dayjs.utc().subtract(30, 'days').toDate(),
     });

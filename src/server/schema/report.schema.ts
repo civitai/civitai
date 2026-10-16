@@ -215,6 +215,9 @@ export const createReportInputSchema = z
     message: 'Services cannot be reported yet.',
   });
 
+// `report.create` returns no data: the client only needs to know the call succeeded.
+export const createReportOutputSchema = z.null();
+
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({
   type: z.enum(ReportEntity),
@@ -235,8 +238,8 @@ export const getLatestAppealSchema = z.object({
 });
 
 export type GetRecentAppealsInput = z.output<typeof getRecentAppealsSchema>;
+// Always the caller's own appeals.
 export const getRecentAppealsSchema = z.object({
-  userId: z.number().optional(),
   startDate: z.date().optional(),
 });
 
