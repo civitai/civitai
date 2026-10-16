@@ -90,6 +90,9 @@ vi.mock('~/components/Post/Detail/PostContestCollectionInfoAlert', () => ({
 }));
 
 const { PostImages } = await import('~/components/Post/Detail/PostImages');
+const { getEventDecorationClearLeftCss } = await import(
+  '~/components/Cosmetics/EventDecoration/event-decoration-placement'
+);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -113,12 +116,12 @@ const frameOf = (imageId: number) =>
     .querySelector(`[data-testid="media"][data-image-id="${imageId}"]`)
     ?.closest('div.relative') ?? null;
 // The top-left badge group (blur toggle, sticker badge, collection tag) of one image.
+const badgeGroup = (imageId: number) =>
+  frameOf(imageId)?.querySelector('[data-testid="blur-toggle"]')?.parentElement as
+    | HTMLElement
+    | undefined;
 const badgeClearance = (imageId: number) =>
-  (
-    frameOf(imageId)?.querySelector('[data-testid="blur-toggle"]')?.parentElement as
-      | HTMLElement
-      | undefined
-  )?.style.getPropertyValue('--event-decoration-clear-left');
+  badgeGroup(imageId)?.style.getPropertyValue('--event-decoration-clear-left');
 
 beforeEach(() => {
   h.linkClicks.count = 0;
@@ -139,7 +142,14 @@ describe('the post page wears each image hat on that image, as the cards do', ()
     const hat = hats()[0];
     expect(hat.closest('[data-worn-on]')?.getAttribute('data-worn-on')).toBe('2');
     expect(frameOf(2)?.contains(hat)).toBe(true);
+    // Inside the corner, not hanging off it: the image's frame clips at its edge. A corner hat is
+    // positioned with a calc() that follows its container's allowance.
+    expect((hat as HTMLElement).style.left).not.toContain('calc');
+    const hatData = h.image(2, true).eventDecoration!.data;
+    expect(badgeClearance(2)).toBe(getEventDecorationClearLeftCss(hatData, 'inside'));
     expect(badgeClearance(2)).toMatch(/^[1-9][0-9]*px$/);
+    // The clearance only moves the badges if their position reads it.
+    expect(badgeGroup(2)?.className).toContain('var(--event-decoration-clear-left');
     expect(badgeClearance(1)).toBe('');
   });
 

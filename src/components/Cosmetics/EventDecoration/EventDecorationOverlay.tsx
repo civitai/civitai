@@ -5,6 +5,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import {
   DEFAULT_HAT_PLACEMENT,
+  getEventDecorationClearLeftCss,
   getHatLayout,
   HAT_PLAIN_CARD_NUDGE,
   hatShiftCss,
@@ -51,6 +52,37 @@ export function EventDecorationOverlay({
       />
     );
   return null;
+}
+
+type WornDecoration = { data: EventDecorationData } | null | undefined;
+
+/**
+ * One image's own hat, inside its media's corner: the media clips at its edge, so the hat stays
+ * inside it. For views that show one image's media (a gallery post's slides, the post page).
+ */
+export function ImageMediaHat({
+  imageId,
+  decoration,
+}: {
+  imageId: number;
+  decoration: WornDecoration;
+}) {
+  if (!decoration) return null;
+  return (
+    <EventDecorationOverlay
+      decoration={decoration.data}
+      placement="inside"
+      wornOn={{ entityType: 'Image', entityId: imageId }}
+    />
+  );
+}
+
+/** Steps the media's top-left badges clear of its ImageMediaHat. */
+export function imageMediaHatClearLeft(decoration: WornDecoration) {
+  if (!decoration) return undefined;
+  return {
+    '--event-decoration-clear-left': getEventDecorationClearLeftCss(decoration.data, 'inside'),
+  } as CSSProperties;
 }
 
 const CONFETTI_COLORS = ['#fab005', '#228be6', '#e64980', '#40c057', '#fd7e14', '#be4bdb'];
