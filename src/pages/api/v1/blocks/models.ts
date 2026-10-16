@@ -112,8 +112,10 @@ const blockModelsSchema = z.object({
   // Only the mode is read from the client. The user id behind `mine` comes from the token's
   // `sub`, and no `userId` / `username` param is declared, so one sent in the query is dropped.
   owner: z.enum(['mine', 'any']).default('any'),
-  // `1,2,3` or repeated params. Each a positive int4 (the column type, so an out-of-range id is a
-  // 400 here rather than a database error), at most MAX_MODEL_VERSION_IDS of them.
+  // `1,2,3`, or repeated single-id params (`a=1&a=2`; a comma list inside a repeated param is a
+  // 400). Parsed with Number(), so `0x1f` / `1e3` are read as 31 / 1000. Each must be a positive
+  // int4 (the column type, so an out-of-range id is a 400 here rather than a database error), at
+  // most MAX_MODEL_VERSION_IDS of them.
   modelVersionIds: commaDelimitedNumberArray(
     z.number().int().positive().max(PG_INT4_MAX).array().max(MAX_MODEL_VERSION_IDS)
   ).optional(),

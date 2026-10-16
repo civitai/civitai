@@ -473,6 +473,20 @@ describe('/api/v1/blocks/models — modelVersionIds', () => {
     expect(mockRunModelSearch).not.toHaveBeenCalled();
   });
 
+  it('rejects a comma list inside a repeated param with 400', async () => {
+    const res = await invoke({ modelVersionIds: ['813', '9021,77'] });
+    expect(res.statusCode).toBe(400);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  // Pins the shared helper's Number() coercion (commaDelimitedNumberArray), so a change to it is
+  // seen here: these still have to land on a positive int4 to pass.
+  it('reads ids through Number(): hex and exponent forms are coerced', async () => {
+    const res = await invoke({ modelVersionIds: '0x1f,1e3' });
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toEqual([31, 1000]);
+  });
+
   it('accepts the int4 maximum', async () => {
     const res = await invoke({ modelVersionIds: '2147483647' });
     expect(res.statusCode).toBe(200);
