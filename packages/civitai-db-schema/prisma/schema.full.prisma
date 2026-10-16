@@ -4890,44 +4890,45 @@ model Thread {
   rootThreadId   Int?
   rootThread     Thread? @relation("root", fields: [rootThreadId], references: [id], onDelete: Cascade)
 
+  // `commentId` alone stays SetNull: cascading it would let one comment's delete destroy other users' replies.
   questionId    Int?            @unique
-  question      Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  question      Question?       @relation(fields: [questionId], references: [id], onDelete: Cascade)
   answerId      Int?            @unique
-  answer        Answer?         @relation(fields: [answerId], references: [id], onDelete: SetNull)
+  answer        Answer?         @relation(fields: [answerId], references: [id], onDelete: Cascade)
   imageId       Int?            @unique
-  image         Image?          @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  image         Image?          @relation(fields: [imageId], references: [id], onDelete: Cascade)
   postId        Int?            @unique
-  post          Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
+  post          Post?           @relation(fields: [postId], references: [id], onDelete: Cascade)
   reviewId      Int?            @unique
-  review        ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  review        ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   commentId     Int?            @unique
   comment       CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
   modelId       Int?            @unique
-  model         Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  model         Model?          @relation(fields: [modelId], references: [id], onDelete: Cascade)
   articleId     Int?            @unique
-  article       Article?        @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  article       Article?        @relation(fields: [articleId], references: [id], onDelete: Cascade)
   bountyId      Int?            @unique
-  bounty        Bounty?         @relation(fields: [bountyId], references: [id], onDelete: SetNull)
+  bounty        Bounty?         @relation(fields: [bountyId], references: [id], onDelete: Cascade)
   bountyEntryId Int?            @unique
-  bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
+  bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
   clubPostId    Int?            @unique
-  clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
+  clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
   comicProjectId       Int?
   comicChapterPosition Int?
-  comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: SetNull, onUpdate: Cascade)
+  comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: Cascade, onUpdate: Cascade)
   challengeId   Int?            @unique
-  challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
+  challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: Cascade)
   model3dId        Int?            @unique
-  model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: SetNull)
+  model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: Cascade)
   model3dReviewId  Int?            @unique
-  model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
+  model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: Cascade)
   // App-store listing comments (W13). References the AppListing INTEGER surrogate
   // (`serial_id`), NOT its TEXT ULID `id` — CommentsV2 is integer-keyed. `app_listings`
   // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
   appListingId     Int?            @unique
-  appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: SetNull)
+  appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: Cascade)
   crucibleId       Int?            @unique
-  crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: SetNull)
+  crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -4944,6 +4945,7 @@ model Thread {
   @@index([imageId], type: Hash)
   @@index([articleId], type: Hash)
   @@index([rootThreadId], type: Hash)
+  @@index([parentThreadId])
   @@index([challengeId], type: Hash)
 }
 
