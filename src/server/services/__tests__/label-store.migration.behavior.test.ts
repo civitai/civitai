@@ -157,7 +157,7 @@ describe('votes', () => {
       msOnItem: 1500,
     });
     expect(labels[0].labellerRef).toMatch(/^[0-9a-f]{64}$/);
-    expect(labels[0].sourceRef).not.toContain(String(MODS[0]));
+    expect(labels[0].sourceRef).toBe(`ScanLabelVote:${ITEM}:${labels[0].labellerRef}`);
   });
 
   it('three agreeing votes make the subject trainable', async () => {
