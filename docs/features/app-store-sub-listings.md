@@ -89,9 +89,9 @@ path or body names it.
 
 | Endpoint                                     | Body                                                 | Returns                             |
 | -------------------------------------------- | ---------------------------------------------------- | ----------------------------------- |
-| `PUT /api/v1/catalog/items/{externalId}`     | `title, tagline?, contentRating?, creatorUserId?`    | `{ id, status, pendingEdit, href }` |
-| `DELETE /api/v1/catalog/items/{externalId}`  | —                                                    | `{ ok, withdrawn }`                 |
-| `GET /api/v1/catalog/items?cursor=`          | —                                                    | `{ items, nextCursor }`             |
+| `PUT /api/v1/catalog/items/{externalId}`     | `title, tagline?, imageId?, contentRating?, creatorUserId?` | `{ id, status, pendingEdit, href }` |
+| `DELETE /api/v1/catalog/items/{externalId}`  | —                                                           | `{ ok, withdrawn }`                 |
+| `GET /api/v1/catalog/items?cursor=`          | —                                                           | `{ items, nextCursor }`             |
 
 `externalId` is 1-64 letters, digits, `_` or `-`; it is both the item key and the card's `{id}`.
 The PUT body is strict (unknown keys are 400) and at most 8 KB. The listing lists 100 items per
@@ -103,8 +103,14 @@ waits for a moderator; an edit to an approved item is staged and the live card k
 hidden item answers `200` with `status: "hidden"` (to its own creator) and is not changed. An
 identical re-sync writes nothing and is not rate limited. The title (1-80 characters) and tagline
 (at most 140) go through cleaning and the shared text-safety check (never as a moderator), and the
-rating may not be less mature than the parent's. There are no item images yet: the card shows the
-parent's cover.
+rating may not be less mature than the parent's.
+
+`imageId` is the id of an existing Civitai image, under the same rule as an in-app publish: the
+item's author (below) uploaded it, else 403 `image_not_yours`, and it is publicly visible, else 400
+`image_not_public`. Like every other field it is part of the full item a PUT replaces, so leaving
+it out removes the image (for an approved item, as a staged edit). The card shows it under the same
+render-time checks as an on-site item's image, and the parent's cover otherwise. The listing does
+not return it.
 
 The author is the listing's owner, or `creatorUserId` when that user has signed in to the platform
 with Civitai (an OAuth consent to the token's client). Either must pass the shared-write trust
@@ -120,6 +126,8 @@ not rate limited.
 | 403    | `not_enabled`                                              | no listing qualifies as the client's parent (see Endpoints above)                         |
 | 409    | `parent_ambiguous`                                         | more than one (a configuration error)                                                     |
 | 400    | `invalid_body`, `text_rejected`, `rating_too_loose`        | as named                                                                                  |
+| 400    | `image_not_public`                                         | the image is not in a published, non-private post, or not reviewed                        |
+| 403    | `image_not_yours`                                          | the image was not uploaded by the item's author                                           |
 | 403    | `creator_not_linked`, `untrusted`                          | the creator has no consent to the client, or fails the trust check                        |
 | 404    | `creator_not_found`                                        | the creator's account is gone                                                             |
 | 409    | `author_mismatch`, `conflict`                              | the item belongs to another creator; the item kept changing while saving                  |

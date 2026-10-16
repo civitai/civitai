@@ -707,6 +707,19 @@ describe('an off-site parent with a link template', () => {
     expect(onsite).not.toHaveProperty('external');
   });
 
+  // Invariant guard: the image projection does not branch on the parent kind, so a catalog
+  // item's image gets the same render-time publicity re-check as an on-site one.
+  it('shows the item image on an off-site card while its post is public, else the parent cover', async () => {
+    await seedOffsiteChild();
+    await setTemplate(OFFSITE, TEMPLATE);
+    await holder.db.exec(`UPDATE app_listings SET cover_id = 1 WHERE id = '${OFFSITE}'`);
+    await holder.db.exec(`UPDATE app_sub_listings SET image_id = 2 WHERE id = '${GAME}'`);
+    const cover = async () => (await page()).find((i) => i.id === GAME)?.coverUrl;
+    expect(await cover()).toBe('item-a');
+    await holder.db.exec(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
+    expect(await cover()).toBe('parent-cover');
+  });
+
   it('hides the child while the parent has no template', async () => {
     await seedOffsiteChild();
     expect(childIds(await page()).sort()).toEqual([CHILD_A, CHILD_B]);
