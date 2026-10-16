@@ -73,6 +73,11 @@ const flagged = (label: 'minor' | 'poi', extra: Record<string, unknown> = {}) =>
   meta: { textScanFlags: { [label]: { textHash: 'h-1' } }, ...extra },
 });
 const body = { modelId: 42, textHash: 'h-1' };
+const errorOf = (res: { payload: unknown }) => (res.payload as { message?: string }).message ?? '';
+const nothingRuled = () => {
+  for (const fn of [m.confirm, m.revert, m.setMinor, m.stamp, m.grantPoi])
+    expect(fn).not.toHaveBeenCalled();
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -201,31 +206,48 @@ describe('minorFlag.rule', () => {
   it('refuses a keep while the owner has an open appeal', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
     dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 1 });
-    expect((await call({ ...body, label: 'minor', keep: true })).status).toBe(400);
+    const res = await call({ ...body, label: 'minor', keep: true });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('open appeal');
     expect(m.confirm).not.toHaveBeenCalled();
   });
 
   it('refuses a flag that is not on the model', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
-    expect((await call({ ...body, label: 'poi', keep: true })).status).toBe(400);
+    const other = await call({ ...body, label: 'poi', keep: true });
+    expect(other.status).toBe(400);
+    expect(errorOf(other)).toContain('No text-scan poi flag');
     dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
-    expect((await call({ ...body, label: 'poi', keep: true })).status).toBe(400);
+    const missing = await call({ ...body, label: 'poi', keep: true });
+    expect(missing.status).toBe(400);
+    expect(errorOf(missing)).toContain('No text-scan poi flag');
     expect(m.stamp).not.toHaveBeenCalled();
+  });
+
+  it('refuses a hash-only auto-flag: this endpoint rules on text-scan flags only', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      meta: { minorFlagSnapshot: { source: 'auto' } },
+    });
+    const res = await call({ ...body, label: 'minor', keep: false });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('hash flags are confirmed or reverted from the queue');
+    nothingRuled();
   });
 
   it('refuses a ruling made on text that has since changed', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
-    expect((await call({ ...body, textHash: 'h-0', label: 'minor', keep: false })).status).toBe(
-      400
-    );
-    expect(m.setMinor).not.toHaveBeenCalled();
-    expect(m.revert).not.toHaveBeenCalled();
+    const res = await call({ ...body, textHash: 'h-0', label: 'minor', keep: false });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('text changed');
+    nothingRuled();
   });
 
   it('refuses a minor keep whose ruling could not be recorded', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
     m.confirm.mockResolvedValue({ hadVerdict: true, stamped: false });
-    expect((await call({ ...body, label: 'minor', keep: true })).status).toBe(400);
+    const res = await call({ ...body, label: 'minor', keep: true });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('could not be recorded');
   });
 
   it('keeps a minor flag that has no verdict to stamp', async () => {
@@ -250,6 +272,42 @@ describe('minorFlag.rule', () => {
   ])('refuses %s before touching the model', async (_, ruling) => {
     expect((await call({ ...body, label: 'minor', ...ruling })).status).toBe(400);
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('accepts a lift with no reason and stamps none', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
+    const res = await call({ ...body, label: 'poi', keep: false });
+    expect(res.status).toBe(200);
+    expect(m.grantPoi).toHaveBeenCalledTimes(1);
+    const arg = m.grantPoi.mock.calls[0][0];
+    expect(arg.reason).toBeUndefined();
+    expect(arg.note).toBeUndefined();
+  });
+
+  it('refuses a reason that was sent but does not fit, with the validator message', async () => {
+    const res = await call({ ...body, label: 'minor', keep: true, resolvedReason: 'not-a-minor' });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('"not-a-minor" is not a reason for Kept.');
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('refuses while another request holds the flag lock, without ruling', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
+    redisMock.sysRedis.set.mockResolvedValueOnce(null);
+    const res = await call({ ...body, label: 'poi', keep: false });
+    expect(res.status).toBe(400);
+    expect(errorOf(res)).toContain('being resolved');
+    nothingRuled();
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+  });
+
+  it('releases the flag lock when the ruling throws', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
+    m.grantPoi.mockRejectedValueOnce(new Error('db down'));
+    const res = await call({ ...body, label: 'poi', keep: false });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(redisMock.sysRedis.eval).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a ruling that does not name the text it was made on', async () => {

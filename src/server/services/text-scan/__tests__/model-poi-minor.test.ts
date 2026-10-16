@@ -485,10 +485,16 @@ describe('grantModelTextScanPoi', () => {
       note: 'not a real likeness',
     });
     const call = flat(dbMock.dbWrite.$queryRaw.mock.calls[0]);
-    expect(call.slice(1)).toEqual(
-      expect.arrayContaining(['moderator', 'Fictional person', 'not a real likeness'])
-    );
-    expect(call.slice(1)).not.toContain('appeal');
+    const bound = call.slice(1);
+    // The statement binds via, reason, note in that order after the hash; a swap would pass a bag check.
+    const at = bound.indexOf('moderator');
+    expect(at).toBeGreaterThan(-1);
+    expect(bound.slice(at, at + 3)).toEqual([
+      'moderator',
+      'Fictional person',
+      'not a real likeness',
+    ]);
+    expect(bound).not.toContain('appeal');
   });
 
   it('restores the pre-poi nsfw and sfwOnly from the snapshot', async () => {

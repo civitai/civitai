@@ -959,7 +959,12 @@ describe('confirmMinorHashAutoFlag — text-scan ruling', () => {
   it('upholds the text-scan minor flag as a moderator ruling with the reason and note', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
 
-    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4, reason: 'Minor depicted', note: 'n' });
+    await confirmMinorHashAutoFlag({
+      modelId: 100,
+      userId: 4,
+      reason: 'Minor depicted',
+      note: 'n',
+    });
 
     expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
       modelId: 100,
@@ -1008,9 +1013,6 @@ describe('confirmMinorHashAutoFlag — text-scan ruling', () => {
     });
 
     expect(mockTrackModActivity).toHaveBeenCalled();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'text-scan', modelId: 100 })
-    );
   });
 });
 

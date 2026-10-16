@@ -51,7 +51,10 @@ async function rule({
 }: Parameters<typeof ruleModelTextScanFlag>[0]) {
   const model = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
   const entry = model ? readTextScanFlags(model.meta)[label] : undefined;
-  if (!model || !entry) throw throwBadRequestError(`This model has no ${label} flag to rule on.`);
+  if (!model || !entry)
+    throw throwBadRequestError(
+      `No text-scan ${label} flag on this model; hash flags are confirmed or reverted from the queue.`
+    );
   if (entry.textHash !== textHash)
     throw throwBadRequestError('The text changed since this flag. Reload and review it again.');
 

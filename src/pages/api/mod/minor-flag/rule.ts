@@ -17,7 +17,7 @@ export default defineModeratorEndpoint('minorFlag.rule', {
     '`keep: false` lifts the flag and closes an open owner appeal on it; `keep: true` records that the flag stands.',
     "Refuses when the model has no such flag, or when `textHash` is not the flag's current text hash (the text changed; reload).",
     'A keep is refused while the owner has an open appeal: rule it through `resolveAppeal`.',
-    "`resolvedReason` is optional; when sent it must belong to the verdict (`flagReview`: Kept or Lifted) and to `label`, or the request is refused. It is stamped on the label's ruling.",
+    "`resolvedReason` is optional; when sent it must belong to the verdict (`flagReview`: Kept or Lifted) and to `label`, or the request is refused. It is stamped on the label's ruling. The reason is optional at the API and required by the moderator UI.",
   ],
   rateLimit: minorFlagRateLimit,
   input: z.object({

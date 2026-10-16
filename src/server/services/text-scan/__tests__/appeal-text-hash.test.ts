@@ -130,7 +130,10 @@ describe('stampModeratorTextScanRuling', () => {
       note: 'checked the sheet',
     });
     const [withText, ...withValues] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[0]);
-    expect(withValues).toEqual(expect.arrayContaining(['Adult character', 'checked the sheet']));
+    // Reason binds immediately before note, so a swap cannot pass.
+    const at = withValues.indexOf('Adult character');
+    expect(at).toBeGreaterThan(-1);
+    expect(withValues.slice(at, at + 2)).toEqual(['Adult character', 'checked the sheet']);
     expect(withText.join('?')).toContain('jsonb_strip_nulls');
 
     await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' });

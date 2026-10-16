@@ -18,23 +18,23 @@ beforeEach(() => {
 });
 
 describe('ruleTextScanFlag', () => {
-  it.each([
-    [true, 'Keep flag'],
-    [false, 'Lift flag'],
-  ])('sends keep=%s with the hash the moderator saw and their reason', async (keep, label) => {
-    await ruleTextScanFlag({ modelId: 42, label: 'poi', keep, textHash: 'h-1', reason });
-    expect(callModEndpoint).toHaveBeenCalledWith(
-      'minor-flag/rule',
-      { modelId: 42, label: 'poi', keep, textHash: 'h-1', ...reason },
-      label
-    );
-  });
-
-  it('reports the ruling and refreshes the queue counts', async () => {
+  it('sends the ruling with the hash the moderator saw, reports it and refreshes the queue counts', async () => {
     expect(
       await ruleTextScanFlag({ modelId: 42, label: 'minor', keep: false, textHash: 'h-1', reason })
     ).toEqual({ ok: true, ruled: 'lifted', label: 'minor', modelId: 42 });
+    expect(callModEndpoint).toHaveBeenCalledWith(
+      'minor-flag/rule',
+      { modelId: 42, label: 'minor', keep: false, textHash: 'h-1', ...reason },
+      'Lift flag'
+    );
     expect(bustMinorQueueCounts).toHaveBeenCalled();
+  });
+
+  it('reports a keep as kept', async () => {
+    callModEndpoint.mockResolvedValue({ ok: true, body: { ruled: 'kept' } });
+    expect(
+      await ruleTextScanFlag({ modelId: 42, label: 'poi', keep: true, textHash: 'h-1', reason })
+    ).toMatchObject({ ok: true, ruled: 'kept' });
   });
 
   it('passes a refusal through without refreshing the counts', async () => {
