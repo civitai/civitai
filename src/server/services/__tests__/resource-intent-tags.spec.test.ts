@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   RESOURCE_INTENT_TAGS_SPEC,
   RESOURCE_INTENT_TAGS_SPEC_HASH,
@@ -10,7 +11,6 @@ describe('RESOURCE_INTENT_TAGS_SPEC', () => {
     expect(rest).toEqual({
       maxSegmentTokens: 4,
       gramSizes: [1, 2, 3],
-      // The prototype's registered V1 score (RANK, SEARCH.eco_eps) and ecosystem rule (ECO, m = 50).
       score: {
         fitExponent: 1,
         userWeight: 0.05,
@@ -21,8 +21,7 @@ describe('RESOURCE_INTENT_TAGS_SPEC', () => {
         ecosystemMinUsers: 100,
         ecosystemsReturned: 3,
       },
-      // R | X | XXX
-      matureLevels: 4 | 8 | 16,
+      matureLevels: NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX,
     });
     expect(stopwords.length).toBe(140);
   });

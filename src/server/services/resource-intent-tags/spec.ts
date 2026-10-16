@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 
+import { NsfwLevel } from '~/server/common/enums';
 import { matureBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   compareCodePoints,
@@ -59,9 +60,7 @@ const valueMap = (entries: [number, number[][]][]) =>
   new Map(entries.map(([k, pairs]) => [k, values(pairs)]));
 
 /**
- * A four-tag, four-resource index on which grouping, the explicit gate, the ecosystem resolver and
- * the ranking each change their output when one of their rules changes: tag 0 is an explicit head
- * holding tag 1 (so tag 1's weight is half of tag 0's idf, not its own), tags 1 and 2 tie on idf, the
+ * A four-tag, four-resource index: tag 0 is an explicit head holding tag 1 (so tag 1's weight is half of tag 0's idf, not its own), tags 1 and 2 tie on idf, the
  * second ecosystem sits exactly on the resolver's user floor and the third just below it.
  */
 const FP_TAGS: TagVocabularyEntry[] = [
@@ -104,12 +103,11 @@ function scorerFingerprint() {
   const prompt = 'amber kite, brass owl, cobalt fern, dusk harbor';
   return {
     groups: keptGroups([3, 2, 1, 0], [3, 2, 1], FP_TAGS),
-    // PG | PG-13, Blocked alone, R, then X with the caller's ecosystem
     requests: [
-      { browsingLevel: 3, baseModel: null },
-      { browsingLevel: 32, baseModel: null },
-      { browsingLevel: 4, baseModel: null },
-      { browsingLevel: 8, baseModel: 'E1' },
+      { browsingLevel: NsfwLevel.PG | NsfwLevel.PG13, baseModel: null },
+      { browsingLevel: NsfwLevel.Blocked, baseModel: null },
+      { browsingLevel: NsfwLevel.R, baseModel: null },
+      { browsingLevel: NsfwLevel.X, baseModel: 'E1' },
     ].map((r) => {
       const out = scoreTagRequest(FP_INDEX, { prompt, kind: 'addon', ...r });
       return { ...out, weights: [...out.weights] };

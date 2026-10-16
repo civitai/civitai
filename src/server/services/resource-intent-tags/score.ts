@@ -1,4 +1,5 @@
 import { matureBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { compareCodePoints, tagKeys } from './extract';
 import type { GroupingTag } from './groups';
 import { keptWeights } from './groups';
@@ -11,7 +12,8 @@ import { keptWeights } from './groups';
  *   S(r) = M(r)·exp(λ·F(r)) + β_U·U(r) + β_P·P(r)
  *
  * `src/server/services/__tests__/resource-intent-tags.score.parity.test.ts` holds it to the prototype's
- * own output on a synthetic index. Nothing here reads a database; a snapshot decoder fills the index.
+ * own output on a synthetic index. Nothing here reads a database; the index is filled by a snapshot
+ * decoder that does not exist yet.
  */
 
 /** The scorer's constants, as the prototype registered and screened them. Change only with a new screen. */
@@ -24,7 +26,7 @@ export const TAG_SCORE_PARAMS = {
   popularityWeight: 0.02,
   /** The ecosystem distribution's weight inside the user-side score. */
   userEcosystemWeight: 0.05,
-  /** Candidates kept, before the resource gates. */
+  /** Candidates kept; the matcher's resource gates are not yet applied to this arm. */
   maxCandidates: 300,
   /** Dirichlet prior strength of the (tag, ecosystem) lift. */
   liftPrior: 50,
@@ -47,14 +49,14 @@ export type ResourceValues = { resource: Uint32Array; value: Float64Array };
 export type TagIndexKind = {
   /** Model ids, ascending: a resource's index is its position, so index order breaks score ties. */
   modelIds: readonly number[];
-  /** Each resource's own shrunk outcome fit; 0 without evidence. */
+  /** Each resource's own shrunk outcome fit: finite, 0 without evidence. */
   fit: Float64Array;
   /** Ecosystem ids each resource is published for. */
   ecosystems: readonly (readonly number[])[];
   /**
    * Per tag id, its resources in ascending index, CSR: entries `ptr[t]` to `ptr[t + 1]`. `c` is the
    * content score (0 for a pair known only from use); `fit` the (resource, tag) shrunk fit, NaN where
-   * fewer than 2 users back it.
+   * the snapshot has none.
    */
   postings: { ptr: Uint32Array; resource: Uint32Array; c: Float64Array; fit: Float64Array };
   /** Per ecosystem id: users of each resource there (the popularity prior). */
@@ -85,9 +87,12 @@ export type TagIndex = {
   kinds: Readonly<Record<TagKind, TagIndexKind>>;
 };
 
-/** A request may match an explicit tag only when its (already clamped) browsing level includes R, X or XXX. */
+/**
+ * A request may match an explicit tag only when its (already clamped) browsing level includes R, X or
+ * XXX. A level that is not a positive flag set allows nothing.
+ */
 export function matureAllowed(browsingLevel: number): boolean {
-  return (browsingLevel & matureBrowsingLevelsFlag) !== 0;
+  return browsingLevel > 0 && Flags.intersects(browsingLevel, matureBrowsingLevelsFlag);
 }
 
 /**
@@ -147,42 +152,43 @@ export type TagCandidate = { modelId: number; score: number };
 const before = (score: Float64Array, a: number, b: number) =>
   score[a] > score[b] || (score[a] === score[b] && a < b);
 
-/** The first `k` of `cands` in `before` order, without sorting all of them. */
-function topK(cands: number[], score: Float64Array, k: number): number[] {
-  if (cands.length <= k) return cands.sort((a, b) => (before(score, a, b) ? -1 : 1));
-  // A heap of the best k so far whose root is the WORST of them.
-  const heap: number[] = [];
-  const worse = (a: number, b: number) => before(score, b, a);
-  const up = (i: number) => {
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (!worse(heap[i], heap[p])) break;
-      [heap[i], heap[p]] = [heap[p], heap[i]];
-      i = p;
-    }
-  };
-  const down = (i: number) => {
-    for (;;) {
-      const l = 2 * i + 1;
-      const r = l + 1;
-      let w = i;
-      if (l < heap.length && worse(heap[l], heap[w])) w = l;
-      if (r < heap.length && worse(heap[r], heap[w])) w = r;
-      if (w === i) return;
-      [heap[i], heap[w]] = [heap[w], heap[i]];
-      i = w;
-    }
-  };
-  for (const c of cands) {
-    if (heap.length < k) {
-      heap.push(c);
-      up(heap.length - 1);
-    } else if (before(score, c, heap[0])) {
-      heap[0] = c;
-      down(0);
+/** The best `k` indices offered, in `before` order, kept in a heap whose root is the worst of them. */
+class TopK {
+  private heap: number[] = [];
+  constructor(private score: Float64Array, private k: number) {}
+
+  private worse(a: number, b: number) {
+    return before(this.score, b, a);
+  }
+
+  push(c: number) {
+    const h = this.heap;
+    if (h.length < this.k) {
+      h.push(c);
+      for (let i = h.length - 1; i > 0; ) {
+        const p = (i - 1) >> 1;
+        if (!this.worse(h[i], h[p])) break;
+        [h[i], h[p]] = [h[p], h[i]];
+        i = p;
+      }
+    } else if (this.k > 0 && before(this.score, c, h[0])) {
+      h[0] = c;
+      for (let i = 0; ; ) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let w = i;
+        if (l < h.length && this.worse(h[l], h[w])) w = l;
+        if (r < h.length && this.worse(h[r], h[w])) w = r;
+        if (w === i) break;
+        [h[i], h[w]] = [h[w], h[i]];
+        i = w;
+      }
     }
   }
-  return heap.sort((a, b) => (before(score, a, b) ? -1 : 1));
+
+  sorted(): number[] {
+    return this.heap.sort((a, b) => (before(this.score, a, b) ? -1 : 1));
+  }
 }
 
 /**
@@ -258,19 +264,17 @@ export function rankTagCandidates(
   }
 
   const score = new Float64Array(n);
-  const cands: number[] = [];
+  const top = new TopK(score, params.maxCandidates);
   for (let r = 0; r < n; r++) {
-    if (!inEcosystem[r] || !(match[r] / W > 0 || user[r] > 0)) continue;
     const M = match[r] / W;
-    const F = kind.fit[r] + fitDelta[r] / W;
+    if (!inEcosystem[r] || !(M > 0 || user[r] > 0)) continue;
+    // M = 0 contributes exactly 0 (F is finite), so skip the exp.
+    const content = M > 0 ? M * Math.exp(params.fitExponent * (kind.fit[r] + fitDelta[r] / W)) : 0;
     const Un = userMax > 0 ? user[r] / userMax : user[r];
-    score[r] =
-      M * Math.exp(params.fitExponent * F) +
-      params.userWeight * Un +
-      params.popularityWeight * popularity[r];
-    cands.push(r);
+    score[r] = content + params.userWeight * Un + params.popularityWeight * popularity[r];
+    top.push(r);
   }
-  return topK(cands, score, params.maxCandidates).map((r) => ({
+  return top.sorted().map((r) => ({
     modelId: kind.modelIds[r],
     score: score[r],
   }));
@@ -290,11 +294,15 @@ export type TagScoreResult = {
   foundTagIds: number[];
   /** Weights of the tags that passed the gate, in summation order. */
   weights: Map<number, number>;
-  /** `no_tags`: nothing passed the gate, so nothing was ranked. */
-  status: 'ok' | 'no_tags';
+  /**
+   * Why nothing was ranked, when nothing was: `no_tags`, no tag passed the gate; `no_ecosystem`, no
+   * baseModel and no ecosystem has enough training users; `unknown_ecosystem`, the ecosystem is not
+   * in the index. `ok` with no candidates means the ranking ran and matched nothing.
+   */
+  status: 'ok' | 'no_tags' | 'no_ecosystem' | 'unknown_ecosystem';
   /** Tag-derived ecosystems, best first; only when the request had no baseModel. */
   ecosystems: string[];
-  /** The ecosystem the candidates were ranked on. */
+  /** The caller's baseModel, else the best tag-derived ecosystem; null when there was neither. */
   ecosystem: string | null;
   candidates: TagCandidate[];
 };
@@ -322,9 +330,9 @@ export function scoreTagRequest(
         (id) => index.ecosystems[id].name
       );
   const ecosystem = req.baseModel || ecosystems[0];
-  if (!ecosystem) return { ...empty, status: 'ok' };
+  if (!ecosystem) return { ...empty, status: 'no_ecosystem' };
   const ecoId = index.ecosystems.findIndex((e) => e.name === ecosystem);
-  const candidates =
-    ecoId < 0 ? [] : rankTagCandidates(index.kinds[req.kind], ecoId, weights, params);
+  if (ecoId < 0) return { ...empty, ecosystems, ecosystem, status: 'unknown_ecosystem' };
+  const candidates = rankTagCandidates(index.kinds[req.kind], ecoId, weights, params);
   return { foundTagIds, weights, status: 'ok', ecosystems, ecosystem, candidates };
 }

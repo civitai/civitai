@@ -1,5 +1,5 @@
 {
- "about": "Scorer parity: SYNTHETIC tag index and requests (invented keys, ecosystems and model ids). Every expected value was produced by the offline prototype's own functions (v0.tag_weights, v1.gate_tags, v0.eco_options, v0.tag_eco, v1.UserIndex, p3 P3Index.p3_rank/p3_scores V1, use_u=True; LEX request side) on this index, by the generator p6a-scorer-parity-gen.py (kept in the private infra repo, it imports private code). Never edit to make a test pass; regenerate. idf is the prototype's unrounded log(usersTotal / users). Postings: [modelId, c, fit | null] (fit only for (resource, tag) pairs with >= 2 users). top: the first 50 of the ranked list (score desc, model id asc) with each S.",
+ "about": "Scorer parity: SYNTHETIC tag index and requests (invented keys, ecosystems and model ids). Every expected value was produced by the offline prototype's own functions (v0.tag_weights, v1.gate_tags, v0.eco_options, v0.tag_eco, v1.UserIndex, p3 P3Index.p3_rank/p3_scores V1, use_u=True; LEX request side) on this index, by a generator that imports non-public code and is not in this repository. Never edit to make a test pass; regenerate. idf is the prototype's unrounded log(usersTotal / users). Postings: [modelId, c, fit | null] (fit only for (resource, tag) pairs with >= 2 users). ranked: the whole ranked list (score desc, model id asc, at most 300) with each S.",
  "prototypeSha256": {
   "v0": "3ad9616ba9494d4c54dd2d782a8fc9bcc0dbb1e5fea9cdf8c5ecaa9b6ad45023",
   "v1": "b11fae119e9bc896570e669b3f424931feaa262e2043faf41b625362ffc7ee3b",
@@ -229,6 +229,11 @@
    "name": "Foxtrot",
    "users": 40,
    "observations": 73
+  },
+  {
+   "name": "Golf",
+   "users": 0,
+   "observations": 0
   }
  ],
  "tagEcosystemCounts": {
@@ -630,7 +635,8 @@
      "Bravo"
     ],
     [
-     "Alpha"
+     "Alpha",
+     "Golf"
     ],
     [
      "Alpha"
@@ -683,7 +689,8 @@
      "Foxtrot"
     ],
     [
-     "Alpha"
+     "Alpha",
+     "Golf"
     ],
     [
      "Alpha"
@@ -737,7 +744,8 @@
     ],
     [
      "Alpha",
-     "Charlie"
+     "Charlie",
+     "Golf"
     ],
     [],
     [
@@ -805,7 +813,8 @@
      "Foxtrot"
     ],
     [
-     "Bravo"
+     "Bravo",
+     "Golf"
     ],
     [
      "Bravo"
@@ -5798,7 +5807,7 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
-   "top": [
+   "ranked": [
     [
      1001,
      0.4815873030830619
@@ -5998,6 +6007,10 @@
     [
      1063,
      0.011968811717729906
+    ],
+    [
+     1038,
+     0.010610560395195295
     ]
    ]
   },
@@ -6039,7 +6052,7 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
-   "top": [
+   "ranked": [
     [
      1001,
      0.3937191513013501
@@ -6239,6 +6252,10 @@
     [
      1076,
      0.013045839683033047
+    ],
+    [
+     1038,
+     0.010610560395195295
     ]
    ]
   },
@@ -6270,7 +6287,7 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
-   "top": [
+   "ranked": [
     [
      1001,
      0.6604045558505294
@@ -6470,6 +6487,10 @@
     [
      1038,
      0.010581834663052684
+    ],
+    [
+     1032,
+     0.005978010693721383
     ]
    ]
   },
@@ -6505,7 +6526,7 @@
    ],
    "ecosystem": "Charlie",
    "candidateCount": 13,
-   "top": [
+   "ranked": [
     [
      1036,
      0.33674346302465985
@@ -6592,7 +6613,7 @@
    ],
    "ecosystem": "Bravo",
    "candidateCount": 25,
-   "top": [
+   "ranked": [
     [
      1018,
      0.664320814472172
@@ -6719,7 +6740,7 @@
    "ecosystems": [],
    "ecosystem": "Bravo",
    "candidateCount": 25,
-   "top": [
+   "ranked": [
     [
      1007,
      0.6258271158448014
@@ -6846,7 +6867,7 @@
    "ecosystems": [],
    "ecosystem": "Echo",
    "candidateCount": 17,
-   "top": [
+   "ranked": [
     [
      1041,
      0.6373154711869198
@@ -6945,7 +6966,7 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
-   "top": [
+   "ranked": [
     [
      1003,
      1.0004902914556069
@@ -7145,6 +7166,10 @@
     [
      1038,
      0.010644189958630241
+    ],
+    [
+     1032,
+     0.006020634491463308
     ]
    ]
   },
@@ -7171,7 +7196,7 @@
    "ecosystems": [],
    "ecosystem": "Delta",
    "candidateCount": 10,
-   "top": [
+   "ranked": [
     [
      1053,
      0.399541381835793
@@ -7237,7 +7262,55 @@
    "ecosystems": [],
    "ecosystem": "Zulu",
    "candidateCount": 0,
-   "top": []
+   "ranked": []
+  },
+  {
+   "name": "baseModel with published resources but no compatibility set or popularity",
+   "prompt": "amber kite, brass owl, frost tower, rust canyon",
+   "browsingLevel": 3,
+   "baseModel": "Golf",
+   "kind": "addon",
+   "found": [
+    "amber kite",
+    "brass owl",
+    "frost tower",
+    "rust canyon"
+   ],
+   "keptWeights": [
+    [
+     "frost tower",
+     3.7297014486341915
+    ],
+    [
+     "amber kite",
+     2.8134107167600364
+    ],
+    [
+     "brass owl",
+     2.8134107167600364
+    ],
+    [
+     "rust canyon",
+     1.1737669622688702
+    ]
+   ],
+   "ecosystems": [],
+   "ecosystem": "Golf",
+   "candidateCount": 3,
+   "ranked": [
+    [
+     1012,
+     0.3819305813967404
+    ],
+    [
+     1066,
+     0.33102676144852866
+    ],
+    [
+     1027,
+     0.13760875939504966
+    ]
+   ]
   },
   {
    "name": "checkpoint, SFW, baseModel",
@@ -7267,7 +7340,7 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 12,
-   "top": [
+   "ranked": [
     [
      5024,
      0.15464225829859998
@@ -7355,7 +7428,7 @@
    ],
    "ecosystem": "Charlie",
    "candidateCount": 7,
-   "top": [
+   "ranked": [
     [
      5008,
      0.4596080674800535

@@ -10,8 +10,7 @@ import {
 /**
  * Request-time grouping against the vocabulary miner's golden fixture, whose expected values were
  * worked out by hand from the rule. The `tags` and `cases` are byte-identical to the miner's fixture at
- * its commit 8e68c98a8b3d (2026-10-16); only the `about` text was shortened, to drop a private path.
- * Never edit a case to make this pass.
+ * its commit 8e68c98a8b3d (2026-10-16). Never edit a case to make this pass.
  */
 type Case = {
   name: string;

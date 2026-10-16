@@ -15,8 +15,8 @@ import { scoreTagRequest, TAG_SCORE_PARAMS } from '~/server/services/resource-in
  * tag-derived ecosystem resolver) on a SYNTHETIC index: invented tag keys, ecosystems and model ids.
  * The generator built the index in the prototype's own data structures, ran the prototype's functions
  * on these requests and wrote what they returned; it also exported the index in the shape below. It
- * imports private code, so it is kept in the private infra repo. Never edit the fixture to make this
- * pass; regenerate it or fix the port.
+ * imports non-public code and is not in this repository. Never edit the fixture to make this pass;
+ * regenerate it or fix the port.
  */
 type Pairs = [number, number][];
 type KindJson = {
@@ -40,7 +40,7 @@ type Case = {
   ecosystems?: string[];
   ecosystem?: string;
   candidateCount?: number;
-  top?: Pairs;
+  ranked?: Pairs;
 };
 type Golden = {
   vocabulary: { key: string; idf: number; explicit: boolean; near: number[] }[];
@@ -105,13 +105,12 @@ function buildIndex(g: Golden): TagIndex {
 }
 
 const index = buildIndex(golden);
-const TOP = 50;
 
 describe('resource-intent-tags scorer parity with the prototype', () => {
   it('the fixture is the one this test was written for', () => {
-    expect(golden.cases.length).toBe(14);
+    expect(golden.cases.length).toBe(15);
     expect(golden.cases.filter((c) => c.noTags).length).toBe(2);
-    expect(golden.cases.reduce((n, c) => n + (c.top?.length ?? 0), 0)).toBe(309);
+    expect(golden.cases.reduce((n, c) => n + (c.ranked?.length ?? 0), 0)).toBe(316);
   });
 
   it.each(golden.cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
@@ -128,17 +127,23 @@ describe('resource-intent-tags scorer parity with the prototype', () => {
       c.keptWeights.map(([k, w]) => [k, expect.closeTo(w, 12)])
     );
     if (c.noTags) {
-      expect(r.status).toBe('no_tags');
-      expect(r.candidates).toEqual([]);
+      expect(r).toMatchObject({
+        status: 'no_tags',
+        ecosystems: [],
+        ecosystem: null,
+        candidates: [],
+      });
       return;
     }
-    expect(r.status).toBe('ok');
+    const known = golden.ecosystems.some((e) => e.name === c.ecosystem);
+    expect(r.status).toBe(known ? 'ok' : 'unknown_ecosystem');
     expect(r.ecosystems).toEqual(c.ecosystems);
     expect(r.ecosystem).toBe(c.ecosystem);
+    // The whole list (every case is under the 300 cap), so the first 50 are compared exactly too.
+    const expected = c.ranked as Pairs;
     expect(r.candidates.length).toBe(c.candidateCount);
-    const top = r.candidates.slice(0, TOP);
-    expect(top.map((x) => x.modelId)).toEqual(c.top?.map(([m]) => m));
-    top.forEach((x, i) => expect(x.score).toBeCloseTo((c.top as Pairs)[i][1], 12));
+    expect(r.candidates.map((x) => x.modelId)).toEqual(expected.map(([m]) => m));
+    r.candidates.forEach((x, i) => expect(x.score).toBeCloseTo(expected[i][1], 12));
   });
 
   it("a candidate cap below the list length keeps the uncapped ranking's leading order, ties included", () => {
@@ -159,5 +164,14 @@ describe('resource-intent-tags scorer parity with the prototype', () => {
       }
     }
     expect(checked).toBeGreaterThan(30);
+  });
+
+  it('reports no_ecosystem, unranked, when no ecosystem has enough training users', () => {
+    const thin = { ...index, ecosystems: index.ecosystems.map((e) => ({ ...e, users: 99 })) };
+    const c = golden.cases.find((x) => !x.noTags && !x.baseModel) as Case;
+    const r = scoreTagRequest(thin, { ...c, baseModel: null });
+    expect(r).toMatchObject({ status: 'no_ecosystem', ecosystems: [], ecosystem: null });
+    expect(r.candidates).toEqual([]);
+    expect(r.weights.size).toBeGreaterThan(0);
   });
 });

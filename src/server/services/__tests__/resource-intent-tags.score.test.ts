@@ -16,6 +16,8 @@ describe('matureAllowed', () => {
     // The prototype tested "any bit but PG/PG-13", which also admits Blocked alone; the served rule
     // names the mature levels, so Blocked by itself does not open the explicit tags.
     expect(matureAllowed(NsfwLevel.Blocked)).toBe(false);
+    // Not a clamped level: -1 has every bit set, and must not read as mature.
+    expect(matureAllowed(-1)).toBe(false);
   });
 });
 

@@ -1,12 +1,8 @@
 import { compareCodePoints } from './extract';
 
 /**
- * Request-time synonym grouping and tag weights for the v1 content-tag arm: a port of the vocabulary
- * miner's `request_groups`, `kept_weights`, `gate_groups` and `kept_groups`, which reproduce the
- * offline prototype's `tag_weights` → `gate_tags` and `tag_groups` → `gate_groups` on the LEX request
- * side (every literal tag has P = 1, so a tag's raw weight is its idf).
- * `src/server/services/__tests__/resource-intent-tags.groups.test.ts` holds it to the miner's golden
- * fixture.
+ * Request-time synonym grouping and weights for the v1 content-tag arm, a port of the vocabulary
+ * miner's grouping (pinned by `src/server/services/__tests__/resource-intent-tags.groups.test.ts`).
  *
  * Groups are formed over every tag FOUND in the prompt, before the explicit-tag gate, and only then are
  * the gated tags dropped: a gated tag can head a group that holds two kept tags which are not near each
