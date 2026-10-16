@@ -172,17 +172,17 @@ const LEDGER = [
   },
   {
     opener: 'recordScopeInvocation({',
-    count: 7,
+    count: 8,
     why:
       'THE AUDIT-VISIBILITY ARM, which is NOT a money arm and is in this ledger for the ' +
-      'seam, not the spend. Seven router paths write a `block_scope_invocations` row: the ' +
-      'block-post writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
+      'seam, not the spend. Eight router paths write a `block_scope_invocations` row: the ' +
+      'block-post writer, the app-reaction writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
       'submit, the pass-through submit, the multi-step workflow submit and the shared ' +
       "confirmed-quote submit (training runs and confirmed steps). That row carries the app's REAL id and the " +
       "viewer's REAL user id, and `app-analytics.service.ts` aggregates it by " +
       '`appBlockId IN (ownedIds)` — so a path that omits the claim writes an UNMARKED row ' +
       "that appears in a delisted app owner's own analytics, which is exactly the signal " +
-      'the private-run feature exists to withhold. The full cross-file population (twelve ' +
+      'the private-run feature exists to withhold. The full cross-file population (thirteen ' +
       'sites over five files) is ledgered by ' +
       '`no-unmarked-private-run-invocation.test.ts`; this entry exists so the TOTAL below ' +
       'stays an honest count of the router.',

@@ -91,6 +91,10 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'goods:purchase:self': "Buy this app's items with your Buzz",
   'apps:store:items:write':
     'List items you made in this app in the Civitai App Store, under your name',
+  // There is no per-reaction confirm, so this one grant is all the viewer is asked; the
+  // sentence says so rather than implying a later prompt.
+  'social:react:self':
+    'React to images this app shows you, as you — reactions appear on Civitai like your own, without asking each time',
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {
