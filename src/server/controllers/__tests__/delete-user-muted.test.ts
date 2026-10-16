@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 
 /**
  * A muted account cannot close itself through `user.delete`: deletion scrubs the email and the
@@ -66,10 +67,11 @@ describe('user.delete (tRPC) refuses a muted account', () => {
     const row = seed(true);
     const before = structuredClone(row);
 
-    const err = await deleteUserHandler({ ctx, input: { id: SELF } }).catch((e) => e);
+    await expect(deleteUserHandler({ ctx, input: { id: SELF } })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining(SUPPORT_LINKS.portal),
+    });
 
-    expect(err).toMatchObject({ code: 'FORBIDDEN' });
-    expect(err.message).toContain('/support-portal');
     expect(store.get(SELF)).toEqual(before);
     expect(deleteUser).not.toHaveBeenCalled();
     expect(trackUserActivity).not.toHaveBeenCalled();

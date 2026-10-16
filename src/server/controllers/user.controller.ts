@@ -6,6 +6,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
   OnboardingComplete,
   OnboardingSteps,
@@ -786,8 +787,7 @@ export const deleteUserHandler = async ({
   if (self?.muted)
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message:
-        "Restricted accounts can't be closed from account settings. You can still have your account deleted: open a ticket through our support portal at /support-portal and our team will process it.",
+      message: `Restricted accounts can't be closed from account settings. You can still have your account deleted: open a ticket through our support portal at ${SUPPORT_LINKS.portal} and our team will process it.`,
     });
 
   try {
