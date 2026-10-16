@@ -10,19 +10,14 @@ import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 export const CSAM_HOLD_TEXT_CHARS = 50_000;
 
 // Postgres rejects NUL and lone surrogates, so storing either would fail every retry.
-const stripNul = (value: string) => value.replace(/\u0000/g, '');
+const sanitizeForPostgres = (value: string) => value.replace(/\u0000/g, '').toWellFormed();
 
 function storable(value: unknown): unknown {
-  if (typeof value === 'string') return stripNul(value);
+  if (typeof value === 'string') return sanitizeForPostgres(value);
   if (Array.isArray(value)) return value.map(storable);
   if (value && typeof value === 'object')
     return Object.fromEntries(Object.entries(value).map(([key, v]) => [key, storable(v)]));
   return value;
-}
-
-function capText(text: string, max: number) {
-  const cut = stripNul(text).slice(0, max);
-  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
 }
 
 function contentAtOf(meta: Record<string, unknown> | undefined) {
@@ -55,8 +50,9 @@ export async function applyCsamHold({
         label: 'csam',
         textHash,
         userId,
-        text: capText(composeUserText(subject), CSAM_HOLD_TEXT_CHARS),
-        reason: stripNul(outcome.csam.reason),
+        // Cut before well-forming, so a pair split by the cap is replaced rather than kept half.
+        text: sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS)),
+        reason: sanitizeForPostgres(outcome.csam.reason),
         workflowId,
         promptId: promptIds?.csam ?? null,
         contentAt: contentAtOf(subject.meta),
@@ -84,7 +80,8 @@ export async function applyCsamHold({
 }
 
 /**
- * The hold goes first so a failing entity action (a scam cleanup, a rating floor) cannot cost it.
+ * The hold goes first, and a failed write fails the callback before the entity action runs: the
+ * retry cron rescans, and an action that never ran cannot be applied twice.
  */
 export function withCsamHold(
   entityType: TextScanEntityType,
@@ -94,7 +91,6 @@ export function withCsamHold(
     try {
       await applyCsamHold({ entityType, ...args });
     } catch (error) {
-      // Not rethrown: a retry would re-run the entity action, and a deterministic failure would loop.
       logToAxiom({
         name: 'text-scan',
         type: 'error',
@@ -104,6 +100,7 @@ export function withCsamHold(
         workflowId: args.workflowId,
         error: error instanceof Error ? error.message : String(error),
       }).catch(() => null);
+      throw error;
     }
     await apply(args);
   };

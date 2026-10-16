@@ -151,25 +151,35 @@ describe('csam verdicts through the registered adapters', () => {
     ['Post', () => applyRatingFloor],
     ['Model', () => applyModelPoiMinor],
   ] as const)(
-    '%s still runs its own action when the hold write fails, and the callback succeeds',
+    '%s fails the callback without running its own action when the hold write fails',
     async (entityType, action) => {
       dbMock.dbWrite.textScanHold.create.mockRejectedValueOnce(new Error('db down'));
       const outcome = { ...csamOnly, scam: { detected: true, reason: 'test' } };
       await expect(
         getModerationAdapter(entityType)!.applyTextScan!(args({ outcome }) as never)
-      ).resolves.toBeUndefined();
-      expect(action()).toHaveBeenCalled();
+      ).rejects.toThrow('db down');
+      expect(action()).not.toHaveBeenCalled();
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'error', entityType, entityId: 77, workflowId: 'wf-1' })
       );
     }
   );
 
-  it('does not fail the callback when the hold write throws a falsy value', async () => {
+  it('records the hold on the retry after a failed write, and acts once', async () => {
+    dbMock.dbWrite.textScanHold.create.mockRejectedValueOnce(new Error('db down'));
+    const outcome = { ...csamOnly, scam: { detected: true, reason: 'test' } };
+    const adapter = getModerationAdapter('ChatMessage')!;
+    await expect(adapter.applyTextScan!(args({ outcome }) as never)).rejects.toThrow();
+    await adapter.applyTextScan!(args({ outcome, workflowId: 'wf-retry' }) as never);
+    expect(holds).toHaveLength(1);
+    expect(autoMuteScamAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the callback when the hold write throws a falsy value', async () => {
     dbMock.dbWrite.textScanHold.create.mockImplementationOnce(() => Promise.reject(undefined));
-    await expect(
-      getModerationAdapter('Comment')!.applyTextScan!(args() as never)
-    ).resolves.toBeUndefined();
+    await expect(getModerationAdapter('Comment')!.applyTextScan!(args() as never)).rejects.toBe(
+      undefined
+    );
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', entityType: 'Comment' })
     );
@@ -214,11 +224,17 @@ describe('applyCsamHold', () => {
       ? Object.values(value).flatMap(strings)
       : [];
 
-  it('strips NUL from the text and from every string in meta', async () => {
+  const unstorable = (row: HoldRow) =>
+    [row.text, row.reason, ...strings(row.meta)].filter(
+      (v): v is string => typeof v === 'string' && UNSTORABLE.test(v)
+    );
+
+  it('strips NUL from the text, the reason and every string in meta', async () => {
     const base = args();
     await applyCsamHold({
       entityType: 'Comment',
       ...base,
+      outcome: { ...csamOnly, csam: { detected: true, reason: 'te\u0000st' } },
       subject: {
         ...base.subject,
         fields: [{ heading: 'Comment', text: 'neutral\u0000text' }],
@@ -226,11 +242,40 @@ describe('applyCsamHold', () => {
       },
     });
     expect(holds[0].text).toContain('neutraltext');
+    expect(holds[0].reason).toBe('test');
     expect(holds[0].meta).toEqual({ note: 'ab', nested: { list: ['cd', 4] } });
-    expect([holds[0].text, ...strings(holds[0].meta)].some((v) => UNSTORABLE.test(v))).toBe(false);
+    expect(unstorable(holds[0])).toEqual([]);
   });
 
-  it('cuts the text at the cap without splitting a surrogate pair', async () => {
+  it('replaces lone surrogates in the text, the reason and nested meta strings', async () => {
+    const base = args();
+    await applyCsamHold({
+      entityType: 'Comment',
+      ...base,
+      outcome: { ...csamOnly, csam: { detected: true, reason: 'low \uDC00 high' } },
+      subject: {
+        ...base.subject,
+        fields: [{ heading: 'Comment', text: 'neutral \uD800 text' }],
+        meta: { nested: { list: ['a\uDBFFb', 4], note: 'x\uDFFF' } },
+      },
+    });
+    expect(holds[0].text).toContain('neutral \uFFFD text');
+    expect(holds[0].reason).toBe('low \uFFFD high');
+    expect(holds[0].meta).toEqual({ nested: { list: ['a\uFFFDb', 4], note: 'x\uFFFD' } });
+    expect(unstorable(holds[0])).toEqual([]);
+  });
+
+  it('keeps a whole surrogate pair', async () => {
+    const base = args();
+    await applyCsamHold({
+      entityType: 'Comment',
+      ...base,
+      subject: { ...base.subject, fields: [{ heading: 'Comment', text: 'smile \u{1F600}' }] },
+    });
+    expect(holds[0].text).toContain('smile \u{1F600}');
+  });
+
+  it('cuts the text at the cap without leaving half a surrogate pair', async () => {
     const base = args();
     const at = composeUserText({
       ...base.subject,

@@ -22,7 +22,9 @@ const { scanEntity } = await import('~/server/services/text-scan/submit');
 const { registerTextScanProfile, resolveTextScanProfileLabels } = await import(
   '~/server/services/text-scan/profiles'
 );
-const { resetTextScanRolloutCache } = await import('~/server/services/text-scan/mode');
+const { getTextScanMode, resetTextScanRolloutCache } = await import(
+  '~/server/services/text-scan/mode'
+);
 const { submitWorkflow } = await import('@civitai/client');
 const { getActiveTextScanPrompts, getTextScanConfig } = await import(
   '~/server/services/text-scan/prompt'
@@ -166,6 +168,59 @@ describe('a profile that narrows its labels per subject', () => {
       reason: 'off',
     });
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('the gate is read before the subject is loaded', () => {
+  it('skips as off without loading when the gate drops every label', async () => {
+    const csamOnlyLoad = vi.fn(load);
+    registerTextScanProfile({ entityType: 'Comment', labels: ['csam'], load: csamOnlyLoad });
+    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+      status: 'skipped',
+      reason: 'off',
+    });
+    expect(csamOnlyLoad).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing entity once a label survives the gate', async () => {
+    csamMode('review');
+    registerTextScanProfile({
+      entityType: 'Comment',
+      labels: ['csam'],
+      load: async () => new Map(),
+    });
+    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+      status: 'skipped',
+      reason: 'missing',
+    });
+  });
+
+  it('clears every profile label when a narrowed subject is too short', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValueOnce('shadow');
+    csamMode('review');
+    registerTextScanProfile({
+      entityType: 'Comment',
+      labels: ['scam', 'csam'],
+      minChars: 50,
+      load,
+      labelsFor: () => ['csam'],
+    });
+    em.findUnique.mockResolvedValue({
+      workflowId: 'wf-old',
+      status: 'Succeeded',
+      nsfwLevel: null,
+      triggeredLabels: ['scam'],
+      result: { version: 1 },
+    } as never);
+    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+      status: 'skipped',
+      reason: 'too-short',
+    });
+    const { data } = em.updateMany.mock.calls[0][0] as {
+      data: { triggeredLabels: string[]; result: { labels: Record<string, unknown> } };
+    };
+    expect(data.triggeredLabels).toEqual([]);
+    expect(Object.keys(data.result.labels).sort()).toEqual(['csam', 'scam']);
   });
 });
 

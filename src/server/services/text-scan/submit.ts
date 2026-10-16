@@ -327,18 +327,27 @@ export async function scanEntity({
   const profile = getTextScanProfile(entityType);
   if (!profile) return { status: 'skipped', reason: 'no-profile' };
 
+  const planPasses = (labels: TextScanLabel[]) =>
+    labels.length
+      ? planTextScanPasses(labels, mode, searchMode).filter(
+          (p) => !only || (only === 'web-search') === (p.variant === 'web-search')
+        )
+      : [];
+  // Gated before the load, so a scan with nothing left to ask costs no subject query.
+  const gatedPasses = planPasses(await resolveTextScanProfileLabels(profile));
+  if (!gatedPasses.length) return { status: 'skipped', reason: 'off' };
+
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return { status: 'skipped', reason: 'missing' };
   if (subject.notPublic) return { status: 'skipped', reason: 'not-public' };
 
   const labels = await resolveTextScanProfileLabels(profile, subject);
-  if (!labels.length) return { status: 'skipped', reason: 'off' };
-  const passes = planTextScanPasses(labels, mode, searchMode).filter(
-    (p) => !only || (only === 'web-search') === (p.variant === 'web-search')
-  );
+  const passes = planPasses(labels);
   if (!passes.length) return { status: 'skipped', reason: 'off' };
   if (subjectTextLength(subject) < (profile.minChars ?? 1)) {
-    for (const pass of passes) await clearStaleVerdict({ entityType, entityId, pass, subject });
+    // Every gated label, not just the narrowed ones: an earlier verdict may carry a dropped label.
+    for (const pass of gatedPasses)
+      await clearStaleVerdict({ entityType, entityId, pass, subject });
     return { status: 'skipped', reason: 'too-short' };
   }
 

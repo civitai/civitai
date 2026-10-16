@@ -119,8 +119,9 @@ the model for review. Disputes, appeals and mute reviews go through the existing
 `csam` is the exception: a positive verdict writes one Pending `TextScanHold` row per entity, label
 and scanned text, and nothing else (no report, mute, strike, hide or notification). A rescan of the
 same text adds nothing; changed text adds a new row. The scam, Post and Model adapters write the hold
-before their own action. A failed hold write is logged as an error and does not fail the callback,
-so the adapter's action is never repeated by a retry. Moderators work the holds on the moderator
+before their own action. A failed hold write is logged as an error and fails the callback before
+that action runs, so the row is marked Failed and the retry cron rescans it; the action has not run,
+so it is not applied twice. Moderators work the holds on the moderator
 app's CSAM text holds queue; see [text-scan-csam-holds.md](text-scan-csam-holds.md).
 
 ## Modes
