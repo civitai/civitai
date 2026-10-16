@@ -860,6 +860,9 @@ importers:
       jsdom:
         specifier: ^27.4.0
         version: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      kysely:
+        specifier: ^0.28.7
+        version: 0.28.17
       pg-format:
         specifier: ^1.0.4
         version: 1.0.4
