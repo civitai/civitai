@@ -13,9 +13,8 @@ vi.mock('$lib/server/db', async () => {
   return { dbRead: db, dbWrite: db };
 });
 
-const { getGenerationRestrictions, getRestrictionFacets, getRemixSources } = await import(
-  '../user-restriction.service'
-);
+const { getGenerationRestrictions, getRestrictionFacets, getRemixSources, ORIGIN_FILTERS } =
+  await import('../user-restriction.service');
 
 const emitted = async (run: () => Promise<unknown>) => {
   captured.length = 0;
@@ -65,6 +64,19 @@ describe('origin filter', () => {
     expect(list).not.toContain('incomplete');
   });
 
+  it('restricts unchanged-remix to rows with a trigger whose remix prompt matched the source', async () => {
+    const sqls = await emitted(() =>
+      getGenerationRestrictions({ page: 1, limit: 20, origin: 'unchanged-remix' })
+    );
+    expect(sqls).toHaveLength(2);
+    for (const sql of sqls)
+      expect(sql).toContain(`'$[*] ? (@.origin.remix.promptMatch == "identical")'::jsonpath`);
+  });
+
+  it('accepts unchanged-remix as an origin filter value', () => {
+    expect(ORIGIN_FILTERS).toEqual(['remix', 'typed', 'unchanged-remix']);
+  });
+
   it('adds no origin predicate when none is asked for', async () => {
     const sqls = await emitted(() => getGenerationRestrictions({ page: 1, limit: 20 }));
     for (const sql of sqls) expect(sql).not.toContain('jsonb_path_exists');
@@ -84,10 +96,17 @@ describe('facets', () => {
     expect(byOrigin).not.toContain('group by');
   });
 
+  it('counts unchanged remixes in the origin facet', async () => {
+    const sqls = await emitted(() => getRestrictionFacets({}));
+    const byOrigin = sqls.find((s) => s.includes('filter (where'))!;
+    expect(byOrigin).toContain('"unchangedRemix"');
+    expect(byOrigin).toContain('@.origin.remix.promptMatch == "identical"');
+  });
+
   it('returns zeros for an empty queue', async () => {
     expect(await getRestrictionFacets({})).toEqual({
       status: { any: 0, Pending: 0, Upheld: 0, Overturned: 0 },
-      origin: { all: 0, remix: 0, typed: 0 },
+      origin: { all: 0, remix: 0, typed: 0, 'unchanged-remix': 0 },
     });
   });
 });

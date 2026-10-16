@@ -77,11 +77,12 @@ export type RestrictionQuery = {
   username?: string;
   userId?: number;
   restrictionId?: number;
-  /** `remix`: some trigger came from a remix. `typed`: every prompt trigger recorded its origin and none came from a remix or the prompt enhancer. */
+  /** `remix`: some trigger came from a remix. `typed`: every prompt trigger recorded its origin and none came from a remix or the prompt enhancer. `unchanged-remix`: some trigger's remixed prompt matched the source image's stored prompt. */
   origin?: OriginFilter;
 };
 
-export type OriginFilter = 'remix' | 'typed';
+export const ORIGIN_FILTERS = ['remix', 'typed', 'unchanged-remix'] as const;
+export type OriginFilter = (typeof ORIGIN_FILTERS)[number];
 
 // `triggers` is an array, or a single object on rows from before the backfill. jsonpath's default lax
 // mode unwraps an array when a member is accessed on it, so one path covers both shapes.
@@ -114,7 +115,18 @@ const TYPED_SQL = sql<boolean>`(
   ${PROMPT_SQL} and not (${UNRECORDED_SQL} or ${REMIX_SQL} or ${ENHANCER_SQL} or ${INCOMPLETE_SQL})
 )`;
 
-const originPredicate = (origin: OriginFilter) => (origin === 'remix' ? REMIX_SQL : TYPED_SQL);
+// `promptMatch` is a server-side comparison against the source image's stored prompt, so this holds
+// whether or not the moderator-facing verification has run.
+const UNCHANGED_REMIX_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
+  '$[*] ? (@.origin.remix.promptMatch == "identical")'
+)})`;
+
+const ORIGIN_PREDICATES: Record<OriginFilter, ReturnType<typeof sql<boolean>>> = {
+  remix: REMIX_SQL,
+  typed: TYPED_SQL,
+  'unchanged-remix': UNCHANGED_REMIX_SQL,
+};
+const originPredicate = (origin: OriginFilter) => ORIGIN_PREDICATES[origin];
 
 const asTriggerArray = (value: unknown): RestrictionTrigger[] => {
   if (Array.isArray(value)) return value as RestrictionTrigger[];
@@ -281,6 +293,7 @@ export async function getRestrictionFacets(
         eb.fn.countAll<string>().as('all'),
         sql<string>`count(*) filter (where ${REMIX_SQL})`.as('remix'),
         sql<string>`count(*) filter (where ${TYPED_SQL})`.as('typed'),
+        sql<string>`count(*) filter (where ${UNCHANGED_REMIX_SQL})`.as('unchangedRemix'),
       ])
       .executeTakeFirst(),
   ]);
@@ -302,6 +315,7 @@ export async function getRestrictionFacets(
       all: Number(byOrigin?.all ?? 0),
       remix: Number(byOrigin?.remix ?? 0),
       typed: Number(byOrigin?.typed ?? 0),
+      'unchanged-remix': Number(byOrigin?.unchangedRemix ?? 0),
     },
   };
 }

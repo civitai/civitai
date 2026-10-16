@@ -11,6 +11,7 @@ import { planRemixSources } from '$lib/restrictions/origin';
 import {
   getGenerationRestrictions,
   getRemixSources,
+  ORIGIN_FILTERS,
   getRestrictionFacets,
   saveSuspiciousMatches,
   type RemixSource,
@@ -101,7 +102,7 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
     url,
     queue,
     {
-      origin: z.enum(['remix', 'typed']).optional().catch(undefined),
+      origin: z.enum(ORIGIN_FILTERS).optional().catch(undefined),
       selected: selectedSchema,
     }
   );

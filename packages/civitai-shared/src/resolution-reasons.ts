@@ -22,6 +22,11 @@ export const RESOLUTION_REASONS = {
   restriction: {
     Overturned: [
       {
+        value: 'remix-source',
+        label: 'Prompt came from a remix',
+        description: "The flagged terms came from the remixed image's prompt, not from the user.",
+      },
+      {
         value: 'minor-term-misread',
         label: 'Minor-age terms misread',
         description:

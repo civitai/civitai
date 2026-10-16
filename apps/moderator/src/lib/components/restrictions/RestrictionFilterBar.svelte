@@ -37,6 +37,7 @@
     { value: '', label: 'All', count: facets.origin.all },
     { value: 'remix', label: 'Has a remix', count: facets.origin.remix },
     { value: 'typed', label: 'Typed', count: facets.origin.typed },
+    { value: 'unchanged-remix', label: 'Unchanged remix', count: facets.origin['unchanged-remix'] },
   ]);
   const typeChips = $derived<Chip[]>(types.map((t) => ({ value: t, label: RESTRICTION_TYPE_LABELS[t] })));
 
