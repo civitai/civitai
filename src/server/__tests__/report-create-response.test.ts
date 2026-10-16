@@ -74,4 +74,15 @@ describe('report.getRecentAppeals', () => {
     await getRecentAppealsHandler({ input, ctx });
     expect(getAppealCount).toHaveBeenCalledWith(expect.objectContaining({ userId: CALLER }));
   });
+
+  // Each half on its own, so reverting either one alone is caught.
+  it('takes no userId in its input', () => {
+    expect(getRecentAppealsSchema.parse({ userId: 99 })).not.toHaveProperty('userId');
+  });
+
+  it('ignores a userId that reaches the handler', async () => {
+    await getRecentAppealsHandler({ input: { userId: 99 } as never, ctx });
+    expect(getAppealCount).toHaveBeenCalledTimes(1);
+    expect(getAppealCount).toHaveBeenCalledWith(expect.objectContaining({ userId: CALLER }));
+  });
 });
