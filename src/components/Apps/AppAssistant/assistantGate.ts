@@ -129,9 +129,12 @@ export interface AssistantGate {
  */
 export function createAssistantGate({
   refuse,
+  onReply,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
+  /** Told when a new reply makes its first tool call, before that call's refusal is asked. */
+  onReply?: () => void;
 } = {}): AssistantGate {
   let conversationId: string | null = null;
   // The chat numbers every reply, Continue and Retry included.
@@ -196,6 +199,7 @@ export function createAssistantGate({
       reply = context.reply;
       turnCalls = 0;
       running = 0;
+      onReply?.();
     }
     if (turnCalls >= APP_ASSISTANT_TURN_TOOL_CALL_LIMIT)
       return { refuse: TURN_LIMIT_REFUSAL, stop: true, message: TURN_LIMIT_MESSAGE };

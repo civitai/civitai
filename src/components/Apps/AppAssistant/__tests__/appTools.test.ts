@@ -15,13 +15,20 @@ const sandbox = (app: string, state: Sandbox['state'] = 'starting'): Sandbox => 
   expiresAt: null,
 });
 
+function appTools(
+  apps: Sandbox[] | undefined,
+  open: (app: string) => Promise<unknown>,
+  current: Sandbox | null = null
+) {
+  return createAppTools({ apps: () => apps, current: () => current, open: open as never });
+}
+
 function tool(
   apps: Sandbox[] | undefined,
   open: (app: string) => Promise<unknown>,
   current: Sandbox | null = null
 ) {
-  return createAppTools({ apps: () => apps, current: () => current, open: open as never })
-    .create_app;
+  return appTools(apps, open, current).tools.create_app;
 }
 
 const run = (t: ReturnType<typeof tool>, name: unknown) =>
@@ -113,6 +120,33 @@ describe('create_app', () => {
     expect(result).toMatchObject({ app: 'tip-calculator', existed: true });
   });
 
+  it('keeps a numbered open app too, rather than making a third copy', async () => {
+    const open = vi.fn();
+    const openApp = sandbox('tip-calculator-2', 'running');
+    const result = await run(
+      tool([sandbox('tip-calculator', 'suspended'), openApp], open, openApp),
+      'Tip calculator'
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ app: 'tip-calculator-2', existed: true });
+  });
+
+  it('resumes the open app when it is paused, instead of saying it is ready', async () => {
+    const open = vi.fn(async (app: string) => ({
+      sandbox: sandbox(app, 'starting'),
+      created: false,
+    }));
+    const paused = sandbox('tip-calculator', 'suspended');
+    const result = await run(tool([paused], open, paused), 'Tip calculator');
+    expect(open.mock.calls).toEqual([['tip-calculator']]);
+    expect(result).toMatchObject({
+      app: 'tip-calculator',
+      state: 'starting',
+      existed: true,
+      note: expect.stringMatching(/was paused and is starting again/),
+    });
+  });
+
   it('still starts a different app while one is open', async () => {
     const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
     const openApp = sandbox('tip-calculator', 'running');
@@ -124,6 +158,33 @@ describe('create_app', () => {
     const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
     await run(tool([], open), undefined);
     expect(open).toHaveBeenCalledWith('my-app');
+  });
+});
+
+describe('create_app after a limit, in the same reply', () => {
+  const keepLimit = () =>
+    new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit');
+
+  it('is refused with the same words until the next reply', async () => {
+    const open = vi.fn(async () => {
+      throw keepLimit();
+    });
+    const tools = appTools([], open);
+    expect(tools.refusal('create_app')).toBeNull();
+    const said = await failureOf(run(tools.tools.create_app, 'Fourth'));
+    expect(tools.refusal('create_app')).toBe(said);
+    expect(tools.refusal('set_checklist')).toBeNull();
+    tools.newReply();
+    expect(tools.refusal('create_app')).toBeNull();
+  });
+
+  it('is not refused after a failure a retry could clear', async () => {
+    const open = vi.fn(async () => {
+      throw new SandboxApiError('Sandbox service error (503)', 503, 'unavailable');
+    });
+    const tools = appTools([], open);
+    await failureOf(run(tools.tools.create_app, 'Fourth'));
+    expect(tools.refusal('create_app')).toBeNull();
   });
 });
 

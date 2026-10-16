@@ -162,13 +162,30 @@ export function AppAssistantWorkspace({
     stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
 
+  const appTools = useMemo(
+    () =>
+      createAppTools({
+        apps: () => live.current.apps,
+        current: () => live.current.active,
+        open: async (app) => {
+          const opened = await openRef.current(app);
+          // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
+          live.current.active = opened.sandbox;
+          setActiveName(opened.sandbox.name);
+          return opened;
+        },
+      }),
+    []
+  );
   const gate = useMemo(
     () =>
       createAssistantGate({
-        // Features are planned for an app, so not before one exists.
-        refuse: (name) => (name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : null),
+        refuse: (name) =>
+          // Features are planned for an app, so not before one exists.
+          name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
+        onReply: appTools.newReply,
       }),
-    []
+    [appTools]
   );
   // What was verified belongs to the sandbox it was verified in.
   useEffect(() => gate.reset(), [activeName, gate]);
@@ -191,20 +208,10 @@ export function AppAssistantWorkspace({
           if (next) setTab('preview');
         },
       }),
-      ...createAppTools({
-        apps: () => live.current.apps,
-        current: () => live.current.active,
-        open: async (app) => {
-          const opened = await openRef.current(app);
-          // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
-          live.current.active = opened.sandbox;
-          setActiveName(opened.sandbox.name);
-          return opened;
-        },
-      }),
+      ...appTools.tools,
       ...gate.tools,
     }),
-    [canPreview, gate]
+    [canPreview, gate, appTools]
   );
 
   const instructions = useCallback(

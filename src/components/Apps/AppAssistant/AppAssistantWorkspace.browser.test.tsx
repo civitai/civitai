@@ -246,6 +246,29 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     ]);
   });
 
+  test('after a limit, create_app is refused for the rest of the reply without asking the service again', async () => {
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }),
+      sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' }),
+      sandbox('sbx-cccccccccccc', { state: 'suspended' }),
+    ];
+    await mount();
+    m.openReject = new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit');
+    expect(m.chat!.beforeToolCall!('create_app', {}, conv)).toEqual({ allow: true });
+    await expect(
+      Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Fourth app' }, ctx))
+    ).rejects.toThrow(/Delete one under Your apps/);
+    expect(m.open).toHaveBeenCalledTimes(1);
+
+    expect(m.chat!.beforeToolCall!('create_app', {}, conv)).toEqual({
+      refuse: expect.stringMatching(/^You already have as many apps as you can keep\./),
+    });
+    // The next reply may try again (the user may have deleted one).
+    expect(m.chat!.beforeToolCall!('create_app', {}, { ...conv, reply: 2 })).toEqual({
+      allow: true,
+    });
+  });
+
   test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
     m.list = [];
     await mount();

@@ -36,33 +36,58 @@ export interface AppToolsOptions {
 
 type CreateResult = { app: string; state: Sandbox['state']; existed?: true; note: string };
 
-export function createAppTools({ apps, current, open }: AppToolsOptions): Record<string, ChatTool> {
+export interface AppTools {
+  tools: Record<string, ChatTool>;
+  /** Why a call may not run now: create_app again in the reply where it hit a limit. */
+  refusal(name: string): string | null;
+  /** A new reply began; a limit hit in the last one may be worth trying again. */
+  newReply(): void;
+}
+
+export function createAppTools({ apps, current, open }: AppToolsOptions): AppTools {
   // The chat runs a step's calls together; a second create must not race the first to the service,
   // which would make two apps under one name.
   let pending: Promise<CreateResult> | null = null;
+  // Retrying cannot clear a limit within a reply, and a running-limit retry pauses the user's apps again.
+  let limited: string | null = null;
+
+  const openOrExplain = async (app: string) => {
+    try {
+      return await open(app);
+    } catch (error) {
+      const message = appOpenFailure(error);
+      if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
+      throw new Error(message);
+    }
+  };
 
   const create = async (name: string): Promise<CreateResult> => {
     const list = apps();
     if (!list) throw new Error(APPS_LOADING);
     const openNow = current();
-    // Asked again for the app that is open: keep building it rather than make a numbered copy.
-    if (openNow && newAppKey(name, []) === openNow.app)
+    // Asked again for the app that is open (whatever number it got): keep it rather than make a copy.
+    const others = list.filter((s) => s.name !== openNow?.name).map((s) => s.app);
+    if (openNow && newAppKey(name, others) === openNow.app) {
+      if (openNow.state !== 'suspended')
+        return {
+          app: openNow.app,
+          state: openNow.state,
+          existed: true,
+          note: `The app ${openNow.app} is already open; keep working on it.`,
+        };
+      const resumed = await openOrExplain(openNow.app);
       return {
         app: openNow.app,
-        state: openNow.state,
+        state: resumed.sandbox.state,
         existed: true,
-        note: `The app ${openNow.app} is already open; keep working on it.`,
+        note: `The app ${openNow.app} was paused and is starting again; its tools arrive with your next reply. Keep working on it.`,
       };
+    }
     const app = newAppKey(
       name,
       list.map((s) => s.app)
     );
-    let opened: { sandbox: Sandbox; created: boolean };
-    try {
-      opened = await open(app);
-    } catch (error) {
-      throw new Error(appOpenFailure(error));
-    }
+    const opened = await openOrExplain(app);
     const { sandbox, created } = opened;
     // The list it was named against can be stale, and the service finds before it creates.
     if (!created)
@@ -101,5 +126,11 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): Record
       return pending;
     },
   };
-  return { [CREATE_APP]: create_app };
+  return {
+    tools: { [CREATE_APP]: create_app },
+    refusal: (name) => (name === CREATE_APP ? limited : null),
+    newReply: () => {
+      limited = null;
+    },
+  };
 }
