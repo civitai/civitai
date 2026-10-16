@@ -22,7 +22,7 @@
     scanVerdictText,
     type FlagLabel,
   } from '$lib/minor-flags/text-scan-verdicts';
-  import AppealImages from './AppealImages.svelte';
+  import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
   import AppealTags from './AppealTags.svelte';
 
   let {

@@ -17,6 +17,7 @@ const {
   setTextScanConfig,
   setTextScanRollout,
   setTextScanWebSearchRollout,
+  setTextScanLabelMode,
   insertTextScanPrompt,
   MissingTextScanPromptError,
   DEFAULT_TEXT_SCAN_MODEL,
@@ -344,6 +345,59 @@ describe('setTextScanWebSearchRollout', () => {
     dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
     await setTextScanWebSearchRollout('Model', null, { moderatorId: 5 });
     expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:web-search', 'Model');
+  });
+});
+
+describe('setTextScanLabelMode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses users who are not active moderators, and unknown labels', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    await expect(setTextScanLabelMode('minor', 'review', { moderatorId: 9 })).rejects.toThrow();
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(
+      setTextScanLabelMode('nsfw' as never, 'review', { moderatorId: 5 })
+    ).rejects.toThrow('nsfw');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+  });
+
+  it('writes review, removes the field for auto, and logs both', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await setTextScanLabelMode('minor', 'review', { moderatorId: 5 });
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:label-modes',
+      'minor',
+      'review'
+    );
+    await setTextScanLabelMode('minor', 'auto', { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:label-modes', 'minor');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'label mode updated',
+        moderatorId: 5,
+        label: 'minor',
+        mode: 'review',
+      })
+    );
+  });
+});
+
+describe('setTextScanLabelMode cache', () => {
+  it('drops the cached read, so this pod sees the change at once', async () => {
+    const { getTextScanLabelMode, resetTextScanRolloutCache } = await import(
+      '~/server/services/text-scan/mode'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ minor: 'review' } as never);
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+    await setTextScanLabelMode('minor', 'review', { moderatorId: 5 });
+
+    expect(await getTextScanLabelMode('minor')).toBe('review');
+    resetTextScanRolloutCache();
   });
 });
 

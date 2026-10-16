@@ -45,11 +45,6 @@ const querySchema = z.object({
   q: z.string().trim().max(100).catch(''),
 });
 
-export const FLAG_QUEUE_VIEWS = ['appeals', 'redetected'] as const;
-export type FlagQueueView = (typeof FLAG_QUEUE_VIEWS)[number];
-
-const viewSchema = z.object({ view: z.enum(FLAG_QUEUE_VIEWS).catch('appeals') });
-
 const appealFilterSchema = z.object({
   source: z.enum(APPEAL_SOURCES).catch(DEFAULT_APPEAL_FILTERS.source),
   flag: z.enum(APPEAL_FLAGS).catch(DEFAULT_APPEAL_FILTERS.flag),
@@ -136,25 +131,6 @@ export async function loadRedetectedQueue(url: URL) {
 
 export type RedetectedQueueData = Awaited<ReturnType<typeof loadRedetectedQueue>>;
 
-/** The flag-appeals page serves two queues; `?view=redetected` swaps the appeal triage for the
- *  re-detected labels. Only the chosen one is queried; the tab badge count rides along on both. */
-export async function loadFlagQueue(url: URL) {
-  const { view } = parseQuery(url, viewSchema);
-  // The badge is decoration; a failure here must not take the list down with it.
-  const count = getRedetectedCount().catch((err) => {
-    console.error('Re-detected count failed', err);
-    return null;
-  });
-  if (view === 'redetected') {
-    const [queue, redetectedCount] = await Promise.all([loadRedetectedQueue(url), count]);
-    return { view, redetectedCount, ...queue };
-  }
-  const [queue, redetectedCount] = await Promise.all([loadAppealQueue(url), count]);
-  return { view, redetectedCount, ...queue };
-}
-
-export type FlagQueueData = Awaited<ReturnType<typeof loadFlagQueue>>;
-
 const modelIdFrom = async (event: RequestEvent) => {
   const form = await event.request.formData();
   const modelId = Number(form.get('modelId'));
@@ -197,9 +173,12 @@ const redetectionAction =
     return { success: true, modelId, label: label.data, resolved: result.resolved };
   };
 
-export const appealActions: Actions = {
+export const redetectionActions: Actions = {
   keepRedetected: redetectionAction(true),
   dismissRedetected: redetectionAction(false),
+};
+
+export const appealActions: Actions = {
   upholdAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, true)),
   overturnAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, false)),
   // Reads its own form: `run` consumes the body for the model id alone.

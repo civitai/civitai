@@ -10,12 +10,14 @@ import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
+import { TEXT_SCAN_FLAG_LABELS } from '~/server/services/text-scan/flag-snapshot';
 import { MIN_SEGMENT_CHARS } from '~/server/services/text-scan/segment';
 import { mergeTextScanOutputs } from '~/server/services/text-scan/merge';
 import { parseTextScanSteps, textScanStepsBySegment } from '~/server/services/text-scan/parse';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
 import {
   isTextScanWebSearchEntityType,
+  readTextScanLabelModes,
   readTextScanRollouts,
   readTextScanWebSearchRollouts,
   TEXT_SCAN_WEB_SEARCH_LABELS,
@@ -38,6 +40,7 @@ import {
   MAX_SEGMENTS_LIMIT,
   MissingTextScanPromptError,
   setTextScanConfig,
+  setTextScanLabelMode,
   setTextScanRollout,
   setTextScanWebSearchRollout,
   subjectTextLength,
@@ -63,6 +66,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'putConfig',
   'putModes',
   'putWebSearchModes',
+  'putLabelModes',
   'scanEntity',
   'batchEntities',
   'sampleShadow',
@@ -226,6 +230,12 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       })
       .nullable(),
     allowActive: z.boolean().default(false),
+  }),
+  z.object({
+    action: z.literal('putLabelModes'),
+    label: z.enum(TEXT_SCAN_FLAG_LABELS),
+    /** `review` holds the label's detections for a moderator; `auto` removes the field. */
+    mode: z.enum(['auto', 'review']),
   }),
   z.object({
     action: z.literal('scanEntity'),
@@ -818,7 +828,7 @@ function requireModeratorId(id: number | undefined) {
   return id;
 }
 
-/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body. */
+/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body; `putLabelModes` accepts only the session id. */
 export async function runTextScanHarnessAction(
   input: TextScanHarnessInput,
   actor: { moderatorId?: number }
@@ -826,11 +836,12 @@ export async function runTextScanHarnessAction(
   switch (input.action) {
     case 'getPrompts': {
       // Primary, not replica: the lab reloads straight after a save and would list the previous version as newest.
-      const [active, config, modes, webSearchModes, latestRows] = await Promise.all([
+      const [active, config, modes, webSearchModes, labelModes, latestRows] = await Promise.all([
         getActiveTextScanPrompts(),
         getTextScanConfig(),
         readTextScanRollouts(),
         readTextScanWebSearchRollouts(),
+        readTextScanLabelModes(),
         dbWrite.$queryRaw<
           { key: string; id: number; createdAt: Date; createdById: number | null }[]
         >`
@@ -847,7 +858,10 @@ export async function runTextScanHarnessAction(
           })
         : undefined;
       const latest = Object.fromEntries(latestRows.map(({ key, ...row }) => [key, row]));
-      return { kind: 'json', body: { active, config, modes, webSearchModes, history, latest } };
+      return {
+        kind: 'json',
+        body: { active, config, modes, webSearchModes, labelModes, history, latest },
+      };
     }
 
     case 'putPrompt': {
@@ -880,6 +894,12 @@ export async function runTextScanHarnessAction(
         allowActive: input.allowActive,
       });
       return { kind: 'json', body: { webSearchModes } };
+    }
+
+    case 'putLabelModes': {
+      const id = requireModeratorId(actor.moderatorId);
+      const labelModes = await setTextScanLabelMode(input.label, input.mode, { moderatorId: id });
+      return { kind: 'json', body: { labelModes } };
     }
 
     case 'scanEntity': {

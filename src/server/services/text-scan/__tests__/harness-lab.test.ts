@@ -10,6 +10,7 @@ vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   readTextScanRollouts: vi.fn(async () => ({})),
+  readTextScanLabelModes: vi.fn(async () => ({ minor: 'review' })),
 }));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
@@ -281,5 +282,11 @@ describe('getPrompts', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ key: 'base', id: 3, createdAt, createdById: 5 }]);
     const { body } = (await run({ action: 'getPrompts' })) as { body: { latest: unknown } };
     expect(body.latest).toEqual({ base: { id: 3, createdAt, createdById: 5 } });
+  });
+
+  it('returns the per-label modes beside the rollouts', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    const { body } = (await run({ action: 'getPrompts' })) as { body: { labelModes: unknown } };
+    expect(body.labelModes).toEqual({ minor: 'review' });
   });
 });

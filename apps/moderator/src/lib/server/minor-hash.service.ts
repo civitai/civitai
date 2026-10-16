@@ -567,7 +567,7 @@ export type RedetectedRow = {
 export type RedetectedQuery = Page & { filters?: RedetectedFilters };
 
 /** MUST match the predicate of the partial index `Model_textScanRedetected_idx` (see its migration)
- *  character for character. The count runs on every Appeals page load as well, so a mismatch turns each
+ *  character for character. The sidebar count runs on every page load, so a mismatch turns each
  *  load into a seq scan of "Model". Every query over the queue repeats this fragment. */
 const redetectedIndexPredicate = sql`
   (m.meta->'textScanFlags'->'minor' ? 'redetected'
@@ -582,7 +582,8 @@ const redetectedLabelsJoin = sql`
   ) AS l(label, entry)
 `;
 
-/** Labels the text scan detected again after a human had cleared them on other text. Nothing was
+/** Detections the text scan held for a moderator: a re-detection after a human clear, or a first
+ *  detection in review mode. Nothing was
  *  flagged and the owner was not told, so this list is the only place the detection surfaces.
  *  A row per model and label; oldest detection first by default so nothing starves.
  *

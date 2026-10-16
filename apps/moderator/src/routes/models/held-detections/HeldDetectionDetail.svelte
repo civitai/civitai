@@ -1,10 +1,10 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
+  import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
@@ -12,10 +12,16 @@
   import TriageDetailFrame from '$lib/components/minor-flags/TriageDetailFrame.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
-  import { clearViaLabel, rulingText } from '$lib/minor-flags/text-scan-verdicts';
+  import {
+    clearViaLabel,
+    detectionCopy,
+    detectionKind,
+    detectionSections,
+    rulingText,
+  } from '$lib/minor-flags/text-scan-verdicts';
+  import { FLAG_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
-  import { urlWith } from '$lib/url';
-  import AppealImages from './AppealImages.svelte';
+  import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
 
   let {
     row,
@@ -37,9 +43,10 @@
   // either label, blocks a ruling. Change both together.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
   const ago = (value: string) => `${shortAge(value)} ago`;
-  const appealsHref = $derived(
-    urlWith(page.url, { view: null, q: row.modelId, page: null, item: null, flag: null, sort: null })
-  );
+  const appealsHref = $derived(`${FLAG_APPEALS_PATH}?q=${row.modelId}`);
+  const kind = $derived(detectionKind(row.redetected));
+  const copy = $derived(detectionCopy(kind));
+  const sections = $derived(detectionSections(kind, row.rulings));
   const blocked = $derived(row.hasPendingAppeal);
   const flagged = $derived(row.label === 'poi' ? row.poi : row.minor);
 </script>
@@ -67,6 +74,7 @@
       </div>
       <div class="flex flex-wrap items-center gap-1.5 text-sm text-dark-2">
         <FlagBadge label={row.label} size="md" />
+        <DetectionKindBadge {kind} size="md" />
         <span>
           by
           {#if row.username}
@@ -81,7 +89,7 @@
     <AppealImages images={row.coverImages} />
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <TriageCard title="Why it was flagged">
+      <TriageCard title="Why it was held">
         <div class="space-y-2 text-base text-dark-0">
           <p class="m-0">
             Text scan: {row.label === 'poi' ? 'real person' : 'minor'}
@@ -102,47 +110,50 @@
             </span>
           </p>
           <p class="m-0 text-sm text-dark-2">
-            Found on text edited after it was cleared. The scan held this instead of flagging; the
-            owner wasn't told.
+            {copy.explanation}
           </p>
         </div>
       </TriageCard>
 
-      <TriageCard title="Previously cleared">
-        <div class="space-y-2 text-base text-dark-0">
-          {#if row.granted}
-            <p class="m-0">
-              {clearViaLabel(row.granted.via)}
-              {#if row.grantedByUsername}
-                by <span class="font-medium text-white">{row.grantedByUsername}</span>
-              {:else if row.granted.by}
-                by user #{row.granted.by}
-              {/if}
-              {#if row.granted.at}
-                <span class="text-sm text-dark-2" title={dateTime(row.granted.at)}>
-                  · {ago(row.granted.at)}
-                </span>
-              {/if}
-            </p>
-          {:else}
-            <p class="m-0">No clearing record.</p>
-          {/if}
-          {#if row.rulings?.length}
-            <div class="rounded-md bg-dark-6 p-3 text-sm">
-              <p class="m-0 font-medium text-white">Earlier rulings</p>
-              {#each row.rulings as ruling (`${ruling.decision}:${ruling.at}:${ruling.by}`)}
-                <p class="m-0 mt-1">
-                  {rulingText(ruling.decision, ruling.via)}
-                  {#if ruling.by}by user #{ruling.by}{/if}
-                  {#if ruling.at}
-                    <span class="text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
-                  {/if}
-                </p>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </TriageCard>
+      {#if sections.priorClear}
+        <TriageCard title="Previously cleared">
+          <div class="space-y-2 text-base text-dark-0">
+            {#if row.granted}
+              <p class="m-0">
+                {clearViaLabel(row.granted.via)}
+                {#if row.grantedByUsername}
+                  by <span class="font-medium text-white">{row.grantedByUsername}</span>
+                {:else if row.granted.by}
+                  by user #{row.granted.by}
+                {/if}
+                {#if row.granted.at}
+                  <span class="text-sm text-dark-2" title={dateTime(row.granted.at)}>
+                    · {ago(row.granted.at)}
+                  </span>
+                {/if}
+              </p>
+            {:else}
+              <p class="m-0">No clearing record.</p>
+            {/if}
+          </div>
+        </TriageCard>
+      {/if}
+
+      {#if sections.rulings}
+        <TriageCard title="Earlier rulings">
+          <div class="space-y-1 text-sm text-dark-0">
+            {#each row.rulings ?? [] as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}
+              <p class="m-0">
+                {rulingText(ruling.decision, ruling.via)}
+                {#if ruling.by}by user #{ruling.by}{/if}
+                {#if ruling.at}
+                  <span class="text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
+                {/if}
+              </p>
+            {/each}
+          </div>
+        </TriageCard>
+      {/if}
     </div>
 
     <ModelFactsCard {row} />
@@ -161,7 +172,7 @@
       data-triage-action="uphold"
       method="POST"
       action={actionHref('keepRedetected')}
-      use:enhance={submit('Flag kept')}
+      use:enhance={submit('Flagged')}
     >
       {@render verdictFields()}
       <Button
@@ -171,14 +182,14 @@
         disabled={blocked}
         title={blocked ? APPEAL_FIRST : undefined}
       >
-        Keep flagged <Kbd>1</Kbd>
+        Flag <Kbd>1</Kbd>
       </Button>
     </form>
     <form
       data-triage-action="overturn"
       method="POST"
       action={actionHref('dismissRedetected')}
-      use:enhance={submit('Dismissed')}
+      use:enhance={submit('Not flagged')}
     >
       {@render verdictFields()}
       <Button
@@ -189,7 +200,7 @@
         disabled={blocked}
         title={blocked ? APPEAL_FIRST : undefined}
       >
-        Dismiss <Kbd>2</Kbd>
+        Don't flag <Kbd>2</Kbd>
       </Button>
     </form>
   {/snippet}

@@ -10,11 +10,17 @@ import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/ser
 import {
   isTextScanWebSearchEntityType,
   parseTextScanRollout,
+  readTextScanLabelModes,
   readTextScanRollouts,
   readTextScanWebSearchRollouts,
   resetTextScanRolloutCache,
+  type TextScanLabelMode,
   type TextScanRollout,
 } from '~/server/services/text-scan/mode';
+import {
+  TEXT_SCAN_FLAG_LABELS,
+  type TextScanFlagLabel,
+} from '~/server/services/text-scan/flag-snapshot';
 import { composeUserText, segmentUserText } from '~/server/services/text-scan/segment';
 import type {
   PromptIds,
@@ -162,6 +168,29 @@ export async function setTextScanWebSearchRollout(
     rollout,
   });
   return readTextScanWebSearchRollouts();
+}
+
+/** `auto` removes the field. Other pods pick the change up within the 15s rollout cache. */
+export async function setTextScanLabelMode(
+  label: TextScanFlagLabel,
+  mode: TextScanLabelMode,
+  { moderatorId }: { moderatorId: number }
+) {
+  if (!(TEXT_SCAN_FLAG_LABELS as readonly string[]).includes(label))
+    throw throwBadRequestError(`${label}: only poi and minor have a label mode`);
+  await assertActiveModerator(moderatorId);
+  if (mode === 'review') await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, label, 'review');
+  else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, label);
+  resetTextScanRolloutCache();
+  await logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'label mode updated',
+    moderatorId,
+    label,
+    mode,
+  });
+  return readTextScanLabelModes();
 }
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };

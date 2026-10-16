@@ -65,14 +65,16 @@ describe('the Users section', () => {
 });
 
 describe('the Models section', () => {
-  it('shows both pages, each under its own grant', () => {
+  it('shows every page, each under its own grant', () => {
     applyGrants({
       '/models/minor-hash-matches': ['moderator:reviewer'],
       '/models/flag-appeals': ['moderator:reviewer'],
+      '/models/held-detections': ['moderator:reviewer'],
     });
     expect(labelsUnder('Models')).toEqual([
       ['/models/minor-hash-matches', 'Minor Hash Matches'],
       ['/models/flag-appeals', 'Model Flag Appeals'],
+      ['/models/held-detections', 'Held Detections'],
     ]);
 
     applyGrants({ '/models/minor-hash-matches': ['moderator:reviewer'] });
@@ -82,13 +84,19 @@ describe('the Models section', () => {
     applyGrants({ '/models/flag-appeals': ['moderator:reviewer'] });
     expect(labelsUnder('Models')).toEqual([['/models/flag-appeals', 'Model Flag Appeals']]);
     expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
+    expect(canAccess(reviewer, '/models/held-detections')).toBe(false);
+
+    applyGrants({ '/models/held-detections': ['moderator:reviewer'] });
+    expect(labelsUnder('Models')).toEqual([['/models/held-detections', 'Held Detections']]);
+    expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
   });
 
-  it('badges both queues', () => {
+  it('badges every queue', () => {
     const models = NAVIGATION.find((n) => n.path === '/models');
     expect(models?.children?.map((c) => [c.path, c.countKey])).toEqual([
       ['/models/minor-hash-matches', 'minorHashMatches'],
       ['/models/flag-appeals', 'modelFlagAppeals'],
+      ['/models/held-detections', 'heldDetections'],
     ]);
   });
 
@@ -113,10 +121,11 @@ describe('/admin grantable pages', () => {
     );
   });
 
-  it('lists both Models pages as grantable', () => {
+  it('lists every Models page as grantable', () => {
     expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
       '/models/minor-hash-matches',
       '/models/flag-appeals',
+      '/models/held-detections',
     ]);
   });
 });

@@ -9,6 +9,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
   getActiveTextScanPrompts: vi.fn(),
   getTextScanConfig: vi.fn(),
+  setTextScanLabelMode: vi.fn(),
 }));
 
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
@@ -20,7 +21,7 @@ const { getTextScanProfile, registerTextScanProfile } = await import(
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { submitWorkflow } = await import('@civitai/client');
-const { getActiveTextScanPrompts, getTextScanConfig } = await import(
+const { getActiveTextScanPrompts, getTextScanConfig, setTextScanLabelMode } = await import(
   '~/server/services/text-scan/prompt'
 );
 
@@ -191,5 +192,47 @@ describe('text-scan harness with segmented text', () => {
     it('is stale when the rule set the row was hashed with differs from the stored one', async () => {
       expect(await changed('fp-b', 'fp-a')).toEqual([true]);
     });
+  });
+});
+
+describe('putLabelModes', () => {
+  const parse = (extra: Record<string, unknown> = {}) =>
+    textScanHarnessSchema.parse({
+      action: 'putLabelModes',
+      label: 'minor',
+      mode: 'review',
+      ...extra,
+    });
+  beforeEach(() => vi.mocked(setTextScanLabelMode).mockReset());
+
+  it('sets one label mode as the authenticated moderator and returns the stored modes', async () => {
+    vi.mocked(setTextScanLabelMode).mockResolvedValue({ minor: 'review' });
+    const res = await runTextScanHarnessAction(parse(), { moderatorId: 5 });
+    expect(setTextScanLabelMode).toHaveBeenCalledWith('minor', 'review', { moderatorId: 5 });
+    expect(res).toEqual({ kind: 'json', body: { labelModes: { minor: 'review' } } });
+  });
+
+  it('ignores a moderator id asserted in the body', async () => {
+    vi.mocked(setTextScanLabelMode).mockResolvedValue({});
+    await runTextScanHarnessAction(parse({ moderatorId: 99 }), { moderatorId: 5 });
+    expect(setTextScanLabelMode).toHaveBeenCalledWith('minor', 'review', { moderatorId: 5 });
+  });
+
+  it('is refused without an authenticated moderator, even when the body names one', async () => {
+    await expect(runTextScanHarnessAction(parse({ moderatorId: 5 }), {})).rejects.toThrow(
+      'moderator id is required'
+    );
+    expect(setTextScanLabelMode).not.toHaveBeenCalled();
+  });
+
+  it('rejects a label that has no mode and a mode that does not exist', () => {
+    expect(
+      textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'nsfw', mode: 'review' })
+        .success
+    ).toBe(false);
+    expect(
+      textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'minor', mode: 'hold' })
+        .success
+    ).toBe(false);
   });
 });

@@ -1,22 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  resolveRedetection,
-  getRedetectedModels,
-  getRedetectedCount,
-  getMinorFlagAppealsForReview,
-} = vi.hoisted(() => ({
+const { resolveRedetection, getRedetectedModels, getRedetectedCount } = vi.hoisted(() => ({
   resolveRedetection: vi.fn(),
   getRedetectedModels: vi.fn(),
   getRedetectedCount: vi.fn(),
-  getMinorFlagAppealsForReview: vi.fn(),
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
   getAutoFlaggedMinorModels: vi.fn(),
   getMinorFlagAppealGroups: vi.fn(async () => []),
-  getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview: vi.fn(),
   getModelMinorState: vi.fn(),
   getRedetectedModels,
@@ -37,7 +30,7 @@ const { actions, load } = await import('../+page.server');
 const post = (fields: Record<string, string>) => {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
-  return { request: new Request('http://x/models/flag-appeals', { method: 'POST', body }) };
+  return { request: new Request('http://x/models/held-detections', { method: 'POST', body }) };
 };
 type ActionEvent = Parameters<NonNullable<typeof actions>[string]>[0];
 const run = (name: string, fields: Record<string, string>) =>
@@ -48,7 +41,6 @@ beforeEach(() => {
   resolveRedetection.mockResolvedValue({ ok: true, resolved: 'kept' });
   getRedetectedModels.mockResolvedValue({ items: [], hasMore: false });
   getRedetectedCount.mockResolvedValue(3);
-  getMinorFlagAppealsForReview.mockResolvedValue({ items: [], hasMore: false });
 });
 
 describe('re-detection actions', () => {
@@ -96,48 +88,36 @@ describe('re-detection actions', () => {
   });
 });
 
-describe('queue view', () => {
-  type Loaded = { view: string; redetectedCount: number | null; redetectedFilters?: unknown };
-  const loadView = async (query: string) =>
+describe('queue load', () => {
+  type Loaded = { redetectedFilters: unknown; items: unknown[] };
+  const loadQueue = async (query = '') =>
     (await (load as unknown as (e: { url: URL }) => Promise<Loaded>)({
-      url: new URL(`http://x/models/flag-appeals${query}`),
+      url: new URL(`http://x/models/held-detections${query}`),
     })) as Loaded;
-  const view = async (query: string) => (await loadView(query)).view;
 
-  it('loads the re-detected list only for ?view=redetected', async () => {
-    expect(await view('?view=redetected')).toBe('redetected');
+  it('lists the held detections and never queries appeals', async () => {
+    await loadQueue();
     expect(getRedetectedModels).toHaveBeenCalledTimes(1);
-    expect(getMinorFlagAppealsForReview).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['', 'no view'],
-    ['?view=appeals', 'the appeals view'],
-    ['?view=bogus', 'an unknown view'],
-  ])('serves appeals and never queries re-detections for %s', async (query) => {
-    expect(await view(query)).toBe('appeals');
-    expect(getRedetectedModels).not.toHaveBeenCalled();
-    expect(getMinorFlagAppealsForReview).toHaveBeenCalledTimes(1);
+  it('ignores a leftover ?view param', async () => {
+    await loadQueue('?view=appeals');
+    expect(getRedetectedModels).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['', '?view=redetected'])('carries the tab count on every view (%s)', async (query) => {
-    expect((await loadView(query)).redetectedCount).toBe(3);
-  });
-
-  it('still serves the list when the count fails', async () => {
+  it('still serves the list when the total fails', async () => {
     getRedetectedCount.mockRejectedValue(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const loaded = await loadView('?view=redetected');
-    expect(loaded.view).toBe('redetected');
-    expect(loaded.redetectedCount).toBeNull();
+    const loaded = await loadQueue();
+    expect(loaded.items).toEqual([]);
   });
 
   it('passes the flag and sort filters through, ignoring unknown values', async () => {
-    await view('?view=redetected&flag=poi&sort=newest');
+    await loadQueue('?flag=poi&sort=newest');
     expect(getRedetectedModels).toHaveBeenLastCalledWith(
       expect.objectContaining({ filters: { flag: 'poi', sort: 'newest' } })
     );
-    await view('?view=redetected&flag=unflagged&sort=flagged');
+    await loadQueue('?flag=unflagged&sort=flagged');
     expect(getRedetectedModels).toHaveBeenLastCalledWith(
       expect.objectContaining({ filters: { flag: 'all', sort: 'oldest' } })
     );

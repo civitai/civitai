@@ -79,6 +79,9 @@
  *     author, private messages included, so only the attributed, audited /api/mod/text-scan
  *     serves them.
  *
+ *   putLabelModes is refused here (403) too: it changes what the live scan does with a detection
+ *     and needs a signed-in moderator, so only /api/mod/text-scan serves it.
+ *
  *   { "action": "scanTexts", "entityType": "Comment",
  *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
  *     "promptOverrides"?, "model"?, "thinking"?, "concurrency"?, "wait"? }
@@ -391,6 +394,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (action === 'composeEntities' || action === 'sampleShadow')
     return res.status(403).json({
       error: `${action} is only served by /api/mod/text-scan, which records who read what.`,
+    });
+  if (action === 'putLabelModes')
+    return res.status(403).json({
+      error: 'putLabelModes is only served by /api/mod/text-scan, which attributes the change.',
     });
   if (isTextScanHarnessAction(action)) {
     try {

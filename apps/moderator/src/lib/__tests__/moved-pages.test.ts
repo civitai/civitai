@@ -28,7 +28,18 @@ describe('movedViewTarget', () => {
     );
   });
 
+  it('sends the old re-detected view to Held Detections, carrying the selection', () => {
+    expect(movedViewTarget(at('/models/flag-appeals?view=redetected&item=7:minor&flag=poi'))).toBe(
+      '/models/held-detections?item=7%3Aminor&flag=poi'
+    );
+    expect(movedViewTarget(at('/models/flag-appeals?view=redetected'))).toBe(
+      '/models/held-detections'
+    );
+  });
+
   it.each([
+    '/models/flag-appeals',
+    '/models/flag-appeals?view=appeals',
     '/audit/generator-restrictions',
     '/audit/generator-restrictions?type=bot-account',
     '/models/minor-hash-matches?tab=auto',

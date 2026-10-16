@@ -2573,6 +2573,12 @@ export const REDIS_SYS_KEYS = {
      */
     WEB_SEARCH: 'system:text-scan:web-search',
     /*
+      Use: per-label switch for what a poi/minor detection does once the scan can act. A field set to
+        "review" holds the detection for a moderator; a missing field is auto (flag immediately).
+      Structure: hset, field = label ("minor" | "poi"), value = "review" (auto = field deleted)
+     */
+    LABEL_MODES: 'system:text-scan:label-modes',
+    /*
       Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
         Clavata job skips them only while the `text-scan` Flipt kill switch is on.
       Structure: set of Clavata keys

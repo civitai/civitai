@@ -88,16 +88,17 @@ async function withResolutionLock<T>(
 }
 
 /**
- * A moderator's call on a label the scan re-detected after a human had cleared it. Keeping applies
+ * A moderator's call on a detection the scan held: a re-detection after a human had cleared the
+ * label, or a first detection while the label is in review mode. Keeping applies
  * the flag exactly as the scan would have (restrictions, snapshot, owner notice) and records the
- * moderator's upheld ruling; dismissing stamps a fresh clear on the re-detected text and tells no one.
+ * moderator's upheld ruling; dismissing records a clear on the held text and tells no one.
  * An appeal the owner still has open is resolved by its own flow, not here.
  */
 export function resolveTextScanRedetection(args: {
   modelId: number;
   label: TextScanFlagLabel;
   keep: boolean;
-  /** The re-detected text the moderator was shown; the ruling applies to that and nothing newer. */
+  /** The held text the moderator was shown; the ruling applies to that and nothing newer. */
   textHash: string;
   userId: number;
 }): Promise<RedetectionOutcome> {
@@ -124,6 +125,21 @@ async function resolve({
   const detection = model ? getTextScanRedetection(model.meta, label) : null;
   if (!model || !detection || detection.textHash !== textHash) throw stale();
 
+  // promptIds are logged so a decision can be joined to the prompt versions that produced the verdict.
+  const logDecision = (decision: 'kept' | 'dismissed' | 'closed') =>
+    logToAxiom({
+      name: 'text-scan',
+      type: 'info',
+      message: 'held detection resolved',
+      entityType: 'Model',
+      entityId: modelId,
+      label,
+      kind: detection.kind ?? 'redetected',
+      decision,
+      promptIds: detection.promptIds ?? null,
+      moderatorId: userId,
+    }).catch(() => null);
+
   // Any label: the owner's appeal covers the model, and the queue disables its buttons on the same
   // rule (`hasPendingAppeal` in the moderator app's getRedetectedModels).
   const openAppeal = await dbWrite.appeal.findFirst({
@@ -143,23 +159,18 @@ async function resolve({
       throw throwBadRequestError('A keep of this flag is unfinished. Retry Keep to complete it.');
     if (model[label]) {
       if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+      logDecision('closed');
       return 'closed';
     }
     if (!(await dismissRedetection({ modelId, label, textHash, userId }))) throw stale();
-    logToAxiom({
-      name: 'text-scan',
-      type: 'info',
-      message: `${label} re-detection dismissed`,
-      entityType: 'Model',
-      entityId: modelId,
-      moderatorId: userId,
-    }).catch(() => null);
+    logDecision('dismissed');
     return 'dismissed';
   }
 
   // Flagged by another route since: there is nothing left to apply.
   if (model[label] && !ownEntry) {
     if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+    logDecision('closed');
     return 'closed';
   }
 
@@ -188,5 +199,6 @@ async function resolve({
     });
   // Last, so a failure anywhere above leaves the item in the queue to retry.
   await dropRedetection({ modelId, label, textHash });
+  logDecision('kept');
   return 'kept';
 }
