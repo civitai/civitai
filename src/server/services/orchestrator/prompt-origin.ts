@@ -127,6 +127,8 @@ async function enhancerOrigin(
 
     let best: NonNullable<PromptOrigin['enhancer']> | undefined;
     for (const workflow of result.items ?? []) {
+      const workflowId = workflow.id;
+      if (!workflowId) continue;
       const step = findPromptEnhancementStep(
         workflow as { steps?: Array<{ $type?: string; name?: string }> }
       ) as { output?: { enhancedPrompt?: unknown } } | undefined;
@@ -135,9 +137,9 @@ async function enhancerOrigin(
       const { match } = comparePrompts(enhanced, prompt);
       if (match === 'unrelated') continue;
       if (match === 'identical') {
-        return { value: { workflowId: workflow.id, promptMatch: 'identical', verified: false } };
+        return { value: { workflowId, promptMatch: 'identical', verified: false } };
       }
-      best ??= { workflowId: workflow.id, promptMatch: 'edited', verified: false };
+      best ??= { workflowId, promptMatch: 'edited', verified: false };
     }
     return { value: best };
   } catch {
