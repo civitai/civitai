@@ -127,13 +127,14 @@ describe("blockWorkflowBodySchema — kind: 'step' PASS-THROUGH arm", () => {
   });
 
   it('REJECTS an input over the payload bound', () => {
-    const big = { pad: 'x'.repeat(PASS_THROUGH_INPUT_BYTES_MAX) };
+    // `.` is outside the base64 alphabet: an all-letter pad is refused as inline media first.
+    const big = { pad: '.'.repeat(PASS_THROUGH_INPUT_BYTES_MAX) };
     expect(JSON.stringify(big).length).toBeGreaterThan(PASS_THROUGH_INPUT_BYTES_MAX);
     const parsed = blockWorkflowBodySchema.safeParse(passThroughBody({ input: big }));
     expect(parsed.success).toBe(false);
-    expect(
-      parsed.success === false && parsed.error.issues.some((i) => i.path.includes('input'))
-    ).toBe(true);
+    expect(parsed.success === false && parsed.error.issues.map((i) => [i.path, i.message])).toEqual(
+      [[['input'], 'step input exceeds the 262144-byte limit']]
+    );
   });
 
   // 🔴 THE ARM DISCRIMINATOR IS THE VALUE OF `step`, NOT THE ABSENCE OF THE KEY.
@@ -172,5 +173,79 @@ describe("kind: 'step' — the REGISTRY arm is unchanged by the new sibling", ()
   it('the exported registry-arm schema still refuses a pass-through body on its own', () => {
     expect(blockStepBodySchema.safeParse(passThroughBody()).success).toBe(false);
     expect(blockPassThroughStepBodySchema.safeParse(passThroughBody()).success).toBe(true);
+  });
+});
+
+describe("kind: 'step' pass-through — inline media is refused", () => {
+  const fix =
+    "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
+    'or pick it with useImagePicker and pass the returned url';
+  const issuesOf = (input: Record<string, unknown>) => {
+    const parsed = blockWorkflowBodySchema.safeParse(passThroughBody({ input }));
+    return parsed.success ? [] : parsed.error.issues.map((i) => [i.path, i.message]);
+  };
+  const tinyJpeg = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
+
+  it('at the top level', () => {
+    expect(issuesOf({ ImageUrl: tinyJpeg })).toEqual([
+      [['input', 'ImageUrl'], `input.ImageUrl carries inline media (data URI/base64); ${fix}`],
+    ]);
+  });
+
+  it('nested in an object', () => {
+    expect(issuesOf({ source: { image: tinyJpeg } })).toEqual([
+      [
+        ['input', 'source', 'image'],
+        `input.source.image carries inline media (data URI/base64); ${fix}`,
+      ],
+    ]);
+  });
+
+  it('in an array', () => {
+    expect(issuesOf({ images: ['https://image.civitai.com/a.jpeg', tinyJpeg] })).toEqual([
+      [['input', 'images', 1], `input.images[1] carries inline media (data URI/base64); ${fix}`],
+    ]);
+  });
+
+  it('as a raw base64 run at the threshold, but not one character below it', () => {
+    const run = (n: number) => 'iVBORw0KGgo+/AAA'.repeat(300).slice(0, n);
+    expect(issuesOf({ image: run(4096) }).map(([path]) => path)).toEqual([['input', 'image']]);
+    expect(issuesOf({ image: run(4095) })).toEqual([]);
+  });
+
+  // A real phone photo trips the byte cap too; only this message names the fix.
+  it('over the byte cap, reports ONLY the inline-media issue', () => {
+    const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
+    expect(photo.length).toBeGreaterThan(PASS_THROUGH_INPUT_BYTES_MAX);
+    expect(issuesOf({ ImageUrl: photo })).toEqual([
+      [['input', 'ImageUrl'], `input.ImageUrl carries inline media (data URI/base64); ${fix}`],
+    ]);
+  });
+
+  // Sized from the cap, so it goes red if the cap outgrows the value budget.
+  it('behind as much padding as fits inside the byte cap', () => {
+    const pad = new Array(Math.floor(PASS_THROUGH_INPUT_BYTES_MAX / 2) - 64).fill(0);
+    const input = { pad, photo: tinyJpeg };
+    expect(JSON.stringify(input).length).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
+    expect(issuesOf(input).map(([path]) => path)).toEqual([['input', 'photo']]);
+  });
+
+  // `undefined` properties survive the wire transformer and count zero bytes toward the cap.
+  it('refuses padding the byte cap cannot see, instead of giving up the search', () => {
+    const pad = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined]));
+    const input = { ...pad, photo: tinyJpeg };
+    expect(JSON.stringify(input).length).toBeLessThan(PASS_THROUGH_INPUT_BYTES_MAX);
+    expect(issuesOf(input)).toEqual([[['input'], 'step input holds more than 262144 values']]);
+  });
+
+  it('accepts hosted urls, short strings, long prose and a $ref object', () => {
+    expect(
+      issuesOf({
+        image: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=1024/photo.jpeg',
+        short: 'QUJD',
+        prompt: 'a watercolor fox in a misty forest, '.repeat(300),
+        ref: { $ref: 'gen', path: 'output.images[0].url' },
+      })
+    ).toEqual([]);
   });
 });

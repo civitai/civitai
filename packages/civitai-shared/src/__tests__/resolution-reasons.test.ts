@@ -56,6 +56,8 @@ describe('RESOLUTION_REASONS', () => {
       'flagAppeal/Rejected': ['flag-confirmed', 'other'],
       'heldDetection/Kept': ['detection-correct', 'other'],
       'heldDetection/Dismissed': ['not-a-minor', 'not-a-real-person', 'terms-misread', 'other'],
+      'flagReview/Kept': ['detection-correct', 'other'],
+      'flagReview/Lifted': ['not-a-minor', 'not-a-real-person', 'terms-misread', 'other'],
     });
   });
 
@@ -100,6 +102,27 @@ describe('resolutionReasonError', () => {
   it('caps the note', () => {
     const long = 'x'.repeat(RESOLUTION_NOTE_MAX_LENGTH + 1);
     expect(resolutionReasonError('appeal', 'Approved', 'misclassified', long)).toMatch(/longer/);
+  });
+});
+
+describe('flagReview', () => {
+  it('accepts a keep reason on Kept and refuses it on Lifted', () => {
+    expect(
+      resolutionReasonError('flagReview', 'Kept', 'detection-correct', undefined, ['poi'])
+    ).toBeNull();
+    expect(
+      resolutionReasonError('flagReview', 'Lifted', 'detection-correct', undefined, ['poi'])
+    ).toMatch(/not a reason for Lifted/);
+  });
+
+  it('requires a reason and scopes lift reasons to the flag', () => {
+    expect(resolutionReasonError('flagReview', 'Kept', '', undefined)).toMatch(/Pick a reason/);
+    expect(
+      resolutionReasonError('flagReview', 'Lifted', 'not-a-minor', undefined, ['poi'])
+    ).toMatch(/does not apply to this flag/);
+    expect(
+      resolutionReasonError('flagReview', 'Lifted', 'not-a-real-person', undefined, ['poi'])
+    ).toBeNull();
   });
 });
 

@@ -64,6 +64,7 @@ function listenForReply() {
 type PickerProps = {
   sources: string[];
   max: number | null;
+  publicOnly: boolean;
   onResolved: (picked: BlockPickedImageInfo[]) => void;
 };
 
@@ -150,6 +151,18 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
     expect(lastDialog().id).toBe('block-image-picker-rq_open');
     expect(pickerProps().sources).toEqual(['posted', 'generated']);
     expect(pickerProps().max).toBeNull();
+    expect(pickerProps().publicOnly).toBe(false);
+  });
+
+  test('passes publicOnly to the picker only when the app asked for it', async () => {
+    await mountReady();
+
+    openPicker('rq_public', { sources: ['posted'], publicOnly: true });
+    expect(pickerProps().publicOnly).toBe(true);
+
+    useDialogStore.getState().closeAll();
+    openPicker('rq_public_off', { sources: ['posted'], publicOnly: false });
+    expect(pickerProps().publicOnly).toBe(false);
   });
 
   test('passes the requested sources and the clamped cap to the picker', async () => {
@@ -243,6 +256,7 @@ describe('PageBlockHost OPEN_IMAGE_PICKER', () => {
     ['sources that is not a list', { sources: 'posted' }, /sources must be/],
     ['a zero max', { multiple: { max: 0 } }, /multiple\.max must be/],
     ['a fractional max', { multiple: { max: 1.5 } }, /multiple\.max must be/],
+    ['a publicOnly that is not a boolean', { publicOnly: 'true' }, /publicOnly must be a boolean/],
   ])('%s is refused with an error and opens nothing', async (_name, payload, error) => {
     await mountReady();
     const replies = listenForReply();

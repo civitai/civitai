@@ -208,6 +208,7 @@ export type ModEndpoint =
   | 'minor-flag/resolve-appeal'
   | 'minor-flag/resolve-redetection'
   | 'minor-flag/revert'
+  | 'minor-flag/rule'
   | 'minor-flag/set-minor'
   | 'model/bring-back'
   | 'model/set-sfw-only'

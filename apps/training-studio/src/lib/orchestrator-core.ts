@@ -35,11 +35,22 @@ export function isFlux2(engine?: string): boolean {
   return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
 }
 
+const isHtmlPage = (body: string) => /^\s*<(!doctype|html)/i.test(body);
+
+/** An edge error page (Cloudflare's 5xx) comes back as a whole HTML document — never show the markup. */
+function describeHtmlPage(body: string): string {
+  const status = body.match(/cf-error-(\d{3})|Error reference number:\s*(\d{3})/i);
+  const code = status?.[1] ?? status?.[2];
+  return `the training service is unavailable right now${
+    code ? ` (HTTP ${code})` : ''
+  } — try again in a minute`;
+}
+
 /** A rejected step comes back as RFC-9110 ProblemDetails (`.title` + a `.errors` field→messages map), a
  *  plain error as `.detail`; surface whichever is present, including the per-field validation errors so a
  *  bad body says which field, not just "One or more validation errors occurred". */
 export function describeSubmitError(error: unknown): string {
-  if (typeof error === 'string') return error;
+  if (typeof error === 'string') return isHtmlPage(error) ? describeHtmlPage(error) : error;
   const e = error as
     | { detail?: string; title?: string; errors?: Record<string, string[] | string> }
     | undefined;

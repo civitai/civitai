@@ -175,7 +175,9 @@ async function fillWithinDebounce(input: ReturnType<typeof page.getByLabelText>,
 }
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function openModal(props: { sources?: BlockImagePickerSource[]; max?: number | null } = {}) {
+function openModal(
+  props: { sources?: BlockImagePickerSource[]; max?: number | null; publicOnly?: boolean } = {}
+) {
   const onResolved = vi.fn();
   renderWithProviders(<DialogProvider />);
   dialogStore.trigger({
@@ -184,6 +186,7 @@ function openModal(props: { sources?: BlockImagePickerSource[]; max?: number | n
     props: {
       sources: props.sources ?? ['posted', 'generated'],
       max: props.max ?? null,
+      ...(props.publicOnly !== undefined ? { publicOnly: props.publicOnly } : {}),
       onResolved,
     },
   });
@@ -368,6 +371,52 @@ describe('BlockImagePickerModal', () => {
     expect(onResolved).toHaveBeenCalledWith([
       { source: 'generated', url: blobUrl('mature'), width: 832, height: 1216, nsfwLevel: 4 },
     ]);
+  });
+
+  test('posted: asks the server for public posts only when the app asked for publicOnly', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'], publicOnly: true });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({ publicOnly: true });
+    await expect
+      .element(page.getByText(/Posted images are limited to public posts/))
+      .toBeInTheDocument();
+  });
+
+  test('posted: publicOnly is kept when the viewer jumps to a date', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'], publicOnly: true });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+    await vi.waitFor(
+      () =>
+        expect(mocks.postedQuery).toHaveBeenLastCalledWith(
+          { toDate: new Date(2024, 5, 30, 23, 59, 59, 999), publicOnly: true },
+          expect.anything()
+        ),
+      { timeout: 5000 }
+    );
+  });
+
+  test('a generated-only publicOnly picker says nothing about posts', async () => {
+    setGenerated([]);
+    openModal({ sources: ['generated'], publicOnly: true });
+
+    await expect.element(page.getByText(/finished scanning/)).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Posted images are limited to public posts/))
+      .not.toBeInTheDocument();
+  });
+
+  test('posted: without publicOnly the server is asked exactly as before', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'], publicOnly: false });
+
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+    expect(mocks.postedQuery).toHaveBeenCalled();
+    for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({});
   });
 
   test('posted: lists what the server returned, whatever its level', async () => {

@@ -83,6 +83,35 @@ export async function resolveRedetection(
   };
 }
 
+export type FlagRulingResult =
+  | { ok: true; ruled: 'kept' | 'lifted'; label: 'minor' | 'poi'; modelId: number }
+  | { ok: false; error: string };
+
+/** Rules on a standing text-scan flag outside an appeal, for the text the moderator was shown
+ *  (`textHash`); the main app refuses when that text has changed or an owner appeal is open on a keep. */
+export async function ruleTextScanFlag({
+  modelId,
+  label,
+  keep,
+  textHash,
+  reason,
+}: {
+  modelId: number;
+  label: 'minor' | 'poi';
+  keep: boolean;
+  textHash: string;
+  reason: RulingReason;
+}): Promise<FlagRulingResult> {
+  const result = await callModEndpoint(
+    'minor-flag/rule',
+    { modelId, label, keep, textHash, ...reason },
+    keep ? 'Keep flag' : 'Lift flag'
+  );
+  if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  return { ok: true, ruled: result.body.ruled === 'lifted' ? 'lifted' : 'kept', label, modelId };
+}
+
 /**
  * Revert is the one action whose 200 does not mean it happened. A model whose snapshot capture failed
  * — capture is best-effort — has nothing to restore, so the endpoint answers `reverted: 0` and the
