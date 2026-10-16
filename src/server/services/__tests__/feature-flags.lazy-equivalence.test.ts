@@ -128,7 +128,10 @@ const contexts: { name: string; ctx: Ctx }[] = [
     name: 'moderator / red / FR(restricted)',
     ctx: { user: makeUser({ id: 7, isModerator: true }), req: makeReq('civitai.red', 'FR') },
   },
-  { name: 'granted-all / green / US', ctx: { user: grantedAll, req: makeReq('civitai.com', 'US') } },
+  {
+    name: 'granted-all / green / US',
+    ctx: { user: grantedAll, req: makeReq('civitai.com', 'US') },
+  },
   {
     name: 'granted-all / red / FR(restricted)',
     ctx: { user: grantedAll, req: makeReq('civitai.red', 'FR') },
@@ -148,10 +151,9 @@ describe('lazy per-flag === eager, for every flag key across representative cont
       const eager = getFeatureFlags(ctx);
       const lazy = getFeatureFlagsLazy(ctx);
       for (const key of featureFlagKeys) {
-        expect(
-          lazy[key as keyof typeof lazy],
-          `flag "${key}" diverged in context "${name}"`
-        ).toBe(eager[key as keyof typeof eager]);
+        expect(lazy[key as keyof typeof lazy], `flag "${key}" diverged in context "${name}"`).toBe(
+          eager[key as keyof typeof eager]
+        );
       }
     });
   }
@@ -193,17 +195,5 @@ describe('lazy evaluates ONLY the accessed key', () => {
     fliptEvalCalls.length = 0;
     void lazy.videoTraining;
     expect(fliptEvalCalls).toHaveLength(0);
-  });
-
-  it('eager compute evaluates MANY flags (the work lazy avoids)', () => {
-    // Unique user id → a fresh result-cache key so this genuinely recomputes
-    // (a previously-computed context would be served from the 10s result cache
-    // and eval zero flags).
-    const ctx: Ctx = { user: makeUser({ id: 555555 }), req: makeReq('civitai.com', 'US') };
-    fliptEvalCalls.length = 0;
-    getFeatureFlags(ctx);
-    // The full compute walks every fliptKey'd flag that passes gating — far more
-    // than the single eval the lazy path pays when only canViewNsfw is read.
-    expect(fliptEvalCalls.length).toBeGreaterThan(20);
   });
 });

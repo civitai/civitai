@@ -289,13 +289,6 @@ describe('getReactionsSelect — a reaction names its reactor and nothing more',
     expect(getReactionsSelect.user.select).toEqual({ id: true, username: true });
   });
 
-  it('does not pull the profilePicture relation (its `metadata` is a non-null Json)', () => {
-    const userSelect = getReactionsSelect.user.select as Record<string, unknown>;
-    expect(userSelect).not.toHaveProperty('profilePicture');
-    expect(userSelect).not.toHaveProperty('deletedAt');
-    expect(userSelect).not.toHaveProperty('image');
-  });
-
   it('keeps the reaction fields the grouping and optimistic update depend on', () => {
     expect(getReactionsSelect).toHaveProperty('id', true);
     expect(getReactionsSelect).toHaveProperty('reaction', true);

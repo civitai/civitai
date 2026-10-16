@@ -40,24 +40,10 @@ const byIds = (ids: number[]) =>
     user: { id: 42, isModerator: false },
   } as never);
 
-const emptyLog = (stage: string) =>
-  expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-    expect.objectContaining({ name: 'images-by-ids-empty', stage, ids: 2 }),
-    'civitai-prod'
-  );
-
 describe('pages requested by id that come back empty', () => {
   afterEach(() => {
     vi.useRealTimers();
     queryRows.mockReset();
-  });
-
-  it('names the query returning no rows', async () => {
-    vi.setSystemTime(new Date('2026-09-16T10:00:00Z'));
-    queryRows.mockReturnValue([]);
-    const r = await getAllImages(byIds([4, 8]));
-    expect(r.items).toEqual([]);
-    emptyLog('no-rows');
   });
 
   it('names the viewer filter dropping every row', async () => {

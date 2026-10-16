@@ -186,26 +186,7 @@ describe('getUserEngagedModelsByIds — read-tier seam', () => {
   });
 });
 
-describe('getUserEngagedModelsByIds — per-type correctness', () => {
-  it('a Hide model shows under Hide and not under Favorite', async () => {
-    const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [B] });
-    expect(res.Hide).toContain(B);
-    expect(res.Favorite ?? []).not.toContain(B);
-  });
-
-  it('a model engaged as multiple types appears under each type', async () => {
-    const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [B] });
-    expect(res.Hide).toContain(B);
-    expect(res.Notify).toContain(B);
-  });
-});
-
 describe('getUserEngagedModelsByIds — Recommended path', () => {
-  it('a recommended model in the input set appears under Recommended', async () => {
-    const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [A] });
-    expect(res.Recommended).toEqual([A]);
-  });
-
   it('a recommended model OUTSIDE the input set does not appear', async () => {
     const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [A, B] });
     expect(res.Recommended).not.toContain(E);

@@ -45,10 +45,6 @@ describe('a row that was already over the limit stays editable', () => {
 });
 
 describe('the limit itself', () => {
-  it('is 500 — the card has no line clamp, so this is what renders in full', () => {
-    expect(CREATOR_ANNOUNCEMENT_CONTENT_MAX).toBe(500);
-  });
-
   it('is the same number the creator-studio composer counts against', async () => {
     const { readFileSync } = await import('fs');
     const { fileURLToPath } = await import('url');

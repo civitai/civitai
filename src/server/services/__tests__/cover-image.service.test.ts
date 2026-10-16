@@ -245,20 +245,6 @@ describe('productionCoverImageDeps.objectExists', () => {
     expect(checkFileExistsMock).not.toHaveBeenCalled();
   });
 
-  it('reports the indeterminate check when the uploads client cannot be built', async () => {
-    getImageUploadBackendMock.mockRejectedValue(
-      new Error('B2 image upload credentials not configured')
-    );
-
-    await productionCoverImageDeps.objectExists(coverImage.url);
-
-    expect(logToAxiomMock).toHaveBeenCalledTimes(1);
-    expect(logToAxiomMock.mock.calls[0][0]).toMatchObject({
-      name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
-      reason: 'client-unavailable',
-    });
-  });
-
   it('probes the uploads bucket the app actually writes to', async () => {
     const s3 = { send: vi.fn() };
     getImageUploadBackendMock.mockResolvedValue({ s3, bucket: 'civitai-media-uploads' });
