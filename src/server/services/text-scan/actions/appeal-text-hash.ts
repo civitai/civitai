@@ -50,10 +50,14 @@ export async function stampModeratorTextScanRuling({
   modelId,
   userId,
   label,
+  reason,
+  note,
 }: {
   modelId: number;
   userId: number;
   label: TextScanFlagLabel;
+  reason?: string;
+  note?: string;
 }) {
   const textHash = await loadGrantTextHash('Model', modelId, label);
   if (!textHash) return false;
@@ -67,7 +71,9 @@ export async function stampModeratorTextScanRuling({
           || jsonb_build_object(
             'appealGranted', jsonb_build_object(
               'at', now(), 'by', ${userId}::int, 'textHash', ${textHash}::text, 'via', 'moderator'
-            )
+            ) || jsonb_strip_nulls(jsonb_build_object(
+              'reason', ${reason ?? null}::text, 'note', ${note ?? null}::text
+            ))
           )
       )
     )

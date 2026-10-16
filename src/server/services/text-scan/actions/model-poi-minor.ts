@@ -600,10 +600,16 @@ export async function grantModelTextScanPoi({
   modelId,
   userId,
   grantHash,
+  via = 'appeal',
+  reason,
+  note,
 }: {
   modelId: number;
   userId: number;
   grantHash: string;
+  via?: 'appeal' | 'moderator';
+  reason?: string;
+  note?: string;
 }) {
   if (!grantHash) throw new Error('A granted appeal needs the grant hash it covers');
   const before = await dbWrite.model.findUnique({
@@ -651,8 +657,10 @@ export async function grantModelTextScanPoi({
               'at', now(),
               'by', ${userId}::int,
               'textHash', ${grantHash}::text,
-              'via', 'appeal'
-            ))
+              'via', ${via}::text
+            ) || jsonb_strip_nulls(jsonb_build_object(
+              'reason', ${reason ?? null}::text, 'note', ${note ?? null}::text
+            )))
         )
     WHERE m.id = ${modelId}
       AND m.poi

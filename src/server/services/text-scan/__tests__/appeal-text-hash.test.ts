@@ -107,6 +107,38 @@ describe('stampModeratorTextScanRuling', () => {
     expect(flatValues).toEqual(expect.arrayContaining([3, 7]));
   });
 
+  it('carries the moderator reason and note into the ruling, and omits them when not given', async () => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      {
+        id: 7,
+        userId: 5,
+        name: 'M',
+        description: null,
+        nsfw: false,
+        poi: false,
+        minor: true,
+        modelVersions: [],
+      },
+    ]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+
+    await stampModeratorTextScanRuling({
+      modelId: 7,
+      userId: 3,
+      label: 'minor',
+      reason: 'Adult character',
+      note: 'checked the sheet',
+    });
+    const [withText, ...withValues] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    expect(withValues).toEqual(expect.arrayContaining(['Adult character', 'checked the sheet']));
+    expect(withText.join('?')).toContain('jsonb_strip_nulls');
+
+    await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' });
+    const [, ...bareValues] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[1]);
+    // Absent fields bind as null, which jsonb_strip_nulls drops, so the ruling carries no key.
+    expect(bareValues.filter((v) => v === null)).toHaveLength(2);
+  });
+
   // The scan skips a model that is not public; a ruling on one its owner unpublished must not.
   it('records a ruling on a model that is not public', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([

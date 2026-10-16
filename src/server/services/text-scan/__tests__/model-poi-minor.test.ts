@@ -471,9 +471,24 @@ describe('grantModelTextScanPoi', () => {
     expect(text).toMatch(/meta = jsonb_set\(\s+m\.meta,\s+ARRAY\[\?::text, 'poi'\],/);
     expect(text).toContain(`- 'redetected'`);
     expect(text).toContain(`'textHash', ?::text,`);
-    expect(text).toContain(`'via', 'appeal'`);
-    expect(call.slice(1)).toEqual(expect.arrayContaining([3, 'h-current', MODEL_ID]));
+    expect(call.slice(1)).toEqual(expect.arrayContaining([3, 'h-current', 'appeal', MODEL_ID]));
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('records a moderator lift with its reason and note instead of an appeal', async () => {
+    await grantModelTextScanPoi({
+      modelId: MODEL_ID,
+      userId: 3,
+      grantHash: 'h-current',
+      via: 'moderator',
+      reason: 'Fictional person',
+      note: 'not a real likeness',
+    });
+    const call = flat(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(call.slice(1)).toEqual(
+      expect.arrayContaining(['moderator', 'Fictional person', 'not a real likeness'])
+    );
+    expect(call.slice(1)).not.toContain('appeal');
   });
 
   it('restores the pre-poi nsfw and sfwOnly from the snapshot', async () => {
