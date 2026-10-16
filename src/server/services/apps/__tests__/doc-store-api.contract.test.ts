@@ -1861,6 +1861,22 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
     expect(lookups).toEqual([]);
   });
 
+  it('refuses before the trust gate: an untrusted viewer gets resource_not_owned, not not_eligible', async () => {
+    const { tokenOf } = await setup();
+    const newbie = await tokenOf(VIEWER_IDS.newbie);
+    const refused = await call({
+      token: newbie,
+      method: 'POST',
+      path: '/picks',
+      body: pick(V2_OWN),
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toEqual(refusedBody);
+    // Control: without a declared field the same viewer reaches the trust gate.
+    const gated = await call({ token: newbie, method: 'POST', path: '/picks', body: { data: {} } });
+    expect(gated.body).toMatchObject({ code: 'not_eligible' });
+  });
+
   it('a moderator writing is not exempt', async () => {
     const { tokenOf } = await setup();
     h.users.set(VIEWER_IDS.v3, { ...user('v3', true), isModerator: true });

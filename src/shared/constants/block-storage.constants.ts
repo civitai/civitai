@@ -104,15 +104,10 @@ export const APP_STORAGE_LOG_MAX_ENTRIES = 10_000;
 export const APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR = 1_000;
 
 /**
- * `ownedModelVersions`: JSON Pointers (RFC 6901) into a document's `data`, each naming a
- * field that, when present, must hold a model version id the writing viewer owns. The server
- * checks them on every document create and update (`doc-store-ownership.ts`).
- *
- * A pointer is 1 to 4 segments, each `/` followed by 1 to 64 characters, where `/` and `~`
- * appear only as the escapes `~1` and `~0`. The root pointer `""` and empty segments are
- * refused: the root is the whole `data` object, never an id. A numeric segment indexes an
- * array. Kept as a string because the schema's `pattern` must equal it byte for byte, and a
- * `RegExp`'s `.source` escapes `/`.
+ * `ownedModelVersions` entries: JSON Pointers (RFC 6901) into a document's `data`, checked on
+ * every create and update (`doc-store-ownership.ts`). The root pointer `""` is refused — the
+ * root is the whole `data` object, never an id. A string, not a `RegExp`, because the schema's
+ * `pattern` must equal it byte for byte and `RegExp.source` escapes `/`.
  */
 export const APP_STORAGE_OWNED_POINTER_PATTERN = '^(/([^/~]|~[01]){1,64}){1,4}$';
 export const APP_STORAGE_OWNED_POINTER_RE = new RegExp(APP_STORAGE_OWNED_POINTER_PATTERN, 'u');
@@ -558,7 +553,6 @@ function parseCollection(
   return collection;
 }
 
-/** Parses `ownedModelVersions`. Returns the pointers, or null when the list is unusable. */
 function parseOwnedPointers(at: string, raw: unknown, errors: string[]): string[] | null {
   if (!Array.isArray(raw)) {
     errors.push(`${at} must be an array of JSON Pointers`);

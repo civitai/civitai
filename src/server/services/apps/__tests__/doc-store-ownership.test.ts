@@ -121,8 +121,7 @@ describe('assertOwnedModelVersions', () => {
         JSON.stringify(value)
       ).toEqual(stranger);
     }
-    // Only the well-formed id reached the database; the malformed values were refused first.
-    expect(lookup.mock.calls).toEqual([[[999]]]);
+    expect(lookup.mock.calls, 'only the well-formed id reaches the lookup').toEqual([[[999]]]);
   });
 
   it('allows a declared field that is absent, without a database read', async () => {

@@ -1,15 +1,12 @@
-// The `ownedModelVersions` rule of an App Blocks storage collection: fields of a document's
-// `data`, named by JSON Pointer in the app's reviewed manifest, that may hold only a model
-// version the writing viewer owns. The data comes from an app-rendered page holding the
-// viewer's block token, so the id is untrusted and the request cannot opt out: the route
-// runs this on every create and update of a collection that declares the rule.
+// The `ownedModelVersions` rule of an App Blocks storage collection. The `data` comes from an
+// app-rendered page holding the viewer's block token, so the ids are untrusted; the rule comes
+// only from the reviewed manifest, so a request cannot opt out of it.
 import { dbRead } from '~/server/db/client';
+import { INT4_MAX } from '~/server/schema/base.schema';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import type { DeclaredStorageCollection } from '~/shared/constants/block-storage.constants';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
-/** The largest id a `ModelVersion.id` (Postgres `integer`) can hold. */
-const MAX_ID = 2_147_483_647;
 const ARRAY_INDEX = /^(0|[1-9][0-9]*)$/;
 
 type Resolved = { found: true; value: unknown } | { found: false };
@@ -70,10 +67,10 @@ function notOwned(pointer: string): DocStoreError {
 }
 
 /**
- * Refuses `data` unless every declared pointer that resolves holds a positive integer id of
- * a model version, not deleted, whose model belongs to `authorUid` (so an anonymous author,
- * `null`, owns nothing). A pointer that resolves to nothing is allowed. Moderators get no
- * exemption. Makes at most one database read, and none when no declared field is present.
+ * Refuses `data` unless every declared pointer that resolves holds a positive integer id of a
+ * non-deleted model version whose model belongs to `authorUid` (an anonymous author, `null`,
+ * owns nothing). A pointer that resolves to nothing is allowed. At most one database read, and
+ * none when no declared field is present.
  */
 export async function assertOwnedModelVersions(
   decl: DeclaredStorageCollection,
@@ -88,7 +85,8 @@ export async function assertOwnedModelVersions(
     const at = resolveJsonPointer(data, pointer);
     if (!at.found) continue;
     const id = at.value;
-    if (typeof id !== 'number' || !Number.isInteger(id) || id < 1 || id > MAX_ID) {
+    // Out of `integer` range is refused here, never sent to the query (Prisma would throw).
+    if (typeof id !== 'number' || !Number.isInteger(id) || id < 1 || id > INT4_MAX) {
       throw notOwned(pointer);
     }
     claimed.push({ pointer, id });

@@ -8,7 +8,9 @@ import type {
 
 /**
  * One collection's declaration — the manifest parser's own type, so what the
- * validator accepted at review is exactly what the store enforces. The store
+ * validator accepted at review is what the store sees. `ownedModelVersions` is
+ * the exception: the store ignores it and the REST layer enforces it
+ * (`doc-store-ownership.ts`). The store
  * still refuses, itself, the parts the parser admits only behind
  * `APP_STORAGE_ENABLED_FEATURES` (`write: 'anyone'`, `kind: 'log'`,
  * `ttlSeconds`, `maxEntries`); `write: 'owner'` is accepted and means nobody

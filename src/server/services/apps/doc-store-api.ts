@@ -603,7 +603,8 @@ async function moderate(
  * Failures that are OUR fault, refunded without charging the caller's rejection bucket: the
  * store or a dependency was unavailable, the store timed out on a lock other writers held, or
  * anything that is not a `DocStoreError` at all. Every refusal about the caller's request or
- * document is charged as a rejection.
+ * document raised after the budget is reserved is charged as a rejection; the gates that run
+ * before it (body parsing, the write policy, `ownedModelVersions`) charge nothing.
  *
  * ⚠️ THE DEFAULT IS THE OPPOSITE OF THE LEGACY SURFACE'S. `apps-shared.router.ts` refunds only
  * the statements it marks as plumbing (`asTransactionFault`: connection, BEGIN, COMMIT) and
@@ -737,9 +738,9 @@ async function run(
       const created = route.op === 'create' ? parseBody(createBody, body) : null;
       const putIn = route.op === 'put' ? parseBody(putBody, body) : null;
       const deleteVersion = route.op === 'delete' ? deleteIfVersion(req) : undefined;
-      // The manifest's ownership rule, on every write that sets `data` (create and put are
-      // the only two). Before any rate limit, write budget, trust lookup or moderation scan,
-      // so a refused version costs the caller nothing and the platform no scan.
+      // Every write that sets `data` (create and put are the only two), before any rate limit,
+      // write budget, trust lookup or moderation scan — the manifest schema documents a refusal
+      // as costing nothing.
       const newData = created?.data ?? putIn?.data;
       if (newData) await assertOwnedModelVersions(decl, newData, uid);
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
