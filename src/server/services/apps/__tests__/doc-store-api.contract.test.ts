@@ -1874,6 +1874,7 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
     expect(refused.body).toEqual(refusedBody);
     // Control: without a declared field the same viewer reaches the trust gate.
     const gated = await call({ token: newbie, method: 'POST', path: '/picks', body: { data: {} } });
+    expect(gated.status).toBe(403);
     expect(gated.body).toMatchObject({ code: 'not_eligible' });
   });
 

@@ -92,9 +92,13 @@ describe('assertOwnedModelVersions', () => {
     expect(lookup).toHaveBeenCalledWith([101]);
   });
 
-  it("accepts the author's own version", async () => {
+  it("accepts the author's own version, up to the largest integer id", async () => {
     await expect(
       assertOwnedModelVersions(decl([POINTER]), owned, AUTHOR, table({ 101: AUTHOR }))
+    ).resolves.toBeUndefined();
+    const max = { workflow: { modelVersionId: 2_147_483_647 } };
+    await expect(
+      assertOwnedModelVersions(decl([POINTER]), max, AUTHOR, table({ 2_147_483_647: AUTHOR }))
     ).resolves.toBeUndefined();
   });
 
