@@ -11,6 +11,17 @@
 // Accepted trade-off: between a version that declares shared collections going live and the
 // copy of its legacy rows finishing (run right after go-live), an old key does not resolve.
 //
+// "Declares a shared collection" is taken to mean "has moved"; nothing else enforces it, and
+// the legacy shared-write routes stay open. Consequences, by design:
+//   - once an app's approved manifest declares a shared collection, the document store is the
+//     only source for key → item: legacy shared rows written afterwards (e.g. by an old open
+//     tab) never resolve;
+//   - an app that keeps a legacy shared feed alongside a declared shared collection loses
+//     lookups for its legacy keys;
+//   - rollback hazard: re-approving a manifest with no shared collection makes legacy
+//     authoritative again — leftover legacy copies of deleted documents come back, and items
+//     that exist only in the document store stop resolving.
+//
 // Document store: production namespace only, so a dev or review document never resolves; only
 // the collections the APPROVED manifest declares shared are probed, so an app with none costs
 // no document-store query.
@@ -67,8 +78,25 @@ async function findInDocStore(args: {
   try {
     matches = await getDocStoreLookup().findSharedByKey(args.appBlockId, shared, args.key);
   } catch (err) {
-    // No store here (unconfigured, or a role that bypasses RLS): fall back to the legacy store.
-    if (isDocStoreError(err, 'storage_disabled')) return { kind: 'not_authoritative' };
+    // No store here: fall back to the legacy store. Unconfigured is expected (dev, previews);
+    // a configured store that refuses (its role bypasses RLS) re-opens the legacy fallback for
+    // an app that has moved, so that one is logged.
+    if (isDocStoreError(err, 'storage_disabled')) {
+      const { appdataDb } = await import('~/server/db/appdataDb');
+      if (appdataDb) {
+        const { logToAxiom } = await import('~/server/logging/client');
+        logToAxiom(
+          {
+            name: 'app-shared-item-doc-store-disabled',
+            type: 'error',
+            message: err.message,
+            appBlockId: args.appBlockId,
+          },
+          'app-blocks'
+        ).catch(() => undefined);
+      }
+      return { kind: 'not_authoritative' };
+    }
     throw err;
   }
   if (matches.length > 1) return { kind: 'ambiguous' };

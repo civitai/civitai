@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as DocStoreModule from '~/server/services/apps/doc-store';
 import type { DocStoreDb } from '~/server/services/apps/doc-store';
 import {
@@ -36,8 +37,15 @@ const h = vi.hoisted(() => ({
   lookup: undefined as unknown,
   legacy: new Map<string, { author: number; hidden: boolean }>(),
   legacyCalls: 0,
+  appdataConfigured: false,
 }));
 
+// Whether the process has a document-store pool configured (`APPDATA_DATABASE_URL`).
+vi.mock('~/server/db/appdataDb', () => ({
+  get appdataDb() {
+    return h.appdataConfigured ? {} : null;
+  },
+}));
 vi.mock('~/server/services/apps/doc-store-lookup.instance', () => ({
   getDocStoreLookup: () => h.lookup,
 }));
@@ -102,6 +110,12 @@ function legacyRow(appId: string, key: string, author: number, hidden = false) {
   h.legacy.set(`${legacySchema(appId)}/${key}`, { author, hidden });
 }
 
+/** The fallback-on-a-refused-store log lines, by event name. */
+const disabledLogs = () =>
+  loggingMock.logToAxiom.mock.calls
+    .map((c: unknown[]) => c[0] as Record<string, unknown>)
+    .filter((e) => e?.name === 'app-shared-item-doc-store-disabled');
+
 const subListing = (appId: string, key: string) => readSharedItemForSubListing(appId, key);
 const attribution = (appId: string, key: string, spender = SPENDER) =>
   resolvePublishedContentAuthorUserId({
@@ -132,6 +146,8 @@ function defineSuite(rls: boolean) {
       h.lookup = docStore.createDocStoreLookup?.({ db });
       h.legacy.clear();
       h.legacyCalls = 0;
+      h.appdataConfigured = false;
+      loggingMock.logToAxiom.mockClear();
       dbMock.dbRead.appBlock.findUnique.mockImplementation(
         async ({ where }: { where: { id: string } }) => apps.get(where.id) ?? null
       );
@@ -254,6 +270,19 @@ function defineSuite(rls: boolean) {
         legacyRow(app, 'k', LEGACY_AUTHOR);
         h.lookup = docStore.createDocStoreLookup?.({ db: null });
         expect(await subListing(app, 'k')).toEqual({ authorUserId: LEGACY_AUTHOR, hidden: false });
+        expect(disabledLogs()).toEqual([]);
+      });
+
+      it('a configured document store that refuses its role falls back to legacy, and says so', async () => {
+        const app = freshApp();
+        legacyRow(app, 'k', LEGACY_AUTHOR);
+        h.appdataConfigured = true;
+        // The superuser connection bypasses RLS, so the store refuses every call.
+        h.lookup = docStore.createDocStoreLookup?.({ db: harness.dbAs(null) });
+        expect(await subListing(app, 'k')).toEqual({ authorUserId: LEGACY_AUTHOR, hidden: false });
+        expect(disabledLogs()).toEqual([
+          expect.objectContaining({ appBlockId: app, type: 'error' }),
+        ]);
       });
 
       it('an approved manifest that does not parse is a 503, not a fall back to the legacy store', async () => {
