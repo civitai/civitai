@@ -235,6 +235,10 @@ vi.mock('~/server/prom/client', () => ({
   vaultItemFailedCounter: promMetricStub(),
   rewardGivenCounter: promMetricStub(),
   rewardFailedCounter: promMetricStub(),
+  // Incremented by `publicProcedure`'s client-version middleware (src/server/trpc.ts) on every
+  // `x-client: web` request, so a suite driving a procedure over HTTP as the web client 500s
+  // without it.
+  trpcClientReadCapabilityRequests: promMetricStub(),
   // Also re-exported rather than declared here, and NOT a metric — it is the real cross-graph
   // Registry that `src/pages/api/metrics.ts` scrapes and now also registers its own failure counter
   // on, at MODULE scope. Omitting it means any suite that merely IMPORTS that page throws

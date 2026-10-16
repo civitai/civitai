@@ -20,6 +20,10 @@ import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/t
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
+import {
+  pinResponseWriteToSuperjson,
+  runWithResponseWriteFormat,
+} from '~/server/trpc/response-write-format';
 import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 
@@ -67,7 +71,12 @@ const trpcHandler = createNextApiHandler({
       errorCount: errors.length,
       paths: info?.calls.map((call) => call.path) ?? paths,
     });
-    if (edgeCached) ctx?.res?.removeHeader('Set-Cookie');
+    if (edgeCached) {
+      ctx?.res?.removeHeader('Set-Cookie');
+      // A cached body is served to the next caller of this URL whatever client it is, so it
+      // must be superjson, the format every client reads. See response-write-format.ts.
+      pinResponseWriteToSuperjson();
+    }
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
@@ -252,5 +261,10 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // Seed the request-scoped procedure-path context so the transformer's serialize
   // step (an awaited descendant of trpcHandler) can name the offending procedure
   // on an oversized/slow serialize. No-op wrapper when the instrument is disabled.
-  await runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res));
+  //
+  // The response write format (superjson vs devalue) is decided per request from the
+  // client headers — see `~/server/trpc/response-write-format`.
+  await runWithResponseWriteFormat(req.headers, () =>
+    runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res))
+  );
 }) as NextApiHandler;
