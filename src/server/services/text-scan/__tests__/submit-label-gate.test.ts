@@ -19,7 +19,9 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
 }));
 
 const { scanEntity } = await import('~/server/services/text-scan/submit');
-const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
+const { registerTextScanProfile, resolveTextScanProfileLabels } = await import(
+  '~/server/services/text-scan/profiles'
+);
 const { resetTextScanRolloutCache } = await import('~/server/services/text-scan/mode');
 const { submitWorkflow } = await import('@civitai/client');
 const { getActiveTextScanPrompts, getTextScanConfig } = await import(
@@ -134,5 +136,50 @@ describe('the csam gate at submit time', () => {
     expect(lastBody().metadata.labels).toEqual(['scam', 'csam']);
     expect(lastBody().steps[0].input.messages[0].content).toContain('CSAM DEF');
     expect(lastHash()).not.toBe(before);
+  });
+});
+
+describe('a profile that narrows its labels per subject', () => {
+  const narrowTo = (labels: ('scam' | 'csam')[]) =>
+    registerTextScanProfile({
+      entityType: 'Comment',
+      labels: ['scam', 'csam'],
+      load,
+      labelsFor: () => labels,
+    });
+
+  it('asks only for the gated labels the subject keeps', async () => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ ...PROMPTS, ...CSAM_PROMPT });
+    csamMode('review');
+    narrowTo(['csam']);
+    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toMatchObject({
+      status: 'submitted',
+    });
+    expect(lastBody().metadata.labels).toEqual(['csam']);
+    expect(lastBody().metadata.promptIds).toEqual({ base: 1, csam: 7 });
+  });
+
+  it('submits nothing when the gate drops every label the subject keeps', async () => {
+    narrowTo(['csam']);
+    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+      status: 'skipped',
+      reason: 'off',
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveTextScanProfileLabels', () => {
+  const subject = { fields: [{ heading: 'Body', text: 'placeholder text' }], declared: {} };
+
+  it.each(['off', 'review'])('%s: a subject changes nothing without labelsFor', async (mode) => {
+    csamMode(mode);
+    const profile = { labels: ['scam', 'csam'] as ('scam' | 'csam')[] };
+    expect(await resolveTextScanProfileLabels(profile, subject)).toEqual(
+      await resolveTextScanProfileLabels(profile)
+    );
+    expect(await resolveTextScanProfileLabels(profile, subject)).toEqual(
+      mode === 'review' ? ['scam', 'csam'] : ['scam']
+    );
   });
 });

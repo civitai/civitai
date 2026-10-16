@@ -244,6 +244,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
         outcome,
         subject,
         textHash: metadata.textHash ?? textScanTextHash(subject),
+        promptIds: metadata.promptIds,
       });
     } catch (error) {
       // Left raised, the next callback would find nothing stricter and never act on it.
@@ -356,6 +357,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       outcome,
       subject,
       textHash: metadata.textHash ?? textScanTextHash(subject),
+      promptIds: metadata.promptIds,
     });
   } catch (error) {
     // Left Succeeded, the row would never be retried and the verdict would be lost; Failed puts it

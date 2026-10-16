@@ -54,6 +54,8 @@ export type TextScanProfile = {
   minChars?: number;
   /** Entities that no longer exist are absent from the map; ones that are not public are not. */
   load: (ids: number[]) => Promise<Map<number, TextScanSubject>>;
+  /** The subset of `labels` this subject is scanned for; all of them when absent. */
+  labelsFor?: (subject: TextScanSubject) => TextScanLabel[];
 };
 
 export type TextScanOutput = {

@@ -46,6 +46,11 @@ replaces Clavata only once Collection is cut over with `disableClavataFor`.
 Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
 `text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
 
+ChatMessage, Comment, CommentV2, UserProfile, Post and Model also list `csam`, asked only while its
+gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
+in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
+workflow per window.
+
 ### Model rules
 
 `ModelRules` is a second scan of a model, separate from `Model`, so it has its own rollout and its
@@ -114,7 +119,9 @@ the model for review. Disputes, appeals and mute reviews go through the existing
 `csam` is the exception: a positive verdict writes one Pending `TextScanHold` row per entity, label
 and scanned text, and nothing else (no report, mute, strike, hide or notification). A rescan of the
 same text adds nothing; changed text adds a new row. The scam, Post and Model adapters write the hold
-before their own action. Moderators work the holds on a separate moderator-app page.
+before their own action. A failed hold write is logged as an error and does not fail the callback,
+so the adapter's action is never repeated by a retry. Moderators work the holds on a separate
+moderator-app page.
 
 ## Modes
 

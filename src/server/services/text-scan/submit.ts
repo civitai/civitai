@@ -327,15 +327,16 @@ export async function scanEntity({
   const profile = getTextScanProfile(entityType);
   if (!profile) return { status: 'skipped', reason: 'no-profile' };
 
-  const labels = await resolveTextScanProfileLabels(profile);
+  const subject = (await profile.load([entityId])).get(entityId);
+  if (!subject) return { status: 'skipped', reason: 'missing' };
+  if (subject.notPublic) return { status: 'skipped', reason: 'not-public' };
+
+  const labels = await resolveTextScanProfileLabels(profile, subject);
+  if (!labels.length) return { status: 'skipped', reason: 'off' };
   const passes = planTextScanPasses(labels, mode, searchMode).filter(
     (p) => !only || (only === 'web-search') === (p.variant === 'web-search')
   );
   if (!passes.length) return { status: 'skipped', reason: 'off' };
-
-  const subject = (await profile.load([entityId])).get(entityId);
-  if (!subject) return { status: 'skipped', reason: 'missing' };
-  if (subject.notPublic) return { status: 'skipped', reason: 'not-public' };
   if (subjectTextLength(subject) < (profile.minChars ?? 1)) {
     for (const pass of passes) await clearStaleVerdict({ entityType, entityId, pass, subject });
     return { status: 'skipped', reason: 'too-short' };

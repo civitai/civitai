@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AutoMute from '~/server/services/scam-auto-mute.service';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as ReportService from '~/server/services/report.service';
@@ -32,7 +33,10 @@ vi.mock('~/server/services/text-scan/actions/model-poi-minor', () => ({
 }));
 
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
-const { applyCsamHold } = await import('~/server/services/text-scan/actions/csam-hold');
+const { applyCsamHold, CSAM_HOLD_TEXT_CHARS } = await import(
+  '~/server/services/text-scan/actions/csam-hold'
+);
+const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { getTextScanCsamMode } = await import('~/server/services/text-scan/mode');
 const { createReport } = await import('~/server/services/report.service');
 const { autoMuteScamAccount } = await import('~/server/services/scam-auto-mute.service');
@@ -147,16 +151,36 @@ describe('csam verdicts through the registered adapters', () => {
     ['Post', () => applyRatingFloor],
     ['Model', () => applyModelPoiMinor],
   ] as const)(
-    '%s still runs its own action when the hold write fails, then fails the callback',
+    '%s still runs its own action when the hold write fails, and the callback succeeds',
     async (entityType, action) => {
       dbMock.dbWrite.textScanHold.create.mockRejectedValueOnce(new Error('db down'));
       const outcome = { ...csamOnly, scam: { detected: true, reason: 'test' } };
       await expect(
         getModerationAdapter(entityType)!.applyTextScan!(args({ outcome }) as never)
-      ).rejects.toThrow('db down');
+      ).resolves.toBeUndefined();
       expect(action()).toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', entityType, entityId: 77, workflowId: 'wf-1' })
+      );
     }
   );
+
+  it('does not fail the callback when the hold write throws a falsy value', async () => {
+    dbMock.dbWrite.textScanHold.create.mockImplementationOnce(() => Promise.reject(undefined));
+    await expect(
+      getModerationAdapter('Comment')!.applyTextScan!(args() as never)
+    ).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', entityType: 'Comment' })
+    );
+  });
+
+  it('records the csam prompt id handed over by the callback', async () => {
+    await getModerationAdapter('Post')!.applyTextScan!(
+      args({ promptIds: { base: 1, csam: 9 } }) as never
+    );
+    expect(holds[0].promptId).toBe(9);
+  });
 });
 
 describe('applyCsamHold', () => {
@@ -178,5 +202,46 @@ describe('applyCsamHold', () => {
       subject: { ...base.subject, userId },
     });
     expect(holds[0].userId).toBeNull();
+  });
+
+  // Postgres rejects both in text and in jsonb, so a stored one would fail every retry.
+  const UNSTORABLE =
+    /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  const strings = (value: unknown): string[] =>
+    typeof value === 'string'
+      ? [value]
+      : value && typeof value === 'object'
+      ? Object.values(value).flatMap(strings)
+      : [];
+
+  it('strips NUL from the text and from every string in meta', async () => {
+    const base = args();
+    await applyCsamHold({
+      entityType: 'Comment',
+      ...base,
+      subject: {
+        ...base.subject,
+        fields: [{ heading: 'Comment', text: 'neutral\u0000text' }],
+        meta: { note: 'a\u0000b', nested: { list: ['c\u0000d', 4] } },
+      },
+    });
+    expect(holds[0].text).toContain('neutraltext');
+    expect(holds[0].meta).toEqual({ note: 'ab', nested: { list: ['cd', 4] } });
+    expect([holds[0].text, ...strings(holds[0].meta)].some((v) => UNSTORABLE.test(v))).toBe(false);
+  });
+
+  it('cuts the text at the cap without splitting a surrogate pair', async () => {
+    const base = args();
+    const at = composeUserText({
+      ...base.subject,
+      fields: [{ heading: 'Comment', text: 'X' }],
+    }).indexOf('X');
+    const text = 'a'.repeat(CSAM_HOLD_TEXT_CHARS - 1 - at) + '\u{1F600}' + 'tail';
+    const subject = { ...base.subject, fields: [{ heading: 'Comment', text }] };
+    expect(composeUserText(subject).charCodeAt(CSAM_HOLD_TEXT_CHARS - 1)).toBe(0xd83d);
+    await applyCsamHold({ entityType: 'Comment', ...base, subject });
+    const stored = holds[0].text as string;
+    expect(stored.length).toBeLessThanOrEqual(CSAM_HOLD_TEXT_CHARS);
+    expect(UNSTORABLE.test(stored)).toBe(false);
   });
 });
