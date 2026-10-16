@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, uniqueToken } from './preview-trpc';
 
@@ -100,7 +100,7 @@ const MIGRATED_PATHS = [
 ] as const;
 
 // Mirror preview-smoke.spec.ts: assert we cleared the preview gate.
-function assertGatePassed(page: import('@playwright/test').Page, path: string) {
+function assertGatePassed(page: Page, path: string) {
   expect(page.url(), `${path}: should not redirect to /login`).not.toContain('/login');
   expect(page.url(), `${path}: should not redirect to /preview-restricted`).not.toContain(
     '/preview-restricted'
