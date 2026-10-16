@@ -69,12 +69,12 @@ describe('the Models section', () => {
     applyGrants({
       '/models/minor-hash-matches': ['moderator:reviewer'],
       '/models/flag-appeals': ['moderator:reviewer'],
-      '/models/minor-detections': ['moderator:reviewer'],
+      '/models/held-detections': ['moderator:reviewer'],
     });
     expect(labelsUnder('Models')).toEqual([
       ['/models/minor-hash-matches', 'Minor Hash Matches'],
       ['/models/flag-appeals', 'Model Flag Appeals'],
-      ['/models/minor-detections', 'Minor Detections'],
+      ['/models/held-detections', 'Held Detections'],
     ]);
 
     applyGrants({ '/models/minor-hash-matches': ['moderator:reviewer'] });
@@ -84,10 +84,10 @@ describe('the Models section', () => {
     applyGrants({ '/models/flag-appeals': ['moderator:reviewer'] });
     expect(labelsUnder('Models')).toEqual([['/models/flag-appeals', 'Model Flag Appeals']]);
     expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
-    expect(canAccess(reviewer, '/models/minor-detections')).toBe(false);
+    expect(canAccess(reviewer, '/models/held-detections')).toBe(false);
 
-    applyGrants({ '/models/minor-detections': ['moderator:reviewer'] });
-    expect(labelsUnder('Models')).toEqual([['/models/minor-detections', 'Minor Detections']]);
+    applyGrants({ '/models/held-detections': ['moderator:reviewer'] });
+    expect(labelsUnder('Models')).toEqual([['/models/held-detections', 'Held Detections']]);
     expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
   });
 
@@ -96,7 +96,7 @@ describe('the Models section', () => {
     expect(models?.children?.map((c) => [c.path, c.countKey])).toEqual([
       ['/models/minor-hash-matches', 'minorHashMatches'],
       ['/models/flag-appeals', 'modelFlagAppeals'],
-      ['/models/minor-detections', 'minorDetections'],
+      ['/models/held-detections', 'heldDetections'],
     ]);
   });
 
@@ -125,7 +125,7 @@ describe('/admin grantable pages', () => {
     expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
       '/models/minor-hash-matches',
       '/models/flag-appeals',
-      '/models/minor-detections',
+      '/models/held-detections',
     ]);
   });
 });

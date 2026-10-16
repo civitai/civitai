@@ -30,7 +30,7 @@ const { actions, load } = await import('../+page.server');
 const post = (fields: Record<string, string>) => {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
-  return { request: new Request('http://x/models/minor-detections', { method: 'POST', body }) };
+  return { request: new Request('http://x/models/held-detections', { method: 'POST', body }) };
 };
 type ActionEvent = Parameters<NonNullable<typeof actions>[string]>[0];
 const run = (name: string, fields: Record<string, string>) =>
@@ -92,7 +92,7 @@ describe('queue load', () => {
   type Loaded = { redetectedFilters: unknown; items: unknown[] };
   const loadQueue = async (query = '') =>
     (await (load as unknown as (e: { url: URL }) => Promise<Loaded>)({
-      url: new URL(`http://x/models/minor-detections${query}`),
+      url: new URL(`http://x/models/held-detections${query}`),
     })) as Loaded;
 
   it('lists the held detections and never queries appeals', async () => {

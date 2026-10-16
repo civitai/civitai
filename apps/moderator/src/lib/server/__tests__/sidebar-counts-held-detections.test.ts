@@ -38,16 +38,16 @@ const { getSidebarCounts } = await import('../sidebar-counts.service');
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('sidebar count minorDetections', () => {
+describe('sidebar count heldDetections', () => {
   it('is the held-detection total', async () => {
     getRedetectedCount.mockResolvedValue(5);
-    expect(await getSidebarCounts()).toMatchObject({ minorDetections: 5, modelFlagAppeals: 4 });
+    expect(await getSidebarCounts()).toMatchObject({ heldDetections: 5, modelFlagAppeals: 4 });
   });
 
   it('is dropped, without blanking the other badges, when its query fails', async () => {
     getRedetectedCount.mockRejectedValue(new Error('db down'));
     const counts = await getSidebarCounts();
-    expect(counts).not.toHaveProperty('minorDetections');
+    expect(counts).not.toHaveProperty('heldDetections');
     expect(counts).toMatchObject({ modelFlagAppeals: 4, minorHashMatches: 3 });
   });
 });

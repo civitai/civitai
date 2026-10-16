@@ -312,7 +312,7 @@ describe('moved views', () => {
     ['/models/minor-hash-matches?tab=appeals&q=7', '/models/flag-appeals?q=7'],
     [
       '/models/flag-appeals?view=redetected&item=7%3Aminor',
-      '/models/minor-detections?item=7%3Aminor',
+      '/models/held-detections?item=7%3Aminor',
     ],
   ])(
     'redirects %s before the grant check, even for a role holding neither old page',

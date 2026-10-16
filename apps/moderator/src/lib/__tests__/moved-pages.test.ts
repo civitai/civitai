@@ -28,12 +28,12 @@ describe('movedViewTarget', () => {
     );
   });
 
-  it('sends the old re-detected view to Minor Detections, carrying the selection', () => {
+  it('sends the old re-detected view to Held Detections, carrying the selection', () => {
     expect(movedViewTarget(at('/models/flag-appeals?view=redetected&item=7:minor&flag=poi'))).toBe(
-      '/models/minor-detections?item=7%3Aminor&flag=poi'
+      '/models/held-detections?item=7%3Aminor&flag=poi'
     );
     expect(movedViewTarget(at('/models/flag-appeals?view=redetected'))).toBe(
-      '/models/minor-detections'
+      '/models/held-detections'
     );
   });
 

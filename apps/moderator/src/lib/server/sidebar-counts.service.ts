@@ -42,7 +42,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     removedAppeals,
     minorQueue,
     modelFlagAppealGroups,
-    minorDetections,
+    heldDetections,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -96,7 +96,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     feedbackAppsPlatformNew,
     removedAppeals,
     modelFlagAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
-    ...(minorDetections != null ? { minorDetections } : {}),
+    ...(heldDetections != null ? { heldDetections } : {}),
     ...(minorQueue != null ? { minorHashMatches: minorQueue.pending + minorQueue.auto } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),

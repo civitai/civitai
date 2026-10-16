@@ -11,7 +11,7 @@
   import type { RedetectedQueueData } from '$lib/server/minor-flag-queue';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
   import { urlWith } from '$lib/url';
-  import MinorDetectionDetail from './MinorDetectionDetail.svelte';
+  import HeldDetectionDetail from './HeldDetectionDetail.svelte';
 
   type QueueForm = { error?: string; modelId?: number } | null;
 
@@ -59,7 +59,7 @@
   {rowKey}
   {parseKey}
   selectionParam="item"
-  queueLabel="Minor detections queue"
+  queueLabel="Held detections queue"
   itemLabel="Detection"
   canKeep={(row) => !row.hasPendingAppeal}
   canUnflag={(row) => !row.hasPendingAppeal}
@@ -91,7 +91,7 @@
     </TriageRow>
   {/snippet}
   {#snippet detail(row, state)}
-    <MinorDetectionDetail
+    <HeldDetectionDetail
       {row}
       civitaiUrl={data.civitaiUrl}
       verdict={state.verdict}

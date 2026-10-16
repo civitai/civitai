@@ -2,7 +2,7 @@ import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/ki
 import type { SessionUser } from '@civitai/auth';
 import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
-import { FLAG_APPEALS_PATH, MINOR_DETECTIONS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
+import { FLAG_APPEALS_PATH, HELD_DETECTIONS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 
 export const APP = 'moderator';
@@ -111,7 +111,7 @@ export const NAVIGATION: NavLink[] = [
     children: [
       { path: MINOR_HASH_PATH, label: 'Minor Hash Matches', countKey: 'minorHashMatches' },
       { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals', countKey: 'modelFlagAppeals' },
-      { path: MINOR_DETECTIONS_PATH, label: 'Minor Detections', countKey: 'minorDetections' },
+      { path: HELD_DETECTIONS_PATH, label: 'Held Detections', countKey: 'heldDetections' },
     ],
   },
   {

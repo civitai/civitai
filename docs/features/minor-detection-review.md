@@ -68,10 +68,10 @@ produced the verdict.
 
 ## Moderator app
 
-`/models/minor-detections` ("Minor Detections", under Models) lists first detections and
+`/models/held-detections` ("Held Detections", under Models) lists first detections and
 re-detections together, each badged with its kind, in the shared triage layout: **Flag (1)** /
 **Don't flag (2)**. The Re-detected tab moves here from Flag Appeals, which keeps appeals only; the old
-`/models/flag-appeals?view=redetected` URL redirects.
+`/models/flag-appeals?view=redetected` URL redirects. The page lists held poi (real person) re-detections as well as minor ones, hence the name.
 
 ## Rollout
 

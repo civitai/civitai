@@ -229,7 +229,7 @@ a human `appealGranted` and a later scan detects it on text with a *different* h
 nothing, notifies nobody and changes no restrictions: it writes
 `meta.textScanFlags[label].redetected` (workflow, reason, names, hash) and leaves the grant in
 place. A first-detection hold from review mode writes the same marker with `kind: 'first'`. The same
-hash stays blocked as before. The moderator app lists these on `/models/minor-detections` (badged
+hash stays blocked as before. The moderator app lists these on `/models/held-detections` (badged
 Re-detected, beside first detections held by review mode — see `minor-detection-review.md`), with
 the prior clear (who, when, via). **Flag** (the API's keep) calls
 `/api/mod/minor-flag/resolve-redetection` and applies the flag exactly as the scan would have (owner

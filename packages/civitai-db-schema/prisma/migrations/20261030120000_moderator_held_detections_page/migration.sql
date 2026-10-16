@@ -1,5 +1,5 @@
 -- Moderator app: the Re-detected view moved from /models/flag-appeals to its own page,
--- /models/minor-detections, which also lists first detections held for review. The new page is granted
+-- /models/held-detections, which also lists first detections held for review. The new page is granted
 -- on its own path, so copy the grants of the page it was split from; otherwise only moderator:admin can
 -- open it.
 --
@@ -8,7 +8,7 @@
 -- Idempotent (ON CONFLICT DO NOTHING), so re-running never overwrites a grant edited on /admin since.
 
 INSERT INTO "AppPageAccess" ("app", "path", "roles", "updatedById", "updatedAt")
-SELECT src."app", '/models/minor-detections', src."roles", src."updatedById", now()
+SELECT src."app", '/models/held-detections', src."roles", src."updatedById", now()
 FROM "AppPageAccess" src
 WHERE src."app" = 'moderator' AND src."path" = '/models/flag-appeals'
 ON CONFLICT ("app", "path") DO NOTHING;
