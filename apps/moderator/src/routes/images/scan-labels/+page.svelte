@@ -27,6 +27,12 @@
     (document.activeElement as HTMLElement | null)?.blur();
   };
 
+  let videoReady = $state(false);
+  $effect.pre(() => {
+    void data.card?.itemId;
+    videoReady = false;
+  });
+
   let serverError = $state<string | null>(null);
 
   const submitVote: SubmitFunction = ({ formData }) => {
@@ -121,7 +127,12 @@
         class="flex flex-col gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5 transition-opacity"
         class:opacity-50={submitting}
       >
-        <div class="flex justify-center">
+        <!-- Media events do not bubble; capture on the wrapper hears the inner <video>. -->
+        <div
+          class="relative flex justify-center"
+          onloadeddatacapture={() => (videoReady = true)}
+          oncanplaycapture={() => (videoReady = true)}
+        >
           <EdgeMedia
             src={data.card.url}
             name={data.card.name}
@@ -132,6 +143,14 @@
             alt="Image under review"
             class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
           />
+          {#if data.card.type === 'video' && !videoReady}
+            <div
+              class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-dark-2"
+              role="status"
+            >
+              <span class="rounded-md bg-dark-8/80 px-3 py-1.5">Loading video...</span>
+            </div>
+          {/if}
         </div>
         <VoteForm itemId={data.card.itemId} {submitting} onsubmit={submitVote} />
       </section>
