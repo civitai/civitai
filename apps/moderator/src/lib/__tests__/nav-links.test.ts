@@ -55,6 +55,20 @@ describe('the Users section', () => {
     expect(labelsUnder('Users')).toEqual([['/users/scam-restrictions', 'Scam Restrictions']]);
   });
 
+  it('gives Strike Review its own grant and badge, conferring nothing on /users', () => {
+    applyGrants({ '/users/strike-review': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/users/strike-review')).toBe(true);
+    expect(canAccess(reviewer, '/users')).toBe(false);
+    expect(
+      navForUser(reviewer)
+        .find((l) => l.label === 'Users')
+        ?.children?.map((c) => [c.path, c.label, c.countKey])
+    ).toEqual([['/users/strike-review', 'Strike Review', 'strikeReview']]);
+
+    applyGrants({ '/users': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/users/strike-review')).toBe(false);
+  });
+
   it('leaves Scam Restrictions out of Audit', () => {
     applyGrants({ '/audit/generator-restrictions': ['moderator:reviewer'] });
     expect(labelsUnder('Audit')).toEqual([

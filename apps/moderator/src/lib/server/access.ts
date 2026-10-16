@@ -237,6 +237,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/users', label: 'Users' },
       { path: '/users/newest', label: 'Newest Users' },
       { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
+      { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
     ],
   },
   { path: '/admin', label: 'Permissions' },
