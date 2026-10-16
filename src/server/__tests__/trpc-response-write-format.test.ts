@@ -71,6 +71,8 @@ vi.mock('~/server/routers', async () => {
     appRouter: router({
       payload: publicProcedure.query(() => PAYLOAD),
       notAPojo: publicProcedure.query(() => new NotAPojo(7)),
+      // A block-token query path (BLOCK_TOKEN_QUERY_PROCEDURES): always answered `no-store`.
+      blocks: router({ listMyWorkflows: publicProcedure.query(() => PAYLOAD) }),
     }),
   };
 });
@@ -223,6 +225,13 @@ describe('TRPC_WRITE_DEVALUE=true — format chosen per request', () => {
     expect(single.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
     const stream = await streamed(CAPABLE_WEB);
     expect(stream.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
+  });
+
+  it('keeps no-store on a devalue block-token response rather than the private default', async () => {
+    const served = await get('blocks.listMyWorkflows', CAPABLE_WEB);
+    // Positive control: this response really is devalue, so the private-marking branch is live.
+    expect(singleData(served)).toEqual(asDevalue(PAYLOAD));
+    expect(served.headers.get('cache-control')).toBe('no-store');
   });
 
   it('still falls back to superjson when devalue cannot represent the payload', async () => {
