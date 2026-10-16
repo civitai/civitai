@@ -62,7 +62,13 @@ async function dismissRedetection({
 
 export async function hasOpenModelAppeal(modelId: number) {
   const openAppeal = await dbWrite.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, status: AppealStatus.Pending },
+    // In-app appeals only: a site-form appeal on the model is about its unpublish, not the flag.
+    where: {
+      entityType: EntityType.Model,
+      entityId: modelId,
+      status: AppealStatus.Pending,
+      category: null,
+    },
     select: { id: true },
   });
   return !!openAppeal;

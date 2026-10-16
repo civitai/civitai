@@ -785,7 +785,7 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE a."entityType" = 'Model'
+    WHERE a."entityType" = 'Model' AND a.category IS NULL
       -- Cast rather than parameterize the enum: Prisma sends the value as text and
       -- Postgres has no AppealStatus = text operator.
       AND a.status::text = ${AppealStatus.Pending}

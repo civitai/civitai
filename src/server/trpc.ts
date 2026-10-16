@@ -509,3 +509,22 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
  * to complain — not merely because blocking it seems harsh.
  */
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
+
+const isAuthedAllowRestricted = t.middleware(
+  ({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
+    if (!user || user.deletedAt) throw new TRPCError({ code: 'UNAUTHORIZED' });
+    return next({ ctx: { ...ctx, user, acceptableOrigin } });
+  }
+);
+
+/**
+ * Signed in, and nothing else: a banned or muted account passes, and so does one that never
+ * finished onboarding. Those are exactly the accounts the site appeal form exists for, and every
+ * other procedure refuses them.
+ *
+ * 🔴 For the site appeal form's two procedures only (`report.submitSiteAppeal`,
+ * `report.getSiteAppealState`). A guard test fails if anything else is built on it.
+ */
+export const restrictedAccountAppealProcedure = publicProcedure
+  .use(isAuthedAllowRestricted)
+  .use(isFlagProtected('siteAppealForm'));

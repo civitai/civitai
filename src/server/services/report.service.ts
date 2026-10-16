@@ -733,7 +733,8 @@ export function getLatestAppeal({
   userId: number;
 }) {
   return dbRead.appeal.findFirst({
-    where: { entityType, entityId, userId },
+    // In-app appeals only: a site-form appeal on the same entity is a different request.
+    where: { entityType, entityId, userId, category: null },
     orderBy: { id: 'desc' },
     select: { id: true, status: true, resolvedAt: true },
   });
@@ -743,7 +744,7 @@ export function reopenAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
     // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
     // moderator-only review flag. A reopen has no such check, so it must never reach an image.
-    where: { id, entityType: { not: EntityType.Image } },
+    where: { id, entityType: { not: EntityType.Image }, category: null },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
@@ -775,6 +776,8 @@ export function getAppealCount({
       userId,
       status: { in: status },
       createdAt: { gte: startDate },
+      // Site-form appeals carry no fee and never count toward one.
+      category: null,
       // Waiting on review because the content was removed first is not the user's doing.
       NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
     },
@@ -1358,6 +1361,7 @@ export async function resolveEntityAppeal({
       status: AppealStatus.Pending,
       entityType,
       entityRemovedAt: null,
+      category: null,
     },
     data: {
       status,
