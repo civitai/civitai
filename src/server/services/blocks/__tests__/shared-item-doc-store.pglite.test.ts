@@ -311,7 +311,8 @@ function defineSuite(rls: boolean) {
         const app = freshApp();
         await put(app, POSTS, 'gen-2', DOC_AUTHOR);
         await hide(app, POSTS, 'gen-2');
-        legacyRow(app, 'gen-2', LEGACY_AUTHOR);
+        // A visible legacy copy of the same item: the document store's hide still decides.
+        legacyRow(app, 'gen-2', DOC_AUTHOR);
         expect(await attribution(app, 'gen-2')).toBeNull();
       });
 
