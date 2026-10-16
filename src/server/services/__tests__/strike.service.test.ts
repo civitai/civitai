@@ -662,6 +662,55 @@ describe('strike.service', () => {
       );
     });
 
+    it('void 3 -> 2 points: clears the review flag only, the mute stays', async () => {
+      const { userUpdate } = mockTransactionForEscalation(2, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 2, action: 'none' });
+      expect(userUpdate).toHaveBeenCalledTimes(1);
+      expect(userUpdate.mock.calls[0][0]).toEqual({
+        where: { id: 1 },
+        data: { meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: false } },
+      });
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(mockInvalidateSession).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
+    });
+
+    it('void 2 -> 2 points, not flagged: writes nothing', async () => {
+      const { userUpdate } = mockTransactionForEscalation(2, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation' },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 2, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+    });
+
+    it('void 4 -> 3 points: still flagged, writes nothing', async () => {
+      const { userUpdate } = mockTransactionForEscalation(3, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 3, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+    });
+
     it('<2 points, user not muted: no action', async () => {
       const { userUpdate } = mockTransactionForEscalation(1, {
         muted: false,

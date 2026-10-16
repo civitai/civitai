@@ -424,7 +424,16 @@ export async function evaluateStrikeEscalation(
         // Muting happens ONLY when a strike is issued. Voiding, expiry and the daily sweep re-evaluate
         // to RELEASE, never to re-apply — otherwise a moderator's manual unmute is silently undone by
         // the next job run, which is what happened before this flag existed.
-        if (!allowMute) return { totalPoints, action: 'none', notify: false };
+        if (!allowMute) {
+          // The mute stands, but the review flag still follows the points: a void from 3 to 2 must
+          // take the account out of the moderators' review queue.
+          if (currentMeta.strikeFlaggedForReview)
+            await tx.user.update({
+              where: { id: userId },
+              data: { meta: { ...currentMeta, strikeFlaggedForReview: false } },
+            });
+          return { totalPoints, action: 'none', notify: false };
+        }
 
         const alreadyHeld = user.muted && !moderatorMuted;
 
