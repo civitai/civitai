@@ -19,7 +19,9 @@ Prod measurements (read-only replica, taken 2026-10-16 — figures in the plan d
 - [x] Row counts: `Comment`, `CommentV2`, `Thread`, `CommentReaction`, `CommentV2Reaction`,
       `CommentReport`, `CommentV2Report`
 - [x] v1 depth distribution — 3 rows; v1 backfill needs no depth handling
-- [x] Orphaned `Thread` count (all entity FKs null) and orphan comments under them — 288K / 233K
+- [x] Orphaned `Thread` count (all entity FKs null) and orphan comments under them — 288K / 233K,
+      plus 41K nested threads / 43K comments under them; cause is `ON DELETE SET NULL` on every
+      entity FK, growing ~6K comments/month
 - [x] `Thread` rows pointing at deleted images — 0
 - [x] Per-entityType comment volume (drives flip order and index sizing)
 - [x] `Thread` rows for dead surfaces: `clubPostId` 53, `questionId`/`answerId` 456
@@ -46,8 +48,8 @@ Decisions & prerequisites:
       later costs what the enum costs now
 - [ ] **(review)** Orphaned-thread comments: migrate under a sentinel topic, or drop and accept
       dangling report/strike/scam-ledger references
-- [ ] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: confirmed
-      acceptable
+- [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
+      (2026-10-16)
 
 **Gate:** all measurements recorded in the plan doc; both open decisions written down.
 

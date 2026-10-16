@@ -44,7 +44,7 @@ written**: the blockers below have to be folded into Phases 1–3 first, and two
 | Max ids                                                   | `Comment` 1,367,252; `CommentV2` 2,538,176                                                                                                                                                                                                                                                                     |
 | v1 depth                                                  | 3 `Comment` rows whose parent also has a parent — v1 needs no depth handling                                                                                                                                                                                                                                   |
 | v2 depth                                                  | reply chains reach 247 levels; 692 comments sit deeper than 20 (in 666 non-empty threads) — the backfill must clamp them or `commentv3_depth_cap` aborts the copy                                                                                                                                              |
-| Orphaned threads                                          | 288,407 root threads with no entity, holding 233,458 `CommentV2` rows (~10% of v2) — see _Decisions still open_                                                                                                                                                                                                |
+| Orphaned threads                                          | 288,718 root threads with no entity, holding 233,525 `CommentV2` rows (~10% of v2) plus 42,577 in nested threads under them — see _Decisions still open_                                                                                                                                                      |
 | Child threads with null `parentThreadId` / `rootThreadId` | 2 of 502,658 — ordering the backfill by `parentThreadId` is fine                                                                                                                                                                                                                                               |
 | Threads per entity                                        | review 3.65M, image 1.06M, post 164K, bounty + bountyEntry 31K, article 18K, comic 462, model 456, question/answer 456, challenge 352, model3d (+ review) 149, clubPost 53, crucible 11, appListing 1. No thread carries two entity FKs; no `imageId` dangles.                                                 |
 | Dead columns                                              | `CommentV2.metadata` is non-null on 20,141 rows and every value is `{"oldId": n}`, an import marker nothing reads — drop. `nsfw` is true on 11 v2 rows and 1 v1 row — drop.                                                                                                                                    |
@@ -54,8 +54,8 @@ written**: the blockers below have to be folded into Phases 1–3 first, and two
 
 Found in passing: comic chapter threads double-counted — `comics.router.ts` incremented
 `Thread.commentCount` by hand on top of the `comment_count_update` trigger, so every comic thread
-was over by up to 11. The increment is removed; the Phase 3 topic recount corrects the stored
-values regardless.
+was over by up to 11. The increment is removed (#6121) and the stored counts were recounted in
+prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
 
 ### Blockers
 
@@ -94,19 +94,33 @@ values regardless.
 7. **Crucible is a comment surface** (`Thread.crucibleId`, #5780, after this plan was written):
    add `'crucible'` to `CommentEntityType`, the backfill, the topic copy and the flip order.
 8. **`CommentTopic` has no FK to its entity**, so it accumulates orphans exactly as `Thread` does
-   unless every entity hard-delete path removes the topic row — and nothing deletes `Thread` rows
-   today. "Entity cleanup = delete one row" holds only once image, post, article, bounty and model
+   unless every entity hard-delete path removes the topic row — today every entity FK on `Thread`
+   is `ON DELETE SET NULL` and nothing deletes `Thread` rows, which is where the 288K orphans come
+   from. "Entity cleanup = delete one row" holds only once image, post, article, bounty and model
    deletes and account deletion do it.
 
 ### Decisions still open
 
-- **Orphaned-thread comments.** 233K comments is not residue: reports, strikes, the scam-case
-  ledger and notification rows still reference them by id. Either migrate them under a sentinel
-  topic (needs an `orphan` enum value, since the deleted entity's kind is unknown) or drop them and
-  accept dangling references in those tables. Decide before Phase 3.
-- **Depth-cap clamp for migrated rows.** 692 comments get re-parented to depth 20 with `replyToId`
-  set, the write path's clamp applied retroactively. It changes where they render; confirm that is
-  acceptable for historical rows.
+- **Orphaned-thread comments.** They exist because every entity FK on `Thread` is
+  `ON DELETE SET NULL` and nothing deletes `Thread` rows: deleting an image, review, post or
+  article blanks the thread's entity column and leaves the thread, its comments, and its nested
+  reply threads behind, with no record of what they were attached to. It is an ongoing stream, not
+  a legacy artefact — about 6K comments a month join it (2026-10-16: 288,718 root threads holding
+  233,525 comments, plus 40,778 nested threads with another 42,577 comments). Nothing renders them
+  (no entity page), but they are not residue: reports, strikes, the scam-case ledger and
+  notification rows reference them by id, and the per-user readers (`events/points/hooks.ts`
+  comment count, `creator-score-self-activity.service.ts`, `block-hide-comments.service.ts`,
+  the moderator detail fetchers) still count them. Either migrate them under a sentinel topic
+  (needs an `orphan` enum value, since the deleted entity's kind is unknown) or drop them and
+  accept dangling references and shifted per-user tallies. Recommendation: sentinel topic. Decide
+  before Phase 3. Going forward `CommentTopic` keeps its `(entityType, entityId)` after the entity
+  is gone, so V3 orphans at least stay attributable (blocker 8).
+
+Decided 2026-10-16:
+
+- **Depth-cap clamp for migrated rows** — approved (Briant). The 692 over-cap comments are
+  re-parented to a depth-20 sibling with `replyToId` set, the write path's clamp applied
+  retroactively.
 
 ### Drift since 2026-09-01
 
@@ -440,7 +454,7 @@ The new model makes both real:
   parent's path), recording who was actually answered in `replyToId` for the "@user" display.
   Clients never send tree fields — the `BEFORE INSERT` trigger derives `path`, `rootId` and
   `depth` from `parentId`. The backfill applies the same clamp to the 692 migrated comments that
-  sit deeper than 20 (open decision above).
+  sit deeper than 20 (approved 2026-10-16).
 
 ## Deletion semantics — decided (D6)
 
