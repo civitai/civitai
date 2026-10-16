@@ -16,7 +16,8 @@ import { scoreTagRequest, TAG_SCORE_PARAMS } from '~/server/services/resource-in
  * The generator built the index in the prototype's own data structures, ran the prototype's functions
  * on these requests and wrote what they returned; it also exported the index in the shape below. It
  * imports non-public code and is not in this repository. Never edit the fixture to make this pass;
- * regenerate it or fix the port.
+ * regenerate it or fix the port. When the snapshot decoder lands, encode this fixture in the wire
+ * format, build `index` with the production decoder, and delete `buildIndex`.
  */
 type Pairs = [number, number][];
 type KindJson = {
@@ -139,7 +140,7 @@ describe('resource-intent-tags scorer parity with the prototype', () => {
     expect(r.status).toBe(known ? 'ok' : 'unknown_ecosystem');
     expect(r.ecosystems).toEqual(c.ecosystems);
     expect(r.ecosystem).toBe(c.ecosystem);
-    // The whole list (every case is under the 300 cap), so the first 50 are compared exactly too.
+    // Every case is under the 300 cap, so this is the whole ranked list.
     const expected = c.ranked as Pairs;
     expect(r.candidates.length).toBe(c.candidateCount);
     expect(r.candidates.map((x) => x.modelId)).toEqual(expected.map(([m]) => m));

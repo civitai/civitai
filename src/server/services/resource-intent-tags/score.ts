@@ -141,7 +141,6 @@ export function resolveEcosystems(
       score += v.w * Math.log(ecosystemLift(v.counts.get(id) ?? 0, v.total, e.observations, N, m));
     return { id, score };
   });
-  // Stable: equal scores keep the eligibility order.
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map((x) => x.id);
 }
@@ -302,7 +301,7 @@ export type TagScoreResult = {
   status: 'ok' | 'no_tags' | 'no_ecosystem' | 'unknown_ecosystem';
   /** Tag-derived ecosystems, best first; only when the request had no baseModel. */
   ecosystems: string[];
-  /** The caller's baseModel, else the best tag-derived ecosystem; null when there was neither. */
+  /** The caller's baseModel, else the best tag-derived ecosystem; null on `no_tags` and `no_ecosystem`. */
   ecosystem: string | null;
   candidates: TagCandidate[];
 };

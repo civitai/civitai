@@ -60,8 +60,9 @@ const valueMap = (entries: [number, number[][]][]) =>
   new Map(entries.map(([k, pairs]) => [k, values(pairs)]));
 
 /**
- * A four-tag, four-resource index: tag 0 is an explicit head holding tag 1 (so tag 1's weight is half of tag 0's idf, not its own), tags 1 and 2 tie on idf, the
- * second ecosystem sits exactly on the resolver's user floor and the third just below it.
+ * A four-tag, four-resource index: tag 0 is an explicit head holding tag 1 (so tag 1's weight is
+ * half tag 0's idf, not its own); tags 1 and 2 tie on idf; the second ecosystem sits exactly on the
+ * resolver's user floor and the third just below it.
  */
 const FP_TAGS: TagVocabularyEntry[] = [
   { key: 'amber kite', idf: 2.5, near: [1], explicit: true },
