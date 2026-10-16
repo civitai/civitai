@@ -80,6 +80,7 @@ const TOTAL_BUDGET_MS = 1_000;
 
 export async function loadMatchesQueue(url: URL) {
   const { limit, page, q, offset, search } = parsePaging(url);
+  let budget: number | undefined;
 
   const [queue, total] = await Promise.all([
     getMinorHashMatchesForReview({ limit, offset, search }),
@@ -87,11 +88,15 @@ export async function loadMatchesQueue(url: URL) {
       ? undefined
       : Promise.race([
           getMinorQueueCounts().then((counts) => counts.pending),
-          new Promise<undefined>((resolve) => setTimeout(resolve, TOTAL_BUDGET_MS)),
-        ]).catch((err) => {
-          console.error('File matches total failed', err);
-          return undefined;
-        }),
+          new Promise<undefined>((resolve) => {
+            budget = setTimeout(resolve, TOTAL_BUDGET_MS);
+          }),
+        ])
+          .catch((err) => {
+            console.error('File matches total failed', err);
+            return undefined;
+          })
+          .finally(() => clearTimeout(budget)),
   ]);
 
   return { limit, page, offset, q, total, ...queue, fullBleed: true };
@@ -175,22 +180,25 @@ const flaggedAction =
   async (event) => {
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
-    const label = z.enum(['minor', 'poi']).safeParse(form.get('label'));
+    const posted = form.get('label');
+    const label = z.enum(['minor', 'poi']).safeParse(posted);
     const source = z.enum(['hash', 'redetected']).safeParse(form.get('source'));
-    if (!(modelId > 0) || !label.success || !source.success)
+    if (!(modelId > 0) || !source.success)
       return fail(400, { error: 'Missing model id, label or source.' });
     const refusal = (error: string) =>
       fail(400, { error, modelId, subject: modelSubject(modelId) });
 
     if (source.data === 'hash') {
       // Hash flags are minor flags; a poi label here would still lift or keep the minor flag.
-      if (label.data !== 'minor') return refusal('A hash flag can only be ruled as minor.');
+      if (posted !== null && !(label.success && label.data === 'minor'))
+        return refusal('A hash flag can only be ruled as minor.');
       // The main app's confirm and revert endpoints take no reason yet, so none is read or recorded.
       const result = await (keep ? confirmMinorFlag : revertMinorFlag)(modelId);
       if (!result.ok) return refusal(result.error ?? 'Action failed.');
-      return { success: true, modelId, label: label.data, resolved: keep ? 'kept' : 'dismissed' };
+      return { success: true, modelId, label: 'minor', resolved: keep ? 'kept' : 'dismissed' };
     }
 
+    if (!label.success) return fail(400, { error: 'Missing model id, label or source.' });
     const textHash = z.string().min(1).max(200).safeParse(form.get('textHash'));
     if (!textHash.success) return fail(400, { error: 'Missing text hash.' });
     const reason = rulingReasonFromForm('heldDetection', keep ? 'Kept' : 'Dismissed', form, [

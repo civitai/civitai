@@ -20,7 +20,7 @@ auto-flag), [minor-detection-review.md](minor-detection-review.md) (text-scan ho
 Notes on the tabs:
 
 - Same-uploader file matches are flagged automatically at scan time, so they appear in Flagged, not in File
-  matches. A hash row can only be ruled as `minor`; the action refuses any other label.
+  matches. A hash row can only be ruled as `minor`; the action refuses any other label. A hash flag past its 30-day window leaves the list but is still found by searching its model id, with the chip "review window closed".
 - A model with an open appeal shows an "also in Appeals" chip in Flagged. Keeping its flag is disabled (the
   main app refuses it); lifting proceeds and closes the appeal. A re-detection under appeal is locked both ways.
 - File matches rows carry the "uploaded Nd" age of the copy, not a match date: no match timestamp is

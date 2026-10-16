@@ -420,6 +420,28 @@ describe('hash auto-flags and the merged queue', () => {
     expect(await keys({ search: { username: 'OTHER' } })).toEqual(['21:minor:hash']);
   });
 
+  it('finds an aged-out hash flag only when searched by its model id', async () => {
+    expect(await keys({})).not.toContain('22:minor:hash');
+    expect(await keys({ search: { modelOrUserId: 22 } })).toEqual(['22:minor:hash']);
+    // The uploader's id is not the model's: the window still applies to their other flags.
+    expect(await keys({ search: { modelOrUserId: 1 } })).not.toContain('22:minor:hash');
+    expect(await keys({ search: { username: 'owner' } })).not.toContain('22:minor:hash');
+    expect(await getFlaggedCount({ search: { modelOrUserId: 22 } })).toBe(1);
+    expect(await getAutoFlaggedCount({ search: { modelOrUserId: 22 } })).toBe(1);
+
+    const [row] = (await getFlaggedModels({ limit: 20, search: { modelOrUserId: 22 } })).items;
+    expect(row.daysLeft).toBe(0);
+  });
+
+  it('still hides an aged-out flag a moderator accepted when searched by model id', async () => {
+    await seedFlagged(
+      26,
+      1,
+      snapshot('auto', daysAgo(40), { minorHashAccepted: { at: daysAgo(1) } })
+    );
+    expect(await keys({ search: { modelOrUserId: 26 } })).toEqual([]);
+  });
+
   it('flags a hash row whose owner also has an open appeal', async () => {
     await pg.exec(
       `INSERT INTO "Appeal" VALUES (1, 'Model', 20, 'Pending'), (2, 'Model', 21, 'Void')`

@@ -200,7 +200,9 @@
         <FlagBadge label={row.label} size="md" />
         {#if row.hasPendingAppeal}<MetaChip size="md" tone="amber">also in Appeals</MetaChip>{/if}
         {#if row.daysLeft !== null}
-          <MetaChip size="md" tone="amber">{row.daysLeft} d left in review window</MetaChip>
+          <MetaChip size="md" tone="amber"
+            >{row.daysLeft === 0 ? 'review window closed' : `${row.daysLeft} d left in review window`}</MetaChip
+          >
         {/if}
       {/snippet}
     </ModelDetailHeader>
@@ -242,8 +244,9 @@
             {#if row.flaggedAt}
               <p class="m-0 text-sm text-dark-2" title={dateTime(row.flaggedAt)}>
                 hash sweep, {ago(row.flaggedAt)}{#if row.daysLeft !== null}
-                  · {row.daysLeft} day{row.daysLeft === 1 ? '' : 's'} left; after that the flag is
-                  presumed correct{/if}
+                  · {#if row.daysLeft === 0}review window closed; the flag is presumed correct{:else}{row.daysLeft}
+                    day{row.daysLeft === 1 ? '' : 's'} left; after that the flag is presumed
+                    correct{/if}{/if}
               </p>
             {/if}
             {#if row.prevNsfw != null || row.prevGalleryLevel != null}

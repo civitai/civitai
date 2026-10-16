@@ -162,7 +162,7 @@
           <MetaChip tone="amber">also in Appeals</MetaChip>
         {/if}
         {#if row.daysLeft !== null}
-          <span class="text-xs text-dark-2 tabular-nums">{row.daysLeft} d left</span>
+          <span class="text-xs text-dark-2 tabular-nums">{row.daysLeft === 0 ? 'window closed' : `${row.daysLeft} d left`}</span>
         {/if}
       {/snippet}
     </TriageRow>

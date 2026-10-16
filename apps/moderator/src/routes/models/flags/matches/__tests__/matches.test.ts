@@ -87,6 +87,23 @@ describe('Model Flags / File matches', () => {
     expect(await loadAt()).toMatchObject({ items: [], total: undefined });
   });
 
+  it('drops the total when the count never resolves, and releases the timer when it does', async () => {
+    vi.useFakeTimers();
+    try {
+      getMinorQueueCounts.mockReturnValue(new Promise(() => {}));
+      const pending = loadAt();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await pending).toMatchObject({ items: [], total: undefined });
+      expect(vi.getTimerCount()).toBe(0);
+
+      getMinorQueueCounts.mockResolvedValue({ pending: 8 });
+      expect(await loadAt()).toMatchObject({ total: 8 });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('flags as minor by model id', async () => {
     expect(await run('setMinor', { modelId: '7' })).toMatchObject({ success: true, modelId: 7 });
     expect(setModelMinorFlag).toHaveBeenCalledWith(7);

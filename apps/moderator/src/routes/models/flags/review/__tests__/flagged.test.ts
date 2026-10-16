@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { resolveRedetection, confirmMinorFlag, revertMinorFlag, getFlaggedModels, getFlaggedCount } =
@@ -72,6 +75,26 @@ describe('hash flag actions', () => {
     });
     expect(confirmMinorFlag).not.toHaveBeenCalled();
     expect(revertMinorFlag).not.toHaveBeenCalled();
+  });
+
+  it('rules a hash flag as minor even when no label is posted', async () => {
+    expect(await run('keepFlag', { modelId: '42', source: 'hash', ...kept })).toMatchObject({
+      success: true,
+      label: 'minor',
+      resolved: 'kept',
+    });
+    expect(confirmMinorFlag).toHaveBeenCalledWith(42);
+  });
+
+  it('posts the label and source the action reads from the verdict form', () => {
+    const detail = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../FlaggedDetail.svelte'),
+      'utf-8'
+    );
+    const fields = detail.slice(detail.indexOf('{#snippet verdictFields()}'));
+    expect(fields.slice(0, fields.indexOf('{/snippet}'))).toMatch(
+      /name="modelId"[\s\S]*name="label" value=\{row\.label\}[\s\S]*name="source" value=\{row\.source\}/
+    );
   });
 
   it('lift reverts the flag by model id', async () => {

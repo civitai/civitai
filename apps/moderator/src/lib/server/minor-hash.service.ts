@@ -79,13 +79,16 @@ const humanConfirmedPredicate = sql`
   )
 `;
 
-/** The scan hook's flags still inside the review window and not yet affirmed by a human. */
-const hashFlaggedPredicate = sql`
+/** The scan hook's flags still inside the review window and not yet affirmed by a human. Searching a
+ *  model id lifts the window for that model, so a moderator can still reach Revert once it has closed. */
+const hashFlaggedPredicate = (search?: MinorSearch) => sql`
   m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
   AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
   AND NOT ${humanConfirmedPredicate}
   AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
-  AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
+  AND ((m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}${
+    search && 'modelOrUserId' in search ? sql` OR m.id = ${search.modelOrUserId}` : sql``
+  })
 `;
 
 const minorSrcCte = sql`
@@ -609,7 +612,7 @@ const hashBranch = (search: MinorSearch | undefined) => sql`
          (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
   FROM "Model" m
   LEFT JOIN "User" u ON u.id = m."userId"
-  WHERE ${hashFlaggedPredicate}
+  WHERE ${hashFlaggedPredicate(search)}
     AND ${searchPredicate(search, userRefs)}
 `;
 
@@ -724,7 +727,7 @@ export async function getAutoFlaggedCount({ search }: { search?: MinorSearch } =
     SELECT count(*)::int AS count
     FROM "Model" m
     ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
-    WHERE ${hashFlaggedPredicate}
+    WHERE ${hashFlaggedPredicate(search)}
       AND ${searchPredicate(search, userRefs)}
   `.execute(dbRead);
   return result.rows[0]?.count ?? 0;
