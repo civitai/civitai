@@ -30,7 +30,7 @@ export type StorylineContinuePost = {
 };
 
 /** What happened after a submit, as the server reported it. */
-export type StorylineSubmitOutcome = 'pending' | 'approved' | 'awaitingScan';
+export type StorylineSubmitOutcome = 'pending' | 'approved' | 'awaitingScan' | 'added';
 
 /** A grid tile at its widest: a third of the modal. */
 const TILE_WIDTH = 140;
@@ -59,6 +59,7 @@ export function StorylineContinueForm({
   onPostChange,
   onSubmit,
   onStartOwn,
+  ownerAdd = false,
   submitting,
   outcome,
   error,
@@ -90,6 +91,8 @@ export function StorylineContinueForm({
   onPostChange: (postId: number | null) => void;
   onSubmit: () => void;
   onStartOwn?: () => void;
+  /** The viewer owns the storyline: the post joins as the next chapter at once, unpriced. */
+  ownerAdd?: boolean;
   submitting?: boolean;
   outcome?: StorylineSubmitOutcome | null;
   error?: string | null;
@@ -101,19 +104,26 @@ export function StorylineContinueForm({
     viewerId,
     storyline,
     closedReason,
+    asOwner: ownerAdd,
   });
 
   const pickerLabelId = useId();
   // The same rule as the refusal below, so a tile is marked exactly when picking it would be refused.
   const isAboveCeiling = (postLevel: number) => {
-    const tileVerdict = storylineSubmitVerdict({ postLevel, viewerId, storyline, closedReason });
+    const tileVerdict = storylineSubmitVerdict({
+      postLevel,
+      viewerId,
+      storyline,
+      closedReason,
+      asOwner: ownerAdd,
+    });
     return !tileVerdict.allowed && tileVerdict.reason === 'aboveRating';
   };
 
   if (outcome) return <StorylineSubmitted outcome={outcome} price={price} />;
 
   // Refusals that do not depend on the post are said before any post is picked.
-  if (!verdict.allowed && verdict.reason !== 'aboveRating')
+  if (!verdict.allowed && verdict.reason !== 'aboveRating' && verdict.reason !== 'notRated')
     return (
       <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
         <Text size="sm">{refusalCopy[verdict.reason]}</Text>
@@ -127,7 +137,9 @@ export function StorylineContinueForm({
         <Stack gap={6} className="min-w-0">
           <div>
             <Text fw={600} lineClamp={2}>
-              Continue {storyline.title}
+              {ownerAdd
+                ? `Add the next chapter to ${storyline.title}`
+                : `Continue ${storyline.title}`}
             </Text>
             {parentName && (
               <Text size="sm" c="dimmed" lineClamp={1}>
@@ -145,7 +157,7 @@ export function StorylineContinueForm({
             >
               Up to {ceiling}
             </Badge>
-            {price > 0 ? (
+            {ownerAdd ? null : price > 0 ? (
               <Badge
                 variant="light"
                 color="yellow"
@@ -219,7 +231,13 @@ export function StorylineContinueForm({
         )}
       </Stack>
 
-      {post && !verdict.allowed && (
+      {post && !verdict.allowed && verdict.reason === 'notRated' && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+          <Text size="sm">This post has not been rated yet. Try again once it has been.</Text>
+        </Alert>
+      )}
+
+      {post && !verdict.allowed && verdict.reason === 'aboveRating' && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
           <Text size="sm">
             Cannot be submitted. Your post is rated {getBrowsingLevelLabel(post.nsfwLevel)}; this
@@ -229,7 +247,13 @@ export function StorylineContinueForm({
         </Alert>
       )}
 
-      {post && verdict.allowed && (
+      {post && verdict.allowed && ownerAdd && (
+        <Text size="sm" c="dimmed">
+          It joins your storyline as the next chapter right away. No review, no cost.
+        </Text>
+      )}
+
+      {post && verdict.allowed && !ownerAdd && (
         <Text size="sm" c="dimmed">
           {verdict.awaitingScan
             ? 'Your post is still being rated. It is submitted now and reaches the creator once rating finishes, or is returned if it comes out above the limit. '
@@ -255,7 +279,11 @@ export function StorylineContinueForm({
           </Button>
         )}
         <Button disabled={!post || !verdict.allowed} loading={submitting} onClick={onSubmit}>
-          {price > 0 ? `Submit for ${storylinePriceLabel(price)}` : 'Submit'}
+          {ownerAdd
+            ? 'Add chapter'
+            : price > 0
+            ? `Submit for ${storylinePriceLabel(price)}`
+            : 'Submit'}
         </Button>
       </Group>
     </Stack>
@@ -331,6 +359,13 @@ function StorylineSubmitted({
   outcome: StorylineSubmitOutcome;
   price: number;
 }) {
+  if (outcome === 'added')
+    return (
+      <Alert color="green" icon={<IconCheck size={18} />}>
+        <Text size="sm">Added to your storyline as the next chapter.</Text>
+      </Alert>
+    );
+
   if (outcome === 'approved')
     return (
       <Alert color="green" icon={<IconCheck size={18} />}>

@@ -406,6 +406,23 @@ describe('StorylineEndOfChapter', () => {
     ).toBe('Closed to new chapters');
   });
 
+  // The owner adds their own chapter through the picker, parented on the chapter they are at the
+  // end of; the button is theirs alone, and nobody else gets it.
+  it('offers the owner the picker, parented on this chapter, and nobody else', () => {
+    mocks.children = [];
+    mocks.terms = { open: true, price: 0, closedReason: null };
+    const sel = '[data-testid="storyline-add-own-chapter"]';
+    const owned = render({ parentPostId: 15, isOwner: true });
+    const button = owned.querySelector<HTMLButtonElement>(sel);
+    expect(button?.textContent).toBe('Use a post you made');
+    act(() => button?.click());
+    expect(mocks.openContinue.mock.calls).toEqual([[{ parentPostId: 15, parentChapterId: 4 }]]);
+    document.body.innerHTML = '';
+    expect(render({ parentPostId: 15 }).querySelector(sel)).toBeNull();
+    document.body.innerHTML = '';
+    expect(render({ isOwner: true }).querySelector(sel)).toBeNull();
+  });
+
   it('puts writing below every path, outside the cards', () => {
     mocks.children = [
       child(5, 'canon', 'A'),
