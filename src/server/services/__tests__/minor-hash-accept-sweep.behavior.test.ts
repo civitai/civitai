@@ -11,20 +11,25 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
-dbMock.dbWrite.$executeRaw.mockImplementation((async (
-  strings: TemplateStringsArray,
-  ...values: unknown[]
-) => {
+// Inlined as text literals: the statements bind their JSON keys untyped (`meta ? $1`), which the
+// real driver sends as text but PGlite refuses to infer.
+function run(strings: TemplateStringsArray, values: unknown[]) {
   const flat = Prisma.sql(strings, ...(values as never[]));
-  // Inlined as text literals: the statement binds its JSON keys untyped (`meta ? $1`), which the
-  // real driver sends as text but PGlite refuses to infer.
   const text = flat.text.replace(/\$(\d+)/g, (_, i: string) => {
     const value = flat.values[Number(i) - 1];
     return typeof value === 'number' ? String(value) : `'${String(value).replace(/'/g, "''")}'`;
   });
-  const { affectedRows } = await holder.db.query(text);
-  return affectedRows ?? 0;
-}) as never);
+  return holder.db.query(text);
+}
+
+dbMock.dbWrite.$executeRaw.mockImplementation(
+  (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    (await run(strings, values)).affectedRows ?? 0) as never
+);
+dbMock.dbRead.$queryRaw.mockImplementation(
+  (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    (await run(strings, values)).rows) as never
+);
 
 const { acceptExpiredMinorAutoFlags, MINOR_HASH_ACCEPTED_KEY } = await import(
   '~/server/services/minor-hash.service'
@@ -50,7 +55,10 @@ afterEach(async () => {
   await holder.db.close();
 });
 
-async function acceptedWith(appeal: { status: string; category: string | null } | null) {
+async function acceptedWith(
+  dryRun: boolean,
+  appeal: { status: string; category: string | null } | null
+) {
   await holder.db.query(`INSERT INTO "Model" (id, minor, meta) VALUES (1, true, $1::jsonb)`, [
     EXPIRED_AUTO_FLAG,
   ]);
@@ -59,7 +67,9 @@ async function acceptedWith(appeal: { status: string; category: string | null } 
       `INSERT INTO "Appeal" ("entityType", "entityId", status, category) VALUES ('Model', 1, $1, $2)`,
       [appeal.status, appeal.category]
     );
-  await acceptExpiredMinorAutoFlags({ dryRun: false, limit: 10 });
+  // A dry run counts what a real one would accept, from its own copy of the predicate.
+  if (dryRun) return (await acceptExpiredMinorAutoFlags({ dryRun, limit: 10 })).accepted === 1;
+  await acceptExpiredMinorAutoFlags({ dryRun, limit: 10 });
   const { rows } = await holder.db.query<{ accepted: boolean }>(
     `SELECT meta ? $1 AS accepted FROM "Model" WHERE id = 1`,
     [MINOR_HASH_ACCEPTED_KEY]
@@ -67,21 +77,21 @@ async function acceptedWith(appeal: { status: string; category: string | null } 
   return rows[0].accepted;
 }
 
-describe('acceptExpiredMinorAutoFlags', () => {
+describe.each([false, true])('acceptExpiredMinorAutoFlags, dryRun %s', (dryRun) => {
   it('accepts an expired auto flag nobody appealed', async () => {
-    expect(await acceptedWith(null)).toBe(true);
+    expect(await acceptedWith(dryRun, null)).toBe(true);
   });
 
   // A decided in-app appeal means a human already ruled on the flag.
   it.each(['Pending', 'Rejected', 'Approved', 'Void'])(
     'holds a model with an in-app appeal that is %s',
     async (status) => {
-      expect(await acceptedWith({ status, category: null })).toBe(false);
+      expect(await acceptedWith(dryRun, { status, category: null })).toBe(false);
     }
   );
 
   it('holds a model while its site-form appeal is Pending', async () => {
-    expect(await acceptedWith({ status: 'Pending', category: 'Model' })).toBe(false);
+    expect(await acceptedWith(dryRun, { status: 'Pending', category: 'Model' })).toBe(false);
   });
 
   // The form's Model queue rules on the unpublish, not the flag: once it decides, nothing about
@@ -89,7 +99,7 @@ describe('acceptExpiredMinorAutoFlags', () => {
   it.each(['Rejected', 'Approved', 'Void'])(
     'accepts once its site-form appeal is %s',
     async (status) => {
-      expect(await acceptedWith({ status, category: 'Model' })).toBe(true);
+      expect(await acceptedWith(dryRun, { status, category: 'Model' })).toBe(true);
     }
   );
 });

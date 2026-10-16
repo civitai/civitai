@@ -1235,8 +1235,8 @@ export async function closeAppealsDeletedByOwner({
 
 /**
  * Closes and refunds a deleted model's pending appeals without a notice: the owner is already told
- * about the removal. Model appeals are flag disputes, so nothing is left to rule on once the model
- * is gone. Best-effort: the delete already happened, so failures are logged, not thrown. The sweep
+ * about the removal. A flag dispute or an unpublish appeal (site form) alike has nothing left to
+ * rule on once the model is gone. Best-effort: the delete already happened, so failures are logged, not thrown. The sweep
  * stays the safety net.
  */
 export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number }) {
