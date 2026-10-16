@@ -94,6 +94,20 @@ describe('re-detection actions', () => {
     expect(resolveRedetection).not.toHaveBeenCalled();
   });
 
+  it('refuses a reason bound to the other label', async () => {
+    const result = await run('dismissRedetected', {
+      modelId: '42',
+      label: 'poi',
+      textHash: 'h-1',
+      ...dismissed,
+    });
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/does not apply/) },
+    });
+    expect(resolveRedetection).not.toHaveBeenCalled();
+  });
+
   it('refuses a keep reason on a dismissal', async () => {
     const result = await run('dismissRedetected', {
       modelId: '42',

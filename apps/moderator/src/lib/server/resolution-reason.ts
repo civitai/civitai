@@ -4,7 +4,9 @@ import {
   resolutionReasonError,
   type ResolutionSubject,
   type ResolutionVerdict,
+  type TextScanLabel,
 } from '@civitai/shared/resolution-reasons';
+import { parseForm } from './query';
 
 /** Spread into a ruling action's form schema; `checkedResolutionReason` does the verdict check. */
 export const resolutionReasonFields = {
@@ -16,9 +18,31 @@ export const resolutionReasonFields = {
 export function checkedResolutionReason<S extends ResolutionSubject>(
   subject: S,
   verdict: ResolutionVerdict<S>,
-  input: { resolvedReason?: string; internalNotes?: string }
+  input: { resolvedReason?: string; internalNotes?: string },
+  labels?: readonly TextScanLabel[]
 ): { resolvedReason: string; internalNotes: string | undefined } | string {
-  const error = resolutionReasonError(subject, verdict, input.resolvedReason, input.internalNotes);
+  const error = resolutionReasonError(
+    subject,
+    verdict,
+    input.resolvedReason,
+    input.internalNotes,
+    labels
+  );
   if (error) return error;
   return { resolvedReason: input.resolvedReason!, internalNotes: input.internalNotes || undefined };
+}
+
+const reasonSchema = z.object(resolutionReasonFields);
+
+/** `checkedResolutionReason` over a ruling form that carries its verdict some other way. */
+export function rulingReasonFromForm<S extends ResolutionSubject>(
+  subject: S,
+  verdict: ResolutionVerdict<S>,
+  form: FormData,
+  labels?: readonly TextScanLabel[]
+) {
+  const input = parseForm(reasonSchema, form);
+  return typeof input === 'string'
+    ? input
+    : checkedResolutionReason(subject, verdict, input, labels);
 }

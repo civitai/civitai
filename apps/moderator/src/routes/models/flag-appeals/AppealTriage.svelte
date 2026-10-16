@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
+  import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
+  import { rulingDraft } from '$lib/ruling-draft.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
@@ -22,15 +23,11 @@
 
   // A chosen ruling, reason and note belong to the open appeal alone.
   let current = $state<number | null>(null);
-  let draft = $state<RulingDraft<AppealRuling>>(emptyRulingDraft<AppealRuling>());
+  const ruling = rulingDraft<AppealRuling>();
   $effect(() => {
     void current;
-    draft = emptyRulingDraft<AppealRuling>();
+    ruling.reset();
   });
-
-  const choose = (verdict: AppealRuling) => {
-    draft = { verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' };
-  };
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
@@ -80,7 +77,10 @@
   queueLabel="Appeal queue"
   itemLabel="Appeal"
   decisionEnabled={(row) => [flagInForce(row), true]}
-  ondecision={(_row, index) => choose(index === 0 ? 'Rejected' : 'Approved')}
+  ondecision={(_row, index) => {
+    const verdict = FLAG_APPEAL_RULING_CHOICES[index]?.verdict;
+    if (verdict) ruling.choose(verdict);
+  }}
   bind:current
   pageNumber={data.page}
   hasMore={data.hasMore}
@@ -115,8 +115,8 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
-      {choose}
-      bind:draft
+      choose={ruling.choose}
+      bind:draft={() => ruling.current, (d) => (ruling.current = d)}
     />
   {/snippet}
 </TriageShell>

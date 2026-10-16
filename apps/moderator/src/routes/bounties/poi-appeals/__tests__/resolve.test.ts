@@ -51,6 +51,11 @@ describe('bounty real-person appeal ruling', () => {
       { status: 'Rejected', resolvedReason: 'other' },
       /note when the reason is Other/,
     ],
+    [
+      'a minor reason on a real-person flag',
+      { status: 'Approved', resolvedReason: 'not-a-minor' },
+      /does not apply to this flag/,
+    ],
   ])('refuses %s before calling the main app', async (_label, fields, message) => {
     const result = (await resolve({ bountyId: '9', ...fields })) as unknown as Refusal;
     expect(result.status).toBe(400);

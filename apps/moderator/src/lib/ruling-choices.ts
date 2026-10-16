@@ -55,14 +55,14 @@ export const FLAG_APPEAL_RULING_CHOICES: readonly RulingChoice<ResolutionVerdict
     {
       verdict: 'Rejected',
       label: 'Keep flagged',
-      confirmLabel: 'Confirm keep flagged',
-      pendingLabel: 'Keeping…',
+      confirmLabel: 'Confirm: keep flagged',
+      pendingLabel: 'Keeping flag…',
       variant: 'default',
     },
     {
       verdict: 'Approved',
       label: 'Unflag',
-      confirmLabel: 'Confirm unflag',
+      confirmLabel: 'Confirm: unflag',
       pendingLabel: 'Unflagging…',
       variant: 'destructive',
     },
@@ -74,15 +74,15 @@ export const HELD_DETECTION_RULING_CHOICES: readonly RulingChoice<
   {
     verdict: 'Kept',
     label: 'Flag',
-    confirmLabel: 'Confirm flag',
+    confirmLabel: 'Confirm: flag',
     pendingLabel: 'Flagging…',
     variant: 'default',
   },
   {
     verdict: 'Dismissed',
     label: "Don't flag",
-    confirmLabel: "Confirm don't flag",
-    pendingLabel: 'Dismissing…',
+    confirmLabel: "Confirm: don't flag",
+    pendingLabel: 'Clearing…',
     variant: 'destructive',
   },
 ];

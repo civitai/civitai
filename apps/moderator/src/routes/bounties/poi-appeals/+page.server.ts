@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { getBountyPoiAppeals, resolveBountyPoiAppeal } from '$lib/server/bounty-poi.service';
 import { parseForm } from '$lib/server/query';
-import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
+import { rulingReasonFromForm } from '$lib/server/resolution-reason';
 
 const LIMIT = 100;
 
@@ -14,16 +14,16 @@ export const load: PageServerLoad = async () => {
 
 export const actions = {
   resolve: async ({ request }) => {
+    const form = await request.formData();
     const input = parseForm(
       z.object({
         bountyId: z.coerce.number().int().positive({ error: 'Missing bounty id.' }),
         status: z.enum(['Approved', 'Rejected'], { error: 'Pick a verdict.' }),
-        ...resolutionReasonFields,
       }),
-      await request.formData()
+      form
     );
     if (typeof input === 'string') return fail(400, { error: input });
-    const reason = checkedResolutionReason('flagAppeal', input.status, input);
+    const reason = rulingReasonFromForm('flagAppeal', input.status, form, ['poi']);
     if (typeof reason === 'string') return fail(400, { error: reason, bountyId: input.bountyId });
 
     const uphold = input.status === 'Rejected';

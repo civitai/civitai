@@ -98,6 +98,12 @@ describe('model flag appeal rulings — reason', () => {
       { minor: 'uphold', poi: 'overturn', resolvedReason: 'flag-confirmed' },
       /not a reason for Approved/,
     ],
+    [
+      'splitAppeal',
+      'a minor reason on a split that keeps minor',
+      { minor: 'uphold', poi: 'overturn', resolvedReason: 'not-a-minor' },
+      /does not apply to this flag/,
+    ],
   ])('%s refuses %s before calling the main app', async (action, _label, fields, message) => {
     const result = (await run(action, { modelId: '42', ...fields })) as unknown as Refusal;
     expect(result.status).toBe(400);

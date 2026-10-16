@@ -10,6 +10,7 @@
     reasonRequiresNote,
     resolutionReasonsFor,
     type ResolutionVerdict,
+    type TextScanLabel,
   } from '@civitai/shared/resolution-reasons';
 
   let {
@@ -19,6 +20,7 @@
     reason = $bindable(''),
     note = $bindable(''),
     showNote = true,
+    labels,
   }: {
     subject: S;
     verdict: ResolutionVerdict<S>;
@@ -28,9 +30,11 @@
     note?: string;
     /** Off where the surrounding form already has the note field (the ban form's `detailsInternal`). */
     showNote?: boolean;
+    /** The flags being ruled on; reasons bound to another flag are not offered. */
+    labels?: readonly TextScanLabel[];
   } = $props();
 
-  const reasons = $derived(resolutionReasonsFor(subject, verdict));
+  const reasons = $derived(resolutionReasonsFor(subject, verdict, labels));
 </script>
 
 <fieldset class="grid gap-1.5">

@@ -1,9 +1,6 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
@@ -22,13 +19,10 @@
   import { FLAG_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
   import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
-  import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
-  import type { RulingDraft } from '$lib/components/RulingForm.svelte';
+  import RulingForm, { type RulingDraft } from '$lib/components/RulingForm.svelte';
   import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
-  import {
-    resolutionReasonError,
-    type ResolutionVerdict,
-  } from '@civitai/shared/resolution-reasons';
+  import type { Outcome } from '$lib/triage/queue';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
 
   type Verdict = ResolutionVerdict<'heldDetection'>;
 
@@ -39,25 +33,17 @@
     error,
     submit,
     actionHref,
-    choose,
     draft = $bindable(),
   }: {
     row: RedetectedRow;
     civitaiUrl: string;
     verdict: string | undefined;
     error: string | undefined;
-    submit: (outcome: string) => SubmitFunction;
+    submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
-    choose: (verdict: Verdict) => void;
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  const chosen = $derived(HELD_DETECTION_RULING_CHOICES.find((c) => c.verdict === draft.verdict));
-  const unrecordable = $derived(
-    chosen
-      ? resolutionReasonError('heldDetection', chosen.verdict, draft.reason, draft.note)
-      : null
-  );
 
   // Mirrors the main app's refusal in resolveTextScanRedetection: any Pending appeal on the model, for
   // either label, blocks a ruling. Change both together.
@@ -188,45 +174,22 @@
     {/if}
   {/snippet}
   {#snippet actions()}
-    {#each HELD_DETECTION_RULING_CHOICES as c, i (c.verdict)}
-      <Button
-        size="lg"
-        class="h-11 px-5 text-base"
-        variant={draft.verdict === c.verdict ? c.variant : 'outline'}
-        aria-pressed={draft.verdict === c.verdict}
-        disabled={blocked}
-        title={blocked ? APPEAL_FIRST : undefined}
-        onclick={() => choose(c.verdict)}
-      >
-        {c.label} <Kbd>{i + 1}</Kbd>
-      </Button>
-    {/each}
-    {#if chosen}
-      <form
-        method="POST"
-        action={actionHref(chosen.verdict === 'Kept' ? 'keepRedetected' : 'dismissRedetected')}
-        use:enhance={submit(chosen.verdict === 'Kept' ? 'Flagged' : 'Not flagged')}
-        class="grid w-full gap-2 rounded-md border border-dark-4 bg-dark-7 p-3"
-      >
+    <RulingForm
+      subject="heldDetection"
+      choices={HELD_DETECTION_RULING_CHOICES}
+      action={actionHref(draft.verdict === 'Kept' ? 'keepRedetected' : 'dismissRedetected')}
+      enhancer={submit((form) => (form.get('status') === 'Kept' ? 'Flagged' : 'Not flagged'))}
+      idPrefix="held-{row.modelId}-{row.label}"
+      size="lg"
+      kbd
+      labels={[row.label]}
+      disabled={blocked}
+      choiceDisabled={() => (blocked ? APPEAL_FIRST : null)}
+      bind:draft
+    >
+      {#snippet hidden()}
         {@render verdictFields()}
-        <ResolutionReasonFields
-          subject="heldDetection"
-          verdict={chosen.verdict}
-          idPrefix="held-{row.modelId}-{row.label}"
-          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
-          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
-        />
-        <div>
-          <Button
-            type="submit"
-            size="lg"
-            variant={chosen.variant}
-            disabled={blocked || !!unrecordable}
-          >
-            {chosen.confirmLabel}
-          </Button>
-        </div>
-      </form>
-    {/if}
+      {/snippet}
+    </RulingForm>
   {/snippet}
 </TriageDetailFrame>

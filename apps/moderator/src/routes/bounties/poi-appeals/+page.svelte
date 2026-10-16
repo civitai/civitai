@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { cn } from '@civitai/ui/utils.js';
@@ -19,16 +20,22 @@
   // Held here, not in the form: the row swaps to its verdict on submit and back on a refusal.
   const drafts = new SvelteMap<number, RulingDraft<Verdict>>();
   $effect(() => {
-    data.items;
+    const open = new Set(data.items.map((row) => row.bountyId));
     acted.clear();
-    drafts.clear();
+    // Untracked: typing a reason must not re-run this and wipe the marks.
+    untrack(() => {
+      for (const bountyId of drafts.keys()) if (!open.has(bountyId)) drafts.delete(bountyId);
+    });
   });
 
-  // Keeping a flag that is already gone has nothing to keep.
-  const choicesFor = (poi: boolean) =>
-    poi
-      ? FLAG_APPEAL_RULING_CHOICES
-      : FLAG_APPEAL_RULING_CHOICES.filter((c) => c.verdict !== 'Rejected');
+  const keepUnavailable = (poi: boolean) => (verdict: Verdict) =>
+    verdict === 'Rejected' && !poi ? 'No longer flagged. Unflag closes the request.' : null;
+
+  const refusal = $derived.by(() => {
+    if (!form || !('error' in form) || !form.error) return null;
+    const bountyId = 'bountyId' in form ? form.bountyId : undefined;
+    return bountyId ? `Bounty #${bountyId}: ${form.error}` : form.error;
+  });
 
   // A refused verdict must undo its mark, or a moderator believes they ruled on an appeal that
   // is still open.
@@ -49,8 +56,8 @@
   <h1>Bounty Real-Person Appeals</h1>
 </header>
 
-{#if form && 'error' in form && form.error}
-  <ErrorAlert class="mb-4" message={form.error} />
+{#if refusal}
+  <ErrorAlert class="mb-4" message={refusal} />
 {/if}
 
 {#if form && 'rescanQueued' in form && form.rescanQueued}
@@ -126,7 +133,8 @@
           {:else}
             <RulingForm
               subject="flagAppeal"
-              choices={choicesFor(row.poi)}
+              choices={FLAG_APPEAL_RULING_CHOICES}
+              choiceDisabled={keepUnavailable(row.poi)}
               action="?/resolve"
               enhancer={submit(row.bountyId)}
               idPrefix="bounty-poi-{row.bountyId}"
