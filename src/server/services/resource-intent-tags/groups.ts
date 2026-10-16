@@ -1,8 +1,10 @@
 import { compareCodePoints } from './extract';
 
 /**
- * Request-time synonym grouping and weights for the v1 content-tag arm, a port of the vocabulary
- * miner's grouping (pinned by `src/server/services/__tests__/resource-intent-tags.groups.test.ts`).
+ * Request-time synonym grouping and tag weights for the v1 content-tag arm, a port of the vocabulary
+ * miner's grouping and `kept_weights` (pinned by
+ * `src/server/services/__tests__/resource-intent-tags.groups.test.ts`). The adopted V1 score reads
+ * only the per-tag weights, so the miner's post-gate group ordering (`kept_groups`) is not ported.
  *
  * Groups are formed over every tag FOUND in the prompt, before the explicit-tag gate, and only then are
  * the gated tags dropped: a gated tag can head a group that holds two kept tags which are not near each
@@ -72,34 +74,4 @@ export function keptWeights(
   for (const g of foundGroups(foundIds, kept, tags))
     for (const i of g) if (kept.has(i)) w.set(i, tags[g[0]].idf / g.length);
   return w;
-}
-
-/**
- * Groups restricted to the tags that have a weight: gated members and emptied groups dropped, members
- * kept in order (so a group whose head was gated keeps its survivors together), then ordered by weight
- * descending, ties by the first member's key. A group's weight is the sum of its members' weights,
- * added in member order.
- */
-export function gateGroups(
-  groups: readonly (readonly number[])[],
-  weights: ReadonlyMap<number, number>,
-  tags: readonly GroupingTag[]
-): number[][] {
-  const out = groups
-    .map((g) => g.filter((i) => weights.has(i)))
-    .filter((g) => g.length)
-    .map((g) => ({ g, w: g.reduce((s, i) => s + (weights.get(i) as number), 0) }));
-  out.sort((a, b) => b.w - a.w || compareCodePoints(tags[a.g[0]].key, tags[b.g[0]].key));
-  return out.map((x) => x.g);
-}
-
-/** Group the found tags, then drop the gated ones and order the surviving groups by weight. */
-export function keptGroups(
-  foundIds: Iterable<number>,
-  keptIds: Iterable<number>,
-  tags: readonly GroupingTag[]
-): number[][] {
-  const found = [...foundIds];
-  const kept = [...keptIds];
-  return gateGroups(foundGroups(found, kept, tags), keptWeights(found, kept, tags), tags);
 }

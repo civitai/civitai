@@ -80,9 +80,16 @@ export type TagIndexEcosystem = {
 export type TagIndex = {
   vocabulary: readonly TagVocabularyEntry[];
   idByKey: ReadonlyMap<string, number>;
-  /** Every ecosystem the index names; its id is its position. */
+  /**
+   * Every ecosystem the index names; its id is its position. It MUST include the ecosystems below
+   * the resolver's user floor and those with no training use: the lift's observation total sums over
+   * all of them, and only ranking is restricted to the eligible ones.
+   */
   ecosystems: readonly TagIndexEcosystem[];
-  /** Per tag id, training observations per ecosystem id. A tag without an entry casts no ecosystem vote. */
+  /**
+   * Per tag id, training observations per ecosystem id, over EVERY ecosystem (those below the user
+   * floor included: a tag's lift total sums them). A tag without an entry casts no ecosystem vote.
+   */
   tagEcosystemCounts: ReadonlyMap<number, ReadonlyMap<number, number>>;
   kinds: Readonly<Record<TagKind, TagIndexKind>>;
 };
@@ -112,16 +119,17 @@ export function ecosystemLift(
 }
 
 /**
- * Ecosystems ranked by Σ_t w_t·ln lift(t, e) (`ecosystemLift`), best first, at most `limit`. Only
- * ecosystems with at least `ecosystemMinUsers` users are ranked, in order of users descending then
- * name, and equal scores keep that order. A tag without counts casts no vote.
+ * Ecosystems ranked by Σ_t w_t·ln lift(t, e) (`ecosystemLift`), best first, at most `limit`, each with
+ * its score. Only ecosystems with at least `ecosystemMinUsers` users are ranked, in order of users
+ * descending then name, and equal scores keep that order; the observation totals N and c_t still sum
+ * over every ecosystem. A tag without counts casts no vote.
  */
 export function resolveEcosystems(
   index: Pick<TagIndex, 'ecosystems' | 'tagEcosystemCounts'>,
   weights: ReadonlyMap<number, number>,
   limit: number,
   params: Pick<TagScoreParams, 'liftPrior' | 'ecosystemMinUsers'> = TAG_SCORE_PARAMS
-): number[] {
+): { id: number; score: number }[] {
   const m = params.liftPrior;
   const N = index.ecosystems.reduce((s, e) => s + e.observations, 0);
   const eligible = index.ecosystems
@@ -142,7 +150,7 @@ export function resolveEcosystems(
     return { id, score };
   });
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit).map((x) => x.id);
+  return scored.slice(0, limit);
 }
 
 export type TagCandidate = { modelId: number; score: number };
@@ -326,7 +334,7 @@ export function scoreTagRequest(
   const ecosystems = req.baseModel
     ? []
     : resolveEcosystems(index, weights, params.ecosystemsReturned, params).map(
-        (id) => index.ecosystems[id].name
+        (x) => index.ecosystems[x.id].name
       );
   const ecosystem = req.baseModel || ecosystems[0];
   if (!ecosystem) return { ...empty, status: 'no_ecosystem' };

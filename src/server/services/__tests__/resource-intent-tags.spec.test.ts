@@ -30,7 +30,7 @@ describe('RESOURCE_INTENT_TAGS_SPEC', () => {
     // Deliberately a literal: snapshots record the hash they were built under, so change it only
     // on purpose.
     expect(RESOURCE_INTENT_TAGS_SPEC_HASH).toBe(
-      '2c07614a82a0efbc608885820b9dfe32b5964de9b0317299a390c02e52cbd4ed'
+      '94fbe7749cb1573b2f7bc6eec766b949acfa98235e92fd8df74fb33bd46f617a'
     );
   });
 });

@@ -1,5 +1,5 @@
 {
- "about": "Scorer parity: SYNTHETIC tag index and requests (invented keys, ecosystems and model ids). Every expected value was produced by the offline prototype's own functions (v0.tag_weights, v1.gate_tags, v0.eco_options, v0.tag_eco, v1.UserIndex, p3 P3Index.p3_rank/p3_scores V1, use_u=True; LEX request side) on this index, by a generator that imports non-public code and is not in this repository. Never edit to make a test pass; regenerate. idf is the prototype's unrounded log(usersTotal / users). Postings: [modelId, c, fit | null] (fit only for (resource, tag) pairs with >= 2 users). ranked: the whole ranked list (score desc, model id asc, at most 300) with each S.",
+ "about": "Scorer parity: SYNTHETIC tag index and requests (invented keys, ecosystems and model ids). Every expected value was produced by the offline prototype's own functions (v0.tag_weights, v1.gate_tags, v0.eco_options, v0.tag_eco, v1.UserIndex, p3 P3Index.p3_rank/p3_scores V1, use_u=True; LEX request side) on this index, by a generator that imports non-public code and is not in this repository. Never edit to make a test pass; regenerate. idf is the prototype's unrounded log(usersTotal / users). Postings: [modelId, c, fit | null] (fit only for (resource, tag) pairs with >= 2 users). ranked: the whole ranked list (score desc, model id asc, at most 300) with each S. ecosystems / resolver: the top 3 ecosystems from applying v0.tag_eco three times over the remaining ecosystems (it returns only the argmax), each with its score sum_t w_t ln lift(t, e) over the prototype's lift table; resolver is given for every ranked case, ecosystems only when the request had no baseModel.",
  "prototypeSha256": {
   "v0": "3ad9616ba9494d4c54dd2d782a8fc9bcc0dbb1e5fea9cdf8c5ecaa9b6ad45023",
   "v1": "b11fae119e9bc896570e669b3f424931feaa262e2043faf41b625362ffc7ee3b",
@@ -5807,6 +5807,20 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
+   "resolver": [
+    [
+     "Alpha",
+     0.542725967502375
+    ],
+    [
+     "Echo",
+     0.037432626239209954
+    ],
+    [
+     "Bravo",
+     -1.7413769645007864
+    ]
+   ],
    "ranked": [
     [
      1001,
@@ -6052,6 +6066,20 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
+   "resolver": [
+    [
+     "Alpha",
+     1.4527226739558539
+    ],
+    [
+     "Echo",
+     -0.9956520950846461
+    ],
+    [
+     "Bravo",
+     -2.485281410511254
+    ]
+   ],
    "ranked": [
     [
      1001,
@@ -6287,6 +6315,20 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
+   "resolver": [
+    [
+     "Alpha",
+     2.3548592761243987
+    ],
+    [
+     "Bravo",
+     -2.5119981849680775
+    ],
+    [
+     "Echo",
+     -3.6882358507102575
+    ]
+   ],
    "ranked": [
     [
      1001,
@@ -6526,6 +6568,20 @@
    ],
    "ecosystem": "Charlie",
    "candidateCount": 13,
+   "resolver": [
+    [
+     "Charlie",
+     4.663603331913439
+    ],
+    [
+     "Bravo",
+     -1.0454416440181764
+    ],
+    [
+     "Alpha",
+     -1.1546577085984575
+    ]
+   ],
    "ranked": [
     [
      1036,
@@ -6613,6 +6669,20 @@
    ],
    "ecosystem": "Bravo",
    "candidateCount": 25,
+   "resolver": [
+    [
+     "Bravo",
+     4.268614596539907
+    ],
+    [
+     "Echo",
+     -1.8313653939027668
+    ],
+    [
+     "Charlie",
+     -2.3672091270497724
+    ]
+   ],
    "ranked": [
     [
      1018,
@@ -6717,6 +6787,100 @@
    ]
   },
   {
+   "name": "no baseModel, SFW: a gated explicit tag casts no ecosystem vote",
+   "prompt": "teal comet, lunar quilt, ivory mask, umber glyph",
+   "browsingLevel": 3,
+   "baseModel": null,
+   "kind": "addon",
+   "found": [
+    "ivory mask",
+    "lunar quilt",
+    "teal comet",
+    "umber glyph"
+   ],
+   "keptWeights": [
+    [
+     "teal comet",
+     3.506557897319982
+    ],
+    [
+     "lunar quilt",
+     1.4422299934501939
+    ]
+   ],
+   "ecosystems": [
+    "Charlie",
+    "Bravo",
+    "Alpha"
+   ],
+   "ecosystem": "Charlie",
+   "candidateCount": 12,
+   "resolver": [
+    [
+     "Charlie",
+     4.928284654840184
+    ],
+    [
+     "Bravo",
+     -1.0223059709278348
+    ],
+    [
+     "Alpha",
+     -1.2241035765950679
+    ]
+   ],
+   "ranked": [
+    [
+     1037,
+     0.22781719882206652
+    ],
+    [
+     1055,
+     0.06723045640216677
+    ],
+    [
+     1021,
+     0.030765732840992703
+    ],
+    [
+     1044,
+     0.02906880947764992
+    ],
+    [
+     1079,
+     0.02706581238715125
+    ],
+    [
+     1045,
+     0.02688932511227897
+    ],
+    [
+     1025,
+     0.024677155578185974
+    ],
+    [
+     1036,
+     0.022655823120015635
+    ],
+    [
+     1033,
+     0.015482124131535617
+    ],
+    [
+     1041,
+     0.015015618613918164
+    ],
+    [
+     1071,
+     0.011146911071538453
+    ],
+    [
+     1074,
+     0.009639737344177089
+    ]
+   ]
+  },
+  {
    "name": "explicit head with one survivor, SFW, baseModel",
    "prompt": "moss gate, ivory mask, rust canyon",
    "browsingLevel": 1,
@@ -6740,6 +6904,20 @@
    "ecosystems": [],
    "ecosystem": "Bravo",
    "candidateCount": 25,
+   "resolver": [
+    [
+     "Bravo",
+     2.4226250003602283
+    ],
+    [
+     "Charlie",
+     -0.8810230399924868
+    ],
+    [
+     "Echo",
+     -1.2249274669830728
+    ]
+   ],
    "ranked": [
     [
      1007,
@@ -6867,6 +7045,20 @@
    "ecosystems": [],
    "ecosystem": "Echo",
    "candidateCount": 17,
+   "resolver": [
+    [
+     "Echo",
+     2.7432231322192964
+    ],
+    [
+     "Alpha",
+     -0.8154843006331431
+    ],
+    [
+     "Charlie",
+     -0.8930293132036187
+    ]
+   ],
    "ranked": [
     [
      1041,
@@ -6966,6 +7158,20 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 51,
+   "resolver": [
+    [
+     "Alpha",
+     0.5914280210273366
+    ],
+    [
+     "Bravo",
+     0.47476902471597715
+    ],
+    [
+     "Echo",
+     -2.703391732742557
+    ]
+   ],
    "ranked": [
     [
      1003,
@@ -7196,6 +7402,20 @@
    "ecosystems": [],
    "ecosystem": "Delta",
    "candidateCount": 10,
+   "resolver": [
+    [
+     "Bravo",
+     -0.47834918963648954
+    ],
+    [
+     "Echo",
+     -0.48463336795498535
+    ],
+    [
+     "Charlie",
+     -0.6673418638060729
+    ]
+   ],
    "ranked": [
     [
      1053,
@@ -7262,6 +7482,20 @@
    "ecosystems": [],
    "ecosystem": "Zulu",
    "candidateCount": 0,
+   "resolver": [
+    [
+     "Alpha",
+     3.520156554110182
+    ],
+    [
+     "Echo",
+     -3.018491165590099
+    ],
+    [
+     "Bravo",
+     -4.619575424374043
+    ]
+   ],
    "ranked": []
   },
   {
@@ -7297,6 +7531,20 @@
    "ecosystems": [],
    "ecosystem": "Golf",
    "candidateCount": 3,
+   "resolver": [
+    [
+     "Alpha",
+     1.7106283236298898
+    ],
+    [
+     "Bravo",
+     -1.6195708041327768
+    ],
+    [
+     "Echo",
+     -4.288044916009596
+    ]
+   ],
    "ranked": [
     [
      1012,
@@ -7340,6 +7588,20 @@
    "ecosystems": [],
    "ecosystem": "Alpha",
    "candidateCount": 12,
+   "resolver": [
+    [
+     "Alpha",
+     2.540866916317521
+    ],
+    [
+     "Echo",
+     -1.6489005745232488
+    ],
+    [
+     "Bravo",
+     -3.931711009045
+    ]
+   ],
    "ranked": [
     [
      5024,
@@ -7428,6 +7690,20 @@
    ],
    "ecosystem": "Charlie",
    "candidateCount": 7,
+   "resolver": [
+    [
+     "Charlie",
+     0.7128581944463068
+    ],
+    [
+     "Bravo",
+     -0.4253611168913846
+    ],
+    [
+     "Echo",
+     -0.8199453553234127
+    ]
+   ],
    "ranked": [
     [
      5008,

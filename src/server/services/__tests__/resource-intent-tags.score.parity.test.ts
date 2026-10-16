@@ -8,7 +8,11 @@ import type {
   TagKind,
 } from '~/server/services/resource-intent-tags/score';
 import { compareCodePoints } from '~/server/services/resource-intent-tags/extract';
-import { scoreTagRequest, TAG_SCORE_PARAMS } from '~/server/services/resource-intent-tags/score';
+import {
+  resolveEcosystems,
+  scoreTagRequest,
+  TAG_SCORE_PARAMS,
+} from '~/server/services/resource-intent-tags/score';
 
 /**
  * Parity: the scorer against the offline prototype's own output (V1 score, LEX request side, the
@@ -42,6 +46,7 @@ type Case = {
   ecosystem?: string;
   candidateCount?: number;
   ranked?: Pairs;
+  resolver?: [string, number][];
 };
 type Golden = {
   vocabulary: { key: string; idf: number; explicit: boolean; near: number[] }[];
@@ -109,9 +114,9 @@ const index = buildIndex(golden);
 
 describe('resource-intent-tags scorer parity with the prototype', () => {
   it('the fixture is the one this test was written for', () => {
-    expect(golden.cases.length).toBe(15);
+    expect(golden.cases.length).toBe(16);
     expect(golden.cases.filter((c) => c.noTags).length).toBe(2);
-    expect(golden.cases.reduce((n, c) => n + (c.ranked?.length ?? 0), 0)).toBe(316);
+    expect(golden.cases.reduce((n, c) => n + (c.ranked?.length ?? 0), 0)).toBe(328);
   });
 
   it.each(golden.cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
@@ -140,6 +145,12 @@ describe('resource-intent-tags scorer parity with the prototype', () => {
     expect(r.status).toBe(known ? 'ok' : 'unknown_ecosystem');
     expect(r.ecosystems).toEqual(c.ecosystems);
     expect(r.ecosystem).toBe(c.ecosystem);
+    // The resolver's SCORES, not just its order: they move if a gated tag votes, or if the lift's
+    // totals sum over the eligible ecosystems only instead of every one.
+    const resolved = resolveEcosystems(index, r.weights, TAG_SCORE_PARAMS.ecosystemsReturned);
+    expect(resolved.map((x) => [index.ecosystems[x.id].name, x.score])).toEqual(
+      (c.resolver as [string, number][]).map(([e, sc]) => [e, expect.closeTo(sc, 12)])
+    );
     // Every case is under the 300 cap, so this is the whole ranked list.
     const expected = c.ranked as Pairs;
     expect(r.candidates.length).toBe(c.candidateCount);

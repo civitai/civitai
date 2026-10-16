@@ -47,6 +47,6 @@ describe('resolveEcosystems', () => {
       new Map([[0, 1]]),
       5
     );
-    expect(ranked.map((i) => ecosystems[i].name)).toEqual(['Mid', 'Ace', 'Zed']);
+    expect(ranked.map((x) => ecosystems[x.id].name)).toEqual(['Mid', 'Ace', 'Zed']);
   });
 });

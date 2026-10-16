@@ -11,7 +11,6 @@ import {
   tagKeySets,
   tagSegments,
 } from './extract';
-import { keptGroups } from './groups';
 import type { TagIndex, TagIndexKind, TagVocabularyEntry } from './score';
 import { scoreTagRequest, TAG_SCORE_PARAMS } from './score';
 
@@ -62,7 +61,8 @@ const valueMap = (entries: [number, number[][]][]) =>
 /**
  * A four-tag, four-resource index: tag 0 is an explicit head holding tag 1 (so tag 1's weight is
  * half tag 0's idf, not its own); tags 1 and 2 tie on idf; the second ecosystem sits exactly on the
- * resolver's user floor and the third just below it.
+ * resolver's user floor and the third just below it; the explicit tag 0 leans hard toward the first
+ * ecosystem, so the SFW requests' answer moves if a gated tag ever votes.
  */
 const FP_TAGS: TagVocabularyEntry[] = [
   { key: 'amber kite', idf: 2.5, near: [1], explicit: true },
@@ -96,14 +96,13 @@ const FP_INDEX: TagIndex = {
     { name: 'E3', users: 99, observations: 10 },
   ],
   // prettier-ignore
-  tagEcosystemCounts: new Map([[1, new Map([[0, 5], [1, 9]])], [2, new Map([[1, 3], [2, 4]])], [3, new Map([[0, 2]])]]),
+  tagEcosystemCounts: new Map([[0, new Map([[0, 40]])], [1, new Map([[0, 5], [1, 9]])], [2, new Map([[1, 3], [2, 4]])], [3, new Map([[0, 2]])]]),
   kinds: { addon: FP_KIND, checkpoint: FP_KIND },
 };
 
 function scorerFingerprint() {
   const prompt = 'amber kite, brass owl, cobalt fern, dusk harbor';
   return {
-    groups: keptGroups([3, 2, 1, 0], [3, 2, 1], FP_TAGS),
     requests: [
       { browsingLevel: NsfwLevel.PG | NsfwLevel.PG13, baseModel: null },
       { browsingLevel: NsfwLevel.Blocked, baseModel: null },
