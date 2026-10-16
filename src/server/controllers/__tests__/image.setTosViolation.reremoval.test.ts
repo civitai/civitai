@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectedContext } from '~/server/createContext';
-import type * as DbClient from '~/server/db/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as NotificationService from '~/server/services/notification.service';
 
@@ -8,21 +8,16 @@ import type * as NotificationService from '~/server/services/notification.servic
 // removal for the reason the appeal overturned is held for a second moderator before anything
 // changes: the image, its reports and its owner are left alone.
 
-const { findFirst, updateMany, holdRemovals, canConfirmReRemoval, reportsActioned, notify } =
-  vi.hoisted(() => ({
-    findFirst: vi.fn(),
-    updateMany: vi.fn(),
-    holdRemovals: vi.fn(),
-    canConfirmReRemoval: vi.fn(),
-    reportsActioned: vi.fn(),
-    notify: vi.fn(),
-  }));
+const findFirst = dbMock.dbRead.image.findFirst;
+const updateMany = dbMock.dbWrite.image.updateMany;
 
-vi.mock('~/server/db/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof DbClient>()),
-  dbRead: { image: { findFirst } },
-  dbWrite: { image: { updateMany } },
+const { holdRemovals, canConfirmReRemoval, reportsActioned, notify } = vi.hoisted(() => ({
+  holdRemovals: vi.fn(),
+  canConfirmReRemoval: vi.fn(),
+  reportsActioned: vi.fn(),
+  notify: vi.fn(),
 }));
+
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getOpenImageReportIds: vi.fn(async () => [70, 71]),
