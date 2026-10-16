@@ -24,7 +24,12 @@
   let voiding = $state<number | null>(null);
   let voidReason = $state('');
 
+  // One error line for three forms: it shows whichever form was submitted last, so an older refusal
+  // cannot hide a newer one.
+  let lastForm = $state<'ban' | 'unmute' | 'void' | null>(null);
+
   const ban = new FormState({
+    onSubmit: () => (lastForm = 'ban'),
     reload: true,
     onSuccess: () => {
       banning = false;
@@ -32,10 +37,12 @@
     },
   });
   const unmute = new FormState({
+    onSubmit: () => (lastForm = 'unmute'),
     reload: true,
     onSuccess: () => toast.success(`Unmuted ${name}`),
   });
   const voidForm = new FormState({
+    onSubmit: () => (lastForm = 'void'),
     reload: true,
     onSuccess: () => {
       voiding = null;
@@ -44,7 +51,15 @@
     },
   });
 
-  const error = $derived(ban.error ?? unmute.error ?? voidForm.error);
+  const error = $derived(
+    lastForm === 'ban'
+      ? ban.error
+      : lastForm === 'unmute'
+        ? unmute.error
+        : lastForm === 'void'
+          ? voidForm.error
+          : null
+  );
 </script>
 
 <article class="flex flex-col gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">

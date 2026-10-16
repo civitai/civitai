@@ -18,8 +18,8 @@ const inQueue = sql<boolean>`(u."meta"->>'strikeFlaggedForReview')::boolean IS T
   AND u."deletedAt" IS NULL
   AND u."muted" = true`;
 
-export async function countStrikeReview(): Promise<number> {
-  const row = await dbRead
+export async function countStrikeReview(db: typeof dbRead = dbRead): Promise<number> {
+  const row = await db
     .selectFrom('User as u')
     .select((eb) => eb.fn.countAll<string>().as('count'))
     .where(inQueue)
@@ -45,9 +45,11 @@ export type StrikeReviewRow = {
   strikes: StrikeReviewStrike[];
 };
 
+/** Read on the PRIMARY: it is what an action reloads, and on the replica the row the action just took
+ *  out of the queue can still be there. */
 export async function getStrikeReviewQueue(): Promise<{ rows: StrikeReviewRow[]; total: number }> {
   const [users, total] = await Promise.all([
-    dbRead
+    dbWrite
       .selectFrom('User as u')
       .select([
         'u.id as userId',
@@ -62,11 +64,11 @@ export async function getStrikeReviewQueue(): Promise<{ rows: StrikeReviewRow[];
       .orderBy('u.id', 'asc')
       .limit(STRIKE_REVIEW_LIMIT)
       .execute(),
-    countStrikeReview(),
+    countStrikeReview(dbWrite),
   ]);
   if (users.length === 0) return { rows: [], total };
 
-  const strikes = await dbRead
+  const strikes = await dbWrite
     .selectFrom('UserStrike as s')
     .leftJoin('User as issuer', 'issuer.id', 's.issuedBy')
     .select([
@@ -145,4 +147,20 @@ export async function activeStrikeOwner(strikeId: number): Promise<number | null
     .where('status', '=', 'Active')
     .executeTakeFirst();
   return row?.userId ?? null;
+}
+
+/**
+ * Records an unmute from this queue as the review's outcome. The main app's unmute leaves the flag, so
+ * without this a later unrelated mute would bring the account back here as if newly flagged. Only once
+ * the unmute has landed: a still-muted account keeps its flag.
+ */
+export async function clearStrikeReviewFlag(userId: number): Promise<void> {
+  await dbWrite
+    .updateTable('User')
+    .set({
+      meta: sql`jsonb_set(COALESCE("meta", '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)`,
+    })
+    .where('id', '=', userId)
+    .where('muted', '=', false)
+    .execute();
 }

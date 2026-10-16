@@ -6,6 +6,7 @@ import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/se
 import { parseForm } from '$lib/server/query';
 import {
   activeStrikeOwner,
+  clearStrikeReviewFlag,
   getStrikeReviewQueue,
   isInStrikeReview,
   STRIKE_REVIEW_LIMIT,
@@ -62,7 +63,9 @@ export const actions: Actions = {
       muted: false,
       moderatorId: locals.user.id,
     });
-    return result.ok ? { success: true } : fail(400, { error: result.error });
+    if (!result.ok) return fail(400, { error: result.error });
+    await clearStrikeReviewFlag(input.userId);
+    return { success: true };
   },
 
   voidStrike: async ({ request, locals }) => {

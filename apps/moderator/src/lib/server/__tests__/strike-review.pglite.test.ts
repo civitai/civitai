@@ -161,7 +161,9 @@ describe('strike review queue', () => {
     const queries: { sql: string; parameters: readonly unknown[] }[] = [];
     dbHandle.current = new Kysely({
       dialect: pgliteDialect(db),
-      log: (event) => queries.push(event.query),
+      log: (event) => {
+        queries.push(event.query);
+      },
     });
     await countStrikeReview();
     await db.exec('SET enable_seqscan = off');
@@ -224,6 +226,35 @@ describe('strike review actions', () => {
 
     expect(await actions.unmute(event({ userId: 2 }))).toEqual({ success: true });
     expect(setMuted).toHaveBeenCalledWith({ userId: 2, muted: false, moderatorId: 42 });
+  });
+
+  const flagOf = async (id: number) =>
+    (
+      await db.query<{ flag: string | null }>(
+        `SELECT meta->>'strikeFlaggedForReview' AS flag FROM "User" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0].flag;
+
+  it('clears the review flag once the unmute has landed, so a later mute does not requeue it', async () => {
+    setMuted.mockImplementation(async ({ userId }: { userId: number }) => {
+      await db.query(`UPDATE "User" SET muted = false WHERE id = $1`, [userId]);
+      return { ok: true };
+    });
+
+    expect(await actions.unmute(event({ userId: 2 }))).toEqual({ success: true });
+    expect(await flagOf(2)).toBe('false');
+
+    await db.query(`UPDATE "User" SET muted = true WHERE id = 2`);
+    expect(await isInStrikeReview(2)).toBe(false);
+  });
+
+  it('keeps the flag when the unmute reported success but the account is still muted', async () => {
+    setMuted.mockResolvedValue({ ok: true });
+
+    await actions.unmute(event({ userId: 2 }));
+
+    expect(await flagOf(2)).toBe('true');
   });
 
   it('refuses to unmute an account that is not in the queue', async () => {
