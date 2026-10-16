@@ -73,6 +73,8 @@ vi.mock('~/server/middleware.trpc', async () => {
   };
 });
 
+import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { blocksRouter } from '../blocks.router';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
@@ -399,6 +401,7 @@ describe('setReactionFromApp — set semantics', () => {
     const result = await caller().setReactionFromApp(setInput({ reacted: false }) as never);
     expect(h.toggle).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ changed: true, reacted: false, viewerReactions: [] });
+    expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1);
     expect(h.recordScopeInvocation).toHaveBeenCalledWith(
       expect.objectContaining({
         detail: expect.objectContaining({ reacted: false, outcome: 'ok' }),
@@ -428,6 +431,7 @@ describe('setReactionFromApp — set semantics', () => {
     expect(h.toggle).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ changed: true, reacted: true });
     // The audit names what THIS request wrote — a create — not what it asked for.
+    expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1);
     expect(h.recordScopeInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ detail: expect.objectContaining({ reacted: true, outcome: 'ok' }) })
     );
@@ -450,21 +454,41 @@ describe('setReactionFromApp — set semantics', () => {
     const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
     // The reply tells the truth (not reacted); the audit records the reward-paying create.
     expect(result).toMatchObject({ changed: true, reacted: false });
+    expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1);
     expect(h.recordScopeInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ detail: expect.objectContaining({ reacted: true, outcome: 'ok' }) })
     );
   });
 
-  it('a site-handler error AFTER its write landed is reported as the change it made', async () => {
+  it("a unique violation (the row already existed — a racing create won) is NOT this request's change", async () => {
+    // A double-tap: request A created the row; B's stale replica check missed it and B's insert
+    // hit the unique key. B wrote nothing, so it reports the truth and is not audited.
+    viewerHolds(false);
+    afterWrite([{ reaction: 'Heart' }]);
+    const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+    });
+    h.toggle.mockRejectedValue(new TRPCError({ code: 'CONFLICT', message: 'x', cause: p2002 }));
+    const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
+    expect(result).toMatchObject({ changed: false, reacted: true });
+    expect(h.recordScopeInvocation).not.toHaveBeenCalled();
+  });
+
+  it('any other handler error is rethrown and audited ONCE as failed — even if the state moved', async () => {
+    // The state moving cannot be credited to this request: a concurrent writer could have done it.
     viewerHolds(false);
     afterWrite([{ reaction: 'Heart' }]);
     h.toggle.mockRejectedValue(new Error('tracker read failed'));
-    await expect(caller().setReactionFromApp(setInput() as never)).resolves.toMatchObject({
-      changed: true,
-      reacted: true,
-    });
+    await expect(caller().setReactionFromApp(setInput({ reacted: true }) as never)).rejects.toThrow(
+      'tracker read failed'
+    );
+    expect(h.recordScopeInvocation).toHaveBeenCalledTimes(1);
     expect(h.recordScopeInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({ detail: expect.objectContaining({ reacted: true, outcome: 'ok' }) })
+      expect.objectContaining({
+        statusCode: 500,
+        detail: expect.objectContaining({ outcome: 'failed', reacted: true }),
+      })
     );
   });
 

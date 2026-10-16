@@ -1,5 +1,6 @@
 import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
+import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import type { AppImageReaction } from '~/shared/constants/block-reaction.constants';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
@@ -71,6 +72,15 @@ export type SetImageReactionOutcome = {
   viewerReactions: ReviewReactions[];
 };
 
+/** Was this a unique violation — the row already existed? `throwDbError` keeps the Prisma error as `cause`. */
+function isUniqueViolation(error: unknown): boolean {
+  for (let e: unknown = error, depth = 0; e && depth < 3; depth++) {
+    if (isPrismaUniqueViolation(e)) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /**
  * Set the viewer's reaction to the requested state.
  *
@@ -89,9 +99,13 @@ export type SetImageReactionOutcome = {
  * check milliseconds after its own write and usually miss again. A block that sees `reacted`
  * differ from what it asked for knows the request did not apply.
  *
- * If the site handler THROWS after its write landed (a step after the insert failed), the
- * read-back decides: a state that moved is reported as this request's change, otherwise the
- * error is rethrown.
+ * If the site handler THROWS, the error is classified, never inferred from a state comparison
+ * (a comparison cannot tell this request's write from a concurrent one). A unique violation means
+ * the row was already there — a racing request or a stale replica check created it first — so this
+ * request wrote nothing: `changed: false`, and the reply carries the read-back truth. Any other
+ * error is rethrown and audited as a failed attempt. KNOWN LIMIT: a handler that throws AFTER its
+ * own insert committed (a later step failing) is audited as failed although the reaction landed;
+ * the reply is an error and the block's retry is a correct no-op.
  */
 export async function setImageReactionFromApp(opts: {
   ctx: ProtectedContext;
@@ -118,8 +132,8 @@ export async function setImageReactionFromApp(opts: {
   const viewerReactions = await readViewerImageReactionsOnPrimary(opts.userId, opts.imageId);
   const holds = viewerReactions.includes(opts.reaction);
   if (failure) {
-    if (holds === held) throw failure.error;
-    return { changed: true, wroteReacted: holds, reacted: holds, viewerReactions };
+    if (!isUniqueViolation(failure.error)) throw failure.error;
+    return { changed: false, wroteReacted: false, reacted: holds, viewerReactions };
   }
   const changed = result === 'created' || result === 'removed';
   return { changed, wroteReacted: result === 'created', reacted: holds, viewerReactions };
