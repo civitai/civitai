@@ -93,7 +93,7 @@ export async function withResolutionLock<T>(
     .then((reply) => !!reply)
     .catch(() => true);
   if (!acquired)
-    throw throwBadRequestError('This re-detection is being resolved. Reload the queue.');
+    throw throwBadRequestError('This flag is being resolved. Reload and try again.');
   try {
     return await run();
   } finally {

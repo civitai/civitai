@@ -972,6 +972,20 @@ describe('confirmMinorHashAutoFlag — text-scan ruling', () => {
     });
   });
 
+  it('reports whether a verdict existed and the ruling landed', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: true,
+      stamped: true,
+    });
+
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: { minorFlagSnapshot: {} } });
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: false,
+      stamped: false,
+    });
+  });
+
   it('records nothing when the flag has no text-scan verdict', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({ meta: { minorFlagSnapshot: {} } });
     await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
@@ -988,7 +1002,10 @@ describe('confirmMinorHashAutoFlag — text-scan ruling', () => {
     mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
     mockStampModelTextScanAppeal.mockRejectedValueOnce(new Error('db down'));
 
-    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toBeUndefined();
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: true,
+      stamped: false,
+    });
 
     expect(mockTrackModActivity).toHaveBeenCalled();
     expect(mockLogToAxiom).toHaveBeenCalledWith(
@@ -1049,6 +1066,22 @@ describe('revertMinorHashAutoFlag', () => {
       reason: 'Adult',
       note: 'n',
     });
+  });
+
+  it('rules against the hash the moderator saw when one is given', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+
+    await revertMinorHashAutoFlag({
+      modelId: 77,
+      userId: 4,
+      recordTextScanRuling: true,
+      textHash: 'seen-h',
+    });
+
+    expect(mockStampModeratorTextScanRuling).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: 77, label: 'minor', textHash: 'seen-h' })
+    );
   });
 
   it('leaves appeals alone when the caller is the appeal resolution itself', async () => {

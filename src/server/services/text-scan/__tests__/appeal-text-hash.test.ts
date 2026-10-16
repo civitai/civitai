@@ -165,6 +165,23 @@ describe('stampModeratorTextScanRuling', () => {
     );
   });
 
+  it('stamps the hash it is given without reading the current text', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+
+    expect(
+      await stampModeratorTextScanRuling({
+        modelId: 7,
+        userId: 3,
+        label: 'minor',
+        textHash: 'seen-h',
+      })
+    ).toBe(true);
+
+    expect(dbMock.dbWrite.model.findMany).not.toHaveBeenCalled();
+    const [, ...values] = flatSql(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    expect(values).toEqual(expect.arrayContaining(['seen-h']));
+  });
+
   it('writes nothing and reports false when the text cannot be read', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([]);
     expect(await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' })).toBe(

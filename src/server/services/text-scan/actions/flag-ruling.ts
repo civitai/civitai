@@ -4,10 +4,7 @@ import {
   revertMinorHashAutoFlag,
 } from '~/server/services/minor-hash.service';
 import { MINOR_FLAG_SNAPSHOT_KEY, setModelMinor } from '~/server/services/model.service';
-import {
-  loadGrantTextHash,
-  settleFlagAppealsAfterModeratorLift,
-} from '~/server/services/text-scan/actions/appeal-text-hash';
+import { settleFlagAppealsAfterModeratorLift } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
   grantModelTextScanPoi,
   stampModelTextScanAppeal,
@@ -62,8 +59,16 @@ async function rule({
     throw throwBadRequestError("Rule the owner's open appeal from Appeals instead.");
 
   if (keep) {
-    if (label === 'minor') await confirmMinorHashAutoFlag({ modelId, userId, reason, note });
-    else
+    if (label === 'minor') {
+      const { hadVerdict, stamped } = await confirmMinorHashAutoFlag({
+        modelId,
+        userId,
+        reason,
+        note,
+      });
+      if (hadVerdict && !stamped)
+        throw throwBadRequestError('The ruling could not be recorded. Try again.');
+    } else
       await stampModelTextScanAppeal({
         modelId,
         userId,
@@ -79,7 +84,14 @@ async function rule({
   if (label === 'minor') {
     const meta = model.meta as Record<string, unknown> | null;
     if (meta?.[MINOR_FLAG_SNAPSHOT_KEY])
-      await revertMinorHashAutoFlag({ modelId, userId, recordTextScanRuling: true, reason, note });
+      await revertMinorHashAutoFlag({
+        modelId,
+        userId,
+        recordTextScanRuling: true,
+        reason,
+        note,
+        textHash,
+      });
     else
       await setModelMinor({
         id: modelId,
@@ -89,11 +101,17 @@ async function rule({
         recordTextScanRuling: true,
         reason,
         note,
+        textHash,
       });
   } else {
-    const grantHash = await loadGrantTextHash('Model', modelId, 'poi');
-    if (!grantHash) throw throwBadRequestError('Could not read the model text. Try again later.');
-    await grantModelTextScanPoi({ modelId, userId, grantHash, via: 'moderator', reason, note });
+    await grantModelTextScanPoi({
+      modelId,
+      userId,
+      grantHash: textHash,
+      via: 'moderator',
+      reason,
+      note,
+    });
     await settleFlagAppealsAfterModeratorLift({
       modelId,
       userId,

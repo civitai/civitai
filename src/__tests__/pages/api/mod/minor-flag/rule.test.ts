@@ -14,7 +14,6 @@ const m = vi.hoisted(() => ({
   setMinor: vi.fn(),
   stamp: vi.fn(),
   grantPoi: vi.fn(),
-  grantHash: vi.fn(),
   settle: vi.fn(),
   session: { user: { id: 7, isModerator: true, permissions: [], bannedAt: null } },
 }));
@@ -46,7 +45,6 @@ vi.mock('~/server/services/text-scan/actions/model-poi-minor', async (importOrig
 }));
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
   ...(await importOriginal<typeof AppealTextHash>()),
-  loadGrantTextHash: m.grantHash,
   settleFlagAppealsAfterModeratorLift: m.settle,
 }));
 
@@ -79,7 +77,7 @@ const body = { modelId: 42, textHash: 'h-1' };
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.appeal.findFirst.mockResolvedValue(null);
-  m.grantHash.mockResolvedValue('grant-h');
+  m.confirm.mockResolvedValue({ hadVerdict: true, stamped: true });
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -139,6 +137,7 @@ describe('minorFlag.rule', () => {
       recordTextScanRuling: true,
       reason: 'not-a-minor',
       note: undefined,
+      textHash: 'h-1',
     });
     expect(m.setMinor).not.toHaveBeenCalled();
     expect(res.payload).toMatchObject({ ruled: 'lifted' });
@@ -155,18 +154,18 @@ describe('minorFlag.rule', () => {
       recordTextScanRuling: true,
       reason: 'terms-misread',
       note: undefined,
+      textHash: 'h-1',
     });
     expect(m.revert).not.toHaveBeenCalled();
   });
 
-  it('lifts a real-person flag against the text the scan read, then settles appeals', async () => {
+  it('lifts a real-person flag against the text the moderator ruled on, then settles appeals', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
     await call({ ...body, label: 'poi', keep: false, resolvedReason: 'not-a-real-person' });
-    expect(m.grantHash).toHaveBeenCalledWith('Model', 42, 'poi');
     expect(m.grantPoi).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      grantHash: 'grant-h',
+      grantHash: 'h-1',
       via: 'moderator',
       reason: 'not-a-real-person',
       note: undefined,
@@ -184,6 +183,19 @@ describe('minorFlag.rule', () => {
     dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 1 });
     expect((await call({ ...body, label: 'poi', keep: false })).status).toBe(200);
     expect(m.grantPoi).toHaveBeenCalled();
+  });
+
+  it('lets a minor lift proceed while the owner has an open appeal', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      flagged('minor', { minorFlagSnapshot: { source: 'auto' } })
+    );
+    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 1 });
+    const res = await call({ ...body, label: 'minor', keep: false });
+    expect(res.status).toBe(200);
+    expect(m.revert).toHaveBeenCalledWith(
+      expect.objectContaining({ recordTextScanRuling: true, textHash: 'h-1' })
+    );
+    expect(res.payload).toMatchObject({ ruled: 'lifted', label: 'minor' });
   });
 
   it('refuses a keep while the owner has an open appeal', async () => {
@@ -210,11 +222,16 @@ describe('minorFlag.rule', () => {
     expect(m.revert).not.toHaveBeenCalled();
   });
 
-  it('refuses a real-person lift when the model text cannot be read', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
-    m.grantHash.mockResolvedValue(null);
-    expect((await call({ ...body, label: 'poi', keep: false })).status).toBe(400);
-    expect(m.grantPoi).not.toHaveBeenCalled();
+  it('refuses a minor keep whose ruling could not be recorded', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
+    m.confirm.mockResolvedValue({ hadVerdict: true, stamped: false });
+    expect((await call({ ...body, label: 'minor', keep: true })).status).toBe(400);
+  });
+
+  it('keeps a minor flag that has no verdict to stamp', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('minor'));
+    m.confirm.mockResolvedValue({ hadVerdict: false, stamped: false });
+    expect((await call({ ...body, label: 'minor', keep: true })).status).toBe(200);
   });
 
   it.each([

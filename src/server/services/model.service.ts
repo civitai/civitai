@@ -2530,10 +2530,13 @@ export async function setModelMinor({
   reapplySideEffects,
   reason,
   note,
+  textHash,
 }: SetModelMinorInput & {
   /** Recorded on the moderator's text-scan ruling when `recordTextScanRuling` is set. */
   reason?: string;
   note?: string;
+  /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
+  textHash?: string;
   userId: number;
   activity?: ModelMinorActivity;
   tracker?: Tracker;
@@ -2567,6 +2570,7 @@ export async function setModelMinor({
       label: 'minor',
       reason,
       note,
+      textHash,
     });
     if (!stamped)
       logToAxiom({
