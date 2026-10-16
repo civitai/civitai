@@ -176,6 +176,13 @@ is a per-label field, set with `putLabelModes` (`{ "action": "putLabelModes", "l
 `"auto"` removes it) and returned by `getPrompts` as `labelModes`. See
 [minor-detection-review.md](minor-detection-review.md).
 
+`csam` has its own field in the same hash, with modes `off` and `review` only; it never acts on its
+own, so `putLabelModes` refuses `auto` for it. A missing or unreadable field reads as `off`. While
+it is off, every scan drops `csam` from the profile's labels before prompts are looked up and the
+content hash is computed, so no `label:csam` prompt is needed and no hash changes; switching it to
+`review` changes the hash of the profiles that list it, and each of those entities is rescanned once.
+A harness `labels` override is never filtered. `getPrompts` returns it as `csamMode`.
+
 ## Comparing with the existing systems
 
 Every finished verdict is logged to Axiom as `name: 'scan-verdict'`, with `system` = `text-scan`

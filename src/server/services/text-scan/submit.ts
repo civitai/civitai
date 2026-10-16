@@ -16,7 +16,10 @@ import {
 } from '~/server/services/text-scan/mode';
 import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
 import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
-import { getTextScanProfile } from '~/server/services/text-scan/profiles';
+import {
+  getTextScanProfile,
+  resolveTextScanProfileLabels,
+} from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
   composeTextScanMessages,
@@ -324,7 +327,8 @@ export async function scanEntity({
   const profile = getTextScanProfile(entityType);
   if (!profile) return { status: 'skipped', reason: 'no-profile' };
 
-  const passes = planTextScanPasses(profile.labels, mode, searchMode).filter(
+  const labels = await resolveTextScanProfileLabels(profile);
+  const passes = planTextScanPasses(labels, mode, searchMode).filter(
     (p) => !only || (only === 'web-search') === (p.variant === 'web-search')
   );
   if (!passes.length) return { status: 'skipped', reason: 'off' };
@@ -340,7 +344,7 @@ export async function scanEntity({
   const [config, prompts, modelRules] = await Promise.all([
     getTextScanConfig(),
     getActiveTextScanPrompts(),
-    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+    labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
   ]);
   const ctx = { entityType, entityId, subject, config, prompts, modelRules, force };
 

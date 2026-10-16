@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
 
 // @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
@@ -10,6 +11,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getActiveTextScanPrompts: vi.fn(),
   getTextScanConfig: vi.fn(),
   setTextScanLabelMode: vi.fn(),
+  setTextScanCsamMode: vi.fn(),
 }));
 
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
@@ -20,10 +22,10 @@ const { getTextScanProfile, registerTextScanProfile } = await import(
 );
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
+const { resetTextScanRolloutCache } = await import('~/server/services/text-scan/mode');
 const { submitWorkflow } = await import('@civitai/client');
-const { getActiveTextScanPrompts, getTextScanConfig, setTextScanLabelMode } = await import(
-  '~/server/services/text-scan/prompt'
-);
+const { getActiveTextScanPrompts, getTextScanConfig, setTextScanLabelMode, setTextScanCsamMode } =
+  await import('~/server/services/text-scan/prompt');
 
 const PROMPTS = {
   base: { id: 1, key: 'base', content: 'BASE PROMPT' },
@@ -257,6 +259,50 @@ describe('a labels override', () => {
   });
 });
 
+describe('the csam gate in the harness', () => {
+  const ok = { data: { id: 'wf-1', status: 'succeeded', steps: [] } } as never;
+  const scanTexts = (extra: Record<string, unknown> = {}) =>
+    run({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Body', text: 'placeholder' }] }],
+      promptOverrides: { 'label:csam': 'CSAM DEF' },
+      ...extra,
+    });
+  const csamMode = (value?: string) => {
+    redisMock.sysRedis.hGetAll.mockResolvedValue((value ? { csam: value } : {}) as never);
+    resetTextScanRolloutCache();
+  };
+
+  beforeEach(() => {
+    registerTextScanProfile({
+      entityType: 'Comment',
+      labels: ['nsfw', 'csam'],
+      load: async () => new Map(),
+    });
+    vi.mocked(submitWorkflow).mockResolvedValue(ok);
+  });
+
+  it('scans a profile without csam while the gate is off, as production would', async () => {
+    csamMode();
+    await scanTexts();
+    expect(sentSteps()[0].system).toContain('NSFW DEF');
+    expect(sentSteps()[0].system).not.toContain('CSAM DEF');
+  });
+
+  it('scans csam from the profile once the gate is review', async () => {
+    csamMode('review');
+    await scanTexts();
+    expect(sentSteps()[0].system).toContain('CSAM DEF');
+  });
+
+  it('never filters an explicit labels override', async () => {
+    csamMode();
+    await scanTexts({ labels: ['csam'] });
+    expect(sentSteps()[0].system).toContain('CSAM DEF');
+  });
+});
+
 describe('putLabelModes', () => {
   const parse = (extra: Record<string, unknown> = {}) =>
     textScanHarnessSchema.parse({
@@ -265,7 +311,10 @@ describe('putLabelModes', () => {
       mode: 'review',
       ...extra,
     });
-  beforeEach(() => vi.mocked(setTextScanLabelMode).mockReset());
+  beforeEach(() => {
+    vi.mocked(setTextScanLabelMode).mockReset();
+    vi.mocked(setTextScanCsamMode).mockReset();
+  });
 
   it('sets one label mode as the authenticated moderator and returns the stored modes', async () => {
     vi.mocked(setTextScanLabelMode).mockResolvedValue({ minor: 'review' });
@@ -285,6 +334,28 @@ describe('putLabelModes', () => {
       'moderator id is required'
     );
     expect(setTextScanLabelMode).not.toHaveBeenCalled();
+  });
+
+  it('sets csam to off or review, and refuses auto for csam and off for poi/minor', async () => {
+    vi.mocked(setTextScanCsamMode).mockResolvedValue('off');
+    const res = await runTextScanHarnessAction(parse({ label: 'csam', mode: 'off' }), {
+      moderatorId: 5,
+    });
+    expect(setTextScanCsamMode).toHaveBeenCalledWith('off', { moderatorId: 5 });
+    expect(setTextScanLabelMode).not.toHaveBeenCalled();
+    expect(res).toEqual({ kind: 'json', body: { csamMode: 'off' } });
+    expect(parse({ label: 'csam', mode: 'review' })).toMatchObject({ label: 'csam' });
+    const auto = textScanHarnessSchema.safeParse({
+      action: 'putLabelModes',
+      label: 'csam',
+      mode: 'auto',
+    });
+    expect(auto.success).toBe(false);
+    expect(JSON.stringify(auto.error?.issues)).toContain('csam has no auto mode');
+    expect(
+      textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'minor', mode: 'off' })
+        .success
+    ).toBe(false);
   });
 
   it('rejects a label that has no mode and a mode that does not exist', () => {

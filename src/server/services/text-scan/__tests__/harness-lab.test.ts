@@ -11,6 +11,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   readTextScanRollouts: vi.fn(async () => ({})),
   readTextScanLabelModes: vi.fn(async () => ({ minor: 'review' })),
+  readTextScanCsamMode: vi.fn(async () => 'review'),
 }));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
@@ -288,5 +289,11 @@ describe('getPrompts', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
     const { body } = (await run({ action: 'getPrompts' })) as { body: { labelModes: unknown } };
     expect(body.labelModes).toEqual({ minor: 'review' });
+  });
+
+  it('returns the csam mode beside the poi/minor label modes', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    const { body } = (await run({ action: 'getPrompts' })) as { body: { csamMode: unknown } };
+    expect(body.csamMode).toBe('review');
   });
 });

@@ -18,6 +18,7 @@ const {
   setTextScanRollout,
   setTextScanWebSearchRollout,
   setTextScanLabelMode,
+  setTextScanCsamMode,
   insertTextScanPrompt,
   MissingTextScanPromptError,
   DEFAULT_TEXT_SCAN_MODEL,
@@ -380,6 +381,48 @@ describe('setTextScanLabelMode', () => {
         mode: 'review',
       })
     );
+  });
+});
+
+describe('setTextScanCsamMode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses users who are not active moderators, and any mode but off or review', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    await expect(setTextScanCsamMode('review', { moderatorId: 9 })).rejects.toThrow();
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(setTextScanCsamMode('auto' as never, { moderatorId: 5 })).rejects.toThrow(
+      'csam has no auto mode'
+    );
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.hDel).not.toHaveBeenCalled();
+  });
+
+  it('writes review, removes the field for off, logs both, and this pod sees it at once', async () => {
+    const { getTextScanCsamMode, resetTextScanRolloutCache } = await import(
+      '~/server/services/text-scan/mode'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await getTextScanCsamMode()).toBe('off');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ csam: 'review' } as never);
+    expect(await setTextScanCsamMode('review', { moderatorId: 5 })).toBe('review');
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:label-modes',
+      'csam',
+      'review'
+    );
+    expect(await getTextScanCsamMode()).toBe('review');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:label-modes', 'csam');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'label mode updated', label: 'csam', mode: 'review' })
+    );
+    resetTextScanRolloutCache();
   });
 });
 

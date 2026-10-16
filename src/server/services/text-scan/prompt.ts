@@ -10,10 +10,13 @@ import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/ser
 import {
   isTextScanWebSearchEntityType,
   parseTextScanRollout,
+  readTextScanCsamMode,
   readTextScanLabelModes,
   readTextScanRollouts,
   readTextScanWebSearchRollouts,
   resetTextScanRolloutCache,
+  TEXT_SCAN_CSAM_MODE_FIELD,
+  type TextScanCsamMode,
   type TextScanLabelMode,
   type TextScanRollout,
 } from '~/server/services/text-scan/mode';
@@ -191,6 +194,29 @@ export async function setTextScanLabelMode(
     mode,
   });
   return readTextScanLabelModes();
+}
+
+/** `off` removes the field, so a missing field and an explicit off read the same. */
+export async function setTextScanCsamMode(
+  mode: TextScanCsamMode,
+  { moderatorId }: { moderatorId: number }
+) {
+  if (mode !== 'off' && mode !== 'review')
+    throw throwBadRequestError(`csam has no ${String(mode)} mode: only off and review`);
+  await assertActiveModerator(moderatorId);
+  if (mode === 'review')
+    await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD, 'review');
+  else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD);
+  resetTextScanRolloutCache();
+  await logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'label mode updated',
+    moderatorId,
+    label: TEXT_SCAN_CSAM_MODE_FIELD,
+    mode,
+  });
+  return readTextScanCsamMode();
 }
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };

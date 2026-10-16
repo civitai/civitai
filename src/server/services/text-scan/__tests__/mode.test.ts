@@ -23,6 +23,8 @@ const {
   readTextScanWebSearchRollouts,
   getTextScanLabelMode,
   readTextScanLabelModes,
+  getTextScanCsamMode,
+  readTextScanCsamMode,
 } = await import('~/server/services/text-scan/mode');
 const { isTextScanEntityType } = await import('~/server/services/text-scan/profiles');
 
@@ -294,5 +296,63 @@ describe('label modes', () => {
     expect(await getTextScanLabelMode('minor')).toBe('review');
     resetTextScanRolloutCache();
     expect(await getTextScanLabelMode('minor')).toBe('auto');
+  });
+});
+
+describe('csam mode', () => {
+  beforeEach(() => {
+    redisMock.sysRedis.hGetAll.mockReset();
+    resetTextScanRolloutCache();
+    loggingMock.logToAxiom.mockReset().mockResolvedValue(undefined as never);
+  });
+
+  it('is off when the field is missing, unparseable, or the hash is empty', async () => {
+    hash({ minor: 'review' });
+    expect(await getTextScanCsamMode()).toBe('off');
+    resetTextScanRolloutCache();
+    hash({ csam: 'auto' });
+    expect(await getTextScanCsamMode()).toBe('off');
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockResolvedValue(undefined as never);
+    expect(await getTextScanCsamMode()).toBe('off');
+  });
+
+  it('is review when the label-modes hash says so, without touching poi/minor', async () => {
+    hash({ csam: 'review' });
+    expect(await getTextScanCsamMode()).toBe('review');
+    expect(await readTextScanCsamMode()).toBe('review');
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+    expect(await readTextScanLabelModes()).toEqual({});
+    expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledWith('system:text-scan:label-modes');
+  });
+
+  it('fails closed on a read error and logs it once per window', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
+      redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+      expect(await getTextScanCsamMode()).toBe('off');
+      expect(await getTextScanCsamMode()).toBe('off');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          message: 'csam mode read failed, falling back to off',
+        })
+      );
+      vi.setSystemTime(new Date('2030-01-01T00:10:00Z'));
+      await getTextScanCsamMode();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stays off when the failed-read log itself throws', async () => {
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+    loggingMock.logToAxiom.mockImplementation(() => {
+      throw new Error('logger broke');
+    });
+    expect(await getTextScanCsamMode()).toBe('off');
   });
 });
