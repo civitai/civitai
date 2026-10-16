@@ -40,7 +40,7 @@ describe('Model Flag Appeals', () => {
     'serves appeals and never queries held detections for %s',
     async (query) => {
       await (load as unknown as (e: { url: URL }) => Promise<unknown>)({
-        url: new URL(`http://x/models/flag-appeals${query}`),
+        url: new URL(`http://x/models/flags/appeals${query}`),
       });
       expect(getMinorFlagAppealsForReview).toHaveBeenCalledTimes(1);
       expect(getRedetectedModels).not.toHaveBeenCalled();

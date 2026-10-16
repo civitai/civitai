@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive } from '$lib/nav-links';
+import { isNavLinkActive, navCount, navHref } from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
+  isGrantable,
   NAVIGATION,
   navForUser,
   pageAccessState,
@@ -79,42 +80,75 @@ describe('the Users section', () => {
 });
 
 describe('the Models section', () => {
-  it('shows every page, each under its own grant', () => {
+  const APPEALS = '/models/flags/appeals';
+  const REVIEW = '/models/flags/review';
+  const MATCHES = '/models/flags/matches';
+  const flags = (roles = reviewer) =>
+    navForUser(roles)
+      .find((l) => l.label === 'Models')
+      ?.children?.find((c) => c.path === '/models/flags');
+  const counts: Record<string, number> = {
+    modelFlagsAppeals: 3,
+    modelFlagsReview: 5,
+    modelFlagsMatches: 7,
+  };
+  const countFor = (key: string | undefined) => (key ? counts[key] ?? null : null);
+
+  it('is one Model Flags entry holding the three tabs, each under its own grant', () => {
     applyGrants({
-      '/models/minor-hash-matches': ['moderator:reviewer'],
-      '/models/flag-appeals': ['moderator:reviewer'],
-      '/models/held-detections': ['moderator:reviewer'],
+      [APPEALS]: ['moderator:reviewer'],
+      [REVIEW]: ['moderator:reviewer'],
+      [MATCHES]: ['moderator:reviewer'],
     });
-    expect(labelsUnder('Models')).toEqual([
-      ['/models/minor-hash-matches', 'Minor Hash Matches'],
-      ['/models/flag-appeals', 'Model Flag Appeals'],
-      ['/models/held-detections', 'Held Detections'],
-    ]);
-
-    applyGrants({ '/models/minor-hash-matches': ['moderator:reviewer'] });
-    expect(labelsUnder('Models')).toEqual([['/models/minor-hash-matches', 'Minor Hash Matches']]);
-    expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
-
-    applyGrants({ '/models/flag-appeals': ['moderator:reviewer'] });
-    expect(labelsUnder('Models')).toEqual([['/models/flag-appeals', 'Model Flag Appeals']]);
-    expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
-    expect(canAccess(reviewer, '/models/held-detections')).toBe(false);
-
-    applyGrants({ '/models/held-detections': ['moderator:reviewer'] });
-    expect(labelsUnder('Models')).toEqual([['/models/held-detections', 'Held Detections']]);
-    expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
-  });
-
-  it('badges every queue', () => {
-    const models = NAVIGATION.find((n) => n.path === '/models');
-    expect(models?.children?.map((c) => [c.path, c.countKey])).toEqual([
-      ['/models/minor-hash-matches', 'minorHashMatches'],
-      ['/models/flag-appeals', 'modelFlagAppeals'],
-      ['/models/held-detections', 'heldDetections'],
+    expect(labelsUnder('Models')).toEqual([['/models/flags', 'Model Flags']]);
+    expect(flags()?.tabs).toBe(true);
+    expect(flags()?.children?.map((c) => [c.path, c.label])).toEqual([
+      [APPEALS, 'Appeals'],
+      [REVIEW, 'Flagged'],
+      [MATCHES, 'File matches'],
     ]);
   });
 
-  it('is hidden from whoever holds neither page', () => {
+  it('points the one entry at the first tab held and sums only the held tabs', () => {
+    applyGrants({
+      [REVIEW]: ['moderator:reviewer'],
+      [MATCHES]: ['moderator:reviewer'],
+    });
+    const entry = flags()!;
+    expect(navHref(entry)).toBe(REVIEW);
+    expect(navCount(entry, countFor)).toBe(12);
+    const models = navForUser(reviewer).find((l) => l.label === 'Models')!;
+    expect(navCount(models, countFor)).toBe(12);
+  });
+
+  it('lets a user holding only Appeals open Appeals and nothing else', () => {
+    applyGrants({ [APPEALS]: ['moderator:reviewer'] });
+    expect(flags()?.children?.map((c) => c.path)).toEqual([APPEALS]);
+    expect(navHref(flags()!)).toBe(APPEALS);
+    expect(navCount(flags()!, countFor)).toBe(3);
+    expect(canAccess(reviewer, APPEALS)).toBe(true);
+    expect(canAccess(reviewer, REVIEW)).toBe(false);
+    expect(canAccess(reviewer, MATCHES)).toBe(false);
+  });
+
+  it('is active on every tab of the entry', () => {
+    applyGrants({ [REVIEW]: ['moderator:reviewer'] });
+    const entry = flags()!;
+    expect(isNavLinkActive(entry, [entry], at('/models/flags/review?source=hash'))).toBe(true);
+    expect(isNavLinkActive(entry, [entry], at('/models/flags/matches'))).toBe(true);
+    expect(isNavLinkActive(entry, [entry], at('/models'))).toBe(false);
+  });
+
+  it('badges every tab', () => {
+    const group = NAVIGATION.find((n) => n.path === '/models')?.children?.[0];
+    expect(group?.children?.map((c) => [c.path, c.countKey])).toEqual([
+      [APPEALS, 'modelFlagsAppeals'],
+      [REVIEW, 'modelFlagsReview'],
+      [MATCHES, 'modelFlagsMatches'],
+    ]);
+  });
+
+  it('is hidden from whoever holds none of the tabs', () => {
     applyGrants({ '/bounties/poi-appeals': ['moderator:reviewer'] });
     expect(labelsUnder('Models')).toBeUndefined();
   });
@@ -137,10 +171,12 @@ describe('/admin grantable pages', () => {
 
   it('lists every Models page as grantable', () => {
     expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
-      '/models/minor-hash-matches',
-      '/models/flag-appeals',
-      '/models/held-detections',
+      '/models/flags/appeals',
+      '/models/flags/review',
+      '/models/flags/matches',
     ]);
+    expect(isGrantable('/models/flags')).toBe(false);
+    expect(isGrantable('/models/flags/review')).toBe(true);
   });
 });
 

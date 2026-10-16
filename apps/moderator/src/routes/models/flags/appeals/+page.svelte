@@ -12,6 +12,7 @@
     SOURCE_LABELS,
     appealFilterParams,
   } from '$lib/minor-flags/appeal-filters';
+  import ModelFlagsTabs from '../ModelFlagsTabs.svelte';
   import AppealTriage from './AppealTriage.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -56,9 +57,8 @@
 </script>
 
 <div class="flex flex-col gap-3 px-6 pb-4 lg:h-[calc(100svh-3rem)]">
-  <div class="flex flex-wrap items-center gap-4">
-    <h1 class="m-0 text-xl font-semibold text-white">Model Flag Appeals</h1>
-  </div>
+  <h1 class="m-0 text-xl font-semibold text-white">Model Flags</h1>
+  <ModelFlagsTabs />
   <QueueFilterBar
     groups={filterBar.groups}
     q={data.q}

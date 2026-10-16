@@ -10,6 +10,7 @@
     REDETECTED_SORT_LABELS,
     redetectedFilterParams,
   } from '$lib/minor-flags/redetected-filters';
+  import ModelFlagsTabs from '../ModelFlagsTabs.svelte';
   import HeldDetectionTriage from './HeldDetectionTriage.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -39,7 +40,8 @@
 </script>
 
 <div class="flex flex-col gap-3 px-6 pb-4 lg:h-[calc(100svh-3rem)]">
-  <h1 class="m-0 text-xl font-semibold text-white">Held Detections</h1>
+  <h1 class="m-0 text-xl font-semibold text-white">Model Flags</h1>
+  <ModelFlagsTabs />
   <QueueFilterBar
     {groups}
     q={data.q}

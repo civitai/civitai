@@ -22,7 +22,7 @@ const { actions } = await import('../+page.server');
 const post = (fields: Record<string, string>) => {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
-  return { request: new Request('http://x/models/flag-appeals', { method: 'POST', body }) };
+  return { request: new Request('http://x/models/flags/appeals', { method: 'POST', body }) };
 };
 type ActionEvent = Parameters<NonNullable<typeof actions>[string]>[0];
 type Refusal = { status: number; data: { error: string; modelId?: number } };

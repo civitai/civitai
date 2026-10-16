@@ -309,10 +309,15 @@ describe('the access-denied bounce', () => {
 describe('moved views', () => {
   it.each([
     ['/audit/generator-restrictions?type=scam&status=any', '/users/scam-restrictions?status=any'],
-    ['/models/minor-hash-matches?tab=appeals&q=7', '/models/flag-appeals?q=7'],
+    ['/models/minor-hash-matches?tab=appeals&q=7', '/models/flags/appeals?q=7'],
+    ['/models/minor-hash-matches?tab=auto', '/models/flags/review?source=hash'],
     [
       '/models/flag-appeals?view=redetected&item=7%3Aminor',
+      '/models/flags/review?item=7%3Aminor&source=redetected',
+    ],
+    [
       '/models/held-detections?item=7%3Aminor',
+      '/models/flags/review?item=7%3Aminor&source=redetected',
     ],
   ])(
     'redirects %s before the grant check, even for a role holding neither old page',

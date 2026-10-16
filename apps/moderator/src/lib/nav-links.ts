@@ -26,3 +26,25 @@ export function isNavLinkActive(link: NavLink, siblings: NavLink[], url: URL): b
     (other) => !!other.path && other.path.length > link.path!.length && linkMatches(other, url)
   );
 }
+
+/** A `tabs` group is one sidebar entry; it opens on the first tab the user holds (`children` arrive pruned). */
+export const navHref = (link: NavLink): string | undefined =>
+  link.tabs ? link.children?.[0]?.path ?? link.path : link.path;
+
+/**
+ * The badge for a link: its own count, or for a group the sum of its non-informational children. Null
+ * while nothing it sums has loaded.
+ */
+export function navCount(
+  link: NavLink,
+  countFor: (key: string | undefined) => number | null
+): number | null {
+  if (!link.children) return countFor(link.countKey);
+  let total: number | null = null;
+  for (const child of link.children) {
+    if (child.informational) continue;
+    const count = navCount(child, countFor);
+    if (count !== null) total = (total ?? 0) + count;
+  }
+  return total;
+}

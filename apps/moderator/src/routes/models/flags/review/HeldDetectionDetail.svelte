@@ -16,7 +16,7 @@
     detectionSections,
     rulingText,
   } from '$lib/minor-flags/text-scan-verdicts';
-  import { FLAG_APPEALS_PATH } from '$lib/minor-flags/paths';
+  import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
   import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
   import RulingForm, { type RulingDraft } from '$lib/components/RulingForm.svelte';
@@ -49,7 +49,7 @@
   // either label, blocks a ruling. Change both together.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
   const ago = (value: string) => `${shortAge(value)} ago`;
-  const appealsHref = $derived(`${FLAG_APPEALS_PATH}?q=${row.modelId}`);
+  const appealsHref = $derived(`${MODEL_FLAGS_APPEALS_PATH}?q=${row.modelId}`);
   const kind = $derived(detectionKind(row.redetected));
   const copy = $derived(detectionCopy(kind));
   const sections = $derived(detectionSections(kind, row.rulings));

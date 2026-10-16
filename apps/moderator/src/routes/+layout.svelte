@@ -43,7 +43,7 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive } from '$lib/nav-links';
+  import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
 
@@ -72,13 +72,7 @@
   });
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
-  const rollupFor = (item: NavLink) =>
-    item.children
-      ? item.children.reduce(
-          (sum, c) => sum + (c.informational ? 0 : (countFor(c.countKey) ?? 0)),
-          0
-        ) || null
-      : null;
+  const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
 
   // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
@@ -162,7 +156,7 @@
                       <CollapsibleContent>
                         <SidebarMenuSub>
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
-                            {@const cnt = countFor(childLink.countKey)}
+                            {@const cnt = navCount(childLink, countFor)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -171,7 +165,7 @@
                                   <a
                                     href={childLink.external
                                       ? `${data.civitaiUrl}${childLink.path}`
-                                      : childLink.path}
+                                      : navHref(childLink)}
                                     target={childLink.external ? '_blank' : undefined}
                                     rel={childLink.external ? 'noreferrer' : undefined}
                                     data-sveltekit-preload-data={childLink.noPreload ? 'off' : undefined}

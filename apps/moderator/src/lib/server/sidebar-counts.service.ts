@@ -103,10 +103,13 @@ async function fetchCounts(): Promise<SidebarCounts> {
     feedbackAppsPlatformNew,
     removedAppeals,
     reRemovals,
-    modelFlagAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
-    ...(heldDetections != null ? { heldDetections } : {}),
+    modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
+    // Either source failing must not blank the badge for the other.
+    ...(heldDetections != null || minorQueue != null
+      ? { modelFlagsReview: (heldDetections ?? 0) + (minorQueue?.auto ?? 0) }
+      : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
-    ...(minorQueue != null ? { minorHashMatches: minorQueue.pending + minorQueue.auto } : {}),
+    ...(minorQueue != null ? { modelFlagsMatches: minorQueue.pending } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };

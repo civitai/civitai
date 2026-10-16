@@ -2,7 +2,12 @@ import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/ki
 import type { SessionUser } from '@civitai/auth';
 import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
-import { FLAG_APPEALS_PATH, HELD_DETECTIONS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
+import {
+  MODEL_FLAGS_APPEALS_PATH,
+  MODEL_FLAGS_MATCHES_PATH,
+  MODEL_FLAGS_PATH,
+  MODEL_FLAGS_REVIEW_PATH,
+} from '$lib/minor-flags/paths';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 
 export const APP = 'moderator';
@@ -40,6 +45,9 @@ export type NavLink = {
   sharedAccess?: boolean;
   // Hover-preloading runs the page's `load`; for a page whose load takes a lease, that is a write.
   noPreload?: boolean;
+  // The children are grant-aware tab routes of one page: still granted one by one (and listed on /admin), but
+  // the sidebar renders the group as a single entry and the page draws its own tab bar.
+  tabs?: true;
   children?: NavLink[];
 };
 
@@ -110,9 +118,16 @@ export const NAVIGATION: NavLink[] = [
     label: 'Models',
     path: '/models',
     children: [
-      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches', countKey: 'minorHashMatches' },
-      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals', countKey: 'modelFlagAppeals' },
-      { path: HELD_DETECTIONS_PATH, label: 'Held Detections', countKey: 'heldDetections' },
+      {
+        label: 'Model Flags',
+        path: MODEL_FLAGS_PATH,
+        tabs: true,
+        children: [
+          { path: MODEL_FLAGS_APPEALS_PATH, label: 'Appeals', countKey: 'modelFlagsAppeals' },
+          { path: MODEL_FLAGS_REVIEW_PATH, label: 'Flagged', countKey: 'modelFlagsReview' },
+          { path: MODEL_FLAGS_MATCHES_PATH, label: 'File matches', countKey: 'modelFlagsMatches' },
+        ],
+      },
     ],
   },
   {
@@ -468,7 +483,9 @@ export function pageAccessState(edit?: {
         // A section whose every child is ungrantable would render as an empty header with a checkbox
         // that addresses nothing. It is still a real route, so it is still reported in `paths`.
         paths.push(link.path);
-        if (children.length)
+        // Tab routes read as pages of the section on /admin, not as a header of their own.
+        if (link.tabs) out.push(...children);
+        else if (children.length)
           out.push({ key: link.path, label: link.label, kind: 'group', children });
         continue;
       }

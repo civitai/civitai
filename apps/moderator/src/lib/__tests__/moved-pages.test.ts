@@ -22,27 +22,49 @@ describe('movedViewTarget', () => {
     );
   });
 
-  it('sends the old appeals tab to Model Flag Appeals', () => {
+  it('sends the old appeals tab to the Appeals tab', () => {
     expect(movedViewTarget(at('/models/minor-hash-matches?tab=appeals&q=bob&page=2'))).toBe(
-      '/models/flag-appeals?q=bob&page=2'
+      '/models/flags/appeals?q=bob&page=2'
     );
   });
 
-  it('sends the old re-detected view to Held Detections, carrying the selection', () => {
+  it('sends Minor Hash Matches to File matches, and its auto tab to Flagged', () => {
+    expect(movedViewTarget(at('/models/minor-hash-matches'))).toBe('/models/flags/matches');
+    expect(movedViewTarget(at('/models/minor-hash-matches?tab=pending&q=bob'))).toBe(
+      '/models/flags/matches?q=bob'
+    );
+    expect(movedViewTarget(at('/models/minor-hash-matches?tab=auto&page=2'))).toBe(
+      '/models/flags/review?page=2&source=hash'
+    );
+  });
+
+  it('sends Model Flag Appeals to Appeals, and its re-detected view to Flagged, carrying the selection', () => {
+    expect(movedViewTarget(at('/models/flag-appeals?q=bob'))).toBe('/models/flags/appeals?q=bob');
+    expect(movedViewTarget(at('/models/flag-appeals?view=appeals&appeal=7'))).toBe(
+      '/models/flags/appeals?appeal=7'
+    );
     expect(movedViewTarget(at('/models/flag-appeals?view=redetected&item=7:minor&flag=poi'))).toBe(
-      '/models/held-detections?item=7%3Aminor&flag=poi'
+      '/models/flags/review?item=7%3Aminor&flag=poi&source=redetected'
     );
     expect(movedViewTarget(at('/models/flag-appeals?view=redetected'))).toBe(
-      '/models/held-detections'
+      '/models/flags/review?source=redetected'
+    );
+  });
+
+  it('sends Held Detections to Flagged filtered to re-detections', () => {
+    expect(movedViewTarget(at('/models/held-detections'))).toBe(
+      '/models/flags/review?source=redetected'
+    );
+    expect(movedViewTarget(at('/models/held-detections?item=7:minor&flag=poi'))).toBe(
+      '/models/flags/review?item=7%3Aminor&flag=poi&source=redetected'
     );
   });
 
   it.each([
-    '/models/flag-appeals',
-    '/models/flag-appeals?view=appeals',
+    '/models/flags/appeals',
+    '/models/flags/review?source=hash',
     '/audit/generator-restrictions',
     '/audit/generator-restrictions?type=bot-account',
-    '/models/minor-hash-matches?tab=auto',
     '/users/scam-restrictions?type=scam',
     '/images?type=scam',
   ])('leaves %s alone', (path) => {
