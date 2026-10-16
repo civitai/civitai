@@ -1,5 +1,5 @@
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
-import { newAppKey } from '~/components/Apps/AppAssistant/appKey';
+import { isCopyOf, newAppKey } from '~/components/Apps/AppAssistant/appKey';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
 
@@ -65,9 +65,8 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     const list = apps();
     if (!list) throw new Error(APPS_LOADING);
     const openNow = current();
-    // Asked again for the app that is open (whatever number it got): keep it rather than make a copy.
-    const others = list.filter((s) => s.name !== openNow?.name).map((s) => s.app);
-    if (openNow && newAppKey(name, others) === openNow.app) {
+    // Asked again for the app that is open, or a numbered copy of it: keep it rather than make another.
+    if (openNow && isCopyOf(openNow.app, name)) {
       if (openNow.state !== 'suspended')
         return {
           app: openNow.app,
@@ -76,6 +75,13 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
           note: `The app ${openNow.app} is already open; keep working on it.`,
         };
       const resumed = await openOrExplain(openNow.app);
+      // The list can be a minute old; a paused app it still showed may have been deleted since.
+      if (resumed.created)
+        return {
+          app: openNow.app,
+          state: resumed.sandbox.state,
+          note: `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name. Tell the user its files are gone, then call set_checklist with the features they asked for; its tools arrive with your next reply.`,
+        };
       return {
         app: openNow.app,
         state: resumed.sandbox.state,

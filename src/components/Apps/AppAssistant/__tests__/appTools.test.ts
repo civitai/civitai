@@ -131,6 +131,40 @@ describe('create_app', () => {
     expect(result).toMatchObject({ app: 'tip-calculator-2', existed: true });
   });
 
+  it('keeps an open copy after the original was deleted', async () => {
+    const open = vi.fn();
+    const second = sandbox('tip-calculator-2', 'running');
+    const result = await run(tool([second], open, second), 'Tip calculator');
+    expect(open).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ app: 'tip-calculator-2', existed: true });
+  });
+
+  it('keeps an open third copy when only the original is left', async () => {
+    const open = vi.fn();
+    const third = sandbox('tip-calculator-3', 'running');
+    const result = await run(
+      tool([sandbox('tip-calculator', 'suspended'), third], open, third),
+      'Tip calculator'
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ app: 'tip-calculator-3', existed: true });
+  });
+
+  it('tells the assistant a paused app it resumed was in fact gone, and is new and empty', async () => {
+    const open = vi.fn(async (app: string) => ({
+      sandbox: sandbox(app, 'starting'),
+      created: true,
+    }));
+    const paused = sandbox('tip-calculator', 'suspended');
+    const result = await run(tool([paused], open, paused), 'Tip calculator');
+    expect(open.mock.calls).toEqual([['tip-calculator']]);
+    expect(result).toEqual({
+      app: 'tip-calculator',
+      state: 'starting',
+      note: expect.stringMatching(/had been deleted .* a new, empty app/),
+    });
+  });
+
   it('resumes the open app when it is paused, instead of saying it is ready', async () => {
     const open = vi.fn(async (app: string) => ({
       sandbox: sandbox(app, 'starting'),
@@ -147,11 +181,15 @@ describe('create_app', () => {
     });
   });
 
-  it('still starts a different app while one is open', async () => {
+  it.each([
+    ['tip-calculator', 'Quiz game', 'quiz-game'],
+    ['tip-calculator-2', 'Quiz game', 'quiz-game'],
+    ['game', 'Game 2', 'game-2'],
+  ])('still starts a different app while %j is open: %j', async (openKey, name, made) => {
     const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
-    const openApp = sandbox('tip-calculator', 'running');
-    await run(tool([openApp], open, openApp), 'Quiz game');
-    expect(open).toHaveBeenCalledWith('quiz-game');
+    const openApp = sandbox(openKey, 'running');
+    await run(tool([openApp], open, openApp), name);
+    expect(open).toHaveBeenCalledWith(made);
   });
 
   it('names an app from no usable name rather than refusing', async () => {
