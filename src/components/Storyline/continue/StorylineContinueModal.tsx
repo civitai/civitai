@@ -13,6 +13,7 @@ import {
 } from '~/components/Storyline/storyline-ui';
 import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.utils';
 import {
+  useAddOwnerStorylineChapter,
   useStorylineContinueTerms,
   useSubmitStorylineContinuation,
 } from '~/components/Storyline/storyline.data';
@@ -28,12 +29,18 @@ export type StorylineContinueModalProps = {
   parentPostId: number;
   /** The contributor's post, when they started from it. */
   postId?: number;
+  /**
+   * The chapter that ends here, set by the end-of-chapter screen. Used only when the viewer owns
+   * the storyline, who adds the chapter directly instead of submitting it for review.
+   */
+  parentChapterId?: number;
 };
 
 /** Submit one of your posts as a continuation of someone's storyline chapter. */
 export default function StorylineContinueModal({
   parentPostId,
   postId: initialPostId,
+  parentChapterId,
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -72,6 +79,9 @@ export default function StorylineContinueModal({
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
   const terms = useStorylineContinueTerms(parentPostId, { enabled });
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
+  const addOwn = useAddOwnerStorylineChapter({ onSuccess: () => setOutcome('added') });
+  const ownerAdd =
+    !!currentUser && !!storyline && !!parentChapterId && storyline.userId === currentUser.id;
 
   const firstPage = postPages?.pages[0];
   const ownPosts = useMemo(
@@ -113,7 +123,7 @@ export default function StorylineContinueModal({
   const loading = membershipLoading || storylineLoading || terms.isLoading;
 
   return (
-    <Modal {...dialog} title="Continue the story" size="md">
+    <Modal {...dialog} title={ownerAdd ? 'Add the next chapter' : 'Continue the story'} size="md">
       {!currentUser ? (
         <Alert color="gray">Sign in to continue a storyline.</Alert>
       ) : !features.storylines ? (
@@ -124,9 +134,9 @@ export default function StorylineContinueModal({
         </Group>
       ) : !storylineId || !storyline ? (
         <Alert color="gray">This chapter is not part of a storyline you can continue.</Alert>
-      ) : terms.unavailable ? (
+      ) : !ownerAdd && terms.unavailable ? (
         <Alert color="gray">Continuing storylines is not open yet.</Alert>
-      ) : !terms.data ? (
+      ) : !ownerAdd && !terms.data ? (
         <Alert color="red">Couldn&apos;t load what continuing this storyline costs.</Alert>
       ) : (
         <StorylineContinueForm
@@ -134,8 +144,9 @@ export default function StorylineContinueModal({
           storyline={storyline}
           cover={storyline.coverImage}
           parentName={parentName}
-          closedReason={terms.data.closedReason}
-          price={terms.data.price}
+          closedReason={terms.data?.closedReason ?? null}
+          price={terms.data?.price ?? 0}
+          ownerAdd={ownerAdd}
           isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
           posts={posts}
           postsLoading={postsLoading || (ownPostIds.length > 0 && ownChaptersLoading)}
@@ -145,11 +156,15 @@ export default function StorylineContinueModal({
           morePosts={!!firstPage?.nextCursor}
           postId={postId}
           onPostChange={setPostId}
-          submitting={submit.isPending}
-          error={submit.error}
+          submitting={ownerAdd ? addOwn.isPending : submit.isPending}
+          error={ownerAdd ? addOwn.error : submit.error}
           outcome={outcome}
           onSubmit={() => {
             const post = posts.find((candidate) => candidate.id === postId);
+            if (ownerAdd && parentChapterId) {
+              if (post) addOwn.mutate({ parentChapterId, postId: post.id });
+              return;
+            }
             if (!post || !terms.data) return;
             submit.mutate(
               storylineSubmitInput({ parentPostId, post, shownPrice: terms.data.price })

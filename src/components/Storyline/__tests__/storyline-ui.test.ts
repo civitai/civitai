@@ -34,6 +34,33 @@ const verdict = (
   });
 
 describe('storylineSubmitVerdict', () => {
+  describe('as the owner adding their own chapter', () => {
+    const asOwner = (overrides: Partial<Parameters<typeof storylineSubmitVerdict>[0]> = {}) =>
+      verdict({ viewerId: owner, asOwner: true, ...overrides });
+
+    test('the owner may add a rated post, whatever the continue terms say', () => {
+      expect(asOwner({ closedReason: 'closed' })).toEqual({ allowed: true, awaitingScan: false });
+    });
+
+    test('a post above the ceiling is refused', () => {
+      expect(asOwner({ postLevel: NsfwLevel.X })).toEqual({
+        allowed: false,
+        reason: 'aboveRating',
+      });
+    });
+
+    test('an unrated post is refused, since nothing reviews it afterwards', () => {
+      expect(asOwner({ postLevel: 0 })).toEqual({ allowed: false, reason: 'notRated' });
+    });
+
+    test('someone else never gets the owner path', () => {
+      expect(asOwner({ viewerId: contributor })).toEqual({
+        allowed: false,
+        reason: 'ownStoryline',
+      });
+    });
+  });
+
   test('a post at or under the ceiling may be submitted', () => {
     expect(verdict({ postLevel: NsfwLevel.PG13 })).toEqual({ allowed: true, awaitingScan: false });
   });
