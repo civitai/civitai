@@ -44,8 +44,8 @@ export const SORT_LABELS: Record<SortOrder, string> = {
   newest: 'Newest first',
 };
 
-// The account is muted while its row is Pending, so that queue is worked oldest first: newest first
-// left month-old mutes on the last page. A history view reads newest first.
+// A Pending row keeps its account muted, so that queue is worked oldest first: newest first left
+// month-old mutes on the last page.
 export const defaultSortFor = (status: string | undefined): SortOrder =>
   status === 'Pending' ? 'oldest' : 'newest';
 

@@ -55,7 +55,7 @@
   // Page and selection index into the result set being replaced.
   const hrefFor = (key: string, value: string, fallback: string | null) =>
     urlWith(page.url, {
-      // Each status opens at its own default order.
+      // Reset so each status opens at its own default order.
       ...(key === 'status' && { sort: null }),
       [key]: value === (fallback ?? '') ? null : value,
       page: null,
