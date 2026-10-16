@@ -1,17 +1,22 @@
--- The label store: one append-only record of every moderation label, human or machine, that the
--- moderation pipelines write into and train from. Every feature that labels content writes through
--- `label_store.record_label`; queue tables (claims, quotas, leases) stay with each feature.
+-- The label store: the one record of every moderation judgement, from people and from models, that the
+-- moderation pipelines train from and write into. Every feature that labels content writes through these
+-- functions; queue tables (claims, quotas, leases) stay with each feature.
 --
---   subject    the thing labelled, one row per distinct input. No FK to site tables, so labels outlive
---              the image or model they describe.
---   label      one row per label. Never updated; a relabel adds a row.
---   consensus  agreement per (subject, question), refreshed on every label by `record_label`.
+--   subject     the thing judged, one row per distinct input. No FK to site tables, so judgements
+--               outlive the image or model they describe.
+--   label       one row per human judgement. Never updated; a relabel adds a row.
+--   prediction  one row per model output, kept apart from human labels.
+--   consensus   human agreement per (subject, question), with the latest prediction beside it.
+--   change      every change a reader must apply: new labels and predictions, consensus updates,
+--               exclusions and deletions, in one ordered feed.
 --
--- Its own schema, outside Prisma: the drift guard reads `public` only, and the readers get a role that
--- sees the three views at the bottom and nothing else.
+-- Its own schema, outside Prisma: the drift guard reads `public` only. Apply as the owner of the site
+-- tables, so the site's own writes need no grants. Two scoped roles, created by infra, get the rest: a
+-- reader that sees the views at the bottom, and a writer that can only submit predictions.
 --
--- A label write must never fail the write that produced it (a vote, a flag, an appeal decision). Every
--- entry point catches its own errors into `record_failure`, which is the count to watch.
+-- A judgement recorded from a site write (a vote, a flag, an appeal decision) must never fail that write.
+-- Those paths catch their own errors into `record_failure`, which is the count to watch.
+-- `submit_prediction` is for pipelines and raises, so a caller learns its input was refused.
 --
 -- Apply order: any time. Then run `SELECT * FROM label_store.backfill()` once for the rows that predate
 -- the triggers; it is idempotent.
@@ -60,10 +65,7 @@ CREATE TABLE IF NOT EXISTS label_store.label (
   "value"           TEXT NOT NULL,
   "reason"          TEXT,
   "reasonNote"      TEXT,
-  "confidence"      REAL,
-  -- Machine output behind a machine label (scores, the flagger's own reason).
-  "detail"          JSONB,
-  "labellerKind"    TEXT NOT NULL CHECK ("labellerKind" IN ('model', 'moderator', 'knight', 'appeal')),
+  "labellerKind"    TEXT NOT NULL CHECK ("labellerKind" IN ('moderator', 'knight', 'appeal')),
   "labellerRef"     TEXT NOT NULL,
   "sourceRef"       TEXT NOT NULL UNIQUE,
   "labelledAt"      TIMESTAMPTZ(3) NOT NULL,
@@ -72,6 +74,26 @@ CREATE TABLE IF NOT EXISTS label_store.label (
 );
 CREATE INDEX IF NOT EXISTS label_subject_question_idx
   ON label_store.label ("subjectId", "question", "questionVersion");
+
+CREATE TABLE IF NOT EXISTS label_store.prediction (
+  "id"              BIGSERIAL PRIMARY KEY,
+  "subjectId"       BIGINT NOT NULL REFERENCES label_store.subject ("id") ON DELETE CASCADE,
+  "family"          TEXT NOT NULL,
+  "question"        TEXT NOT NULL,
+  "questionVersion" INTEGER NOT NULL DEFAULT 1,
+  "value"           TEXT NOT NULL,
+  "confidence"      REAL,
+  "scores"          JSONB,           -- per-class scores
+  "modelRef"        TEXT NOT NULL,   -- model@version
+  "versions"        JSONB,           -- policy, threshold, preprocessing ... versions
+  "inputHash"       TEXT,            -- sha256 of exactly what the model was given
+  "detail"          JSONB,
+  "sourceRef"       TEXT NOT NULL UNIQUE,
+  "predictedAt"     TIMESTAMPTZ(3) NOT NULL,
+  "recordedAt"      TIMESTAMPTZ(3) NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS prediction_subject_question_idx
+  ON label_store.prediction ("subjectId", "question", "questionVersion");
 
 -- When a question has enough agreement to train on. A question with no rule never becomes trainable.
 CREATE TABLE IF NOT EXISTS label_store.rule (
@@ -94,12 +116,24 @@ CREATE TABLE IF NOT EXISTS label_store.consensus (
   "rule"            TEXT,
   "trainable"       BOOLEAN NOT NULL,
   "modelValue"      TEXT,
+  "modelRef"        TEXT,
   "modelAgrees"     BOOLEAN,
   "computedAt"      TIMESTAMPTZ(3) NOT NULL,
   PRIMARY KEY ("subjectId", "question", "questionVersion")
 );
 CREATE INDEX IF NOT EXISTS consensus_trainable_idx
   ON label_store.consensus ("question", "questionVersion") WHERE "trainable";
+
+-- No FK: a deletion must stay in the feed after its subject is gone.
+CREATE TABLE IF NOT EXISTS label_store.change (
+  "id"              BIGSERIAL PRIMARY KEY,
+  "kind"            TEXT NOT NULL CHECK ("kind" IN ('label', 'prediction', 'consensus', 'exclusion', 'deletion')),
+  "subjectId"       BIGINT NOT NULL,
+  "question"        TEXT,
+  "questionVersion" INTEGER,
+  "refId"           BIGINT,   -- the label or prediction id
+  "at"              TIMESTAMPTZ(3) NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS label_store.record_failure (
   "id"        BIGSERIAL PRIMARY KEY,
@@ -120,8 +154,14 @@ AS $$
   SELECT encode(sha256(convert_to(s."key" || ':' || p_kind || ':' || p_user_id, 'UTF8')), 'hex')
   FROM label_store.secret s
 $$;
--- Anyone who can call it can hash every user id and match labellers; only the store's own functions may.
-REVOKE EXECUTE ON FUNCTION label_store.person_hash(TEXT, INTEGER) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION label_store.text_hash(p_text TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT encode(sha256(convert_to(p_text, 'UTF8')), 'hex')
+$$;
 
 CREATE OR REPLACE FUNCTION label_store.note_failure(p_source_ref TEXT, p_error TEXT)
 RETURNS VOID
@@ -134,6 +174,46 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
   RAISE WARNING 'label_store: % not recorded (%), and the failure could not be logged: %',
     p_source_ref, p_error, SQLERRM;
+END;
+$$;
+
+-- An image subject's owner is looked up while the image exists, so callers outside the site (pipelines)
+-- still produce subjects that an erasure can find.
+CREATE OR REPLACE FUNCTION label_store.upsert_subject(
+  p_subject_type  TEXT,
+  p_subject_id    TEXT,
+  p_content_hash  TEXT,
+  p_snapshot      JSONB,
+  p_phash         BIGINT,
+  p_owner_user_id INTEGER
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = label_store, public, pg_temp
+AS $$
+DECLARE
+  v_owner   INTEGER := p_owner_user_id;
+  v_subject BIGINT;
+BEGIN
+  IF v_owner IS NULL AND p_subject_type = 'image' AND p_subject_id ~ '^[0-9]{1,9}$' THEN
+    SELECT m."userId" INTO v_owner FROM public."Image" m WHERE m."id" = p_subject_id::integer;
+  END IF;
+
+  INSERT INTO label_store.subject AS s (
+    "subjectType", "subjectId", "contentHash", "pHash", "snapshot", "ownerHash"
+  )
+  VALUES (
+    p_subject_type, p_subject_id, p_content_hash, p_phash, p_snapshot,
+    CASE WHEN v_owner IS NULL THEN NULL ELSE label_store.person_hash('owner', v_owner) END
+  )
+  ON CONFLICT ("subjectType", "subjectId", "contentHash") DO UPDATE SET
+    "pHash" = COALESCE(s."pHash", EXCLUDED."pHash"),
+    -- An excluded subject keeps no content, whatever a later judgement brings.
+    "snapshot" = CASE WHEN s."excludedAt" IS NULL THEN COALESCE(s."snapshot", EXCLUDED."snapshot") END,
+    "ownerHash" = COALESCE(s."ownerHash", EXCLUDED."ownerHash")
+  RETURNING s."id" INTO v_subject;
+  RETURN v_subject;
 END;
 $$;
 
@@ -151,7 +231,9 @@ DECLARE
   v_ties    INTEGER;
   v_outcome TEXT;
   v_model   TEXT;
+  v_mref    TEXT;
   v_excl    BOOLEAN;
+  v_changed BOOLEAN;
 BEGIN
   -- Each person counts once, with their latest answer.
   WITH latest AS (
@@ -169,6 +251,7 @@ BEGIN
   ORDER BY t.n DESC, t."value"
   LIMIT 1;
 
+  -- Consensus is about people; a subject only a model has judged has none.
   IF v_total IS NULL THEN
     RETURN;
   END IF;
@@ -178,18 +261,17 @@ BEGIN
     v_outcome := v_top;
   END IF;
 
-  SELECT l."value" INTO v_model
-  FROM label_store.label l
-  WHERE l."subjectId" = p_subject AND l."question" = p_question AND l."questionVersion" = p_version
-    AND l."labellerKind" = 'model'
-  ORDER BY l."labelledAt" DESC, l."id" DESC
+  SELECT p."value", p."modelRef" INTO v_model, v_mref
+  FROM label_store.prediction p
+  WHERE p."subjectId" = p_subject AND p."question" = p_question AND p."questionVersion" = p_version
+  ORDER BY p."predictedAt" DESC, p."id" DESC
   LIMIT 1;
 
   SELECT s."excludedAt" IS NOT NULL INTO v_excl FROM label_store.subject s WHERE s."id" = p_subject;
 
   INSERT INTO label_store.consensus AS c (
     "subjectId", "question", "questionVersion", "outcome", "humanLabels", "agreeing", "unanimous",
-    "rule", "trainable", "modelValue", "modelAgrees", "computedAt"
+    "rule", "trainable", "modelValue", "modelRef", "modelAgrees", "computedAt"
   )
   VALUES (
     p_subject, p_question, p_version, v_outcome, v_total, v_top_n, v_top_n = v_total,
@@ -197,6 +279,7 @@ BEGIN
       ELSE 'min' || r."minHuman" || CASE WHEN r."requireUnanimous" THEN '-unanimous' ELSE '-majority' END END,
     v_outcome IS NOT NULL AND (NOT r."requireUnanimous" OR v_top_n = v_total) AND NOT v_excl,
     v_model,
+    v_mref,
     CASE WHEN v_outcome IS NULL OR v_model IS NULL THEN NULL ELSE v_model = v_outcome END,
     now()
   )
@@ -208,14 +291,92 @@ BEGIN
     "rule" = EXCLUDED."rule",
     "trainable" = EXCLUDED."trainable",
     "modelValue" = EXCLUDED."modelValue",
+    "modelRef" = EXCLUDED."modelRef",
     "modelAgrees" = EXCLUDED."modelAgrees",
-    "computedAt" = EXCLUDED."computedAt";
+    "computedAt" = EXCLUDED."computedAt"
+  WHERE (c."outcome", c."humanLabels", c."agreeing", c."trainable", c."modelValue", c."modelRef", c."modelAgrees")
+    IS DISTINCT FROM
+    (EXCLUDED."outcome", EXCLUDED."humanLabels", EXCLUDED."agreeing", EXCLUDED."trainable",
+     EXCLUDED."modelValue", EXCLUDED."modelRef", EXCLUDED."modelAgrees")
+  RETURNING true INTO v_changed;
+
+  IF v_changed THEN
+    INSERT INTO label_store.change ("kind", "subjectId", "question", "questionVersion")
+    VALUES ('consensus', p_subject, p_question, p_version);
+  END IF;
 END;
 $$;
 
--- The one write path. Returns the new label's id, or NULL when the label already existed (same
--- sourceRef) or the write failed; a failure is logged to `record_failure`, never raised.
--- Pass people as user ids: they are hashed here, so no caller stores a raw id in the store.
+-- The two writers. Both raise on bad input; the wrappers below decide whether a caller sees it.
+-- They return the new row's id, or NULL when the sourceRef was already recorded.
+CREATE OR REPLACE FUNCTION label_store.put_label(
+  p_subject BIGINT, p_family TEXT, p_question TEXT, p_question_version INTEGER, p_value TEXT,
+  p_labeller_kind TEXT, p_labeller_ref TEXT, p_source_ref TEXT, p_labelled_at TIMESTAMPTZ,
+  p_reason TEXT, p_reason_note TEXT, p_ms_on_item INTEGER
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+DECLARE
+  v_id BIGINT;
+BEGIN
+  INSERT INTO label_store.label (
+    "subjectId", "family", "question", "questionVersion", "value", "reason", "reasonNote",
+    "labellerKind", "labellerRef", "sourceRef", "labelledAt", "msOnItem"
+  )
+  VALUES (
+    p_subject, p_family, p_question, p_question_version, p_value, p_reason, p_reason_note,
+    p_labeller_kind, p_labeller_ref, p_source_ref, p_labelled_at, p_ms_on_item
+  )
+  ON CONFLICT ("sourceRef") DO NOTHING
+  RETURNING "id" INTO v_id;
+
+  IF v_id IS NOT NULL THEN
+    INSERT INTO label_store.change ("kind", "subjectId", "question", "questionVersion", "refId")
+    VALUES ('label', p_subject, p_question, p_question_version, v_id);
+    PERFORM label_store.refresh_consensus(p_subject, p_question, p_question_version);
+  END IF;
+  RETURN v_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION label_store.put_prediction(
+  p_subject BIGINT, p_family TEXT, p_question TEXT, p_question_version INTEGER, p_value TEXT,
+  p_model_ref TEXT, p_source_ref TEXT, p_predicted_at TIMESTAMPTZ, p_confidence REAL, p_scores JSONB,
+  p_versions JSONB, p_input_hash TEXT, p_detail JSONB
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+DECLARE
+  v_id BIGINT;
+BEGIN
+  INSERT INTO label_store.prediction (
+    "subjectId", "family", "question", "questionVersion", "value", "confidence", "scores", "modelRef",
+    "versions", "inputHash", "detail", "sourceRef", "predictedAt"
+  )
+  VALUES (
+    p_subject, p_family, p_question, p_question_version, p_value, p_confidence, p_scores, p_model_ref,
+    p_versions, p_input_hash, p_detail, p_source_ref, p_predicted_at
+  )
+  ON CONFLICT ("sourceRef") DO NOTHING
+  RETURNING "id" INTO v_id;
+
+  IF v_id IS NOT NULL THEN
+    INSERT INTO label_store.change ("kind", "subjectId", "question", "questionVersion", "refId")
+    VALUES ('prediction', p_subject, p_question, p_question_version, v_id);
+    PERFORM label_store.refresh_consensus(p_subject, p_question, p_question_version);
+  END IF;
+  RETURN v_id;
+END;
+$$;
+
+-- For site code: records a human label and never raises; a failure goes to `record_failure`.
+-- Pass the person as a user id: it is hashed here, so no caller stores a raw id in the store.
 CREATE OR REPLACE FUNCTION label_store.record_label(
   p_subject_type     TEXT,
   p_subject_id       TEXT,
@@ -226,13 +387,11 @@ CREATE OR REPLACE FUNCTION label_store.record_label(
   p_labeller_kind    TEXT,
   p_source_ref       TEXT,
   p_labelled_at      TIMESTAMPTZ,
-  p_labeller_ref     TEXT DEFAULT NULL,
   p_labeller_user_id INTEGER DEFAULT NULL,
+  p_labeller_ref     TEXT DEFAULT NULL,
   p_question_version INTEGER DEFAULT 1,
   p_reason           TEXT DEFAULT NULL,
   p_reason_note      TEXT DEFAULT NULL,
-  p_confidence       REAL DEFAULT NULL,
-  p_detail           JSONB DEFAULT NULL,
   p_ms_on_item       INTEGER DEFAULT NULL,
   p_snapshot         JSONB DEFAULT NULL,
   p_phash            BIGINT DEFAULT NULL,
@@ -244,55 +403,101 @@ SECURITY DEFINER
 SET search_path = label_store, pg_temp
 AS $$
 DECLARE
-  v_subject BIGINT;
-  v_label   BIGINT;
-  v_ref     TEXT;
+  v_ref TEXT;
 BEGIN
   v_ref := CASE
     WHEN p_labeller_user_id IS NOT NULL THEN label_store.person_hash('labeller', p_labeller_user_id)
     ELSE p_labeller_ref
   END;
   IF v_ref IS NULL THEN
-    RAISE EXCEPTION 'a label needs p_labeller_ref or p_labeller_user_id';
+    RAISE EXCEPTION 'a label needs p_labeller_user_id or p_labeller_ref';
   END IF;
-
-  INSERT INTO label_store.subject AS s (
-    "subjectType", "subjectId", "contentHash", "pHash", "snapshot", "ownerHash"
-  )
-  VALUES (
-    p_subject_type, p_subject_id, p_content_hash, p_phash, p_snapshot,
-    CASE WHEN p_owner_user_id IS NULL THEN NULL ELSE label_store.person_hash('owner', p_owner_user_id) END
-  )
-  ON CONFLICT ("subjectType", "subjectId", "contentHash") DO UPDATE SET
-    "pHash" = COALESCE(s."pHash", EXCLUDED."pHash"),
-    -- An excluded subject keeps no content, whatever a later label brings.
-    "snapshot" = CASE WHEN s."excludedAt" IS NULL THEN COALESCE(s."snapshot", EXCLUDED."snapshot") END,
-    "ownerHash" = COALESCE(s."ownerHash", EXCLUDED."ownerHash")
-  RETURNING s."id" INTO v_subject;
-
-  INSERT INTO label_store.label (
-    "subjectId", "family", "question", "questionVersion", "value", "reason", "reasonNote",
-    "confidence", "detail", "labellerKind", "labellerRef", "sourceRef", "labelledAt", "msOnItem"
-  )
-  VALUES (
-    v_subject, p_family, p_question, p_question_version, p_value, p_reason, p_reason_note,
-    p_confidence, p_detail, p_labeller_kind, v_ref, p_source_ref, p_labelled_at, p_ms_on_item
-  )
-  ON CONFLICT ("sourceRef") DO NOTHING
-  RETURNING "id" INTO v_label;
-
-  IF v_label IS NOT NULL THEN
-    PERFORM label_store.refresh_consensus(v_subject, p_question, p_question_version);
-  END IF;
-  RETURN v_label;
+  RETURN label_store.put_label(
+    label_store.upsert_subject(p_subject_type, p_subject_id, p_content_hash, p_snapshot, p_phash, p_owner_user_id),
+    p_family, p_question, p_question_version, p_value, p_labeller_kind, v_ref, p_source_ref,
+    p_labelled_at, p_reason, p_reason_note, p_ms_on_item
+  );
 EXCEPTION WHEN OTHERS THEN
   PERFORM label_store.note_failure(p_source_ref, SQLSTATE || ': ' || SQLERRM);
   RETURN NULL;
 END;
 $$;
 
--- Takes a subject out of training. 'erasure' deletes it with its labels; any other reason keeps the
--- labels (so counts stay honest) and drops the content.
+-- For site code: records a model output and never raises.
+CREATE OR REPLACE FUNCTION label_store.record_prediction(
+  p_subject_type     TEXT,
+  p_subject_id       TEXT,
+  p_content_hash     TEXT,
+  p_family           TEXT,
+  p_question         TEXT,
+  p_value            TEXT,
+  p_model_ref        TEXT,
+  p_source_ref       TEXT,
+  p_predicted_at     TIMESTAMPTZ,
+  p_question_version INTEGER DEFAULT 1,
+  p_confidence       REAL DEFAULT NULL,
+  p_scores           JSONB DEFAULT NULL,
+  p_versions         JSONB DEFAULT NULL,
+  p_input_hash       TEXT DEFAULT NULL,
+  p_detail           JSONB DEFAULT NULL,
+  p_snapshot         JSONB DEFAULT NULL,
+  p_phash            BIGINT DEFAULT NULL,
+  p_owner_user_id    INTEGER DEFAULT NULL
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+BEGIN
+  RETURN label_store.put_prediction(
+    label_store.upsert_subject(p_subject_type, p_subject_id, p_content_hash, p_snapshot, p_phash, p_owner_user_id),
+    p_family, p_question, p_question_version, p_value, p_model_ref, p_source_ref, p_predicted_at,
+    p_confidence, p_scores, p_versions, p_input_hash, p_detail
+  );
+EXCEPTION WHEN OTHERS THEN
+  PERFORM label_store.note_failure(p_source_ref, SQLSTATE || ': ' || SQLERRM);
+  RETURN NULL;
+END;
+$$;
+
+-- For pipelines, through the writer role: submits a model output and raises if it is refused.
+CREATE OR REPLACE FUNCTION label_store.submit_prediction(
+  p_subject_type     TEXT,
+  p_subject_id       TEXT,
+  p_content_hash     TEXT,
+  p_question         TEXT,
+  p_value            TEXT,
+  p_model_ref        TEXT,
+  p_source_ref       TEXT,
+  p_predicted_at     TIMESTAMPTZ DEFAULT now(),
+  p_question_version INTEGER DEFAULT 1,
+  p_confidence       REAL DEFAULT NULL,
+  p_scores           JSONB DEFAULT NULL,
+  p_versions         JSONB DEFAULT NULL,
+  p_input_hash       TEXT DEFAULT NULL,
+  p_detail           JSONB DEFAULT NULL
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+BEGIN
+  IF p_subject_type IS NULL OR p_subject_id IS NULL OR p_content_hash IS NULL OR p_question IS NULL
+     OR p_value IS NULL OR p_model_ref IS NULL OR p_source_ref IS NULL THEN
+    RAISE EXCEPTION 'submit_prediction: subject type, subject id, content hash, question, value, model ref and source ref are required';
+  END IF;
+  RETURN label_store.put_prediction(
+    label_store.upsert_subject(p_subject_type, p_subject_id, p_content_hash, NULL, NULL, NULL),
+    'pipeline', p_question, p_question_version, p_value, p_model_ref, p_source_ref, p_predicted_at,
+    p_confidence, p_scores, p_versions, p_input_hash, p_detail
+  );
+END;
+$$;
+
+-- Takes a site item out of training. 'erasure' deletes its subjects with everything about them; any
+-- other reason keeps the judgements (so counts stay honest) and drops the content.
 CREATE OR REPLACE FUNCTION label_store.exclude(p_subject_type TEXT, p_subject_id TEXT, p_reason TEXT)
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -303,26 +508,31 @@ DECLARE
   v_n INTEGER;
 BEGIN
   IF p_reason = 'erasure' THEN
-    DELETE FROM label_store.subject WHERE "subjectType" = p_subject_type AND "subjectId" = p_subject_id;
+    WITH gone AS (
+      DELETE FROM label_store.subject
+      WHERE "subjectType" = p_subject_type AND "subjectId" = p_subject_id
+      RETURNING "id"
+    )
+    INSERT INTO label_store.change ("kind", "subjectId") SELECT 'deletion', "id" FROM gone;
     GET DIAGNOSTICS v_n = ROW_COUNT;
     RETURN v_n;
   END IF;
 
   WITH hit AS (
     UPDATE label_store.subject
-    SET "excludedAt" = COALESCE("excludedAt", now()),
-        "excludedReason" = COALESCE("excludedReason", p_reason),
+    SET "excludedAt" = now(),
+        "excludedReason" = p_reason,
         "snapshot" = NULL,
         "bytesRef" = NULL,
         "bytesExpireAt" = NULL
-    WHERE "subjectType" = p_subject_type AND "subjectId" = p_subject_id
+    WHERE "subjectType" = p_subject_type AND "subjectId" = p_subject_id AND "excludedAt" IS NULL
     RETURNING "id"
+  ), untrain AS (
+    UPDATE label_store.consensus c SET "trainable" = false
+    FROM hit WHERE c."subjectId" = hit."id"
   )
-  UPDATE label_store.consensus c SET "trainable" = false
-  FROM hit WHERE c."subjectId" = hit."id";
-
-  SELECT count(*)::int INTO v_n FROM label_store.subject
-  WHERE "subjectType" = p_subject_type AND "subjectId" = p_subject_id;
+  INSERT INTO label_store.change ("kind", "subjectId") SELECT 'exclusion', "id" FROM hit;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN v_n;
 END;
 $$;
@@ -337,26 +547,22 @@ AS $$
 DECLARE
   v_n INTEGER;
 BEGIN
-  DELETE FROM label_store.subject WHERE "ownerHash" = label_store.person_hash('owner', p_user_id);
+  WITH gone AS (
+    DELETE FROM label_store.subject WHERE "ownerHash" = label_store.person_hash('owner', p_user_id)
+    RETURNING "id"
+  )
+  INSERT INTO label_store.change ("kind", "subjectId") SELECT 'deletion', "id" FROM gone;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN v_n;
 END;
 $$;
 
 -- ---------------------------------------------------------------------------------------------------
--- Producers. Each takes a source row, so the trigger and the backfill run the same code.
+-- Site producers. Each takes a source row, so the trigger and the backfill run the same code.
 -- ---------------------------------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION label_store.image_content_hash(p_url TEXT)
-RETURNS TEXT
-LANGUAGE sql
-IMMUTABLE
-AS $$
-  SELECT encode(sha256(convert_to(p_url, 'UTF8')), 'hex')
-$$;
-
--- A scanner flag is the model saying "block" to image.block. Control-sample rows are a sampling
--- marker, not a verdict, and record nothing.
+-- A scanner flag is a model answering "block" to image.block. Its input is the image, or for the prompt
+-- scanner the prompt. Control-sample rows are a sampling marker, not a verdict, and record nothing.
 CREATE OR REPLACE FUNCTION label_store.from_scan_label_flag(f public."ScanLabelFlag")
 RETURNS BIGINT
 LANGUAGE plpgsql
@@ -378,17 +584,18 @@ BEGIN
     PERFORM label_store.note_failure(v_src, 'image not found');
     RETURN NULL;
   END IF;
-  RETURN label_store.record_label(
+  RETURN label_store.record_prediction(
     p_subject_type => 'image',
     p_subject_id => im.id::text,
-    p_content_hash => label_store.image_content_hash(im."url"),
+    p_content_hash => label_store.text_hash(im."url"),
     p_family => 'scan_label',
     p_question => 'image.block',
     p_value => 'block',
-    p_labeller_kind => 'model',
-    p_labeller_ref => f."flaggerVersion",
+    p_model_ref => f."flaggerVersion",
     p_source_ref => v_src,
-    p_labelled_at => f."flaggedAt",
+    p_predicted_at => f."flaggedAt",
+    p_input_hash => CASE WHEN f."source" = 'xguard-prompt'
+      THEN label_store.text_hash(im."meta"->>'prompt') ELSE label_store.text_hash(im."url") END,
     p_detail => jsonb_strip_nulls(jsonb_build_object('source', f."source", 'reason', f."reason", 'outputs', f."snapshot")),
     p_snapshot => jsonb_strip_nulls(jsonb_build_object(
       'url', im."url", 'prompt', im."meta"->>'prompt', 'negativePrompt', im."meta"->>'negativePrompt'
@@ -423,7 +630,7 @@ BEGIN
   RETURN label_store.record_label(
     p_subject_type => 'image',
     p_subject_id => im.id::text,
-    p_content_hash => label_store.image_content_hash(im."url"),
+    p_content_hash => label_store.text_hash(im."url"),
     p_family => 'scan_label',
     p_question => 'image.block',
     p_value => CASE WHEN v."block" THEN 'block' ELSE 'clear' END,
@@ -446,8 +653,8 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- An appeal decision answers image.appeal. The record already holds the image as it was at decision
--- time, so this works after the image is gone; the owner is looked up only while it exists.
+-- An appeal decision answers image.appeal. The record holds the image as it was at decision time, so this
+-- works after the image is gone.
 CREATE OR REPLACE FUNCTION label_store.from_appeal_decision(a public."AppealDecisionRecord")
 RETURNS BIGINT
 LANGUAGE plpgsql
@@ -455,14 +662,12 @@ SECURITY DEFINER
 SET search_path = label_store, public, pg_temp
 AS $$
 DECLARE
-  v_src   TEXT := 'AppealDecisionRecord:' || a."appealId";
-  v_owner INTEGER;
+  v_src TEXT := 'AppealDecisionRecord:' || a."appealId";
 BEGIN
-  SELECT m."userId" INTO v_owner FROM public."Image" m WHERE m."id" = a."imageId";
   RETURN label_store.record_label(
     p_subject_type => 'image',
     p_subject_id => a."imageId"::text,
-    p_content_hash => label_store.image_content_hash(a."imageUrl"),
+    p_content_hash => label_store.text_hash(a."imageUrl"),
     p_family => 'appeal',
     p_question => 'image.appeal',
     p_value => lower(a."decision"),
@@ -470,13 +675,11 @@ BEGIN
     p_labeller_ref => 'appeal-review',
     p_source_ref => v_src,
     p_labelled_at => a."decidedAt",
-    p_detail => jsonb_strip_nulls(jsonb_build_object(
-      'nsfwLevel', a."nsfwLevel", 'aiNsfwLevel', a."aiNsfwLevel", 'blockedFor', a."blockedFor",
-      'nsfwLevelReason', a."nsfwLevelReason"
+    p_snapshot => jsonb_strip_nulls(jsonb_build_object(
+      'url', a."imageUrl", 'nsfwLevel', a."nsfwLevel", 'aiNsfwLevel', a."aiNsfwLevel",
+      'blockedFor', a."blockedFor", 'nsfwLevelReason', a."nsfwLevelReason"
     )),
-    p_snapshot => jsonb_build_object('url', a."imageUrl"),
-    p_phash => a."pHash",
-    p_owner_user_id => v_owner
+    p_phash => a."pHash"
   );
 EXCEPTION WHEN OTHERS THEN
   PERFORM label_store.note_failure(v_src, SQLSTATE || ': ' || SQLERRM);
@@ -561,9 +764,9 @@ END;
 $$;
 
 -- Rows that predate the triggers. Idempotent (sourceRef), so a re-run adds only what is missing. Order
--- does not matter: every label recomputes its subject's consensus from all the labels so far.
+-- does not matter: every judgement recomputes its subject's consensus from all of them so far.
 CREATE OR REPLACE FUNCTION label_store.backfill()
-RETURNS TABLE ("source" TEXT, "rows" BIGINT, "labelsAdded" BIGINT)
+RETURNS TABLE ("source" TEXT, "rows" BIGINT, "added" BIGINT)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = label_store, public, pg_temp
@@ -595,11 +798,25 @@ $$;
 CREATE OR REPLACE VIEW label_store.labels_feed AS
 SELECT
   l."id", l."subjectId", s."subjectType", s."subjectId" AS "siteId", s."contentHash", s."pHash",
-  l."family", l."question", l."questionVersion", l."value", l."reason", l."reasonNote", l."confidence",
-  l."detail", l."labellerKind", l."labellerRef", l."sourceRef", l."labelledAt", l."msOnItem",
-  l."recordedAt", s."excludedAt" IS NOT NULL AS "excluded"
+  l."family", l."question", l."questionVersion", l."value", l."reason", l."reasonNote",
+  l."labellerKind", l."labellerRef", l."sourceRef", l."labelledAt", l."msOnItem", l."recordedAt",
+  s."excludedAt" IS NOT NULL AS "excluded"
 FROM label_store.label l
 JOIN label_store.subject s ON s."id" = l."subjectId";
+
+CREATE OR REPLACE VIEW label_store.predictions_feed AS
+SELECT
+  p."id", p."subjectId", s."subjectType", s."subjectId" AS "siteId", s."contentHash", s."pHash",
+  p."family", p."question", p."questionVersion", p."value", p."confidence", p."scores", p."modelRef",
+  p."versions", p."inputHash", p."detail", p."sourceRef", p."predictedAt", p."recordedAt",
+  s."excludedAt" IS NOT NULL AS "excluded"
+FROM label_store.prediction p
+JOIN label_store.subject s ON s."id" = p."subjectId";
+
+-- Pull by id. A reader that applies every row in order holds the same state as the store.
+CREATE OR REPLACE VIEW label_store.changes_feed AS
+SELECT "id", "kind", "subjectId", "question", "questionVersion", "refId", "at"
+FROM label_store.change;
 
 CREATE OR REPLACE VIEW label_store.training_examples AS
 SELECT
@@ -607,7 +824,7 @@ SELECT
   CASE WHEN s."bytesExpireAt" > now() THEN s."bytesRef" END AS "bytesRef",
   CASE WHEN s."bytesExpireAt" > now() THEN s."bytesExpireAt" END AS "bytesExpireAt",
   s."snapshot", c."question", c."questionVersion", c."outcome", c."humanLabels", c."agreeing",
-  c."unanimous", c."rule", c."modelValue", c."modelAgrees", c."computedAt"
+  c."unanimous", c."rule", c."modelValue", c."modelRef", c."modelAgrees", c."computedAt"
 FROM label_store.consensus c
 JOIN label_store.subject s ON s."id" = c."subjectId"
 WHERE c."trainable" AND s."excludedAt" IS NULL;
@@ -615,13 +832,23 @@ WHERE c."trainable" AND s."excludedAt" IS NULL;
 CREATE OR REPLACE VIEW label_store.pipeline_failures AS
 SELECT * FROM label_store.training_examples WHERE "modelAgrees" = false;
 
--- The reader role is created by infra; grant when it exists. Re-run this block after it is created.
+-- Only the owner calls the functions; the writer role is granted submit_prediction alone, so it cannot
+-- record a human label or hash a user id.
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA label_store FROM PUBLIC;
+
+-- The reader and writer roles are created by infra; grant when they exist. Re-run this block after.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'label_reader') THEN
     GRANT USAGE ON SCHEMA label_store TO label_reader;
-    GRANT SELECT ON label_store.labels_feed, label_store.training_examples, label_store.pipeline_failures
-      TO label_reader;
+    GRANT SELECT ON label_store.labels_feed, label_store.predictions_feed, label_store.changes_feed,
+      label_store.training_examples, label_store.pipeline_failures TO label_reader;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'label_writer') THEN
+    GRANT USAGE ON SCHEMA label_store TO label_writer;
+    GRANT EXECUTE ON FUNCTION label_store.submit_prediction(
+      TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INTEGER, REAL, JSONB, JSONB, TEXT, JSONB
+    ) TO label_writer;
   END IF;
 END;
 $$;
