@@ -223,7 +223,8 @@ It does not stop the leak — that needs the V3 triggers, or the FK flip below.
 
 ### Stopping the leak now — proposed (2026-10-16)
 
-The leak is 17 foreign keys on `Thread` declared `ON DELETE SET NULL`. Flipping them to
+The leak is 16 entity foreign keys on `Thread` (17 columns; the comic one is composite) declared
+`ON DELETE SET NULL`. Flipping them to
 `ON DELETE CASCADE` gives the current schema the semantics V3 was decided to have: an entity
 hard-delete takes its thread, and `CommentV2` → reactions → report links → mutes already cascade
 from there. It is a schema change, so it is a PR with a migration file applied by hand, separate
@@ -237,7 +238,7 @@ from the purge (data only, chat SQL).
 - **Migration shape**, per FK: `DROP CONSTRAINT` + `ADD CONSTRAINT … ON DELETE CASCADE NOT VALID`
   in one short `ALTER TABLE` under a `lock_timeout`, then `VALIDATE CONSTRAINT` separately
   (takes only `SHARE UPDATE EXCLUSIVE`, so writes continue during the 5.7M-row scan). Prisma:
-  `onDelete: Cascade` on the 17 relations in `schema.full.prisma`; the default `relationMode`
+  `onDelete: Cascade` on the 16 relations in `schema.full.prisma`; the default `relationMode`
   is `foreignKeys`, so nothing in the client emulates the action.
 - **What changes for users**: deleting an image, post, review, article, bounty, model, … now
   deletes its comments, their reactions and their report links. `Report` rows for those comments
