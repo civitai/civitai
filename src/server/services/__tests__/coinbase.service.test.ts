@@ -527,11 +527,11 @@ describe('coinbase.service', () => {
       );
     });
 
-    it('should throw when metadata is missing', async () => {
-      // Note: processBuzzOrder has a pre-existing bug where its catch block
-      // references an undefined `event` variable, so the thrown error is
-      // "event is not defined" rather than the original validation error.
-      await expect(processBuzzOrder(makeEventData({ metadata: {} }))).rejects.toThrow();
+    it('rethrows the original error and grants nothing when metadata is missing', async () => {
+      await expect(processBuzzOrder(makeEventData({ metadata: {} }))).rejects.toThrow(
+        'Missing required metadata in Coinbase webhook event'
+      );
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
     });
   });
 });
