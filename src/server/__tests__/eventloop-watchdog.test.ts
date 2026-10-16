@@ -300,7 +300,7 @@ describe('threshold/beat ratio invariant', () => {
 });
 
 describe('watchdog heartbeat', () => {
-  it('records the timestamp it is given', async () => {
+  it('is safe to call when the watchdog was never armed', async () => {
     const { recordWatchdogHeartbeat, WATCHDOG_WORKER_SOURCE } = await loadWatchdog();
     // The store is only observable through the worker, so assert the contract that
     // matters here: the call is safe to make unconditionally, including when the
@@ -308,6 +308,41 @@ describe('watchdog heartbeat', () => {
     expect(() => recordWatchdogHeartbeat(1_700_000_000_000)).not.toThrow();
     expect(() => recordWatchdogHeartbeat()).not.toThrow();
     expect(WATCHDOG_WORKER_SOURCE).toContain('civitai_app_watchdog_up');
+  });
+
+  it('records the timestamp it is given, in the buffer the worker reads', async () => {
+    // A stand-in Worker so the spawn's workerData, which the parent cannot otherwise read
+    // back, is the observation point.
+    const spawned: { workerData: { sab: SharedArrayBuffer } }[] = [];
+    vi.doMock('node:worker_threads', () => ({
+      Worker: class {
+        constructor(_source: string, options: { workerData: { sab: SharedArrayBuffer } }) {
+          spawned.push(options);
+        }
+        unref = vi.fn();
+        on = vi.fn();
+        once = vi.fn();
+        postMessage = vi.fn();
+        terminate = vi.fn();
+      },
+    }));
+    process.env.EVENTLOOP_WATCHDOG_ENABLED = 'true';
+    try {
+      const { registerEventLoopWatchdog, recordWatchdogHeartbeat, shutdownEventLoopWatchdog } =
+        await loadWatchdog();
+      registerEventLoopWatchdog();
+      expect(spawned).toHaveLength(1);
+      const beat = new BigInt64Array(spawned[0].workerData.sab);
+
+      recordWatchdogHeartbeat(1_700_000_000_000);
+      expect(Number(Atomics.load(beat, 0))).toBe(1_700_000_000_000);
+      recordWatchdogHeartbeat(1_700_000_000_250);
+      expect(Number(Atomics.load(beat, 0))).toBe(1_700_000_000_250);
+
+      shutdownEventLoopWatchdog();
+    } finally {
+      vi.doUnmock('node:worker_threads');
+    }
   });
 });
 
