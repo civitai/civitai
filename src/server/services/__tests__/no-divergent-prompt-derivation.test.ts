@@ -7,9 +7,9 @@ import * as promptSimilarityModule from '~/utils/prompt-similarity';
  * Convention guard: prompt derivation has ONE threshold, reached by ONE route.
  *
  * `promptDerivationHolds` decides whether a prompt-reuse remix still counts, and
- * that verdict opens the free remix-gallery submission. It has two readers — the
- * client's claim check (`remix-claim.ts`) and the server's submit-time gate
- * (`remix-provenance.ts`) — and they must not be able to disagree: a client that
+ * that verdict opens the free remix-gallery submission. It has readers — the
+ * client's claim check (`remix-claim.ts`), the server's submit-time gate
+ * (`remix-provenance.ts`) and the moderator-evidence builder (`prompt-origin.ts`) — and they must not be able to disagree: a client that
  * says "this still counts" while the server refuses is a person told they are
  * getting something free and then charged.
  *
@@ -26,7 +26,11 @@ const SRC = path.resolve(__dirname, '../../..');
 const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
 
 const MODULE = 'utils/prompt-similarity.ts';
-const READERS = ['utils/remix-claim.ts', 'server/services/orchestrator/remix-provenance.ts'];
+const READERS = [
+  'utils/remix-claim.ts',
+  'server/services/orchestrator/remix-provenance.ts',
+  'server/services/orchestrator/prompt-origin.ts',
+];
 
 function walk(dir: string, files: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

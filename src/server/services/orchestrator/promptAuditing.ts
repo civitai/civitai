@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { constants } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
@@ -6,6 +7,10 @@ import type { ExternalModerationSource } from '~/server/prom/external-moderation
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import {
+  attachPromptOrigin,
+  type PromptOrigin,
+} from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
@@ -24,6 +29,8 @@ import {
 // distinguish "empty because reset" from "doesn't exist".
 
 export interface BlockedPromptEntry {
+  // Lets the origin be attached after the entry is stored; absent on entries seeded from the audit log.
+  id?: string;
   prompt: string;
   negativePrompt: string;
   source: string;
@@ -37,6 +44,7 @@ export interface BlockedPromptEntry {
   // from a transform of AI content.
   inputImages?: string[];
   inputVideo?: string;
+  origin?: PromptOrigin;
   time: string;
 }
 
@@ -67,7 +75,7 @@ const truncateForRecord = (text: string | undefined) =>
 
 const RESET_MARKER = '__RESET__';
 
-function getBlockedPromptsKey(userId: number) {
+export function getBlockedPromptsKey(userId: number) {
   return `${REDIS_SYS_KEYS.GENERATION.BLOCKED_PROMPTS}:${userId}` as const;
 }
 
@@ -225,6 +233,10 @@ export interface AuditPromptOptions {
   remixOfId?: number; // The original image being remixed
   inputImages?: string[]; // Base/source image URLs attached to the job
   inputVideo?: string; // Source video URL (vid2vid)
+  // Server-verified remix sources and the caller's orchestrator token; only used to record the
+  // prompt's origin when a hard block is stored.
+  sourceImageIds?: number[];
+  orchestratorToken?: string;
   // Only honored when every trigger is soft — see `isSoftBlock`.
   acknowledgedSoftBlock?: boolean;
   // OBSERVABILITY ONLY. Selects the `source` label on the external-moderation duration histogram so
@@ -454,6 +466,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     remixOfId,
     inputImages,
     inputVideo,
+    sourceImageIds,
+    orchestratorToken,
     acknowledgedSoftBlock,
     moderationSource,
   } = options;
@@ -567,8 +581,10 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 
-      // Create blocked prompt entry
-      const blockedEntry: BlockedPromptEntry = {
+      // The origin lookups are slow, so the entry is stored as incomplete now and completed after
+      // the response is decided (see attachPromptOrigin below).
+      const blockedEntry: BlockedPromptEntry & { id: string } = {
+        id: randomUUID(),
         prompt: prompt ?? '',
         negativePrompt: negativePrompt ?? '',
         source,
@@ -578,6 +594,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         remixOfId: remixOfId ?? null,
         inputImages,
         inputVideo,
+        origin: { incomplete: true },
         time: new Date().toISOString(),
       };
 
@@ -597,6 +614,22 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         inputImages,
         inputVideo,
       });
+
+      if (!isModerator) {
+        // Not awaited: the block must not wait on the lookups. attachPromptOrigin logs its own failures.
+        // No in-flight guard: the generation procedures refuse a muted user before the audit runs.
+        void Promise.resolve(
+          attachPromptOrigin({
+            userId,
+            entry: blockedEntry,
+            redisKey: getBlockedPromptsKey(userId),
+            prompt: prompt ?? '',
+            sourceImageIds,
+            remixOfId,
+            token: orchestratorToken,
+          })
+        ).catch(() => undefined);
+      }
 
       // civitai.com/civitai.red - standard escalating warnings
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
