@@ -89,6 +89,9 @@ export async function getSiteAppealState({ user }: { user: AppealUser }) {
 /**
  * The refusal for filing again on the same item, or null. Other has no item, so it is never
  * refused here; one Pending at a time still holds through the unique index.
+ *
+ * Unlike `getAppealRefusal` for in-app appeals, a rejection is not final: re-filing after the
+ * cooldown is allowed, and the moderator queue marks it as a repeat.
  */
 export function getSiteAppealRefusal(
   category: AppealCategory,

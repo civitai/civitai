@@ -36,10 +36,17 @@ db.model.findUnique.mockImplementation(
     null) as never
 );
 db.appeal.findFirst.mockImplementation(
-  (async ({ where }: { where: { entityType: string; entityId: number; status: string } }) =>
+  (async ({
+    where,
+  }: {
+    where: { entityType: string; entityId: number; status: string; category?: null };
+  }) =>
     (
       await holder.db.query(
-        `SELECT id FROM "Appeal" WHERE "entityType" = $1 AND "entityId" = $2 AND status = $3`,
+        // Filters on category only when the caller asks for it, so a dropped filter shows.
+        `SELECT id FROM "Appeal" WHERE "entityType" = $1 AND "entityId" = $2 AND status = $3${
+          'category' in where ? ' AND category IS NULL' : ''
+        }`,
         [where.entityType, where.entityId, where.status]
       )
     ).rows[0] ?? null) as never
@@ -128,7 +135,7 @@ beforeAll(async () => {
       "gallerySettings" jsonb, "lockedProperties" text[] NOT NULL DEFAULT '{}', meta jsonb
     );
     CREATE TABLE "Appeal" (
-      id serial PRIMARY KEY, "entityType" text, "entityId" int, status text
+      id serial PRIMARY KEY, "entityType" text, "entityId" int, status text, category text
     );
     CREATE TABLE "EntityModeration" (
       "entityType" text, "entityId" int, "workflowId" text, result jsonb,
@@ -530,6 +537,17 @@ describe('minor', () => {
       );
       expect(carried).toMatchObject({ reason: 'other', via: 'moderator' });
       expect(carried).not.toHaveProperty('note');
+    });
+
+    // A site-form appeal on the model is about its unpublish, not the flag, so it holds nothing.
+    it('is not held by a site-form appeal on the model', async () => {
+      await redetect();
+      await holder.db.query(
+        `INSERT INTO "Appeal" ("entityType", "entityId", status, category) VALUES ('Model', $1, 'Pending', 'Model')`,
+        [MODEL_ID]
+      );
+
+      expect(await resolve('minor', true)).toBe('kept');
     });
 
     it('caps the history at the newest rulings, grants and upholds alike', async () => {

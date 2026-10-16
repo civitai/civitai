@@ -150,5 +150,27 @@ describe('restrictedAccountAppealProcedure', () => {
       'routers/report.router.ts',
       'trpc.ts',
     ]);
+    // In trpc.ts, only its own declaration: a second procedure built on it there would pass above.
+    const trpcText = readFileSync(path.join(SERVER_DIR, 'trpc.ts'), 'utf8');
+    expect(trpcText.match(/\brestrictedAccountAppealProcedure\b/g)).toHaveLength(1);
   });
+});
+
+// `rateLimit` passes everything through under test, so its presence on the submit procedure (the
+// abuse control on a form open to banned accounts) can only be read off the source. The whole
+// chain, anchored from the procedure name to its mutation, so a limit moved elsewhere fails.
+it('rate-limits submitSiteAppeal, and only by successful submits, with its write scope', () => {
+  const routerText = readFileSync(path.join(__dirname, '../report.router.ts'), 'utf8');
+  const chain = routerText.match(
+    /submitSiteAppeal: restrictedAccountAppealProcedure[\s\S]*?\.mutation\(/
+  )?.[0];
+  expect(chain).toBe(
+    [
+      'submitSiteAppeal: restrictedAccountAppealProcedure',
+      '    .meta({ requiredScope: TokenScope.SocialWrite })',
+      '    .input(submitSiteAppealSchema)',
+      '    .use(rateLimit({ limit: 5, period: CacheTTL.day }, undefined, { onlyCountSuccess: true }))',
+      '    .mutation(',
+    ].join('\n')
+  );
 });

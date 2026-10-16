@@ -359,8 +359,15 @@ export const heavyProcedure = publicProcedure.use(withBulkhead('heavy-image'));
  * Reusable middleware to ensure
  * users are logged in
  */
-const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
+// Shared by `isAuthed` and `isAuthedAllowRestricted`, so a check added to what "signed in" means
+// reaches both.
+function requireSignedIn<U extends { deletedAt?: Date | null }>(user: U | null | undefined): U {
   if (!user || user.deletedAt) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  return user;
+}
+
+const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ctx }, next }) => {
+  const user = requireSignedIn(maybeUser);
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -510,11 +517,8 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
  */
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
 
-const isAuthedAllowRestricted = t.middleware(
-  ({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
-    if (!user || user.deletedAt) throw new TRPCError({ code: 'UNAUTHORIZED' });
-    return next({ ctx: { ...ctx, user, acceptableOrigin } });
-  }
+const isAuthedAllowRestricted = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =>
+  next({ ctx: { ...ctx, user: requireSignedIn(user), acceptableOrigin } })
 );
 
 /**

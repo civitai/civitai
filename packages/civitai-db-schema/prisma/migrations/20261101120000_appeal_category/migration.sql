@@ -10,6 +10,8 @@
 --   20261101120200_appeal_category_pending_key
 --   20261101120300_appeal_category_queue_idx
 --   20261101120400_appeal_drop_old_pending_key
+-- Until the last one runs, the old category-blind key makes a form appeal and an in-app appeal (or
+-- an Account and an Other appeal) on the same entity collide, so the form stays mods-only until then.
 --
 -- Nullable with no default, so ADD COLUMN is a catalog change only (no rewrite).
 SET lock_timeout = '3s';

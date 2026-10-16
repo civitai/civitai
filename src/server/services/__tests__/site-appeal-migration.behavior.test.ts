@@ -86,6 +86,22 @@ describe('site appeal migrations', () => {
     ]);
   });
 
+  it('build the queue index over form appeals only', async () => {
+    const { rows } = await db.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes WHERE indexname = 'Appeal_category_status_createdAt_idx'`
+    );
+    expect(rows[0].indexdef).toMatch(
+      /\(category, status, "createdAt", id\) WHERE \(category IS NOT NULL\)$/
+    );
+  });
+
+  it('key form appeals per appellant, not per entity alone', async () => {
+    await insert({ entityType: 'Model', entityId: 1, userId: 7, category: 'Model' });
+    expect(await rejects({ entityType: 'Model', entityId: 1, userId: 8, category: 'Model' })).toBe(
+      'inserted'
+    );
+  });
+
   it('still refuse a second Pending in-app appeal on one entity', async () => {
     await insert({ entityType: 'Model', entityId: 1, userId: 7 });
     expect(await rejects({ entityType: 'Model', entityId: 1, userId: 7 })).toBe('23505');

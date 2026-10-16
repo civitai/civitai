@@ -25,3 +25,12 @@ export function safeSameOriginPath(raw: unknown, origin: string, fallback: strin
     return fallback;
   }
 }
+
+/** An absolute http(s) URL. Allow-listing the scheme keeps out `javascript:` and `data:`. */
+export function isHttpUrl(value: string): boolean {
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isHttpUrl } from '~/utils/url-helpers';
 import { AppealCategory } from '~/shared/utils/prisma/enums';
 
 export const SITE_APPEAL_MESSAGE_MIN = 20;
@@ -19,14 +20,7 @@ const link = z
   .string()
   .trim()
   .max(SITE_APPEAL_LINK_MAX)
-  .refine((value) => {
-    try {
-      const { protocol } = new URL(value);
-      return protocol === 'https:' || protocol === 'http:';
-    } catch {
-      return false;
-    }
-  }, 'Enter a full link, starting with https://');
+  .refine(isHttpUrl, 'Enter a full link, starting with https://');
 
 export type SubmitSiteAppealInput = z.output<typeof submitSiteAppealSchema>;
 export const submitSiteAppealSchema = z.discriminatedUnion('category', [

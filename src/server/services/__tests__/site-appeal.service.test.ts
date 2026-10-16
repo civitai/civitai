@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   getSiteAppealRefusal,
+  getSiteAppealState,
   SITE_APPEAL_ALREADY_PENDING,
   SITE_APPEAL_NOT_REMOVED,
   SITE_APPEAL_NOT_RESTRICTED,
@@ -234,5 +235,80 @@ describe('submitSiteAppealSchema', () => {
   it('reads an empty link as no link', () => {
     const parsed = submitSiteAppealSchema.parse({ ...other, link: '' });
     expect(parsed).toEqual({ ...other, link: undefined });
+  });
+});
+
+describe('submitSiteAppeal cooldown', () => {
+  const input = { category: AppealCategory.Article, entityId: 9, message: MESSAGE } as const;
+  const rejectedDaysAgo = (days: number) =>
+    ({ status: AppealStatus.Rejected, resolvedAt: new Date(Date.now() - days * DAY) } as never);
+
+  beforeEach(() => {
+    dbWrite.article.findUnique.mockResolvedValue({
+      userId: USER.id,
+      status: ArticleStatus.UnpublishedViolation,
+    } as never);
+  });
+
+  // Literal day counts on both sides, so a changed cooldown fails here rather than moving the
+  // test along with it.
+  it('refuses a re-file 29 days after a rejection', async () => {
+    dbWrite.appeal.findFirst.mockResolvedValue(rejectedDaysAgo(29));
+    await expect(submitSiteAppeal({ user: USER, input })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbWrite.appeal.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a re-file 31 days after a rejection', async () => {
+    dbWrite.appeal.findFirst.mockResolvedValue(rejectedDaysAgo(31));
+    await submitSiteAppeal({ user: USER, input });
+    expect(dbWrite.appeal.create).toHaveBeenCalled();
+  });
+});
+
+describe('getSiteAppealState', () => {
+  const { dbRead } = dbMock;
+
+  beforeEach(() => {
+    dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null, muted: true } as never);
+  });
+
+  it("reads only the caller's own rows", async () => {
+    const state = await getSiteAppealState({ user: USER });
+
+    expect(state.restriction).toEqual({ banned: false, muted: true });
+    expect(dbWrite.user.findUnique.mock.calls[0][0].where).toEqual({ id: USER.id });
+    expect(dbRead.article.findMany.mock.calls[0][0].where).toEqual({
+      userId: USER.id,
+      status: ArticleStatus.UnpublishedViolation,
+    });
+    expect(dbRead.model.findMany.mock.calls[0][0].where).toEqual({
+      userId: USER.id,
+      status: ModelStatus.UnpublishedViolation,
+      deletedAt: null,
+    });
+    expect(dbRead.appeal.findMany.mock.calls[0][0].where).toEqual({
+      userId: USER.id,
+      category: { not: null },
+    });
+  });
+
+  // The appellant reads these rows; the moderator's notes, reason and identity stay out. Equality,
+  // because the Prisma mock ignores `select` and a key added to it would otherwise pass unseen.
+  it('selects no moderator-only appeal field', async () => {
+    await getSiteAppealState({ user: USER });
+    expect(Object.keys(dbRead.appeal.findMany.mock.calls[0][0].select).sort()).toEqual([
+      'appealMessage',
+      'category',
+      'context',
+      'createdAt',
+      'entityId',
+      'entityType',
+      'id',
+      'resolvedAt',
+      'resolvedMessage',
+      'status',
+    ]);
   });
 });

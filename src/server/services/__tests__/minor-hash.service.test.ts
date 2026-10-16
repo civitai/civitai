@@ -1496,20 +1496,8 @@ describe('rollbackMinorHashAutoFlags', () => {
 });
 
 describe('acceptExpiredMinorAutoFlags', () => {
-  // A resolved appeal already had a human look at it; sweeping it up as "nobody
-  // objected" would overwrite that decision with a presumption.
-  it('skips any model with an appeal of any status', async () => {
-    mockDbWrite.$executeRaw.mockResolvedValue(0);
-
-    await acceptExpiredMinorAutoFlags({ dryRun: false, limit: 500 });
-
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('"Appeal"');
-    expect(text).toContain('NOT EXISTS');
-    expect(text).not.toContain(`status = 'Pending'`);
-  });
-
+  // Which appeals hold a model back is covered against Postgres in
+  // minor-hash-accept-sweep.behavior.test.ts.
   it('writes nothing on a dry run', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ count: 4 }]);
 
@@ -1521,6 +1509,15 @@ describe('acceptExpiredMinorAutoFlags', () => {
 });
 
 describe('getMinorFlagAppealsForReview', () => {
+  // A text pin: it sees the predicate is written, not that it selects the right rows. The moderator
+  // app's twin of this query has the behavioural case (minor-flag-appeals.pglite.test.ts).
+  it('lists in-app appeals only, never a site-form appeal on the model', async () => {
+    await getMinorFlagAppealsForReview({ limit: 10 });
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toMatch(/WHERE a\."entityType" = 'Model' AND a\.category IS NULL\n/);
+  });
+
   it('returns poi and the text-scan verdict so a moderator can read the reason', async () => {
     await getMinorFlagAppealsForReview({ limit: 10 });
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
