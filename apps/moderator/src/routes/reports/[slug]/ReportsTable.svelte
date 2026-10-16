@@ -37,6 +37,8 @@
     reportDetail,
     gameFrameReportImage,
   } from '$lib/reports';
+  import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
+  import { browsingLevelLabels } from '@civitai/shared';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
@@ -94,6 +96,16 @@
     onSettled: reloadIfGone,
   });
   let confirmingTakedown = $state<number | null>(null);
+  const offeringForm = new FormState({
+    onSuccess: (result) => {
+      confirmingOfferingTakedown = null;
+      toast.success(String(result?.serviceOfferingTakedown ?? 'Done'));
+    },
+    reload: true,
+    onSettled: reloadIfGone,
+  });
+  let confirmingOfferingTakedown = $state<number | null>(null);
+  let offeringReason = $state<string>('');
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
   const reportComment = (r: { details: unknown }) =>
@@ -166,6 +178,9 @@
     confirmingDelist = null;
     storylineForm.error = null;
     confirmingTakedown = null;
+    offeringForm.error = null;
+    confirmingOfferingTakedown = null;
+    offeringReason = '';
   }
 
   // The row is the target, but it also holds links (the item, the reporter) that must keep doing
@@ -503,6 +518,112 @@
             {/if}
             {#if storylineForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{storylineForm.error}</p>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'serviceOffering'}
+          {@const offering = data.serviceOfferings.find((o) => o.id === selected.entityId)}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            {#if offering}
+              <p class="mb-1 flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-medium">{offering.title}</span>
+                <Badge variant="outline">{offering.status}</Badge>
+                <Badge variant="outline">
+                  {(browsingLevelLabels as Record<number, string | undefined>)[offering.maxNsfwLevel] ??
+                    `rating ${offering.maxNsfwLevel}`}
+                </Badge>
+                {#if offering.removedReason}
+                  <Badge variant="outline">taken down by a moderator</Badge>
+                {/if}
+              </p>
+              <p class="mb-1 text-sm text-dark-2">
+                by {offering.sellerUsername ?? `user #${offering.sellerId}`}
+              </p>
+              <p class="mb-2 whitespace-pre-wrap text-sm">{offering.description}</p>
+              {#if offering.removedReason}
+                <p class="mb-2 text-sm">
+                  Reason: {serviceOfferingTakedownReasons[
+                    offering.removedReason as keyof typeof serviceOfferingTakedownReasons
+                  ]?.optionLabel ?? offering.removedReason}{offering.removedDetails
+                    ? `: ${offering.removedDetails}`
+                    : ''}
+                </p>
+              {/if}
+            {:else}
+              <p class="mb-2 text-sm text-muted-foreground">This service no longer exists.</p>
+            {/if}
+            {#if offering && !offering.removedReason}
+              <p class="mb-2 text-sm">
+                Taking it down removes the service from its seller's shop for good and tells the seller why, then
+                sets this report Actioned. Its open deals carry on; a request not yet accepted can only be declined.
+              </p>
+              {#if confirmingOfferingTakedown === selected.id}
+                <form
+                  method="POST"
+                  action="?/takeDownServiceOffering"
+                  use:enhance={offeringForm.enhance}
+                  class="flex flex-col gap-2"
+                >
+                  <input type="hidden" name="id" value={selected.id} />
+                  <select
+                    name="reason"
+                    class="h-8 rounded-md border bg-background px-2 text-sm"
+                    bind:value={offeringReason}
+                    required
+                  >
+                    <option value="" disabled>Reason</option>
+                    {#each Object.entries(serviceOfferingTakedownReasons) as [key, reason] (key)}
+                      <option value={key}>{reason.optionLabel}</option>
+                    {/each}
+                  </select>
+                  <Textarea
+                    name="details"
+                    maxlength={1000}
+                    required={offeringReason === 'other'}
+                    placeholder={offeringReason === 'other'
+                      ? 'What is wrong (sent to the seller)'
+                      : 'Note for moderators (optional, not sent to the seller)'}
+                  />
+                  <!-- Shown as text too: a typed note hides the placeholder, and Other sends it. -->
+                  <p class="text-xs text-dark-2">
+                    {offeringReason === 'other'
+                      ? 'This text is sent to the seller as the reason.'
+                      : 'Kept with the takedown for moderators; the seller sees only the reason.'}
+                  </p>
+                  <div class="flex flex-wrap gap-2">
+                    <Button type="submit" size="sm" variant="destructive" disabled={offeringForm.submitting}>
+                      Yes, take it down
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onclick={() => {
+                        confirmingOfferingTakedown = null;
+                        offeringReason = '';
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              {:else}
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onclick={() => {
+                    // A reason is picked per report, never carried over from the last one.
+                    offeringReason = '';
+                    confirmingOfferingTakedown = selected.id;
+                  }}
+                >
+                  Take down service
+                </Button>
+              {/if}
+            {/if}
+            {#if offeringForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{offeringForm.error}</p>
             {/if}
           </div>
         {/if}

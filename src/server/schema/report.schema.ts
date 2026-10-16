@@ -207,12 +207,6 @@ export const createReportInputSchema = z
   .refine((input) => input.type !== ReportEntity.GameFrameGame, {
     path: ['type'],
     message: 'Games are reported from Civitai Games.',
-  })
-  // Decision (briony, 2026-10-15): refused until the moderator app has a queue for offering reports,
-  // so none can land where no moderator can see them. Lifted in the PR that adds that queue.
-  .refine((input) => input.type !== ReportEntity.ServiceOffering, {
-    path: ['type'],
-    message: 'Services cannot be reported yet.',
   });
 
 // `report.create` returns no data: the client only needs to know the call succeeded.

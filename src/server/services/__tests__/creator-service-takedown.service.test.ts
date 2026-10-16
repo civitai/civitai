@@ -52,6 +52,22 @@ describe('takedown', () => {
     });
   });
 
+  // A moderator's note on a reason with its own copy stays on the row, out of the seller's payload.
+  it("keeps a note out of the seller's notification unless the reason is other", async () => {
+    await takedownServiceOffering({
+      moderatorId: MOD,
+      input: { id: OFFERING, reason: 'misleading', details: 'internal note' },
+    });
+    await takedownServiceOffering({
+      moderatorId: MOD,
+      input: { id: OFFERING, reason: 'other', details: 'Sells account access' },
+    });
+    const sent = vi
+      .mocked(createNotification)
+      .mock.calls.map(([n]) => (n as { details: { details: unknown } }).details.details);
+    expect(sent).toEqual([null, 'Sells account access']);
+  });
+
   it('notifies the seller once, keyed to the offering, without the moderator', async () => {
     await takedownServiceOffering({ moderatorId: MOD, input: { id: OFFERING, reason: 'spam' } });
     expect(createNotification).toHaveBeenCalledTimes(1);

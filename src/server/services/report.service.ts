@@ -438,6 +438,11 @@ export const createReport = async ({
     !(await dbRead.storyline.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That storyline no longer exists.');
+  if (
+    type === ReportEntity.ServiceOffering &&
+    !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
+  )
+    throw throwNotFoundError('That service no longer exists.');
 
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 

@@ -26,6 +26,7 @@ const report = (reason: ReportReason = ReportReason.TOSViolation) =>
 beforeEach(() => {
   vi.clearAllMocks();
   reportFindFirst.mockResolvedValue(null);
+  dbMock.dbRead.serviceOffering.findUnique.mockResolvedValue({ id: 17 } as never);
   reportCreate.mockResolvedValue({ id: 74, details: {} });
 });
 
@@ -55,20 +56,25 @@ describe('reporting a service offering', () => {
   });
 });
 
-// Decision (briony, 2026-10-15): the public report input refuses offerings until the moderator app
-// has a queue for them. Delete this case in the PR that adds that queue, together with the refine.
-describe('filing an offering report before the moderator queue exists', () => {
-  it('is refused at the input, while other entity types still parse', async () => {
+// The apps/moderator queue for offering reports exists (/reports/service), so the public input takes
+// them. If that queue is ever removed, refuse them here again rather than let reports land unseen.
+describe('filing an offering report', () => {
+  it('is accepted at the public input', async () => {
     const { createReportInputSchema } = await import('~/server/schema/report.schema');
-    const input = (type: ReportEntity) => ({
-      type,
+    const parsed = createReportInputSchema.safeParse({
+      type: ReportEntity.ServiceOffering,
       id: 17,
       reason: ReportReason.TOSViolation,
       details: { violation: 'Spam', comment: 'asks buyers to pay off-site' },
     });
-    expect(createReportInputSchema.safeParse(input(ReportEntity.ServiceOffering)).success).toBe(
-      false
-    );
-    expect(createReportInputSchema.safeParse(input(ReportEntity.Crucible)).success).toBe(true);
+    expect(parsed.success).toBe(true);
+  });
+});
+
+describe('reporting a service that does not exist', () => {
+  it('is a 404 before any report is written, not a failed join row', async () => {
+    dbMock.dbRead.serviceOffering.findUnique.mockResolvedValue(null as never);
+    await expect(report()).rejects.toThrow('That service no longer exists.');
+    expect(reportCreate).not.toHaveBeenCalled();
   });
 });
