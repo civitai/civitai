@@ -10,6 +10,13 @@
     reason: '',
     note: '',
   });
+
+  /** A reason and note are written for one verdict: switching drops them, and choosing it again
+   *  clears it. */
+  export const chooseVerdict = <V extends string>(
+    draft: RulingDraft<V>,
+    verdict: V
+  ): RulingDraft<V> => ({ verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' });
 </script>
 
 <script lang="ts" generics="S extends ResolutionSubject">
@@ -58,7 +65,6 @@
     disabled?: boolean;
     /** The ruling is submitting; the confirm button says so. */
     busy?: boolean;
-    /** `lg` is the triage action bar's size. */
     size?: 'sm' | 'xs' | 'lg';
     /** Shows each choice's digit key; the queue maps the keys to the same order. */
     kbd?: boolean;
@@ -83,10 +89,7 @@
   );
   const large = $derived(size === 'lg');
 
-  // A reason and note are written for one verdict; a switch must not carry them to the other.
-  const choose = (verdict: Verdict) => {
-    draft = { verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' };
-  };
+  const choose = (verdict: Verdict) => (draft = chooseVerdict(draft, verdict));
 </script>
 
 <div class={cn('grid gap-2', large && 'w-full')}>

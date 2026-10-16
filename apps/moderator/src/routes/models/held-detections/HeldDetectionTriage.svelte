@@ -25,13 +25,8 @@
 
   type Verdict = ResolutionVerdict<'heldDetection'>;
 
-  // A chosen verdict, reason and note belong to the open detection alone.
   let current = $state<string | null>(null);
-  const ruling = rulingDraft<Verdict>();
-  $effect(() => {
-    void current;
-    ruling.reset();
-  });
+  const ruling = rulingDraft<Verdict>(() => current);
 
   // A model can wait on both labels, so a row is identified by the pair.
   const rowKey = (row: RedetectedRow) => `${row.modelId}:${row.label}`;

@@ -17,8 +17,9 @@ export const flagEntryPath = (label: LabelRef) =>
   Prisma.sql`(m.meta->${TEXT_SCAN_FLAGS_KEY}->${labelRef(label)})`;
 
 // A write that replaces or overwrites a decision on the label entry moves the old one into a bounded
-// history instead of dropping it, without its free-text note: the history rides on every feed row.
-// `carry` names the decisions being superseded; empty when there is nothing to carry.
+// history instead of dropping it. `carry` names the decisions being superseded; empty when there is
+// nothing to carry. The live decision keeps its note; history is copied whole into `rulings[]` up to
+// 5 deep, so a note there would ride every feed row several times over.
 export const carriedRulings = (
   label: LabelRef,
   carry: ('appealGranted' | 'appealUpheld')[] = ['appealGranted', 'appealUpheld']

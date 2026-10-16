@@ -208,7 +208,7 @@ export const appealActions: Actions = {
     const poi = decision.safeParse(form.get('poi'));
     if (!(modelId > 0) || !minor.success || !poi.success)
       return fail(400, { error: 'Missing model id or decision.' });
-    // The main app closes the appeal Approved when any label is lifted.
+    // The verdict rule from `RULINGS` in AppealDetail.svelte.
     const lifted = (['minor', 'poi'] as const).filter(
       (label) => ({ minor, poi }[label].data === 'overturn')
     );

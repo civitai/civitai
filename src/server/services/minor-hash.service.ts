@@ -783,8 +783,8 @@ export async function resolveMinorFlagAppeal({
   const overturned = flagged.filter((label) => decide(label) === 'overturn');
   const approved = labels ? overturned.length > 0 : !uphold;
 
-  // Checked against the status this ruling writes, which the caller's flags alone cannot tell: a
-  // per-label ruling also decides any flagged label it does not name.
+  // Checked against the verdict this ruling writes: a per-label ruling also decides flagged labels it
+  // does not name.
   if (resolvedReason) {
     const ruledOn = approved ? overturned : flagged;
     const invalid = resolutionReasonError(

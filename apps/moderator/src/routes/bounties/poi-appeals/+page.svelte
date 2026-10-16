@@ -135,6 +135,7 @@
               subject="flagAppeal"
               choices={FLAG_APPEAL_RULING_CHOICES}
               choiceDisabled={keepUnavailable(row.poi)}
+              labels={['poi']}
               action="?/resolve"
               enhancer={submit(row.bountyId)}
               idPrefix="bounty-poi-{row.bountyId}"

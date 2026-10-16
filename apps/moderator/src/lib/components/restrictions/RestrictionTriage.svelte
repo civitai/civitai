@@ -56,12 +56,7 @@
   // The open restriction, reported by the shell; a chosen verdict belongs to it alone.
   let current = $state<number | null>(null);
 
-  // A chosen verdict, reason and note belong to one restriction.
-  const ruling = rulingDraft<Verdict>();
-  $effect(() => {
-    void current;
-    ruling.reset();
-  });
+  const ruling = rulingDraft<Verdict>(() => current);
 
   const actionHref = (action: string) =>
     formActionHref(action, {

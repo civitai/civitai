@@ -21,13 +21,8 @@
     form,
   }: { data: AppealQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
 
-  // A chosen ruling, reason and note belong to the open appeal alone.
   let current = $state<number | null>(null);
-  const ruling = rulingDraft<AppealRuling>();
-  $effect(() => {
-    void current;
-    ruling.reset();
-  });
+  const ruling = rulingDraft<AppealRuling>(() => current);
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>

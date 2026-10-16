@@ -11,7 +11,6 @@
     confirmLabel: string;
     variant: ButtonVariant;
     outcome: string;
-    /** A split's per-label decisions, and the one flag it lifts. */
     split?: { minor: Decision; poi: Decision; lifted: TextScanLabel };
   };
 
@@ -21,7 +20,7 @@
     return found;
   };
 
-  // A split lifts one flag, so the appeal closes Approved and takes an Approved reason.
+  // A split lifts one flag, so it is an Approved ruling.
   const RULINGS = {
     Rejected: { ...choice('Rejected'), action: 'upholdAppeal', outcome: 'Appeal rejected' },
     Approved: { ...choice('Approved'), action: 'overturnAppeal', outcome: 'Appeal approved' },
@@ -118,8 +117,7 @@
   const canUphold = $derived(flagInForce(row));
 
   const ruling = $derived<Ruling | null>(draft.verdict ? RULINGS[draft.verdict] : null);
-  // The flags this ruling decides, so a reason bound to another flag is not offered. The main app
-  // checks the same against the model as it stands.
+  // Mirrors `resolveMinorFlagAppeal`'s check; change both together.
   const ruledOn = $derived.by((): TextScanLabel[] | undefined => {
     if (ruling?.split) return [ruling.split.lifted];
     const flagged = (['minor', 'poi'] as const).filter((l) => (l === 'minor' ? row.minor : poiOpen));

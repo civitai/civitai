@@ -507,7 +507,6 @@ describe('minor', () => {
       expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(NEWER);
     });
 
-    // Model.meta rides on every feed row; the reason stays in the history, the free-text note does not.
     it('carries a superseded ruling into the history with its reason but not its note', async () => {
       await redetect();
       await resolveTextScanRedetection({

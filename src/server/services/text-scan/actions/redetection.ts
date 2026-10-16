@@ -107,7 +107,7 @@ export function resolveTextScanRedetection(args: {
   /** The held text the moderator was shown; the ruling applies to that and nothing newer. */
   textHash: string;
   userId: number;
-  /** The moderator's reason slug and note, stamped on the ruling. A `closed` outcome records neither. */
+  /** A `closed` outcome records neither. */
   reason?: string;
   note?: string;
 }): Promise<RedetectionOutcome> {

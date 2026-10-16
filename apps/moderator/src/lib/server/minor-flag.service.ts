@@ -1,4 +1,5 @@
 import { bustMinorQueueCounts } from './minor-hash.service';
+import type { checkedResolutionReason } from './resolution-reason';
 import { callModEndpoint, type ActionResult, type JsonResult } from './user-actions.service';
 
 /**
@@ -22,8 +23,7 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
-/** What `checkedResolutionReason` returns for a ruling: the main app re-checks it against the verdict. */
-export type RulingReason = { resolvedReason: string; internalNotes: string | undefined };
+export type RulingReason = Exclude<ReturnType<typeof checkedResolutionReason>, string>;
 
 /** `rescanQueued` is always false now: the endpoint keeps it for compatibility. */
 export type AppealResult = { ok: true; rescanQueued: boolean } | { ok: false; error: string };

@@ -70,7 +70,6 @@ describe('minorFlag.resolveAppeal', () => {
     );
   });
 
-  // The service decides the verdict a per-label ruling writes, so it owns the reason check.
   it('passes a per-label ruling and its reason to the service unchecked', async () => {
     const split = { modelId: 42, uphold: true, poi: 'overturn', resolvedReason: 'flag-confirmed' };
     expect(await call(split)).toBe(200);
