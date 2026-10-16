@@ -8,11 +8,9 @@ const { getFlaggedModels, getFlaggedCount, getMinorFlagAppealsForReview } = vi.h
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/minor-hash.service', () => ({
-  getAutoFlaggedMinorModels: vi.fn(),
   getMinorFlagAppealGroups: vi.fn(async () => []),
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview: vi.fn(),
-  getModelMinorState: vi.fn(),
   getFlaggedModels,
   getFlaggedCount,
 }));

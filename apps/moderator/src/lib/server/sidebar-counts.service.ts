@@ -90,7 +90,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     getMinorFlagAppealGroups({}),
     // Index-served (see `redetectedIndexPredicate`), but a failure must not blank the other badges.
     bounded(getRedetectedCount),
-    // Not `minorQueue.auto`: that rides on the ~10s Pending count and drops with it at the bound above.
+    // Its own cheap count, not the ~10s Pending one, so it survives that count dropping at the bound above.
     bounded(getAutoFlaggedCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),

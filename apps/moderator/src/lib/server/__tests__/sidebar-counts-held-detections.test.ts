@@ -34,7 +34,7 @@ vi.mock('../feedback.service', () => ({ countNewFeedback: async () => 0 }));
 vi.mock('../removed-appeals.service', () => ({ countRemovedAppeals: async () => 0 }));
 vi.mock('../minor-hash.service', () => ({
   getMinorFlagAppealGroups: async () => [{ count: 4 }],
-  getMinorQueueCounts: async () => ({ pending: 1, auto: 2 }),
+  getMinorQueueCounts: async () => ({ pending: 1 }),
   getRedetectedCount,
   getAutoFlaggedCount,
 }));

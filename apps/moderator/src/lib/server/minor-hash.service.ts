@@ -145,9 +145,9 @@ export type MinorHashReviewRow = {
   pastAppeals: { approved: number; rejected: number; void: number; pending: number };
 };
 
-/** Tab 1 — Pending review: a model sharing a file hash with something a human flagged as minor, where
- *  the two were uploaded by DIFFERENT accounts (`NOT sameUploader`; the same-uploader case is what the
- *  scan hook auto-flags, which is tab 2). */
+/** File matches: a model sharing a file hash with something a human flagged as minor, where the two
+ *  were uploaded by DIFFERENT accounts (`NOT sameUploader`; the same-uploader case is what the scan
+ *  hook auto-flags, which the Flagged tab lists). */
 export async function getMinorHashMatchesForReview({ limit, offset = 0, search }: Page) {
   const rows = await sql<MinorHashReviewRow>`
     WITH ${minorSrcCte},
@@ -230,43 +230,6 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0, search }
   `.execute(dbRead);
 
   // The extra row is how "there is another page" is known without a second count query.
-  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
-}
-
-export type AutoFlaggedMinorModel = {
-  modelId: number;
-  modelName: string;
-  userId: number;
-  username: string | null;
-  status: string;
-  flaggedAt: Date;
-  prevNsfw: boolean | null;
-  prevGalleryLevel: number | null;
-};
-
-/** Tab 2 — Auto-flagged: what the scan hook flagged with no human in the loop. Confirmed ones drop
- *  out, and so do accepted ones and anything past the review window — an unreviewed auto-flag is
- *  presumed correct once the owner has had a month to contest it, and without that bound the queue
- *  only grows. */
-export async function getAutoFlaggedMinorModels({ limit, offset = 0, search }: Page) {
-  const rows = await sql<AutoFlaggedMinorModel>`
-    SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-           m.status::text AS status,
-           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
-           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
-           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
-    FROM "Model" m
-    LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE ${hashFlaggedPredicate}
-      AND ${searchPredicate(search, {
-        modelId: 'm.id',
-        userId: 'm.userId',
-        username: 'u.username',
-      })}
-    ORDER BY (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz DESC, m.id DESC
-    LIMIT ${limit + 1} OFFSET ${offset}
-  `.execute(dbRead);
-
   return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
 }
 
@@ -804,41 +767,6 @@ export async function getRedetectedCount({
   return result.rows[0]?.count ?? 0;
 }
 
-export type ModelMinorState = {
-  modelId: number;
-  modelName: string;
-  userId: number;
-  username: string | null;
-  status: string;
-  minor: boolean;
-  minorLocked: boolean;
-  flagSource: string | null;
-  flagConfirmedFrom: string | null;
-  flaggedAt: Date | null;
-  clearedAt: Date | null;
-  acceptedAt: Date | null;
-};
-
-/** Reaches a model no tab lists — e.g. a same-uploader auto-flag older than
- *  `AUTO_FLAG_REVIEW_WINDOW_DAYS` — so its Revert is still reachable. */
-export async function getModelMinorState(modelId: number) {
-  const result = await sql<ModelMinorState>`
-    SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-           m.status::text AS status, m.minor,
-           'minor' = ANY(m."lockedProperties") AS "minorLocked",
-           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
-           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'confirmedFrom' AS "flagConfirmedFrom",
-           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
-           (m.meta->${MINOR_HASH_CLEARED_KEY}->>'at')::timestamptz AS "clearedAt",
-           (m.meta->${MINOR_HASH_ACCEPTED_KEY}->>'at')::timestamptz AS "acceptedAt"
-    FROM "Model" m
-    LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE m.id = ${modelId}
-  `.execute(dbRead);
-
-  return result.rows[0] ?? null;
-}
-
 export type MinorHashMatchDetail = {
   modelCoverUrl: string | null;
   modelCoverType: string | null;
@@ -960,16 +888,12 @@ export async function getAutoFlaggedMinorDetail({ modelId }: { modelId: number }
   return { match, detail };
 }
 
-export type MinorQueueCounts = { pending: number; auto: number };
+export type MinorQueueCounts = { pending: number };
 
 /**
- * Tab counts. Client-fetched and cached rather than part of `load`, because the Pending count costs
- * ~10s on its own: it has to build the same seed set and candidate CTE the queue does, then count the
- * whole population instead of one page of it. Blocking every page render on that to label two tabs
- * is the trade the row queries already refuse.
- *
- * Both in one round trip, since a moderator reads them together and a tab labelled with a count
- * from a different moment is the thing worth avoiding.
+ * The File matches count. Cached rather than computed per request, because it costs ~10s on its own: it
+ * has to build the same seed set and candidate CTE the queue does, then count the whole population
+ * instead of one page of it.
  */
 const counts = createCache({ name: 'minor-queue-counts:v2', fetch: fetchCounts, ttlSeconds: 300 });
 
@@ -984,44 +908,33 @@ export function bustMinorQueueCounts(): Promise<void> {
 }
 
 async function fetchCounts(): Promise<MinorQueueCounts> {
-  const [pending, rest] = await Promise.all([
-    sql<{ count: number }>`
-      WITH ${minorSrcCte},
-      candidates AS (
-        SELECT m.id AS "modelId", m."userId",
-               bool_or(EXISTS (
-                 SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
-               )) AS "sameUploader",
-               (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash
-        FROM "ModelFileHash" mfh
-        JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
-        JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-        JOIN "Model" m ON m.id = mv."modelId"
-        WHERE mfh.type = 'SHA256'
-          AND mfh.hash IN (SELECT hash FROM minor_src)
-          AND NOT m.minor
-          AND m.status <> 'Deleted'
-          AND NOT (m.meta ? 'minorHashDismissed')
-          AND ${notMinorHashClearedPredicate}
-        GROUP BY m.id, m."userId"
-      )
-      -- EXISTS rather than the queue's LATERAL join: the queue needs WHICH seed matched, a count only
-      -- needs that one did, and the two agree because the LATERAL is unconditional (JOIN ... ON TRUE).
-      SELECT count(*)::int AS count
-      FROM candidates c
-      WHERE NOT c."sameUploader"
-        AND EXISTS (SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" <> c."userId")
-    `.execute(dbRead),
-    sql<{ auto: number }>`
-      SELECT
-        (SELECT count(*)::int FROM "Model" m
-          WHERE ${hashFlaggedPredicate}
-        ) AS auto
-    `.execute(dbRead),
-  ]);
+  const pending = await sql<{ count: number }>`
+    WITH ${minorSrcCte},
+    candidates AS (
+      SELECT m.id AS "modelId", m."userId",
+             bool_or(EXISTS (
+               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
+             )) AS "sameUploader",
+             (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash
+      FROM "ModelFileHash" mfh
+      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
+      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mfh.type = 'SHA256'
+        AND mfh.hash IN (SELECT hash FROM minor_src)
+        AND NOT m.minor
+        AND m.status <> 'Deleted'
+        AND NOT (m.meta ? 'minorHashDismissed')
+        AND ${notMinorHashClearedPredicate}
+      GROUP BY m.id, m."userId"
+    )
+    -- EXISTS rather than the queue's LATERAL join: the queue needs WHICH seed matched, a count only
+    -- needs that one did, and the two agree because the LATERAL is unconditional (JOIN ... ON TRUE).
+    SELECT count(*)::int AS count
+    FROM candidates c
+    WHERE NOT c."sameUploader"
+      AND EXISTS (SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" <> c."userId")
+  `.execute(dbRead);
 
-  return {
-    pending: Number(pending.rows[0]?.count ?? 0),
-    auto: Number(rest.rows[0]?.auto ?? 0),
-  };
+  return { pending: Number(pending.rows[0]?.count ?? 0) };
 }

@@ -64,11 +64,11 @@ function parsePaging(url: URL) {
     : numeric !== null
     ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
     : { username: q };
-  return { limit, page, q, offset: (page - 1) * limit, numeric, search };
+  return { limit, page, q, offset: (page - 1) * limit, search };
 }
 
 /**
- * The File matches list. Its total is the cached sidebar-grade count, which costs ~10s cold, so it is
+ * The File matches list. Its total is the cached queue count, which costs ~10s cold, so it is
  * bounded: a slow count drops the "of N" instead of holding the page. A search narrows the list, not the
  * count, so the total is only offered for the whole queue.
  *
