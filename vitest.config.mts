@@ -268,8 +268,10 @@ const unitTestConfig = {
     // Measured: 7 `*.behavior.test.ts` files went from 87 passing to 0, reported as SKIPPED rather
     // than failed, so the suite total stayed at 22,636 while 87 fewer tests actually executed.
     // Compare the PASSED count, never the total, when changing this list.
-    // `msgpackr` fails a third way: its bundle does not load
-    // (`SyntaxError: Identifier 'createRequire' has already been declared`).
+    // Two more fail in ways neither check above catches: `msgpackr`'s bundle does not load
+    // (`SyntaxError: Identifier 'createRequire' has already been declared`), and
+    // `@opentelemetry/api` bundles with `SpanStatusCode` undefined, so every caught error in
+    // packages/civitai-telemetry's span helpers becomes `reading 'ERROR'` (12 files red).
     // The three biggest fan-in packages measured over the test-reachable graph are blocked the same
     // way and are the follow-up this list is building toward:
     //   `@tabler/icons-react` 5,952 package files / 166 importers — 2 mocking files
@@ -328,7 +330,6 @@ const unitTestConfig = {
           '@openrouter/sdk',
           '@openrouter/sdk/models',
           '@openrouter/sdk/models/errors',
-          '@opentelemetry/api',
           'nodemailer',
           'obscenity',
           'superjson',
