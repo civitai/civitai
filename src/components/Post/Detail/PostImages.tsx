@@ -1,6 +1,7 @@
 import { Badge, Button, Center, Group, Loader, Paper } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { Fragment, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
@@ -26,6 +27,8 @@ import type { PostContestCollectionItem } from '~/types/router';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { getEventDecorationClearLeft } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -114,7 +117,12 @@ export function PostImages({
                               : undefined,
                         }}
                       >
-                        <Group gap={4} className="absolute left-2 top-2 z-10">
+                        <PostImageHat image={image} />
+                        <Group
+                          gap={4}
+                          className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+                          style={hatClearLeft(image)}
+                        >
                           <ImageGuard2.BlurToggle />
                           {features.stickerPlacement && (
                             <StickerPlacementCardBadge imageId={image.id} />
@@ -241,4 +249,23 @@ export function PostImages({
       </ContainerProvider>
     </StickerPlacementBatchProvider>
   );
+}
+
+/** The image's own hat, inside its corner, as on the gallery's post cards (ImagesAsPostsCard). */
+function PostImageHat({ image }: { image: ImagesInfiniteModel }) {
+  if (!image.eventDecoration) return null;
+  return (
+    <EventDecorationOverlay
+      decoration={image.eventDecoration.data}
+      placement="inside"
+      wornOn={{ entityType: 'Image', entityId: image.id }}
+    />
+  );
+}
+
+/** Steps the top-left badges clear of the image's hat. */
+function hatClearLeft(image: ImagesInfiniteModel) {
+  if (!image.eventDecoration) return undefined;
+  const clearLeft = getEventDecorationClearLeft(image.eventDecoration.data, 'inside');
+  return { '--event-decoration-clear-left': clearLeft + 'px' } as CSSProperties;
 }
