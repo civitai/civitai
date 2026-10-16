@@ -457,6 +457,22 @@ topic alone — the entity still exists.
   too — not a regression.
 - Volume: ~6K orphaned comments a month today means a few hundred entity-with-comments deletes a
   day. Nothing to batch.
+- **Cost of a big cascade — benchmarked 2026-10-16** (Postgres 18.6, the DDL and index set from
+  this doc, 326K-row table, reaction- and topic-count triggers live, 3 reactions per comment).
+  Articles are the only entity with threads over 200 comments (26 of them; the largest is 5,361
+  comments, p90 of those 26 is 3,408), and articles are hard-deleted (`article.service.ts`
+  `tx.article.delete`, plus `deleteMany` on account deletion).
+
+  | Cascade                            | Without `commentv3_reply_to` | With it |
+  | ---------------------------------- | ---------------------------- | ------- |
+  | 5,400 comments + 16,200 reactions  | 59 s                         | 144 ms  |
+  | 21,000 comments + 63,000 reactions | 216 s                        | 524 ms  |
+  | one childless comment hard-delete  | 12 ms (full scan)            | 2 ms    |
+
+  The slow column is the `replyToId ON DELETE SET NULL` FK scanning the whole table once per
+  deleted row — quadratic, and it would have hit every single-comment hard-delete too, at 3.6M
+  rows. With the index the cascade is linear in the deleted set and sits inside the article
+  delete transaction without trouble. Not worth an async cleanup job.
 
 ### Indexes
 
@@ -480,6 +496,10 @@ CREATE INDEX commentv3_path_gist ON "CommentV3" USING gist ("path");
 -- Account deletion, per-user counts, moderation, judge gate
 CREATE INDEX commentv3_user ON "CommentV3" ("userId", "id" DESC);
 CREATE UNIQUE INDEX commentv3_legacy_v1 ON "CommentV3" ("legacyV1Id") WHERE "legacyV1Id" IS NOT NULL;
+-- The replyToId FK's SET NULL action runs "UPDATE … WHERE replyToId = $1" for EVERY hard-deleted
+-- row; without this index that is a full table scan per delete (measured: 60 s to cascade one
+-- 5,400-comment article, 144 ms with it)
+CREATE INDEX commentv3_reply_to ON "CommentV3" ("replyToId") WHERE "replyToId" IS NOT NULL;
 ```
 
 ## The interactions, as queries

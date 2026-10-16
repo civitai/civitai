@@ -50,6 +50,8 @@ Decisions & prerequisites:
       is hard-deleted (2026-10-16); inventory of referencing rows in the plan doc
 - [x] **(review)** `parentId ON DELETE RESTRICT` survives a topic cascade deleting a whole reply
       tree in one statement — verified on Postgres 18.6
+- [x] **(review)** Cascade cost for the largest article thread (5.4K comments): 144 ms with the
+      `replyToId` index, 59 s without — index added to the DDL
 - [ ] **(review)** Prod purge of today's orphans (archive table + delete root threads): Briant to
       approve after reading the inventory
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
@@ -69,7 +71,8 @@ Decisions & prerequisites:
 - [ ] `commentv3_set_path` BEFORE INSERT trigger (fills `path`, `rootId` and `depth`; no
       GENERATED columns — the repo's one precedent was reverted to a trigger the next day) **(review)**
 - [ ] Index set from the plan doc (top ×3, entity, replies ×2 with `hidden` second,
-      `(rootId, depth)`, GiST `path`, `(userId, id DESC)`, `legacyV1Id` unique partial)
+      `(rootId, depth)`, GiST `path`, `(userId, id DESC)`, `legacyV1Id` unique partial,
+      **`replyToId` partial — without it every hard-delete scans the table (review, benchmarked)**)
 - [ ] Shared sequence `comment_shared_id_seq`: seed past `max(CommentV2.id, Comment.id)`, re-point
       `Comment` and `CommentV2` id defaults at it
 - [ ] Triggers: `CommentTopic.commentCount` (counted set = ALL rows incl. hidden/self, matching
