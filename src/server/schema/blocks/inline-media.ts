@@ -20,11 +20,23 @@ export const INLINE_MEDIA_MAX_VISITS = 262_144;
 
 export type InlineMediaPath = (string | number)[];
 
-/** Shared by every field of one body, so many fields cannot each spend a full budget. */
-export type InlineMediaBudget = { visits: number };
+/**
+ * Shared by every field of one body, so many fields cannot each spend a full budget.
+ * `stringChars` is a lower bound on the body's JSON length, counted from the strings the
+ * search has passed; `inspected` counts the characters handed to the patterns.
+ */
+export type InlineMediaBudget = { visits: number; stringChars?: number; inspected?: number };
 
 /** Returned when the body holds more than `INLINE_MEDIA_MAX_VISITS` values. */
 export const INLINE_MEDIA_TOO_MANY_VALUES = 'too-many-values';
+
+/**
+ * Returned once the strings already passed make the body's JSON longer than the byte limit
+ * the caller named. From there no further string is read (the walk still finishes, for the
+ * value budget), so the patterns never read more than the limit plus the string that crosses
+ * it; the caller's byte cap refuses the body.
+ */
+export const INLINE_MEDIA_OVER_BYTE_LIMIT = 'over-byte-limit';
 
 export function isInlineMediaString(value: string): boolean {
   if (INLINE_MEDIA_DATA_URI_REGEX.test(value)) return true;
@@ -91,17 +103,59 @@ export function walkJsonValues(
 }
 
 /**
+ * A container whose own entries `JSON.stringify` writes as they are: an array or a plain
+ * object, without `toJSON` (own or inherited) and not a boxed value.
+ */
+function writesOwnEntries(value: object): boolean {
+  if (typeof (value as { toJSON?: unknown }).toJSON === 'function') return false;
+  if (value instanceof String || value instanceof Number || value instanceof Boolean) return false;
+  return true;
+}
+
+/**
  * The JSON path of the first string in `value`, in document order, that carries inline
  * media; `null` if none; `INLINE_MEDIA_TOO_MANY_VALUES` once `budget` is spent.
+ *
+ * With a `byteLimit`, each string is checked BEFORE its length is counted, so the string
+ * that crosses the limit is still searched: an over-limit photo gets this message, not the
+ * byte cap's. Once the counted strings pass the limit, no later string is read; the walk
+ * still finishes, so a body past the value budget is reported as before, and otherwise the
+ * search returns `INLINE_MEDIA_OVER_BYTE_LIMIT`. The count is a lower bound on the JSON
+ * length (each string's characters and quotes, only where `JSON.stringify` writes it), so it
+ * never passes the limit for a body that fits.
  */
 export function findInlineMediaPath(
   value: unknown,
-  budget: InlineMediaBudget = { visits: 0 }
-): InlineMediaPath | null | typeof INLINE_MEDIA_TOO_MANY_VALUES {
-  const hit = walkJsonValues(value, budget, (frame) =>
-    typeof frame.value === 'string' && isInlineMediaString(frame.value) ? 'stop' : undefined
-  );
+  budget: InlineMediaBudget = { visits: 0 },
+  byteLimit = Infinity
+):
+  | InlineMediaPath
+  | null
+  | typeof INLINE_MEDIA_TOO_MANY_VALUES
+  | typeof INLINE_MEDIA_OVER_BYTE_LIMIT {
+  // Containers whose entries `JSON.stringify` does not write as they are (a boxed value, an
+  // object with `toJSON`), and everything under them: their strings are not counted.
+  const unwritten = new Set<JsonWalkFrame>();
+  let overLimit = false;
+  const hit = walkJsonValues(value, budget, (frame) => {
+    const node = frame.value;
+    const counted = !(frame.parent && unwritten.has(frame.parent));
+    if (node !== null && typeof node === 'object') {
+      if (!counted || !writesOwnEntries(node)) unwritten.add(frame);
+      return undefined;
+    }
+    if (typeof node !== 'string') return undefined;
+    if ((budget.stringChars ?? 0) > byteLimit) {
+      overLimit = true;
+      return undefined;
+    }
+    budget.inspected = (budget.inspected ?? 0) + node.length;
+    if (isInlineMediaString(node)) return 'stop';
+    if (counted) budget.stringChars = (budget.stringChars ?? 0) + node.length + 2;
+    return undefined;
+  });
   if (hit === INLINE_MEDIA_TOO_MANY_VALUES) return hit;
+  if (overLimit) return INLINE_MEDIA_OVER_BYTE_LIMIT;
   return hit ? pathOf(hit) : null;
 }
 
