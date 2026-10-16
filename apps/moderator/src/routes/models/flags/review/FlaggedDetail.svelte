@@ -22,6 +22,7 @@
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
+  import { flaggedDecisionEnabled } from '$lib/minor-flags/flagged-decision';
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import {
     detectionCopy,
@@ -54,10 +55,11 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  // Mirrors the main app's refusal: an open appeal on the model blocks keeping a flag, for either
-  // label. Lifting is allowed. Change both together.
+  // Mirrors the main app's refusal: an open appeal blocks keeping a flag, and blocks a re-detection
+  // ruling either way. Lifting a hash row is allowed. Change with `flaggedDecisionEnabled`.
   const APPEAL_FIRST = "Resolve the owner's open appeal first.";
   const blocked = $derived(row.hasPendingAppeal);
+  const enabled = $derived(flaggedDecisionEnabled(row));
   const canOpenAppeals = $derived(
     page.data.modelFlagTabs?.some((tab: { href: string }) => tab.href === MODEL_FLAGS_APPEALS_PATH)
   );
@@ -74,12 +76,16 @@
     { action: 'keepFlag', label: 'Keep flag', outcome: 'Flag kept' },
     { action: 'liftFlag', label: 'Lift flag', outcome: 'Flag lifted' },
   ] as const;
+  const HELD_DECISIONS = {
+    Kept: { action: 'keepFlag', label: 'Keep flag' },
+    Dismissed: { action: 'liftFlag', label: 'Lift flag' },
+  } as const;
   const FIELDS_GRID = 'grid gap-2 sm:grid-cols-[minmax(14rem,22rem)_1fr_auto]';
 
   const chosen = $derived(HELD_DETECTION_RULING_CHOICES.find((c) => c.verdict === draft.verdict));
   const unrecordable = $derived(
     chosen
-      ? (blocked && chosen.verdict === 'Kept'
+      ? (!enabled[chosen.verdict === 'Kept' ? 0 : 1]
           ? APPEAL_FIRST
           : resolutionReasonError('heldDetection', chosen.verdict, draft.reason, draft.note, [
               row.label,
@@ -111,7 +117,7 @@
 {#snippet buttons()}
   {#if row.source === 'redetected'}
     {#each HELD_DETECTION_RULING_CHOICES as c, i (c.verdict)}
-      {@const unavailable = blocked && c.verdict === 'Kept' ? APPEAL_FIRST : null}
+      {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
       <TriageKeyButton
         key={i + 1}
         primary={i === 0}
@@ -120,12 +126,12 @@
         title={unavailable ?? undefined}
         onclick={() => choose(c.verdict)}
       >
-        {DECISIONS[i].label}
+        {HELD_DECISIONS[c.verdict].label}
       </TriageKeyButton>
     {/each}
   {:else}
     {#each DECISIONS as choice, i (choice.action)}
-      {@const unavailable = choice.action === 'keepFlag' && blocked ? APPEAL_FIRST : null}
+      {@const unavailable = !enabled[i] ? APPEAL_FIRST : null}
       <form
         method="POST"
         action={actionHref(choice.action)}
@@ -151,7 +157,7 @@
   {#if chosen}
     <form
       method="POST"
-      action={actionHref(chosen.verdict === 'Kept' ? 'keepFlag' : 'liftFlag')}
+      action={actionHref(HELD_DECISIONS[chosen.verdict].action)}
       use:enhance={submit((form) => (form.get('status') === 'Kept' ? 'Flagged' : 'Not flagged'))}
       class={FIELDS_GRID}
     >

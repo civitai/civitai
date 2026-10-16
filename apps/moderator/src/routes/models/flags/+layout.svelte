@@ -5,6 +5,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Kbd } from '@civitai/ui/components/ui/kbd/index.js';
   import TriageTabs from '$lib/components/triage/TriageTabs.svelte';
+  import { carriedSearchParams } from '$lib/triage/filters';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: Snippet } = $props();
@@ -12,11 +13,7 @@
   const q = $derived(page.url.searchParams.get('q') ?? '');
   // A plain GET form: the tab's filters and sort ride along, while the page, the open item and the
   // old search describe the result set being replaced.
-  const carried = $derived(
-    [...page.url.searchParams.entries()].filter(
-      ([name]) => !['q', 'page', 'item', 'appeal', 'model'].includes(name)
-    )
-  );
+  const carried = $derived(carriedSearchParams(page.url.searchParams));
 </script>
 
 <div class="flex flex-col gap-3 pb-4 lg:h-[calc(100svh-3rem)]">

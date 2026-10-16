@@ -19,7 +19,7 @@
   import { NativeSelect } from '@civitai/ui/components/ui/native-select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
-  import { urlWith } from '$lib/url';
+  import { chipHref } from '$lib/triage/filters';
 
   let {
     groups,
@@ -33,11 +33,7 @@
   } = $props();
 
   const hrefFor = (group: ChipGroup, value: string) =>
-    urlWith(page.url, {
-      [group.key]: value === group.defaultValue ? null : value,
-      page: null,
-      [selectionParam]: null,
-    });
+    chipHref(page.url, group, value, selectionParam);
 </script>
 
 <div class="flex flex-wrap items-center gap-1.5">
@@ -47,7 +43,7 @@
         {@const active = group.active === value}
         {@const count = group.counts?.[value]}
         <a
-          href={hrefFor(group, active && group.toggle ? group.defaultValue : value)}
+          href={hrefFor(group, value)}
           data-sveltekit-noscroll
           data-sveltekit-keepfocus
           aria-current={active ? 'true' : undefined}

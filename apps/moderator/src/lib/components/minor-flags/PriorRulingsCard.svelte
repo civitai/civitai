@@ -28,42 +28,48 @@
   } = $props();
 
   const listed = $derived(showRulings ? (rulings ?? []) : []);
-  const empty = $derived(!showPriorClear && listed.length === 0 && !pastAppeals);
+  // Only a row that carries ruling history can say nobody has ruled; a null list means unknown.
+  const none = $derived(
+    showRulings && Array.isArray(rulings) && rulings.length === 0 && !showPriorClear && !pastAppeals
+  );
+  const visible = $derived(showPriorClear || listed.length > 0 || !!pastAppeals || none);
 </script>
 
-<TriageCard title="Prior rulings and appeals">
-  <div class="space-y-1.5 text-base text-dark-0">
-    {#if showPriorClear}
-      <p class="m-0">
-        {#if granted}
-          Previously cleared: {clearViaLabel(granted.via)}
-          {#if grantedByUsername}
-            by <span class="font-medium text-white">{grantedByUsername}</span>
-          {:else if granted.by}
-            by user #{granted.by}
+{#if visible}
+  <TriageCard title="Prior rulings and appeals">
+    <div class="space-y-1.5 text-base text-dark-0">
+      {#if showPriorClear}
+        <p class="m-0">
+          {#if granted}
+            Previously cleared: {clearViaLabel(granted.via)}
+            {#if grantedByUsername}
+              by <span class="font-medium text-white">{grantedByUsername}</span>
+            {:else if granted.by}
+              by user #{granted.by}
+            {/if}
+            {#if granted.at}
+              <span class="text-sm text-dark-2" title={dateTime(granted.at)}>· {ago(granted.at)}</span>
+            {/if}
+          {:else}
+            Previously cleared: no clearing record.
           {/if}
-          {#if granted.at}
-            <span class="text-sm text-dark-2" title={dateTime(granted.at)}>· {ago(granted.at)}</span>
+        </p>
+      {/if}
+      {#each listed as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}
+        <p class="m-0">
+          {rulingText(ruling.decision, ruling.via)}
+          {#if ruling.by}by user #{ruling.by}{/if}
+          {#if ruling.at}
+            <span class="text-sm text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
           {/if}
-        {:else}
-          Previously cleared: no clearing record.
-        {/if}
-      </p>
-    {/if}
-    {#each listed as ruling, i (`${ruling.decision}:${ruling.at}:${ruling.by}:${i}`)}
-      <p class="m-0">
-        {rulingText(ruling.decision, ruling.via)}
-        {#if ruling.by}by user #{ruling.by}{/if}
-        {#if ruling.at}
-          <span class="text-sm text-dark-2" title={dateTime(ruling.at)}>· {ago(ruling.at)}</span>
-        {/if}
-      </p>
-    {/each}
-    {#if pastAppeals}
-      <p class="m-0">This uploader's earlier appeals: {pastAppealsText(pastAppeals)}.</p>
-    {/if}
-    {#if empty}
-      <p class="m-0">No moderator has ruled on this model yet.</p>
-    {/if}
-  </div>
-</TriageCard>
+        </p>
+      {/each}
+      {#if pastAppeals}
+        <p class="m-0">This uploader's earlier appeals: {pastAppealsText(pastAppeals)}.</p>
+      {/if}
+      {#if none}
+        <p class="m-0">No moderator has ruled on this model yet.</p>
+      {/if}
+    </div>
+  </TriageCard>
+{/if}
