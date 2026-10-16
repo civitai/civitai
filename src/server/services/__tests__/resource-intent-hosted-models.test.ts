@@ -23,7 +23,6 @@ describe('hosted model catalog integrity', () => {
     ).toEqual([
       ['OpenAI', 1532032, ['legible_text', 'image_editing']],
       ['NanoBanana', 1903424, ['character_consistency', 'image_editing']],
-      ['Imagen4', 1669468, ['photoreal', 'legible_text']],
       ['Seedream', 1951069, ['high_resolution', 'legible_text']],
       ['Grok', 2435474, ['reference_images']],
       ['MAI', 2673730, ['photoreal', 'legible_text', 'image_editing']],

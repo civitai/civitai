@@ -66,7 +66,6 @@ For reference, these ecosystems have both generation support and a default model
 | Qwen | 2113658 | Checkpoint, LORA |
 | NanoBanana | 2154472 | Checkpoint only |
 | OpenAI | 2880272 | Checkpoint only |
-| Imagen4 | 1889632 | Checkpoint only |
 | Seedream | 2208278 | Checkpoint only |
 | ZImageTurbo | 2442439 | Checkpoint, LORA |
 | PonyV7 | 2152373 | Checkpoint, LORA |

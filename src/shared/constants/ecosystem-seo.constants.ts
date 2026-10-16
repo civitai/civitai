@@ -3076,25 +3076,30 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Imagen 4', 'Seedream', 'FLUX.1'],
+      peers: ['GPT Image', 'Seedream', 'FLUX.1'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Likeness-preserving photo editing',
-            'Photoreal text-to-image',
+            'Natural-language prompts, text in image',
             'High-res text-to-image',
             'Photorealism, text, versatility',
           ],
         },
         {
           label: 'Image editing',
-          values: ['Native, multi-turn', 'Limited', 'Via edit variant', 'In-context (Kontext)'],
+          values: [
+            'Native, multi-turn',
+            'Native, reference-driven',
+            'Via edit variant',
+            'In-context (Kontext)',
+          ],
           winner: 0,
         },
         {
           label: 'Character consistency',
-          values: ['Excellent', 'Fair', 'Good', 'Fair'],
+          values: ['Excellent', 'Good', 'Good', 'Fair'],
           winner: 0,
         },
         {
@@ -3142,134 +3147,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         note: 'No model-specific prompt guide exists (generic fallback) — tips are grounded in the model card’s documented editing capabilities, not a guide.',
       },
     ],
-  },
-
-  Imagen4: {
-    key: 'Imagen4',
-    updatedAt: '2026-07-23',
-    slug: 'imagen-4',
-    name: 'Imagen 4',
-    metaDescription:
-      "Generate with Imagen 4 on Civitai — Google DeepMind's text-to-image model for photorealism, fine detail, and legible in-image text. Browse examples & prompts.",
-    modality: 'image',
-    hero: {
-      intro:
-        "Imagen 4 is Google DeepMind's latest text-to-image model, built to turn natural-language prompts into ultra-high-quality, photorealistic images with a focus on visual fidelity, fine detail, and compositional accuracy. It also renders legible in-image text. Generate with it right here on Civitai — no GPU, no install.",
-      badges: ['Text-to-Image', 'Photorealism', 'By Google DeepMind'],
-    },
-    overview: [
-      "Imagen 4 is the latest iteration of Google DeepMind's Imagen text-to-image line, designed to generate ultra-high-quality, photorealistic images from natural-language prompts. Its emphasis is on visual fidelity, fine detail, and compositional accuracy — reading a plain description of a scene and rendering it with convincing lighting, materials, and structure rather than relying on tag-style keywords. It responds strongly to cinematic, descriptive prompting that specifies perspective, lighting, environment, and action.",
-      'Unlike open-weight families such as FLUX.1 or SDXL, Imagen 4 is a closed, hosted model — there are no downloadable weights and no local checkpoints or LoRAs. It is served exclusively through an API, which Civitai runs for you: you write a prompt, pick an aspect ratio, and the image comes back without any local setup. That makes it a fast way to reach Google-grade photorealism directly in the browser.',
-      'Choose Imagen 4 when photorealism, fine detail, accurate composition, or legible in-image text matter most, and when you want a polished result from a natural-language description without tuning samplers or stacking LoRAs. For deep style customization, community fine-tunes, and huge LoRA libraries — especially for anime and character art — the open SDXL-based ecosystems (Pony, Illustrious) or FLUX.1 remain the better fit, since Imagen 4 trades that openness for a hosted, ready-to-run pipeline.',
-    ],
-    promptTips: [
-      'Write in natural, cinematic language and follow the template [Subject] + [Context/Background] + [Style] + [Lighting and technical details]. Descriptive full sentences beat comma-separated tags on Imagen 4.',
-      'Be explicit about lighting — Imagen 4 responds strongly to lighting cues. "Warm late-afternoon sun raking across the wall from the left" gives far more than "nice lighting."',
-      'Skip weight syntax like (word:1.5) — it is not supported. Emphasize an element by describing it in more vivid detail instead of using numeric weights.',
-      'State everything positively — Imagen 4 has no negative-prompt field. Instead of listing what to avoid, describe the clean scene you do want (an empty plaza rather than "no people").',
-      'For text in the image, spell out the exact words in quotes and describe the type: e.g. "a bold sans-serif title at the top reading \'HELLO\'," specifying font style, size, and placement. Then refine iteratively, changing one variable at a time.',
-    ],
-    generatorVersionId: 1889632,
-    featuredModels: [
-      {
-        modelId: 1669468,
-        versionId: 1889632,
-        imageId: 134163949,
-        displayName: 'Imagen 4',
-        note: 'Civitai-hosted · by Google DeepMind',
-      },
-    ],
-    featuredExamples: [
-      {
-        imageId: 135412138,
-        prompt: 'A frigate-sized futuristic spaceship with dark grey armor drifting in deep space',
-        settings: 'Imagen 4 · 1280×896',
-      },
-      {
-        imageId: 134505718,
-        prompt:
-          'A traditional black-and-yellow taxi rolling through a Mumbai street in the afternoon',
-        settings: 'Imagen 4 · 1280×896',
-      },
-      {
-        imageId: 134257673,
-        prompt: 'A Disney-themed supermarket with food aisles based on Disney films',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134215036,
-        prompt:
-          'A red-crowned crane in shallow water, Japanese ukiyo-e woodblock and watercolor style',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134163951,
-        prompt:
-          'A tranquil sunset over a mirror-like lake reflecting a lone tree and flitting birds',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134163946,
-        prompt: 'Itsukushima Shrine at high tide, golden hour, telephoto compression',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-    ],
-    comparison: {
-      peers: ['Nano Banana', 'Seedream', 'FLUX.1'],
-      rows: [
-        {
-          label: 'Best for',
-          values: [
-            'Photorealism & fine detail',
-            'Conversational image editing',
-            'High-res photoreal generation',
-            'Prompt adherence & text',
-          ],
-        },
-        { label: 'Prompt adherence', values: ['Excellent', 'Very good', 'Very good', 'Excellent'] },
-        { label: 'Text in images', values: ['Strong', 'Fair', 'Fair', 'Strong'], winner: 0 },
-        {
-          label: 'Prompt style',
-          values: ['Natural language', 'Conversational', 'Natural language', 'Natural language'],
-        },
-        {
-          label: 'Access',
-          values: ['API only', 'API only', 'API only', 'Open weights + API'],
-        },
-        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
-      ],
-    },
-    faq: [
-      {
-        q: 'How much does it cost to generate with Imagen 4?',
-        a: 'Generation on Civitai runs on Buzz, and Imagen 4 is a premium, Google-hosted model, so it sits toward the higher end of the range — each image costs more Buzz than a lightweight open checkpoint like SDXL. Every account still earns free Blue Buzz daily by reacting to images and staying active on the site, so you can try Imagen 4 without spending real money; you will just work through your daily Blue Buzz faster than on cheaper models. For heavier use, let your Buzz accumulate or add a membership for higher limits.',
-      },
-      {
-        q: 'What is Imagen 4?',
-        a: "Imagen 4 is Google DeepMind's latest text-to-image model, built for ultra-high-quality, photorealistic images with strong visual fidelity, fine detail, and compositional accuracy. Try it directly in the Civitai generator.",
-      },
-      {
-        q: 'Can I run Imagen 4 locally?',
-        a: "No — Imagen 4 is a closed, hosted model with no public weights, so there is nothing to download or run on your own GPU. Civitai runs it through Google's API for you, so you can generate in the browser with no setup.",
-      },
-      {
-        q: 'Is Imagen 4 good at rendering text in images?',
-        a: 'Yes — it supports typography and can render legible in-image text. Spell out the exact words in quotes and describe the font style, size, and placement. Remix an example above to see how the prompt carries over.',
-      },
-      {
-        q: 'Can I use LoRAs or custom checkpoints with Imagen 4?',
-        a: 'No — because Imagen 4 is API-only with no open weights, it does not support community LoRAs or fine-tuned checkpoints. If you want to stack LoRAs and custom styles, an open ecosystem like FLUX.1, SDXL, Pony, or Illustrious is the better choice, and all of them run on Civitai too.',
-      },
-      {
-        q: 'How should I prompt Imagen 4?',
-        a: 'Use natural, cinematic language following [Subject] + [Context] + [Style] + [Lighting], be specific about lighting, and phrase everything positively — Imagen 4 has no negative-prompt field. Remix any example above to start from a working prompt.',
-      },
-    ],
-    sunset: {
-      date: '2026-08-17',
-      note: 'Google is shutting down the Imagen 4 endpoints, after which it will no longer be generatable on Civitai. Nano Banana and Seedream are the closest hosted alternatives.',
-    },
-    attribution: 'a hosted text-to-image model by Google DeepMind (Imagen 4)',
   },
 
   Seedream: {
@@ -3365,14 +3242,14 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Nano Banana', 'Imagen 4', 'Qwen'],
+      peers: ['Nano Banana', 'GPT Image', 'Qwen'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Typography & high-res realism',
             'Image editing & consistency',
-            'Photoreal & in-image text',
+            'Natural-language prompts & text',
             'Prompt accuracy & text',
           ],
         },
@@ -4006,7 +3883,6 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'grok', label: 'Grok Imagine', ecosystemKeys: ['Grok'] },
   { slug: 'happyhorse', label: 'HappyHorse', ecosystemKeys: ['HappyHorse'] },
   { slug: 'nano-banana', label: 'Nano Banana', ecosystemKeys: ['NanoBanana'] },
-  { slug: 'imagen-4', label: 'Imagen 4', ecosystemKeys: ['Imagen4'] },
   { slug: 'seedream', label: 'Seedream', ecosystemKeys: ['Seedream'] },
   { slug: 'veo-3', label: 'Veo 3', ecosystemKeys: ['Veo3'] },
   { slug: 'chroma', label: 'Chroma', ecosystemKeys: ['Chroma'] },

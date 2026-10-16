@@ -1198,9 +1198,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // OpenAI - checkpoint only
   { ecosystemId: ECO.OpenAI, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Imagen4 - checkpoint only
-  { ecosystemId: ECO.Imagen4, supportType: 'generation', modelTypes: checkpointOnly },
-
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1691,13 +1688,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.OpenAI,
     defaults: {
       model: { id: 2880272 },
-      modelLocked: true,
-    },
-  },
-  {
-    ecosystemId: ECO.Imagen4,
-    defaults: {
-      model: { id: 1889632 },
       modelLocked: true,
     },
   },

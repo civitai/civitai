@@ -50,15 +50,6 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
     capabilities: ['character_consistency', 'image_editing'],
   },
   {
-    ecosystemId: ECO.Imagen4,
-    name: 'Imagen 4',
-    maker: 'Google DeepMind',
-    modelId: 1669468,
-    goodAt:
-      'Photorealistic images with fine detail, compositional accuracy and legible in-image text.',
-    capabilities: ['photoreal', 'legible_text'],
-  },
-  {
     ecosystemId: ECO.Seedream,
     name: 'Seedream',
     maker: 'ByteDance',
