@@ -52,21 +52,30 @@ Decisions & prerequisites:
       tree in one statement — verified on Postgres 18.6
 - [x] **(review)** Cascade cost for the largest article thread (5.4K comments): 144 ms with the
       `replyToId` index, 59 s without — index added to the DDL
-- [ ] **(review)** Prod purge of today's orphans — procedure reviewed and written up in the plan
-      (_Orphan purge_: archive schema, explicit `Report`/`EntityModeration`/`JobQueue` deletes,
-      batched thread deletes, rollback traps); Briant to approve, then the SQL is supplied in chat
+- [ ] **(review)** Prod purge of today's orphans — approved 2026-10-16; procedure written up in
+      the plan (_Orphan purge_: archive schema, explicit `Report`/`EntityModeration`/`JobQueue`
+      deletes, batched thread deletes, rollback traps). Remaining: write the SQL, run it by hand
+      **after** the FK-flip migration is applied
 - [x] **(review)** Second orphan class measured: 2,867 reply threads whose parent comment was
       hard-deleted (`Thread.commentId` SET NULL), 3,843 comments — purged with the rest, skipped
       by the backfill
 - [ ] **(review)** Stop the leak now: flip the 16 `Thread` entity FKs to `ON DELETE CASCADE`
-      (PR + hand-applied migration, `NOT VALID` then `VALIDATE`; `commentId` stays `SET NULL`) —
-      approved by Justin 2026-10-16; built on `fix/thread-entity-fk-cascade` (migration
-      `20261101120000_thread_entity_fk_cascade`); apply after that release deploys, then run the
-      purge by hand
+      (`commentId` stays `SET NULL`; `challengeId` has no FK in prod, so it is added after
+      deleting its dangling threads) — approved 2026-10-16; built on
+      `fix/thread-entity-fk-cascade` (migration `20261101120000_thread_entity_fk_cascade`:
+      `NOT VALID` then `VALIDATE`). Tick when: PR merged, release deployed, migration applied by
+      hand, all 16 constraints validated. Then run the purge by hand
+- [ ] **(review)** After the migration is applied: recapture the prod catalog, run
+      `drift:baseline` (the 15 Thread `referential-action` entries and
+      `missing-foreign-key|Thread|challengeId` drop out), and delete the `inFlightThreadCascade`
+      carve-out in `production-snapshot.test.ts`
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
       (2026-10-16)
 
-**Gate:** all measurements recorded in the plan doc; both open decisions written down.
+**Gate:** all measurements recorded in the plan doc; the orphan, depth-clamp, purge and FK-flip
+decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured items,
+`ComicChapter` surrogate id, flip order, the ltree infra sign-off, the purge SQL and the
+migration apply.
 
 ## Phase 1 — Schema (expand)
 
@@ -291,8 +300,8 @@ continuous across the cutover.
 - [ ] Drop triggers: `comment_count_update` (function `update_thread_comment_count`),
       `trg_moderation_comment`, `trg_moderation_commentv2`, `comment_reaction_count_update`, and
       the Phase 2 mirror triggers
-- [ ] Remove Thread entries from `schema-drift/drift-baseline.json` + update remediation plan and
-      `production-plan.test.ts`
+- [ ] Remove any remaining Thread entries from `schema-drift/drift-baseline.json` + update
+      remediation plan and `production-plan.test.ts`
 - [ ] `EntityType` values `Comment`/`CommentV2` **left in place** (read-time aliases only)
 - [ ] `job-queue.ts` unused mappings deleted; schema reverse-relations cleaned;
       `db:generate` + `db:check-generated` clean
