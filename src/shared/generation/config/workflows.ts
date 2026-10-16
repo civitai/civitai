@@ -100,6 +100,8 @@ const TXT2IMG_IDS = [
   ECO.Flux3Klein_base,
   // Other image ecosystems
   ECO.Anima,
+  ECO.MossImage,
+  ECO.MossImage_base,
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,

@@ -54,6 +54,11 @@ import {
   trainingModelInfo,
 } from '~/utils/training';
 
+// @civitai/client's AiToolkitTrainingInput still requires requiresAgeClassification; the
+// orchestration-client YuE2 input (beta.124+) omits it.
+type YuE2TrainingInput = YuE2AiToolkitTrainingInput &
+  Pick<AiToolkitTrainingInput, 'requiresAgeClassification'>;
+
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
   const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
@@ -209,7 +214,7 @@ export const buildAiToolkitTrainingStep = (
     metadata,
   } = input;
 
-  let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
+  let trainingInput: AiToolkitTrainingInput | YuE2TrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 
