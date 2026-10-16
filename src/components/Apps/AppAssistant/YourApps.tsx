@@ -21,7 +21,7 @@ export const APP_STATUS: Record<Sandbox['state'], string> = {
 
 export function AppError({ error }: { error: unknown }) {
   if (!error) return null;
-  // openApp pauses the other running app first, so reaching this means another tab started one meanwhile.
+  // openApp already suspends the others and retries, so this is the retry refused: another tab started one in between.
   if (isRunningLimit(error))
     return (
       <Alert color="yellow" variant="light" title="Only one app can run at a time">

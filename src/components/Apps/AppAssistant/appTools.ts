@@ -40,7 +40,7 @@ export function createAppTools({ apps, open }: AppToolsOptions): Record<string, 
       );
       try {
         const { sandbox, created } = await open(app);
-        // The list it was named against can be a minute old, and the service finds before it creates.
+        // The list it was named against can be stale, and the service finds before it creates.
         if (!created)
           return {
             app,

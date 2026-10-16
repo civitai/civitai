@@ -55,6 +55,7 @@ const m = vi.hoisted(() => ({
   onConsentRequired: null as null | (() => void),
   openError: null as unknown,
   listError: null as unknown,
+  listNeverLoaded: true,
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
@@ -82,7 +83,8 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
     };
     return {
       list: {
-        data: client ? m.list : undefined,
+        // A list that never loaded has no data; one whose later poll failed keeps it.
+        data: client && !(m.listError && m.listNeverLoaded) ? m.list : undefined,
         isSuccess: !!client,
         isLoading: false,
         error: m.listError,
@@ -178,6 +180,7 @@ beforeEach(() => {
   m.onConsentRequired = null;
   m.openError = null;
   m.listError = null;
+  m.listNeverLoaded = true;
 });
 
 describe('AppAssistantWorkspace with no apps', () => {
@@ -198,6 +201,14 @@ describe('AppAssistantWorkspace with no apps', () => {
     await openFirst();
     expect(document.querySelector('[data-testid="app-assistant-preview-pane"]')).not.toBeNull();
     expect(document.querySelector('[role="radiogroup"]')).not.toBeNull();
+  });
+
+  test('a later poll that fails keeps the apps listed, without an alarm', async () => {
+    m.listError = new SandboxApiError('Sandbox service error (503)', 503, 'unavailable');
+    m.listNeverLoaded = false;
+    await mount();
+    await expect.element(page.getByRole('button', { name: /^Your apps/ })).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/could not be reached/);
   });
 
   test('a list that fails to load is reported, not shown as having no apps', async () => {

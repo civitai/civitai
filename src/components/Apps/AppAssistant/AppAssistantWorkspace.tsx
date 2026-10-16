@@ -374,7 +374,8 @@ export function AppAssistantWorkspace({
             sandboxes.open.error ??
             sandboxes.suspend.error ??
             sandboxes.remove.error ??
-            sandboxes.list.error
+            // A failed poll keeps the last list, which is still right to show.
+            (sandboxes.list.data ? null : sandboxes.list.error)
           }
         />
       )}
