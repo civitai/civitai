@@ -19,7 +19,7 @@ const { dbHandle, recordModActivity, applyBlockSideEffects, setReportStatus, chQ
     dbHandle: { current: null as unknown },
     recordModActivity: vi.fn(async () => undefined),
     applyBlockSideEffects: vi.fn(async () => undefined),
-    setReportStatus: vi.fn(async () => ({ ok: true, changed: true })),
+    setReportStatus: vi.fn(async (_input: { id: number }) => ({ ok: true, changed: true })),
     chQuery: vi.fn(async (): Promise<object[]> => []),
   })
 );
@@ -368,7 +368,7 @@ describe('deciding a held removal', () => {
     expect(recordModActivity).toHaveBeenCalledWith(
       expect.objectContaining({ userId: CONFIRMER, activity: 'confirmRemoval' })
     );
-    expect(setReportStatus.mock.calls.map(([a]) => (a as { id: number }).id)).toEqual([7, 8]);
+    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
   });
 
   it('runs the removal once when two moderators confirm', async () => {
@@ -391,7 +391,7 @@ describe('deciding a held removal', () => {
     });
     expect(applyBlockSideEffects).not.toHaveBeenCalled();
     // The image is down, so the reports the removal answered are done with.
-    expect(setReportStatus.mock.calls.map(([a]) => (a as { id: number }).id)).toEqual([7, 8]);
+    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
   });
 
   it('voids the request, leaving the image up, when a later appeal was approved', async () => {

@@ -62,7 +62,7 @@
 
 {#if form && 'status' in form && form.status === 'Void'}
   <p class="mb-4 text-sm text-dark-2" role="status">
-    Request #{form.id} was voided, not run: {form.note}.
+    Request #{form.id} was voided, not run: {(form as { note?: string }).note}.
   </p>
 {/if}
 
