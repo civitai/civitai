@@ -13,6 +13,7 @@ const logSysRedisFailOpen = vi.hoisted(() => vi.fn());
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
 
 import {
+  DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS,
   DOWNLOAD_BLOCKLIST_TTL,
   getDownloadBlocklistValue,
 } from '~/server/services/download-blocklist.service';
@@ -132,6 +133,27 @@ describe('getDownloadBlocklistValue', () => {
     const started = Date.now();
     await expect(getDownloadBlocklistValue('ip-blacklist')).resolves.toBe('192.0.2.60');
     expect(Date.now() - started).toBeLessThan(1000);
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the database once the deadline passes when the cache read stalls', async () => {
+    vi.useFakeTimers();
+    // A read that never settles: what a stalled cache socket looks like to the caller.
+    const neverSettles = new Promise<never>((resolve) => void resolve);
+    redisMock.redis.packed.get.mockImplementation((() => neverSettles) as never);
+    findUnique.mockResolvedValue({ key: 'ip-blacklist', value: '192.0.2.80' } as never);
+
+    let settled: unknown = 'pending';
+    void getDownloadBlocklistValue('ip-blacklist').then((value) => {
+      settled = value;
+    });
+
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_BLOCKLIST_CACHE_DEADLINE_MS - 1);
+    expect(settled).toBe('pending');
+    expect(findUnique).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe('192.0.2.80');
     expect(findUnique).toHaveBeenCalledTimes(1);
   });
 
