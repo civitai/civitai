@@ -18,6 +18,13 @@ import {
 import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
+import {
+  findInlineMediaPath,
+  INLINE_MEDIA_MAX_VISITS,
+  INLINE_MEDIA_TOO_MANY_VALUES,
+  inlineMediaMessage,
+} from '~/server/schema/blocks/inline-media';
+import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -637,9 +644,10 @@ const blockPassThroughStepShape = {
   // fine and then throws on the first parse, measured.
   step: z.undefined(),
   $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
-  // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server does not read,
-  // rewrite, merge or default any field in here — that is the whole point of the
-  // arm, and the submitted step's `input` is BYTE-IDENTICAL to this value.
+  // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server may refuse it,
+  // but never rewrites, merges or defaults any field in here — that is the
+  // whole point of the arm, and the submitted step's `input` is BYTE-IDENTICAL
+  // to this value.
   // (Not the SAME object: `z.record` rebuilds the top level, so the caller's own
   // object never reaches the orchestrator whatever the router does. An earlier
   // draft claimed identity here and in `blocks.router`; measured false.)
@@ -652,9 +660,39 @@ const blockPassThroughStepShape = {
   quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX).optional(),
 };
 
+/**
+ * Refuses at the first inline-media path under `fields`, or at `overflow` once the body's
+ * shared value budget runs out. `continue: false` suppresses the byte-cap issue, which an
+ * inline photo usually also trips; only this message names the fix.
+ */
+function refuseInlineMedia<T extends Record<string, unknown>>(
+  fields: (body: T) => [InlineMediaPath, unknown][],
+  overflow: { path: InlineMediaPath; message: string }
+) {
+  return (body: T, ctx: z.RefinementCtx) => {
+    const budget = { visits: 0 };
+    for (const [prefix, value] of fields(body)) {
+      const hit = findInlineMediaPath(value, budget);
+      if (!hit) continue;
+      const issue =
+        hit === INLINE_MEDIA_TOO_MANY_VALUES
+          ? overflow
+          : { path: [...prefix, ...hit], message: inlineMediaMessage([...prefix, ...hit]) };
+      ctx.addIssue({ code: 'custom', ...issue, continue: false });
+      return;
+    }
+  };
+}
+
 export const blockPassThroughStepBodySchema = z
   .object(blockPassThroughStepShape)
   .strict()
+  .superRefine(
+    refuseInlineMedia((b) => [[['input'], b.input]], {
+      path: ['input'],
+      message: `step input holds more than ${INLINE_MEDIA_MAX_VISITS} values`,
+    })
+  )
   .refine((b) => JSON.stringify(b.input).length <= PASS_THROUGH_INPUT_BYTES_MAX, {
     path: ['input'],
     message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
@@ -671,8 +709,8 @@ export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>
 // 🔴 THERE IS NO `maxBuzz`. The ceiling is the token's per-generation budget
 // times the number of steps, computed by the server; the app declares nothing.
 //
-// 🔴 THIS SCHEMA CHECKS SHAPE AND SIZE ONLY. The step count, the step-name rules
-// and the reference graph are checked by `resolveBlockWorkflowGraph`, and the
+// 🔴 THIS SCHEMA CHECKS SHAPE, SIZE AND INLINE MEDIA ONLY. The step count, the
+// step-name rules and the reference graph are checked by `resolveBlockWorkflowGraph`, and the
 // step-type denylist by the router — both on the estimate and the submit, before
 // any orchestrator call. They are NOT here because a schema rejection is thrown
 // at the tRPC boundary, where it cannot carry the `errorCode` a block branches
@@ -704,6 +742,22 @@ export const blockMultiStepWorkflowBodySchema = z
     arguments: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
+  // `arguments` too: a step input can `$ref` it, so it reaches the orchestrator the same way.
+  .superRefine(
+    refuseInlineMedia(
+      (b) => [
+        ...b.steps.map((step, i): [InlineMediaPath, unknown] => [
+          ['steps', i, 'input'],
+          step.input,
+        ]),
+        [['arguments'], b.arguments],
+      ],
+      {
+        path: ['steps'],
+        message: `step inputs and arguments hold more than ${INLINE_MEDIA_MAX_VISITS} values in total`,
+      }
+    )
+  )
   .refine(
     (b) =>
       b.steps.reduce((bytes, step) => bytes + JSON.stringify(step.input).length, 0) +
