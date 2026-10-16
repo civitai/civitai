@@ -14,6 +14,16 @@ import type * as BuzzService from '~/server/services/buzz.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+// The re-removal hold reads through Kysely, which this file does not route to PGlite; no image here
+// has an approved appeal, so the hold lets everything through (covered by its own tests).
+vi.mock('~/server/services/image-removal-hold.service', () => ({
+  canConfirmReRemoval: async () => false,
+  holdRemovals: async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  }),
+  heldRemovalSummary: () => [],
+}));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
