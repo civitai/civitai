@@ -61,6 +61,30 @@ type SubListingHydrateRow = {
  */
 export const PARENT_LINK_TEMPLATE_SQL = Prisma.sql`(to_jsonb(sp) ->> 'link_template')`;
 
+/**
+ * The image's post, aliased `p`, is published and not Private: what a card needs before it shows
+ * an item image. NULL, so false, for an image with no post. The one definition behind both the
+ * card render (`hydrateSubListingCards`) and the publish check (`isImageInPublicPost`).
+ */
+const IMAGE_POST_PUBLIC_SQL = Prisma.sql`(p."publishedAt" < now() AND p."availability"::text <> 'Private')`;
+
+/**
+ * True when `imageId` is in a published, non-private post. Stricter than `getImage`'s anonymous
+ * read, which also serves a postless image that is an article cover or on a bounty: the card
+ * would not show such an image, so it is not accepted for one.
+ */
+export async function isImageInPublicPost(
+  db: Pick<PrismaClient, '$queryRaw'>,
+  imageId: number
+): Promise<boolean> {
+  const rows = await db.$queryRaw<{ id: number }[]>(Prisma.sql`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId} AND ${IMAGE_POST_PUBLIC_SQL}
+  `);
+  return rows.length > 0;
+}
+
 export type SubListingViewer = {
   /** The viewer's own browsing level, when signed in. */
   browsingLevel?: number | null;
@@ -168,7 +192,7 @@ export async function hydrateSubListingCards(
            i."tosViolation" AS image_tos_violation,
            i."acceptableMinor" AS image_acceptable_minor,
            i."blockedFor" AS image_blocked_for,
-           (p."publishedAt" < now() AND p."availability"::text <> 'Private') AS image_public
+           ${IMAGE_POST_PUBLIC_SQL} AS image_public
     FROM app_sub_listings s
     JOIN app_listings al ON al.id = s.parent_listing_id
     JOIN "User" u ON u.id = s.author_user_id

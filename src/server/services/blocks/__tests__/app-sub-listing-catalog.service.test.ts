@@ -184,6 +184,10 @@ beforeEach(() => {
     id,
     user: { id: IMAGE_OWNERS[id] ?? -1 },
   }));
+  // `isImageInPublicPost`: every image above is in a published, non-private post.
+  read.$queryRaw.mockImplementation(async (q: { values: unknown[] }) =>
+    IMAGE_OWNERS[q.values[0] as number] ? [{ id: q.values[0] }] : []
+  );
 });
 
 describe('upsertCatalogSubListing — new items', () => {

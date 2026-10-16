@@ -6,7 +6,10 @@ import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
-import { PARENT_LINK_TEMPLATE_SQL } from '~/server/services/blocks/app-sub-listing-store.service';
+import {
+  isImageInPublicPost,
+  PARENT_LINK_TEMPLATE_SQL,
+} from '~/server/services/blocks/app-sub-listing-store.service';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import {
@@ -295,25 +298,28 @@ export async function readSharedItemForSubListing(
 }
 
 /**
- * Owner of `imageId` if an anonymous viewer may see it, else null. A card shows its image to
- * every store visitor, so this reuses `getImage`'s non-moderator read rather than restating
- * its visibility rule. Render re-checks that the image's post is still public and the
- * per-viewer maturity (`hydrateSubListingCards` / `projectSubListingCard`).
+ * Owner of `imageId` if a store visitor would see it on a card, else null. Two reads: `getImage`'s
+ * non-moderator read (reviewed, not Blocked, readable by an anonymous viewer), reused rather than
+ * restating its visibility rule; and the card's own requirement that the image is in a published,
+ * non-private post (`isImageInPublicPost`), which `getImage` does not impose on a postless article
+ * cover or bounty image. Render re-checks the post and the per-viewer maturity
+ * (`hydrateSubListingCards` / `projectSubListingCard`).
  */
 async function publicImageOwner(imageId: number): Promise<number | null> {
   const { getImage } = await import('~/server/services/image.service');
+  let owner: number;
   try {
-    const image = await getImage({ id: imageId, isModerator: false });
-    return image.user.id;
+    owner = (await getImage({ id: imageId, isModerator: false })).user.id;
   } catch (err) {
     if (err instanceof TRPCError && err.code === 'NOT_FOUND') return null;
     throw err;
   }
+  return (await isImageInPublicPost(dbRead, imageId)) ? owner : null;
 }
 
 /**
  * The image rule for a card, shared by the in-app publish and the catalog sync: `imageId` must
- * be publicly visible and uploaded by the item's author.
+ * be publicly visible, in a published non-private post, and uploaded by the item's author.
  */
 async function assertCardImage(imageId: number | null, authorUserId: number): Promise<void> {
   if (imageId == null) return;

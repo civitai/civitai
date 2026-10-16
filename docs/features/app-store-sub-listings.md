@@ -43,8 +43,8 @@ The parent is the calling app's own listing, from the token. A publish requires:
 parent row; a signed-in subject passing the shared-write trust check; an item that exists in the
 app's shared storage, is not hidden and was authored by the caller; a title (1–80) and tagline
 (≤140) that pass cleaning and the shared text-safety check; an image the caller owns that is
-publicly visible (the anonymous-viewer read of `getImage`: in a published, non-private post and
-reviewed), else 400 `image_not_public`; a `subPath`
+publicly visible (readable through `getImage` by an anonymous viewer, so reviewed) and in a
+published, non-private post, as the card requires, else 400 `image_not_public`; a `subPath`
 of one to four `[A-Za-z0-9_-]` segments; and a rating no less mature than the parent's (unset
 inherits it). Limits: 30/hour and 100/day per user per parent, `max_per_author` active items,
 8 KB body. While the tables are absent the endpoints answer 503. An upsert that keeps losing a
