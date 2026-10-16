@@ -33,7 +33,7 @@ const F1 = 201;
 const F2 = 202;
 const LATE_FOLLOWER = 203;
 const OPTED_OUT = 204;
-const BLOCKED_BY_FOLLOWER = 205;
+const BLOCKED_BY_AUTHOR = 205;
 
 const NOW = '2026-10-16 10:00:30+00';
 /** The previous run's cursor. */
@@ -92,7 +92,8 @@ beforeAll(async () => {
       "userId" INT NOT NULL,
       "targetUserId" INT NOT NULL,
       type TEXT NOT NULL,
-      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-01-01'
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-01-01',
+      PRIMARY KEY ("userId", "targetUserId")
     );
     CREATE TABLE "UserNotificationSettings" ("userId" INT NOT NULL, type TEXT NOT NULL);
     SET search_path = public, pg_catalog;
@@ -110,7 +111,7 @@ beforeEach(async () => {
     UPDATE test_clock SET t = '${NOW}';
     INSERT INTO "User" VALUES
       (${AUTHOR}, 'author'), (${OTHER_AUTHOR}, 'other'), (${F1}, 'f1'), (${F2}, 'f2'),
-      (${LATE_FOLLOWER}, 'late'), (${OPTED_OUT}, 'quiet'), (${BLOCKED_BY_FOLLOWER}, 'blocker');
+      (${LATE_FOLLOWER}, 'late'), (${OPTED_OUT}, 'quiet'), (${BLOCKED_BY_AUTHOR}, 'blocker');
     INSERT INTO "Tag" VALUES
       (1, 'article category'), (2, 'announcement'), (3, 'guide'), (8, 'genre'), (9, 'music');
     -- 'music' has a parent too, just not 'article category'.
@@ -119,8 +120,10 @@ beforeEach(async () => {
       (${F1}, ${AUTHOR}, 'Follow'),
       (${F2}, ${AUTHOR}, 'Follow'),
       (${OPTED_OUT}, ${AUTHOR}, 'Follow'),
-      (${BLOCKED_BY_FOLLOWER}, ${AUTHOR}, 'Follow'),
-      (${BLOCKED_BY_FOLLOWER}, ${AUTHOR}, 'Block');
+      (${BLOCKED_BY_AUTHOR}, ${AUTHOR}, 'Follow'),
+      -- One row per pair, as in prod: a follower cannot also block or hide the author, so the
+      -- reachable block is the author's.
+      (${AUTHOR}, ${BLOCKED_BY_AUTHOR}, 'Block');
     INSERT INTO "UserEngagement" ("userId", "targetUserId", type, "createdAt") VALUES
       (${LATE_FOLLOWER}, ${AUTHOR}, 'Follow', '2026-10-16 10:00:20');
     INSERT INTO "UserNotificationSettings" VALUES (${OPTED_OUT}, 'new-article-from-following');
@@ -148,12 +151,10 @@ describe('new-article-from-following — who gets what, executed', () => {
     });
   });
 
-  it('a follower who followed after the article was published, an opted-out follower and a block are left out', async () => {
+  it('a follower who followed after the article was published, an opted-out follower and one the author blocked are left out', async () => {
     await article(11, '2026-10-16 10:00:10');
-    const recipients = recipientsOf(await run(), 11);
-    expect(recipients).not.toContain(LATE_FOLLOWER);
-    expect(recipients).not.toContain(OPTED_OUT);
-    expect(recipients).not.toContain(BLOCKED_BY_FOLLOWER);
+    // Exactly these, so neither an empty result nor an extra recipient passes.
+    expect(recipientsOf(await run(), 11)).toEqual([F1, F2]);
   });
 
   it('only Published articles: unpublished, draft and processing rows that carry a publishedAt are skipped', async () => {
@@ -194,7 +195,7 @@ describe('🔴 the cursor race — a row the previous run could not see yet', ()
     expect([...new Set((await run()).map((r) => r.details.articleId))]).toEqual([12]);
   });
 
-  it('overlapping runs emit the same key for the same article, which the notifications worker de-duplicates', async () => {
+  it('overlapping runs emit identical rows under the same per-article key', async () => {
     await article(11, '2026-10-16 10:00:10');
     const first = await run('2026-10-16T10:00:00.000Z');
     await db.exec(`UPDATE test_clock SET t = '2026-10-16 10:01:30+00'`);
