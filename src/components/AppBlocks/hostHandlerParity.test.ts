@@ -327,7 +327,7 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       //     NACK_ONLY_ERRORS. Those get no error reply except the dispatcher's NACK, which the
       //     sweep above pins.
       const unforwarded = requestTypes.filter((t) => !forwarded.has(t)).sort();
-      expect(unforwarded).toHaveLength(16);
+      expect(unforwarded).toHaveLength(18);
       const pins = pinsFromTestSources();
       expect(pins.length).toBeGreaterThanOrEqual(30);
       expect([...new Set(pins.map((p) => p.type))].sort()).toEqual(unforwarded);

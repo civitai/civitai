@@ -53,6 +53,12 @@ import {
   type CreatePostPreview,
 } from './createPostFromAppGate';
 import { CreatePostConsentBody } from './CreatePostConsentBody';
+import {
+  classifyEntityReactionError,
+  createReactionReplyLatch,
+  resolveGetEntityReactionsRequest,
+  resolveSetEntityReactionRequest,
+} from './reactionGate';
 import { handleEstimateBatch } from './estimateBatchGate';
 import { handlePrepareTrainingDataset } from './prepareTrainingDatasetGate';
 import {
@@ -4572,6 +4578,119 @@ export function PageBlockHost({
     trpcUtils,
     followCollectionMutation,
     unfollowCollectionMutation,
+  ]);
+
+  // ── SET_ENTITY_REACTION → ENTITY_REACTION_RESULT ───────────────────────────
+  // ── GET_ENTITY_REACTIONS → ENTITY_REACTIONS_RESULT ─────────────────────────
+  //
+  // A block sets, or reads, the viewer's reaction on an image it was served. The decision layer
+  // is SHARED with IframeHost (`reactionGate.ts`), which carries the rationale; this host
+  // contributes its `viewer` prop, its `reviewMode` and the token's granted scopes.
+  //
+  // 🔴 NO CONFIRM DIALOG, ON PURPOSE. A per-tap confirm would make reactions unusable; the
+  // consent is the consent-gated `social:react:self` grant, refused here as `needs-consent`
+  // while missing and refused again by the server if this check ever regressed.
+  //
+  // REQUEST-style ⇒ every path replies exactly once (`createReactionReplyLatch`) with a
+  // `result` or a closed-set `error`. `trpcUtils.client` rather than a `useMutation` so no
+  // render-time hook is added to a component two dozen suites mock by hand.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
+      const gate = resolveSetEntityReactionRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewMode,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTION_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('SET_ENTITY_REACTION');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.setReactionFromApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewMode,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_ENTITY_REACTIONS', (raw) => {
+      const gate = resolveGetEntityReactionsRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewMode,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTIONS_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTIONS_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('GET_ENTITY_REACTIONS');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.getReactionsForApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewMode,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
   ]);
 
   // ── CREATE_POST_FROM_APP → CREATE_POST_RESULT ──────────────────────────────

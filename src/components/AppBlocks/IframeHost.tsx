@@ -81,6 +81,12 @@ import {
   resolveCollectionIdentity,
   type CollectionLookupBudget,
 } from './collectionFollowGate';
+import {
+  classifyEntityReactionError,
+  createReactionReplyLatch,
+  resolveGetEntityReactionsRequest,
+  resolveSetEntityReactionRequest,
+} from './reactionGate';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -3203,6 +3209,110 @@ export function IframeHost({
     trpcUtils,
     followCollectionMutation,
     unfollowCollectionMutation,
+  ]);
+
+  // ── SET_ENTITY_REACTION / GET_ENTITY_REACTIONS ─────────────────────────────
+  // The model-slot twin of PageBlockHost's reaction handlers; the decision layer is shared
+  // (`reactionGate.ts`) and carries the rationale. This host contributes `currentUser` and the
+  // token's granted scopes. There is no mod-review sandbox on the model slot, so `reviewMode`
+  // is constant false here.
+  //
+  // No confirm dialog: the consent-gated `social:react:self` grant is the consent. Every path
+  // replies exactly once; `trpcUtils.client` so no render-time hook is added.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
+      const gate = resolveSetEntityReactionRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTION_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('SET_ENTITY_REACTION');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.setReactionFromApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_ENTITY_REACTIONS', (raw) => {
+      const gate = resolveGetEntityReactionsRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTIONS_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTIONS_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('GET_ENTITY_REACTIONS');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.getReactionsForApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
   ]);
 
   useEffect(() => {

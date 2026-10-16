@@ -148,10 +148,24 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  isAppBlocksAppReactionsEnabled,
   isAppBlocksEnabled,
   isAppBlocksPostCreationEnabled,
 } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
+// The SITE's reaction limits, imported rather than restated: the app wrapper shares them.
+import { reactionRateLimits } from '~/server/schema/reaction.schema';
+import {
+  getReactionsForAppSchema,
+  setReactionFromAppSchema,
+} from '~/server/schema/blocks/app-reaction.schema';
+import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
+import {
+  APP_REACTION_SCOPE,
+  APP_REACTION_SERVER_ERRORS,
+  isAppImageReaction,
+  SITE_REACTION_RATE_LIMIT_KEY,
+} from '~/shared/constants/block-reaction.constants';
 import { persistBlockUploadImageSchema } from '~/server/schema/blocks/block-image-upload.schema';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
@@ -745,6 +759,99 @@ async function recordBlockPostInvocation(opts: {
     });
   } catch {
     /* best-effort: an audit failure never breaks (or slows) a committed post */
+  }
+}
+
+type BlockReactionRequestAuth = {
+  claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
+  userId: number;
+};
+
+/**
+ * The authorization ladder for the two app-reaction procedures — `setReactionFromApp` and
+ * `getReactionsForApp` — in one place, so the read can never be reachable on a token the write
+ * would refuse. Modelled on `authorizeBlockPostRequest` and in the same order:
+ *
+ *   1. the bridge guard (validity, revocation, the backing app still approved);
+ *   2. the `social:react:self` scope — consent-gated, so absent until the viewer granted it;
+ *   3. a non-anon subject that IS the signed-in session user the request arrived with;
+ *   4. the App-Blocks runtime flag on that subject;
+ *   5. the subject hydrates;
+ *   6. the dedicated, fail-closed app-reactions flag on that subject.
+ *
+ * The ticket check is NOT here: it is per entity, so each procedure applies it to its own ids.
+ *
+ * ⚠️ The return type is a named alias, and the guard is never spelled with an open paren in
+ * prose, for the same two textual-scanner reasons recorded on `authorizeBlockPostRequest`.
+ */
+async function authorizeBlockReactionRequest(
+  blockToken: string,
+  sessionUserId: number
+): Promise<BlockReactionRequestAuth> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  if (!claims.scopes.includes(APP_REACTION_SCOPE)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: APP_REACTION_SERVER_ERRORS.missingScope });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'reacting requires a signed-in viewer' });
+  }
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (!subjectUser) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'reacting subject could not be resolved, please try again',
+    });
+  }
+  // Fail-closed: an ABSENT flag resolves false for everyone, mods included.
+  if (!(await isAppBlocksAppReactionsEnabled({ user: subjectUser }))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: APP_REACTION_SERVER_ERRORS.disabled });
+  }
+  return { claims, userId };
+}
+
+/**
+ * The audit row for one reaction an app CHANGED. Not written for a no-op set — nothing happened
+ * on the viewer's account — and not before the gates admit the call, so a refused app cannot
+ * fill the viewer's Activity feed. Best-effort, like the post audit: a failed audit write never
+ * fails a reaction that already landed.
+ */
+async function recordBlockReactionInvocation(opts: {
+  claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
+  userId: number;
+  imageId: number;
+  reaction: string;
+  reacted: boolean;
+  outcome: 'ok' | 'failed';
+}): Promise<void> {
+  try {
+    const { recordScopeInvocation } = await import(
+      '~/server/services/blocks/user-app-surface.service'
+    );
+    await recordScopeInvocation({
+      userId: opts.userId,
+      appBlockId: opts.claims.appBlockId,
+      blockInstanceId: opts.claims.blockInstanceId,
+      scope: 'social:react:self',
+      // Bounded: `endpoint` is the `topEndpoints` GROUP BY key; the ids live in `detail`.
+      endpoint: 'reaction:set',
+      statusCode: opts.outcome === 'failed' ? 500 : 200,
+      detail: {
+        action: 'reaction.set',
+        outcome: opts.outcome,
+        entityType: 'Image',
+        entityId: opts.imageId,
+        reaction: opts.reaction,
+        reacted: opts.reacted,
+      },
+      dev: opts.claims.dev === true,
+      // ⚠️ SPELLED `opts.claims`, like the post audit: the verified claims arrive on an options bag.
+      privateRun: opts.claims.privateRun === true,
+    });
+  } catch {
+    /* best-effort: an audit failure never breaks (or slows) a reaction that landed */
   }
 }
 
@@ -5919,6 +6026,158 @@ export const blocksRouter = router({
         await recordOutcome('failed');
         throw err;
       }
+    }),
+
+  /**
+   * ── APP REACTIONS (image only, v1) ──────────────────────────────────────────
+   *
+   * A block sets the VIEWER'S reaction on an image a block endpoint served it. Design and
+   * maintainer decisions: civitai-app-starters#669.
+   *
+   * 🔴 THE WRITE IS THE SITE'S OWN `toggleReactionHandler`, so rewards, metrics, milestone
+   * notifications and the public reactors list behave exactly as a click on the site does.
+   * What this wrapper adds is what a direct `reaction.toggle` call cannot carry:
+   *
+   *   - WHICH APP — the token, so every change gets a `block_scope_invocations` row;
+   *   - PROVENANCE — a ticket the serving block endpoint signed for (image, app, viewer). An
+   *     app cannot react to an image it was never shown, nor reuse another app's or another
+   *     viewer's ticket;
+   *   - SET SEMANTICS — `reacted` is the desired state; a request that already matches does
+   *     nothing, so it pays nothing and moves nothing;
+   *   - an image allowlist (no `Dislike` — invisible on the site, but rewarded);
+   *   - a fail-closed kill switch, independent of the runtime flag.
+   *
+   * 🔴 ONE QUOTA, NOT TWO. Rate-limited with the site's own `reactionRateLimits` under the
+   * site's own key (`SITE_REACTION_RATE_LIMIT_KEY`, which is what `reaction.toggle`'s path
+   * derives to), so an app's reactions and the viewer's clicks draw on one per-user budget.
+   * There is deliberately no extra per-app cap in v1 (maintainer decision); the audit trail is
+   * how an abusive app is found, and per-app caps are the first follow-up if it shows one.
+   * Like the site, a refused attempt still counts against the quota.
+   *
+   * `guardedProcedure` like `reaction.toggle` (muted / banned / unverified-email refused), plus
+   * `blockApiKeys`, so only the viewer's own browser session can call it. MUTATION for the
+   * bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  setReactionFromApp: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(setReactionFromAppSchema)
+    .use(rateLimit(reactionRateLimits, undefined, { sharedKey: SITE_REACTION_RATE_LIMIT_KEY }))
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockReactionRequest(input.blockToken, ctx.user.id);
+
+      // The image allowlist, server-side. The host gate checks it too; this is the authority.
+      if (!isAppImageReaction(input.reaction)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: APP_REACTION_SERVER_ERRORS.reactionNotAllowed,
+        });
+      }
+
+      // PROVENANCE. The ticket must have been signed for exactly this image, this app and this
+      // viewer, and be unexpired. Checked AFTER every identity gate so it cannot be probed by a
+      // caller who could not react anyway.
+      const verdict = verifyReactTicket(input.ticket, {
+        entityType: input.entityType,
+        entityId: input.entityId,
+        appBlockId: claims.appBlockId,
+        sub: claims.sub,
+      });
+      if (!verdict.ok) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: APP_REACTION_SERVER_ERRORS.ticket });
+      }
+
+      const [{ toggleReactionHandler }, { setImageReactionFromApp, readImageReactionStates }] =
+        await Promise.all([
+          import('~/server/controllers/reaction.controller'),
+          import('~/server/services/blocks/block-reaction.service'),
+        ]);
+
+      let outcome;
+      try {
+        outcome = await setImageReactionFromApp({
+          ctx,
+          userId,
+          imageId: input.entityId,
+          reaction: input.reaction,
+          reacted: input.reacted,
+          toggle: toggleReactionHandler,
+        });
+      } catch (err) {
+        await recordBlockReactionInvocation({
+          claims,
+          userId,
+          imageId: input.entityId,
+          reaction: input.reaction,
+          reacted: input.reacted,
+          outcome: 'failed',
+        });
+        throw err;
+      }
+      if (outcome.changed) {
+        await recordBlockReactionInvocation({
+          claims,
+          userId,
+          imageId: input.entityId,
+          reaction: input.reaction,
+          reacted: input.reacted,
+          outcome: 'ok',
+        });
+      }
+
+      const states = await readImageReactionStates({ userId, imageIds: [input.entityId] });
+      const state = states[input.entityId];
+      return {
+        entityType: input.entityType,
+        entityId: input.entityId,
+        changed: outcome.changed,
+        counts: state.counts,
+        viewerReactions: state.viewerReactions,
+        statsUnknown: state.statsUnknown,
+      };
+    }),
+
+  /**
+   * The read half: counts and the viewer's own reactions for up to 100 images.
+   *
+   * 🔴 TICKETED, LIKE THE WRITE. Whether a viewer reacted to an image is visible on the site only
+   * to that image's owner, so an unticketed read would let an app holding the scope probe the
+   * viewer's reaction history across arbitrary ids. An id without a valid ticket is simply not
+   * answered (listed in `unavailable`) — never answered with an empty `viewerReactions`, which
+   * would read as "you have not reacted" and invite the viewer to react again.
+   *
+   * Same ladder as the write; the catalog bucket bounds it, since each call is a metric read.
+   */
+  getReactionsForApp: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(getReactionsForAppSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockReactionRequest(input.blockToken, ctx.user.id);
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+
+      const ids = [...new Set(input.ids)];
+      const ticketed: number[] = [];
+      const unavailable: number[] = [];
+      for (const id of ids) {
+        const verdict = verifyReactTicket(input.tickets?.[String(id)], {
+          entityType: input.entityType,
+          entityId: id,
+          appBlockId: claims.appBlockId,
+          sub: claims.sub,
+        });
+        (verdict.ok ? ticketed : unavailable).push(id);
+      }
+
+      const { readImageReactionStates } = await import(
+        '~/server/services/blocks/block-reaction.service'
+      );
+      const byId = await readImageReactionStates({ userId, imageIds: ticketed });
+      return { entityType: input.entityType, byId, unavailable };
     }),
 
   /**
