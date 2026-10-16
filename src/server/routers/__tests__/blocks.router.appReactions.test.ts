@@ -146,6 +146,11 @@ function setInput(over: Record<string, unknown> = {}) {
   };
 }
 
+/** The viewer's reactions on the PRIMARY after the write (the read-back). */
+function afterWrite(rows: Array<{ reaction: string }>) {
+  dbMock.dbWrite.imageReaction.findMany.mockResolvedValue(rows);
+}
+
 /** The viewer currently holds (or does not hold) the reaction, on the PRIMARY. */
 function viewerHolds(holds: boolean) {
   dbMock.dbWrite.imageReaction.findFirst.mockResolvedValue(holds ? { id: 1 } : null);
@@ -355,9 +360,12 @@ describe('setReactionFromApp — set semantics', () => {
 
   it('reacted:false on an ABSENT reaction is also a no-op', async () => {
     viewerHolds(false);
+    afterWrite([]);
     const result = await caller().setReactionFromApp(setInput({ reacted: false }) as never);
     expect(result.changed).toBe(false);
+    expect(result.reacted).toBe(false);
     expect(h.toggle).not.toHaveBeenCalled();
+    expect(h.recordScopeInvocation).not.toHaveBeenCalled();
   });
 
   it('reacted:true on an absent reaction calls the SITE handler once, as the session viewer', async () => {
@@ -375,6 +383,8 @@ describe('setReactionFromApp — set semantics', () => {
     expect(result).toEqual({
       entityType: 'image',
       entityId: IMAGE_ID,
+      reaction: 'Heart',
+      reacted: true,
       changed: true,
       counts: { Like: 3, Heart: 5, Laugh: 0, Cry: 1 },
       viewerReactions: ['Heart'],
@@ -382,51 +392,53 @@ describe('setReactionFromApp — set semantics', () => {
     });
   });
 
-  it('reacted:false on a held reaction calls the site handler (it removes)', async () => {
+  it('reacted:false on a held reaction removes it, reports it and audits the removal', async () => {
     viewerHolds(true);
+    afterWrite([]);
     h.toggle.mockResolvedValue('removed');
-    await caller().setReactionFromApp(setInput({ reacted: false }) as never);
+    const result = await caller().setReactionFromApp(setInput({ reacted: false }) as never);
     expect(h.toggle).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ changed: true, reacted: false, viewerReactions: [] });
+    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detail: expect.objectContaining({ reacted: false, outcome: 'ok' }),
+      })
+    );
   });
 
-  it('a toggle that matched no row is NOT reported or audited as a change', async () => {
+  it('🔴 a toggle that did not apply (race / replica lag) is reported TRUTHFULLY, not as asked', async () => {
+    // Asked for reacted:true; the site's own (replica) check saw a row the primary no longer has,
+    // so its delete matched nothing. The primary read-back is the truth: still not reacted.
+    viewerHolds(false);
+    afterWrite([]);
     h.toggle.mockResolvedValue('noop');
-    const result = await caller().setReactionFromApp(setInput() as never);
-    expect(result.changed).toBe(false);
+    const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
+    expect(h.toggle).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ changed: false, reacted: false, viewerReactions: [] });
+    // Nothing changed on the viewer's account, so nothing is audited.
     expect(h.recordScopeInvocation).not.toHaveBeenCalled();
   });
 
-  it('a toggle that went the OTHER way (concurrent request) is toggled back once, then audited', async () => {
-    // Asked for reacted:true; a racing request made the site handler REMOVE instead.
-    h.toggle.mockResolvedValueOnce('removed').mockResolvedValueOnce('created');
-    const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
-    expect(h.toggle).toHaveBeenCalledTimes(2);
-    expect(result.changed).toBe(true);
-    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({ detail: expect.objectContaining({ outcome: 'ok', reacted: true }) })
-    );
+  it('never toggles twice — a concurrent winner is reported, not fought', async () => {
+    // Asked to REMOVE; a racing request already re-created it. One toggle, then the truth.
+    viewerHolds(true);
+    afterWrite([{ reaction: 'Heart' }]);
+    h.toggle.mockResolvedValue('created');
+    const result = await caller().setReactionFromApp(setInput({ reacted: false }) as never);
+    expect(h.toggle).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ changed: false, reacted: true });
   });
 
-  it('a second wrong-way toggle is an error, never a silent inversion', async () => {
-    h.toggle.mockResolvedValue('removed');
-    await expect(caller().setReactionFromApp(setInput({ reacted: true }) as never)).rejects.toThrow(
-      'reaction state changed concurrently'
-    );
-    expect(h.toggle).toHaveBeenCalledTimes(2);
-    expect(h.recordScopeInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({ detail: expect.objectContaining({ outcome: 'failed' }) })
-    );
-  });
-
-  it('reports the viewer reactions read on the PRIMARY after the write', async () => {
-    dbMock.dbWrite.imageReaction.findMany.mockResolvedValue([
-      { reaction: 'Heart' },
-      { reaction: 'Like' },
-    ]);
+  it('reads the post-write state on the PRIMARY, for this viewer and image', async () => {
+    afterWrite([{ reaction: 'Heart' }, { reaction: 'Like' }]);
     // The replica still lags: it would answer with nothing.
     h.getUserReactionsForImages.mockResolvedValue({});
     const result = await caller().setReactionFromApp(setInput() as never);
     expect(result.viewerReactions).toEqual(['Heart', 'Like']);
+    expect(dbMock.dbWrite.imageReaction.findMany).toHaveBeenCalledWith({
+      where: { imageId: IMAGE_ID, userId: VIEWER_ID },
+      select: { reaction: true },
+    });
   });
 
   it('writes ONE audit row for a change, naming the app, the image and the reaction', async () => {

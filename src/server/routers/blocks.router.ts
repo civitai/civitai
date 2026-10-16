@@ -6089,13 +6089,11 @@ export const blocksRouter = router({
         throw new TRPCError({ code: 'FORBIDDEN', message: APP_REACTION_SERVER_ERRORS.ticket });
       }
 
-      const [
-        { toggleReactionHandler },
-        { setImageReactionFromApp, readImageReactionStates, readViewerImageReactionsOnPrimary },
-      ] = await Promise.all([
-        import('~/server/controllers/reaction.controller'),
-        import('~/server/services/blocks/block-reaction.service'),
-      ]);
+      const [{ toggleReactionHandler }, { setImageReactionFromApp, readImageReactionStates }] =
+        await Promise.all([
+          import('~/server/controllers/reaction.controller'),
+          import('~/server/services/blocks/block-reaction.service'),
+        ]);
 
       let outcome;
       try {
@@ -6118,31 +6116,32 @@ export const blocksRouter = router({
         });
         throw err;
       }
+      // Audited from what HAPPENED (read back on the primary), not from what was asked: a racing
+      // request can make the site toggle go the other way, and the audit trail must say so.
       if (outcome.changed) {
         await recordBlockReactionInvocation({
           claims,
           userId,
           imageId: input.entityId,
           reaction: input.reaction,
-          reacted: input.reacted,
+          reacted: outcome.reacted,
           outcome: 'ok',
         });
       }
 
       // Counts come from the metric store, which updates asynchronously, so right after a change
-      // they can lag by one; the viewer's own reactions are read on the PRIMARY so the block is
-      // told the state it just set, not a lagging replica's.
-      const [states, viewerReactions] = await Promise.all([
-        readImageReactionStates({ userId, imageIds: [input.entityId] }),
-        readViewerImageReactionsOnPrimary(userId, input.entityId),
-      ]);
+      // they can lag it. `reacted` / `viewerReactions` are the primary's truth: when `reacted`
+      // differs from the request, a concurrent change won and the request did not apply.
+      const states = await readImageReactionStates({ userId, imageIds: [input.entityId] });
       const state = states[input.entityId];
       return {
         entityType: input.entityType,
         entityId: input.entityId,
+        reaction: input.reaction,
+        reacted: outcome.reacted,
         changed: outcome.changed,
         counts: state.counts,
-        viewerReactions,
+        viewerReactions: outcome.viewerReactions,
         statsUnknown: state.statsUnknown,
       };
     }),
