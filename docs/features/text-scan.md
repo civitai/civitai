@@ -109,7 +109,12 @@ only, so a Model rule can only be managed on `/text-scan/model-rules`.
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
 (the owner can appeal), mute the account pending moderator review, or, for `modelRules`, unpublish
 the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
-(a storyline title appeal is on Storylines > Title Appeals); text scan adds no queue of its own.
+(a storyline title appeal is on Storylines > Title Appeals).
+
+`csam` is the exception: a positive verdict writes one Pending `TextScanHold` row per entity, label
+and scanned text, and nothing else (no report, mute, strike, hide or notification). A rescan of the
+same text adds nothing; changed text adds a new row. The scam, Post and Model adapters write the hold
+before their own action. Moderators work the holds on a separate moderator-app page.
 
 ## Modes
 

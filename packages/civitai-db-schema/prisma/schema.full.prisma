@@ -2249,6 +2249,42 @@ model TextScanPrompt {
   @@index([key, id(sort: Desc)])
 }
 
+enum TextScanHoldStatus {
+  Pending
+  Dismissed
+  Confirmed
+}
+
+// A text-scan verdict held for a moderator; nothing else acts on it. A partial index on pending rows
+// lives in migration 20261016150000_text_scan_hold (Prisma cannot model it).
+model TextScanHold {
+  id           Int                @id @default(autoincrement())
+  entityType   String
+  entityId     Int
+  label        String
+  textHash     String
+  status       TextScanHoldStatus @default(Pending)
+  /// Content author. A plain column so the hold keeps it after the account is deleted.
+  userId       Int?
+  /// The text as composed for the scan.
+  text         String
+  reason       String
+  workflowId   String?
+  promptId     Int?
+  contentAt    DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  decidedAt    DateTime?
+  decidedById  Int?
+  decisionNote String?
+  hiddenAt     DateTime?
+  restoredAt   DateTime?
+  meta         Json?
+
+  @@unique([entityType, entityId, label, textHash])
+  @@index([status, createdAt])
+}
+
 enum ImageEngagementType {
   Favorite
   Hide
