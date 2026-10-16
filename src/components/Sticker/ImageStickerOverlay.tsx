@@ -136,7 +136,12 @@ export function ImageStickerOverlay({ imageId }: { imageId: number }) {
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!active || !host) return;
+    // Cleared with the host, so a later session does not paint (and register as
+    // the drag surface) a box measured before the layout last changed.
+    if (!active || !host) {
+      setBox(null);
+      return;
+    }
 
     let bound: HTMLElement | null = null;
     let observer: ResizeObserver | null = null;
@@ -144,13 +149,23 @@ export function ImageStickerOverlay({ imageId }: { imageId: number }) {
     const measure = () => {
       const element = bound;
       if (!element || element.offsetWidth <= 0 || element.offsetHeight <= 0) return;
+      // An image with no decoded picture (still loading, or failed) has a layout
+      // box but no artwork, and a failed one draws its broken-image placeholder
+      // there: a placement made against that is stored against a rectangle nobody
+      // else sees. The `load` listener measures again once there is a picture.
+      if (element instanceof HTMLImageElement && element.naturalWidth === 0) return;
 
       const stop = host.offsetParent;
       const at = offsetWithin(element, stop);
       const self = offsetWithin(host, stop);
       if (!at || !self) return;
 
-      const drawn = mediaContentRectOf(element);
+      // An embed has no natural size to fit, and its visible box is its border
+      // box: a padding-ratio wrapper is zero tall in its content box.
+      const drawn =
+        element instanceof HTMLImageElement || element instanceof HTMLVideoElement
+          ? mediaContentRectOf(element)
+          : { width: element.offsetWidth, height: element.offsetHeight, left: 0, top: 0 };
       const next = {
         width: drawn.width,
         height: drawn.height,

@@ -67,13 +67,13 @@ const { ImageStickerOverlay } = await import('~/components/Sticker/ImageStickerO
  * root below it and measure an offset no real page has. Percentages, so that
  * resizing the stage resizes the media with no help from the test.
  */
-const renderStage = () => {
+const renderStage = (src: string | null = PORTRAIT_PNG) => {
   renderWithProviders(
     <div data-testid="stage" style={{ position: 'relative', width: 400, height: 400 }}>
       {/* eslint-disable-next-line @next/next/no-img-element -- a fixture, not app markup. */}
       <img
         data-testid="media"
-        src={PORTRAIT_PNG}
+        src={src ?? undefined}
         alt=""
         style={{ position: 'absolute', left: '10%', top: '10%', width: '60%', height: '60%' }}
       />
@@ -145,6 +145,82 @@ describe('the overlay is the rendered media box', () => {
       .poll(() => styleBox(box), { timeout: 5000 })
       .toEqual({ left: 80, top: 60, width: 480, height: 360 });
     expect(styleBox(box)).toEqual(await mediaRect());
+  });
+});
+
+describe('media that is not a plain image', () => {
+  /**
+   * A padding-ratio embed, the shape `YoutubeEmbed` renders: no height of its own,
+   * so the visible box is all padding and its content box is zero tall.
+   */
+  test('an embed is measured by its border box, not its empty content box', async () => {
+    renderWithProviders(
+      <div data-testid="stage" style={{ position: 'relative', width: 400, height: 400 }}>
+        <div
+          data-testid="embed"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: 300,
+            height: 0,
+            paddingBottom: '56.25%',
+          }}
+        >
+          <iframe
+            title="embed"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+          />
+        </div>
+        <ImageStickerOverlay imageId={IMAGE_ID} />
+      </div>
+    );
+
+    const box = styleBox(await overlayBox());
+    const embed = (await page.getByTestId('embed').element()) as HTMLElement;
+
+    // The wide-screen box a viewer actually sees, not the zero-tall content box.
+    expect(box.width).toBe(300);
+    expect(box.height).toBe(embed.offsetHeight);
+    expect(box.height).toBeGreaterThan(0);
+  });
+
+  /**
+   * A placement is a fraction of the picture, and a picture that did not load is
+   * not one: the broken-image icon and its alt text would become the coordinate
+   * system, and anything placed there is stored against a rectangle nobody else
+   * sees.
+   */
+  /**
+   * The other half of the guard: refusing an image with no picture must not mean
+   * refusing it forever. The surface appears when the picture does, which only the
+   * `load` listener can notice, since the box is already final by then.
+   */
+  test('the surface appears when the picture arrives', async () => {
+    renderStage(null);
+
+    await expect.element(page.getByTestId('media'), { timeout: 5000 }).toBeInTheDocument();
+    const media = (await page.getByTestId('media').element()) as HTMLImageElement;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(document.querySelector('[data-testid="placements"]')).toBeNull();
+
+    media.src = PORTRAIT_PNG;
+
+    expect(styleBox(await overlayBox())).toEqual({ left: 40, top: 40, width: 240, height: 240 });
+  });
+
+  test('an image that failed to load is not a surface', async () => {
+    renderStage('data:image/png;base64,AAAA');
+
+    await expect.element(page.getByTestId('media'), { timeout: 5000 }).toBeInTheDocument();
+    const media = (await page.getByTestId('media').element()) as HTMLImageElement;
+    await expect.poll(() => media.complete, { timeout: 5000 }).toBe(true);
+    expect(media.naturalWidth).toBe(0);
+    // Laid out and non-zero, so a size check alone would let it through.
+    expect(media.offsetWidth).toBeGreaterThan(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(document.querySelector('[data-testid="placements"]')).toBeNull();
   });
 });
 
