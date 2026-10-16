@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -12,6 +13,7 @@ import { recordUserActivity } from './user-activity';
 import { restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
+import type { HeldSummary } from './removal-hold';
 
 // Enforcement actions from User Lookup (Retool's BANAPI / UNBANAPI / ToggleMute / forceLogout, ticket
 // 868kkxqpn §1.2).
@@ -1068,6 +1070,19 @@ async function inChunks(
   return { ok: true, count: affected };
 }
 
+export type RemoveImagesResult =
+  | { ok: true; count: number; held: HeldSummary[] }
+  | { ok: false; error: string };
+
+const heldSummarySchema = z.array(
+  z.object({
+    imageId: z.number(),
+    created: z.boolean(),
+    approvedAt: z.string(),
+    approvedByUsername: z.string().nullable(),
+  })
+);
+
 export async function removeImages(input: {
   imageIds: number[];
   reason?: string;
@@ -1075,13 +1090,17 @@ export async function removeImages(input: {
    *  it files the removal with no classification at all — silent and unrecoverable after the fact. */
   violationType?: string;
   moderatorId: number;
-}): Promise<CountResult> {
+  /** The moderator holds `image.removal.confirm`, so the endpoint holds none of these removals. */
+  canConfirmReRemoval?: boolean;
+}): Promise<RemoveImagesResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
+  // Removals the endpoint held for a second moderator instead of applying (`removal-hold`).
+  const held: HeldSummary[] = [];
   const result = await inChunks(
     input.imageIds,
-    (chunk) =>
-      postMainAppJson(
+    async (chunk) => {
+      const sent = await postMainAppJson(
         '/api/mod/remove-images',
         {
           imageIds: chunk,
@@ -1089,28 +1108,36 @@ export async function removeImages(input: {
           reason: input.reason,
           ...(input.violationType ? { violationType: input.violationType } : {}),
           ...(input.reason ? { violationDetails: input.reason } : {}),
+          ...(input.canConfirmReRemoval ? { canConfirmReRemoval: true } : {}),
         },
         'Image removal'
-      ),
+      );
+      if (sent.ok) held.push(...(heldSummarySchema.safeParse(sent.body.held).data ?? []));
+      return sent;
+    },
     // One row per image: ModActivity keys on content id, so a single "removed 300" row would leave
-    // 299 images with no record of who removed them.
-    (chunk) =>
-      Promise.all(
-        chunk.map((id) =>
-          recordModActivity({
-            userId: input.moderatorId,
-            entityType: 'image',
-            entityId: id,
-            activity: 'bulkRemove',
-          })
-        )
-      ).then(() => undefined)
+    // 299 images with no record of who removed them. A held image was not removed.
+    (chunk) => {
+      const heldIds = new Set(held.map((h) => h.imageId));
+      return Promise.all(
+        chunk
+          .filter((id) => !heldIds.has(id))
+          .map((id) =>
+            recordModActivity({
+              userId: input.moderatorId,
+              entityType: 'image',
+              entityId: id,
+              activity: 'bulkRemove',
+            })
+          )
+      ).then(() => undefined);
+    }
   );
   if (!result.ok) return result;
 
-  if (result.count === 0)
+  if (result.count === 0 && !held.length)
     return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
-  return result;
+  return { ...result, held };
 }
 
 /**

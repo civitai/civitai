@@ -33,6 +33,7 @@ import {
   updateImageAcceptableMinor,
   raiseOwnImageNsfwLevel,
   updateImageNsfwLevel,
+  getOpenImageReportIds,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import {
@@ -45,6 +46,11 @@ import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
+import {
+  canConfirmReRemoval,
+  heldRemovalSummary,
+  holdRemovals,
+} from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
@@ -117,6 +123,9 @@ export const moderateImageHandler = async ({
       userId: ctx.user.id,
       ip: resolveClientIpOrNull(ctx.req) ?? undefined,
       userAgent: ctx.req.headers['user-agent'],
+      ...(input.reviewAction === 'block' && {
+        canConfirmReRemoval: await canConfirmReRemoval(ctx.user),
+      }),
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -200,6 +209,24 @@ export const setTosViolationHandler = async ({
       },
     });
     if (!image) throw throwNotFoundError(`No image with id ${id}`);
+
+    // Before anything changes: a held removal leaves the image, its reports and its owner untouched
+    // until a second moderator confirms it.
+    if (!(await canConfirmReRemoval(user))) {
+      const { held } = await holdRemovals(
+        [
+          {
+            imageId: id,
+            violationType,
+            violationDetails,
+            reportIds: await getOpenImageReportIds(id, ReportReason.TOSViolation),
+          },
+        ],
+        user.id,
+        'site.setTosViolation'
+      );
+      if (held.length) return { ...image, held: heldRemovalSummary(held)[0] };
+    }
 
     // Update all reports with this comment id to actioned
     const affectedReports = await updateImageReportStatusByReason({
@@ -295,7 +322,7 @@ export const setTosViolationHandler = async ({
         userId: ctx.user.id,
       },
     ]);
-    return image;
+    return { ...image, held: null };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

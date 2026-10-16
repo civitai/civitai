@@ -68,12 +68,17 @@
   // What the server says it did — it can differ from what was asked (images already removed, a follow-up
   // that failed) — so the result line reports that rather than the request.
   let imageResult = $state<string | null>(null);
+  let imageHeld = $state(false);
   const onSubmit = new FormState({
     reload: true,
-    onSubmit: () => (imageResult = null),
+    onSubmit: () => {
+      imageResult = null;
+      imageHeld = false;
+    },
     onSuccess: (data) => {
       selected.clear();
       imageResult = typeof data?.imageResult === 'string' ? data.imageResult : null;
+      imageHeld = data?.imageHeld === true;
     },
   });
 
@@ -293,7 +298,10 @@
     {#if onSubmit.error}
       <ErrorAlert class="mt-3" message={onSubmit.error} />
     {:else if imageResult}
-      <p class="mt-3 text-sm text-dark-0" role="status">{imageResult}</p>
+      <p class="mt-3 text-sm text-dark-0" role="status">
+            {imageResult}
+            {#if imageHeld}<a href="/images/re-removals" class="link ml-1">Open Re-removals</a>{/if}
+          </p>
     {/if}
 
     {#if canAct}
@@ -336,6 +344,7 @@
   negativePrompt?: string | null;
   isProfilePicture?: boolean;
   hasConnection?: boolean;
+  approvedAppeal?: { approvedAt: Date; approvedByUsername: string | null } | null;
 })}
   <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -344,6 +353,7 @@
         blockedFor={img.blockedFor}
         tosViolation={img.tosViolation}
         needsReview={img.needsReview}
+        approvedAppeal={img.approvedAppeal}
       />
       <!-- Removing either has consequences beyond the image: one blanks the account's avatar, the
            other pulls an entry out of a bounty. -->

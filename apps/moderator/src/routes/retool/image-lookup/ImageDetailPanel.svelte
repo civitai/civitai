@@ -9,13 +9,19 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { PageData } from './$types';
 
-  type Image = NonNullable<PageData['result']>['image'];
+  type Result = NonNullable<PageData['result']>;
 
   let {
     image,
+    approvedAppeal,
     civitaiUrl,
     canAct = false,
-  }: { image: Image; civitaiUrl: string; canAct?: boolean } = $props();
+  }: {
+    image: Result['image'];
+    approvedAppeal: Result['approvedAppeal'];
+    civitaiUrl: string;
+    canAct?: boolean;
+  } = $props();
 
   let flagging = $state(false);
 
@@ -68,6 +74,7 @@
       minor={image.minor}
       acceptableMinor={image.acceptableMinor}
       poi={image.poi}
+      {approvedAppeal}
     />
   </div>
 

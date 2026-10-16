@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { untrack } from 'svelte';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { optimisticEnhancer } from '$lib/form-action';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
@@ -30,7 +31,12 @@
     /** `canAct` is `/reports/image`'s: reaching it is the shared Reports grant, acting needs `/users`.
      *  The `/images` queues gate both on the page, so they leave it out and can act. */
     data: ImageQueueData & { title: string; civitaiUrl: string; canAct?: boolean };
-    form: { error?: string } | null;
+    form: {
+      error?: string;
+      held?: string;
+      imageId?: number;
+      heldImageIds?: number[];
+    } | null;
   } = $props();
 
   // The report queue rules on reports, so its verdicts are report statuses. Everywhere else the
@@ -47,6 +53,15 @@
   // handled and got skipped.
   const acted = new SvelteMap<string | number, string>();
   const keyOfItem = (item: { id: number; report?: { id: number } }) => item.report?.id ?? item.id;
+  const verdictOf = (item: { id: number; report?: { id: number } }) => acted.get(keyOfItem(item));
+  // A removal held for a second moderator (see `removal-hold`) replaces the optimistic "Removed" on
+  // every card of that image, and keeps it after the next action replaces `form`.
+  $effect(() => {
+    if (!form?.held) return;
+    const held = new Set(form.heldImageIds ?? (form.imageId ? [form.imageId] : []));
+    for (const item of untrack(() => data.items))
+      if (held.has(item.id)) acted.set(keyOfItem(item), 'Held for confirmation');
+  });
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
   const drafts = new SvelteMap<number, RulingDraft<ResolutionVerdict<'appeal'>>>();
@@ -158,6 +173,16 @@
   </p>
 {/if}
 
+{#if form?.held}
+  <div
+    class="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+    role="status"
+  >
+    {form.held}
+    <a href="/images/re-removals" class="link ml-1">Open Re-removals</a>
+  </div>
+{/if}
+
 {#if form?.error}
   <div
     class="mb-3 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
@@ -236,6 +261,24 @@
   {/if}
 {/snippet}
 
+<!-- A removal for the reason this appeal overturned is held for a second moderator (Re-removals). -->
+{#snippet appealHistory(item: {
+  approvedAppeal: {
+    approvedAt: Date;
+    approvedByUsername: string | null;
+    removalLabel: string | null;
+  } | null;
+})}
+  {#if item.approvedAppeal}
+    {@const a = item.approvedAppeal}
+    <Badge class="w-fit bg-sky-500/15 text-sky-300">
+      Appeal approved {fmt(a.approvedAt)}{a.approvedByUsername ? ` by ${a.approvedByUsername}` : ''}{a.removalLabel
+        ? ` (was ${formatEnum(a.removalLabel)})`
+        : ''}
+    </Badge>
+  {/if}
+{/snippet}
+
 <!-- One grid per distinct item shape (discriminated by `kind`); the card body then dispatches on
      `data.view`. Both read straight from the server types — no casts, no aliases. -->
 {#if data.kind === 'review-highlight'}
@@ -266,16 +309,17 @@
           {#if item.promptHighlight.hasHighlights}
             <PromptHighlight result={item.promptHighlight} />
           {/if}
-          <ReviewActions {item} minorQueue verdict={acted.get(keyOfItem(item))} {selected} {submit} />
+          <ReviewActions {item} minorQueue verdict={verdictOf(item)} {selected} {submit} />
         </div>
       {:else}
         <div class="flex flex-col gap-1.5">
           <Badge class="w-fit bg-fuchsia-500/15 text-fuchsia-400">Remix source — prompt flagged</Badge>
           <PromptHighlight result={item.promptHighlight} />
-          <ReviewActions {item} verdict={acted.get(keyOfItem(item))} {selected} {submit} />
+          <ReviewActions {item} verdict={verdictOf(item)} {selected} {submit} />
         </div>
       {/if}
       {@render model3dAffordance(item)}
+      {@render appealHistory(item)}
     {/snippet}
   </ImageQueueGrid>
 {:else if data.kind === 'reported'}
@@ -319,9 +363,10 @@
         {#if placementId !== null}
           <StickerPlacementRemove {placementId} />
         {/if}
-        <ReviewActions {item} reportId={item.report.id} {reported} verdict={acted.get(keyOfItem(item))} {selected} {submit} />
+        <ReviewActions {item} reportId={item.report.id} {reported} verdict={verdictOf(item)} {selected} {submit} />
       {/if}
       {@render model3dAffordance(item)}
+      {@render appealHistory(item)}
     {/snippet}
   </ImageQueueGrid>
 {:else if data.kind === 'appeal'}
@@ -377,8 +422,9 @@
           </div>
         {/if}
       </div>
-      <AppealActions {item} verdict={acted.get(keyOfItem(item))} {selected} {messages} {drafts} {submit} />
+      <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
       {@render model3dAffordance(item)}
+      {@render appealHistory(item)}
     {/snippet}
   </ImageQueueGrid>
 {:else}
@@ -440,11 +486,12 @@
       <ReviewActions
         {item}
         dismissFlag={isFlagOnlyRemaining(item)}
-        verdict={acted.get(keyOfItem(item))}
+        verdict={verdictOf(item)}
         {selected}
         {submit}
       />
       {@render model3dAffordance(item)}
+      {@render appealHistory(item)}
     {/snippet}
   </ImageQueueGrid>
 {/if}

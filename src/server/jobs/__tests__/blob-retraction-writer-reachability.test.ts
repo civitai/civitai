@@ -108,6 +108,16 @@ const { mockDeleteImages } = vi.hoisted(() => ({
 
 // `isProd` alone is overridden; the rest of the module is spread so nothing else in the graph
 // loses an export it imports. The job short-circuits before deleting anything when it is false.
+// The re-removal hold reads through Kysely, which this file does not route to PGlite; no image here
+// has an approved appeal, so the hold lets everything through (covered by its own tests).
+vi.mock('~/server/services/image-removal-hold.service', () => ({
+  canConfirmReRemoval: async () => false,
+  holdRemovals: async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  }),
+  heldRemovalSummary: () => [],
+}));
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isProd: true,

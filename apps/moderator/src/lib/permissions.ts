@@ -66,6 +66,9 @@ export const PERMISSIONS = [
   // apart so a role can be given the Audit queues without the account-ending half of them.
   { id: 'audit.ban.execute', label: 'Ban an account from an audit queue' },
   { id: 'csam.report.file', label: 'File a CSAM report' },
+  // A removal that repeats the reason an approved appeal overturned is held until someone with this
+  // confirms it on /images/re-removals; a holder's own such removals apply directly.
+  { id: 'image.removal.confirm', label: 'Confirm re-removals of images approved on appeal' },
   // Reading the feedback queue is what the `/feedback` PAGE grant means — there is deliberately no
   // `feedback.read` id, because a permission duplicating a page grant is the weld this file's
   // header records. These two are the writes.

@@ -4332,6 +4332,22 @@ export interface AppealTrainingObjectDeletion {
   createdAt: Date;
 }
 
+export interface ImageRemovalConfirmation {
+  id: number;
+  imageId: number;
+  appealId: number;
+  requestedById: number;
+  requestedAt: Date;
+  violationType: string | null;
+  violationDetails: string | null;
+  source: string;
+  reportIds: number[];
+  status: string;
+  decidedById: number | null;
+  decidedAt: Date | null;
+  decisionNote: string | null;
+}
+
 export interface ScanLabelItem {
   id: number;
   imageId: number;

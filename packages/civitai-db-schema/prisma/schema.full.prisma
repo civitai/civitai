@@ -6946,6 +6946,29 @@ model AppealTrainingObjectDeletion {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 }
 
+/// A removal held for a second moderator because it repeats the reason an approved appeal overturned.
+/// FK, CHECKs and the one-Pending-per-image index live in migration 20261031130000_image_removal_confirmation.
+model ImageRemovalConfirmation {
+  id               Int       @id @default(autoincrement())
+  imageId          Int
+  appealId         Int
+  requestedById    Int
+  requestedAt      DateTime  @default(now()) @db.Timestamptz(3)
+  violationType    String?
+  violationDetails String?
+  /// Which removal path was held, e.g. `moderator.block`, `site.setTosViolation`.
+  source           String
+  reportIds        Int[]     @default([])
+  /// Pending | Confirmed | Declined | Void
+  status           String    @default("Pending")
+  decidedById      Int?
+  decidedAt        DateTime? @db.Timestamptz(3)
+  decisionNote     String?
+
+  @@index([status, requestedAt])
+  @@index([imageId])
+}
+
 // Upload scan label queue. FKs and CHECK constraints live in migration 20261022130000_scan_label_queue.
 model ScanLabelItem {
   id             Int       @id @default(autoincrement())

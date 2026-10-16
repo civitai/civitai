@@ -1246,6 +1246,18 @@ export const updateImageReportStatusByReason = ({
   `;
 };
 
+/** The image's reports for one reason that are not yet actioned. */
+export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT r.id FROM "Report" r
+    JOIN "ImageReport" i ON i."reportId" = r.id
+    WHERE i."imageId" = ${id}
+      AND r.reason = ${reason}::"ReportReason"
+      AND r.status <> 'Actioned'::"ReportStatus"
+  `;
+  return rows.map((r) => r.id);
+};
+
 export const getImageDetail = async ({ id }: GetByIdInput) => {
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
