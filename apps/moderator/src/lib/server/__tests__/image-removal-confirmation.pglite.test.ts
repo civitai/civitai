@@ -59,7 +59,7 @@ const { confirmRemoval, declineRemoval } = await import('../image-removal-confir
 const MIGRATION = readFileSync(
   fileURLToPath(
     new URL(
-      '../../../../../../packages/civitai-db-schema/prisma/migrations/20261031120000_image_removal_confirmation/migration.sql',
+      '../../../../../../packages/civitai-db-schema/prisma/migrations/20261031130000_image_removal_confirmation/migration.sql',
       import.meta.url
     )
   ),

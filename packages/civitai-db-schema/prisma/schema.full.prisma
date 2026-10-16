@@ -6947,7 +6947,7 @@ model AppealTrainingObjectDeletion {
 }
 
 /// A removal held for a second moderator because it repeats the reason an approved appeal overturned.
-/// FK, CHECKs and the one-Pending-per-image index live in migration 20261031120000_image_removal_confirmation.
+/// FK, CHECKs and the one-Pending-per-image index live in migration 20261031130000_image_removal_confirmation.
 model ImageRemovalConfirmation {
   id               Int       @id @default(autoincrement())
   imageId          Int
