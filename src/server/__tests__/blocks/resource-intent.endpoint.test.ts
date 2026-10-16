@@ -411,7 +411,7 @@ describe('needs → hostedModels', () => {
     const { res } = await call({ __claims: { ...CLAIMS, maxBrowsingLevel: 3 }, body });
     expect(mockGetResourceIntent.mock.calls[0][0]).toEqual({ ...VALID_BODY, kind: 'checkpoint' });
     const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
-    expect(hosted.map((h) => h.key)).toEqual(['Imagen4', 'MAI']);
+    expect(hosted.map((h) => h.key)).toEqual(['MAI']);
   });
 
   it('a degraded primitive response still carries the hosted list', async () => {
