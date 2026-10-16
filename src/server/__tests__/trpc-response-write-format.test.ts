@@ -192,6 +192,18 @@ describe('TRPC_WRITE_DEVALUE=true — format chosen per request', () => {
     expect(singleData(served)).toEqual(asSuperjson(PAYLOAD));
   });
 
+  it('writes superjson for an edge-cacheable response on the streamed batch path too', async () => {
+    // The stream calls responseMeta before any chunk is serialized; this pins that ordering.
+    const served = await streamed({ ...CAPABLE_WEB, 'x-test-cacheable': '1' });
+    expect(served.headers.get('cache-control')).toContain('s-maxage=60');
+    const chunks = streamedChunks(served);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(
+      chunks.every((chunk) => typeof chunk === 'object' && chunk !== null && 'json' in chunk)
+    ).toBe(true);
+    expect(containsPayload(chunks.map((chunk) => superjson.deserialize(chunk as any)))).toBe(true);
+  });
+
   it('still falls back to superjson when devalue cannot represent the payload', async () => {
     const served = await get('notAPojo', CAPABLE_WEB);
     expect(singleData(served)).toEqual(asSuperjson(new NotAPojo(7)));

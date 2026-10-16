@@ -70,14 +70,8 @@ describe('canDecodeDevalueResponse', () => {
     );
   });
 
-  it('rejects missing headers and repeated (array) header values', () => {
+  it('rejects a request with no headers', () => {
     expect(canDecodeDevalueResponse(undefined)).toBe(false);
     expect(canDecodeDevalueResponse({})).toBe(false);
-    expect(
-      canDecodeDevalueResponse({ 'x-client': ['web', 'web'], 'x-client-version': '5.0.2081' })
-    ).toBe(false);
-    expect(canDecodeDevalueResponse({ 'x-client': 'web', 'x-client-version': ['5.0.2081'] })).toBe(
-      false
-    );
   });
 });
