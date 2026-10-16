@@ -716,6 +716,37 @@ describe('strike.service', () => {
       expect(executeRaw).not.toHaveBeenCalled();
     });
 
+    it('void to <2 points on a moderator mute: clears the review flag, keeps the mute', async () => {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(1, {
+        muted: true,
+        mutedAt: new Date('2026-10-01'),
+        muteExpiresAt: null,
+        meta: { strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 1, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      expect(sqlOf([executeRaw.mock.calls[0][0]])).toContain("'{strikeFlaggedForReview}', 'false'");
+    });
+
+    it('<2 points, flagged but no longer muted: clears the review flag', async () => {
+      const { userUpdate, executeRaw } = mockTransactionForEscalation(0, {
+        muted: false,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { strikeFlaggedForReview: true },
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 0, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+    });
+
     it('<2 points, user not muted: no action', async () => {
       const { userUpdate } = mockTransactionForEscalation(1, {
         muted: false,

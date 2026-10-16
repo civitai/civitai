@@ -333,6 +333,18 @@ export async function getUserStandings(input: GetUserStandingsInput) {
 export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted';
 
 /**
+ * `jsonb_set`, not a spread of the `meta` read earlier: the User row is not locked during escalation,
+ * and writing a stale copy back would restore a `muteReason` that a concurrent unmute had just removed.
+ */
+async function clearReviewFlag(tx: Prisma.TransactionClient, userId: number) {
+  await tx.$executeRaw`
+    UPDATE "User"
+    SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)
+    WHERE id = ${userId}
+  `;
+}
+
+/**
  * Evaluate strike escalation for a user based on their total active points.
  * Handles both escalation (mute/flag) and de-escalation (unmute when points drop).
  */
@@ -426,15 +438,8 @@ export async function evaluateStrikeEscalation(
         // the next job run, which is what happened before this flag existed.
         if (!allowMute) {
           // The mute stands, but the review flag still follows the points: a void from 3 to 2 must
-          // take the account out of the moderators' review queue. `jsonb_set`, not a spread of
-          // `currentMeta`: the User row is not locked here, and writing the stale copy back would
-          // restore a `muteReason` that a concurrent unmute had just removed.
-          if (currentMeta.strikeFlaggedForReview)
-            await tx.$executeRaw`
-              UPDATE "User"
-              SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)
-              WHERE id = ${userId}
-            `;
+          // take the account out of the moderators' review queue.
+          if (currentMeta.strikeFlaggedForReview) await clearReviewFlag(tx, userId);
           return { totalPoints, action: 'none', notify: false };
         }
 
@@ -482,6 +487,11 @@ export async function evaluateStrikeEscalation(
           muteExpiresAt: user.muteExpiresAt?.toISOString() ?? null,
         });
       }
+
+      // The release below clears the flag with the mute; a mute it will not lift (a moderator's) or
+      // none at all must not leave the account flagged with nothing left to review.
+      if (currentMeta.strikeFlaggedForReview && (!user.muted || moderatorMuted))
+        await clearReviewFlag(tx, userId);
 
       // De-escalation: release a mute STRIKES applied, once the points no longer justify it. Two ways
       // out of the 2-point tier and this is the backstop one — the strikes expire, the daily job
