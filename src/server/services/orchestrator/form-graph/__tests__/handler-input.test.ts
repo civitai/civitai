@@ -14,6 +14,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
 import { createFormGraphStepInput } from '../index';
+import { createOpenAIInput } from '../openai.handler';
 
 /**
  * What each handler actually puts on the wire, asserted absolutely.
@@ -529,6 +530,36 @@ describe('the imageGen handlers pin their payloads, not just their engine', () =
       model,
       operation: 'createImage',
     });
+  });
+
+  // OpenAI retired gpt-image-1: a remix still carrying v1 must reach the wire as 1.5.
+  it('a request carrying retired v1 is sent as gpt-image-1.5', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'OpenAI',
+      prompt: 'a cat',
+      seed: 42,
+      model: openaiVersionIds.v1,
+      transparent: true,
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'openai',
+      model: 'gpt-image-1.5',
+      background: 'transparent',
+      operation: 'createImage',
+    });
+  });
+
+  // The handler's own map, for a caller that skips the graph's remap.
+  it.each([
+    { label: 'v1', model: { id: openaiVersionIds.v1 } },
+    { label: 'no model', model: undefined },
+  ])('the handler never emits gpt-image-1 ($label)', async ({ model }) => {
+    const steps = (await createOpenAIInput(
+      { ecosystem: 'OpenAI', workflow: 'txt2img', prompt: 'a cat', quantity: 1, model } as never,
+      ctx
+    )) as Array<{ input: { model: string } }>;
+    expect(steps[0]!.input.model).toBe('gpt-image-1.5');
   });
 });
 
