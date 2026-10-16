@@ -7,15 +7,14 @@ import type {
 } from '~/shared/constants/block-storage.constants';
 
 /**
- * One collection's declaration — the manifest parser's own type, so what the
- * validator accepted at review is exactly what the server enforces. The REST layer,
- * not the store, enforces `showAuthor` (`doc-store-api.ts`) and `ownedModelVersions`
- * (`doc-store-ownership.ts`). The store
- * still refuses, itself, the parts the parser admits only behind
- * `APP_STORAGE_ENABLED_FEATURES` (`write: 'anyone'`, `kind: 'log'`,
- * `ttlSeconds`, `maxEntries`); `write: 'owner'` is accepted and means nobody
- * writes documents until owner writes exist. The parser requires `write` on a shared
- * collection; the store reads an absent one as `own`.
+ * One collection's declaration — the manifest parser's own type, so the store sees exactly
+ * what the validator accepted at review. The store never reads `showAuthor` or
+ * `ownedModelVersions`; the REST layer applies them (`doc-store-api.ts`,
+ * `doc-store-ownership.ts`). The store still refuses, itself, the parts the parser admits
+ * only behind `APP_STORAGE_ENABLED_FEATURES` (`write: 'anyone'`, `kind: 'log'`,
+ * `ttlSeconds`, `maxEntries`, `dailyWritesPerAuthor`); `write: 'owner'` is accepted and
+ * means nobody writes documents until owner writes exist. The parser requires `write` on a
+ * shared collection; the store reads an absent one as `own`.
  */
 export type DocCollectionConfig = DeclaredStorageCollection;
 
