@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from './db';
 import { blockImage, isModerationBlocked } from './image-moderation.service';
 import { recordModActivity } from './mod-activity';
 import { setReportStatus } from './reports.service';
+import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 
 // Removals held by `holdRemovals` because they repeat the reason an approved appeal overturned. A
 // moderator holding `image.removal.confirm` decides each one on /images/re-removals. Confirming runs
@@ -74,7 +75,7 @@ export async function getRemovalConfirmations({
 }
 
 export type DecideResult =
-  | { ok: true; status: RemovalConfirmationStatus }
+  | { ok: true; status: RemovalConfirmationStatus; note?: string }
   | { ok: false; error: string };
 
 const NOT_PENDING = 'Another moderator already decided this removal. Reload.';
@@ -105,9 +106,17 @@ export async function confirmRemoval({
       error: 'You requested this removal, so another moderator must confirm it.',
     };
 
-  // Removed meanwhile (another reason, another path): running it again would notify the owner twice.
-  const alreadyRemoved = await isModerationBlocked(row.imageId);
-  const status: RemovalConfirmationStatus = alreadyRemoved ? 'Void' : 'Confirmed';
+  // Void rather than run: removed meanwhile (running it again would notify the owner twice), or a
+  // later appeal was approved, which this request never weighed.
+  const latestAppeal = (await getLatestApprovedImageAppeals(dbWrite, [row.imageId])).get(
+    row.imageId
+  );
+  const voidNote = (await isModerationBlocked(row.imageId))
+    ? 'Already removed'
+    : latestAppeal && latestAppeal.appealId !== row.appealId
+    ? 'A later appeal was approved'
+    : null;
+  const status: RemovalConfirmationStatus = voidNote ? 'Void' : 'Confirmed';
 
   // Claimed in one statement so two confirmers cannot both run the removal.
   const claimed = await dbWrite
@@ -116,32 +125,34 @@ export async function confirmRemoval({
       status,
       decidedById: userId,
       decidedAt: new Date(),
-      decisionNote: alreadyRemoved ? 'Already removed' : note ?? null,
+      decisionNote: voidNote ?? note ?? null,
     })
     .where('id', '=', id)
     .where('status', '=', 'Pending')
     .where('requestedById', '<>', userId)
     .executeTakeFirst();
   if (!claimed.numUpdatedRows) return { ok: false, error: NOT_PENDING };
-  if (alreadyRemoved) return { ok: true, status };
+  if (voidNote === 'A later appeal was approved') return { ok: true, status, note: voidNote };
 
-  try {
-    await blockImage({
-      imageId: row.imageId,
-      userId: row.requestedById,
-      violationType: row.violationType ?? undefined,
-      violationDetails: row.violationDetails ?? undefined,
-      skipAppealCheck: true,
-    });
-  } catch (e) {
-    // Back to Pending so it is not recorded as confirmed with the image still up.
-    await dbWrite
-      .updateTable('ImageRemovalConfirmation')
-      .set({ status: 'Pending', decidedById: null, decidedAt: null, decisionNote: null })
-      .where('id', '=', id)
-      .execute();
-    throw e;
-  }
+  if (!voidNote)
+    try {
+      await blockImage({
+        imageId: row.imageId,
+        userId: row.requestedById,
+        violationType: row.violationType ?? undefined,
+        violationDetails: row.violationDetails ?? undefined,
+        skipAppealCheck: true,
+      });
+    } catch (e) {
+      // Back to Pending so it is not recorded as confirmed with the image still up.
+      await dbWrite
+        .updateTable('ImageRemovalConfirmation')
+        .set({ status: 'Pending', decidedById: null, decidedAt: null, decisionNote: null })
+        .where('id', '=', id)
+        .execute();
+      throw e;
+    }
+  // The image is down either way, so the reports the removal answered are actioned.
   for (const reportId of row.reportIds)
     await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId });
   await recordModActivity({
@@ -150,7 +161,7 @@ export async function confirmRemoval({
     entityId: row.imageId,
     activity: 'confirmRemoval',
   });
-  return { ok: true, status };
+  return { ok: true, status, ...(voidNote && { note: voidNote }) };
 }
 
 /** Declines a held removal; the image stays up. */

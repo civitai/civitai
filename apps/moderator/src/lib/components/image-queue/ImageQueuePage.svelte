@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { untrack } from 'svelte';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { optimisticEnhancer } from '$lib/form-action';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
@@ -52,12 +53,15 @@
   // handled and got skipped.
   const acted = new SvelteMap<string | number, string>();
   const keyOfItem = (item: { id: number; report?: { id: number } }) => item.report?.id ?? item.id;
-  // Images whose removal was held for a second moderator rather than applied (see `removal-hold`).
-  const heldImageIds = $derived(
-    new Set(form?.held ? form.heldImageIds ?? (form.imageId ? [form.imageId] : []) : [])
-  );
-  const verdictOf = (item: { id: number; report?: { id: number } }) =>
-    heldImageIds.has(item.id) ? 'Held for confirmation' : acted.get(keyOfItem(item));
+  const verdictOf = (item: { id: number; report?: { id: number } }) => acted.get(keyOfItem(item));
+  // A removal held for a second moderator (see `removal-hold`) replaces the optimistic "Removed" on
+  // every card of that image, and keeps it after the next action replaces `form`.
+  $effect(() => {
+    if (!form?.held) return;
+    const held = new Set(form.heldImageIds ?? (form.imageId ? [form.imageId] : []));
+    for (const item of untrack(() => data.items))
+      if (held.has(item.id)) acted.set(keyOfItem(item), 'Held for confirmation');
+  });
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
   const drafts = new SvelteMap<number, RulingDraft<ResolutionVerdict<'appeal'>>>();

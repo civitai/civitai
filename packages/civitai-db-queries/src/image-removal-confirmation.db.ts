@@ -116,28 +116,49 @@ export type HeldRemoval = {
 export async function holdSameReasonRemovals(opts: {
   db: Kysely<DB>;
   requests: RemovalRequest[];
+  /** 0 when the caller named no moderator. */
   requestedById: number;
   source: string;
   knownReasons: ReadonlySet<string>;
-  /** ClickHouse, for approvals whose decision record has no removal label yet. Failures hold. */
+  /** ClickHouse, for the removal each appeal overturned. Failures hold. */
   clickhouse?: ClickhouseQuery;
 }): Promise<{ held: HeldRemoval[]; proceed: number[] }> {
-  const { db, requests, requestedById, source, knownReasons, clickhouse } = opts;
+  const { db, requestedById, source, knownReasons, clickhouse } = opts;
+  // One request per image: a batch naming an image twice would update its row twice in one statement.
+  const requests = [...new Map(opts.requests.map((r) => [r.imageId, r])).values()];
   const appeals = await getLatestApprovedImageAppeals(
     db,
     requests.map((r) => r.imageId)
   );
   if (!appeals.size) return { held: [], proceed: requests.map((r) => r.imageId) };
 
-  const unlabelled = [...appeals.values()].filter((a) => !a.removalLabel).map((a) => a.imageId);
+  // Already removed: nothing would be undone a second time, and the removal's reports still need
+  // actioning, so it goes through.
+  const removed = new Set(
+    (
+      await db
+        .selectFrom('Image')
+        .select('id')
+        .where('id', 'in', [...appeals.keys()])
+        .where('ingestion', '=', 'Blocked')
+        .where('blockedFor', '=', 'moderated')
+        .execute()
+    ).map((r) => r.id)
+  );
+
+  // The decision record's label is filled later from the LATEST removal, which can postdate the
+  // approval, so the time-bounded ClickHouse read wins when it answers.
   const eventsByImage = new Map<number, RemovalEvent[]>();
-  if (unlabelled.length && clickhouse) {
+  let eventsRead = false;
+  const lookup = [...appeals.keys()].filter((id) => !removed.has(id));
+  if (lookup.length && clickhouse) {
     try {
-      for (const e of await loadRemovalEvents(clickhouse, unlabelled)) {
+      for (const e of await loadRemovalEvents(clickhouse, lookup)) {
         const list = eventsByImage.get(e.imageId) ?? [];
         list.push(e);
         eventsByImage.set(e.imageId, list);
       }
+      eventsRead = true;
     } catch (e) {
       console.error('[image-removal-confirmation] removal label lookup failed', e);
     }
@@ -147,17 +168,22 @@ export async function holdSameReasonRemovals(opts: {
   const proceed: number[] = [];
   for (const request of requests) {
     const appeal = appeals.get(request.imageId);
-    const overturned = appeal
-      ? appeal.removalLabel ??
-        overturnedRemovalLabel(eventsByImage.get(request.imageId) ?? [], appeal.approvedAt)
+    if (!appeal || removed.has(request.imageId)) {
+      proceed.push(request.imageId);
+      continue;
+    }
+    const overturned = eventsRead
+      ? overturnedRemovalLabel(eventsByImage.get(request.imageId) ?? [], appeal.approvedAt) ??
+        appeal.removalLabel
       : null;
-    if (appeal && isSameRemovalReason(overturned, request.violationType, knownReasons))
+    if (isSameRemovalReason(overturned, request.violationType, knownReasons))
       toHold.push({ request, appeal });
     else proceed.push(request.imageId);
   }
   if (!toHold.length) return { held: [], proceed };
 
-  const inserted = await db
+  // A removal that joins a pending request adds its reports to it, so confirming actions them all.
+  const rows = await db
     .insertInto('ImageRemovalConfirmation')
     .values(
       toHold.map(({ request, appeal }) => ({
@@ -170,35 +196,24 @@ export async function holdSameReasonRemovals(opts: {
         reportIds: request.reportIds ?? [],
       }))
     )
-    .onConflict((oc) => oc.column('imageId').where('status', '=', 'Pending').doNothing())
-    .returning(['id', 'imageId'])
-    .execute();
-  const createdIds = new Map(inserted.map((r) => [r.imageId, r.id]));
-
-  const joined = toHold.filter(({ request }) => !createdIds.has(request.imageId));
-  const existing = joined.length
-    ? await db
-        .selectFrom('ImageRemovalConfirmation')
-        .select(['id', 'imageId'])
+    .onConflict((oc) =>
+      oc
+        .column('imageId')
         .where('status', '=', 'Pending')
-        .where(
-          'imageId',
-          'in',
-          joined.map(({ request }) => request.imageId)
-        )
-        .execute()
-    : [];
-  const existingIds = new Map(existing.map((r) => [r.imageId, r.id]));
+        .doUpdateSet({
+          reportIds: sql<
+            number[]
+          >`ARRAY(SELECT DISTINCT unnest("ImageRemovalConfirmation"."reportIds" || excluded."reportIds"))`,
+        })
+    )
+    // `xmax = 0` only on a freshly inserted row.
+    .returning(['id', 'imageId', sql<boolean>`xmax = 0`.as('created')])
+    .execute();
+  const byImage = new Map(rows.map((r) => [r.imageId, r]));
 
-  const held: HeldRemoval[] = [];
-  for (const { request, appeal } of toHold) {
-    const createdId = createdIds.get(request.imageId);
-    const confirmationId = createdId ?? existingIds.get(request.imageId);
-    // The pending request was decided between the insert and the read. Refuse rather than apply a
-    // removal no one confirmed; a retry files a fresh request.
-    if (confirmationId == null)
-      throw new Error(`Image ${request.imageId} changed while it was being removed. Try again.`);
-    held.push({ imageId: request.imageId, confirmationId, created: createdId != null, appeal });
-  }
+  const held = toHold.map(({ request, appeal }) => {
+    const row = byImage.get(request.imageId)!;
+    return { imageId: request.imageId, confirmationId: row.id, created: row.created, appeal };
+  });
   return { held, proceed };
 }

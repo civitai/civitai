@@ -49,7 +49,7 @@ const decide =
       });
     }
     if (!result.ok) return fail(409, { error: result.error, id: input.id });
-    return { success: true, id: input.id, status: result.status };
+    return { success: true, id: input.id, status: result.status, note: result.note };
   };
 
 export const actions: Actions = {

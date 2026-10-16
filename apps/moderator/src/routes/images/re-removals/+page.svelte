@@ -60,6 +60,12 @@
 
 <LinkTabs class="mb-4" items={TABS} active={data.status} />
 
+{#if form && 'status' in form && form.status === 'Void'}
+  <p class="mb-4 text-sm text-dark-2" role="status">
+    Request #{form.id} was voided, not run: {form.note}.
+  </p>
+{/if}
+
 {#if form?.error && !rowError}
   <ErrorAlert class="mb-4" message={form.error} />
 {/if}
@@ -115,9 +121,13 @@
             <p class="text-xs font-semibold text-dark-2">Removal requested</p>
             <p>
               {reasonLabel(row.violationType)} · by
-              <a href={userLookupUrl(row.requestedById)} class={LINK_CLASS}>
-                {row.requestedByUsername ?? `user ${row.requestedById}`}
-              </a>
+              {#if row.requestedById}
+                <a href={userLookupUrl(row.requestedById)} class={LINK_CLASS}>
+                  {row.requestedByUsername ?? `user ${row.requestedById}`}
+                </a>
+              {:else}
+                an unnamed caller
+              {/if}
               · {dateTime(row.requestedAt)}
             </p>
             {#if row.violationDetails}

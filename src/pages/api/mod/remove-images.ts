@@ -37,13 +37,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       canConfirmReRemoval,
     } = parsed.data;
 
-    // Only a moderator's removal of chosen images is held; an account-wide removal (`userId`) is not.
+    // A removal of chosen images is held; an account-wide removal (`userId`) is not.
     let ids = imageIds;
     let held: ReturnType<typeof heldRemovalSummary> = [];
-    if (imageIds?.length && moderatorId && !canConfirmReRemoval) {
+    if (imageIds?.length && !canConfirmReRemoval) {
       const hold = await holdRemovals(
         imageIds.map((imageId) => ({ imageId, violationType, violationDetails })),
-        moderatorId,
+        moderatorId ?? 0,
         'api.removeImages'
       );
       ids = hold.proceed;

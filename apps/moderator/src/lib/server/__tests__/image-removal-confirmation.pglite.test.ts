@@ -238,16 +238,39 @@ describe('a removal of an image approved on appeal', () => {
     expect((await image()).ingestion).toBe('Blocked');
   });
 
-  it('joins the pending request rather than filing a second one', async () => {
+  it('joins the pending request, adding its reports, rather than filing a second one', async () => {
     await approve();
-    await blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'animatedMinorNsfw' });
+    await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7],
+    });
     const second = await blockImage({
       imageId: IMAGE,
       userId: CONFIRMER,
       violationType: 'animatedMinorNsfw',
+      reportIds: [8, 7],
     });
     expect(second.held?.created).toBe(false);
-    expect(await confirmations()).toHaveLength(1);
+    const rows = await confirmations();
+    expect(rows).toHaveLength(1);
+    expect([...rows[0].reportIds].sort()).toEqual([7, 8]);
+  });
+
+  it('applies to an image that is already removed rather than holding it', async () => {
+    await approve();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
+      [IMAGE]
+    );
+    const result = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+    });
+    expect(result.held).toBeUndefined();
+    expect(await confirmations()).toEqual([]);
   });
 
   describe('without a recorded label, it reads the overturned removal from ClickHouse', () => {
@@ -273,6 +296,21 @@ describe('a removal of an image approved on appeal', () => {
       ]);
       const other = await blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'gore' });
       expect(other.held).toBeUndefined();
+    });
+
+    it('trusts the time-bounded read over a recorded label from a later removal', async () => {
+      // The nightly fill recorded the latest removal, which came after the approval.
+      await approve({ label: 'gore' });
+      chQuery.mockResolvedValue([
+        { imageId: IMAGE, time: '2026-09-20 17:30:11', label: 'schoolNsfw' },
+        { imageId: IMAGE, time: '2026-10-14 18:59:16', label: 'gore' },
+      ]);
+      const same = await blockImage({
+        imageId: IMAGE,
+        userId: REQUESTER,
+        violationType: 'schoolNsfw',
+      });
+      expect(same.held).toBeDefined();
     });
 
     it('holds when ClickHouse cannot answer', async () => {
@@ -347,7 +385,25 @@ describe('deciding a held removal', () => {
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
       [IMAGE]
     );
-    expect(await confirmRemoval({ id, userId: CONFIRMER })).toEqual({ ok: true, status: 'Void' });
+    expect(await confirmRemoval({ id, userId: CONFIRMER })).toMatchObject({
+      ok: true,
+      status: 'Void',
+    });
+    expect(applyBlockSideEffects).not.toHaveBeenCalled();
+    // The image is down, so the reports the removal answered are done with.
+    expect(setReportStatus.mock.calls.map(([a]) => (a as { id: number }).id)).toEqual([7, 8]);
+  });
+
+  it('voids the request, leaving the image up, when a later appeal was approved', async () => {
+    const id = await hold();
+    await approve({ resolvedAt: '2026-10-15 09:00:00' });
+
+    expect(await confirmRemoval({ id, userId: CONFIRMER })).toEqual({
+      ok: true,
+      status: 'Void',
+      note: 'A later appeal was approved',
+    });
+    expect((await image()).ingestion).toBe('Scanned');
     expect(applyBlockSideEffects).not.toHaveBeenCalled();
     expect(setReportStatus).not.toHaveBeenCalled();
   });

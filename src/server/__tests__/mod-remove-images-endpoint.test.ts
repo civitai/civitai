@@ -39,6 +39,10 @@ beforeEach(() => {
   handleBlockImages.mockReset();
   trackImages.mockReset();
   holdRemovals.mockReset();
+  holdRemovals.mockImplementation(async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  }));
 });
 
 // The moderator app releases separately and posts its own copy of the violation list here. A value
@@ -105,6 +109,15 @@ describe('/api/mod/remove-images re-removal hold', () => {
     expect(handleBlockImages).not.toHaveBeenCalled();
     expect(trackImages).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith({ images: 0, held: [{ imageId: 2 }] });
+  });
+
+  it('holds a removal that names no moderator, as an unnamed caller', async () => {
+    holdRemovals.mockResolvedValue({ held: [{ imageId: 2 }], proceed: [] });
+
+    await call({ imageIds: [2], violationType: 'gore' });
+
+    expect(holdRemovals).toHaveBeenCalledWith(expect.any(Array), 0, 'api.removeImages');
+    expect(handleBlockImages).not.toHaveBeenCalled();
   });
 
   it('holds nothing for a moderator who may confirm re-removals, or for an account-wide removal', async () => {

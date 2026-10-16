@@ -6,7 +6,7 @@ import { issueStrike, restoreImages, setImageFlag } from './user-actions.service
 import { countBlockedImages, removeImagesWithFollowUps } from './bulk-image.service';
 import { sendModNotification } from './moderation-memory.service';
 import { setReportStatus } from './reports.service';
-import { heldRemovalMessage } from './removal-hold';
+import { HELD_FOLLOW_UPS_NOTE, heldRemovalMessage } from './removal-hold';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4 } from './users.service';
 import { REPORT_RULINGS } from '$lib/reports';
@@ -105,7 +105,11 @@ export function reportModerationActions(pagePath: string) {
         canConfirmReRemoval: !!locals.grants['image.removal.confirm'],
       });
       if (!result.ok) return scopedFail('images', result.error);
-      const heldNote = result.held.length ? ` ${heldRemovalMessage(result.held)}` : '';
+      const heldNote = result.held.length
+        ? ` ${heldRemovalMessage(result.held)}${
+            input.strikeOwners || input.alsoFlag ? ` ${HELD_FOLLOW_UPS_NOTE}` : ''
+          }`
+        : '';
 
       // A silent flag failure is worse than none: the moderator believes the images are marked.
       const flagNote = result.flag?.applied

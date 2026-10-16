@@ -61,6 +61,10 @@ export const toHeldSummary = ({ imageId, created, appeal }: HeldRemoval): HeldSu
   approvedByUsername: appeal.approvedByUsername,
 });
 
+/** Said beside a held removal whose strike or flag was skipped: confirming does not apply them. */
+export const HELD_FOLLOW_UPS_NOTE =
+  'Strikes and flags were not applied to the held images; apply them once the removal is confirmed.';
+
 /** What the removing moderator is told when a removal is held instead of applied. */
 export function heldRemovalMessage(held: (HeldRemoval | HeldSummary)[]): string {
   if (!held.length) return '';

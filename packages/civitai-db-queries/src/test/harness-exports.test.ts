@@ -59,6 +59,7 @@ const PACKAGE_EXPORTS = {
   './model': './src/model.db.ts',
   './page-access': './src/page-access.db.ts',
   './tag': './src/tag.db.ts',
+  './image-removal-confirmation': './src/image-removal-confirmation.db.ts',
   './test-harness': './src/test/compile-harness.ts',
 };
 
