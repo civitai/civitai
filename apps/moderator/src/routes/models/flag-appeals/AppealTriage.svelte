@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
@@ -9,7 +10,7 @@
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
   import type { AppealQueueData } from '$lib/server/minor-flag-queue';
   import { urlWith } from '$lib/url';
-  import AppealDetail from './AppealDetail.svelte';
+  import AppealDetail, { type AppealRuling } from './AppealDetail.svelte';
   import AppealTags from './AppealTags.svelte';
 
   type QueueForm = { error?: string; rescanQueued?: boolean; modelId?: number } | null;
@@ -18,6 +19,18 @@
     data,
     form,
   }: { data: AppealQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
+
+  // A chosen ruling, reason and note belong to the open appeal alone.
+  let current = $state<number | null>(null);
+  let draft = $state<RulingDraft<AppealRuling>>(emptyRulingDraft<AppealRuling>());
+  $effect(() => {
+    void current;
+    draft = emptyRulingDraft<AppealRuling>();
+  });
+
+  const choose = (verdict: AppealRuling) => {
+    draft = { verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' };
+  };
 
   // Carries the page's query so a no-JS submit re-renders the same queue.
   const actionHref = (action: string) =>
@@ -67,6 +80,8 @@
   queueLabel="Appeal queue"
   itemLabel="Appeal"
   decisionEnabled={(row) => [flagInForce(row), true]}
+  ondecision={(_row, index) => choose(index === 0 ? 'Rejected' : 'Approved')}
+  bind:current
   pageNumber={data.page}
   hasMore={data.hasMore}
   offset={data.offset}
@@ -100,6 +115,8 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
+      {choose}
+      bind:draft
     />
   {/snippet}
 </TriageShell>

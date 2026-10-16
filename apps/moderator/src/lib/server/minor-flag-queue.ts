@@ -1,7 +1,9 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, RequestEvent } from '@sveltejs/kit';
-import { parseQuery } from '$lib/server/query';
+import type { ResolutionSubject, ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+import { parseForm, parseQuery } from '$lib/server/query';
+import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import {
   getAutoFlaggedMinorModels,
   getMinorFlagAppealGroups,
@@ -158,6 +160,16 @@ export const minorHashActions: Actions = {
   dismiss: (event) => run(event, dismissMinorHashMatch),
 };
 
+const reasonSchema = z.object(resolutionReasonFields);
+const rulingReason = <S extends ResolutionSubject>(
+  subject: S,
+  verdict: ResolutionVerdict<S>,
+  form: FormData
+) => {
+  const input = parseForm(reasonSchema, form);
+  return typeof input === 'string' ? input : checkedResolutionReason(subject, verdict, input);
+};
+
 const redetectionAction =
   (keep: boolean): Actions[string] =>
   async (event) => {
@@ -167,8 +179,10 @@ const redetectionAction =
     const textHash = z.string().min(1).max(200).safeParse(form.get('textHash'));
     if (!(modelId > 0) || !label.success || !textHash.success)
       return fail(400, { error: 'Missing model id, label or text hash.' });
+    const reason = rulingReason('heldDetection', keep ? 'Kept' : 'Dismissed', form);
+    if (typeof reason === 'string') return fail(400, { error: reason, modelId });
 
-    const result = await resolveRedetection(modelId, label.data, keep, textHash.data);
+    const result = await resolveRedetection(modelId, label.data, keep, textHash.data, reason);
     if (!result.ok) return fail(400, { error: result.error, modelId });
     return { success: true, modelId, label: label.data, resolved: result.resolved };
   };
@@ -178,10 +192,23 @@ export const redetectionActions: Actions = {
   dismissRedetected: redetectionAction(false),
 };
 
+const wholeAppealAction =
+  (uphold: boolean): Actions[string] =>
+  async (event) => {
+    const form = await event.request.formData();
+    const modelId = Number(form.get('modelId'));
+    if (!(modelId > 0)) return fail(400, { error: 'Missing model id.' });
+    const reason = rulingReason('flagAppeal', uphold ? 'Rejected' : 'Approved', form);
+    if (typeof reason === 'string') return fail(400, { error: reason, modelId });
+
+    const result = await resolveMinorFlagAppeal(modelId, uphold, reason);
+    if (!result.ok) return fail(400, { error: result.error, modelId });
+    return { success: true, modelId, rescanQueued: result.rescanQueued === true };
+  };
+
 export const appealActions: Actions = {
-  upholdAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, true)),
-  overturnAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, false)),
-  // Reads its own form: `run` consumes the body for the model id alone.
+  upholdAppeal: wholeAppealAction(true),
+  overturnAppeal: wholeAppealAction(false),
   splitAppeal: async (event) => {
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
@@ -190,11 +217,16 @@ export const appealActions: Actions = {
     const poi = decision.safeParse(form.get('poi'));
     if (!(modelId > 0) || !minor.success || !poi.success)
       return fail(400, { error: 'Missing model id or decision.' });
+    // The main app closes the appeal Approved when any label is lifted.
+    const lifts = minor.data === 'overturn' || poi.data === 'overturn';
+    const reason = rulingReason('flagAppeal', lifts ? 'Approved' : 'Rejected', form);
+    if (typeof reason === 'string') return fail(400, { error: reason, modelId });
 
-    const result = await resolveMinorFlagAppealPerLabel(modelId, {
-      minor: minor.data,
-      poi: poi.data,
-    });
+    const result = await resolveMinorFlagAppealPerLabel(
+      modelId,
+      { minor: minor.data, poi: poi.data },
+      reason
+    );
     if (!result.ok) return fail(400, { error: result.error, modelId });
     return { success: true, modelId, rescanQueued: result.rescanQueued };
   },

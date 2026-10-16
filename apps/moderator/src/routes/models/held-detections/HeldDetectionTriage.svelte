@@ -1,5 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+  import { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import DetectionKindBadge from '$lib/components/minor-flags/DetectionKindBadge.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
@@ -19,6 +21,20 @@
     data,
     form,
   }: { data: RedetectedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
+
+  type Verdict = ResolutionVerdict<'heldDetection'>;
+
+  // A chosen verdict, reason and note belong to the open detection alone.
+  let current = $state<string | null>(null);
+  let draft = $state<RulingDraft<Verdict>>(emptyRulingDraft<Verdict>());
+  $effect(() => {
+    void current;
+    draft = emptyRulingDraft<Verdict>();
+  });
+
+  const choose = (verdict: Verdict) => {
+    draft = { verdict: draft.verdict === verdict ? null : verdict, reason: '', note: '' };
+  };
 
   // A model can wait on both labels, so a row is identified by the pair.
   const rowKey = (row: RedetectedRow) => `${row.modelId}:${row.label}`;
@@ -62,6 +78,8 @@
   queueLabel="Held detections queue"
   itemLabel="Detection"
   decisionEnabled={(row) => [!row.hasPendingAppeal, !row.hasPendingAppeal]}
+  ondecision={(_row, index) => choose(index === 0 ? 'Kept' : 'Dismissed')}
+  bind:current
   outcomeFor={(result, outcome) =>
     result.type === 'success' && result.data?.resolved === 'closed' ? 'Already flagged' : outcome}
   pageNumber={data.page}
@@ -97,6 +115,8 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
+      {choose}
+      bind:draft
     />
   {/snippet}
 </TriageShell>

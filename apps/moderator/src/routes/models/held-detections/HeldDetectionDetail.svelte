@@ -22,6 +22,15 @@
   import { FLAG_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { RedetectedRow } from '$lib/server/minor-hash.service';
   import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
+  import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
+  import type { RulingDraft } from '$lib/components/RulingForm.svelte';
+  import { HELD_DETECTION_RULING_CHOICES } from '$lib/ruling-choices';
+  import {
+    resolutionReasonError,
+    type ResolutionVerdict,
+  } from '@civitai/shared/resolution-reasons';
+
+  type Verdict = ResolutionVerdict<'heldDetection'>;
 
   let {
     row,
@@ -30,6 +39,8 @@
     error,
     submit,
     actionHref,
+    choose,
+    draft = $bindable(),
   }: {
     row: RedetectedRow;
     civitaiUrl: string;
@@ -37,7 +48,16 @@
     error: string | undefined;
     submit: (outcome: string) => SubmitFunction;
     actionHref: (action: string) => string;
+    choose: (verdict: Verdict) => void;
+    draft: RulingDraft<Verdict>;
   } = $props();
+
+  const chosen = $derived(HELD_DETECTION_RULING_CHOICES.find((c) => c.verdict === draft.verdict));
+  const unrecordable = $derived(
+    chosen
+      ? resolutionReasonError('heldDetection', chosen.verdict, draft.reason, draft.note)
+      : null
+  );
 
   // Mirrors the main app's refusal in resolveTextScanRedetection: any Pending appeal on the model, for
   // either label, blocks a ruling. Change both together.
@@ -168,40 +188,45 @@
     {/if}
   {/snippet}
   {#snippet actions()}
-    <form
-      data-triage-action="uphold"
-      method="POST"
-      action={actionHref('keepRedetected')}
-      use:enhance={submit('Flagged')}
-    >
-      {@render verdictFields()}
+    {#each HELD_DETECTION_RULING_CHOICES as c, i (c.verdict)}
       <Button
-        type="submit"
         size="lg"
         class="h-11 px-5 text-base"
+        variant={draft.verdict === c.verdict ? c.variant : 'outline'}
+        aria-pressed={draft.verdict === c.verdict}
         disabled={blocked}
         title={blocked ? APPEAL_FIRST : undefined}
+        onclick={() => choose(c.verdict)}
       >
-        Flag <Kbd>1</Kbd>
+        {c.label} <Kbd>{i + 1}</Kbd>
       </Button>
-    </form>
-    <form
-      data-triage-action="overturn"
-      method="POST"
-      action={actionHref('dismissRedetected')}
-      use:enhance={submit('Not flagged')}
-    >
-      {@render verdictFields()}
-      <Button
-        type="submit"
-        size="lg"
-        variant="destructive"
-        class="h-11 px-5 text-base"
-        disabled={blocked}
-        title={blocked ? APPEAL_FIRST : undefined}
+    {/each}
+    {#if chosen}
+      <form
+        method="POST"
+        action={actionHref(chosen.verdict === 'Kept' ? 'keepRedetected' : 'dismissRedetected')}
+        use:enhance={submit(chosen.verdict === 'Kept' ? 'Flagged' : 'Not flagged')}
+        class="grid w-full gap-2 rounded-md border border-dark-4 bg-dark-7 p-3"
       >
-        Don't flag <Kbd>2</Kbd>
-      </Button>
-    </form>
+        {@render verdictFields()}
+        <ResolutionReasonFields
+          subject="heldDetection"
+          verdict={chosen.verdict}
+          idPrefix="held-{row.modelId}-{row.label}"
+          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
+          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
+        />
+        <div>
+          <Button
+            type="submit"
+            size="lg"
+            variant={chosen.variant}
+            disabled={blocked || !!unrecordable}
+          >
+            {chosen.confirmLabel}
+          </Button>
+        </div>
+      </form>
+    {/if}
   {/snippet}
 </TriageDetailFrame>

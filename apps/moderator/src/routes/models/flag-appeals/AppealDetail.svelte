@@ -1,3 +1,51 @@
+<script module lang="ts">
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+  import type { ButtonVariant } from '@civitai/ui/components/ui/button/index.js';
+  import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
+
+  type Decision = 'uphold' | 'overturn';
+  type Ruling = {
+    action: 'upholdAppeal' | 'overturnAppeal' | 'splitAppeal';
+    verdict: ResolutionVerdict<'flagAppeal'>;
+    label: string;
+    confirmLabel: string;
+    variant: ButtonVariant;
+    /** What the item shows once decided. */
+    outcome: string;
+    labels?: { minor: Decision; poi: Decision };
+  };
+
+  const choice = (verdict: ResolutionVerdict<'flagAppeal'>) =>
+    FLAG_APPEAL_RULING_CHOICES.find((c) => c.verdict === verdict)!;
+
+  // A split lifts one flag, so the appeal closes Approved and takes an Approved reason.
+  const RULINGS = {
+    Rejected: { ...choice('Rejected'), action: 'upholdAppeal', outcome: 'Appeal rejected' },
+    Approved: { ...choice('Approved'), action: 'overturnAppeal', outcome: 'Appeal approved' },
+    liftPoi: {
+      action: 'splitAppeal',
+      verdict: 'Approved',
+      label: 'Keep minor, lift real person',
+      confirmLabel: 'Confirm keep minor, lift real person',
+      variant: 'default',
+      outcome: 'Kept minor, lifted real person',
+      labels: { minor: 'uphold', poi: 'overturn' },
+    },
+    liftMinor: {
+      action: 'splitAppeal',
+      verdict: 'Approved',
+      label: 'Lift minor, keep real person',
+      confirmLabel: 'Confirm lift minor, keep real person',
+      variant: 'default',
+      outcome: 'Lifted minor, kept real person',
+      labels: { minor: 'overturn', poi: 'uphold' },
+    },
+  } satisfies Record<string, Ruling>;
+
+  export type AppealRuling = keyof typeof RULINGS;
+  const SPLIT_RULINGS = ['liftPoi', 'liftMinor'] as const satisfies readonly AppealRuling[];
+</script>
+
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { browser } from '$app/environment';
@@ -23,6 +71,9 @@
     type FlagLabel,
   } from '$lib/minor-flags/text-scan-verdicts';
   import AppealImages from '$lib/components/minor-flags/AppealImages.svelte';
+  import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
+  import type { RulingDraft } from '$lib/components/RulingForm.svelte';
+  import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
   import AppealTags from './AppealTags.svelte';
 
   let {
@@ -32,6 +83,8 @@
     error,
     submit,
     actionHref,
+    choose,
+    draft = $bindable(),
   }: {
     row: MinorFlagAppealRow;
     civitaiUrl: string;
@@ -40,7 +93,14 @@
     error: string | undefined;
     submit: (verdict: string) => SubmitFunction;
     actionHref: (action: string) => string;
+    choose: (ruling: AppealRuling) => void;
+    draft: RulingDraft<AppealRuling>;
   } = $props();
+
+  const ruling = $derived<Ruling | null>(draft.verdict ? RULINGS[draft.verdict] : null);
+  const unrecordable = $derived(
+    ruling ? resolutionReasonError('flagAppeal', ruling.verdict, draft.reason, draft.note) : null
+  );
 
   const modelHref = (id: number, versionId: number | null = null) =>
     `${civitaiUrl}/models/${id}?view=basic${versionId ? `&modelVersionId=${versionId}` : ''}`;
@@ -227,58 +287,57 @@
     <UploaderCard {row} />
   {/snippet}
   {#snippet actions()}
-    <form
-      data-triage-action="uphold"
-      method="POST"
-      action={actionHref('upholdAppeal')}
-      use:enhance={submit('Appeal rejected')}
-    >
-      <input type="hidden" name="modelId" value={row.modelId} />
+    {#each FLAG_APPEAL_RULING_CHOICES as c, i (c.verdict)}
+      {@const blocked = c.verdict === 'Rejected' && !canUphold}
       <Button
-        type="submit"
         size="lg"
         class="h-11 px-5 text-base"
-        disabled={!canUphold}
-        title={canUphold ? undefined : 'Not flagged any more. Unflag closes the request.'}
+        variant={draft.verdict === c.verdict ? c.variant : 'outline'}
+        aria-pressed={draft.verdict === c.verdict}
+        disabled={blocked}
+        title={blocked ? 'Not flagged any more. Unflag closes the request.' : undefined}
+        onclick={() => choose(c.verdict)}
       >
-        Keep flagged <Kbd>1</Kbd>
+        {c.label} <Kbd>{i + 1}</Kbd>
       </Button>
-    </form>
-    <form
-      data-triage-action="overturn"
-      method="POST"
-      action={actionHref('overturnAppeal')}
-      use:enhance={submit('Appeal approved')}
-    >
-      <input type="hidden" name="modelId" value={row.modelId} />
-      <Button type="submit" size="lg" variant="destructive" class="h-11 px-5 text-base">
-        Unflag <Kbd>2</Kbd>
-      </Button>
-    </form>
+    {/each}
     {#if row.minor && poiOpen}
+      {#each SPLIT_RULINGS as split (split)}
+        <Button
+          size="lg"
+          variant={draft.verdict === split ? 'default' : 'outline'}
+          class="h-11 text-base"
+          aria-pressed={draft.verdict === split}
+          onclick={() => choose(split)}
+        >
+          {RULINGS[split].label}
+        </Button>
+      {/each}
+    {/if}
+    {#if ruling}
       <form
         method="POST"
-        action={actionHref('splitAppeal')}
-        use:enhance={submit('Kept minor, lifted real person')}
+        action={actionHref(ruling.action)}
+        use:enhance={submit(ruling.outcome)}
+        class="grid w-full gap-2 rounded-md border border-dark-4 bg-dark-7 p-3"
       >
         <input type="hidden" name="modelId" value={row.modelId} />
-        <input type="hidden" name="minor" value="uphold" />
-        <input type="hidden" name="poi" value="overturn" />
-        <Button type="submit" size="lg" variant="outline" class="h-11 text-base">
-          Keep minor, lift real person
-        </Button>
-      </form>
-      <form
-        method="POST"
-        action={actionHref('splitAppeal')}
-        use:enhance={submit('Lifted minor, kept real person')}
-      >
-        <input type="hidden" name="modelId" value={row.modelId} />
-        <input type="hidden" name="minor" value="overturn" />
-        <input type="hidden" name="poi" value="uphold" />
-        <Button type="submit" size="lg" variant="outline" class="h-11 text-base">
-          Lift minor, keep real person
-        </Button>
+        {#if ruling.labels}
+          <input type="hidden" name="minor" value={ruling.labels.minor} />
+          <input type="hidden" name="poi" value={ruling.labels.poi} />
+        {/if}
+        <ResolutionReasonFields
+          subject="flagAppeal"
+          verdict={ruling.verdict}
+          idPrefix="flag-appeal-{row.appealId}"
+          bind:reason={() => draft.reason, (reason) => (draft = { ...draft, reason })}
+          bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
+        />
+        <div>
+          <Button type="submit" size="lg" variant={ruling.variant} disabled={!!unrecordable}>
+            {ruling.confirmLabel}
+          </Button>
+        </div>
       </form>
     {/if}
   {/snippet}
