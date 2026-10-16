@@ -52,8 +52,12 @@ Decisions & prerequisites:
       tree in one statement — verified on Postgres 18.6
 - [x] **(review)** Cascade cost for the largest article thread (5.4K comments): 144 ms with the
       `replyToId` index, 59 s without — index added to the DDL
-- [ ] **(review)** Prod purge of today's orphans (archive table + delete root threads): Briant to
-      approve after reading the inventory
+- [ ] **(review)** Prod purge of today's orphans — procedure reviewed and written up in the plan
+      (_Orphan purge_: archive schema, explicit `Report`/`EntityModeration`/`JobQueue` deletes,
+      batched thread deletes, rollback traps); Briant to approve, then the SQL is supplied in chat
+- [x] **(review)** Second orphan class measured: 2,867 reply threads whose parent comment was
+      hard-deleted (`Thread.commentId` SET NULL), 3,843 comments — purged with the rest, skipped
+      by the backfill
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
       (2026-10-16)
 
@@ -147,7 +151,9 @@ the copy):
 - [ ] Mute copy: `ThreadMute` splits. Thread with `commentId` → `CommentMute` on that comment's id
       (v2 ids preserved; note the off-by-one — v2 mutes the comment's CHILD thread); entity-bearing
       thread with no `commentId` → `CommentTopicMute`; orphaned → skipped and counted
-- [ ] Orphaned-thread comments (and their reactions/report links) skipped, counts logged
+- [ ] Orphaned-thread comments (and their reactions/report links) skipped, counts logged —
+      **both classes**: entity-less root threads AND child threads with `commentId IS NULL`
+      (a null `parentId` from the latter would promote a reply to top level on a live entity)
 - [ ] Parity checks: per-entity counts vs `Thread.commentCount`, reaction counts vs both source
       tables, spot checksums, `ThreadMute` count vs `CommentMute` + `CommentTopicMute` + skipped,
       and an `updatedAt`/`deletedAt` comparison old vs new (count parity cannot see a stale edit

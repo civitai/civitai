@@ -46,6 +46,7 @@ written**: the blockers below have to be folded into Phases 1–3 first, and two
 | v2 depth                                                  | reply chains reach 247 levels; 692 comments sit deeper than 20 (in 666 non-empty threads) — the backfill must clamp them or `commentv3_depth_cap` aborts the copy                                                                                                                                              |
 | Orphaned threads                                          | 288,718 root threads with no entity, holding 233,525 `CommentV2` rows (~10% of v2) plus 42,577 in nested threads under them — see _Decisions still open_                                                                                                                                                       |
 | Child threads with null `parentThreadId` / `rootThreadId` | 2 of 502,658 — ordering the backfill by `parentThreadId` is fine                                                                                                                                                                                                                                               |
+| Replies to deleted comments                               | 2,867 child threads under live entities whose `commentId` was nulled by a v2 hard-delete, holding 3,843 comments — a second orphan class; the backfill must skip them, not promote them to top level (see _Decisions still open_)                                                                              |
 | Threads per entity                                        | review 3.65M, image 1.06M, post 164K, bounty + bountyEntry 31K, article 18K, comic 462, model 456, question/answer 456, challenge 352, model3d (+ review) 149, clubPost 53, crucible 11, appListing 1. No thread carries two entity FKs; no `imageId` dangles.                                                 |
 | Dead columns                                              | `CommentV2.metadata` is non-null on 20,141 rows and every value is `{"oldId": n}`, an import marker nothing reads — drop. `nsfw` is true on 11 v2 rows and 1 v1 row — drop.                                                                                                                                    |
 | `ThreadMute`                                              | 225 rows in prod — the feature is live, not dev-only                                                                                                                                                                                                                                                           |
@@ -134,12 +135,15 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
   135 open human reports (AdminAttention + TOSViolation + Spam) are the only rows a moderator
   might still want, and what they would act on is the author, not the comment.
 
-  **Still open: purging today's orphans in prod** (Briant wants the inventory above reviewed
-  first). Recommended shape if approved: copy the orphan `CommentV2` rows and their reaction and
-  report-link rows into an archive table in the same database, then delete the orphan root
-  threads (nested threads, comments, reactions, report links and the one mute cascade through
-  existing FKs). The `Report` rows stay. Reversible, and it takes the 276K rows out of the
-  Phase 3 backfill and parity checks.
+  **A second orphan class, found 2026-10-16: replies to deleted comments.** `Thread.commentId`
+  is `ON DELETE SET NULL`, so when a v2 comment is hard-deleted its reply thread stays under the
+  live entity with no parent comment: 2,867 such threads holding 3,843 comments. Nothing can
+  expand them either. The backfill must treat them as orphans too — mapped naively,
+  `parentId = thread.commentId = NULL` would promote every one of those replies to a top-level
+  comment on a live entity.
+
+  **Still open: purging today's orphans in prod** — procedure under _Orphan purge_ below; Briant
+  to approve.
 
 Decided 2026-10-16:
 
@@ -148,6 +152,75 @@ Decided 2026-10-16:
   retroactively.
 - **Orphans do not persist in V3** — approved (Briant); design under _Entity deletion_ in the
   target data model, backfill consequence above.
+
+### Orphan purge — procedure (reviewed 2026-10-16, awaiting approval)
+
+One-off, by hand on the primary, in chat-supplied SQL rather than a migration file (data fix,
+not schema). Everything is reversible until the archive is dropped in Phase 6.
+
+**What goes, and how** (prod FKs and triggers verified 2026-10-16):
+
+| Table                      | Rows    | Mechanism                                                      |
+| -------------------------- | ------- | -------------------------------------------------------------- |
+| `Thread` orphan roots      | 288,718 | the statement                                                  |
+| `Thread` nested under them | 40,778  | `rootThreadId`/`parentThreadId` cascade                        |
+| `Thread` dead-parent class | 2,867   | the statement (plus any threads nested under those, cascade)   |
+| `CommentV2`                | ~280K   | `threadId` cascade                                             |
+| `CommentV2Reaction`        | ~184K   | `commentId` cascade                                            |
+| `CommentV2Report` links    | ~5.7K   | `commentV2Id` cascade                                          |
+| `ThreadMute`               | 1       | `threadId` cascade                                             |
+| `Report`                   | ~5.7K   | **explicit** — no FK reaches it; cascades to `ReportAutomated` |
+| `EntityModeration`         | 3       | **explicit** — polymorphic `(entityType, entityId)`            |
+| `JobQueue`                 | 3       | **explicit** — same                                            |
+
+None of the ~5.7K reports is also linked to an image, user or v1 comment, so deleting them
+removes nothing else. Untouched and unaffected: `UserRestriction.triggers` (scam ledger, restore
+is an id-list no-op), the notifications database (payload ids 404 like any deleted comment),
+ClickHouse, Meilisearch (comments are not indexed), Buzz and event points (no clawback path),
+v1 `Comment` (its `modelId` FK already cascades; 0 dangling).
+
+**Steps**
+
+1. **Build the set once**, into a work table in a dedicated `archive` schema: orphan roots (all
+   entity columns null, `parentThreadId` null) plus every thread whose `rootThreadId` is one;
+   dead-parent threads (`parentThreadId` set, `commentId` null, root alive) plus their
+   descendants by a recursive walk of `parentThreadId`. Mark the "tops" (rows whose parent is not
+   itself in the set) — those are what the delete targets; the rest cascade. Record the counts.
+2. **Archive** with `CREATE TABLE archive.<name> AS SELECT …` for `Thread`, `CommentV2`,
+   `CommentV2Reaction`, `CommentV2Report`, `Report`, `ReportAutomated`, `ThreadMute`,
+   `EntityModeration`, `JobQueue`; index each on its id. A separate schema, not `public`: the
+   drift gate only reports missing FKs/columns, so it would not notice, but `db:moderator:pull`
+   introspects, and a stray public table would land in a tracked schema file.
+3. **Verify the archive** row-for-row against the step-1 counts before any delete.
+4. **Delete the explicit rows**: `Report` (via the archived report ids — cascades its link rows
+   and `ReportAutomated`), then `EntityModeration` and `JobQueue` for the archived comment ids.
+5. **Delete the tops in batches** of ~2,000 thread ids per transaction, ordered by id, with a
+   short pause between batches and the replica lag watched. Two triggers fire per cascaded row
+   (`comment_count_update`, `comment_reaction_count_update`) and update parents that are being
+   deleted in the same statement — wasted work, not wrong results, and the reason to batch
+   rather than run one statement. Expect minutes, not hours (the V3 benchmark above cascaded
+   21K comments + 63K reactions in 0.5 s).
+6. **Verify**: the orphan-root query returns only threads created after step 1 (the ~6K/month
+   stream continues until the V3 entity-delete triggers are live); `CommentV2` and reaction
+   counts dropped by the step-1 numbers; `Report` has no row whose only link was to a purged
+   comment.
+7. Autovacuum reclaims the space; a manual `VACUUM ANALYZE` on `Thread`, `CommentV2` and
+   `CommentV2Reaction` shortens the wait.
+8. **Keep `archive` until Phase 6**, then `DROP SCHEMA archive CASCADE` with the old tables.
+
+**Rollback (restore from archive), if ever needed.** Insert in FK order: `Thread` (roots before
+children), `CommentV2`, reactions, `Report`, `ReportAutomated`, links, mutes. Three traps:
+`comment_count_update` re-increments `Thread.commentCount` on insert, so insert threads with
+`commentCount = 0`; `comment_reaction_count_update` does the same to `CommentV2.reactionCount`,
+so insert comments with `reactionCount = 0`; and `trg_moderation_commentv2` fires on every
+`CommentV2` insert, so either disable it for the session or delete the ~280K `JobQueue` rows it
+enqueues afterwards.
+
+**Why purge at all, given the backfill skips orphans anyway.** It removes ~280K rows from the
+backfill and parity checks, drops 5.7K dead reports from a queue, and gives the archive a
+real-world rehearsal of the "entity delete cascades comments" semantics before V3 enforces them.
+It does not stop the leak — that needs the V3 triggers, or (not proposed) flipping the 17 `Thread`
+entity FKs to `ON DELETE CASCADE` now.
 
 ### Drift since 2026-09-01
 
