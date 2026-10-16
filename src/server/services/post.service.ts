@@ -110,6 +110,7 @@ import {
 import { getMetadata } from '~/utils/metadata';
 import { getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
+import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import { CacheTTL } from '../common/constants';
 import type {
   AddPostTagInput,
@@ -237,6 +238,7 @@ export const getPostsInfinite = async ({
   excludedUserIds,
   period,
   periodMode,
+  jumpTo,
   sort,
   user,
   tags,
@@ -362,6 +364,11 @@ export const getPostsInfinite = async ({
       );
     }
   }
+
+  const jump = draftOnly ? undefined : resolveJumpTo({ jumpTo, sort, userId: targetUser });
+  if (jump?.direction === 'before') AND.push(Prisma.sql`p."publishedAt" < ${new Date(jump.endMs)}`);
+  else if (jump?.direction === 'after')
+    AND.push(Prisma.sql`p."publishedAt" >= ${new Date(jump.startMs)}`);
 
   if (browsingLevel) {
     if (pending && (isModerator || userId)) {

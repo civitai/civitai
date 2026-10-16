@@ -9,6 +9,7 @@ import { traceContextHeaders } from '~/server/utils/otel-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import { encodeFeedCursor, parseFeedCursor } from '~/server/common/feed-cursor';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
+import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import {
   buildFeedRequestRow,
   type CapturableSearchInput,
@@ -74,6 +75,8 @@ const PERIOD_DAYS: Record<string, number | undefined> = {
   AllTime: undefined,
 };
 const LEVELS = [1, 2, 4, 8, 16, 32];
+// The feed refuses a cursor id past int4, and a refused jump would fall back unbounded.
+const MAX_FEED_ID = 2_147_483_647;
 // The feed service's own ceiling on userIds.
 const MAX_USER_IDS = 10_000;
 const MAX_FOLLOWED = MAX_USER_IDS;
@@ -219,6 +222,15 @@ export function mapSearchInputToFeedQuery(
   else if (cursor) return skip(CURSOR_UNPARSED);
   if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
   if (offset > MAX_OFFSET) return skip(DEEP_OFFSET);
+  // A jump is the feed's own keyset cursor placed at the month edge. Once the search index has
+  // served a jumped page its offset cursor is only meaningful there, so it keeps the paging.
+  let keyset = feedCursor;
+  const jump = resolveJumpTo({ jumpTo: input.jumpTo, sort: input.sort, userId });
+  if (jump && !feedCursor) {
+    if (mode !== 'primary') return skip('jumpTo:shadow');
+    if (offset) return skip('jumpTo:offset');
+    keyset = jump.direction === 'before' ? `${jump.endMs - 1}|${MAX_FEED_ID}` : `${jump.startMs}|0`;
+  }
 
   const params = new URLSearchParams();
   params.set('levels', levels.join(','));
@@ -265,7 +277,7 @@ export function mapSearchInputToFeedQuery(
   const limit =
     typeof input.limit === 'number' && input.limit > 0 ? Math.min(input.limit, 200) : 100;
   params.set('limit', String(limit));
-  if (feedCursor) params.set('cursor', feedCursor);
+  if (keyset) params.set('cursor', keyset);
   else if (offset) params.set('offset', String(offset));
   // The site freezes a paged set at the first page's minute only for Newest; the other
   // sorts page a live set, so a cut there would compare different sets.
