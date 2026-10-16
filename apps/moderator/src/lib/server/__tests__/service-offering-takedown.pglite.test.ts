@@ -137,6 +137,8 @@ describe('service offering takedown from the report queue', () => {
       })
     );
     expect(JSON.stringify(createNotification.mock.calls)).not.toContain(String(MOD));
+    // The note stays on the row; only `other` sends its details to the seller.
+    expect(JSON.stringify(createNotification.mock.calls)).not.toContain('Links off-site');
     expect(recordModActivity).toHaveBeenCalledTimes(1);
   });
 

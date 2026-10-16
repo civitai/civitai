@@ -64,3 +64,13 @@ export const isServiceOfferingTakedownReason = (
 export const SERVICE_OFFERING_TAKEN_DOWN = 'service-offering-taken-down';
 export const serviceOfferingTakenDownKey = (offeringId: number) =>
   `${SERVICE_OFFERING_TAKEN_DOWN}:${offeringId}`;
+
+/**
+ * The details the seller's notification carries. Only `other` has no copy of its own, so only its
+ * details are written for the seller; for every other reason they are a moderator's note and stay
+ * on the offering row, out of the notification payload.
+ */
+export const sellerFacingTakedownDetails = (
+  reason: ServiceOfferingTakedownReason,
+  details: string | null | undefined
+) => (reason === 'other' ? details ?? null : null);

@@ -585,6 +585,12 @@
                       ? 'What is wrong (sent to the seller)'
                       : 'Note for moderators (optional, not sent to the seller)'}
                   />
+                  <!-- Shown as text too: a typed note hides the placeholder, and Other sends it. -->
+                  <p class="text-xs text-dark-2">
+                    {offeringReason === 'other'
+                      ? 'This text is sent to the seller as the reason.'
+                      : 'Kept with the takedown for moderators; the seller sees only the reason.'}
+                  </p>
                   <div class="flex flex-wrap gap-2">
                     <Button type="submit" size="sm" variant="destructive" disabled={offeringForm.submitting}>
                       Yes, take it down

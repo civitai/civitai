@@ -1,6 +1,7 @@
 import { NotificationCategory } from '@civitai/notifications';
 import {
   SERVICE_OFFERING_TAKEN_DOWN,
+  sellerFacingTakedownDetails,
   serviceOfferingTakenDownKey,
   type ServiceOfferingTakedownReason,
 } from '@civitai/shared/service-offering-takedown';
@@ -117,7 +118,7 @@ export async function takedownServiceOffering({
           offeringTitle: offering.title,
           sellerUsername: offering.sellerUsername,
           reason,
-          details,
+          details: sellerFacingTakedownDetails(reason, details),
         },
       });
     } catch (error) {

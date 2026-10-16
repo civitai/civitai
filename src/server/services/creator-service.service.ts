@@ -6,6 +6,7 @@ import { countOpenDealsByOffering } from '~/server/services/creator-service-deal
 import { createNotification } from '~/server/services/notification.service';
 import {
   SERVICE_OFFERING_TAKEN_DOWN,
+  sellerFacingTakedownDetails,
   serviceOfferingTakenDownKey,
 } from '@civitai/shared/service-offering-takedown';
 import { NotificationCategory } from '~/server/common/enums';
@@ -326,7 +327,7 @@ export async function takedownServiceOffering({
       offeringTitle: offering.title,
       sellerUsername: offering.seller.username,
       reason,
-      details: details ?? null,
+      details: sellerFacingTakedownDetails(reason, details),
     },
   });
 }
