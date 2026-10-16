@@ -207,6 +207,37 @@ export async function getImagesForCollection(
 }
 
 /**
+ * The images hung off a non-post entity through `ImageConnection`: a bounty's reference images, a bounty
+ * entry's submissions, an article's body images. `extraIds` is for what is a column rather than a
+ * connection — an article's cover — which the site shows with the rest.
+ *
+ * The connected ids are read FIRST and the images by id list. `i.id IN (subquery) OR i.id IN (...)`
+ * cannot become a semi-join — the planner falls back to a per-row subplan over all of `Image`, and an
+ * article took minutes. An entity holds a few hundred images at most, so the list is small.
+ */
+export async function getImagesForConnection(
+  entityType: 'Article' | 'Bounty' | 'BountyEntry',
+  entityId: number,
+  window: BatchWindow = {},
+  extraIds: number[] = []
+): Promise<BulkBatch> {
+  const connected = await dbRead
+    .selectFrom('ImageConnection')
+    .select('imageId')
+    .where('entityType', '=', entityType)
+    .where('entityId', '=', entityId)
+    .limit(MAX_CONNECTED_IMAGES)
+    .execute();
+  const ids = [...new Set([...connected.map((c) => c.imageId), ...extraIds])].filter(
+    (id) => Number.isInteger(id) && id > 0
+  );
+  return getImagesByIds(ids, window);
+}
+
+/** Far above any one article's, bounty's or entry's images; a bound so the id list stays a list. */
+const MAX_CONNECTED_IMAGES = 5000;
+
+/**
  * `nsfwBlockedOnly` is Retool's `UserQuery5000` — `nsfwLevel = 32` is what `handleBlockImages` sets, so it
  * lists what has ALREADY been removed from an account. That is the restore path: confirm a purge
  * landed, or pull back one that went too wide.
@@ -291,7 +322,7 @@ export async function countImagesForUser(userId: number): Promise<number> {
 /**
  * Retool's `strikeCheckbox`, on both Bulk Image Manager and User Reports: a TOS removal and the strike
  * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
- * grid only holds the page in front of the moderator, and a selection can outlive it.
+ * client is not trusted to name them, and a hand-built POST can carry any ids.
  */
 export async function strikeBatchOwners(input: {
   imageIds: number[];

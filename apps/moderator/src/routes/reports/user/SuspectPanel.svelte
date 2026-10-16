@@ -26,6 +26,7 @@
   import { entityUrl, modelLookupUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
   import { clearPaging, nonPagingSearch } from '$lib/paging';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import type { ReportActionGrants } from '$lib/report-queue';
 
   let {
     suspectId,
@@ -35,7 +36,7 @@
     models,
     filters,
     accountHistory,
-    canAct,
+    can,
     civitaiUrl,
   }: {
     suspectId: number;
@@ -46,7 +47,8 @@
     models: AccountData['models'];
     filters: AccountData['filters'];
     accountHistory: AccountData['accountHistory'];
-    canAct: boolean;
+    /** The viewer's action grants: the image bar needs `images`, its strike box `strike`. */
+    can: ReportActionGrants;
     civitaiUrl: string;
   } = $props();
 
@@ -82,8 +84,8 @@
     },
   });
 
-  // Paging deliberately keeps the selection — one removal spans several pages of a 500-image account.
-  // A filter change or a new suspect must not. Keyed on the search string, not `items`, which is a
+  // A filter change or a new suspect clears the selection; paging drops it too, since `ImageActionBar`
+  // keeps only what is on screen. Keyed on the search string, not `items`, which is a
   // fresh array after ANY write and would discard a selection mid-assembly.
   const batchKey = $derived(nonPagingSearch(pageState.url.search));
   $effect(() => {
@@ -304,7 +306,7 @@
           </p>
     {/if}
 
-    {#if canAct}
+    {#if can.images}
       <div class="mt-3 border-t border-dark-4 pt-3">
         <ImageActionBar
           bare
@@ -313,6 +315,7 @@
           onSubmit={onSubmit.enhance}
           submitting={onSubmit.submitting}
           notify={false}
+          strike={can.strike}
           {blockedIds}
         />
       </div>
@@ -325,7 +328,7 @@
     total={suspect.matched}
     perPage={suspect.perPage}
     page={suspect.page}
-    selected={canAct ? selected : undefined}
+    selected={can.images ? selected : undefined}
     empty="No images match these filters."
     endLabel="End of this account's content."
     card={imageCard}

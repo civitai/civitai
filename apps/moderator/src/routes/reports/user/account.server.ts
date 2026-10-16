@@ -5,7 +5,7 @@ import { reportModerationActions } from '$lib/server/report-actions';
 import { accountEnforcementActions } from '$lib/server/account-actions';
 import { getTimedMute } from '$lib/server/user-actions.service';
 import { loadItemReports } from '$lib/server/report-queue-load';
-import { ReportEntity } from '$lib/reports';
+import { ReportEntity, reportPath } from '$lib/reports';
 import { lastModActivity } from '$lib/server/mod-activity';
 import { ingestionErrorLevelSet } from '@civitai/shared';
 import { loadAccountHistory } from '$lib/server/account-history';
@@ -114,6 +114,6 @@ export type AccountData = Awaited<ReturnType<typeof loadAccount>>;
 
 // Both pages that render an account take the same forms.
 export const accountActions = {
-  ...reportModerationActions('/users'),
+  ...reportModerationActions(reportPath(ReportEntity.User)),
   ...accountEnforcementActions,
 };

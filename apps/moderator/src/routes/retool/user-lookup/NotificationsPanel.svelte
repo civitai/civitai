@@ -12,6 +12,7 @@
   import { dateTime } from '$lib/format';
   import ListCard from './ListCard.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { denied } from '$lib/permissions';
 
   // `details` keys vary by notification type — the notifications service stores a raw payload and the
   // monolith renders it. These are the ones that carry prose; anything else is ids and is not worth
@@ -32,6 +33,7 @@
     onSuccess,
   }: {
     userId: number;
+    /** Sending: the `user.strike` action grant, as Notify is on the report queues. */
     canAct: boolean;
     onSuccess: () => void;
   } = $props();
@@ -79,7 +81,7 @@
   {/if}
 
   {#if !canAct}
-    <p class="text-sm text-dark-2">Sending requires the Users permission.</p>
+    <p class="text-sm text-dark-2">{denied('user.strike')}</p>
   {:else if sending}
     <form method="POST" action="?/sendNotification" use:enhance={form.enhance}>
       <input type="hidden" name="userId" value={userId} />

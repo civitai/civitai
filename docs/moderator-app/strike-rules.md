@@ -80,7 +80,8 @@ lifetime over one 1-point strike that mutes nobody.
 ## 5. Who can issue one
 
 - **Any moderator at the API level** — no extra permission, same bar as mute/unmute.
-- **In Mod Studio, every strike button also requires the `/users` page grant.**
+- **In Mod Studio, every strike button also requires the `user.strike` action grant** (was the
+  `/users` page grant until 2026-10-16), which also covers Notify and a removal that strikes its owners.
 - Strikes issued by a person are classified `ManualModAction`.
 - **Automatic strikes are limited to 1 per user per day**; `ManualModAction` and `Scam` (one per case
   already) are exempt, and a voided strike does not count. A rate-limited

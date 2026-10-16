@@ -1,7 +1,7 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess, requiresGrant } from '$lib/server/access';
+import { canAccess, denied, requiresGrant } from '$lib/server/access';
 import { parseForm, userIdSchema } from '$lib/server/query';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
@@ -245,10 +245,10 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // Issuing a strike NOTIFIES the user, so it is gated on the enforcement permission rather than the
-  // note permission it sits beside.
+  // Issuing a strike NOTIFIES the user, so it is gated on the `user.strike` action grant — the one every
+  // page that strikes checks — rather than the note permission it sits beside.
   addStrike: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return noteFail(403, 'Not permitted.');
+    if (!locals.grants['user.strike']) return noteFail(403, denied('user.strike'));
     const author = locals.user.username;
     if (!author) return noteFail(400, 'Your account has no username to attribute the strike to.');
 
@@ -324,9 +324,10 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // Notifying a user is an enforcement-adjacent act, not a note, so it takes the same gate.
+  // Notifying a user is an enforcement-adjacent act, not a note, so it takes the strike's grant, as the
+  // report queues' Notify does.
   sendNotification: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return notifyFail('Not permitted.');
+    if (!locals.grants['user.strike']) return notifyFail(denied('user.strike'));
     const input = parseForm(
       userIdSchema.extend({
         message: z.string().trim().min(1).max(1000),
