@@ -88,6 +88,14 @@ export type RunModelSearchContext = {
   user?: SessionUser;
   /** Absolute origin used to build download URLs (from getNextPage's baseUrl). */
   baseUrlOrigin: string;
+  /**
+   * Restrict to models owned by this user id. Set only by the block catalog's `owner=mine`, from
+   * the verified token subject — a ctx field, so it cannot arrive in parsed query input. Pair it
+   * with the same id on `resolveModelSearchIds` for a text query.
+   */
+  ownerUserId?: number;
+  /** Keep only Public-availability versions on every path (see getModelsRaw). */
+  publicVersionsOnly?: boolean;
 };
 
 const modelTypeValues = new Set<string>(Object.values(ModelType));
@@ -112,6 +120,13 @@ export async function resolveModelSearchIds(opts: {
   limit: number;
   browsingLevel: number;
   /**
+   * Owner filter applied INSIDE the Meili query (`user.id`, a declared filterable attribute).
+   * Filtering only afterwards in the DB would intersect the top-N relevance hits across ALL users
+   * with one user's models — sparse or empty pages, the same failure `types` documents below.
+   * Must be a safe integer: it is interpolated into the filter expression.
+   */
+  ownerUserId?: number;
+  /**
    * Type filter applied INSIDE the Meili query. Without it, a `query` +
    * `types` request intersects the top-N relevance hits (of ANY type) with
    * the type filter in the DB — for sparse types like Wildcards that's
@@ -125,6 +140,10 @@ export async function resolveModelSearchIds(opts: {
   const browsingLevelValues = Flags.instanceToArray(browsingLevel);
   const typeValues = types?.filter((t) => modelTypeValues.has(t));
   const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
+  const { ownerUserId } = opts;
+  if (ownerUserId !== undefined && !Number.isSafeInteger(ownerUserId)) {
+    throw new Error('ownerUserId must be an integer');
+  }
 
   let meiliResult: SearchResponse<{ id: number }> | undefined;
   try {
@@ -137,6 +156,7 @@ export async function resolveModelSearchIds(opts: {
             filter: [
               `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
               ...(typeValues?.length ? [`type IN [${typeValues.join(',')}]`] : []),
+              ...(ownerUserId !== undefined ? [`user.id = ${ownerUserId}`] : []),
             ],
             attributesToRetrieve: ['id'],
           })
@@ -180,7 +200,14 @@ export async function runModelSearch(
   input: RunModelSearchInput & { searchIds?: number[] },
   ctx: RunModelSearchContext
 ): Promise<{ items: unknown[]; nextCursor?: string | bigint | Date }> {
-  const { browsingLevel, nsfwImagePassthrough, user, baseUrlOrigin } = ctx;
+  const {
+    browsingLevel,
+    nsfwImagePassthrough,
+    user,
+    baseUrlOrigin,
+    ownerUserId,
+    publicVersionsOnly,
+  } = ctx;
   const {
     limit,
     skip,
@@ -221,6 +248,8 @@ export async function runModelSearch(
       disablePoi: true,
     } as Parameters<typeof getModelsWithVersions>[0]['input'],
     user,
+    ownerUserId,
+    publicVersionsOnly,
   });
 
   // Meilisearch returns ids in relevance order, but getModelsWithVersions
