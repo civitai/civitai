@@ -28,8 +28,9 @@ export function resolveOwnedPointer(data: unknown, pointer: string): Resolved {
 export type VersionOwnerLookup = (ids: number[]) => Promise<Map<number, number>>;
 
 export const lookupVersionOwners: VersionOwnerLookup = async (ids) => {
-  // The primary when any id was written within the replication-lag window (version publish,
-  // unpublish and delete flag it), so a just-published version is not refused off a replica.
+  // The primary when any id was written within the replication-lag window, so a version created
+  // moments ago is not refused as missing, and one deleted moments ago is not accepted off a
+  // replica that still has it. Creation, deletion and an ownership transfer all flag it.
   const db = await getDbWithoutLagBatch('modelVersion', ids);
   const rows = await db.modelVersion.findMany({
     where: { id: { in: ids } },
