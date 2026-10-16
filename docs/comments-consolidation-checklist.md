@@ -46,8 +46,12 @@ Decisions & prerequisites:
 - [x] Mute table naming decided (2026-09-01): `CommentMute` + `CommentTopicMute`, not the
       `*Engagement` + type-enum convention — a `Follow` state is speculative and a second table
       later costs what the enum costs now
-- [ ] **(review)** Orphaned-thread comments: migrate under a sentinel topic, or drop and accept
-      dangling report/strike/scam-ledger references
+- [x] **(review)** Orphaned-thread comments: not migrated, and V3 deletes a topic when its entity
+      is hard-deleted (2026-10-16); inventory of referencing rows in the plan doc
+- [x] **(review)** `parentId ON DELETE RESTRICT` survives a topic cascade deleting a whole reply
+      tree in one statement — verified on Postgres 18.6
+- [ ] **(review)** Prod purge of today's orphans (archive table + delete root threads): Briant to
+      approve after reading the inventory
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
       (2026-10-16)
 
@@ -71,6 +75,8 @@ Decisions & prerequisites:
 - [ ] Triggers: `CommentTopic.commentCount` (counted set = ALL rows incl. hidden/self, matching
       today's `update_thread_comment_count`), reaction-count port of
       `update_comment_reaction_count`
+- [ ] **(review)** `commentv3_delete_topic` AFTER DELETE trigger on each of the 13 entity tables
+      (`comicChapter` via its surrogate id), so an entity hard-delete cascades its comments
 - [ ] Prisma shape: `path` as `Unsupported("ltree") @default(dbgenerated())` — without the default
       Prisma strips `create`/`upsert` from the delegate **(review)**; `rootId`/`depth` plain
       required `Int`; `db:check-generated` clean with it
@@ -138,8 +144,7 @@ the copy):
 - [ ] Mute copy: `ThreadMute` splits. Thread with `commentId` → `CommentMute` on that comment's id
       (v2 ids preserved; note the off-by-one — v2 mutes the comment's CHILD thread); entity-bearing
       thread with no `commentId` → `CommentTopicMute`; orphaned → skipped and counted
-- [ ] Orphaned-thread comments (and their reactions/reports) handled per the Phase 0 decision,
-      counts logged
+- [ ] Orphaned-thread comments (and their reactions/report links) skipped, counts logged
 - [ ] Parity checks: per-entity counts vs `Thread.commentCount`, reaction counts vs both source
       tables, spot checksums, `ThreadMute` count vs `CommentMute` + `CommentTopicMute` + skipped,
       and an `updatedAt`/`deletedAt` comparison old vs new (count parity cannot see a stale edit

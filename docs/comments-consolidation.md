@@ -96,7 +96,8 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
 8. **`CommentTopic` has no FK to its entity**, so it accumulates orphans exactly as `Thread` does
    unless every entity hard-delete path removes the topic row — today every entity FK on `Thread`
    is `ON DELETE SET NULL` and nothing deletes `Thread` rows, which is where the 288K orphans come
-   from. "Entity cleanup = delete one row" holds only once image, post, article, bounty and model
+   from. Resolved by the per-entity `AFTER DELETE` triggers (_Entity deletion_, decided
+   2026-10-16). "Entity cleanup = delete one row" holds only once image, post, article, bounty and model
    deletes and account deletion do it.
 
 ### Decisions still open
@@ -110,17 +111,43 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
   (no entity page), but they are not residue: reports, strikes, the scam-case ledger and
   notification rows reference them by id, and the per-user readers (`events/points/hooks.ts`
   comment count, `creator-score-self-activity.service.ts`, `block-hide-comments.service.ts`,
-  the moderator detail fetchers) still count them. Either migrate them under a sentinel topic
-  (needs an `orphan` enum value, since the deleted entity's kind is unknown) or drop them and
-  accept dangling references and shifted per-user tallies. Recommendation: sentinel topic. Decide
-  before Phase 3. Going forward `CommentTopic` keeps its `(entityType, entityId)` after the entity
-  is gone, so V3 orphans at least stay attributable (blocker 8).
+  the moderator detail fetchers) still count them.
+
+  **Decided 2026-10-16 (Briant): orphans should not persist.** In V3 an entity hard-delete
+  deletes its `CommentTopic` and everything under it cascades (see _Entity deletion_ below), so
+  the backfill **skips** orphaned-thread comments rather than inventing a sentinel topic. What
+  that drops in prod, measured 2026-10-16 over all 276,102 orphan comments (35,547 authors):
+
+  | Referenced by                          | Rows                                                                   |
+  | -------------------------------------- | ---------------------------------------------------------------------- |
+  | `CommentV2Reaction`                    | 184,145                                                                |
+  | `CommentV2Report` → `Report`           | 5,709: 5,439 Unactioned, 107 Pending, 163 Actioned                     |
+  | open reports by reason                 | Automated 5,411, AdminAttention 106, TOSViolation 25, Spam 4           |
+  | `hidden` / `tosViolation` flags        | 461 / 57                                                               |
+  | `EntityModeration` (text-scan records) | 3, none blocked                                                        |
+  | `JobQueue` ModerationRequest           | 3                                                                      |
+  | `ThreadMute`                           | 1                                                                      |
+  | scam-case ledger (`UserRestriction`)   | hidden ids in `triggers` JSON; restore is `WHERE id = ANY(ids)`, no-op |
+
+  For scale, the whole `CommentV2Report` queue holds 64,568 open reports, so the 5,546 open ones
+  on orphans are 9% of a queue that is not being worked, and 98% of them are `Automated`. The
+  135 open human reports (AdminAttention + TOSViolation + Spam) are the only rows a moderator
+  might still want, and what they would act on is the author, not the comment.
+
+  **Still open: purging today's orphans in prod** (Briant wants the inventory above reviewed
+  first). Recommended shape if approved: copy the orphan `CommentV2` rows and their reaction and
+  report-link rows into an archive table in the same database, then delete the orphan root
+  threads (nested threads, comments, reactions, report links and the one mute cascade through
+  existing FKs). The `Report` rows stay. Reversible, and it takes the 276K rows out of the
+  Phase 3 backfill and parity checks.
 
 Decided 2026-10-16:
 
 - **Depth-cap clamp for migrated rows** — approved (Briant). The 692 over-cap comments are
   re-parented to a depth-20 sibling with `replyToId` set, the write path's clamp applied
   retroactively.
+- **Orphans do not persist in V3** — approved (Briant); design under _Entity deletion_ in the
+  target data model, backfill consequence above.
 
 ### Drift since 2026-09-01
 
@@ -393,8 +420,43 @@ thread), and `challenge.service.ts` + `getCommentCount` read an entity-level cou
 upserts it on first comment (replacing lazy Thread creation 1:1), and every comment FK-references
 it — so entity cleanup is "delete the topic row", with comments cascading. That's _more_ integrity
 than today from comment to topic. From topic to entity it is the same as `Thread`: there is no FK,
-so the entity delete paths (image, post, article, bounty, model, account deletion) must delete the
-topic row explicitly, or orphans accumulate exactly as they do now (blocker 8).
+so something has to delete the topic row when the entity goes, or orphans accumulate exactly as
+they do now (blocker 8).
+
+### Entity deletion — decided 2026-10-16
+
+**An entity hard-delete deletes its topic; the topic cascades to comments, reactions, report
+links and mutes.** Soft deletes (a model with status Deleted, an unpublished article) leave the
+topic alone — the entity still exists.
+
+- Done by an `AFTER DELETE` trigger on each entity table, not by service code: most entity deletes
+  never pass through a service (a post delete cascades its images; account deletion cascades
+  nearly everything), which is the same bypass argument that moved Phase 2 to triggers. One
+  function, parameterised by entity type, attached to the 13 entity tables in `CommentEntityType`:
+
+  ```sql
+  CREATE OR REPLACE FUNCTION commentv3_delete_topic() RETURNS trigger LANGUAGE plpgsql AS $$
+  BEGIN
+    DELETE FROM "CommentTopic" WHERE "entityType" = TG_ARGV[0]::"CommentEntityType" AND "entityId" = OLD.id;
+    RETURN NULL;
+  END $$;
+
+  CREATE TRIGGER commentv3_delete_topic AFTER DELETE ON "Image"
+    FOR EACH ROW EXECUTE FUNCTION commentv3_delete_topic('image');
+  -- …one per entity table; comicChapter uses its integer surrogate id (Phase 1 prerequisite)
+  ```
+
+- **Verified 2026-10-16 on Postgres 18.6** (prod is 18.3): a topic cascade deletes a whole reply
+  tree in one statement under `parentId ON DELETE RESTRICT`, in any id order — RESTRICT and
+  NO ACTION both see the children go within the same statement. A single-row delete of a parent
+  whose reply exists still fails, which is the D6 race guard. No change to the DDL.
+- `Report` rows whose comment is gone stay, with no target. D6 already accepts this for childless
+  hard-deletes, so the moderator queue has to tolerate it either way.
+- The event-points hook only recounts a user's comments when the comment service deletes them; a
+  cascade bypasses it and awarded points stand. Today the comments survive and the points stand
+  too — not a regression.
+- Volume: ~6K orphaned comments a month today means a few hundred entity-with-comments deletes a
+  day. Nothing to batch.
 
 ### Indexes
 
@@ -658,8 +720,8 @@ Idempotent, batched copy jobs:
   `legacyV1Id`. Recompute `CommentV3.reactionCount` from the copied rows at the end.
 - Reports: `CommentV2Report` copies as-is; `CommentReport` maps through `legacyV1Id`. The `Report`
   rows themselves don't move.
-- Orphaned-thread comments (233K in prod) and their reactions/reports: per the open decision in
-  the viability review — migrate under a sentinel topic or skip; either way log counts.
+- Orphaned-thread comments (276K in prod) and their reactions/report links are **skipped**
+  (decided 2026-10-16) and the counts logged; fewer still if the prod purge happens first.
 - Parity checks: per-entity counts vs `Thread.commentCount` (recomputed from `CommentV2` first —
   comic threads were over-counted until the double increment was removed), reaction counts vs the
   two source tables, spot checksums, and an `updatedAt`/`deletedAt` comparison against the old rows.
@@ -986,9 +1048,9 @@ mute check and block-hide alike.
 - `clubPost` threads — clubs are dead code; rows (if any) are left behind and dropped with Thread.
 - `question`/`answer` — decided (decision 1): not migrated; rows drop with Thread, and
   `QuestionAnswerComments.tsx` + `question/answer.metrics.ts` retire alongside.
-- Comments attached to orphaned Threads (all entity FKs null) — unreachable in the UI, but 233K
-  rows that reports, strikes and the scam ledger still reference; whether to migrate them under a
-  sentinel topic is an open decision (viability review).
+- Comments attached to orphaned Threads (all entity FKs null) — 276K rows unreachable in the UI;
+  decided 2026-10-16 not to migrate them (inventory of what references them in _Decisions still
+  open_).
 
 ## Sweep coverage (2026-08-24)
 
