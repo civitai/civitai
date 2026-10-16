@@ -111,8 +111,10 @@ beforeEach(async () => {
     INSERT INTO "User" VALUES
       (${AUTHOR}, 'author'), (${OTHER_AUTHOR}, 'other'), (${F1}, 'f1'), (${F2}, 'f2'),
       (${LATE_FOLLOWER}, 'late'), (${OPTED_OUT}, 'quiet'), (${BLOCKED_BY_FOLLOWER}, 'blocker');
-    INSERT INTO "Tag" VALUES (1, 'article category'), (2, 'announcement'), (3, 'guide'), (9, 'music');
-    INSERT INTO "TagsOnTags" VALUES (1, 2), (1, 3);
+    INSERT INTO "Tag" VALUES
+      (1, 'article category'), (2, 'announcement'), (3, 'guide'), (8, 'genre'), (9, 'music');
+    -- 'music' has a parent too, just not 'article category'.
+    INSERT INTO "TagsOnTags" VALUES (1, 2), (1, 3), (8, 9);
     INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES
       (${F1}, ${AUTHOR}, 'Follow'),
       (${F2}, ${AUTHOR}, 'Follow'),
