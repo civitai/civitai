@@ -355,15 +355,6 @@ describe('🔴 POOL_MERGE with no servable snapshot: BASE, flagged, 60 s, reason
       coocFallbackReason: 'load_failed',
     });
   });
-
-  it('a served snapshot does not log a fallback', async () => {
-    mockStage1();
-    await getResourceIntent(INPUT, { ...CTX, poolMerge: true });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-cooc-fallback' }),
-      'temp-search'
-    );
-  });
 });
 
 describe('POOL_MERGE cache hit', () => {

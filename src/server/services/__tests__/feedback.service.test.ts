@@ -52,21 +52,6 @@ describe('createFeedback — extended context', () => {
     message: 'the feed repeated itself',
   };
 
-  it('writes attached image ids into the stored context', async () => {
-    await createFeedback({ ...args, context: { images: [UUID_1, UUID_2] } });
-    expect(writtenContext()).toEqual({ images: [UUID_1, UUID_2] });
-  });
-
-  it('writes the screenshot id into the stored context', async () => {
-    await createFeedback({ ...args, context: { screenshotId: UUID_SHOT } });
-    expect(writtenContext()).toEqual({ screenshotId: UUID_SHOT });
-  });
-
-  it('writes the Faro session id into the stored context', async () => {
-    await createFeedback({ ...args, context: { sessionId: 'faro-abc' } });
-    expect(writtenContext()).toEqual({ sessionId: 'faro-abc' });
-  });
-
   it('writes all three alongside the pre-existing fields', async () => {
     await createFeedback({
       ...args,

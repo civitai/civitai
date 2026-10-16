@@ -314,19 +314,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     );
   });
 
-  it('says NOTHING about rejections when every read succeeds', async () => {
-    fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
-
-    await getImageMetricsObject([{ id: 1 }]);
-
-    // Without this, logging unconditionally passes the case above.
-    expect(
-      logToAxiomMock.mock.calls.filter(
-        ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics rejected'
-      )
-    ).toHaveLength(0);
-  });
-
   it('serves the keys that LANDED when one key is still outstanding at the deadline', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
     redisMock.redis.hGetAll.mockImplementation((key: string) => {

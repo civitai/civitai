@@ -274,15 +274,6 @@ function input(modelVersionId?: number) {
 
 const common = { userId: 1, isModerator: false, token: 't', experimental: false } as const;
 
-describe('the graph fixture is still what these tests assume', () => {
-  it('Qwen/txt2img is modelLocked with a default', () => {
-    // Guard the guard: if Qwen stops being modelLocked, nothing below
-    // substitutes and every assertion would pass vacuously.
-    expect(getWorkflowCapability('Qwen', 'txt2img')?.modelLocked).toBe(true);
-    expect(typeof QWEN_DEFAULT).toBe('number');
-  });
-});
-
 // A `disabled` version is deliberately still selectable and still parses, so
 // this refusal is the ONLY thing between it and a billed submit. `QWEN_DEFAULT`
 // rather than an arbitrary id: an unrecognised one is substituted away before

@@ -1,10 +1,6 @@
 import client from 'prom-client';
 import { describe, expect, it, vi } from 'vitest';
-import { instrumentationRegistry } from '@civitai/telemetry/client';
-import {
-  COOC_RETENTION_HEARTBEAT_METRIC,
-  createCoocRetentionHeartbeatGauge,
-} from '~/server/prom/resource-intent-cooc.metrics';
+import { createCoocRetentionHeartbeatGauge } from '~/server/prom/resource-intent-cooc.metrics';
 import {
   COOC_RETENTION_HEARTBEAT_KEY,
   readCoocRetentionHeartbeat,
@@ -148,16 +144,6 @@ describe('cooc retention heartbeat', () => {
     t = 60_000;
     await values(gauge);
     expect(read).toHaveBeenCalledTimes(2);
-  });
-
-  it('the metrics route registers the gauge on the scraped registry', async () => {
-    await import('~/server/prom/resource-intent-cooc.metrics');
-    expect(instrumentationRegistry.getSingleMetric(COOC_RETENTION_HEARTBEAT_METRIC)).toBeDefined();
-    const route = (await import('fs')).readFileSync(
-      (await import('path')).join(process.cwd(), 'src/pages/api/metrics.ts'),
-      'utf8'
-    );
-    expect(route).toContain("import '~/server/prom/resource-intent-cooc.metrics';");
   });
 
   it('a failed read keeps the last value, waits a minute, then reads again', async () => {

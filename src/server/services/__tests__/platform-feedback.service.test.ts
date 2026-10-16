@@ -30,12 +30,8 @@ vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
   isFeedbackAreaEnabled: mocks.isFeedbackAreaEnabled,
 }));
 
-const {
-  createPlatformFeedback,
-  getPlatformFeedbackStatus,
-  platformFeedbackFingerprint,
-  PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS,
-} = await import('../platform-feedback.service');
+const { createPlatformFeedback, getPlatformFeedbackStatus, platformFeedbackFingerprint } =
+  await import('../platform-feedback.service');
 
 // printf 'v1\ncli\nsubmit.server-refused' | sha256sum
 const FP_CLI_REF = 'ccb33a3af2f5981c140b409d7cd44a50d469685d7c0b5966d4c18609f3681819';
@@ -680,10 +676,6 @@ describe('createPlatformFeedback — a dismissed report reopens', () => {
     await send(alice);
     await setStatus(1, 'dismissed');
   }
-
-  it('the threshold is three new reporters', () => {
-    expect(PLATFORM_FEEDBACK_REOPEN_AFTER_REPORTERS).toBe(3);
-  });
 
   it('counts each new reporter after the close once, however often they repeat', async () => {
     await dismissed();

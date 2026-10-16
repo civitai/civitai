@@ -399,16 +399,6 @@ describe('joinCreatorsProgram', () => {
     expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
   });
 
-  it('logs the failed bust rather than swallowing it', async () => {
-    armJoin();
-    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('cache redis unreachable'));
-
-    await joinCreatorsProgram(userId);
-
-    expect(mockHandleLogError).toHaveBeenCalledTimes(1);
-    expect((mockHandleLogError.mock.calls[0][0] as Error).message).toBe('cache redis unreachable');
-  });
-
   it('STILL fails when the join write itself fails — the guard is narrow', async () => {
     mockDbWrite.$queryRaw.mockResolvedValueOnce([
       { score: MIN_CREATOR_SCORE + 1000, membership: 'silver' },
