@@ -7,7 +7,7 @@ import {
 } from '~/server/schema/blocks/workflow.schema';
 
 /**
- * The `kind:'workflow'` WIRE shape. This schema checks shape and size only — the
+ * The `kind:'workflow'` WIRE shape. This schema checks shape, size and inline media only — the
  * step count, the name rules and the reference graph are refused later, with an
  * `errorCode`, by `resolveBlockWorkflowGraph` (`workflow-graph.test.ts`) and the
  * router (`blocks.router.workflowKind.test.ts`).
@@ -103,7 +103,8 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
   it('bounds the SUM of every step input plus arguments', () => {
     expect(WORKFLOW_INPUT_BYTES_MAX).toBe(PASS_THROUGH_INPUT_BYTES_MAX);
     // `{"p":"…"}` is 8 bytes of framing around the string.
-    const input = (bytes: number) => ({ p: 'x'.repeat(bytes - 8) });
+    // `.` is outside the base64 alphabet: an all-letter pad is refused as inline media first.
+    const input = (bytes: number) => ({ p: '.'.repeat(bytes - 8) });
     const half = WORKFLOW_INPUT_BYTES_MAX / 2;
     const fits = body({
       steps: [
@@ -143,5 +144,55 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
       blockWorkflowBodySchema.safeParse({ ...passThrough, steps: [{ $type: 'echo', input: {} }] })
         .success
     ).toBe(false);
+  });
+});
+
+describe("kind:'workflow' — inline media is refused", () => {
+  const fix =
+    "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
+    'or pick it with useImagePicker and pass the returned url';
+  const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+  const issuesOf = (b: unknown) => {
+    const parsed = blockWorkflowBodySchema.safeParse(b);
+    return parsed.success ? [] : parsed.error.issues.map((i) => [i.path, i.message]);
+  };
+
+  it('in any step input, at its full path', () => {
+    const withPhoto = body({
+      steps: [
+        { name: 'gen', $type: 'imageGen', input: { prompt: 'a cat' } },
+        { $type: 'imageGen', input: { images: ['https://image.civitai.com/a.jpeg', tinyPng] } },
+      ],
+    });
+    expect(issuesOf(withPhoto)).toEqual([
+      [
+        ['steps', 1, 'input', 'images', 1],
+        `step input field steps[1].input.images[1] carries inline media (data URI/base64); ${fix}`,
+      ],
+    ]);
+  });
+
+  it('in `arguments`, which a step input can $ref', () => {
+    expect(issuesOf(body({ arguments: { photo: tinyPng } }))).toEqual([
+      [
+        ['arguments', 'photo'],
+        `step input field arguments.photo carries inline media (data URI/base64); ${fix}`,
+      ],
+    ]);
+  });
+
+  it('over the byte cap, reports ONLY the inline-media issue', () => {
+    const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
+    expect(photo.length).toBeGreaterThan(WORKFLOW_INPUT_BYTES_MAX);
+    expect(issuesOf(body({ steps: [{ $type: 'imageGen', input: { ImageUrl: photo } }] }))).toEqual([
+      [
+        ['steps', 0, 'input', 'ImageUrl'],
+        `step input field steps[0].input.ImageUrl carries inline media (data URI/base64); ${fix}`,
+      ],
+    ]);
+  });
+
+  it('still parses $ref objects and hosted urls', () => {
+    expect(issuesOf(body())).toEqual([]);
   });
 });
