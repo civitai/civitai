@@ -467,10 +467,20 @@ describe('roster access', () => {
     expect(failing.invalidateSession).toHaveBeenCalledTimes(2);
   });
 
-  it('rolls the quota back when the role grant fails', async () => {
+  it('refuses to add anyone while the role is missing, writing nothing', async () => {
     await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
     await pg.exec(`DELETE FROM "Role"`);
-    await expect(add(1)).rejects.toThrow();
+    expect(await add(1)).toEqual({ ok: false, reason: 'no-role' });
+    expect(await quota(1)).toBeUndefined();
+  });
+
+  it('rolls the quota back when the role grant fails', async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (1, 'ana', true)`);
+    await pg.exec(`
+      CREATE FUNCTION refuse() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'refused'; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER refuse BEFORE INSERT ON "UserRole" FOR EACH ROW EXECUTE FUNCTION refuse();
+    `);
+    await expect(add(1)).rejects.toThrow('refused');
     expect(await quota(1)).toBeUndefined();
   });
 });

@@ -44,6 +44,8 @@ const REFUSAL: Record<Extract<RosterResult, { ok: false }>['reason'], (who: stri
   'not-moderator': (who) =>
     `${who} is not a moderator, so they cannot open the moderator app. Make them a moderator first.`,
   'not-on-roster': (who) => `${who} is not on the roster.`,
+  'no-role': () =>
+    'The Scan Labels role does not exist in the auth hub yet, so nobody can be added. Ask an admin to create it.',
 };
 
 const SESSION_LAG = ' Their access may take up to 4 hours to update.';

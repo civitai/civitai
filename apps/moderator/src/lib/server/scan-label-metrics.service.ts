@@ -254,7 +254,7 @@ const defaultDeps: RosterDeps = {
 
 export type RosterResult =
   | { ok: true; username: string | null; sessionBusted: boolean }
-  | { ok: false; reason: 'no-user' | 'not-moderator' | 'not-on-roster' };
+  | { ok: false; reason: 'no-user' | 'not-moderator' | 'not-on-roster' | 'no-role' };
 
 /**
  * Puts a user on the roster (or takes them off) and grants or revokes `SCAN_LABEL_ROLE` in the same
@@ -278,6 +278,15 @@ export async function setQuota(
       .executeTakeFirst();
     if (!user) return { ok: false, reason: 'no-user' };
     if (active && !user.isModerator) return { ok: false, reason: 'not-moderator' };
+    // `UserRole.role` references `Role`, which the auth hub owns; without the row the grant would throw.
+    if (active) {
+      const role = await trx
+        .selectFrom('Role')
+        .select('id')
+        .where('id', '=', SCAN_LABEL_ROLE)
+        .executeTakeFirst();
+      if (!role) return { ok: false, reason: 'no-role' };
+    }
     const now = new Date();
     await trx
       .insertInto('ScanLabelQuota')
