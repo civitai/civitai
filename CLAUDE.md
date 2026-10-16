@@ -69,6 +69,8 @@ pnpm run test:packages:run # packages/*      pnpm run test:apps:run   # apps/*
 pnpm run test:component    # browser mode    pnpm run test:lint-rules # convention guards
 pnpm test                  # Playwright e2e (pnpm run test:ui for the UI)
 ```
+- A test earns its place only if it can catch a bug a caller would notice; what that rules out is in
+  `.claude/rules/testing.md` → What earns a test.
 - The suites cover disjoint directories; `test:unit:run` runs nothing under `packages/` or `apps/`.
 - Select the unit suite as **`--project 'unit*'`** — `--project unit` silently skips the `unit-native`
   files and exits 0.
