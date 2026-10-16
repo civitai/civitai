@@ -1800,19 +1800,4 @@ describe('block step registry — declared $type vs built $type (clause 7a)', ()
   it('NEGATIVE CONTROL: an agreeing entry passes', () => {
     expect(() => assertStepInvariants('fixture-step', makeFixtureStep())).not.toThrow();
   });
-
-  // 🔴 REDUNDANT WITH THE LOAD-TIME GATE, labelled rather than left to look
-  // like independent coverage: `assertStepInvariants` runs at module import, so
-  // an entry violating 7a crashes the import before this test can collect. It
-  // documents the invariant; it cannot independently fail.
-  it('every SHIPPED entry agrees, on every variant (redundant with load-time gate)', () => {
-    for (const [id, step] of listRegisteredSteps()) {
-      for (const variant of step.variants) {
-        const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
-        expect(step.buildStep(params).$type, `${id} variant '${variant}'`).toBe(
-          step.orchestratorType
-        );
-      }
-    }
-  });
 });

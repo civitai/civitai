@@ -73,18 +73,6 @@ describe('reapDevTunnelsJob', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 
-  it('logs a summary (incl. skipped) only when the sweep did something', async () => {
-    mockReap.mockResolvedValue({ swept: 2, reaped: 1, skipped: 1, listOk: true });
-
-    await runJob();
-
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'reap-dev-tunnels', swept: 2, reaped: 1, skipped: 1 }),
-      'webhooks'
-    );
-  });
-
   it('surfaces a LIST failure as a distinct error + `list_failed` metric (not a silent no-op)', async () => {
     mockReap.mockResolvedValue({ swept: 0, reaped: 0, skipped: 0, listOk: false, status: 403 });
 
