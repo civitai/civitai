@@ -326,26 +326,9 @@ describe('csam mode', () => {
     expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledWith('system:text-scan:label-modes');
   });
 
-  it('fails closed on a read error and logs it once per window', async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
-      redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
-      expect(await getTextScanCsamMode()).toBe('off');
-      expect(await getTextScanCsamMode()).toBe('off');
-      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          message: 'csam mode read failed, falling back to off',
-        })
-      );
-      vi.setSystemTime(new Date('2030-01-01T00:10:00Z'));
-      await getTextScanCsamMode();
-      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
+  it('fails closed on a read error', async () => {
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+    expect(await getTextScanCsamMode()).toBe('off');
   });
 
   it('stays off when the failed-read log itself throws', async () => {

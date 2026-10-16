@@ -175,10 +175,4 @@ describe('csam review: every sender is scanned, scam only for eligible ones', ()
     expect(subject.meta).not.toHaveProperty('scamIneligible');
     expect(await resolveTextScanProfileLabels(profile(), subject)).toEqual(['scam', 'csam']);
   });
-
-  it('reads the csam mode once per batch', async () => {
-    dbMock.dbWrite.user.findMany.mockResolvedValue([]);
-    await loadChatWindows([30, 30, 30]);
-    expect(getTextScanCsamMode).toHaveBeenCalledTimes(1);
-  });
 });

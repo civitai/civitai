@@ -204,6 +204,8 @@ export async function setTextScanCsamMode(
   if (mode !== 'off' && mode !== 'review')
     throw throwBadRequestError(`csam has no ${String(mode)} mode: only off and review`);
   await assertActiveModerator(moderatorId);
+  if (mode === 'review' && !(await getActiveTextScanPrompts())['label:csam']?.content?.trim())
+    throw throwBadRequestError('csam review needs an active label:csam prompt; save one first');
   if (mode === 'review')
     await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD, 'review');
   else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD);

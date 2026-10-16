@@ -1,9 +1,12 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { textScanEmEntityType } from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
+
+// The held text is personal data; a month leaves room to escalate a decided hold by hand.
+export const CSAM_HOLD_TEXT_RETENTION_DAYS = 30;
 
 export const TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES: TextScanEntityType[] = [
   'ChatMessage',
@@ -82,9 +85,19 @@ export async function cleanupTextScanRows({
       )
     : { deleted: 0, exhausted: false };
 
+  const { count: holdTextCleared } = await dbWrite.textScanHold.updateMany({
+    where: {
+      status: { not: 'Pending' },
+      decidedAt: { lt: decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days') },
+      text: { not: '' },
+    },
+    data: { text: '', meta: Prisma.DbNull },
+  });
+
   return {
     shadowDeleted: shadow.deleted,
     cleanDeleted: clean.deleted,
+    holdTextCleared,
     exhausted: shadow.exhausted || clean.exhausted,
   };
 }

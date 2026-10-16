@@ -1,6 +1,6 @@
-import { fail } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import { requiresGrant } from '$lib/server/access';
+import { denied, requiresGrant } from '$lib/server/access';
 import {
   countPendingCsamHolds,
   dismissCsamHold,
@@ -16,7 +16,9 @@ const querySchema = z.object({
   entityType: z.enum(CSAM_HOLD_ENTITY_TYPES).optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+// The page grant only decides who sees the nav entry and badge; the held text is for csam filers.
+export const load: PageServerLoad = async ({ url, locals }) => {
+  if (!locals.grants['csam.report.file']) error(403, denied('csam.report.file'));
   const { limit, page, entityType } = parseQuery(url, querySchema);
   const offset = (page - 1) * limit;
   const [queue, total] = await Promise.all([

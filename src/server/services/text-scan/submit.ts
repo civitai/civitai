@@ -215,6 +215,20 @@ async function logMissingPrompts(ctx: { entityType: string; entityId: number; ke
   });
 }
 
+const CSAM_PROMPT_KEY = 'label:csam';
+const csamShadowDropLogged = new Set<string>();
+
+function logCsamShadowDrop(entityType: TextScanEntityType) {
+  if (csamShadowDropLogged.has(entityType)) return;
+  csamShadowDropLogged.add(entityType);
+  logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'csam not requested for shadow scans',
+    entityType,
+  }).catch(() => null);
+}
+
 const NO_TEXT_REASON = 'No text left to scan.';
 
 // Text removed below the minimum is never submitted, so without this a verdict on the old text
@@ -333,16 +347,23 @@ export async function scanEntity({
           (p) => !only || (only === 'web-search') === (p.variant === 'web-search')
         )
       : [];
+  // Only an active verdict reaches the adapter that records a csam hold, so a shadow one is unread.
+  const resolveLabels = async (subject?: TextScanSubject) => {
+    const resolved = await resolveTextScanProfileLabels(profile, subject);
+    if (mode !== 'shadow' || !resolved.includes('csam')) return resolved;
+    logCsamShadowDrop(entityType);
+    return resolved.filter((label) => label !== 'csam');
+  };
   // Gated before the load, so a scan with nothing left to ask costs no subject query.
-  const gatedPasses = planPasses(await resolveTextScanProfileLabels(profile));
+  const gatedPasses = planPasses(await resolveLabels());
   if (!gatedPasses.length) return { status: 'skipped', reason: 'off' };
 
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return { status: 'skipped', reason: 'missing' };
   if (subject.notPublic) return { status: 'skipped', reason: 'not-public' };
 
-  const labels = await resolveTextScanProfileLabels(profile, subject);
-  const passes = planPasses(labels);
+  let labels = await resolveLabels(subject);
+  let passes = planPasses(labels);
   if (!passes.length) return { status: 'skipped', reason: 'off' };
   if (subjectTextLength(subject) < (profile.minChars ?? 1)) {
     // Every gated label, not just the narrowed ones: an earlier verdict may carry a dropped label.
@@ -356,6 +377,13 @@ export async function scanEntity({
     getActiveTextScanPrompts(),
     labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
   ]);
+  // The csam gate can open before its prompt exists; that must not stop the other labels.
+  if (labels.includes('csam') && !prompts[CSAM_PROMPT_KEY]?.content?.trim()) {
+    await logMissingPrompts({ entityType, entityId, keys: [CSAM_PROMPT_KEY] }).catch(() => null);
+    labels = labels.filter((label) => label !== 'csam');
+    passes = planPasses(labels);
+    if (!passes.length) return { status: 'skipped', reason: 'off' };
+  }
   const ctx = { entityType, entityId, subject, config, prompts, modelRules, force };
 
   const [first, ...rest] = passes;

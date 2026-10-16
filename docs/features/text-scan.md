@@ -118,8 +118,10 @@ the model for review. Disputes, appeals and mute reviews go through the existing
 
 `csam` is the exception: a positive verdict writes one Pending `TextScanHold` row per entity, label
 and scanned text, and nothing else (no report, mute, strike, hide or notification). A rescan of the
-same text adds nothing; changed text adds a new row. The scam, Post and Model adapters write the hold
-before their own action. A failed hold write is logged as an error and fails the callback before
+same text adds nothing; changed text adds a new row. A chat window adds nothing while the sender
+has a Pending hold in that chat, or when the newest decided one already covered every message in it.
+A verdict requested in `review` is held even if the gate turned off before it landed. The scam, Post
+and Model adapters write the hold before their own action. A failed hold write is logged as an error and fails the callback before
 that action runs, so the row is marked Failed and the retry cron rescans it; the action has not run,
 so it is not applied twice. Moderators work the holds on the moderator
 app's CSAM text holds queue; see [text-scan-csam-holds.md](text-scan-csam-holds.md).
@@ -194,6 +196,9 @@ own, so `putLabelModes` refuses `auto` for it. A missing or unreadable field rea
 it is off, every scan drops `csam` from the profile's labels before prompts are looked up and the
 content hash is computed, so no `label:csam` prompt is needed and no hash changes; switching it to
 `review` changes the hash of the profiles that list it, and each of those entities is rescanned once.
+`putLabelModes` refuses `review` until an active `label:csam` prompt exists; if one goes missing
+later, scans drop `csam` alone (logged as a missing prompt) and keep the other labels. A shadow scan
+never asks for `csam`, since only an active verdict reaches the adapter that holds it.
 A harness `labels` override is never filtered. `getPrompts` returns it as `csamMode`.
 
 ## Comparing with the existing systems

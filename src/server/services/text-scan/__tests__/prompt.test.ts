@@ -398,11 +398,26 @@ describe('setTextScanCsamMode', () => {
     expect(redisMock.sysRedis.hDel).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['no csam prompt row', []],
+    ['a blank csam prompt row', [{ id: 7, key: 'label:csam', content: '  ' }]],
+  ])('refuses review while there is %s, and still allows off', async (_, rows) => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue(rows as never);
+    await expect(setTextScanCsamMode('review', { moderatorId: 5 })).rejects.toThrow('label:csam');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
+  });
+
   it('writes review, removes the field for off, logs both, and this pod sees it at once', async () => {
     const { getTextScanCsamMode, resetTextScanRolloutCache } = await import(
       '~/server/services/text-scan/mode'
     );
     dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 7, key: 'label:csam', content: 'CSAM DEF' },
+    ] as never);
     resetTextScanRolloutCache();
     redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
     expect(await getTextScanCsamMode()).toBe('off');

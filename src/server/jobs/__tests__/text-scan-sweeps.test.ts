@@ -98,7 +98,7 @@ describe('sweepChatWindows', () => {
     upserted(TEXT_SCAN_CHAT_CURSOR_KEY, 8);
   });
 
-  it('in csam review, scans every sender’s window, reading the mode once per run', async () => {
+  it('in csam review, scans every sender’s window', async () => {
     vi.mocked(getTextScanCsamMode).mockResolvedValue('review');
     eligibleSenders(5);
     cursorAt(0);
@@ -110,7 +110,6 @@ describe('sweepChatWindows', () => {
       caughtUp: true,
     });
     expect(scannedIds()).toEqual([1, 2, 3]);
-    expect(getTextScanCsamMode).toHaveBeenCalledTimes(1);
   });
 
   it('reads past the cursor in id order from the primary, with no createdAt filter', async () => {

@@ -17,12 +17,15 @@ const { actions, load } = await import('../+page.server');
 const { holdPreview } = await import('../hold-entity');
 
 type LoadEvent = Parameters<typeof load>[0];
+
+const holder = { 'csam.report.file': true };
 type ActionEvent = Parameters<NonNullable<typeof actions>[string]>[0];
 
-const loadAt = (query: string) =>
-  load({ url: new URL(`http://x/csam/text-holds${query}`) } as unknown as LoadEvent) as Promise<
-    Record<string, unknown>
-  >;
+const loadAt = (query: string, grants: Record<string, boolean> = holder) =>
+  load({
+    url: new URL(`http://x/csam/text-holds${query}`),
+    locals: { grants },
+  } as unknown as LoadEvent) as Promise<Record<string, unknown>>;
 
 const dismiss = (fields: Record<string, string>, grants: Record<string, boolean>) => {
   const body = new FormData();
@@ -33,8 +36,6 @@ const dismiss = (fields: Record<string, string>, grants: Record<string, boolean>
   };
   return actions!.dismiss(event as unknown as ActionEvent) as Promise<Record<string, unknown>>;
 };
-
-const holder = { 'csam.report.file': true };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,6 +71,12 @@ describe('csam text holds load', () => {
       entityType: undefined,
     });
     expect(data.entityType).toBeNull();
+  });
+
+  it('refuses a moderator without the csam permission before reading any hold', async () => {
+    await expect(loadAt('', {})).rejects.toMatchObject({ status: 403 });
+    expect(listPendingCsamHolds).not.toHaveBeenCalled();
+    expect(countPendingCsamHolds).not.toHaveBeenCalled();
   });
 
   it('still lists the queue when the total fails', async () => {

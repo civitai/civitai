@@ -15,6 +15,9 @@ positive; nothing else happens to the content or its author. See the hold paragr
 Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Model.meta`: csam text
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
 
+Thirty days after a hold is decided, the daily `text-scan-retention` job clears its text and meta;
+the row, reason, ids and decision stay.
+
 ## Decisions
 
 - **Dismiss** (with an optional moderator-only note, up to 500 characters) sets the hold to
@@ -29,6 +32,7 @@ must never reach the user-facing report queue or an entity's meta, and nothing a
 - The page is granted on its own path. Migration
   `20261101120000_moderator_csam_text_holds_page` copies the roles of `/images/csam` onto it; it is
   applied by hand. Until it runs, only `moderator:admin` can open the page.
-- Deciding a hold also needs the `csam.report.file` permission, checked by the moderator app's form
-  action and again by the main-app endpoint.
+- Nav visibility = page grant; opening the page and acting = `csam.report.file`. The page load
+  refuses (403) a moderator without that permission, the form action checks it again, and so does
+  the main-app endpoint.
 - The sidebar badge (`csamTextHolds`) counts Pending csam holds and refreshes with the sidebar cache.

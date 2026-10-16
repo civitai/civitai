@@ -2,15 +2,12 @@ import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
-import { getTextScanCsamMode } from '~/server/services/text-scan/mode';
 import { composeUserText } from '~/server/services/text-scan/segment';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
+import { sanitizeForPostgres } from '~/utils/string-helpers';
 
 export const CSAM_HOLD_TEXT_CHARS = 50_000;
-
-// Postgres rejects NUL and lone surrogates, so storing either would fail every retry.
-const sanitizeForPostgres = (value: string) => value.replace(/\u0000/g, '').toWellFormed();
 
 function storable(value: unknown): unknown {
   if (typeof value === 'string') return sanitizeForPostgres(value);
@@ -27,6 +24,41 @@ function contentAtOf(meta: Record<string, unknown> | undefined) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+const messageIdsOf = (meta: unknown) => {
+  const ids = (meta as { messageIds?: unknown } | null)?.messageIds;
+  return Array.isArray(ids) ? ids : [];
+};
+
+/**
+ * Each new message rescans the sender's recent window, so one conversation would otherwise queue a
+ * hold per message. The held id of a pending hold, or of a decided hold that already saw every
+ * message in this window.
+ */
+async function coveringChatHold(userId: number | null, meta: Record<string, unknown> | undefined) {
+  const chatId = meta?.chatId;
+  if (typeof chatId !== 'number') return null;
+  const where = {
+    entityType: 'ChatMessage',
+    label: 'csam',
+    userId,
+    meta: { path: ['chatId'], equals: chatId },
+  } satisfies Prisma.TextScanHoldWhereInput;
+  const pending = await dbWrite.textScanHold.findFirst({
+    where: { ...where, status: 'Pending' },
+    select: { id: true },
+  });
+  if (pending) return pending.id;
+  const decided = await dbWrite.textScanHold.findFirst({
+    where: { ...where, status: { not: 'Pending' } },
+    orderBy: { id: 'desc' },
+    select: { id: true, meta: true },
+  });
+  if (!decided) return null;
+  const seen = new Set(messageIdsOf(decided.meta));
+  const window = messageIdsOf(meta);
+  return window.length && window.every((id) => seen.has(id)) ? decided.id : null;
+}
+
 export async function applyCsamHold({
   entityType,
   entityId,
@@ -37,34 +69,36 @@ export async function applyCsamHold({
   promptIds,
 }: ApplyTextScanArgs & { entityType: TextScanEntityType }) {
   if (!outcome.csam?.detected) return;
-  // Submit already drops csam while the gate is off, but a verdict submitted before a flip can land after it.
-  if ((await getTextScanCsamMode()) !== 'review') return;
 
   const userId = subject.userId && subject.userId > 0 ? subject.userId : null;
+  const coveredBy =
+    entityType === 'ChatMessage' ? await coveringChatHold(userId, subject.meta) : null;
   let holdId: number | null = null;
-  try {
-    const hold = await dbWrite.textScanHold.create({
-      data: {
-        entityType,
-        entityId,
-        label: 'csam',
-        textHash,
-        userId,
-        // Cut before well-forming, so a pair split by the cap is replaced rather than kept half.
-        text: sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS)),
-        reason: sanitizeForPostgres(outcome.csam.reason),
-        workflowId,
-        promptId: promptIds?.csam ?? null,
-        contentAt: contentAtOf(subject.meta),
-        meta: (subject.meta ? storable(subject.meta) : undefined) as
-          | Prisma.InputJsonValue
-          | undefined,
-      },
-      select: { id: true },
-    });
-    holdId = hold.id;
-  } catch (error) {
-    if (!isPrismaUniqueViolation(error)) throw error;
+  if (coveredBy === null) {
+    try {
+      const hold = await dbWrite.textScanHold.create({
+        data: {
+          entityType,
+          entityId,
+          label: 'csam',
+          textHash,
+          userId,
+          // Cut before well-forming, so a pair split by the cap is replaced rather than kept half.
+          text: sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS)),
+          reason: sanitizeForPostgres(outcome.csam.reason),
+          workflowId,
+          promptId: promptIds?.csam ?? null,
+          contentAt: contentAtOf(subject.meta),
+          meta: (subject.meta ? storable(subject.meta) : undefined) as
+            | Prisma.InputJsonValue
+            | undefined,
+        },
+        select: { id: true },
+      });
+      holdId = hold.id;
+    } catch (error) {
+      if (!isPrismaUniqueViolation(error)) throw error;
+    }
   }
 
   logToAxiom({
@@ -76,6 +110,7 @@ export async function applyCsamHold({
     workflowId,
     holdId,
     created: holdId !== null,
+    ...(coveredBy !== null ? { coveredBy } : {}),
   }).catch(() => null);
 }
 
@@ -91,6 +126,7 @@ export function withCsamHold(
     try {
       await applyCsamHold({ entityType, ...args });
     } catch (error) {
+      // Code and name only: a Prisma message can echo the arguments, which here are the held text.
       logToAxiom({
         name: 'text-scan',
         type: 'error',
@@ -98,7 +134,8 @@ export function withCsamHold(
         entityType,
         entityId: args.entityId,
         workflowId: args.workflowId,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorCode: (error as { code?: unknown } | null | undefined)?.code,
       }).catch(() => null);
       throw error;
     }

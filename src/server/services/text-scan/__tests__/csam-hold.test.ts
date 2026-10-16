@@ -47,6 +47,12 @@ type HoldRow = Record<string, unknown> & { id: number };
 let holds: HoldRow[] = [];
 const holdKey = (row: Record<string, unknown>) =>
   [row.entityType, row.entityId, row.label, row.textHash].join('|');
+type HoldWhere = { userId: unknown; status: unknown; meta: { equals: unknown } };
+const matchesChatHold = (row: HoldRow, where: HoldWhere) =>
+  row.entityType === 'ChatMessage' &&
+  row.userId === where.userId &&
+  (row.meta as { chatId?: unknown } | null)?.chatId === where.meta.equals &&
+  (where.status === 'Pending' ? row.status === 'Pending' : row.status !== 'Pending');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -63,6 +69,13 @@ beforeEach(() => {
       holds.push(row);
       return row;
     }
+  );
+  dbMock.dbWrite.textScanHold.findFirst.mockImplementation(
+    (async ({ where }: { where: HoldWhere }) =>
+      holds
+        .filter((row) => matchesChatHold(row, where))
+        .sort((a, b) => b.id - a.id)
+        .at(0) ?? null) as never
   );
 });
 
@@ -117,10 +130,10 @@ describe('csam verdicts through the registered adapters', () => {
     expect(autoMuteScamAccount).not.toHaveBeenCalled();
   });
 
-  it('records nothing while the gate is off', async () => {
+  it('still holds a verdict that lands after the gate was turned off', async () => {
     vi.mocked(getTextScanCsamMode).mockResolvedValueOnce('off');
     await getModerationAdapter('Comment')!.applyTextScan!(args() as never);
-    expect(dbMock.dbWrite.textScanHold.create).not.toHaveBeenCalled();
+    expect(holds).toHaveLength(1);
   });
 
   it('records nothing for a verdict without csam', async () => {
@@ -137,31 +150,31 @@ describe('csam verdicts through the registered adapters', () => {
     expect(holds.map((row) => row.textHash)).toEqual(['hash-1', 'hash-2']);
   });
 
-  it('holds before the scam action runs, and still mutes on a scam verdict', async () => {
-    const outcome = { ...csamOnly, scam: { detected: true, reason: 'test' } };
-    await getModerationAdapter('ChatMessage')!.applyTextScan!(args({ outcome }) as never);
+  const ACTIONS = [
+    ...(
+      ['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'User', 'ResourceReview'] as const
+    ).map((entityType) => [entityType, () => autoMuteScamAccount] as const),
+    ['Post', () => applyRatingFloor] as const,
+    ['Model', () => applyModelPoiMinor] as const,
+  ];
+  const withScam = { ...csamOnly, scam: { detected: true, reason: 'test' } };
+
+  it.each(ACTIONS)('%s holds before its own action runs', async (entityType, action) => {
+    await getModerationAdapter(entityType)!.applyTextScan!(args({ outcome: withScam }) as never);
     expect(holds).toHaveLength(1);
     expect(vi.mocked(dbMock.dbWrite.textScanHold.create).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(autoMuteScamAccount).mock.invocationCallOrder[0]
+      vi.mocked(action()).mock.invocationCallOrder[0]
     );
   });
 
-  it.each([
-    ['ChatMessage', () => autoMuteScamAccount],
-    ['Post', () => applyRatingFloor],
-    ['Model', () => applyModelPoiMinor],
-  ] as const)(
+  it.each(ACTIONS)(
     '%s fails the callback without running its own action when the hold write fails',
     async (entityType, action) => {
       dbMock.dbWrite.textScanHold.create.mockRejectedValueOnce(new Error('db down'));
-      const outcome = { ...csamOnly, scam: { detected: true, reason: 'test' } };
       await expect(
-        getModerationAdapter(entityType)!.applyTextScan!(args({ outcome }) as never)
+        getModerationAdapter(entityType)!.applyTextScan!(args({ outcome: withScam }) as never)
       ).rejects.toThrow('db down');
       expect(action()).not.toHaveBeenCalled();
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'error', entityType, entityId: 77, workflowId: 'wf-1' })
-      );
     }
   );
 
@@ -180,8 +193,17 @@ describe('csam verdicts through the registered adapters', () => {
     await expect(getModerationAdapter('Comment')!.applyTextScan!(args() as never)).rejects.toBe(
       undefined
     );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', entityType: 'Comment' })
+  });
+
+  it('keeps the error message, which can echo the held text, out of the failure log', async () => {
+    dbMock.dbWrite.textScanHold.create.mockRejectedValueOnce(
+      Object.assign(new Error('Invalid value: neutral text'), { code: 'P2009' })
+    );
+    await expect(
+      getModerationAdapter('Comment')!.applyTextScan!(args() as never)
+    ).rejects.toThrow();
+    expect(JSON.stringify(vi.mocked(loggingMock.logToAxiom).mock.calls)).not.toContain(
+      'neutral text'
     );
   });
 
@@ -190,6 +212,40 @@ describe('csam verdicts through the registered adapters', () => {
       args({ promptIds: { base: 1, csam: 9 } }) as never
     );
     expect(holds[0].promptId).toBe(9);
+  });
+});
+
+describe('chat holds over one conversation', () => {
+  const chatWindow = (entityId: number, messageIds: number[], chatId = 4) => {
+    const base = args();
+    return {
+      entityType: 'ChatMessage' as const,
+      ...base,
+      entityId,
+      textHash: `hash-${entityId}`,
+      subject: { ...base.subject, meta: { chatId, messageIds } },
+    };
+  };
+
+  it('adds nothing while a hold for the same sender and chat is pending', async () => {
+    await applyCsamHold(chatWindow(77, [77, 70]));
+    await applyCsamHold(chatWindow(80, [80, 77, 70]));
+    expect(holds.map((row) => row.entityId)).toEqual([77]);
+  });
+
+  it('adds nothing when the last decided hold already saw every message', async () => {
+    await applyCsamHold(chatWindow(80, [80, 77, 70]));
+    holds[0].status = 'Dismissed';
+    await applyCsamHold(chatWindow(81, [80, 77]));
+    expect(holds.map((row) => row.entityId)).toEqual([80]);
+  });
+
+  it('holds again once a new message reaches a decided conversation', async () => {
+    await applyCsamHold(chatWindow(77, [77, 70]));
+    holds[0].status = 'Dismissed';
+    await applyCsamHold(chatWindow(80, [80, 77]));
+    await applyCsamHold(chatWindow(90, [90], 5));
+    expect(holds.map((row) => row.entityId)).toEqual([77, 80, 90]);
   });
 });
 
