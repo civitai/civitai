@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
@@ -10,6 +9,7 @@ import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
 import {
@@ -109,17 +109,13 @@ export default PublicEndpoint(
       // so where that peer is a shared hop, listing its address blocks all such
       // traffic to every download route at once. See `parseIpBlocklist`.
       const ip = getTrustedClientIp(req);
-      const ipBlacklist = parseIpBlocklist(
-        (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
-      );
+      const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
       if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
 
       // Check if user is blacklisted
       const session = await getServerAuthSession({ req, res });
       if (!!session?.user) {
-        const userBlacklist = parseUserBlocklist(
-          (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
-        );
+        const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
         if (userBlacklist.includes(session.user.id.toString()))
           return errorResponse(403, 'Forbidden');
       }
