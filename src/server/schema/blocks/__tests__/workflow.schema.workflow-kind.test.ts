@@ -191,6 +191,18 @@ describe("kind:'workflow' — inline media is refused", () => {
     ]);
   });
 
+  it('counts `arguments` against the same budget as the steps', () => {
+    const pad = () =>
+      Object.fromEntries(Array.from({ length: 150_000 }, (_, i) => [`k${i}`, undefined]));
+    const withArguments = body({
+      steps: [{ $type: 'imageGen', input: pad() }],
+      arguments: { ...pad(), photo: tinyPng },
+    });
+    expect(issuesOf(withArguments)).toEqual([
+      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
+    ]);
+  });
+
   it('over the byte cap, reports ONLY the inline-media issue', () => {
     const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
     expect(photo.length).toBeGreaterThan(WORKFLOW_INPUT_BYTES_MAX);
