@@ -41,7 +41,7 @@ const event = (fields: Record<string, string>, grants: Record<string, boolean> =
     locals: { user: { id: 7 }, grants },
     params: { slug: 'reported' },
     getClientAddress: () => '1.2.3.4',
-  }) as never;
+  } as never);
 
 const HELD = 52;
 const REMOVED = 53;
