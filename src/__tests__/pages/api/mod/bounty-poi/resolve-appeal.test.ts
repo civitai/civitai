@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RESOLUTION_NOTE_MAX_LENGTH } from '@civitai/shared/resolution-reasons';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { mockResolve, session } = vi.hoisted(() => ({
@@ -73,6 +74,16 @@ describe('bountyPoi.resolveAppeal', () => {
   it.each([
     ['an overturn reason on an uphold', { uphold: true, resolvedReason: 'not-a-real-person' }],
     ['Other without a note', { uphold: true, resolvedReason: 'other' }],
+    ['a keep reason on an overturn', { uphold: false, resolvedReason: 'flag-confirmed' }],
+    ['a minor reason on a real-person flag', { uphold: false, resolvedReason: 'not-a-minor' }],
+    [
+      'a note over the limit',
+      {
+        uphold: true,
+        resolvedReason: 'other',
+        internalNotes: 'x'.repeat(RESOLUTION_NOTE_MAX_LENGTH + 1),
+      },
+    ],
   ])('refuses %s before resolving anything', async (_, ruling) => {
     expect(await call({ bountyId: 9, ...ruling })).toBe(400);
     expect(mockResolve).not.toHaveBeenCalled();

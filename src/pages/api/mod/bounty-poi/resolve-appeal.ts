@@ -15,7 +15,7 @@ export default defineModeratorEndpoint('bountyPoi.resolveAppeal', {
     'Upholding refuses if the bounty is no longer flagged.',
     'Overturning restores the prior availability and keeps `poi` locked false.',
     'Overturning refuses, leaving the appeal open, when the bounty text cannot be read.',
-    '`resolvedReason` is optional; when sent it must belong to the verdict (`flagAppeal`: Rejected for an uphold, Approved for an overturn), or the request is refused.',
+    '`resolvedReason` is optional; when sent it must belong to the verdict (`flagAppeal`: Rejected for an uphold, Approved for an overturn) and to the real-person flag, or the request is refused.',
     '`rescanQueued` is always false and kept for compatibility: an overturn covers the text as last scanned.',
   ],
   rateLimit: bountyPoiRateLimit,
@@ -40,7 +40,8 @@ export default defineModeratorEndpoint('bountyPoi.resolveAppeal', {
         'flagAppeal',
         input.uphold ? 'Rejected' : 'Approved',
         input.resolvedReason,
-        input.internalNotes
+        input.internalNotes,
+        ['poi']
       );
       if (invalid) throw throwBadRequestError(invalid);
     }

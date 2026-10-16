@@ -18,7 +18,7 @@ export default defineModeratorEndpoint('minorFlag.resolveRedetection', {
     'Dismissing clears the held text and tells nobody; the same text is never held again.',
     'Refuses when the re-detection changed or was already resolved, or when `textHash` is not the pending one.',
     'Refuses while the owner has an open appeal: resolve it through `resolveAppeal` first.',
-    "`resolvedReason` is optional; when sent it must belong to the verdict (`heldDetection`: Kept or Dismissed), or the request is refused. It is stamped on the label's ruling; a `closed` outcome stamps nothing.",
+    "`resolvedReason` is optional; when sent it must belong to the verdict (`heldDetection`: Kept or Dismissed) and to `label`, or the request is refused. It is stamped on the label's ruling; a `closed` outcome stamps nothing.",
   ],
   rateLimit: minorFlagRateLimit,
   input: z.object({
@@ -48,7 +48,8 @@ export default defineModeratorEndpoint('minorFlag.resolveRedetection', {
         'heldDetection',
         input.keep ? 'Kept' : 'Dismissed',
         input.resolvedReason,
-        input.internalNotes
+        input.internalNotes,
+        [input.label]
       );
       if (invalid) throw throwBadRequestError(invalid);
     }

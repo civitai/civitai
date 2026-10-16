@@ -1,4 +1,6 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RESOLUTION_NOTE_MAX_LENGTH } from '@civitai/shared/resolution-reasons';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { mockResolve, session } = vi.hoisted(() => ({
@@ -68,19 +70,29 @@ describe('minorFlag.resolveAppeal', () => {
     );
   });
 
-  it('checks a per-label ruling that lifts a flag against the Approved list', async () => {
-    const split = { modelId: 42, uphold: false, minor: 'uphold', poi: 'overturn' };
-    expect(await call({ ...split, resolvedReason: 'not-a-real-person' })).toBe(200);
-    expect(await call({ ...split, resolvedReason: 'flag-confirmed' })).toBe(400);
-    expect(mockResolve).toHaveBeenCalledTimes(1);
+  // The service decides the verdict a per-label ruling writes, so it owns the reason check.
+  it('passes a per-label ruling and its reason to the service unchecked', async () => {
+    const split = { modelId: 42, uphold: true, poi: 'overturn', resolvedReason: 'flag-confirmed' };
+    expect(await call(split)).toBe(200);
+    expect(mockResolve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uphold: true,
+        labels: { poi: 'overturn' },
+        resolvedReason: 'flag-confirmed',
+      })
+    );
   });
 
-  it.each([
-    ['an uphold reason on an overturn', { uphold: false, resolvedReason: 'flag-confirmed' }],
-    ['a held-detection reason', { uphold: true, resolvedReason: 'detection-correct' }],
-    ['Other without a note', { uphold: false, resolvedReason: 'other' }],
-  ])('refuses %s before resolving anything', async (_, ruling) => {
-    expect(await call({ modelId: 42, ...ruling })).toBe(400);
+  it("answers the service's refusal of a reason as a 400", async () => {
+    mockResolve.mockRejectedValue(new TRPCError({ code: 'BAD_REQUEST', message: 'not a reason' }));
+    expect(await call({ modelId: 42, uphold: false, resolvedReason: 'flag-confirmed' })).toBe(400);
+  });
+
+  it('refuses a note over the limit before resolving anything', async () => {
+    const note = 'x'.repeat(RESOLUTION_NOTE_MAX_LENGTH + 1);
+    expect(
+      await call({ modelId: 42, uphold: false, resolvedReason: 'other', internalNotes: note })
+    ).toBe(400);
     expect(mockResolve).not.toHaveBeenCalled();
   });
 

@@ -4,6 +4,7 @@ import {
   RESOLUTION_REASONS,
   resolutionReasonError,
   resolutionReasonLabel,
+  resolutionReasonsFor,
   type ResolutionReason,
 } from '../resolution-reasons';
 
@@ -82,15 +83,6 @@ describe('resolutionReasonError', () => {
     expect(resolutionReasonError('appeal', 'Approved', '', 'note')).toMatch(/Pick a reason/);
   });
 
-  it('refuses a held-detection keep reason on a dismissal', () => {
-    expect(
-      resolutionReasonError('heldDetection', 'Dismissed', 'not-a-minor', undefined)
-    ).toBeNull();
-    expect(
-      resolutionReasonError('heldDetection', 'Dismissed', 'detection-correct', undefined)
-    ).toMatch(/not a reason for Dismissed/);
-  });
-
   it('refuses a reason from the other verdict or the other subject', () => {
     expect(resolutionReasonError('restriction', 'Overturned', 'clear-intent', undefined)).toMatch(
       /not a reason for Overturned/
@@ -108,6 +100,37 @@ describe('resolutionReasonError', () => {
   it('caps the note', () => {
     const long = 'x'.repeat(RESOLUTION_NOTE_MAX_LENGTH + 1);
     expect(resolutionReasonError('appeal', 'Approved', 'misclassified', long)).toMatch(/longer/);
+  });
+});
+
+describe('label-bound reasons', () => {
+  const offered = (labels?: ('minor' | 'poi')[]) =>
+    resolutionReasonsFor('flagAppeal', 'Approved', labels).map((r) => r.value);
+
+  it('offers a reason bound to a label only when that flag is in play', () => {
+    expect(offered(['poi'])).toEqual([
+      'not-a-real-person',
+      'terms-misread',
+      'context-provided',
+      'other',
+    ]);
+    expect(offered(['minor'])).toEqual([
+      'not-a-minor',
+      'terms-misread',
+      'context-provided',
+      'other',
+    ]);
+    expect(offered(['minor', 'poi'])).toEqual(offered());
+  });
+
+  it('refuses a reason bound to a flag that is not being ruled on', () => {
+    expect(
+      resolutionReasonError('heldDetection', 'Dismissed', 'not-a-minor', undefined, ['poi'])
+    ).toMatch(/does not apply to this flag/);
+    expect(
+      resolutionReasonError('heldDetection', 'Dismissed', 'not-a-minor', undefined, ['minor'])
+    ).toBeNull();
+    expect(resolutionReasonError('flagAppeal', 'Approved', 'not-a-minor', undefined)).toBeNull();
   });
 });
 

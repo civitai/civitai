@@ -1787,6 +1787,65 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 
+  describe('the ruling reason is checked against the status the ruling writes', () => {
+    type Labels = Parameters<typeof resolveMinorFlagAppeal>[0]['labels'];
+    const rule = (uphold: boolean, labels: Labels, resolvedReason: string) =>
+      resolveMinorFlagAppeal({ modelId: 42, uphold, userId: 7, labels, resolvedReason });
+
+    beforeEach(() =>
+      mockPrimaryModelFindUnique.mockResolvedValue({
+        minor: true,
+        poi: true,
+        meta: {
+          minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+          textScanFlags: { poi: poiEntry, minor: poiEntry },
+        },
+      })
+    );
+
+    it.each([
+      ['an uphold that lifts poi', true, { poi: 'overturn' }, 'not-a-real-person'],
+      ['an overturn that keeps both', false, { minor: 'uphold', poi: 'uphold' }, 'flag-confirmed'],
+      [
+        'an overturn naming only minor, which lifts poi',
+        false,
+        { minor: 'uphold' },
+        'terms-misread',
+      ],
+    ] as const)('records the reason for %s', async (_, uphold, labels, reason) => {
+      await rule(uphold, labels, reason);
+      expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ resolvedReason: reason })
+      );
+    });
+
+    it.each([
+      ['an uphold that lifts poi', true, { poi: 'overturn' }, 'flag-confirmed'],
+      [
+        'an overturn that keeps both',
+        false,
+        { minor: 'uphold', poi: 'uphold' },
+        'not-a-real-person',
+      ],
+      [
+        'an overturn naming only minor, which lifts poi',
+        false,
+        { minor: 'uphold' },
+        'flag-confirmed',
+      ],
+      ['a lift of poi alone', false, { minor: 'uphold', poi: 'overturn' }, 'not-a-minor'],
+    ] as const)(
+      'refuses a mismatched reason on %s before any write',
+      async (_, uphold, labels, reason) => {
+        await expect(rule(uphold, labels, reason)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+        expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+        expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+        expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+      }
+    );
+  });
+
   // Review Focus 4: an appeal never rolls a moderator's own flag back to a pre-state.
   it('takes the plain unset path for a moderator-origin minor flag', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({

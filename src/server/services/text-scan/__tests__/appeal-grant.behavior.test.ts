@@ -196,7 +196,7 @@ type StoredModel = {
           promptIds: unknown;
           model: unknown;
         };
-        rulings?: { decision: string; textHash: string; via: string }[];
+        rulings?: { decision: string; textHash: string; via: string; reason?: string }[];
       }
     >;
   };
@@ -505,6 +505,32 @@ describe('minor', () => {
 
       expect(mockCreateNotification).not.toHaveBeenCalled();
       expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(NEWER);
+    });
+
+    // Model.meta rides on every feed row; the reason stays in the history, the free-text note does not.
+    it('carries a superseded ruling into the history with its reason but not its note', async () => {
+      await redetect();
+      await resolveTextScanRedetection({
+        modelId: MODEL_ID,
+        label: 'minor',
+        textHash: NEWER,
+        userId: 9,
+        keep: true,
+        reason: 'other',
+        note: 'a 30yo',
+      });
+      await stampModelTextScanAppeal({
+        modelId: MODEL_ID,
+        userId: 3,
+        decision: 'appealUpheld',
+        labels: ['minor'],
+      });
+
+      const carried = (await stored()).meta.textScanFlags.minor.rulings!.find(
+        (r) => r.decision === 'appealUpheld'
+      );
+      expect(carried).toMatchObject({ reason: 'other', via: 'moderator' });
+      expect(carried).not.toHaveProperty('note');
     });
 
     it('caps the history at the newest rulings, grants and upholds alike', async () => {
@@ -1228,6 +1254,29 @@ describe('review mode: a first detection waits for a moderator', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'held detection resolved', kind: 'redetected' })
     );
+  });
+
+  it('records no reason or note when the resolution closes', async () => {
+    await hold();
+    await holder.db.query(`UPDATE "Model" SET minor = true WHERE id = $1`, [MODEL_ID]);
+
+    expect(
+      await resolveTextScanRedetection({
+        modelId: MODEL_ID,
+        label: 'minor',
+        textHash: (await stored()).meta.textScanFlags.minor.redetected!.textHash,
+        userId: 9,
+        keep: true,
+        reason: 'detection-correct',
+        note: 'seen',
+      })
+    ).toBe('closed');
+
+    expect(JSON.stringify((await stored()).meta)).not.toMatch(/detection-correct|"note"/);
+    const logged = loggingMock.logToAxiom.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(logged).toMatchObject({ decision: 'closed' });
+    expect(logged).not.toHaveProperty('reason');
+    expect(logged).not.toHaveProperty('note');
   });
 
   it('logs a resolution that closed because the model was flagged another way', async () => {
