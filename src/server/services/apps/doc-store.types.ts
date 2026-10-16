@@ -1,6 +1,7 @@
 // Types, limits and the error class for the App Blocks document store
 // (`./doc-store.ts`). No SQL lives here; `doc-store.ts` is the only module that
 // touches the `appdata` tables.
+import { logToAxiom } from '~/server/logging/client';
 import type {
   AppStorageIndexType,
   DeclaredStorageCollection,
@@ -196,12 +197,24 @@ export const docStoreUnavailable = () =>
     retryAfter: 1,
   });
 
-/** A read a storage gate depends on: a failure is retryable, never a refusal about the caller. */
+/**
+ * A read a storage gate depends on: a failure is retryable, never a refusal about the caller.
+ * The client sees only the 503, so the original error is logged here or not at all.
+ */
 export async function docStoreDependency<T>(read: Promise<T>): Promise<T> {
   try {
     return await read;
   } catch (err) {
     if (err instanceof DocStoreError) throw err;
+    logToAxiom(
+      {
+        name: 'app-blocks-doc-store-dependency-fault',
+        type: 'error',
+        error: err instanceof Error ? err.name : typeof err,
+        message: err instanceof Error ? err.message : String(err),
+      },
+      'app-blocks'
+    ).catch(() => undefined);
     throw docStoreUnavailable();
   }
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
 const lag = vi.hoisted(() => ({ recentlyWritten: new Set<number>() }));
@@ -158,6 +159,16 @@ describe('assertOwnedModelVersions', () => {
       message: 'storage is temporarily unavailable',
       details: { retryAfter: 1 },
     });
+    // The client sees only the 503, so the cause must reach the log.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      {
+        name: 'app-blocks-doc-store-dependency-fault',
+        type: 'error',
+        error: 'Error',
+        message: 'replica unreachable',
+      },
+      'app-blocks'
+    );
   });
 });
 

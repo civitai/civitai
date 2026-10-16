@@ -6268,8 +6268,16 @@ export async function transferModelOwnership({
     );
 
   // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
-  // and a replica still showing the previous owner would cache that owner's list for a week.
-  await invalidation('preventReplicationLagBatch', preventReplicationLagBatch('model', modelIds));
+  // and a replica still showing the previous owner would cache that owner's list for a week. The
+  // versions too: per-version owner checks (App Blocks `ownedModelVersions`) read through the
+  // 'modelVersion' key, and a replica still showing the previous owner would answer them wrongly.
+  await invalidation(
+    'preventReplicationLagBatch',
+    Promise.all([
+      preventReplicationLagBatch('model', modelIds),
+      preventReplicationLagBatch('modelVersion', affectedVersionIds),
+    ])
+  );
 
   await Promise.all([
     ...(becomesOfficial

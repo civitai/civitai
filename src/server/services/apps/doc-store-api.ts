@@ -737,9 +737,9 @@ async function run(
       const created = route.op === 'create' ? parseBody(createBody, body) : null;
       const putIn = route.op === 'put' ? parseBody(putBody, body) : null;
       const deleteVersion = route.op === 'delete' ? deleteIfVersion(req) : undefined;
-      // Every write that sets `data` (create and put are the only two), before any rate limit,
-      // write budget, trust lookup or moderation scan — the manifest schema documents a refusal
-      // as costing nothing.
+      // Every write that sets `data` (create and put are the only two), before the trust lookup,
+      // the write budget and the moderation scan — the manifest schema documents a refusal as
+      // spending no write budget and no scan.
       const newData = created?.data ?? putIn?.data;
       if (newData) await assertOwnedModelVersions(decl, newData, uid);
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
