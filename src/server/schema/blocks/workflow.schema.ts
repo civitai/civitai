@@ -25,6 +25,7 @@ import {
   inlineMediaMessage,
 } from '~/server/schema/blocks/inline-media';
 import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -493,7 +494,7 @@ export const blockInlineComfyBodySchema = z
     path: ['workflow'],
     message: `inline workflow may contain at most ${INLINE_GRAPH_NODES_MAX} nodes`,
   })
-  .refine((b) => JSON.stringify(b.workflow).length <= INLINE_GRAPH_BYTES_MAX, {
+  .refine((b) => jsonLengthWithin([b.workflow], INLINE_GRAPH_BYTES_MAX), {
     path: ['workflow'],
     message: `inline workflow exceeds the ${INLINE_GRAPH_BYTES_MAX}-byte limit`,
   });
@@ -693,7 +694,7 @@ export const blockPassThroughStepBodySchema = z
       message: `step input holds more than ${INLINE_MEDIA_MAX_VISITS} values`,
     })
   )
-  .refine((b) => JSON.stringify(b.input).length <= PASS_THROUGH_INPUT_BYTES_MAX, {
+  .refine((b) => jsonLengthWithin([b.input], PASS_THROUGH_INPUT_BYTES_MAX), {
     path: ['input'],
     message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
   });
@@ -760,9 +761,10 @@ export const blockMultiStepWorkflowBodySchema = z
   )
   .refine(
     (b) =>
-      b.steps.reduce((bytes, step) => bytes + JSON.stringify(step.input).length, 0) +
-        (b.arguments ? JSON.stringify(b.arguments).length : 0) <=
-      WORKFLOW_INPUT_BYTES_MAX,
+      jsonLengthWithin(
+        [...b.steps.map((step) => step.input), ...(b.arguments ? [b.arguments] : [])],
+        WORKFLOW_INPUT_BYTES_MAX
+      ),
     {
       path: ['steps'],
       message: `workflow step inputs and arguments exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,

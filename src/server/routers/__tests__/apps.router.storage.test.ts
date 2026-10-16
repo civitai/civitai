@@ -827,6 +827,25 @@ describe('apps.storage.set', () => {
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
 
+  it('refuses a value that repeats one string past the cap without serialising it', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    const text = 'word '.repeat(20_000);
+    const value = { items: new Array(1_000).fill(text) }; // ~100 MB once serialised
+    const stringify = vi.spyOn(JSON, 'stringify');
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    try {
+      await expect(caller.storage.set({ blockToken: 't', key: 'k', value })).rejects.toMatchObject({
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'value exceeds 64KB cap',
+      });
+      const longest = Math.max(0, ...stringify.mock.results.map((r) => String(r.value).length));
+      expect(longest).toBeLessThan(64 * 1024);
+    } finally {
+      stringify.mockRestore();
+    }
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
   it('rejects writes that would cross the 50MB quota', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     // quota nearly full

@@ -378,6 +378,7 @@ import {
   type TRPCMeta,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 import type { SessionUser } from '~/types/session';
 
 // G6 — the terminal orchestrator states (as mapped onto the block-contract
@@ -1706,7 +1707,7 @@ const KNOWN_SLOT_IDS = SLOT_KNOWN_SLOT_IDS;
 // (emoji, certain CJK ranges). Buffer.byteLength is the right unit.
 const settingsSchema = z
   .record(z.string(), z.unknown())
-  .refine((value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= 4096, {
+  .refine((value) => jsonLengthWithin([value], 4096, { unit: 'utf8' }), {
     message: 'settings exceeds 4KB',
   });
 

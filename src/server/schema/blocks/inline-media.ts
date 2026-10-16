@@ -33,34 +33,46 @@ export function isInlineMediaString(value: string): boolean {
   );
 }
 
-type Frame = { value: unknown; key: string | number | null; parent: Frame | null };
+/** One value in a walk: where it sits (`key` in `parent`, `null` at the root) and what it is. */
+export type JsonWalkFrame = {
+  value: unknown;
+  key: string | number | null;
+  parent: JsonWalkFrame | null;
+};
 
-function pathOf(frame: Frame): InlineMediaPath {
+/** `'stop'` ends the walk at this value; `'skip'` leaves its children unvisited. */
+export type JsonWalkVisitor = (frame: JsonWalkFrame) => 'stop' | 'skip' | void;
+
+function pathOf(frame: JsonWalkFrame): InlineMediaPath {
   const path: InlineMediaPath = [];
-  for (let f: Frame | null = frame; f && f.key !== null; f = f.parent) path.push(f.key);
+  for (let f: JsonWalkFrame | null = frame; f && f.key !== null; f = f.parent) path.push(f.key);
   return path.reverse();
 }
 
 /**
- * The JSON path of the first string in `value`, in document order, that carries inline
- * media; `null` if none; `INLINE_MEDIA_TOO_MANY_VALUES` once `budget` is spent. Iterative,
- * so nesting depth cannot overflow the stack.
+ * Visits every value in `value` in document order: array items by index, then own
+ * enumerable keys in `for…in` order. A value referenced twice is visited twice. Each value
+ * costs one visit from `budget`, charged when its container is opened, so a container with
+ * too many children ends the walk before any of them is visited.
+ *
+ * Returns the frame `visit` stopped at, `null` once every value is visited, or
+ * `INLINE_MEDIA_TOO_MANY_VALUES` once `budget` is spent. Iterative, so nesting depth cannot
+ * overflow the stack. The inline-media search and `jsonLengthWithin` both walk with it.
  */
-export function findInlineMediaPath(
+export function walkJsonValues(
   value: unknown,
-  budget: InlineMediaBudget = { visits: 0 }
-): InlineMediaPath | null | typeof INLINE_MEDIA_TOO_MANY_VALUES {
-  const stack: Frame[] = [{ value, key: null, parent: null }];
+  budget: InlineMediaBudget,
+  visit: JsonWalkVisitor
+): JsonWalkFrame | null | typeof INLINE_MEDIA_TOO_MANY_VALUES {
+  const stack: JsonWalkFrame[] = [{ value, key: null, parent: null }];
   if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
   while (stack.length > 0) {
-    const frame = stack.pop() as Frame;
+    const frame = stack.pop() as JsonWalkFrame;
+    const verdict = visit(frame);
+    if (verdict === 'stop') return frame;
     const node = frame.value;
-    if (typeof node === 'string') {
-      if (isInlineMediaString(node)) return pathOf(frame);
-      continue;
-    }
-    if (node === null || typeof node !== 'object') continue;
-    const children: Frame[] = [];
+    if (verdict === 'skip' || node === null || typeof node !== 'object') continue;
+    const children: JsonWalkFrame[] = [];
     if (Array.isArray(node)) {
       for (let i = 0; i < node.length; i++) {
         if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
@@ -76,6 +88,21 @@ export function findInlineMediaPath(
     for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
   }
   return null;
+}
+
+/**
+ * The JSON path of the first string in `value`, in document order, that carries inline
+ * media; `null` if none; `INLINE_MEDIA_TOO_MANY_VALUES` once `budget` is spent.
+ */
+export function findInlineMediaPath(
+  value: unknown,
+  budget: InlineMediaBudget = { visits: 0 }
+): InlineMediaPath | null | typeof INLINE_MEDIA_TOO_MANY_VALUES {
+  const hit = walkJsonValues(value, budget, (frame) =>
+    typeof frame.value === 'string' && isInlineMediaString(frame.value) ? 'stop' : undefined
+  );
+  if (hit === INLINE_MEDIA_TOO_MANY_VALUES) return hit;
+  return hit ? pathOf(hit) : null;
 }
 
 /** `['input', 'images', 0]` → `input.images[0]`. */

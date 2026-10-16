@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';
 import {
@@ -55,10 +56,10 @@ export const upsertSubscriptionSchema = z
     enabled: z.boolean().default(true),
     ...subscriptionTargetsSchema.shape,
   })
-  .refine(
-    (value) => Buffer.byteLength(JSON.stringify(value.settings), 'utf8') <= 4096,
-    { message: 'settings exceeds 4KB', path: ['settings'] }
-  );
+  .refine((value) => jsonLengthWithin([value.settings], 4096, { unit: 'utf8' }), {
+    message: 'settings exceeds 4KB',
+    path: ['settings'],
+  });
 export type UpsertSubscriptionInput = z.infer<typeof upsertSubscriptionSchema>;
 
 /**
