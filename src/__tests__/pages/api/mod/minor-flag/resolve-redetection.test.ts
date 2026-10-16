@@ -69,6 +69,28 @@ describe('minorFlag.resolveRedetection', () => {
     );
   });
 
+  it('forwards a reason that belongs to the verdict, with its note', async () => {
+    const body = { modelId: 42, label: 'minor', textHash: 'h-1' };
+    await call({ ...body, keep: 'false', resolvedReason: 'other', internalNotes: 'a cartoon' });
+    expect(mockResolve).toHaveBeenCalledWith(
+      expect.objectContaining({ keep: false, reason: 'other', note: 'a cartoon' })
+    );
+  });
+
+  it.each([
+    ['a keep reason on a dismissal', { keep: false, resolvedReason: 'detection-correct' }],
+    ['an appeal reason on a keep', { keep: true, resolvedReason: 'flag-confirmed' }],
+    ['Other without a note', { keep: true, resolvedReason: 'other' }],
+  ])('refuses %s before resolving anything', async (_, ruling) => {
+    expect(await call({ modelId: 42, label: 'minor', textHash: 'h-1', ...ruling })).toBe(400);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it('rules without a reason when none is sent', async () => {
+    await call({ modelId: 42, label: 'minor', keep: true, textHash: 'h-1' });
+    expect(mockResolve.mock.calls[0][0].reason).toBeUndefined();
+  });
+
   it('rejects an unknown label before resolving anything', async () => {
     expect(await call({ modelId: 42, label: 'nsfw', keep: true, textHash: 'h-1' })).toBe(400);
     expect(mockResolve).not.toHaveBeenCalled();

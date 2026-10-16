@@ -1476,8 +1476,14 @@ describe('getMinorFlagAppealsForReview', () => {
 });
 
 describe('resolveMinorFlagAppeal', () => {
-  it('upholds by confirming the flag and rejecting the appeal', async () => {
-    await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+  it("upholds by confirming the flag and rejecting the appeal with the moderator's reason", async () => {
+    await resolveMinorFlagAppeal({
+      modelId: 42,
+      uphold: true,
+      userId: 7,
+      resolvedReason: 'other',
+      internalNotes: 'school uniform tag',
+    });
 
     expect(mockTrackModActivity).toHaveBeenCalledWith(
       7,
@@ -1488,6 +1494,8 @@ describe('resolveMinorFlagAppeal', () => {
         ids: [42],
         entityType: EntityType.Model,
         status: AppealStatus.Rejected,
+        resolvedReason: 'other',
+        internalNotes: 'school uniform tag',
         userId: 7,
       })
     );

@@ -28,11 +28,15 @@ async function dismissRedetection({
   label,
   textHash,
   userId,
+  reason,
+  note,
 }: {
   modelId: number;
   label: TextScanFlagLabel;
   textHash: string;
   userId: number;
+  reason?: string;
+  note?: string;
 }) {
   const entry = flagEntryPath(label);
   const dismissed = await dbWrite.$executeRaw`
@@ -44,7 +48,9 @@ async function dismissRedetection({
   ])} || jsonb_build_object(
           'appealGranted', jsonb_build_object(
             'at', now(), 'by', ${userId}::int, 'textHash', ${textHash}::text, 'via', 'moderator'
-          )
+          ) || jsonb_strip_nulls(jsonb_build_object(
+            'reason', ${reason ?? null}::text, 'note', ${note ?? null}::text
+          ))
         )
       )
     )
@@ -101,6 +107,9 @@ export function resolveTextScanRedetection(args: {
   /** The held text the moderator was shown; the ruling applies to that and nothing newer. */
   textHash: string;
   userId: number;
+  /** The moderator's reason slug and note, stamped on the ruling. A `closed` outcome records neither. */
+  reason?: string;
+  note?: string;
 }): Promise<RedetectionOutcome> {
   return withResolutionLock(args.modelId, args.label, () => resolve(args));
 }
@@ -111,12 +120,16 @@ async function resolve({
   keep,
   textHash,
   userId,
+  reason,
+  note,
 }: {
   modelId: number;
   label: TextScanFlagLabel;
   keep: boolean;
   textHash: string;
   userId: number;
+  reason?: string;
+  note?: string;
 }): Promise<RedetectionOutcome> {
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
@@ -138,6 +151,7 @@ async function resolve({
       decision,
       promptIds: detection.promptIds ?? null,
       moderatorId: userId,
+      ...(decision !== 'closed' && { reason: reason ?? null, note: note ?? null }),
     }).catch(() => null);
 
   // Any label: the owner's appeal covers the model, and the queue disables its buttons on the same
@@ -162,7 +176,8 @@ async function resolve({
       logDecision('closed');
       return 'closed';
     }
-    if (!(await dismissRedetection({ modelId, label, textHash, userId }))) throw stale();
+    if (!(await dismissRedetection({ modelId, label, textHash, userId, reason, note })))
+      throw stale();
     logDecision('dismissed');
     return 'dismissed';
   }
@@ -196,6 +211,8 @@ async function resolve({
       decision: 'appealUpheld',
       labels: [label],
       via: 'moderator',
+      reason,
+      note,
     });
   // Last, so a failure anywhere above leaves the item in the queue to retry.
   await dropRedetection({ modelId, label, textHash });

@@ -709,6 +709,8 @@ export async function stampModelTextScanAppeal({
   labels,
   grantHashes,
   via = 'appeal',
+  reason,
+  note,
 }: {
   modelId: number;
   userId: number;
@@ -716,6 +718,8 @@ export async function stampModelTextScanAppeal({
   labels: TextScanFlagLabel[];
   grantHashes?: Partial<Record<TextScanFlagLabel, string>>;
   via?: 'appeal' | 'moderator';
+  reason?: string;
+  note?: string;
 }) {
   if (!labels.length) return;
   // A grant covers the text the moderator reviewed, per label because the scan that owns a label
@@ -738,7 +742,9 @@ export async function stampModelTextScanAppeal({
               'by', ${userId}::int,
               'textHash', COALESCE((${hashes}::jsonb)->>l.label, m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash'),
               'via', ${via}::text
-            )
+            ) || jsonb_strip_nulls(jsonb_build_object(
+              'reason', ${reason ?? null}::text, 'note', ${note ?? null}::text
+            ))
           )
         )
         FROM unnest(${labels}::text[]) AS l(label)

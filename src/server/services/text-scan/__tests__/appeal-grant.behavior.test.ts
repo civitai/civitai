@@ -375,6 +375,43 @@ describe('minor', () => {
       expect((await stored()).meta.textScanFlags.minor.redetected).toBeUndefined();
     });
 
+    it("stamps the moderator's reason and note on the ruling and the log line", async () => {
+      await redetect();
+      const ruling = { modelId: MODEL_ID, label: 'minor' as const, textHash: NEWER, userId: 9 };
+
+      await resolveTextScanRedetection({ ...ruling, keep: true, reason: 'other', note: 'a 30yo' });
+
+      expect((await stored()).meta.textScanFlags.minor.appealUpheld).toMatchObject({
+        via: 'moderator',
+        reason: 'other',
+        note: 'a 30yo',
+      });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ decision: 'kept', reason: 'other', note: 'a 30yo' })
+      );
+    });
+
+    it('stamps the reason on a dismissal and leaves both keys off when none is given', async () => {
+      await redetect();
+      await resolveTextScanRedetection({
+        modelId: MODEL_ID,
+        label: 'minor',
+        textHash: NEWER,
+        userId: 9,
+        keep: false,
+        reason: 'not-a-minor',
+      });
+      const granted = (await stored()).meta.textScanFlags.minor.appealGranted;
+      expect(granted).toMatchObject({ reason: 'not-a-minor', via: 'moderator' });
+      expect(granted).not.toHaveProperty('note');
+
+      await redetect();
+      await resolve('minor', false);
+      const plain = (await stored()).meta.textScanFlags.minor.appealGranted;
+      expect(plain).not.toHaveProperty('reason');
+      expect(plain).not.toHaveProperty('note');
+    });
+
     it('refuses a label with nothing pending', async () => {
       await seed({ scanHash: SCANNED });
       await overturn();

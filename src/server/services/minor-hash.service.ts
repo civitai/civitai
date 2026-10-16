@@ -747,11 +747,15 @@ export async function resolveMinorFlagAppeal({
   uphold,
   userId,
   labels,
+  resolvedReason,
+  internalNotes,
 }: {
   modelId: number;
   uphold: boolean;
   userId: number;
   labels?: Partial<Record<AppealLabel, AppealLabelDecision>>;
+  resolvedReason?: string;
+  internalNotes?: string;
 }) {
   // Read from the primary: a revert inside replication lag is exactly the race the uphold
   // guard exists for, and the replica would still answer "flagged". One PK lookup.
@@ -822,6 +826,8 @@ export async function resolveMinorFlagAppeal({
     ids: [modelId],
     entityType: EntityType.Model,
     status: approved ? AppealStatus.Approved : AppealStatus.Rejected,
+    resolvedReason,
+    internalNotes,
     userId,
   });
 

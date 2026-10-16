@@ -45,6 +45,16 @@ describe('RESOLUTION_REASONS', () => {
       'restriction/Upheld': ['clear-intent', 'repeat-evasion', 'prior-history', 'other'],
       'appeal/Approved': ['misclassified', 'rating-only', 'context-provided', 'other'],
       'appeal/Rejected': ['violation-confirmed', 'different-violation', 'other'],
+      'flagAppeal/Approved': [
+        'not-a-minor',
+        'not-a-real-person',
+        'terms-misread',
+        'context-provided',
+        'other',
+      ],
+      'flagAppeal/Rejected': ['flag-confirmed', 'other'],
+      'heldDetection/Kept': ['detection-correct', 'other'],
+      'heldDetection/Dismissed': ['not-a-minor', 'not-a-real-person', 'terms-misread', 'other'],
     });
   });
 
@@ -70,6 +80,15 @@ describe('resolutionReasonError', () => {
   it('requires a reason', () => {
     expect(resolutionReasonError('appeal', 'Approved', undefined, 'note')).toMatch(/Pick a reason/);
     expect(resolutionReasonError('appeal', 'Approved', '', 'note')).toMatch(/Pick a reason/);
+  });
+
+  it('refuses a held-detection keep reason on a dismissal', () => {
+    expect(
+      resolutionReasonError('heldDetection', 'Dismissed', 'not-a-minor', undefined)
+    ).toBeNull();
+    expect(
+      resolutionReasonError('heldDetection', 'Dismissed', 'detection-correct', undefined)
+    ).toMatch(/not a reason for Dismissed/);
   });
 
   it('refuses a reason from the other verdict or the other subject', () => {
