@@ -398,7 +398,12 @@ describe('pickWinnersForChallenge unmatched picks (challenge 390)', () => {
 
   it('resolves a creatorId the judge returned as a numeric string', async () => {
     mockChallengeJudgeRow(ChallengeSource.System);
-    mockJudgedEntryRows([{ imageId: 1, userId: 100, username: 'Alice' }]);
+    // Two entrants: a single one is awarded place 1 without asking the judge, so the string id
+    // below would never be read.
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'Alice' },
+      { imageId: 2, userId: 200, username: 'Bob' },
+    ]);
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
 
     mockGenerateWinners.mockResolvedValue({
