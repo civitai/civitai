@@ -76,6 +76,27 @@ const nativePoolPlugin = {
   },
 };
 
+// 🔴 The fs module cache key does not cover the dependency optimizer's output, yet a cached
+// transform embeds optimizer-versioned import URLs (`…/index.js?v=<browserHash>`). So after any
+// change to `deps.optimizer.ssr.include` the cache serves transforms built for the OTHER list.
+// Measured: a 150-file run under one list, then the same files under another, failed 148 files
+// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/client` until the cache was deleted — which every
+// branch switch across a list change would hit. Folding the optimizer's hashes into every key
+// keeps each list's transforms apart.
+const optimizerCacheKeyPlugin = {
+  name: 'civitai:fs-cache-optimizer-key',
+  configureVitest({
+    experimental_defineCacheKeyGenerator,
+  }: {
+    experimental_defineCacheKeyGenerator: any;
+  }) {
+    experimental_defineCacheKeyGenerator(({ environment }: { environment: any }) => {
+      const metadata = environment.depsOptimizer?.metadata;
+      return metadata ? `${metadata.hash}:${metadata.browserHash}` : undefined;
+    });
+  },
+};
+
 // Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
 // (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
 // node_modules) resolves them the same way the app build does. `@civitai/auth` is omitted —
@@ -328,8 +349,8 @@ const unitTestConfig = {
   // Widening it is a follow-up with its own verification, not a freebie.
   //
   // Staleness is self-correcting rather than something to remember: the cache carries a format
-  // version, and `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
-  // when it moves, so a dependency bump can't leave a stale transform behind. It writes to
+  // version, `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
+  // when it moves, and `optimizerCacheKeyPlugin` keys entries on the optimizer's output. It writes to
   // `node_modules/.experimental-vitest-cache`, so it is gitignored with the rest of `node_modules`.
   experimental: { fsModuleCache: true },
 };
@@ -535,6 +556,7 @@ export default defineConfig({
       'apps/*/vitest.config.mts',
       {
         resolve: { alias },
+        plugins: [optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
           name: 'unit',
@@ -552,7 +574,7 @@ export default defineConfig({
       },
       {
         resolve: { alias },
-        plugins: [nativePoolPlugin],
+        plugins: [nativePoolPlugin, optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
           name: 'unit-native',
