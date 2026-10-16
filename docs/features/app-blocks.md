@@ -734,7 +734,6 @@ same page host, so the owner sees the same confirm.
    within the per-job limit.
 
    Three things to know as an author:
-
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
      quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
      cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
@@ -742,11 +741,10 @@ same page host, so the owner sees the same confirm.
    - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
      plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
      `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
-body.input.<path> is a Date`), at the estimate and at the submit.
+     body.input.<path> is a Date`), at the estimate and at the submit.
    - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
      refused with `a training step type cannot run as a confirmed step — use
-kind:'training'`. Training runs have their own kind, with its own dataset and checks.
-
+     kind:'training'`. Training runs have their own kind, with its own dataset and checks.
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session

@@ -91,8 +91,19 @@ describe('blockImagePicker.getPosted', () => {
       caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
         publicOnly: 'true',
       } as never)
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps publicOnly when it jumps to a date', async () => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({ id: 9000 });
+    await caller({ showNsfw: true, browsingLevel: 3 }, { canViewNsfw: true }).getPosted({
+      toDate: new Date('2024-06-30T23:59:59.999Z'),
+      publicOnly: true,
+    });
+
+    expect(queriedWhere().id).toEqual({ lte: 9000 });
+    expect(queriedWhere().post.availability).toEqual({ not: 'Private' });
   });
 
   it('passes a jump-to date through to the query, as an id bound', async () => {

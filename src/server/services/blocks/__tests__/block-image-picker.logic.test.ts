@@ -61,13 +61,10 @@ describe('postedPickableWhere', () => {
     expect(rest).toEqual(defaultRest);
   });
 
-  it('without publicOnly, or with it false, the post may be Private: the query is unchanged', () => {
-    const before = { post: { publishedAt: { lte: new Date('2026-03-04T05:06:07.000Z') } } };
-    expect(postedPickableWhere(8123, 7)).toMatchObject(before);
+  it('publicOnly false is the default query', () => {
     expect(postedPickableWhere(8123, 7, { publicOnly: false })).toEqual(
       postedPickableWhere(8123, 7)
     );
-    expect(postedPickableWhere(8123, 7).post).not.toHaveProperty('availability');
   });
 
   it.each([

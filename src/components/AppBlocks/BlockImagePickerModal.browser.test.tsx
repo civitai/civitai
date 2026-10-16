@@ -379,6 +379,35 @@ describe('BlockImagePickerModal', () => {
 
     await expect.element(tile('Posted image 1')).toBeInTheDocument();
     for (const [input] of mocks.postedQuery.mock.calls) expect(input).toEqual({ publicOnly: true });
+    await expect
+      .element(page.getByText(/Posted images are limited to public posts/))
+      .toBeInTheDocument();
+  });
+
+  test('posted: publicOnly is kept when the viewer jumps to a date', async () => {
+    setPosted([postedItem(1)]);
+    openModal({ sources: ['posted'], publicOnly: true });
+    await expect.element(tile('Posted image 1')).toBeInTheDocument();
+
+    await userEvent.fill(page.getByLabelText('Jump to date'), '2024-06-30');
+    await vi.waitFor(
+      () =>
+        expect(mocks.postedQuery).toHaveBeenLastCalledWith(
+          { toDate: new Date(2024, 5, 30, 23, 59, 59, 999), publicOnly: true },
+          expect.anything()
+        ),
+      { timeout: 5000 }
+    );
+  });
+
+  test('a generated-only publicOnly picker says nothing about posts', async () => {
+    setGenerated([]);
+    openModal({ sources: ['generated'], publicOnly: true });
+
+    await expect.element(page.getByText(/finished scanning/)).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Posted images are limited to public posts/))
+      .not.toBeInTheDocument();
   });
 
   test('posted: without publicOnly the server is asked exactly as before', async () => {
