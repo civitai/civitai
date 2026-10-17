@@ -19,7 +19,8 @@ outside Prisma (the drift guard reads `public` only), so there is no Prisma mode
 | `prediction` | model output | Kept apart from labels. `modelRef` (model@version), per-class `scores`, `versions` (policy, threshold, preprocessing), `inputHash` of exactly what the model saw. |
 | `consensus` | (subject, question) with human labels | Each person counted once, latest answer. Only moderator and knight labels count; appeal outcomes do not. A tie for the top answer gives no outcome. `trainable` when the question's `rule` is met and the subject is not excluded. `modelAgrees` compares the latest prediction. |
 | `rule` | question version | Minimum human labels and whether they must be unanimous. A question with no rule never becomes trainable. |
-| `change` | change a reader must apply | `label`, `prediction`, `consensus`, `exclusion`, `deletion`, in id order. |
+| `change` | change a reader must apply | `label`, `prediction`, `consensus`, `subject` (bytes or a missing field changed), `exclusion`, `deletion`. Ordered by (`txid`, `id`). |
+| `erased_subject`, `erased_owner` | erased subject or owner | Tombstones: recording anything for one raises (site paths log it to `record_failure`). |
 | `record_failure` | judgement that could not be recorded | The count to watch. |
 
 A **question** names what was asked and keeps different scales apart: `image.block` (block / clear) is
@@ -33,11 +34,12 @@ change.
 | `record_label(...)` | site code recording a human judgement | logs to `record_failure` and returns NULL; does not raise on bad input |
 | `record_prediction(...)` | site code recording a model output | same |
 | `submit_prediction(...)` | the authenticated prediction endpoint, on behalf of pipelines | raises |
+| `submit_predictions(p_items)` | the endpoint's batch: a JSON array of `submit_prediction` arguments | refuses per item, never the batch |
 | `exclude(p_subject_type, p_subject_id, p_reason)` | taking an item out of training | `erasure` deletes it; `safety`, `removed` and `retention` keep the judgements and drop the content |
-| `erase_owner(p_user_id)` | a user's erasure request | deletes every subject the user owns; not called on account deletion |
+| `erase_owner(p_user_id)` | a user's erasure request | deletes every subject the user owns and tombstones the owner; not called on account deletion |
 
 Excluded images are taken out by the nightly `appeal-decision-records` job, with the same rule it applies
-to appeal records (`sweepLabelStore`).
+to appeal records (`sweepLabelStore`). Deleting an appeal record takes its image out too.
 
 The functions belong to the owner of the site tables; site code that calls them directly connects as
 that owner.
@@ -46,8 +48,12 @@ Pass people as user ids (`p_labeller_user_id`, `p_owner_user_id`); the store has
 call a `p_source_ref` that is unique to the source row: a retry with the same ref records nothing.
 
 Wired today by triggers: scan label flags (predictions) and votes (labels), image appeal decisions, and
-scan label byte copies and withdrawals. `label_store.backfill()` replays those source tables and is
-idempotent.
+scan label byte copies and withdrawals. `CALL label_store.backfill_batches()` replays those source tables,
+committing every 2000 rows; `backfill()` does it in one transaction. Both are idempotent.
+
+Pipelines submit predictions to `POST /api/mod/label-store/predictions` with a full-access personal API
+key of a moderator account holding the moderator-app permission `labelStore.submitPrediction`. Up to 500 per call; each is recorded, a duplicate, or rejected with a reason. The
+endpoint's reference is on `/moderator/api`.
 
 ```sql
 SELECT label_store.record_label(
@@ -63,9 +69,10 @@ SELECT label_store.record_label(
 
 Readers get a role that can select five views and nothing else: `labels_feed`, `predictions_feed`,
 `changes_feed`, `training_examples` (trainable subjects with outcome and bytes pointer) and
-`pipeline_failures` (trainable subjects the model got wrong). Pull `changes_feed` by `id > cursor`,
-re-reading a short window behind the cursor (ids are assigned before commit, so a row can appear after a
-higher id), and apply each row to keep a copy of the labels, predictions and trainable examples.
+`pipeline_failures` (trainable subjects the model got wrong). Pull `changes_feed` by
+`("txid", "id") > (cursor)` in that order, and apply each row to keep a copy of the labels, predictions and
+trainable examples. The view holds back rows of transactions still running, so a cursor never skips one;
+a long transaction on the primary delays the feed until it ends.
 
 The reader role is created outside this repo; the migration's grant block is re-run once it exists.
 There is no writer role: predictions come in through an authenticated site endpoint.

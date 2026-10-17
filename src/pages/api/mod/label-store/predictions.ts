@@ -1,5 +1,7 @@
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { submitPredictions } from '~/server/services/label-store.service';
+import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
 const MAX_PREDICTIONS = 500;
@@ -31,7 +33,7 @@ const predictionSchema = z.strictObject({
     .trim()
     .min(1)
     .max(200)
-    .describe('Unique per prediction; a repeat is a duplicate, not a second row.'),
+    .describe('Your id for the run or prediction. A repeat for the same image and question is a duplicate.'),
   predictedAt: z.iso.datetime({ offset: true }).optional(),
   confidence: z.number().min(0).max(1).optional(),
   scores: z
@@ -45,18 +47,23 @@ const predictionSchema = z.strictObject({
 
 export default defineModeratorEndpoint('labelStore.submitPredictions', {
   summary: 'Record model predictions in the label store.',
-  grant: 'labelStore.submitPrediction',
   returns:
     "{ results: { sourceRef, status: 'recorded' | 'duplicate' | 'rejected', id?, error? }[] }, in input order",
   notes: [
-    'Requires the moderator app permission `labelStore.submitPrediction`; the caller need not be a moderator.',
+    'Requires the moderator app permission `labelStore.submitPrediction`.',
     `Up to ${MAX_PREDICTIONS} predictions per call, and a request body under 1 MB.`,
-    'Idempotent per sourceRef. Each prediction stands alone: one rejected (for example, an erased image) does not reject the rest.',
+    'Idempotent per (sourceRef, image, question, questionVersion). Each prediction stands alone: one rejected (for example, an erased image) does not reject the rest.',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
   input: z.object({ predictions: z.array(predictionSchema).min(1).max(MAX_PREDICTIONS) }),
   auditExclude: ['predictions'],
-  async handler({ predictions }) {
+  async handler({ predictions }, ctx) {
+    if (!(await hasModeratorGrant(ctx.actor, 'labelStore.submitPrediction')))
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'Submitting predictions needs the "labelStore.submitPrediction" moderator permission.',
+      });
+
     const results = await submitPredictions(predictions);
     return {
       results,

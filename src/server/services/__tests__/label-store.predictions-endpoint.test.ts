@@ -28,12 +28,6 @@ vi.mock('~/server/clickhouse/client', () => ({
     retoolAudit = audit;
   },
 }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
-  handleEndpointError: (
-    res: { status: (n: number) => { json: (b: unknown) => unknown } },
-    e: unknown
-  ) => res.status(500).json({ error: (e as Error).message }),
-}));
 // The grant row as `/admin` writes it: which roles hold which grant id.
 const GRANTS: Record<string, string[]> = { 'labelStore.submitPrediction': ['moderator:pipeline'] };
 vi.mock('~/server/services/moderator-grants', () => ({
@@ -54,7 +48,7 @@ const HASH = createHash('sha256').update('u-501', 'utf8').digest('hex');
 
 const PIPELINE = {
   id: 3001,
-  isModerator: false,
+  isModerator: true,
   bannedAt: null,
   permissions: [],
   roles: ['moderator:pipeline'],
@@ -142,7 +136,7 @@ const stored = async () =>
   ).rows;
 
 describe('who may submit', () => {
-  it('records for a grant holder who is not a moderator', async () => {
+  it('records for a moderator holding the grant', async () => {
     const { status, payload } = await call({ predictions: [prediction()] });
 
     expect(status).toBe(200);
@@ -155,12 +149,19 @@ describe('who may submit', () => {
   });
 
   it('refuses a moderator without the grant', async () => {
-    bearerSession.mockResolvedValue(fullKey({ ...PIPELINE, isModerator: true, roles: [] }));
+    bearerSession.mockResolvedValue(fullKey({ ...PIPELINE, roles: [] }));
 
     const { status, payload } = await call({ predictions: [prediction()] });
 
     expect(status).toBe(403);
-    expect(payload.error).toContain('labelStore.submitPrediction');
+    expect(JSON.stringify(payload)).toContain('labelStore.submitPrediction');
+    expect(await stored()).toEqual([]);
+  });
+
+  it('refuses a grant holder who is not a moderator', async () => {
+    bearerSession.mockResolvedValue(fullKey({ ...PIPELINE, isModerator: false }));
+
+    expect((await call({ predictions: [prediction()] })).status).toBe(403);
     expect(await stored()).toEqual([]);
   });
 
@@ -239,6 +240,24 @@ describe('what it accepts', () => {
       { sourceRef: 'run-1:other', status: 'recorded', id: expect.any(Number) },
     ]);
     expect(await stored()).toHaveLength(2);
+  });
+
+  it('one sourceRef can answer several images and questions', async () => {
+    await holder.db.query(`INSERT INTO "Image" ("id", "userId", "url") VALUES (502, 12, 'u-502')`);
+    const { payload } = await call({
+      predictions: [
+        prediction({ sourceRef: 'run-4' }),
+        prediction({ sourceRef: 'run-4', question: 'image.rating', value: 'pg' }),
+        prediction({ sourceRef: 'run-4', subjectId: 502 }),
+      ],
+    });
+
+    expect((payload.results as { status: string }[]).map((r) => r.status)).toEqual([
+      'recorded',
+      'recorded',
+      'recorded',
+    ]);
+    expect(await stored()).toHaveLength(3);
   });
 
   it('rejects a prediction for an erased image and records the rest of the batch', async () => {

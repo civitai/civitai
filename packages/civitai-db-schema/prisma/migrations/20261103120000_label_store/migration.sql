@@ -81,9 +81,11 @@ CREATE TABLE IF NOT EXISTS label_store.prediction (
   "versions"        JSONB,
   "inputHash"       TEXT,
   "detail"          JSONB,
-  "sourceRef"       TEXT NOT NULL UNIQUE,
+  "sourceRef"       TEXT NOT NULL,
   "predictedAt"     TIMESTAMPTZ(3) NOT NULL,
-  "recordedAt"      TIMESTAMPTZ(3) NOT NULL DEFAULT now()
+  "recordedAt"      TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
+  -- One pipeline run can answer many subjects and questions under one ref.
+  UNIQUE ("sourceRef", "subjectId", "question", "questionVersion")
 );
 CREATE INDEX IF NOT EXISTS prediction_subject_question_idx
   ON label_store.prediction ("subjectId", "question", "questionVersion");
@@ -399,7 +401,7 @@ BEGIN
     p_subject, p_family, p_question, p_question_version, p_value, p_confidence, p_scores, p_model_ref,
     p_versions, p_input_hash, p_detail, p_source_ref, p_predicted_at
   )
-  ON CONFLICT ("sourceRef") DO NOTHING
+  ON CONFLICT ("sourceRef", "subjectId", "question", "questionVersion") DO NOTHING
   RETURNING "id" INTO v_id;
 
   IF v_id IS NOT NULL THEN
@@ -536,7 +538,7 @@ $$;
 
 -- The endpoint's batch: a JSON array of submit_prediction arguments in camelCase. Each item stands
 -- alone, so one refused item (an erased subject) does not refuse the rest. status: 'recorded',
--- 'duplicate' (sourceRef already recorded) or 'rejected' with the reason.
+-- 'duplicate' (already recorded for this subject and question) or 'rejected' with the reason.
 CREATE OR REPLACE FUNCTION label_store.submit_predictions(p_items JSONB)
 RETURNS TABLE ("ord" INTEGER, "id" BIGINT, "status" TEXT, "error" TEXT)
 LANGUAGE plpgsql

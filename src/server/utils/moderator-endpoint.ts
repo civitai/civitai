@@ -5,7 +5,6 @@ import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { hasModeratorGrant, type ModeratorGrantId } from '~/server/services/moderator-grants';
 import { Tracker } from '~/server/clickhouse/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -21,8 +20,7 @@ import type { SessionUser } from '~/types/session';
 // enforced, or enforced and not documented. `/moderator/api` renders these specs, and a docs page that
 // drifts from its API is worse than no docs page — it is a list of calls that used to work.
 //
-// There is ONE actor rule: the caller is a signed-in moderator, or, on an endpoint that names a `grant`,
-// a signed-in holder of that grant. No service token opens these, because
+// There is ONE actor rule: the caller is a signed-in moderator. No service token opens these, because
 // the privileged-permission gate, the per-actor rate limit and the audit row are all evaluated against
 // the actor — a service identity would disable three controls at once and make the audit trail a
 // record of which key was used rather than who acted.
@@ -59,7 +57,6 @@ export type ModeratorSpec = {
   summary: string;
   /** Permission key required on top of the moderator role, from the `granted` feature-flag system. */
   privileged?: string;
-  grant?: ModeratorGrantId;
   input?: z.ZodType;
   returns?: string;
   notes?: string[];
@@ -72,11 +69,6 @@ export type ModeratorDefinition<S extends z.ZodType, TOutput> = {
   method?: ModeratorMethod;
   summary: string;
   privileged?: string;
-  /**
-   * Open to whoever holds this moderator-app grant, moderator or not, in place of the moderator role:
-   * for someone outside moderation who needs this one call. The other rules still apply.
-   */
-  grant?: ModeratorGrantId;
   input?: S;
   returns?: string;
   notes?: string[];
@@ -204,7 +196,6 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     method: def.method ?? 'POST',
     summary: def.summary,
     privileged: def.privileged,
-    grant: def.grant,
     input: def.input,
     returns: def.returns,
     notes: def.notes,
@@ -221,11 +212,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     if ('error' in resolved) return res.status(resolved.status).json({ error: resolved.error });
 
     const { actor, fullCredential } = resolved;
-    if (actor.bannedAt) return res.status(403).json({ error: 'Moderator role required' });
-    if (def.grant) {
-      if (!(await hasModeratorGrant(actor, def.grant)))
-        return res.status(403).json({ error: `Permission "${def.grant}" required for this action` });
-    } else if (!actor.isModerator) {
+    if (!actor.isModerator || actor.bannedAt) {
       return res.status(403).json({ error: 'Moderator role required' });
     }
     if (!fullCredential) {
@@ -307,7 +294,6 @@ export type ModeratorEndpointDoc = {
   method: ModeratorMethod;
   summary: string;
   privileged?: string;
-  grant?: string;
   returns?: string;
   notes?: string[];
   rateLimit: { max: number; windowSeconds: number };
@@ -354,7 +340,6 @@ export function specToDoc(spec: ModeratorSpec): ModeratorEndpointDoc {
     summary: spec.summary,
     rateLimit: spec.rateLimit,
     ...(spec.privileged ? { privileged: spec.privileged } : {}),
-    ...(spec.grant ? { grant: spec.grant } : {}),
     ...(spec.returns ? { returns: spec.returns } : {}),
     ...(spec.notes?.length ? { notes: spec.notes } : {}),
   };
