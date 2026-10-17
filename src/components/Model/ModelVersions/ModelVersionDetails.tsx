@@ -80,6 +80,7 @@ import { CollectionShowcase } from '~/components/Model/CollectionShowcase/Collec
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -150,6 +151,7 @@ import {
   resolveActiveFile,
 } from '~/server/utils/model-helpers';
 import {
+  AppealCategory,
   Availability,
   CollectionType,
   ModelEngagementType,
@@ -1078,7 +1080,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             <ModelUnpublishedAlert
               reason={version.meta?.unpublishedReason}
               customMessage={version.meta?.customMessage}
-              showAppeal
+              // The form's Model appeal is for a removed model; a version removed on its own is Other.
+              appealHref={siteAppealHref(
+                features.siteAppealForm,
+                model.status === ModelStatus.UnpublishedViolation
+                  ? { category: AppealCategory.Model, id: model.id }
+                  : { category: AppealCategory.Other }
+              )}
             />
           )}
           {isPrivateModel && isOwnerOrMod && (

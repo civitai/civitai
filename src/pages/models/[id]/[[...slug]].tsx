@@ -105,6 +105,7 @@ import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
@@ -148,6 +149,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import {
+  AppealCategory,
   Availability,
   CollectionType,
   CosmeticEntity,
@@ -1461,6 +1463,11 @@ export default function ModelDetailsV2({
                 <ModelUnpublishedAlert
                   reason={model.meta?.unpublishedReason}
                   customMessage={model.meta?.customMessage}
+                  appealHref={
+                    isCreator && features.siteAppealForm
+                      ? siteAppealHref(true, { category: AppealCategory.Model, id: model.id })
+                      : undefined
+                  }
                 />
               )}
               {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
