@@ -336,8 +336,16 @@ describe('parseIdListParam', () => {
     ],
     ['', []],
     [undefined, []],
+    // Past Postgres int4: the server would refuse the whole read, so the id is dropped.
+    ['3000000000,12', [12]],
+    ['2147483647', [2147483647]],
   ])('%j -> %j', (value, expected) => {
     expect(parseIdListParam(value)).toEqual(expected);
+  });
+
+  it('keeps no more ids than a path has chapters', () => {
+    const many = Array.from({ length: 250 }, (_, i) => i + 1).join(',');
+    expect(parseIdListParam(many)).toHaveLength(200);
   });
 });
 

@@ -1,4 +1,6 @@
+import { PG_INT4_MAX } from '~/server/common/constants';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
+import { STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
 
 /**
  * Storyline mode lives in the URL, as the end chapter of the path being read. Image detail
@@ -21,9 +23,14 @@ export function parseIdParam(value: unknown) {
 export function parseIdListParam(value: unknown) {
   const raw = Array.isArray(value) ? value[0] : value;
   if (typeof raw !== 'string' && typeof raw !== 'number') return [];
+  // Within what getPath accepts, so a hand-edited link cannot fail the whole read.
   return String(raw)
     .split(',')
-    .flatMap((part) => parseIdParam(part) ?? []);
+    .flatMap((part) => {
+      const id = parseIdParam(part);
+      return id && id <= PG_INT4_MAX ? [id] : [];
+    })
+    .slice(0, STORYLINE_PATH_LIMIT);
 }
 
 /**

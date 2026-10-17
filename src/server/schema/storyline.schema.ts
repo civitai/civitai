@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import { PG_INT4_MAX } from '~/server/common/constants';
 import { STORYLINE_CEILING_LEVELS, STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
 
 const ceilingSchema = z
@@ -61,7 +62,7 @@ export type StorylineChapterReadInput = z.infer<typeof storylineChapterReadSchem
 
 /** `via`: the chapters the reader came through into each rejoined chapter on their route. */
 export const storylinePathSchema = storylineChapterReadSchema.extend({
-  via: z.array(z.number().int().positive()).max(STORYLINE_PATH_LIMIT).optional(),
+  via: z.array(z.number().int().positive().max(PG_INT4_MAX)).max(STORYLINE_PATH_LIMIT).optional(),
 });
 
 /** `parentChapterId` names the route when the chapter continues several chapters. */
