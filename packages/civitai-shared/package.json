@@ -5,6 +5,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
+    "./audio-moderation": "./src/audio-moderation.ts",
     ".": "./src/index.ts",
     "./media-key": "./src/media-key.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
@@ -38,7 +39,8 @@
   },
   "dependencies": {
     "@civitai/db-schema": "workspace:*",
-    "semver": "^7.6.0"
+    "semver": "^7.6.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/semver": "^7.7.1",

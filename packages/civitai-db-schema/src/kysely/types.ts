@@ -996,6 +996,29 @@ export type AuctionBase = {
   validForDays: Generated<number>;
   description: string | null;
 };
+export type AudioModerationScan = {
+  id: Generated<number>;
+  imageId: number | null;
+  sourceDeletedAt: Timestamp | null;
+  sourceUrl: string;
+  sourceHash: string;
+  status: Generated<EntityModerationStatus>;
+  attemptId: string;
+  attempts: Generated<number>;
+  workflowId: string | null;
+  nextAttemptAt: Generated<Timestamp>;
+  startedAt: Timestamp | null;
+  error: string | null;
+  result: unknown | null;
+  flagged: boolean | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  completedAt: Timestamp | null;
+  wouldBlock: boolean | null;
+  reviewedAt: Timestamp | null;
+  reviewerId: number | null;
+  reviewNotes: string | null;
+};
 export type Bid = {
   id: Generated<number>;
   auctionId: number;
@@ -5822,6 +5845,7 @@ export type DB = {
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;
+  AudioModerationScan: AudioModerationScan;
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;

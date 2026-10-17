@@ -80,6 +80,7 @@ import {
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
+import { audioModeration } from '~/server/jobs/audio-moderation';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
 import { createDisconnectHandler } from '~/server/jobs/job';
@@ -181,6 +182,7 @@ export const jobs: Job[] = [
   restoreUserImages,
   ...leaderboardJobs,
   ingestImages,
+  audioModeration,
   removeBlockedImages,
   removeReplacedImages,
   retryImageStorageDeletes,

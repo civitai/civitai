@@ -27,6 +27,7 @@ const PERMISSION_PREFIX = 'grant:';
  * shape carried a friendly key beside the id and the two drifted apart in the reader's head.
  */
 export const PERMISSIONS = [
+  { id: 'audio.review', label: 'Record shadow audio moderation reviews' },
   { id: 'user.identity.edit', label: 'Edit email, username & display name' },
   { id: 'user.buzz.send', label: 'Send or deduct Buzz' },
   { id: 'user.buzz.bank', label: 'See bank transactions in Buzz history' },

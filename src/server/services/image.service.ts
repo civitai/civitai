@@ -1431,6 +1431,32 @@ export const ingestImage = async ({
     return false;
   }
 
+  if (type === 'audio') {
+    // Audio has no frames to rate. Its transcript is queued by the database trigger in shadow mode.
+    const completed = await dbClient.$queryRaw<
+      { id: number; userId: number; postId: number | null }[]
+    >`
+      UPDATE "Image" SET "ingestion" = 'Scanned', "scannedAt" = NOW(),
+        "scanRequestedAt" = NOW(), "nsfwLevel" = CASE WHEN "nsfwLevel" = 0 THEN 1 ELSE "nsfwLevel" END
+      WHERE id = ${id} AND type = 'audio' AND "ingestion" IN ('Pending', 'Rescan', 'Error')
+      RETURNING id, "userId", "postId"
+    `;
+    if (!tx && completed.length) {
+      const { sendIngestionSignal } = await import('~/server/services/image-scan-pipeline');
+      await sendIngestionSignal({
+        imageId: id,
+        userId: completed[0].userId,
+        ingestion: ImageIngestionStatus.Scanned,
+      });
+      if (completed[0].postId) {
+        await updatePostNsfwLevel(completed[0].postId);
+        await bustCachesForPosts(completed[0].postId);
+      }
+      await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+    }
+    return true;
+  }
+
   const callbackUrl =
     env.IMAGE_SCANNING_CALLBACK ??
     `${env.NEXTAUTH_URL}/api/webhooks/image-scan-result?token=${env.WEBHOOK_TOKEN}`;
