@@ -598,6 +598,8 @@ describe('an open that already happened', () => {
     expect(world.openings.size).toBe(1);
     expect([a.replayed, b.replayed].sort()).toEqual([false, true]);
     expect({ ...a, replayed: true }).toEqual({ ...b, replayed: true });
+    // The one that waited on the lock answers from the record: one draw, one log line.
+    expect(mocks.log).toHaveBeenCalledTimes(1);
   });
 
   it("another user's opened box is not answered", async () => {
