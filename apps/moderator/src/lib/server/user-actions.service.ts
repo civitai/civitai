@@ -12,7 +12,7 @@ import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
 import { restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
-import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
+import { PROFILE_FIELD_KEYS, alwaysRemovesMedia, type ProfileField } from '$lib/enforcement';
 import type { HeldSummary } from './removal-hold';
 
 // Enforcement actions from User Lookup (Retool's BANAPI / UNBANAPI / ToggleMute / forceLogout, ticket
@@ -671,8 +671,8 @@ export async function setBanned(input: {
   detailsInternal?: string;
   /** Read back by the appeal flow. Never emailed, so it is safe to collect here. */
   detailsExternal?: string;
-  /** The endpoint blocks media only for `SexualMinor` unless this is set — a Nudify or Harassment ban
-   *  otherwise leaves every image up and needs a second, separate purge. */
+  /** The endpoint blocks media only for minor-safety reasons unless this is set — a Nudify or
+   *  Harassment ban otherwise leaves every image up and needs a second, separate purge. */
   removeMedia?: boolean;
   /** Unpublishes their models. The endpoint DEFAULTS THIS ON when the param is absent, so a caller that
    *  never sends it cannot offer the operator a choice. Send it explicitly either way. */
@@ -695,7 +695,8 @@ export async function setBanned(input: {
   if (input.ban && input.reasonCode) params.reasonCode = input.reasonCode;
   if (input.ban && input.detailsInternal) params.detailsInternal = input.detailsInternal;
   if (input.ban && input.detailsExternal) params.detailsExternal = input.detailsExternal;
-  if (input.ban && input.removeMedia) params.removeMedia = 'true';
+  if (input.ban && (input.removeMedia || alwaysRemovesMedia(input.reasonCode)))
+    params.removeMedia = 'true';
   if (input.ban && input.removeModels !== undefined)
     params.removeModels = String(input.removeModels);
   if (input.ban && input.removeComments) params.removeComments = 'true';

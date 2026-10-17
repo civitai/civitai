@@ -9,7 +9,12 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { BAN_REASONS, BAN_REASONS_REMOVING_CONTENT, type BanReasonCode } from '$lib/enforcement';
+  import {
+    BAN_REASONS,
+    BAN_REASONS_REMOVING_CONTENT,
+    alwaysRemovesMedia,
+    type BanReasonCode,
+  } from '$lib/enforcement';
   import { num } from '$lib/format';
 
   let {
@@ -60,7 +65,11 @@
     if (!commentsTouched) removeComments = removesContent;
   };
 
-  const removesAnything = $derived(removeModels || removeMedia || removeComments);
+  // No opt-out for these: the box shows ticked and locked, and the server removes the media anyway.
+  const mediaLocked = $derived(alwaysRemovesMedia(reasonCode));
+  const mediaRemoved = $derived(removeMedia || mediaLocked);
+
+  const removesAnything = $derived(removeModels || mediaRemoved || removeComments);
 
   // What this ban actually takes down. Derived so opening the form on a different account re-asks, and
   // so a slow count never blocks the form from rendering.
@@ -82,7 +91,7 @@
   <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
     <p class="mb-2 text-sm text-white">
       Ban <strong>{username ?? userId}</strong>? Unpublishes their models and notifies them. Images
-      stay up unless the reason is Sexual Minor, or you tick below.
+      stay up unless the reason is a minor-safety one, or you tick below.
     </p>
     {@render prompt?.()}
 
@@ -130,10 +139,11 @@
       <Checkbox
         id="ban-remove-media-{uid}"
         name="removeMedia"
-        bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))}
+        disabled={mediaLocked}
+        bind:checked={() => mediaRemoved, (v) => ((mediaTouched = true), (removeMedia = v))}
       />
       <Label for="ban-remove-media-{uid}" class="font-normal text-dark-0">
-        Also remove their images
+        {mediaLocked ? 'Their images are always removed for this reason' : 'Also remove their images'}
       </Label>
     </div>
     <div class="mt-2 flex items-center gap-2" data-touch-target>
@@ -164,7 +174,7 @@
           {#if counts}
             {[
               removeModels ? `${num(counts.modelCount)} model${counts.modelCount === 1 ? '' : 's'}` : null,
-              removeMedia ? `${num(counts.imageCount)} image${counts.imageCount === 1 ? '' : 's'}` : null,
+              mediaRemoved ? `${num(counts.imageCount)} image${counts.imageCount === 1 ? '' : 's'}` : null,
               removeComments ? 'every comment' : null,
             ]
               .filter(Boolean)
