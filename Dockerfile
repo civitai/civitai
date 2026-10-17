@@ -223,6 +223,18 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
 RUN node /tmp/assert-standalone-boot-graph.mjs /app && rm -f /tmp/assert-standalone-boot-graph.mjs
 
+# Standalone tRPC server — shipped, NOT run. The default command below stays `server.js`; a
+# deployment opts in by running `node trpc-server/server.mjs` instead, and rolls back by switching
+# its command back. It is `server.js` with `/api/trpc/*` served without Next's router (see the
+# header of scripts/trpc-server/server.mjs), reusing the route and proxy this build compiled.
+#
+# `--check` loads every Next internal the fast path calls from THIS filesystem (the traced subset,
+# which is what the boot-graph gate above exists for) and checks the build's routing against the
+# fast path's assumptions, then exits without serving. Here, so an image whose fast path could not
+# start fails its build instead of a rollout.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.mjs /app/scripts/trpc-server/fast-path.mjs ./trpc-server/
+RUN node trpc-server/server.mjs --check
+
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
