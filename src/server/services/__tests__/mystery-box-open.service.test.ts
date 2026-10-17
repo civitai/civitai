@@ -2,6 +2,7 @@ import type * as Crypto from 'crypto';
 import type * as EventShopItem from '~/server/events/event-shop-item';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as RosterSync from '~/server/events/points/roster-sync';
+import type * as LoggingClient from '~/server/logging/client';
 import { Prisma } from '@prisma/client';
 import { computeBoxOdds } from '@civitai/shared/box-odds';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,7 @@ const { mocks } = vi.hoisted(() => ({
     getEventBuyerTeam: vi.fn(),
     syncRoster: vi.fn(),
     refreshStickers: vi.fn(),
+    log: vi.fn(),
   },
 }));
 
@@ -29,6 +31,10 @@ vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
 vi.mock('~/server/events/points/roster-sync', async (importOriginal) => ({
   ...(await importOriginal<typeof RosterSync>()),
   syncEventRosterMember: mocks.syncRoster,
+}));
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: mocks.log,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof RedisCaches>()),
@@ -93,6 +99,8 @@ let world: {
   items: ItemRow[];
   openings: Map<bigint, Opening>;
   log: string[];
+  /** Runs inside the transaction once the holder lock is held. */
+  onLock?: () => void;
 };
 let lockTail: Promise<void>;
 
@@ -302,21 +310,24 @@ beforeEach(() => {
   dbMock.dbWrite.$transaction.mockReset();
   dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
     let release: (() => void) | undefined;
+    // A failed transaction leaves nothing behind. Snapshot once the lock is held, which is when
+    // Postgres would let this transaction see the world: a loser that waited behind a winner must
+    // not roll back the winner's commit.
+    let before: Pick<typeof world, 'owned' | 'items' | 'openings'> | undefined;
     const tx = makeTx(async () => {
       release = await acquireLock();
+      before = {
+        owned: [...world.owned],
+        items: [...world.items],
+        openings: new Map(world.openings),
+      };
+      world.onLock?.();
     });
     world.log.push('begin');
-    // A failed transaction leaves nothing behind. Restoring a snapshot is only sound while one
-    // transaction at a time can fail, which holds here: the concurrent tests' losers replay.
-    const before = {
-      owned: [...world.owned],
-      items: [...world.items],
-      openings: new Map(world.openings),
-    };
     try {
       return await fn(tx);
     } catch (error) {
-      Object.assign(world, before);
+      if (before) Object.assign(world, before);
       throw error;
     } finally {
       world.log.push('end');
@@ -326,7 +337,13 @@ beforeEach(() => {
 
   mocks.randomInt.mockImplementation(() => 0);
   mocks.getEventBuyerTeam.mockResolvedValue(undefined);
-  mocks.refreshStickers.mockResolvedValue(undefined);
+  mocks.refreshStickers.mockImplementation(async () => {
+    world.log.push('refresh:stickers');
+  });
+  mocks.syncRoster.mockImplementation(async () => {
+    world.log.push('sync:roster');
+  });
+  mocks.log.mockResolvedValue(undefined);
 });
 
 describe('opening a mystery box', () => {
@@ -413,6 +430,21 @@ describe('opening a mystery box', () => {
       rewardDefinitionId: 101,
       rewardType: 'cosmetic',
     });
+    // Hat 2 drawn by another user, and from another box: neither takes it from this holder.
+    world.openings.set(401n, {
+      boxItemId: 401n,
+      userId: OTHER_USER,
+      boxDefinitionId: BOX_ID,
+      rewardDefinitionId: 102,
+      rewardType: 'cosmetic',
+    });
+    world.openings.set(402n, {
+      boxItemId: 402n,
+      userId: HOLDER,
+      boxDefinitionId: BOX_ID + 1,
+      rewardDefinitionId: 102,
+      rewardType: 'cosmetic',
+    });
     // Asks for the first Common hat left.
     mocks.randomInt.mockImplementation(() => 0);
 
@@ -472,6 +504,68 @@ describe('opening a mystery box', () => {
   it('a hat leaves the sticker cache alone', async () => {
     await open();
     expect(mocks.refreshStickers).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the sticker', 0, { stickers: 1, roster: 0 }],
+    ['the event hat', 1, { stickers: 0, roster: 1 }],
+  ])('a mixed pool: drawing %s runs only its own follow-ups', async (_, itemRoll, expected) => {
+    world.contents = [hat(1, COMMON, {}, 'Sticker'), hat(2, COMMON, { event: 'birthday-hats' })];
+    mocks.randomInt.mockReturnValueOnce(0).mockReturnValueOnce(itemRoll);
+    await open();
+    expect(mocks.refreshStickers).toHaveBeenCalledTimes(expected.stickers);
+    expect(mocks.syncRoster).toHaveBeenCalledTimes(expected.roster);
+  });
+
+  it('runs its follow-ups only after the transaction ends', async () => {
+    world.contents = [hat(1, COMMON, { event: 'birthday-hats' }, 'Sticker')];
+    await open();
+    const end = world.log.lastIndexOf('end');
+    expect(world.log.indexOf('refresh:stickers')).toBeGreaterThan(end);
+    expect(world.log.indexOf('sync:roster')).toBeGreaterThan(end);
+  });
+
+  it('runs no follow-ups when the transaction fails late', async () => {
+    world.contents = [hat(1, COMMON, { event: 'birthday-hats' }, 'Sticker')];
+    const realTx = dbMock.dbWrite.$transaction.getMockImplementation()!;
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
+      realTx(async (tx: ReturnType<typeof makeTx>) =>
+        fn({
+          ...tx,
+          item: {
+            delete: async () => {
+              throw new Error('connection lost');
+            },
+          },
+        })
+      )
+    );
+    await expect(open()).rejects.toThrow('connection lost');
+    nothingOpened();
+    expect(mocks.refreshStickers).not.toHaveBeenCalled();
+    expect(mocks.syncRoster).not.toHaveBeenCalled();
+    expect(mocks.log).not.toHaveBeenCalled();
+  });
+
+  it('logs each draw once, and a replay not again', async () => {
+    mocks.randomInt.mockReturnValueOnce(3).mockReturnValueOnce(0);
+    await open();
+    await open();
+    expect(mocks.log.mock.calls).toEqual([
+      [
+        expect.objectContaining({
+          name: 'mystery-box-open',
+          userId: HOLDER,
+          boxItemId: BOX_ITEM.toString(),
+          boxVersion: VERSION,
+          tierId: RARE,
+          contentId: 3,
+          tierRoll: 3,
+          itemRoll: 0,
+          eligibleWeight: 4,
+        }),
+      ],
+    ]);
   });
 
   it('a cache failure after commit does not fail the open', async () => {
@@ -549,10 +643,22 @@ describe('refusals keep the box', () => {
     expect(mocks.randomInt).not.toHaveBeenCalled();
   });
 
-  it('a box edited since the holder saw it, before anything is drawn', async () => {
-    await expect(open({ expectedVersion: VERSION - 1 })).rejects.toThrow('contents changed');
-    nothingOpened();
-    expect(mocks.randomInt).not.toHaveBeenCalled();
+  it.each([[VERSION - 1], [VERSION + 1]])(
+    'a box whose version is not the %s the holder saw, before anything is drawn',
+    async (expectedVersion) => {
+      await expect(open({ expectedVersion })).rejects.toThrow('contents changed');
+      nothingOpened();
+      expect(mocks.randomInt).not.toHaveBeenCalled();
+    }
+  );
+
+  it('a box that left the holder between the first read and the lock', async () => {
+    world.onLock = () => {
+      world.items[0].holderType = 'faction';
+    };
+    await expect(open()).rejects.toThrow('not yours');
+    expect(world.owned).toEqual([]);
+    expect(world.openings.size).toBe(0);
   });
 
   it('a box with nothing left for the holder stays held', async () => {

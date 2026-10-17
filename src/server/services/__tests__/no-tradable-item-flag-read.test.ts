@@ -40,7 +40,12 @@ const NAMES_IT = /trade?able/i;
 const MENTIONS_ITEM_DEFINITION = /item_?definition/i;
 // A literal mask: 2, 0x2, 0b10, or a shift such as 1 << 1.
 const MASK = String.raw`(0x[0-9a-f]+|0b[01]+|\d+(?:\s*<<\s*\d+)?)`;
-const FLAGS_MASK = new RegExp(String.raw`\bflags\b["'\x60\]]?\s*&\s*\(?\s*${MASK}`, 'gi');
+// `flags & 2`, `def["flags"] & 2`, `flags &= 2`, and the operands reversed.
+const FLAGS_MASK = new RegExp(String.raw`\bflags\b["'\x60]?\]?\s*&=?\s*\(?\s*${MASK}`, 'gi');
+const FLAGS_MASK_REVERSED = new RegExp(
+  String.raw`(?<![\w.])${MASK}\s*&\s*\(?\s*[\w.$\[\]"'\x60]*\bflags\b`,
+  'gi'
+);
 // The shared bit helpers (`Flags.hasFlag`, `Flags.intersects`) with a literal mask.
 const FLAGS_HELPER = new RegExp(
   String.raw`\b(?:hasFlag|intersects)\(\s*[^,()]*\bflags\b[^,()]*,\s*${MASK}`,
@@ -57,9 +62,11 @@ const maskValue = (literal: string) => {
 const readsTradableBit = (source: string) =>
   MENTIONS_ITEM_DEFINITION.test(source) &&
   (FLAGS_SHIFT.test(source) ||
-    [...source.matchAll(FLAGS_MASK), ...source.matchAll(FLAGS_HELPER)].some(
-      (match) => (maskValue(match[1]) & 2) !== 0
-    ));
+    [
+      ...source.matchAll(FLAGS_MASK),
+      ...source.matchAll(FLAGS_MASK_REVERSED),
+      ...source.matchAll(FLAGS_HELPER),
+    ].some((match) => (maskValue(match[1]) & 2) !== 0));
 
 const offends = (source: string) => {
   const code = stripAllComments(source);
@@ -93,6 +100,9 @@ describe('🔴 no code reads the TRADABLE item flag', () => {
       ['a shifted mask', 'itemDefinition; if (def.flags & (1 << 1)) trade();'],
       ['a binary mask', 'itemDefinition; if (def.flags & 0b10) trade();'],
       ['a shift down to the bit', 'itemDefinition; const t = (def.flags >> 1) & 1;'],
+      ['the operands reversed', 'itemDefinition; if (2 & def.flags) trade();'],
+      ['bracket access', 'itemDefinition; if (def["flags"] & 2) trade();'],
+      ['a compound assignment', 'itemDefinition; let flags = def.flags; flags &= 2;'],
     ])('%s', (_, source) => {
       expect(offends(source)).toBe(true);
     });
@@ -101,6 +111,8 @@ describe('🔴 no code reads the TRADABLE item flag', () => {
       ['ROLLABLE only', 'itemDefinition; if (def.flags & 1) roll();'],
       ['DISCARDABLE only', 'itemDefinition; if (def.flags & 4) discard();'],
       ['DISCARDABLE as a shift', 'itemDefinition; if (def.flags & (1 << 2)) discard();'],
+      ['DISCARDABLE reversed', 'itemDefinition; if (4 & def.flags) discard();'],
+      ['a number ending a name', 'itemDefinition; const v2 & flags;'],
       ['the bit helper on ROLLABLE', 'itemDefinition; Flags.hasFlag(def.flags, 1);'],
       ['a markup comment naming it', '<!-- tradable --><div></div>'],
       ['a flags bit test outside item code', 'if (version.flags & 2) hide();'],

@@ -39,6 +39,9 @@ export type BoxDraw = {
   itemRoll: number;
 };
 
+/** The most a box's tier weights may sum to: Postgres int4. */
+export const MAX_BOX_WEIGHT = 2_147_483_647;
+
 /** Uniform integer in [0, max). Server code passes `crypto.randomInt`. */
 export type RandomInt = (max: number) => number;
 
@@ -47,13 +50,18 @@ export function computeBoxOdds(
   pool: readonly BoxOddsEntryInput[]
 ): BoxOdds {
   const left = new Map<number, number[]>();
+  let totalWeight = 0;
   for (const tier of tiers) {
     if (!Number.isSafeInteger(tier.weight) || tier.weight <= 0)
       throw new RangeError(
         `Box tier ${tier.id} has weight ${tier.weight}; weights are positive integers`
       );
+    totalWeight += tier.weight;
     left.set(tier.id, []);
   }
+  // The draw records its weights in int4 columns, so a box above that could never be opened.
+  if (totalWeight > MAX_BOX_WEIGHT)
+    throw new RangeError(`Box weights sum to ${totalWeight}; the most is ${MAX_BOX_WEIGHT}`);
   for (const entry of pool) {
     const contentIds = left.get(entry.tierId);
     // A reward in a tier this box doesn't have would be drawn at odds nobody was shown.

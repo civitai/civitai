@@ -106,6 +106,18 @@ describe('mysteryBox.open hands the service the flag, the country and the holder
     }
   );
 
+  it.each([
+    ['1'],
+    ['99'],
+    ['95000'],
+    ['9300000000'],
+    ['1000000000000000000'],
+    ['9223372036854775806'],
+    ['9223372036854775807'],
+  ])('the schema accepts box id %s', (boxItemId) => {
+    expect(openMysteryBoxInput.safeParse({ boxItemId, expectedVersion: 3 }).success).toBe(true);
+  });
+
   it('accepts the largest BIGINT id', async () => {
     await open({ mysteryBox: true }, {}, { boxItemId: '9223372036854775807', expectedVersion: 3 });
     expect(mockOpen).toHaveBeenCalledTimes(1);

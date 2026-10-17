@@ -3,6 +3,7 @@ import {
   computeBoxOdds,
   drawFromOdds,
   drawWithRolls,
+  MAX_BOX_WEIGHT,
   type BoxOdds,
   type BoxOddsEntryInput,
   type BoxOddsTierInput,
@@ -207,6 +208,21 @@ describe('computeBoxOdds refuses a box it cannot draw honestly', () => {
     expect(() =>
       computeBoxOdds([{ id: 1, weight, sortOrder: 0 }], [{ contentId: 1, tierId: 1 }])
     ).toThrow('weights are positive integers');
+  });
+
+  it('weights summing past what the opening record can hold, even with that tier exhausted', () => {
+    const tiers = [
+      { id: 1, weight: MAX_BOX_WEIGHT - 1, sortOrder: 0 },
+      { id: 2, weight: 2, sortOrder: 1 },
+    ];
+    expect(() => computeBoxOdds(tiers, [{ contentId: 1, tierId: 2 }])).toThrow('the most is');
+    // The bound itself is allowed.
+    expect(
+      computeBoxOdds(
+        [{ id: 1, weight: MAX_BOX_WEIGHT, sortOrder: 0 }],
+        [{ contentId: 1, tierId: 1 }]
+      ).eligibleWeight
+    ).toBe(MAX_BOX_WEIGHT);
   });
 
   it('a reward in a tier the box does not have', () => {
