@@ -3,6 +3,7 @@ import { dbRead } from '~/server/db/client';
 import type { EventViewer } from '~/server/events/event-access';
 import { getEventBoxCatalogAccess, isEventShopItemData } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
+import { createFallbackDedup } from '~/server/logging/devalue-fallback-log';
 import { ITEM_DEFINITION_STATUS, ITEM_TYPE } from '~/server/services/item.service';
 import type { BoxCatalogEntry } from '~/server/services/mystery-box.service';
 import {
@@ -21,8 +22,8 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
  * its tiers and contents changed version by version.
  *
  * The odds and contents come from the live tiers and contents, the rows the draw reads, so the page
- * cannot show odds the draw does not use. The history comes from `BoxOddsSnapshot`, written on every
- * publish or edit; a current version whose snapshot is missing or differs from the live box is
+ * cannot show odds the draw does not use. The history comes from `BoxOddsSnapshot`, one row per box
+ * version (written by the box seed today, the box builder later); a current version whose snapshot is missing or differs from the live box is
  * logged, so the history can be repaired.
  */
 
@@ -121,14 +122,9 @@ function rewardNoun(contents: BoxCatalogEntry[]) {
 export type MysteryBoxOddsPage = NonNullable<Awaited<ReturnType<typeof getMysteryBoxOddsPage>>>;
 
 // A box whose history can't be read logs once per pod per minute, not on every view.
-const DRIFT_LOG_EVERY_MS = 60_000;
-const driftLoggedAt = new Map<string, number>();
+const oddsPageErrorLog = createFallbackDedup({ windowMs: 60_000, maxSize: 1000 });
 function logOddsPageError(message: string, fields: { boxDefinitionId: number; version: number }) {
-  const key = `${fields.boxDefinitionId}:${fields.version}:${message}`;
-  const now = Date.now();
-  if (now - (driftLoggedAt.get(key) ?? -Infinity) < DRIFT_LOG_EVERY_MS) return;
-  if (driftLoggedAt.size >= 1000) driftLoggedAt.clear();
-  driftLoggedAt.set(key, now);
+  if (!oddsPageErrorLog.shouldLog(`${fields.boxDefinitionId}:${fields.version}:${message}`)) return;
   logToAxiom({ type: 'error', name: 'mystery-box-odds-page', message, ...fields }).catch();
 }
 
@@ -191,6 +187,8 @@ export async function getMysteryBoxOddsPage({
     },
   });
   const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
+  // A held or opened box went on sale when it was bought: purchase is the only grant of a box today.
+  // A grant path that skips the sale (a prize, a mod grant) must make this check ask for a sale.
   if (!started && !viewer?.isModerator && !(await boxEverHeld(box.id))) return null;
 
   const [tiers, contents, snapshots, sold] = await Promise.all([

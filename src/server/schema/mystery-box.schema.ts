@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { INT4_MAX } from '~/server/schema/base.schema';
 
 const MAX_BIGINT = '9223372036854775807';
 
@@ -19,11 +20,8 @@ export const getEventMysteryBoxesInput = z.object({ event: z.string().min(1).max
 
 export type GetEventMysteryBoxesInput = z.infer<typeof getEventMysteryBoxesInput>;
 
-/** Postgres int4, the id column's type. */
-export const MAX_INT4 = 2_147_483_647;
-
 export const getMysteryBoxOddsPageInput = z.object({
-  boxDefinitionId: z.number().int().positive().max(MAX_INT4),
+  boxDefinitionId: z.number().int().positive().max(INT4_MAX),
 });
 
 export type GetMysteryBoxOddsPageInput = z.infer<typeof getMysteryBoxOddsPageInput>;

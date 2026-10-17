@@ -88,6 +88,8 @@ const seedSnapshot = (): BoxOddsSnapshotData => ({
 });
 
 const OTHER_BOX = 12;
+const OTHER_TIER = { ...TIERS[0], id: 30, boxDefinitionId: OTHER_BOX, key: 'x', name: 'X' };
+const boxContents = () => world.contents.filter((c) => c.boxDefinitionId === BOX);
 
 type Box = {
   id: number;
@@ -235,7 +237,16 @@ const read = (overrides: Partial<Parameters<typeof getMysteryBoxOddsPage>[0]> = 
 
 const errorsLogged = () =>
   loggingMock.logToAxiom.mock.calls
-    .map(([entry]) => entry as { type?: string; name?: string; message?: string })
+    .map(
+      ([entry]) =>
+        entry as {
+          type?: string;
+          name?: string;
+          message?: string;
+          boxDefinitionId?: number;
+          version?: number;
+        }
+    )
     .filter((entry) => entry.type === 'error' && entry.name === 'mystery-box-odds-page');
 
 // The region list is cached for a minute per pod; each case starts past the last one's cache.
@@ -267,13 +278,14 @@ beforeEach(() => {
         params: { event: EVENT },
       },
     ],
-    tiers: TIERS,
+    tiers: [...TIERS, OTHER_TIER],
     contents: [
       hat(1, COMMON, 'Pink'),
       hat(2, COMMON, 'Pink'),
       hat(3, COMMON, 'Blue'),
       hat(4, RARE, 'Pink'),
       hat(5, RARE),
+      { ...hat(20, OTHER_TIER.id, 'Pink'), boxDefinitionId: OTHER_BOX },
     ],
     snapshots: [
       {
@@ -317,6 +329,21 @@ describe('who sees the odds page', () => {
       description: 'A hat from your team.',
       version: 1,
       archived: false,
+    });
+    // Only this box's tiers and contents, with what the page draws them by.
+    expect(page?.tiers.map((t) => [t.id, t.key, t.name, t.color, t.weight])).toEqual([
+      [COMMON, 'common', 'Common', null, 3],
+      [RARE, 'rare', 'Rare', '#3b82f6', 1],
+    ]);
+    expect(page?.contents.map((c) => c.contentId)).toEqual([1, 2, 3, 4, 5]);
+    expect(page?.contents[0]).toEqual({
+      contentId: 1,
+      tierId: COMMON,
+      cosmeticId: 1001,
+      name: 'Hat 1',
+      url: 'hat-1.png',
+      fit: null,
+      team: 'Pink',
     });
     expect(mocks.catalogAccess).toHaveBeenCalledWith(EVENT, undefined);
   });
@@ -363,7 +390,7 @@ describe('who sees the odds page', () => {
 
   it('needs no event for a box without one', async () => {
     theBox().params = {};
-    world.contents = world.contents.map((c) => hat(c.id, c.tierId));
+    world.contents = boxContents().map((c) => hat(c.id, c.tierId));
     const page = await read();
     expect(page?.event).toBeNull();
     expect(page?.teams).toEqual([]);
@@ -398,8 +425,17 @@ describe('before the box goes on sale', () => {
     expect(await read()).not.toBeNull();
     world.items = [{ id: 502n, itemDefinitionId: OTHER_BOX }];
     expect(await read()).toBeNull();
+    world.openings = [{ boxItemId: 504n, boxDefinitionId: OTHER_BOX }];
+    expect(await read()).toBeNull();
     world.openings = [{ boxItemId: 503n, boxDefinitionId: BOX }];
     expect(await read()).not.toBeNull();
+  });
+
+  it('shows it, priced, once its listing window has opened', async () => {
+    world.listings = [listing({ availableFrom: new Date(Date.now() - 3600_000) })];
+    expect((await read())?.price).toBe(500);
+    world.listings = [listing({ availableFrom: new Date(Date.now()) })];
+    expect((await read())?.price).toBe(500);
   });
 
   it('shows a listing whose window has opened, even sold out or ended, without a price', async () => {
@@ -446,6 +482,11 @@ describe('what the odds page shows', () => {
 
   it('calls the contents items when any is not a hat', async () => {
     world.contents[0].reward.cosmetic.type = 'Badge';
+    expect((await read())?.noun).toBe('item');
+  });
+
+  it('calls a content decoration that belongs to no event an item, not a hat', async () => {
+    world.contents[0].reward.cosmetic.data = { url: 'frame.png' } as never;
     expect((await read())?.noun).toBe('item');
   });
 
@@ -506,9 +547,9 @@ describe('the change history', () => {
     world.tiers = TIERS.map((t) => (t.key === 'rare' ? { ...t, weight: 2 } : t));
     theBox().version = 2;
     const page = await read();
-    expect(page?.history.map((h) => [h.version, h.changes])).toEqual([
-      [2, ['Rare weight 1 → 2.']],
-      [1, ['Published: 5 hats, weights 3 / 1 (Common / Rare).']],
+    expect(page?.history.map((h) => [h.version, h.createdAt.toISOString(), h.changes])).toEqual([
+      [2, '2026-11-10T10:00:00.000Z', ['Rare weight 1 → 2.']],
+      [1, '2026-11-06T10:00:00.000Z', ['Published: 5 hats, weights 3 / 1 (Common / Rare).']],
     ]);
     expect(page?.historyComplete).toBe(true);
     expect(errorsLogged()).toEqual([]);
@@ -550,6 +591,20 @@ describe('the change history', () => {
     vi.setSystemTime(Date.now() + 61_000);
     await read();
     expect(errorsLogged()).toHaveLength(2);
+  });
+
+  it('logs each drifted box and each version on its own', async () => {
+    theBox().version = 3;
+    await read();
+    theBox().version = 4;
+    await read();
+    world.boxes.find((b) => b.id === OTHER_BOX)!.version = 2;
+    await read({ boxDefinitionId: OTHER_BOX });
+    expect(errorsLogged().map((e) => [e.boxDefinitionId, e.version])).toEqual([
+      [BOX, 3],
+      [BOX, 4],
+      [OTHER_BOX, 2],
+    ]);
   });
 
   it('logs nothing when the live box matches its snapshot', async () => {
@@ -621,7 +676,7 @@ describe('snapshotsMatch', () => {
   const live = () =>
     snapshotOfLiveBox(
       [...TIERS].reverse(),
-      [...world.contents]
+      [...boxContents()]
         .reverse()
         .map((c) => ({ tierId: c.tierId, cosmeticId: c.reward.cosmeticId }))
     );
@@ -629,6 +684,32 @@ describe('snapshotsMatch', () => {
   it("reads the live box in the writer's own order, whatever order the rows come in", () => {
     expect(live()).toEqual(seedSnapshot());
     expect(snapshotsMatch(live(), seedSnapshot())).toBe(true);
+  });
+
+  it('orders contents by tier rank before cosmetic id, and tiers by id within a sort order', () => {
+    const tiers = [
+      { id: 2, key: 'b', name: 'B', weight: 1, sortOrder: 0 },
+      { id: 1, key: 'a', name: 'A', weight: 1, sortOrder: 0 },
+      { id: 3, key: 'c', name: 'C', weight: 1, sortOrder: 1 },
+    ];
+    expect(
+      snapshotOfLiveBox(tiers, [
+        { tierId: 3, cosmeticId: 1 },
+        { tierId: 2, cosmeticId: 5 },
+        { tierId: 1, cosmeticId: 9 },
+      ])
+    ).toEqual({
+      tiers: [
+        { key: 'a', name: 'A', weight: 1 },
+        { key: 'b', name: 'B', weight: 1 },
+        { key: 'c', name: 'C', weight: 1 },
+      ],
+      contents: [
+        { tier: 'a', cosmeticId: 9 },
+        { tier: 'b', cosmeticId: 5 },
+        { tier: 'c', cosmeticId: 1 },
+      ],
+    });
   });
 
   it('matches a snapshot that lists the same contents in another order', () => {

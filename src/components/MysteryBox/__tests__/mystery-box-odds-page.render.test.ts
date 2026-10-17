@@ -114,6 +114,14 @@ describe('MysteryBoxOddsPage', () => {
     ]);
     expect(hatsShown()).toEqual(['Hat 4', 'Hat 5', 'Hat 1', 'Hat 2']);
     expect(container.textContent).toContain('Showing Team Pink.');
+    expect(container.textContent).toContain(
+      "Weights: Common 3 · Rare 1. A rarity's chance is its weight divided by the total weight"
+    );
+  });
+
+  it("shows the box's description", async () => {
+    await render(page({ description: 'A hat from your team.' }), 'Pink');
+    expect(container.textContent).toContain('A hat from your team.');
   });
 
   it('falls back to the first team for a team the box has nothing for', async () => {
