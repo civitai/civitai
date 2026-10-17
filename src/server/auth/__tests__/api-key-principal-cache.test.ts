@@ -65,6 +65,9 @@ function findFirst({ where }: { where: { key: string; type: { in: string[] } } }
   return Promise.resolve(row ? { ...row } : null);
 }
 
+/** How many cache writes were issued for this credential hash. */
+const setsFor = (hash: string) =>
+  redisMock.redis.packed.set.mock.calls.filter(([key]) => key === cacheKey(hash)).length;
 const dbReads = () => dbMock.dbWrite.apiKey.findFirst.mock.calls.length;
 const cacheKey = (hash: string) => `${REDIS_KEYS.CACHES.API_KEY_PRINCIPAL}:${hash}`;
 let store: ReturnType<typeof installFakeCacheRedis>;
@@ -187,7 +190,8 @@ describe('bearer lookup cache: expiry', () => {
     const row = { ...personal(), expiresAt: new Date(T0.getTime() + 1_000) } as never;
     vi.setSystemTime(T0.getTime() + 2_000);
     await cacheApiKey('hash-of-expired', row, at(T0));
-    expect(store.has(cacheKey('hash-of-expired'))).toBe(false);
+    // The write is never ISSUED — asserted on the client call, not on what the fake kept.
+    expect(setsFor('hash-of-expired')).toBe(0);
   });
 
   it('rejects an OAuth entry planted in the cache by another writer', async () => {
@@ -297,10 +301,11 @@ describe('bearer lookup cache: revocation', () => {
     await cacheApiKey('hash-of-aged', row, at(T0));
     // Written 8 s in: 22 s left, i.e. it expires at lookup start + 30 s.
     expect(store.get(cacheKey('hash-of-aged'))?.expiresAt).toBe(T0.getTime() + 30_000);
-    // A 30 s-old lookup is stopped by the 10 s age bound, before any expiry arithmetic.
-    vi.setSystemTime(T0.getTime() + 30_000);
-    await cacheApiKey('hash-of-spent', row, at(T0));
-    expect(store.has(cacheKey('hash-of-spent'))).toBe(false);
+    // An 11 s-old lookup is refused by the 10 s age bound alone: its expiry (lookup + 30 s) is still
+    // 19 s ahead, so the past-expiry guard would let it through.
+    vi.setSystemTime(T0.getTime() + 11_000);
+    await cacheApiKey('hash-of-old', row, at(T0));
+    expect(setsFor('hash-of-old')).toBe(0);
   });
 
   it('a refill delayed in the client with NO tombstone still expires 30 s after its lookup', async () => {
