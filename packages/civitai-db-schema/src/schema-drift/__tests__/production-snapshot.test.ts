@@ -264,13 +264,16 @@ describe('production catalog snapshot (2026-10-16)', () => {
   });
 
   it('reports no missing columns: every declared column was live at capture', () => {
-    // Exception: `Appeal.category` / `Appeal.context` are declared ahead of the hand-applied
-    // `20261102120000_appeal_category` migration. Remove this carve-out when the catalog is
-    // recaptured after that migration.
-    const inFlightAppealColumns = new Set(['Appeal.category', 'Appeal.context']);
-    expect(currentFound('missing-column').filter((c) => !inFlightAppealColumns.has(c))).toEqual(
-      []
-    );
+    // Exceptions: columns declared ahead of their hand-applied migrations. Remove each when the
+    // catalog is recaptured after it:
+    //   `Appeal.category` / `Appeal.context`: `20261102120000_appeal_category`
+    //   `CosmeticShopItem.itemDefinitionId`: `20261105120000_mystery_box_items`
+    const inFlightColumns = new Set([
+      'Appeal.category',
+      'Appeal.context',
+      'CosmeticShopItem.itemDefinitionId',
+    ]);
+    expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
     expect(found('missing-column').length).toBeGreaterThan(0);
   });
