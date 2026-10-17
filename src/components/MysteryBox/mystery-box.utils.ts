@@ -6,6 +6,7 @@ export type MysteryBoxView = RouterOutput['mysteryBox']['getForEvent'][number];
 export type MysteryBoxTier = MysteryBoxView['tiers'][number];
 export type MysteryBoxContent = MysteryBoxView['contents'][number];
 export type MysteryBoxOpenResult = RouterOutput['mysteryBox']['open'];
+export type MysteryBoxOddsPageData = NonNullable<RouterOutput['mysteryBox']['getOddsPage']>;
 
 /** Rarity colours for a tier with none of its own, rarest last. */
 const FALLBACK_TIER_COLORS = ['#9ca3af', '#22c55e', '#3b82f6', '#f59e0b'];
@@ -106,4 +107,23 @@ export function formatChance(probability: number, digits = 2) {
   const text = pct.toFixed(pct >= 10 ? 0 : digits);
   // An uncertain chance never reads as certain.
   return probability < 1 && Number(text) >= 100 ? '>99%' : `${text}%`;
+}
+
+/** The box's public odds page, on the viewer's team when the box has teams. */
+export function mysteryBoxOddsPageUrl(view: Pick<MysteryBoxView, 'boxDefinitionId' | 'team'>) {
+  const path = `/mystery-boxes/${view.boxDefinitionId}`;
+  return view.team ? `${path}?team=${encodeURIComponent(view.team)}` : path;
+}
+
+/** One team's view of the box (or the whole box, without teams), as if nothing were owned yet. */
+export function baseOddsView(
+  page: Pick<MysteryBoxOddsPageData, 'tiers' | 'contents'>,
+  team?: string
+) {
+  return {
+    tiers: page.tiers,
+    contents: page.contents
+      .filter((c) => c.team === null || team === undefined || c.team === team)
+      .map((c) => ({ ...c, left: true })),
+  };
 }

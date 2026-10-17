@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Center,
@@ -29,6 +30,7 @@ import {
   shelfPricesByCosmetic,
   collectedCount,
   formatChance,
+  mysteryBoxOddsPageUrl,
   revealChance,
   tierColor,
   tierSummaries,
@@ -216,7 +218,10 @@ function BoxSummary({
       </Stack>
       <Text size="xs" c="dimmed">
         Your odds change as you collect: once you own every hat in a rarity, it drops out and the
-        others share its chance.
+        others share its chance.{' '}
+        <Anchor href={mysteryBoxOddsPageUrl(view)} target="_blank" inherit>
+          Full odds &amp; history
+        </Anchor>
       </Text>
       {children}
     </Stack>
