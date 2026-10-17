@@ -16,7 +16,8 @@ import { TagIndexDecodeUnavailableError } from './decode-errors';
  * worker gets the payload's bytes (transferred: the caller's copy is detached), decompresses,
  * unpacks and validates them, and hands the arrays back transferred; only the scorer's maps are
  * built here, a slice per event-loop turn (`assembleTagIndexCooperative`). One worker per decode,
- * terminated when it has answered, so nothing of it outlives the call.
+ * terminated once it has answered (its exit follows shortly after); an abort rejects only after the
+ * worker has exited.
  *
  * Errors keep `decodeTagIndex`'s meaning for `store.ts`: a payload that fails to decode or validate
  * throws an error of the same name, message and code as the worker's; an allocation failure

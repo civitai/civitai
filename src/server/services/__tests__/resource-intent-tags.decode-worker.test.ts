@@ -1,7 +1,7 @@
 import { builtinModules } from 'module';
 import { MessageChannel, receiveMessageOnPort, Worker } from 'worker_threads';
 import { Packr, Unpackr } from 'msgpackr';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { isAllocationFailure } from '~/server/services/resource-intent-cooc/store';
 import { TagIndexDecodeUnavailableError } from '~/server/services/resource-intent-tags/decode-errors';
 import { decodeTagIndexInWorker } from '~/server/services/resource-intent-tags/decode-worker';
@@ -102,6 +102,18 @@ describe('decodeTagIndexInWorker', () => {
       caps: { maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES, maxInflatedBytes: 100 },
     }).catch((e: Error) => e);
     expect((inflate as Error & { code?: string }).code).toBe('ERR_BUFFER_TOO_LARGE');
+  });
+
+  it("without caps given, hands the worker the exported caps (not the bundle's own)", async () => {
+    // The worker's error message names the cap it enforced; a payload one byte over the exported
+    // cap must be refused with exactly that cap.
+    const over = new Uint8Array(TAG_INDEX_MAX_PAYLOAD_BYTES + 1);
+    const e = await decodeTagIndexInWorker(over).catch((x: Error) => x);
+    expect((e as Error).message).toBe(
+      `tag index payload ${
+        TAG_INDEX_MAX_PAYLOAD_BYTES + 1
+      } bytes exceeds ${TAG_INDEX_MAX_PAYLOAD_BYTES}`
+    );
   });
 
   it('takes the payload buffer (transferred, not copied)', async () => {
@@ -231,6 +243,7 @@ describe('decodeTagIndexInWorker failures through the store', () => {
   it('an abort terminates the worker and rejects as unavailable', async () => {
     let exited = false;
     let exitedBeforeReject = false;
+    onTestFinished(() => terminate.mockRestore());
     const realTerminate = Worker.prototype.terminate;
     const terminate = vi
       .spyOn(Worker.prototype, 'terminate')
@@ -256,7 +269,6 @@ describe('decodeTagIndexInWorker failures through the store', () => {
     expect(terminate).toHaveBeenCalledTimes(1);
     // The rejection waited for the worker to exit.
     expect(exitedBeforeReject).toBe(true);
-    terminate.mockRestore();
   });
 
   it('an abort while the arrays are being assembled stops the assembly', async () => {

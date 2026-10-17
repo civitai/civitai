@@ -6,7 +6,7 @@ import {
   PutObjectCommand,
   type S3Client,
 } from '@aws-sdk/client-s3';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { serverSchema } from '~/env/server-schema';
 import {
@@ -182,6 +182,7 @@ describe('s3TagIndexObjects', () => {
   it('an abort that lands while the request is in flight allocates nothing for the body', async () => {
     const abort = new AbortController();
     const alloc = vi.spyOn(Buffer, 'allocUnsafe');
+    onTestFinished(() => alloc.mockRestore());
     const s3 = {
       send: vi.fn(async () => {
         abort.abort();
@@ -201,7 +202,6 @@ describe('s3TagIndexObjects', () => {
       .catch((x: unknown) => x);
     expect((e as Error).name).toBe('AbortError');
     expect(alloc.mock.calls.filter(([n]) => n === 4)).toEqual([]);
-    alloc.mockRestore();
   });
 
   it('an abort stops reading a body that cannot be destroyed, at its next chunk', async () => {
