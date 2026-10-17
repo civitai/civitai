@@ -58,6 +58,17 @@ beforeEach(() => {
 });
 
 describe('getImageHandler event hat', () => {
+  it('fails open: a failed hat lookup still returns the image, with no hat', async () => {
+    decorations.mockRejectedValue(new Error('cache down'));
+    const result = await getImageHandler({
+      input: { id: 1 },
+      ctx: ctxFor({ user: { id: 5 } }),
+    });
+    expect(result.id).toBe(1);
+    expect(result.url).toBe('key');
+    expect(result.eventDecoration).toBeNull();
+  });
+
   it("carries the image's hat, looked up for this one id as this viewer", async () => {
     const result = await getImageHandler({
       input: { id: 1 },

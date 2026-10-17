@@ -791,10 +791,19 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.
+      // A hat is decoration: its lookup failing must not fail the image.
       getEventDecorationsForEntity({
         ids: [input.id],
         entity: 'Image',
         viewer: eventViewerOf(ctx),
+      }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'image-get-event-decoration',
+          message: (error as Error).message,
+          imageId: input.id,
+        }).catch(() => undefined);
+        return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
       }),
     ]);
     const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
