@@ -185,7 +185,7 @@ export const __getTrpcBatchingEnabled = getTrpcBatchingEnabled;
  * ⇒ do NOT batch, so anonymous edge-cacheable tRPC GETs stay unbatched (no `?batch`
  * param) and remain CF-cacheable.
  */
-function isAuthedBrowser() {
+export function isAuthedBrowser() {
   return typeof window !== 'undefined' && window.isAuthed === true;
 }
 
