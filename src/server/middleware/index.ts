@@ -15,7 +15,9 @@ import { syncAccountNoindexMiddleware } from '~/server/middleware/sync-account-n
 // botDetection's terminal-with-request-mods response so both effects apply.
 // (Session-based guards — /moderator, /testing, preview-auth — moved to _app getInitialProps: the edge runtime
 // can't resolve the thin hub civ-token to a full user.)
-const middlewares: Middleware[] = [
+// Exported for the standalone tRPC server's parity ledger
+// (`scripts/trpc-server/parity-ledger.mjs`), whose test fails when this list changes without it.
+export const middlewares: Middleware[] = [
   regionBlockMiddleware,
   regionRestrictionMiddleware,
   apiRegionBlockMiddleware,
