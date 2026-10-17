@@ -80,6 +80,13 @@ export function PostEditForm() {
     };
   }, []); // eslint-disable-line
 
+  // A title set outside this form (Apply preset) fills an empty field. Not marked dirty, so the
+  // autosave above does not send it back.
+  const storedTitle = post?.title;
+  useEffect(() => {
+    if (storedTitle && !form.getValues('title')?.trim()) form.setValue('title', storedTitle);
+  }, [storedTitle]); // eslint-disable-line
+
   usePendingSave('post-detail', debounce);
 
   const controls = [
