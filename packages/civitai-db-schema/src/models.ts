@@ -3199,6 +3199,7 @@ export interface Cosmetic {
   packMemberships?: CosmeticShopItemCosmetic[];
   creatorMilestones?: CreatorMilestone[];
   milestoneExtras?: CreatorMilestoneCosmetic[];
+  itemDefinition?: ItemDefinition | null;
 }
 
 export interface UserCosmetic {
@@ -3328,6 +3329,8 @@ export interface CosmeticShopItem {
   reviewedAt: Date | null;
   rejectionReason: string | null;
   listed: boolean;
+  itemDefinitionId: number | null;
+  itemDefinition?: ItemDefinition | null;
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
@@ -3404,6 +3407,98 @@ export interface UserCosmeticShopPurchaseCosmetic {
   cosmetic?: Cosmetic;
   unitAmount: number;
   meta: JsonValue | null;
+}
+
+export interface ItemDefinition {
+  id: number;
+  type: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  params: JsonValue;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
+  rarity: string | null;
+  value: number | null;
+  flags: number;
+  quantityAvailable: number | null;
+  version: number;
+  status: string;
+  createdById: number | null;
+  updatedById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  items?: Item[];
+  boxTiers?: BoxTier[];
+  boxContents?: BoxContent[];
+  rewardOf?: BoxContent[];
+  oddsSnapshots?: BoxOddsSnapshot[];
+  shopItems?: CosmeticShopItem[];
+}
+
+export interface Item {
+  id: bigint;
+  itemDefinitionId: number;
+  itemDefinition?: ItemDefinition;
+  holderType: string;
+  holderId: number;
+  quantity: number;
+  expiresAt: Date | null;
+  data: JsonValue;
+  sourceKey: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface BoxTier {
+  id: number;
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  key: string;
+  name: string;
+  weight: number;
+  color: string | null;
+  sortOrder: number;
+  contents?: BoxContent[];
+}
+
+export interface BoxContent {
+  id: number;
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  tierId: number;
+  tier?: BoxTier;
+  rewardDefinitionId: number;
+  reward?: ItemDefinition;
+  enabled: boolean;
+}
+
+export interface BoxOpening {
+  boxItemId: bigint;
+  boxDefinitionId: number;
+  boxVersion: number;
+  userId: number;
+  boxSourceKey: string;
+  tierId: number;
+  contentId: number;
+  rewardDefinitionId: number;
+  rewardType: string;
+  tierWeight: number;
+  eligibleWeight: number;
+  tierRoll: number;
+  tierPoolSize: number;
+  itemRoll: number;
+  rewardStatus: string;
+  createdAt: Date;
+}
+
+export interface BoxOddsSnapshot {
+  boxDefinitionId: number;
+  box?: ItemDefinition;
+  version: number;
+  snapshot: JsonValue;
+  createdById: number | null;
+  createdAt: Date;
 }
 
 export interface BuzzClaim {
