@@ -174,11 +174,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           </>
         ) : (
           <>
+            {/* The moderator "Copyright / IP" note (pages/moderator/creator-shop.tsx) quotes this rule. */}
             <Alert color="yellow" icon={<IconAlertTriangle size={18} />}>
               <Text size="xs">
-                All cosmetics must be <b>safe-for-work</b> and must not use{' '}
-                <b>copyrighted or trademarked material</b>
-                {" you don't own."} Submissions that violate this will be rejected. Review the{' '}
+                All cosmetics must be <b>safe-for-work</b> and <b>your own original design</b>. No
+                characters, logos or symbols from brands or franchises you don&apos;t own, even
+                redrawn. Submissions that violate this will be rejected. Review the{' '}
                 <Anchor
                   component="button"
                   type="button"

@@ -32,6 +32,7 @@ import {
   type CapturableSearchInput,
 } from '~/server/services/feed-request-capture.service';
 import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
+import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import {
   countFeedPrimary,
   feedFliptContext,
@@ -1807,6 +1808,7 @@ const getAllImagesUncaptured = async (
     imageId, // used in public API
     username,
     period,
+    jumpTo,
     periodMode,
     tags,
     generation,
@@ -2326,6 +2328,22 @@ const getAllImagesUncaptured = async (
       Prisma.sql`i."createdAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(interval)}'`
     );
   }
+
+  // The month is resolved to the creator's edge image id through ("userId", "createdAt"): a
+  // createdAt bound under ORDER BY id walks every newer row first (54s on an 866k gallery).
+  const jump = resolveJumpTo({ jumpTo, sort, userId: targetUserId });
+  if (jump?.direction === 'before')
+    AND.push(Prisma.sql`i."id" <= (
+      SELECT j.id FROM "Image" j
+      WHERE j."userId" = ${targetUserId} AND j."createdAt" < ${new Date(jump.endMs)}
+      ORDER BY j."createdAt" DESC LIMIT 1
+    )`);
+  else if (jump?.direction === 'after')
+    AND.push(Prisma.sql`i."id" >= (
+      SELECT j.id FROM "Image" j
+      WHERE j."userId" = ${targetUserId} AND j."createdAt" >= ${new Date(jump.startMs)}
+      ORDER BY j."createdAt" ASC LIMIT 1
+    )`);
 
   // Handle cursor & skip conflict
   if (cursor && skip) throw new Error('Cannot use skip with cursor'); // [x]
@@ -3386,6 +3404,15 @@ export const makeMeiliImageSearchFilter = (
 ): MeiliImageFilter => {
   return `${field} ${criteria}`;
 };
+
+/** Applied on every page: a cursor alone would lose the bound when it parses as offset 0. */
+function makeMeiliJumpToFilter(input: { jumpTo?: string; sort?: string; userId?: number }) {
+  const jump = resolveJumpTo(input);
+  if (!jump) return undefined;
+  return jump.direction === 'before'
+    ? makeMeiliImageSearchFilter('sortAtUnix', `< ${jump.endMs}`)
+    : makeMeiliImageSearchFilter('sortAtUnix', `>= ${jump.startMs}`);
+}
 /**
  * Owner carve-out for a `scheduled` request: own content whose publish date is
  * still in the future.
@@ -3942,6 +3969,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     techniques,
     baseModels,
     period,
+    jumpTo,
     isModerator,
     currentUserId,
     excludedUserIds,
@@ -4277,6 +4305,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       )
     );
   }
+  const jumpToFilter = makeMeiliJumpToFilter({ jumpTo, sort, userId });
+  if (jumpToFilter) filters.push(jumpToFilter);
 
   // nb: this is for dev 08-19
   // if (!isProd) {
@@ -4578,6 +4608,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     techniques,
     baseModels,
     period,
+    jumpTo,
     isModerator,
     currentUserId,
     excludedUserIds,
@@ -4896,6 +4927,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       makeMeiliImageSearchFilter('sortAtUnix', `> ${snapToInterval(afterDate.getTime())}`)
     );
   }
+  const jumpToFilter = makeMeiliJumpToFilter({ jumpTo, sort, userId });
+  if (jumpToFilter) filters.push(jumpToFilter);
 
   // nb: this is for dev 08-19
   // if (!isProd) {

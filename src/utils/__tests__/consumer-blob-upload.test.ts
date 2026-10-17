@@ -170,6 +170,26 @@ describe('uploadConsumerBlob', () => {
     expect(reportApplicationError).not.toHaveBeenCalled();
   });
 
+  it.each(['audio/mpeg', 'audio/webm', 'audio/wav', 'audio/x-wav'])(
+    'uploads %s through the same presigned POST',
+    async (type) => {
+      const blob = new Blob([new Uint8Array(512)], { type });
+      const result = track(uploadConsumerBlob(blob));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(FakeXHR.instances[0]?.body).toBe(blob);
+      FakeXHR.instances[0].respond(200, JSON.stringify({ id: 'a1', url: 'https://blob/a1' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result.value).toEqual({ id: 'a1', url: 'https://blob/a1' });
+    }
+  );
+
+  it('refuses a type outside the allowlist before presigning', async () => {
+    await expect(
+      uploadConsumerBlob(new Blob([new Uint8Array(8)], { type: 'audio/ogg' }))
+    ).rejects.toThrow('Unsupported content type: audio/ogg');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('aborts a stalled upload and retries it once with a fresh presigned URL', async () => {
     const result = track(uploadConsumerBlob(jpeg()));
     await vi.advanceTimersByTimeAsync(29_999);

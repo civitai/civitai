@@ -12,9 +12,8 @@ import { countDeletes, countUpdates, planSql, relation } from './helpers';
  * The headline test: plan the real schema against the committed production catalog.
  *
  * 🔴 THE ASSERTION THIS SUITE EXISTS FOR is `emits UPDATEs and zero DELETEs for the SetNull
- * relations`. Its predecessor, hardcoded to DELETE, would have destroyed roughly 23,500
- * live rows across these relations — 610 articles, 519 user accounts, 591 user profiles,
- * 21,815 threads — where the schema asks only for a reference to be cleared.
+ * relations`. Its predecessor, hardcoded to DELETE, would have destroyed live articles, user
+ * accounts and user profiles where the schema asks only for a reference to be cleared.
  *
  * A zero on its own would be worthless. The Cascade suite below is the positive control:
  * the SAME plan, the SAME helper, the SAME catalog, reporting a non-zero DELETE count. The
@@ -39,8 +38,7 @@ const schema = parsePrismaSchema(schemaSource);
  * exclusion list (`Article.coverId`) and the one refused for a NOT NULL column
  * (`ChallengeEvent.createdById`, which has its own test below).
  *
- * Every entry is a relation whose orphan rows carry real user data. `Thread.imageId` alone
- * is 21,815 rows.
+ * Every entry is a relation whose orphan rows carry real user data.
  */
 const SET_NULL_RELATIONS = [
   'Challenge.eventId',
@@ -52,8 +50,6 @@ const SET_NULL_RELATIONS = [
   'Collection.imageId',
   'CosmeticShopSection.imageId',
   'PurchasableReward.coverImageId',
-  'Thread.challengeId',
-  'Thread.imageId',
   'User.profilePictureId',
   'UserProfile.coverImageId',
 ];
@@ -65,6 +61,7 @@ const SET_NULL_RELATIONS = [
 // this campaign. Pinning it as an intended DELETE target meant the tests were blessing a
 // plan that would revert a 2024 architectural decision — precisely the error recorded
 // against the CollectionItem fix. It is now on the exclusion list.
+// Thread.*: an entity-less thread is an orphan nothing can render, so its entity FKs declare Cascade.
 const CASCADE_RELATIONS = [
   'DownloadHistory.modelVersionId',
   'ImageEngagement.imageId',
@@ -75,6 +72,8 @@ const CASCADE_RELATIONS = [
   'ImageTool.imageId',
   'ModelBaseModelMetric.modelId',
   'TagsOnImageVote.imageId',
+  'Thread.challengeId',
+  'Thread.imageId',
 ];
 
 /** Orphan counts stand in for a live measurement so the plan reaches its statements. */
@@ -142,14 +141,14 @@ describe('🔴 the SetNull relations', () => {
 
   it('clears the declared column, and only that column', () => {
     expect(sql).toContain('UPDATE "User" t SET "profilePictureId" = NULL');
-    expect(sql).toContain('UPDATE "Thread" t SET "imageId" = NULL');
+    expect(sql).toContain('UPDATE "Collection" t SET "imageId" = NULL');
     expect(sql).toContain('UPDATE "UserProfile" t SET "coverImageId" = NULL');
   });
 
   it('writes ON DELETE SET NULL into each constraint', () => {
     expect(sql).toContain(
-      'ALTER TABLE "Thread" ADD CONSTRAINT "Thread_imageId_fkey"\n' +
-        '  FOREIGN KEY ("imageId") REFERENCES "Image"("id")\n' +
+      'ALTER TABLE "User" ADD CONSTRAINT "User_profilePictureId_fkey"\n' +
+        '  FOREIGN KEY ("profilePictureId") REFERENCES "Image"("id")\n' +
         '  ON UPDATE CASCADE ON DELETE SET NULL NOT VALID;'
     );
   });

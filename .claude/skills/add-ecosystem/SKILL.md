@@ -61,12 +61,11 @@ Ask the user for the model name and a reference link (HuggingFace page, official
 
 Read the current state of [basemodel.constants.ts](src/shared/constants/basemodel.constants.ts) to determine the next available IDs. Use Read with offsets — don't load the whole file.
 
-- **`ECO.<Name>`**: next available ecosystem ID. Groupings in `ECO`:
-  - Image models: 1-50 range (first come, first served; find next gap)
-  - Video models: 47-66 range
-  - Utility: 66+
+- **`ECO.<Name>`**: ECO IDs are one global namespace; the media-type comments in the block are not
+  ranges. Take the next unused number above the highest root ID (the `Root ecosystems` blocks), and
+  never enter a child range: 100-199 is SDXL children, 200+ AuraFlow children. When the next root
+  number would be 100 or above, ask the user to pick a new root block.
   - Child ecosystems (`parentEcosystemId` set): 100+ for SDXL children, 200+ for AuraFlow children
-  - Pick the next unused number within the appropriate block
 - **`BM.<Name>`**: next available base model ID. Read the `BM` constant block, find the next unused number.
 - **Family ID**: try to match an existing family in `ecosystemFamilies`. If none match, propose creating a new one (confirm with user).
 - **License ID**: try to match an existing license in `licenses` by name/URL. If none match, create a new entry (confirm with user).

@@ -105,6 +105,15 @@ describe('extra parameter capabilities', () => {
     expect(defaultRunParams(run('zimage')).noiseOffset).toBe('0');
     expect(defaultRunParams(run('krea2')).noiseOffset).toBe('0');
   });
+
+  it('recommends shuffling with the trigger kept first once a trigger word is set', () => {
+    expect(defaultRunParams(run('sdxl'))).toMatchObject({ shuffleTokens: false, keepTokens: '0' });
+    expect(defaultRunParams(run('sdxl'), 'mychar')).toMatchObject({
+      shuffleTokens: true,
+      keepTokens: '1',
+    });
+    expect(defaultRunParams(run('sdxl'), '  ')).toMatchObject({ shuffleTokens: false });
+  });
 });
 
 describe('paramDeviations', () => {
@@ -114,6 +123,15 @@ describe('paramDeviations', () => {
     expect(paramDeviations(r, params, 'tag')).toEqual([]);
     params.textEncoderLr = '0.00005';
     expect(paramDeviations(r, { ...params, textEncoderLr: '5e-5' }, 'tag')).toEqual([]);
+  });
+
+  it('measures against the trigger-aware recommendation', () => {
+    const r = run('sdxl');
+    expect(paramDeviations(r, defaultRunParams(r, 'mychar'), 'tag', 'mychar')).toEqual([]);
+    expect(paramDeviations(r, defaultRunParams(r), 'tag', 'mychar').map((d) => d.field)).toEqual([
+      'shuffleTokens',
+      'keepTokens',
+    ]);
   });
 
   it('names each changed field with its recommendation, in form order', () => {

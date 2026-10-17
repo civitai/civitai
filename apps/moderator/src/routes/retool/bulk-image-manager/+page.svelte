@@ -52,7 +52,9 @@
 
   const batchSubject = $derived(batchKey(page.url));
 
-  /** Entries outlive the page they were recorded on, because the actions act on the whole selection. */
+  /** Owners and states of every image seen in this batch, kept across pages. The selection itself
+   *  only holds what is on screen (`ImageActionBar`), so the extra entries serve the Owners row, not
+   *  the action. */
   const seen = new SvelteMap<string | number, { userId: number; blocked: boolean }>();
   const seenOwners = new SvelteMap<number, { username: string | null; bannedAt: Date | null }>();
 
@@ -79,14 +81,14 @@
   });
 
   // Restore is only safe on already-blocked images; the bar warns when a selection includes others.
-  // Read when each page loaded, so for pages the moderator has left this is a snapshot — the server
-  // reports the count it actually found.
+  // Read when the page loaded — the server reports the count it actually found.
   const blockedIds = $derived(
     new Set<string | number>([...seen].filter(([, v]) => v.blocked).map(([id]) => id))
   );
 
-  // Rating and prompt filter the loaded page, unlike `removed`: re-querying changes `batchKey` and
-  // clears a selection that spans pages. `matched` is against the loaded count, not the source total.
+  // Rating and prompt filter the loaded page, unlike `removed`: re-querying changes `batchKey`, and a
+  // client-side filter drops what it hides from the selection (`ImageActionBar`). `matched` is against
+  // the loaded count, not the source total.
   let filters = $state<Record<string, string>>({});
   const filterFields: FilterField[] = [
     {
@@ -118,10 +120,9 @@
   );
 
   /**
-   * 🔴 Named, not counted. A selection can now span pages, so the Owners row below — which is the
-   * batch's current page — is no longer the list of accounts an action reaches. Striking is offered
-   * in the same gesture as removing, and a strike against an account the moderator never saw is one
-   * they could not check for a ban, a note, or whether it is the same person twice.
+   * 🔴 Named, not counted. Striking is offered in the same gesture as removing, and a strike against
+   * an account the moderator has not looked at is one they could not check for a ban, a note, or
+   * whether it is the same person twice.
    */
   const batchOwners = $derived(
     [...seenOwners].map(([id, o]) => ({ id, ...o }))
@@ -294,8 +295,7 @@
     </h2>
     <p class="mb-3 text-xs text-dark-2">
       {#if batch.truncated || batch.offset > 0}
-        A selection survives Previous and Next, so you can gather images across pages and act on them
-        once — <span class="text-amber-300">up to {num(MAX_SELECTION)} per action</span>.
+        A selection holds only the images on this page; act on each page in turn.
       {:else}
         The whole set.
       {/if}
@@ -352,8 +352,8 @@
       {/if}
     </div>
 
-    <!-- Every owner seen in this batch, not just this page's: the selection spans pages, so a row
-         scoped to the current window understates who an action reaches. -->
+    <!-- Every owner seen in this batch, not just this page's. The selection is this page's only, so
+         this row is wider than what an action reaches. -->
     {#if batchOwners.length}
       <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
         <span class="text-xs tracking-wide text-dark-2 uppercase">Owners</span>
@@ -389,6 +389,8 @@
       owners={selectedOwners}
       maxSelection={MAX_SELECTION}
       blockedIds={blockedIds}
+      notify={data.canStrike}
+      strike={data.canStrike}
     />
   {/if}
 

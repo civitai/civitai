@@ -8,6 +8,7 @@ import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { jumpToMonthSchema } from '~/shared/utils/jump-to-month';
 import { toStringList } from '~/utils/array-helpers';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -151,6 +152,7 @@ export const postsQuerySchema = baseQuerySchema.merge(
   postsFilterSchema.extend({
     limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
     cursor: z.union([z.number(), z.string()]).optional(),
+    jumpTo: jumpToMonthSchema.optional(),
     query: z.string().optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),

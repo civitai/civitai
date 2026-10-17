@@ -23,6 +23,7 @@ import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
+import { jumpToEmptyMessage } from '~/shared/utils/jump-to-month';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -116,6 +117,7 @@ function UserPostsPage() {
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
                   showScheduled={canViewDrafts}
+                  jumpToSort={viewingDraft ? undefined : sort}
                   size="compact-sm"
                 />
               </Group>
@@ -130,6 +132,7 @@ function UserPostsPage() {
                 draftOnly: viewingDraft,
                 pending: true,
               }}
+              emptyMessage={viewingDraft ? undefined : jumpToEmptyMessage(query.jumpTo, sort)}
             />
           </Stack>
         </MasonryContainer>

@@ -1,13 +1,12 @@
 <script lang="ts">
   import { dateTime } from '$lib/format';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { reportEntityLabels, reportStatusBadgeClass, getReportItemUrl } from '$lib/reports';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { reportEntityLabels, getReportItemUrl } from '$lib/reports';
   import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
   import ReportQueueColumn from '$lib/components/report-queue/ReportQueueColumn.svelte';
+  import ReportRowMeta from '$lib/components/report-queue/ReportRowMeta.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { clearPaging } from '$lib/paging';
+  import { itemHref, QUEUE_NAV } from '$lib/report-queue';
   import type { LayoutData } from './$types';
 
   let { data }: { data: LayoutData } = $props();
@@ -21,11 +20,7 @@
   // Opening a model keeps the queue page and filters; a single-report view does not survive it.
   function open(modelId: number | null) {
     if (modelId == null) return;
-    const params = new URLSearchParams(page.url.search);
-    params.delete('report');
-    clearPaging(params);
-    const query = params.size ? `?${params}` : '';
-    goto(`/reports/model/${modelId}${query}`, { noScroll: true, keepFocus: true });
+    goto(itemHref(`/reports/model/${modelId}`, page.url.search), QUEUE_NAV);
   }
 
   const ownerFlaggedMinor = $derived(new Set(data.ownerFlaggedMinor));
@@ -59,27 +54,8 @@
         {dateTime(report.createdAt)}
       </span>
     </div>
-    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <Badge class={reportStatusBadgeClass[report.status]}>{report.status}</Badge>
-      <span>{report.reason}</span>
+    <ReportRowMeta report={report}>
       {#if report.entityId != null && ownerFlaggedMinor.has(report.entityId)}<OwnerFlaggedMinorBadge />{/if}
-      <span class="text-muted-foreground">
-        by
-        {#if report.reportedByUsername}
-          <a href={userLookupUrl(report.reportedByUsername)} class="link">{report.reportedByUsername}</a>
-        {:else}
-          —
-        {/if}
-        <!-- Everyone else who filed the same report, folded in beside the filer. -->
-        {#if report.alsoReportedByCount}
-          <span
-            class="tabular-nums"
-            title={`Also reported by ${report.alsoReportedByCount} other ${report.alsoReportedByCount === 1 ? 'user' : 'users'}`}
-          >
-            +{report.alsoReportedByCount}
-          </span>
-        {/if}
-      </span>
-    </div>
+    </ReportRowMeta>
   {/snippet}
 </ReportQueueColumn>

@@ -5,12 +5,12 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ReportQueueColumn from '$lib/components/report-queue/ReportQueueColumn.svelte';
+  import ReportRowMeta from '$lib/components/report-queue/ReportRowMeta.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import type { LayoutData } from './$types';
   import { dateTime, num } from '$lib/format';
-  import { reportReasonLabel, reportStatusBadgeClass } from '$lib/reports';
   import { postReportUrl, userLookupUrl } from '$lib/entity-url';
-  import { clearPaging } from '$lib/paging';
+  import { itemHref, QUEUE_NAV } from '$lib/report-queue';
 
   let { data }: { data: LayoutData } = $props();
 
@@ -24,11 +24,7 @@
   // survive it.
   function open(postId: number | null) {
     if (postId == null) return;
-    const params = new URLSearchParams(page.url.search);
-    params.delete('report');
-    clearPaging(params);
-    const query = params.size ? `?${params}` : '';
-    goto(`${postReportUrl(postId, page.params.tab)}${query}`, { noScroll: true, keepFocus: true });
+    goto(itemHref(postReportUrl(postId, page.params.tab), page.url.search), QUEUE_NAV);
   }
 
   // A bulk action that reports nothing is indistinguishable from one that did nothing, so the sweep
@@ -54,28 +50,27 @@
   dates
 >
   {#snippet toolbar()}
-    {#if data.canAct}
-      <!-- Retool's `ActionAllPostReports`: the query keys on every image in the post already being
-           blocked, which is a post-shaped question — so it lives on this queue alone. -->
-      <form
-        method="POST"
-        action="?/actionResolvedPosts"
-        use:enhance={sweepForm.enhance}
-        class="flex flex-col gap-1"
-      >
-        <Button type="submit" size="sm" variant="outline" class="self-start" disabled={sweepForm.submitting}>
-          Action reports already resolved by content
-        </Button>
-        <span class="text-xs text-muted-foreground">
-          Pending reports whose post is entirely blocked already.
-        </span>
-        {#if sweepForm.error}
-          <p class="m-0 text-xs text-red-300" role="alert">{sweepForm.error}</p>
-        {:else if swept}
-          <p class="m-0 text-xs text-green-300" role="status">{swept}</p>
-        {/if}
-      </form>
-    {/if}
+    <!-- Retool's `ActionAllPostReports`: the query keys on every image in the post already being
+         blocked, which is a post-shaped question — so it lives on this queue alone. A ruling, so it
+         needs only the queue. -->
+    <form
+      method="POST"
+      action="?/actionResolvedPosts"
+      use:enhance={sweepForm.enhance}
+      class="flex flex-col gap-1"
+    >
+      <Button type="submit" size="sm" variant="outline" class="self-start" disabled={sweepForm.submitting}>
+        Action reports already resolved by content
+      </Button>
+      <span class="text-xs text-muted-foreground">
+        Pending reports whose post is entirely blocked already.
+      </span>
+      {#if sweepForm.error}
+        <p class="m-0 text-xs text-red-300" role="alert">{sweepForm.error}</p>
+      {:else if swept}
+        <p class="m-0 text-xs text-green-300" role="status">{swept}</p>
+      {/if}
+    </form>
   {/snippet}
 
   {#snippet row(r)}
@@ -94,25 +89,7 @@
         {dateTime(r.createdAt)}
       </span>
     </div>
-    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <Badge class={reportStatusBadgeClass[r.status]}>{r.status}</Badge>
-      <span>{reportReasonLabel(r.details, r.reason)}</span>
-      <span class="text-muted-foreground">
-        by
-        {#if r.reportedByUsername}
-          <a href={userLookupUrl(r.reportedByUsername)} class="link">{r.reportedByUsername}</a>
-        {:else}
-          —
-        {/if}
-        {#if r.alsoReportedByCount}
-          <span
-            class="tabular-nums"
-            title={`Also reported by ${r.alsoReportedByCount} other ${r.alsoReportedByCount === 1 ? 'user' : 'users'}`}
-          >
-            +{num(r.alsoReportedByCount)}
-          </span>
-        {/if}
-      </span>
+    <ReportRowMeta report={r}>
       {#if p == null}
         <!-- A report survives its post's deletion. Saying so is what stops a moderator reading the
              empty panel as a broken page. -->
@@ -125,6 +102,6 @@
           <span class="text-emerald-300">resolved by content</span>
         {/if}
       {/if}
-    </div>
+    </ReportRowMeta>
   {/snippet}
 </ReportQueueColumn>

@@ -102,7 +102,7 @@
   // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
   const FEATURED: Partial<Record<Media, string[]>> = {
-    image: ['zimage', 'flux3klein', 'anima', 'krea2'],
+    image: ['zimage', 'mossimage', 'flux3klein', 'anima', 'krea2'],
     video: ['minimaxh3', 'wan', 'ltx'],
   };
   const featuredCards = $derived.by(() => {

@@ -80,7 +80,11 @@
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
+      <ModerationMemoryPanel
+        userId={result.identity.id}
+        canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
       <AddressesPanel {signals} accountId={result.identity.id} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
@@ -208,11 +212,15 @@
         <UserChatMessages userId={result.identity.id} />
       {/if}
     {:else if section === 'notes'}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
+      <ModerationMemoryPanel
+        userId={result.identity.id}
+        canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
     {:else if section === 'notifications'}
       <NotificationsPanel
         userId={result.identity.id}
-        canAct={data.canAct}
+        canAct={data.canStrike}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'mutes'}

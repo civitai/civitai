@@ -192,7 +192,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     schema: formSchema,
     form,
     timeout: 1000,
-    key: `bounty_new`,
+    key: `bounty_${bounty?.id ?? 'new'}`,
     watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,

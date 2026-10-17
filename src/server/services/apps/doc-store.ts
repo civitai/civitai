@@ -36,12 +36,13 @@
 //     delete, increment, mark, unmark);
 //   - rate limits;
 //   - content moderation of shared writes;
+//   - a collection's `ownedModelVersions` rule on create and put (`doc-store-ownership.ts`);
 //   - map `DocStoreError` codes to HTTP statuses and envelopes;
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
-// `kind: 'log'` and `maxEntries`.
+// `kind: 'log'`, `maxEntries` and `dailyWritesPerAuthor`.
 // The `expires_at` column and its index exist in the schema so TTL needs no
 // second manual migration; nothing here reads or writes it.
 //

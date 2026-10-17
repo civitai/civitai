@@ -204,6 +204,9 @@ export const ECO = {
   Flux3: 92,
   Flux3Klein: 94,
   Flux3Klein_base: 95,
+  // Base and SFT are separate weight releases, so separate ecosystems.
+  MossImage: 96,
+  MossImage_base: 97,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -907,6 +910,22 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 271,
   },
 
+  // OpenMOSS
+  {
+    id: ECO.MossImage,
+    key: 'MossImage',
+    displayName: 'MOSS Image',
+    familyId: 29,
+    sortOrder: 272,
+  },
+  {
+    id: ECO.MossImage_base,
+    key: 'MossImage_base',
+    displayName: 'MOSS Image Base',
+    familyId: 29,
+    sortOrder: 273,
+  },
+
   // Audio ecosystems
   {
     id: ECO.AceAudio,
@@ -997,7 +1016,7 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
  * than an external provider. Single source of truth for the self-hosted
  * generation toggle; derived from the handlers in
- * `src/server/services/orchestrator/ecosystems/`, which are authoritative for which
+ * `src/server/services/orchestrator/form-graph/*.handler.ts`, which are authoritative for which
  * input type each ecosystem produces.
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
@@ -1027,6 +1046,9 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Qwen',
   'Flux3Klein',
   'Flux3Klein_base',
+  // ComfyMossImage{Sft,Base}CreateImageInput
+  'MossImage',
+  'MossImage_base',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1261,6 +1283,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Flux.3 Klein - open weights, checkpoint and LoRA
   { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
+  // MOSS Image - open weights, checkpoint and LoRA
+  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.MossImage_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1778,6 +1803,20 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.MossImage,
+    defaults: {
+      model: { id: 3409867 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MossImage_base,
+    defaults: {
+      model: { id: 3409868 },
+      modelLocked: true,
+    },
+  },
+  {
     ecosystemId: ECO.Flux3Video,
     defaults: {
       model: { id: 3204701 },
@@ -2232,6 +2271,14 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: loraOnly,
     support: 'partial',
   },
+  // MOSS Image (SFT) has partial support for MOSS Image Base LoRAs
+  {
+    sourceEcosystemId: ECO.MossImage_base,
+    targetEcosystemId: ECO.MossImage,
+    supportType: 'generation',
+    modelTypes: loraOnly,
+    support: 'partial',
+  },
 
   // ==========================================================================
   // AuraFlow ↔ PonyV7 (parent ↔ child)
@@ -2384,6 +2431,8 @@ export const BM = {
   Krea3: 114,
   Flux3Klein: 115,
   Flux3Klein_base: 116,
+  MossImage: 117,
+  MossImage_base: 118,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2885,6 +2934,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Sonilo',
     description: "Sonilo's music and sound-effect generation models",
   },
+  {
+    id: 29,
+    name: 'OpenMOSS',
+    description: "OpenMOSS's image generation models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -3042,6 +3096,22 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Flux3Klein_base,
     licenseId: 49,
+  },
+  {
+    id: BM.MossImage,
+    name: 'MOSS Image',
+    description: "OpenMOSS's 5B text-to-image model, supervised fine-tune of MOSS Image Base",
+    type: 'image',
+    ecosystemId: ECO.MossImage,
+    licenseId: 13,
+  },
+  {
+    id: BM.MossImage_base,
+    name: 'MOSS Image Base',
+    description: "OpenMOSS's 5B text-to-image base model, for fine-tuning and LoRA training",
+    type: 'image',
+    ecosystemId: ECO.MossImage_base,
+    licenseId: 13,
   },
   {
     id: BM.Flux3Video,
@@ -4652,6 +4722,13 @@ export const ecosystemGroups: EcosystemGroup[] = [
     ecosystemIds: [ECO.Flux3Klein, ECO.Flux3Klein_base],
     defaultEcosystemId: ECO.Flux3Klein,
     sortOrder: 23,
+  },
+  {
+    id: 'MossImage',
+    displayName: 'MOSS Image',
+    ecosystemIds: [ECO.MossImage, ECO.MossImage_base],
+    defaultEcosystemId: ECO.MossImage,
+    sortOrder: 24,
   },
   {
     id: 'LTXV',

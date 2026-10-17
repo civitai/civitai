@@ -10301,6 +10301,56 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
 
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
 
+  describe('inline media is refused before any quote or charge', () => {
+    // A phone photo inlined as a data URI: over the byte cap AND inline media.
+    const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
+    const expected =
+      'input.ImageUrl carries inline media (data URI/base64); ' +
+      'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+      "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
+
+    it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+      '%s reports the inline-media message, not the byte cap',
+      async (procedure) => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        const body = ptBody({ input: { ImageUrl: photo } });
+
+        const err = await caller()
+          [procedure]({ blockToken: 'tok', body })
+          .then(
+            () => null,
+            (e: unknown) => e as { code: string; message: string }
+          );
+
+        expect(err?.code).toBe('BAD_REQUEST');
+        expect(err?.message).toContain(expected);
+        expect(err?.message).not.toContain('byte limit');
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      }
+    );
+
+    it("refuses it in a kind:'workflow' step on the estimate", async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const body = {
+        kind: 'workflow' as const,
+        steps: [
+          { name: 'gen', $type: PT_TYPE, input: { prompt: 'a cat' } },
+          { $type: PT_TYPE, input: { images: ['https://image.civitai.com/a.jpeg', photo] } },
+        ],
+      };
+
+      await expect(caller().estimateWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('steps[1].input.images[1] carries'),
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
   describe('🔴 criterion 1 — an UNREGISTERED $type parses and submits', () => {
     it('submits a $type that is not in stepRegistry', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());

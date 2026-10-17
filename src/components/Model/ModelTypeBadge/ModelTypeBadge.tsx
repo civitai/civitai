@@ -49,6 +49,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   Anima: 'ANI',
   'Krea 2': 'KR2',
   'Krea 2 Turbo': 'KR2',
+  'MiniMax H3': 'MH3',
 };
 
 export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: Props) {

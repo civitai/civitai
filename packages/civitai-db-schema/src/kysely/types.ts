@@ -101,6 +101,7 @@ import type {
   ToolType,
   TechniqueType,
   AppealStatus,
+  AppealCategory,
   AuctionType,
   ModerationRuleAction,
   ChangelogType,
@@ -429,6 +430,11 @@ export type Appeal = {
   internalNotes: string | null;
   buzzTransactionId: string | null;
   entityRemovedAt: Timestamp | null;
+  category: AppealCategory | null;
+  /**
+   * What the form collected beyond the message (`SiteAppealContext`).
+   */
+  context: unknown | null;
 };
 export type AppealDecisionRecord = {
   id: Generated<string>;

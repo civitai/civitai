@@ -61,6 +61,13 @@ export const PERMISSIONS = [
   // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
   // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
   { id: 'user.generations.view', label: 'View a user’s generated media' },
+  // Both were the `/users` PAGE grant until 2026-10-16, so opening the new-signups list conferred them
+  // and every report queue withheld them from a Reports-only moderator — the weld this file's header
+  // describes. One id per kind of harm, not per page: the same strike, notification and image writes run
+  // from User Lookup, every report queue, Image Lookup and Bulk Image Manager, and a gate on one of
+  // those pages alone would leave the others as a way round it. Granted by hand on `/admin` at launch.
+  { id: 'user.strike', label: 'Strike or notify an account' },
+  { id: 'image.moderate', label: 'Remove, restore or flag images' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
   // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
   // apart so a role can be given the Audit queues without the account-ending half of them.

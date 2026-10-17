@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { baseModelById, BM, isModelSupported } from '@civitai/shared/basemodel.constants';
+import {
+  baseModelById,
+  baseModels,
+  BM,
+  isModelSupported,
+} from '@civitai/shared/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import {
@@ -98,4 +103,19 @@ describe('YuE2 sample override validation', () => {
     expect(yue2SampleOverrideSchema.safeParse({ steps: 100 }).success).toBe(true);
     expect(audioSampleOverrideSchema.safeParse({ steps: 101 }).success).toBe(true);
   });
+});
+
+// A trained version is written with this base model; a name outside the published list leaves the
+// publish form's base-model select blank.
+describe('trainer base models', () => {
+  it.each(Object.entries(trainingModelInfo))('%s writes a published base model', (_, info) => {
+    expect(baseModels).toContain(info.baseModel);
+  });
+
+  it.each(MODEL_CARDS.flatMap((card) => card.versions.map((version) => [version.key, version])))(
+    'studio %s mirrors a published base model',
+    (_, version) => {
+      expect(baseModels).toContain(version.baseModel);
+    }
+  );
 });

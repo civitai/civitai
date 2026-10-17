@@ -165,6 +165,18 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // the purchase path refuses a buyer who owns the app, and a pre-approval app
   // has no AppBlock row to resolve a catalog from at all.
   'goods:read:self',
+  // social:react:self — INCLUDED in BOTH dev allowlists, on the `posts:write:self` reasoning: a
+  // dev token is self-bound to the AUTHOR'S OWN account, so every reaction it sets is one the
+  // author could have clicked themselves, against the same per-user reaction quota (the wrapper
+  // shares the site's), and still behind the provenance ticket and the fail-closed flag.
+  // Omitting it would leave a reactions app un-iterable before approval: these allowlists strip
+  // the scope before signing, so no consent round-trip could restore it.
+  //
+  // 🔴 IT IS STILL A REAL, REWARD-PAYING REACTION, which is why BOTH review allowlists below
+  // withhold it: a moderator previewing someone else's unapproved app must never react under
+  // the MOD'S name. The private-run ceiling derives from the run-for-real set, so it is
+  // withheld there too.
+  'social:react:self',
 ]);
 
 /**
@@ -204,6 +216,9 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   // rationale): self-bound, read-only, and empty for a pre-approval app.
   // `goods:purchase:self` stays excluded everywhere.
   'goods:read:self',
+  // social:react:self — INCLUDED here too (see the DEV_TOKEN_SCOPE_ALLOWLIST rationale):
+  // self-bound to the author's own account in their own dev tunnel.
+  'social:react:self',
 ]);
 
 /**
@@ -229,6 +244,7 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *   - `goods:read:self`           not needed to RENDER; answers empty pre-approval
  *   - `buzz:read:self`            private financial (balance / ledger / earnings)
  *   - `posts:write:self`          PUBLIC content published under the MOD'S name
+ *   - `social:react:self`         public, reward-paying reactions under the MOD'S name
  *
  * These strings are verified against block-scope.constants.ts. Modelled on
  * TUNNEL_HOST_MINT_SCOPE_ALLOWLIST but WITHOUT `ai:write:budgeted`,
@@ -290,6 +306,8 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *                                     App Storage's `apprev_<pubreq>` schema) — it
  *                                     is indistinguishable from a real one and
  *                                     survives the approve/reject teardown.
+ *   - `social:react:self`             a public, reward-paying reaction under the
+ *                                     REVIEWING MOD'S name, on the same reasoning.
  *
  * (*) App Storage WORKS under run-for-real via a dedicated preview namespace:
  * `resolveStorageContext` (apps.router), when the token carries the signed

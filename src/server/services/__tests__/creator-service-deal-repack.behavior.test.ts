@@ -103,8 +103,10 @@ const uploads = vi.hoisted(() => ({
   corrupt: null as null | ((built: Buffer) => Buffer),
   beforeDone: null as null | (() => Promise<void>),
 }));
-vi.mock('@aws-sdk/lib-storage', () => ({
-  Upload: class {
+// `default` mirrors the named export: the package is pre-bundled for CJS interop, so consumers
+// resolve through `default`.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {
     constructor(
       private readonly options: {
         params: { Key: string; Body: AsyncIterable<Buffer> };
@@ -135,8 +137,9 @@ vi.mock('@aws-sdk/lib-storage', () => ({
     async abort() {
       uploads.aborted++;
     }
-  },
-}));
+  };
+  return { Upload, default: { Upload } };
+});
 
 const scanSeam = vi.hoisted(() => ({ submitFinalScan: vi.fn(async () => 'Pending' as const) }));
 vi.mock('~/server/services/creator-service-deal-file-scan', () => ({

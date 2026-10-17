@@ -92,6 +92,8 @@ describe('endpoint label map ⇄ server writers drift guard', () => {
     expect(boundedEndpointLiterals()).toEqual([
       // `blocks.createPostFromApp` — added with the App-Blocks → Post bridge.
       'post:create',
+      // `blocks.setReactionFromApp` — added with app reactions.
+      'reaction:set',
       'storage:delete',
       'storage:set',
       'user-settings:write',

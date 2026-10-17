@@ -1,0 +1,11 @@
+-- Retires the one-Pending-per-entity key that ignores category. Its two replacements must be VALID
+-- first, or nothing enforces one Pending appeal per entity in between. Check before running:
+--
+--   SELECT indexrelid::regclass, indisvalid FROM pg_index
+--   WHERE indexrelid IN ('"Appeal_inapp_pending_key"'::regclass, '"Appeal_category_pending_key"'::regclass);
+--
+-- Both rows must show indisvalid = true.
+--
+-- Apply after 20261102120300_appeal_category_queue_idx.
+-- RUN OUTSIDE ANY TRANSACTION (CONCURRENTLY).
+DROP INDEX CONCURRENTLY IF EXISTS "Appeal_entityType_entityId_userId_pending_key";

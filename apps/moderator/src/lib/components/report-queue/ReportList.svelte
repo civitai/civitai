@@ -11,6 +11,7 @@
     reportReasonLabel,
     reportStatusBadgeClass,
   } from '$lib/reports';
+  import ReportNotes from './ReportNotes.svelte';
   import ReportStatusButtons from './ReportStatusButtons.svelte';
   import type { ReportListItem } from './report-list';
 
@@ -42,7 +43,8 @@
     /** The report whose ruling is in flight, so one ruling does not disable every row. */
     busyId?: number | null;
     error?: string | null;
-    /** More for the open row, under the report's own details — the model queue's internal notes. */
+    /** More for the open row, under the report's own details and above its notes — the model
+     *  queue's merge-permission check. */
     details?: Snippet<[R]>;
     /** Shown when the item has no reports to list. */
     empty: Snippet;
@@ -210,6 +212,10 @@
                 />
               {/if}
               {#if details}{@render details(r)}{/if}
+              <!-- Every queue's, posting to its `?/saveNotes`: editable by whoever can rule, read by
+                   everyone else. The keyed `each` gives each report its own, so a half-typed note
+                   never carries to another. -->
+              <ReportNotes reportId={r.id} notes={r.internalNotes} canEdit={canRule} />
             </div>
           {/if}
         </li>

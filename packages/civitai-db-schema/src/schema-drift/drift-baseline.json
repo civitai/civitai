@@ -1124,6 +1124,172 @@
       "field": "promoter"
     },
     {
+      "fingerprint": "referential-action|Thread|answerId|Thread|answer|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "answerId"
+      ],
+      "model": "Thread",
+      "field": "answer"
+    },
+    {
+      "fingerprint": "referential-action|Thread|appListingId|Thread|appListing|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "appListingId"
+      ],
+      "model": "Thread",
+      "field": "appListing"
+    },
+    {
+      "fingerprint": "referential-action|Thread|articleId|Thread|article|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "articleId"
+      ],
+      "model": "Thread",
+      "field": "article"
+    },
+    {
+      "fingerprint": "referential-action|Thread|bountyEntryId|Thread|bountyEntry|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "bountyEntryId"
+      ],
+      "model": "Thread",
+      "field": "bountyEntry"
+    },
+    {
+      "fingerprint": "referential-action|Thread|bountyId|Thread|bounty|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "bountyId"
+      ],
+      "model": "Thread",
+      "field": "bounty"
+    },
+    {
+      "fingerprint": "referential-action|Thread|clubPostId|Thread|clubPost|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "clubPostId"
+      ],
+      "model": "Thread",
+      "field": "clubPost"
+    },
+    {
+      "fingerprint": "referential-action|Thread|comicProjectId,comicChapterPosition|Thread|comicChapter|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "comicProjectId",
+        "comicChapterPosition"
+      ],
+      "model": "Thread",
+      "field": "comicChapter"
+    },
+    {
+      "fingerprint": "referential-action|Thread|crucibleId|Thread|crucible|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "crucibleId"
+      ],
+      "model": "Thread",
+      "field": "crucible"
+    },
+    {
+      "fingerprint": "referential-action|Thread|imageId|Thread|image|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "imageId"
+      ],
+      "model": "Thread",
+      "field": "image"
+    },
+    {
+      "fingerprint": "referential-action|Thread|model3dId|Thread|model3d|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "model3dId"
+      ],
+      "model": "Thread",
+      "field": "model3d"
+    },
+    {
+      "fingerprint": "referential-action|Thread|model3dReviewId|Thread|model3dReview|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "model3dReviewId"
+      ],
+      "model": "Thread",
+      "field": "model3dReview"
+    },
+    {
+      "fingerprint": "referential-action|Thread|modelId|Thread|model|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "modelId"
+      ],
+      "model": "Thread",
+      "field": "model"
+    },
+    {
+      "fingerprint": "referential-action|Thread|postId|Thread|post|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "postId"
+      ],
+      "model": "Thread",
+      "field": "post"
+    },
+    {
+      "fingerprint": "referential-action|Thread|questionId|Thread|question|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "questionId"
+      ],
+      "model": "Thread",
+      "field": "question"
+    },
+    {
+      "fingerprint": "referential-action|Thread|reviewId|Thread|review|ON DELETE Cascade ON UPDATE Cascade|ON DELETE SetNull ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "Thread",
+      "columns": [
+        "reviewId"
+      ],
+      "model": "Thread",
+      "field": "review"
+    },
+    {
       "fingerprint": "uniqueness|AnnouncementSpend|announcementId|AnnouncementSpend|",
       "kind": "uniqueness",
       "tier": "enforced",

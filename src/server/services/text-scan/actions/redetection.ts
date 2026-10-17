@@ -60,6 +60,20 @@ async function dismissRedetection({
   return dismissed > 0;
 }
 
+export async function hasOpenModelAppeal(modelId: number) {
+  const openAppeal = await dbWrite.appeal.findFirst({
+    // In-app appeals only: a site-form appeal on the model is about its unpublish, not the flag.
+    where: {
+      entityType: EntityType.Model,
+      entityId: modelId,
+      status: AppealStatus.Pending,
+      category: null,
+    },
+    select: { id: true },
+  });
+  return !!openAppeal;
+}
+
 const stale = () =>
   throwBadRequestError('This re-detection changed or was already resolved. Reload the queue.');
 
@@ -72,7 +86,7 @@ const lockKey = (modelId: number, label: TextScanFlagLabel) =>
 // A keep runs for seconds across several writes, and the queue keeps listing the row meanwhile.
 // One resolution per model and label at a time; the lock expires on its own if the process dies.
 // A Redis outage lets the request through: the hash guards still refuse a conflicting ruling.
-async function withResolutionLock<T>(
+export async function withResolutionLock<T>(
   modelId: number,
   label: TextScanFlagLabel,
   run: () => Promise<T>
@@ -85,7 +99,7 @@ async function withResolutionLock<T>(
     .then((reply) => !!reply)
     .catch(() => true);
   if (!acquired)
-    throw throwBadRequestError('This re-detection is being resolved. Reload the queue.');
+    throw throwBadRequestError('This flag is being resolved. Reload and try again.');
   try {
     return await run();
   } finally {
@@ -156,11 +170,8 @@ async function resolve({
 
   // Any label: the owner's appeal covers the model, and the queue disables its buttons on the same
   // rule (`hasPendingAppeal` in the moderator app's getRedetectedModels).
-  const openAppeal = await dbWrite.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, status: AppealStatus.Pending },
-    select: { id: true },
-  });
-  if (openAppeal) throw throwBadRequestError("Resolve the owner's open appeal first.");
+  if (await hasOpenModelAppeal(modelId))
+    throw throwBadRequestError("Resolve the owner's open appeal first.");
 
   // The label entry was written by a keep of this very detection that did not finish, as opposed to
   // a flag from another route.

@@ -359,8 +359,15 @@ export const heavyProcedure = publicProcedure.use(withBulkhead('heavy-image'));
  * Reusable middleware to ensure
  * users are logged in
  */
-const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
+// Shared by `isAuthed` and `isAuthedAllowRestricted`, so a check added to what "signed in" means
+// reaches both.
+function requireSignedIn<U extends { deletedAt?: Date | null }>(user: U | null | undefined): U {
   if (!user || user.deletedAt) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  return user;
+}
+
+const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ctx }, next }) => {
+  const user = requireSignedIn(maybeUser);
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -509,3 +516,19 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
  * to complain — not merely because blocking it seems harsh.
  */
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
+
+const isAuthedAllowRestricted = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =>
+  next({ ctx: { ...ctx, user: requireSignedIn(user), acceptableOrigin } })
+);
+
+/**
+ * Signed in, and nothing else: a banned or muted account passes, and so does one that never
+ * finished onboarding. Those are exactly the accounts the site appeal form exists for, and every
+ * other procedure refuses them.
+ *
+ * 🔴 For the site appeal form's two procedures only (`report.submitSiteAppeal`,
+ * `report.getSiteAppealState`). A guard test fails if anything else is built on it.
+ */
+export const restrictedAccountAppealProcedure = publicProcedure
+  .use(isAuthedAllowRestricted)
+  .use(isFlagProtected('siteAppealForm'));

@@ -20,7 +20,7 @@ describe('getLatestAppeal', () => {
     });
 
     expect(mockFindFirst).toHaveBeenCalledWith({
-      where: { entityType: EntityType.Image, entityId: 2186217, userId: 602767 },
+      where: { entityType: EntityType.Image, entityId: 2186217, userId: 602767, category: null },
       orderBy: { id: 'desc' },
       select: { id: true, status: true, resolvedAt: true },
     });

@@ -481,11 +481,15 @@ export function pageAccessState(edit?: {
     return out;
   };
 
-  const actions = PERMISSIONS.map((permission): AccessNode => {
-    const key = permissionKey(permission.id);
-    granted[key] = from[key] ?? [];
-    return { key, label: permission.label, kind: 'permission', children: [] };
-  });
+  // Listed by grant key, which `/admin` shows in its own column: the id is the name a call site, an
+  // audit entry and `denied()` all use, so sorting on it puts each key's actions together.
+  const actions = [...PERMISSIONS]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((permission): AccessNode => {
+      const key = permissionKey(permission.id);
+      granted[key] = from[key] ?? [];
+      return { key, label: permission.label, kind: 'permission', children: [] };
+    });
 
   return { tree: walk([...NAVIGATION].sort(byNavOrder)), actions, granted, paths };
 }

@@ -6,7 +6,10 @@ import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
-import { PARENT_LINK_TEMPLATE_SQL } from '~/server/services/blocks/app-sub-listing-store.service';
+import {
+  isImageInPublicPost,
+  PARENT_LINK_TEMPLATE_SQL,
+} from '~/server/services/blocks/app-sub-listing-store.service';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import {
@@ -295,19 +298,41 @@ export async function readSharedItemForSubListing(
 }
 
 /**
- * Owner of `imageId` if an anonymous viewer may see it, else null. A card shows its image to
- * every store visitor, so this reuses `getImage`'s non-moderator read rather than restating
- * its visibility rule. Render re-checks that the image's post is still public and the
- * per-viewer maturity (`hydrateSubListingCards` / `projectSubListingCard`).
+ * Owner of `imageId` if a store visitor would see it on a card, else null. Two reads: `getImage`'s
+ * non-moderator read (reviewed, not Blocked, readable by an anonymous viewer), reused rather than
+ * restating its visibility rule; and the card's own requirement that the image is in a published,
+ * non-private post (`isImageInPublicPost`), which `getImage` does not impose on a postless article
+ * cover or bounty image. Render re-checks the post and the per-viewer maturity
+ * (`hydrateSubListingCards` / `projectSubListingCard`).
  */
 async function publicImageOwner(imageId: number): Promise<number | null> {
   const { getImage } = await import('~/server/services/image.service');
+  let owner: number;
   try {
-    const image = await getImage({ id: imageId, isModerator: false });
-    return image.user.id;
+    owner = (await getImage({ id: imageId, isModerator: false })).user.id;
   } catch (err) {
     if (err instanceof TRPCError && err.code === 'NOT_FOUND') return null;
     throw err;
+  }
+  return (await isImageInPublicPost(dbRead, imageId)) ? owner : null;
+}
+
+/**
+ * The image rule for a card, shared by the in-app publish and the catalog sync: `imageId` must
+ * be publicly visible, in a published non-private post, and uploaded by the item's author.
+ */
+async function assertCardImage(imageId: number | null, authorUserId: number): Promise<void> {
+  if (imageId == null) return;
+  const owner = await publicImageOwner(imageId);
+  if (owner == null) {
+    throw new SubListingError(
+      400,
+      'image_not_public',
+      'The image must be public: in a published post and reviewed'
+    );
+  }
+  if (owner !== authorUserId) {
+    throw new SubListingError(403, 'image_not_yours', 'The image must be one you uploaded');
   }
 }
 
@@ -367,19 +392,7 @@ export async function upsertSubListing(args: {
     throw new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
   }
 
-  if (content.imageId != null) {
-    const owner = await publicImageOwner(content.imageId);
-    if (owner == null) {
-      throw new SubListingError(
-        400,
-        'image_not_public',
-        'The image must be public: in a published post and reviewed'
-      );
-    }
-    if (owner !== user.id) {
-      throw new SubListingError(403, 'image_not_yours', 'The image must be one you uploaded');
-    }
-  }
+  await assertCardImage(content.imageId, user.id);
 
   try {
     const safe = await assertSharedTextSafe({
@@ -726,6 +739,7 @@ export const upsertCatalogItemBodySchema = z
   .object({
     title: z.string().max(1000),
     tagline: z.string().max(2000).nullish(),
+    imageId: z.number().int().positive().nullish(),
     contentRating: z.enum(APP_SUB_LISTING_CONTENT_RATINGS).nullish(),
     creatorUserId: z.number().int().positive().nullish(),
   })
@@ -795,6 +809,7 @@ export async function upsertCatalogSubListing(args: {
     itemKey: args.externalId,
     title: parsed.data.title,
     tagline: parsed.data.tagline,
+    imageId: parsed.data.imageId,
     subPath: args.externalId,
     contentRating: parsed.data.contentRating,
   });
@@ -845,6 +860,8 @@ export async function upsertCatalogSubListing(args: {
       rate.retryAfterSeconds
     );
   }
+
+  await assertCardImage(content.imageId, author.id);
 
   try {
     const safe = await assertSharedTextSafe({

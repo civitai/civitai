@@ -219,6 +219,24 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   //   - A non-anon subject is required (enforced in `enforceContextBinding`).
   //   - Minted by NO dev or review allowlist, so it only reaches an approved app's token.
   'apps:store:items:write': SKIP_OAUTH_CHECK,
+  // social:react:self — set the VIEWER'S reaction on an image a block endpoint served this app
+  // (`blocks.setReactionFromApp` → `SET_ENTITY_REACTION`). A reaction pays the reactor and the
+  // content owner Buzz, moves "Most Reactions" rankings and is publicly attributed, exactly as a
+  // click on the site is — the wrapper calls the same handler.
+  //
+  //   - SENSITIVE ⇒ the manifest must justify it: it writes something other users see, under
+  //     the viewer's name.
+  //   - CONSENT-GATED: deliberately NOT in CONSENT_EXEMPT_SCOPES, so a token carries it only
+  //     after the viewer granted it. There is no per-tap confirm; the grant is the consent.
+  //   - :self ⇒ a non-anon subject is required in `enforceContextBinding`.
+  //   - SKIP_OAUTH_CHECK, for the same reason as `goods:purchase:self`: the natural bit,
+  //     `TokenScope.SocialWrite`, also gates chat, comments and answers, so deriving it onto an
+  //     app's OAuth client at approve would light up those unrelated procedures for the app.
+  //   - PAGE-SAFE by bounding, like tipping: the site's own per-user reaction quota (shared,
+  //     not added to), a provenance ticket per entity and a fail-closed kill switch.
+  //   - In both DEV allowlists (self-bound to the author's own account) and in neither review
+  //     allowlist (a moderator must not react under their own name for an unapproved app).
+  'social:react:self': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
@@ -761,7 +779,8 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - write data OTHER users see       (`apps:storage:shared:write`,
  *                                       `apps:storage:publish`,
  *                                       `posts:write:self`,
- *                                       `apps:store:items:write`)
+ *                                       `apps:store:items:write`,
+ *                                       `social:react:self`)
  *
  * This set does two things. (1) PRESENTATION — it drives the distinct,
  * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
@@ -798,6 +817,8 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   'goods:purchase:self',
   // Writes store cards every visitor sees, under the viewer's name.
   'apps:store:items:write',
+  // Sets a public, reward-paying reaction under the viewer's name.
+  'social:react:self',
 ]);
 
 export function isSensitiveBlockScope(scope: string): boolean {

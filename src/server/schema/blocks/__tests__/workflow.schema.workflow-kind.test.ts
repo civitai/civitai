@@ -7,7 +7,7 @@ import {
 } from '~/server/schema/blocks/workflow.schema';
 
 /**
- * The `kind:'workflow'` WIRE shape. This schema checks shape and size only — the
+ * The `kind:'workflow'` WIRE shape. This schema checks shape, size and inline media only — the
  * step count, the name rules and the reference graph are refused later, with an
  * `errorCode`, by `resolveBlockWorkflowGraph` (`workflow-graph.test.ts`) and the
  * router (`blocks.router.workflowKind.test.ts`).
@@ -103,7 +103,8 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
   it('bounds the SUM of every step input plus arguments', () => {
     expect(WORKFLOW_INPUT_BYTES_MAX).toBe(PASS_THROUGH_INPUT_BYTES_MAX);
     // `{"p":"…"}` is 8 bytes of framing around the string.
-    const input = (bytes: number) => ({ p: 'x'.repeat(bytes - 8) });
+    // `.` is outside the base64 alphabet: an all-letter pad is refused as inline media first.
+    const input = (bytes: number) => ({ p: '.'.repeat(bytes - 8) });
     const half = WORKFLOW_INPUT_BYTES_MAX / 2;
     const fits = body({
       steps: [
@@ -143,5 +144,108 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
       blockWorkflowBodySchema.safeParse({ ...passThrough, steps: [{ $type: 'echo', input: {} }] })
         .success
     ).toBe(false);
+  });
+});
+
+describe("kind:'workflow' — inline media is refused", () => {
+  const fix =
+    'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+    "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
+  const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+  const issuesOf = (b: unknown) => {
+    const parsed = blockWorkflowBodySchema.safeParse(b);
+    return parsed.success ? [] : parsed.error.issues.map((i) => [i.path, i.message]);
+  };
+
+  it('in any step input, at its full path', () => {
+    const withPhoto = body({
+      steps: [
+        { name: 'gen', $type: 'imageGen', input: { prompt: 'a cat' } },
+        { $type: 'imageGen', input: { images: ['https://image.civitai.com/a.jpeg', tinyPng] } },
+      ],
+    });
+    expect(issuesOf(withPhoto)).toEqual([
+      [
+        ['steps', 1, 'input', 'images', 1],
+        `steps[1].input.images[1] carries inline media (data URI/base64); ${fix}`,
+      ],
+    ]);
+  });
+
+  it('in `arguments`, which a step input can $ref', () => {
+    expect(issuesOf(body({ arguments: { photo: tinyPng } }))).toEqual([
+      [['arguments', 'photo'], `arguments.photo carries inline media (data URI/base64); ${fix}`],
+    ]);
+  });
+
+  it('spends one value budget across all steps, so many steps cannot each hide padding', () => {
+    const pad = () =>
+      Object.fromEntries(Array.from({ length: 100_000 }, (_, i) => [`k${i}`, undefined]));
+    const steps = [
+      { $type: 'imageGen', input: pad() },
+      { $type: 'imageGen', input: pad() },
+      { $type: 'imageGen', input: { ...pad(), photo: tinyPng } },
+    ];
+    expect(issuesOf(body({ steps }))).toEqual([
+      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
+    ]);
+  });
+
+  it('counts `arguments` against the same budget as the steps', () => {
+    const pad = () =>
+      Object.fromEntries(Array.from({ length: 150_000 }, (_, i) => [`k${i}`, undefined]));
+    const withArguments = body({
+      steps: [{ $type: 'imageGen', input: pad() }],
+      arguments: { ...pad(), photo: tinyPng },
+    });
+    expect(issuesOf(withArguments)).toEqual([
+      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
+    ]);
+  });
+
+  it('still reports padding in a later field once an earlier one is over the byte cap', () => {
+    const pad = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined]));
+    const over = body({
+      steps: [
+        { $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX), next: 'a' } },
+      ],
+      arguments: pad,
+    });
+    expect(issuesOf(over)).toEqual([
+      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
+    ]);
+  });
+
+  it('leaves a photo in a later field to the byte cap once an earlier one is over it', () => {
+    const over = body({
+      steps: [{ $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX) } }],
+      arguments: { photo: tinyPng },
+    });
+    expect(issuesOf(over)).toEqual([
+      [['steps'], 'workflow step inputs and arguments exceed the 262144-byte limit'],
+    ]);
+  });
+
+  it('over the byte cap, reports ONLY the inline-media issue', () => {
+    const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
+    expect(photo.length).toBeGreaterThan(WORKFLOW_INPUT_BYTES_MAX);
+    expect(issuesOf(body({ steps: [{ $type: 'imageGen', input: { ImageUrl: photo } }] }))).toEqual([
+      [
+        ['steps', 0, 'input', 'ImageUrl'],
+        `steps[0].input.ImageUrl carries inline media (data URI/base64); ${fix}`,
+      ],
+    ]);
+  });
+
+  it('accepts hosted urls and long prose in step inputs and arguments', () => {
+    const prose = 'a watercolor fox in a misty forest, '.repeat(300);
+    const withUrls = body({
+      steps: [
+        { name: 'gen', $type: 'imageGen', input: { prompt: prose } },
+        { $type: 'imageGen', input: { images: ['https://image.civitai.com/a.jpeg'] } },
+      ],
+      arguments: { source: 'https://image.civitai.com/b.jpeg', caption: prose },
+    });
+    expect(issuesOf(withUrls)).toEqual([]);
   });
 });
