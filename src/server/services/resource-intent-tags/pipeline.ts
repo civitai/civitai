@@ -4,7 +4,12 @@ import { dbWrite } from '~/server/db/client';
 import { COOC_STATEMENT_TIMEOUT_MS } from '~/server/services/resource-intent-cooc/build';
 import { coocReplicaRunner } from '~/server/services/resource-intent-cooc/pipeline';
 import { coocSqlOf, type CoocSql } from '~/server/services/resource-intent-cooc/store';
-import { parseTagVocabulary, TagIndexAccumulator, type TagBuildStats } from './build';
+import {
+  indexedModelTypes,
+  parseTagVocabulary,
+  TagIndexAccumulator,
+  type TagBuildStats,
+} from './build';
 import { s3TagIndexObjects } from './objects';
 import { encodeTagIndexCooperative } from './payload';
 import { promptExcludedByAuditor } from './prompt-exclusion';
@@ -304,9 +309,8 @@ function phaseClock() {
 }
 
 /**
- * The encoded index, the event loop yielded throughout. The built arrays are handed to the encoder,
- * which empties the postings as it packs them straight into brotli: the index and its packed bytes
- * are never held whole at once.
+ * Finalizes and encodes, yielding throughout. The encode consumes `data` (`consume: true` empties its
+ * postings as it streams them into brotli), so nothing may read it afterwards.
  */
 export async function finalizeAndEncodeTagIndex(
   acc: TagIndexAccumulator,
@@ -439,12 +443,12 @@ async function readAndBuild(a: {
   for (const u of postUsers) if (genUsers.has(u)) genAndPostUsers++;
   const postedMs = clock();
 
-  // Every eligible model, used in a sampled row or not, plus the used ones: a never-used model is
-  // indexed on its content tags alone, its fit the shrinkage prior's 0.
-  const eligible = await readEligibleModelIds(query, [
-    ...RESOURCE_INTENT_TAGS_SPEC.build.addonTypes,
-    'Checkpoint',
-  ]);
+  // Used models need not still be eligible, so content is read for both; a never-used model ranks on
+  // its content alone, its fit the shrinkage prior's 0.
+  const eligible = await readEligibleModelIds(
+    query,
+    indexedModelTypes(RESOURCE_INTENT_TAGS_SPEC.build.addonTypes)
+  );
   const eligibleMs = clock();
 
   let contentModels = 0;

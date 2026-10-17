@@ -43,7 +43,11 @@ const logToAxiom = loggingMock.logToAxiom;
 const clickhouseClient = vi.hoisted(() => ({ createClient: vi.fn() }));
 // Every accumulator the pipeline makes, held weakly, so a test can see whether one is still reachable.
 const accumulators = vi.hoisted(() => [] as WeakRef<object>[]);
-const cooperativeFinalizes = vi.hoisted(() => ({ count: 0, opts: [] as unknown[] }));
+const cooperativeFinalizes = vi.hoisted(() => ({
+  count: 0,
+  opts: [] as unknown[],
+  built: [] as Build.TagIndexData[],
+}));
 vi.mock('~/server/services/resource-intent-tags/build', async (importOriginal) => {
   const real = await importOriginal<typeof Build>();
   class TrackedAccumulator extends real.TagIndexAccumulator {
@@ -56,7 +60,10 @@ vi.mock('~/server/services/resource-intent-tags/build', async (importOriginal) =
     ) {
       cooperativeFinalizes.count++;
       cooperativeFinalizes.opts.push(args[2]);
-      return super.finalizeCooperative(...args);
+      return super.finalizeCooperative(...args).then((r) => {
+        cooperativeFinalizes.built.push(r.data);
+        return r;
+      });
     }
   }
   return { ...real, TagIndexAccumulator: TrackedAccumulator };
@@ -146,6 +153,15 @@ const CONTENT = [
     id: 3,
     name: 'castle',
     type: 'LORA',
+    description: '',
+    tags: [],
+    versions: [{ baseModel: 'SDXL 1.0', trainedWords: [] }],
+  },
+  // A checkpoint no training row uses.
+  {
+    id: 4,
+    name: 'lighthouse',
+    type: 'Checkpoint',
     description: '',
     tags: [],
     versions: [{ baseModel: 'SDXL 1.0', trainedWords: [] }],
@@ -250,9 +266,11 @@ async function world(
       ];
     }
     if (t.includes("m.status = 'Published'")) {
-      const [after, , page] = sql.values as [number, string[], number];
+      const [after, types, page] = sql.values as [number, string[], number];
+      // Only models of the types the statement asks for (model 1 and 3 are LORAs, 4 a Checkpoint).
+      const typeOf = (id: number) => CONTENT.find((m) => m.id === id)?.type ?? 'LORA';
       return (opts.eligible ?? [1])
-        .filter((id) => id > after)
+        .filter((id) => id > after && types.includes(typeOf(id)))
         .slice(0, page)
         .map((id) => ({ id }));
     }
@@ -330,6 +348,9 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect(cooperativeFinalizes.count).toBe(cooperativeBefore + 1);
     // With float32 postings: half the memory of the largest arrays, the same encoded bytes.
     expect(cooperativeFinalizes.opts.at(-1)).toEqual({ float32Postings: true });
+    // And the encode consumed the built postings as it packed them.
+    for (const kind of ['addon', 'checkpoint'] as const)
+      expect(cooperativeFinalizes.built.at(-1)?.kinds[kind].postings.resource).toHaveLength(0);
     const newest = await versionOf(w.db, NEW_FROZEN);
     expect(newest).not.toBe(await versionOf(w.db, OLD_FROZEN));
     expect(summary.vocabVersion).toBe(newest);
@@ -378,16 +399,20 @@ describe('the happy path (the control every refusal below departs from)', () => 
   });
 
   it('indexes an eligible model no training row used, on its content alone with the prior fit 0', async () => {
-    const w = await world({ eligible: [1, 3] });
+    const w = await world({ eligible: [1, 3, 4] });
     const { summary, payload } = await runTagIndexBuild({ dryRun: true }, w.deps);
     expect(summary).toMatchObject({
-      eligibleModels: 2,
-      // The union of the used models (1, 2) and the eligible ones (1, 3).
-      contentModelsRequested: 3,
-      contentModels: 2,
+      eligibleModels: 3,
+      // The union of the used models (1, 2) and the eligible ones (1, 3, 4).
+      contentModelsRequested: 4,
+      contentModels: 3,
     });
-    expect(summary.stats.models).toEqual({ content: 2, used: 2, addon: 2, checkpoint: 1 });
-    const addon = (await decodeTagIndex(payload)).index.kinds.addon;
+    expect(summary.stats.models).toEqual({ content: 3, used: 2, addon: 2, checkpoint: 2 });
+    const { index } = await decodeTagIndex(payload);
+    // The never-used checkpoint too, at the prior fit.
+    expect(index.kinds.checkpoint.modelIds).toEqual([2, 4]);
+    expect(index.kinds.checkpoint.fit[1]).toBe(0);
+    const addon = index.kinds.addon;
     expect(addon.modelIds).toEqual([1, 3]);
     const r = addon.modelIds.indexOf(3);
     // No use, so no fit of its own: the resource fit is the shrinkage prior's 0.
@@ -403,8 +428,13 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect(entries[0].c).toBeCloseTo(0.8, 6);
     expect(entries[0].fit).toBeNaN();
     // The eligibility read happened once, before the content read.
-    const eligibleReads = w.pgReads.filter((q) => q.includes("m.status = 'Published'"));
-    expect(eligibleReads).toHaveLength(1);
+    const eligibleAt = w.pgReads.flatMap((q, i) =>
+      q.includes("m.status = 'Published'") ? [i] : []
+    );
+    expect(eligibleAt).toHaveLength(1);
+    expect(eligibleAt[0]).toBeLessThan(
+      w.pgReads.findIndex((q) => q.includes('FROM "Model" m WHERE m.id = ANY'))
+    );
   });
 
   it('the same inputs build the same bytes', async () => {

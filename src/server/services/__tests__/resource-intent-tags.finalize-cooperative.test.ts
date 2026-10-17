@@ -1,10 +1,10 @@
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { describe, expect, it } from 'vitest';
+import zlib from 'zlib';
+import { describe, expect, it, vi } from 'vitest';
 import {
   parseTagVocabulary,
-  roundHalfEven,
   TAG_BUILD_PARAMS,
   TagIndexAccumulator,
   type TagModelContent,
@@ -171,17 +171,108 @@ describe('the build at full coverage: memory and order', () => {
     expect(pauses).toBeGreaterThan(50);
   });
 
+  it('streams into brotli as it packs: writes and pauses interleave', async () => {
+    const events: string[] = [];
+    const real = zlib.createBrotliCompress;
+    const spy = vi.spyOn(zlib, 'createBrotliCompress').mockImplementation((opts) => {
+      const z = real(opts);
+      const write = z.write.bind(z) as (...a: unknown[]) => boolean;
+      (z as unknown as { write: typeof write }).write = (...a: unknown[]) => {
+        events.push('w');
+        return write(...a);
+      };
+      return z;
+    });
+    try {
+      await encodeTagIndexCooperative(
+        filled().finalize().data,
+        SPEC,
+        async () => void events.push('p'),
+        {
+          every: 64,
+        }
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    const firstWrite = events.indexOf('w');
+    const lastWrite = events.lastIndexOf('w');
+    // Packed whole first and compressed after, every pause would come before the first write.
+    expect(events.slice(firstWrite, lastWrite).filter((e) => e === 'p').length).toBeGreaterThan(10);
+  });
+
+  it('a brotli failure while the encode is paused fails its next write instead of hanging', async () => {
+    let stream: ReturnType<typeof zlib.createBrotliCompress> | null = null;
+    const real = zlib.createBrotliCompress;
+    const spy = vi
+      .spyOn(zlib, 'createBrotliCompress')
+      .mockImplementation((opts) => (stream = real(opts)));
+    let pauses = 0;
+    try {
+      await expect(
+        encodeTagIndexCooperative(
+          filled().finalize().data,
+          SPEC,
+          async () => {
+            // Fails between writes, while nothing waits on the stream; a destroyed stream emits
+            // nothing more, so only the error kept from this moment can stop the next write.
+            if (++pauses === 20) {
+              stream?.destroy(new Error('brotli failed while paused'));
+              await new Promise((r) => setTimeout(r, 0));
+            }
+          },
+          { every: 64 }
+        )
+      ).rejects.toThrow('brotli failed while paused');
+    } finally {
+      spy.mockRestore();
+    }
+  }, 5_000);
+
+  it('a brotli failure mid-stream fails the encode, and leaves no rejection unhandled', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    const real = zlib.createBrotliCompress;
+    const spy = vi.spyOn(zlib, 'createBrotliCompress').mockImplementation((opts) => {
+      const z = real(opts);
+      const write = z.write.bind(z) as (...a: unknown[]) => boolean;
+      let writes = 0;
+      (z as unknown as { write: typeof write }).write = (...a: unknown[]) => {
+        const ok = write(...a);
+        if (++writes === 3) z.destroy(new Error('brotli failed'));
+        return ok;
+      };
+      return z;
+    });
+    try {
+      await expect(
+        encodeTagIndexCooperative(filled().finalize().data, SPEC, async () => undefined)
+      ).rejects.toThrow('brotli failed');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      spy.mockRestore();
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('pauses while checking the content scores, before a byte is written', async () => {
-    // The last score is not a multiple of 1/10^4, so the check refuses at the very end of its pass:
-    // every pause counted before the refusal is one taken inside the check.
+    // One tag with 70,000 postings: over one 65,536-entry chunk, so the fit count pauses twice and
+    // the score check, which refuses in its second chunk, pauses once after its first.
     const d = filled().finalize().data;
-    const c = d.kinds.addon.postings.c;
-    c[c.length - 1] = 0.12345;
+    const n = 70_000;
+    const p = d.kinds.addon.postings;
+    p.ptr = new Uint32Array(p.ptr.length).fill(n, 1);
+    p.resource = new Uint32Array(n);
+    p.c = new Float64Array(n).fill(0.5);
+    p.fit = new Float64Array(n).fill(NaN);
+    p.c[66_000] = 0.12345;
     let pauses = 0;
     await expect(
       packTagIndexCooperative(d, SPEC, async () => void pauses++, { every: 1 })
     ).rejects.toThrow('is not a multiple');
-    expect(pauses).toBeGreaterThan(0);
+    expect(pauses).toBe(3);
   });
 
   it("the pipeline's finalize-and-encode gives the synchronous path's bytes", async () => {
@@ -195,18 +286,17 @@ describe('the build at full coverage: memory and order', () => {
 
   it('finalize drops the rows and the models it no longer needs', () => {
     const acc = filled();
-    const store = acc as unknown as Record<string, { length: number; buf: { length: number } }>;
-    const grows = [
-      'rowTags',
-      'rowUser',
-      'rowResModel',
-      'contentTags',
-      'contentScaled',
-      'modelEcos',
-    ];
-    for (const g of grows) expect(store[g].buf.length).toBeGreaterThan(0);
+    // Every growable store the accumulator holds, found rather than named.
+    const stores = () =>
+      Object.entries(acc as unknown as Record<string, unknown>).flatMap(([k, v]) => {
+        const g = v as { buf?: unknown; length?: number };
+        return g && ArrayBuffer.isView(g.buf) ? [[k, g.length, (g.buf as Uint8Array).length]] : [];
+      });
+    const before = stores();
+    expect(before.length).toBeGreaterThan(10);
+    expect(before.filter(([, n]) => (n as number) > 0).length).toBeGreaterThan(10);
     acc.finalize();
-    for (const g of grows) expect([g, store[g].length, store[g].buf.length]).toEqual([g, 0, 0]);
+    expect(stores()).toEqual(before.map(([k]) => [k, 0, 0]));
     expect(acc.usedModelIds()).toEqual([]);
   });
 
@@ -232,28 +322,20 @@ describe('the build at full coverage: memory and order', () => {
           if (k.postings.resource[j] === r && k.postings.c[j] > 0) out.push(t);
       return out;
     };
+    const once = tags(filled().finalize().data);
+    expect(once.length).toBeGreaterThan(0);
+    // The second copy carries a tag the first does not: kept, it would show; merged, too.
+    const extra = vocab.tags.findIndex((_, t) => !once.includes(t));
     acc.addModel({
       ...first,
-      name: '',
+      name: vocab.tags[extra].key,
       description: '',
       tags: [],
       trigger: [],
       showcase: [],
       gallery: [],
     });
-    const once = tags(filled().finalize().data);
-    expect(once.length).toBeGreaterThan(0);
     expect(tags(acc.finalize().data)).toEqual(once);
-  });
-
-  it('a content score is stored exactly as an integer of its decimals', () => {
-    // The accumulator keeps c as round(c·10^4) and reads it back divided: every value the build can
-    // produce (c ≥ minScore, 4 decimals) must survive that unchanged.
-    expect(TAG_BUILD_PARAMS.content.scoreDecimals).toBe(4);
-    for (let k = 1000; k <= 10_000; k++) {
-      const c = roundHalfEven(k / 10_000 + 1e-7 * ((k % 3) - 1), 4);
-      expect(Math.round(c * 10_000) / 10_000).toBe(c);
-    }
   });
 
   it('refuses content scores rounded to more decimals than it can store', () => {

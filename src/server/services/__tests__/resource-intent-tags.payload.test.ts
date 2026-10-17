@@ -185,7 +185,9 @@ describe('resource-intent-tags snapshot codec', () => {
 
   it('refuses to inflate past the inflated cap, and admits exactly up to it', async () => {
     const bytes = brotliCompressSync(Buffer.alloc(1001, 7));
-    await expect(decompressTagIndex(bytes, 1000)).rejects.toThrow();
+    await expect(decompressTagIndex(bytes, 1000)).rejects.toMatchObject({
+      code: 'ERR_BUFFER_TOO_LARGE',
+    });
     await expect(decompressTagIndex(bytes, 1001)).resolves.toHaveLength(1001);
   });
 

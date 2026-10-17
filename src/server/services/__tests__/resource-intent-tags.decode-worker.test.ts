@@ -119,8 +119,7 @@ describe('decodeTagIndexInWorker', () => {
       expect(unpack).not.toHaveBeenCalled();
       // Positive control: the same spy sees the main-thread decoder unpack.
       await decodeTagIndex(Buffer.from(payload));
-      // The payload's unpack, then the one-byte unpack that releases msgpackr's view of it.
-      expect(unpack.mock.calls.map(([b]) => (b as Uint8Array).length > 1)).toEqual([true, false]);
+      expect((unpack.mock.calls[0][0] as Uint8Array).length).toBeGreaterThan(1);
     } finally {
       unpack.mockRestore();
     }

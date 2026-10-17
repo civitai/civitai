@@ -20,7 +20,7 @@ import { isTagIndexObjectKey, type TagIndexObjectSweeper } from './store';
  * Ready snapshots kept under the running code's spec hash: the served one and two to fall back to.
  * Retiring the served row is how an operator rolls back (the holder serves the newest ready row), so
  * this allows two weekly rollbacks, which covers a bad build found a week late. Each costs about
- * 80 MiB of storage.
+ * 146 MiB of storage at full coverage (October 2026).
  */
 export const TAG_INDEX_KEEP_READY = 3;
 /**

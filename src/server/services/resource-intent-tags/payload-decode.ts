@@ -22,21 +22,19 @@ import type {
 
 export const TAG_INDEX_PAYLOAD_FORMAT = 'resource-intent-tags/1';
 /**
- * The full-coverage index measured 146 MiB compressed (October 2026); the eligible set grows by about
- * 4,300 models a week, so this leaves room for about two years at that rate
- * (docs/resource-intent-primitive.md, Snapshot). The snapshot table's CHECK holds the same bound.
+ * Holds the full-coverage index with room for its growth (docs/resource-intent-primitive.md,
+ * Snapshot). The snapshot table's payloadBytes CHECK holds the same bound: change both together.
  */
 export const TAG_INDEX_MAX_PAYLOAD_BYTES = 256 * 1024 * 1024;
 /**
- * Caps brotli's output: the full-coverage index inflated 2.56× (374 MiB), so a payload at the cap
- * would inflate to about 655 MiB (docs/resource-intent-primitive.md, Snapshot).
+ * Caps brotli's output; must admit a payload at `TAG_INDEX_MAX_PAYLOAD_BYTES` at the measured
+ * inflation ratio (docs/resource-intent-primitive.md, Snapshot).
  */
 export const TAG_INDEX_MAX_INFLATED_BYTES = 1024 * 1024 * 1024;
 /** Content scores travel as exact integers c·10⁴: part of the wire format, like the format id. */
 export const C_SCALE = 10_000;
 
 const unpackr = new Unpackr({ useRecords: false, mapsAsObjects: true });
-/** msgpack nil. */
 const NIL = Uint8Array.of(0xc0);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
@@ -476,8 +474,8 @@ export async function decodeTagIndexData(
   const { data, specHash } = unpackTagIndexData(
     await decompressTagIndex(payload, caps.maxInflatedBytes)
   );
-  // A whole turn of the event loop between unpacking and validating, each about half a second at
-  // full coverage, for a caller decoding on its main thread (the build's put).
+  // A whole event-loop turn between unpacking and validating, for a caller decoding on its main
+  // thread (the build's put).
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   validateTagIndexData(data, fitBound);
   return { data, vocabVersion: data.vocabVersion, specHash };

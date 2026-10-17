@@ -39,10 +39,8 @@ export type TagRawQuery = CoocRawQuery;
  * Each statement in its own READ ONLY transaction under `statement_timeout`, refused unless the server
  * is a standby: a misrouted connection fails instead of reading the primary.
  *
- * JIT is off for these statements: their per-row lateral and anti-join subplans ran several times
- * slower JIT-compiled. Measured read-only on the standby (October 2026, warm cache, alternating
- * on/off/on/off on the same statement): a content-images batch 3.9–4.0 s with JIT, 0.6 s without; a
- * posted-sample batch 3.9 s with, 1.0 s without; the content-meta statement unaffected.
+ * JIT is off: these statements' per-row lateral and anti-join subplans run several times slower
+ * JIT-compiled (measured: docs/resource-intent-primitive.md, Inputs).
  */
 export function standbyQuery(run: CoocTxRunner, timeoutMs: number): TagRawQuery {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)

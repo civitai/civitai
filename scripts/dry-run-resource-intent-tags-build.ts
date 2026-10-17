@@ -22,10 +22,13 @@ import { runScriptAndExit } from './lib/run-as-script';
  *       under; a key with another fingerprint is refused. Posted users are hashed with it so both
  *       sources share one user namespace
  * The `--limit-*` flags (positive integers) cut the inputs for a quick trial; `--limit-gen` is a
- * LIMIT on the ClickHouse read. The printed counts say what was read. It prints each standby
- * statement kind's attempt times (retries counted separately), the build's peak RSS, its longest
- * event-loop stall, and the wall time. Unlike the job, it reports missing window hours over the limit
- * instead of refusing.
+ * LIMIT on the ClickHouse read (`--limit-models` cuts the union of used and eligible models by
+ * ascending id). The printed counts say what was read. It prints each standby statement kind's
+ * attempt times (retries counted separately); the RSS before the build reads anything, the build's
+ * peak RSS and its longest event-loop stall counted from there; the same for the put's decode
+ * (`decodeTagIndexData`, as `putSnapshot` runs it), whose peak is the job's; the decoded index's
+ * resident cost, with decompress, unpack and validate-and-assemble timed apart; and the wall time.
+ * Unlike the job, it reports missing window hours over the limit instead of refusing.
  */
 
 const ms = (t0: number) => Math.round(performance.now() - t0);
@@ -192,7 +195,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     let inflated: Buffer | null = await decompressTagIndex(payload);
     const decompressMs = ms(t0);
     const rawBytes = inflated.length;
-    // `decodeTagIndex`'s two synchronous halves, timed apart (it yields between them).
+    // Unpack, then validate and assemble together (`decodeTagIndex` turns the event loop between
+    // each of the three).
     t0 = performance.now();
     const unpacked = unpackTagIndexData(inflated);
     const unpackDataMs = ms(t0);
@@ -215,7 +219,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       decompressMs,
       unpackDataMs,
       fromDataMs,
-      // The decoded index alone: the resident cost of holding it.
       ...delta(after),
     });
 

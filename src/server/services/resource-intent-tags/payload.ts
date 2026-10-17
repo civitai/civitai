@@ -2,7 +2,7 @@ import { endianness } from 'os';
 import { once } from 'events';
 import zlib from 'zlib';
 import type { SparseByKey, TagIndexData, TagIndexKindData } from './build';
-import { tagFitBound } from './build';
+import { stepEvery, tagFitBound, type Step } from './build';
 import {
   assembleTagIndex,
   C_SCALE,
@@ -59,36 +59,21 @@ function deltas(ptr: Uint32Array, ids: Uint32Array): Uint32Array {
   return out;
 }
 
-/**
- * Called once per unit of work (or `n` units) inside the pack's loops; true when the pack should
- * pause. Pausing changes nothing about the bytes.
- */
-type PackStep = (n?: number) => boolean;
 /** Units of work (bytes or elements) between pauses of `packTagIndexCooperative`. */
 const PACK_STEP_WORK = 1 << 20;
 /** Elements per inner run of the pack's loops, between step checks. */
 const PACK_CHUNK = 1 << 16;
 
-function packStepEvery(every: number): PackStep {
-  let work = 0;
-  return (n = 1) => {
-    work += n;
-    if (work < every) return false;
-    work = 0;
-    return true;
-  };
-}
-
-/**
- * The packed snapshot is written straight into one buffer of its exact size, in msgpack exactly as
- * `msgpackr` (`useRecords: false`, `mapsAsObjects: true`) packs the same document — every object a
- * map16, every string, array, binary and unsigned integer in its smallest form — so no shuffled copy
- * of an array is held beside the packed bytes. `packTagIndex`'s tests hold the two byte for byte.
- */
 /** Output bytes in order; `null` is a pause point. */
 type ByteStream = Generator<Uint8Array | null, void>;
 type Chunk = { bytes: Uint8Array } | { len: number; write: () => ByteStream };
 
+/**
+ * Writes msgpack exactly as msgpackr (`useRecords: false`, `mapsAsObjects: true`) packs the same
+ * document — every object a map16, every other header in its smallest form — producing each binary
+ * only when the stream reaches it, so no shuffled copy of an array is held beside the output
+ * (`resource-intent-tags.pack-writer.test.ts` holds the two byte for byte).
+ */
 class PackLayout {
   readonly chunks: Chunk[] = [];
   size = 0;
@@ -134,11 +119,10 @@ class PackLayout {
     this.size += len;
   }
   /** `a`'s bytes, shuffled; `make` builds the array only when it is written. */
-  shuffled(make: () => Wide, n: number, bytesPer: number, step: PackStep) {
+  shuffled(make: () => Wide, n: number, bytesPer: number, step: Step) {
     this.bin(n * bytesPer, () => shuffleChunks(make(), n * bytesPer, step));
   }
   raw(bytes: Uint8Array) {
-    // eslint-disable-next-line require-yield
     this.bin(bytes.length, function* () {
       yield bytes;
     });
@@ -165,7 +149,7 @@ class PackLayout {
 }
 
 /** Little-endian bytes, byte plane by byte plane: every element's byte 0, then every byte 1, … */
-function* shuffleChunks(a: Wide, bytes: number, step: PackStep): ByteStream {
+function* shuffleChunks(a: Wide, bytes: number, step: Step): ByteStream {
   const size = a.BYTES_PER_ELEMENT;
   const n = a.length;
   if (bytes !== n * size) throw new Error('tag index: shuffled length mismatch');
@@ -190,7 +174,7 @@ function* shuffleChunks(a: Wide, bytes: number, step: PackStep): ByteStream {
     }
 }
 
-function sparseLayout(L: PackLayout, s: SparseByKey, integer: boolean, step: PackStep) {
+function sparseLayout(L: PackLayout, s: SparseByKey, integer: boolean, step: Step) {
   if (integer)
     for (const v of s.value)
       if (!Number.isInteger(v) || v < 0 || v > 0xffffffff)
@@ -220,7 +204,7 @@ function sparseLayout(L: PackLayout, s: SparseByKey, integer: boolean, step: Pac
 function* kindLayout(
   L: PackLayout,
   k: TagIndexKindData,
-  step: PackStep,
+  step: Step,
   consume: boolean
 ): Generator<void> {
   const p = k.postings;
@@ -305,7 +289,7 @@ function* kindLayout(
 function* layoutSteps(
   data: TagIndexData,
   specHash: string,
-  step: PackStep,
+  step: Step,
   consume: boolean
 ): Generator<void, PackLayout> {
   const v = data.vocabulary;
@@ -387,7 +371,7 @@ async function layoutOf(steps: Generator<void, PackLayout>, pause: () => Promise
 
 /** Uncompressed bytes: what the spec hash fingerprints. */
 export function packTagIndex(data: TagIndexData, specHash: string): Buffer {
-  const steps = layoutSteps(data, specHash, packStepEvery(Infinity), false);
+  const steps = layoutSteps(data, specHash, stepEvery(Infinity), false);
   let r = steps.next();
   while (!r.done) r = steps.next();
   const out = Buffer.allocUnsafe(r.value.size);
@@ -412,7 +396,7 @@ export async function packTagIndexCooperative(
   opts: { every?: number; consume?: boolean } = {}
 ): Promise<Buffer> {
   const L = await layoutOf(
-    layoutSteps(data, specHash, packStepEvery(opts.every ?? PACK_STEP_WORK), opts.consume ?? false),
+    layoutSteps(data, specHash, stepEvery(opts.every ?? PACK_STEP_WORK), opts.consume ?? false),
     pause
   );
   const out = Buffer.allocUnsafe(L.size);
@@ -433,20 +417,26 @@ const BROTLI_PARAMS = (sizeHint: number) => ({
 });
 
 /**
- * A brotli stream at fixed parameters, written in order and collected. Brotli's output does not
- * depend on where the writes break (`encodeTagIndex` and `encodeTagIndexCooperative` give the same
- * bytes; their tests hold that), so packed bytes can be streamed in as they are produced.
+ * A brotli stream at fixed parameters, written in order and collected. Both encoders go through it;
+ * their tests pin that they give the same bytes.
  */
 function brotliWriter(sizeHint: number) {
   const z = zlib.createBrotliCompress({ params: BROTLI_PARAMS(sizeHint) });
   const out: Buffer[] = [];
   z.on('data', (d: Buffer) => out.push(d));
+  // Every stream error is kept here and rethrown by the next write or the end: an 'error' with no
+  // listener would throw out of the process, and a failure while nobody awaits must not go unseen.
+  let failure: unknown = null;
+  z.on('error', (e) => (failure ??= e));
   const ended = once(z, 'end');
+  ended.catch(() => undefined);
   return {
     async write(bytes: Uint8Array) {
+      if (failure) throw failure;
       if (!z.write(bytes)) await once(z, 'drain');
     },
     async end() {
+      if (failure) throw failure;
       z.end();
       await ended;
       return Buffer.concat(out);
@@ -488,7 +478,7 @@ export async function encodeTagIndexCooperative(
   opts: { every?: number; consume?: boolean } = {}
 ): Promise<Buffer> {
   const L = await layoutOf(
-    layoutSteps(data, specHash, packStepEvery(opts.every ?? PACK_STEP_WORK), opts.consume ?? false),
+    layoutSteps(data, specHash, stepEvery(opts.every ?? PACK_STEP_WORK), opts.consume ?? false),
     pause
   );
   const z = brotliWriter(L.size);
@@ -528,13 +518,13 @@ export async function decodeTagIndexData(
 }
 
 /**
- * Decompress, unpack and validate. Does NOT compare the spec hash with the running code's, or the
- * vocabulary version with the frozen one: the caller must.
+ * Decompress, unpack, validate and assemble. Does NOT compare the spec hash with the running code's,
+ * or the vocabulary version with the frozen one: the caller must.
  */
 export async function decodeTagIndex(payload: Uint8Array): Promise<DecodedTagIndex> {
   const { data, vocabVersion, specHash } = await decodeTagIndexData(payload);
-  // A whole turn of the event loop (timers and I/O, which a microtask or `setImmediate` from here
-  // would skip) between the decode's two synchronous halves.
+  // A whole event-loop turn (timers and I/O, which a microtask or setImmediate would skip) between
+  // validating and assembling; `decodeTagIndexData` turns between unpacking and validating.
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   return { index: assembleTagIndex(data), vocabVersion, specHash };
 }

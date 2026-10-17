@@ -192,8 +192,8 @@ export async function putSnapshot(
     throw new TagIndexVocabularyNotFrozenError(
       `a snapshot needs a frozen vocabulary; ${meta.vocabVersion} is '${vocabStatus}'`
     );
-  // Decoded and validated, but not assembled into the scorer's maps: the put only needs to know the
-  // bytes decode to a valid index under this header, and the build's process is at its peak here.
+  // Validated, not assembled: the put needs only a valid index under this header, and assembling
+  // would add to the build's memory peak.
   assertHeader(
     await decodeOrCorrupt(payload, 'tag index payload', (b) => decodeTagIndexData(b)),
     meta,

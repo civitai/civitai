@@ -131,7 +131,7 @@ describe('build-resource-intent-tag-index job', () => {
     };
     expect(job.name).toBe('build-resource-intent-tag-index');
     expect(job.cron).toBe('0 6 * * 2');
-    // Literal: three times the 40-minute full-coverage dry run (October 2026).
+    // Literal, not LOCK_MINUTES: about three times the 38–39 minute full-coverage dry run.
     expect(job.options).toEqual({ lockExpiration: 7200, keepLockOnDisconnect: true });
   });
 

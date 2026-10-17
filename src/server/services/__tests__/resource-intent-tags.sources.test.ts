@@ -372,8 +372,18 @@ describe('content batches are read ahead, and handed on in id order', () => {
   const settle = () => new Promise((r) => setImmediate(r));
   const ids = Array.from({ length: 5000 }, (_, i) => i + 1);
 
-  it('reads three batches at once by default', () => {
+  it('reads three batches at once by default', async () => {
     expect(CONTENT_READ_CONCURRENCY).toBe(3);
+    const g = gatedQuery();
+    const done = readModelContent(g.query, ids, new Date(), () => undefined);
+    for (;;) {
+      await settle();
+      const p = g.pending.find((x) => !x.done);
+      if (!p) break;
+      p.resolve();
+    }
+    await done;
+    expect(g.maxInFlight()).toBe(3);
   });
 
   it('keeps at most `concurrency` batches reading, and hands them on in id order however they finish', async () => {
@@ -418,6 +428,40 @@ describe('content batches are read ahead, and handed on in id order', () => {
     await done;
     expect(g.maxInFlight()).toBe(1);
     expect(g.pending).toHaveLength(10);
+  });
+
+  it('a read-ahead that fails after the read has failed is not left unhandled', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const query = async (q: Prisma.Sql) => {
+        const ids = q.values.find(Array.isArray) as number[];
+        if (ids[0] === 1001) throw new Error('batch two failed');
+        // Batch three fails later, on a timer, once nothing awaits it any more.
+        if (ids[0] === 2001) {
+          await new Promise((r) => setTimeout(r, 10));
+          throw new Error('batch three failed');
+        }
+        return q.sql.includes('"TagsOnModels"')
+          ? ids.map((id) => ({
+              id,
+              name: '',
+              type: 'LORA',
+              description: '',
+              tags: [],
+              versions: [],
+            }))
+          : [];
+      };
+      await expect(readModelContent(query, ids, new Date(), () => undefined)).rejects.toThrow(
+        'batch two failed'
+      );
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('a failed batch fails the read, and hands on nothing after it', async () => {

@@ -11,10 +11,9 @@ import { RESOURCE_INTENT_TAGS_SPEC_HASH } from '~/server/services/resource-inten
 import { createJob } from './job';
 
 /**
- * The build's lock. A full-coverage dry run (every eligible model, October 2026) took 40 minutes on
- * the deployed read route; 120 is three times that, room for statement retries, a slower standby and
- * the eligible set's growth (about 4,300 models a week, which lengthens the content read by roughly
- * 6 minutes a year) without a second build starting under a live one.
+ * Several times a full-coverage build's duration, so retried statements, a slower standby and the
+ * eligible set's growth still finish under it without a second build starting
+ * (docs/resource-intent-primitive.md, "Build job").
  */
 export const LOCK_MINUTES = 120;
 
