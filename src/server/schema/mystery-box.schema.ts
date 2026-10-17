@@ -19,8 +19,11 @@ export const getEventMysteryBoxesInput = z.object({ event: z.string().min(1).max
 
 export type GetEventMysteryBoxesInput = z.infer<typeof getEventMysteryBoxesInput>;
 
+/** Postgres int4, the id column's type. */
+export const MAX_INT4 = 2_147_483_647;
+
 export const getMysteryBoxOddsPageInput = z.object({
-  boxDefinitionId: z.number().int().positive(),
+  boxDefinitionId: z.number().int().positive().max(MAX_INT4),
 });
 
 export type GetMysteryBoxOddsPageInput = z.infer<typeof getMysteryBoxOddsPageInput>;

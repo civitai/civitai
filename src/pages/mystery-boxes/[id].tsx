@@ -6,10 +6,11 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { MysteryBoxOddsPage } from '~/components/MysteryBox/MysteryBoxOddsPage';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { MAX_INT4 } from '~/server/schema/mystery-box.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
-const paramsSchema = z.object({ id: z.coerce.number().int().positive() });
+const paramsSchema = z.object({ id: z.coerce.number().int().positive().max(MAX_INT4) });
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

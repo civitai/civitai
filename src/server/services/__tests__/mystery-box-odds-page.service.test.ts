@@ -68,7 +68,11 @@ const TIERS = [
   },
 ];
 
-/** The snapshot the seed writes for the world below: tiers by sortOrder, contents by tier then cosmetic. */
+/**
+ * A v1 snapshot of the world below in the writer's shape: tiers in draw order, contents by tier then
+ * cosmetic. The writer is the box seed (SQL run by hand, outside this repo) until the box builder
+ * writes them; `boxOddsSnapshotSchema` is the contract both must meet.
+ */
 const seedSnapshot = (): BoxOddsSnapshotData => ({
   tiers: [
     { key: 'common', name: 'Common', weight: 3 },
@@ -83,23 +87,95 @@ const seedSnapshot = (): BoxOddsSnapshotData => ({
   ],
 });
 
+const OTHER_BOX = 12;
+
+type Box = {
+  id: number;
+  type: string;
+  status: string;
+  version: number;
+  name: string;
+  description: string | null;
+  params: unknown;
+};
+type Listing = {
+  id: number;
+  itemDefinitionId: number;
+  status: string;
+  unitAmount: number;
+  availableQuantity: number | null;
+  availableFrom: Date | null;
+  availableTo: Date | null;
+  /** Purchase rows, read through the sold-count query. */
+  sold: number;
+};
+const listing = (overrides: Partial<Listing> = {}): Listing => ({
+  id: 42,
+  itemDefinitionId: BOX,
+  status: 'Published',
+  unitAmount: 500,
+  availableQuantity: null,
+  availableFrom: null,
+  availableTo: null,
+  sold: 0,
+  ...overrides,
+});
+
 let world: {
-  box: {
-    id: number;
-    type: string;
-    status: string;
-    version: number;
-    name: string;
-    description: string | null;
-    params: unknown;
-  } | null;
+  boxes: Box[];
   tiers: typeof TIERS;
   contents: ReturnType<typeof hat>[];
-  snapshots: { version: number; snapshot: unknown; createdAt: Date }[];
-  listing: { unitAmount: number } | null;
+  snapshots: { boxDefinitionId: number; version: number; snapshot: unknown; createdAt: Date }[];
+  listings: Listing[];
+  items: { id: bigint; itemDefinitionId: number }[];
+  openings: { boxItemId: bigint; boxDefinitionId: number }[];
   blocked: unknown;
   owned: { userId: number; cosmeticId: number }[];
 };
+const theBox = () => world.boxes.find((b) => b.id === BOX)!;
+
+// A fake that answers only what the query asks: rows matching `where` (equality or `in`), sorted by
+// `orderBy`, projected to `select`. A query that drops a filter, an order or a column sees it here.
+type Select = { [key: string]: boolean | { select: Select } };
+type Query = { where?: Record<string, unknown>; select?: Select; orderBy?: unknown };
+function project(row: Record<string, unknown>, select: Select): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(select).map(([key, pick]) => {
+      const value = row[key];
+      if (pick === true) return [key, value];
+      return [
+        key,
+        value && typeof value === 'object' && typeof pick === 'object'
+          ? project(value as Record<string, unknown>, pick.select)
+          : value,
+      ];
+    })
+  );
+}
+const matches = (row: Record<string, unknown>, where: Record<string, unknown> = {}) =>
+  Object.entries(where).every(([key, want]) =>
+    want && typeof want === 'object' && 'in' in want
+      ? (want as { in: unknown[] }).in.includes(row[key])
+      : row[key] === want
+  );
+function answer<T extends object>(rows: T[], { where, select, orderBy }: Query, ordered = false) {
+  if (!select) throw new Error('query without a select');
+  if (ordered && !orderBy) throw new Error('query without an order');
+  const keys = (Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []).map(
+    (o) => Object.entries(o as Record<string, 'asc' | 'desc'>)[0]
+  );
+  return rows
+    .filter((row) => matches(row as Record<string, unknown>, where))
+    .sort((a, b) => {
+      for (const [key, dir] of keys) {
+        const x = (a as Record<string, number>)[key];
+        const y = (b as Record<string, number>)[key];
+        if (x !== y) return (x < y ? -1 : 1) * (dir === 'asc' ? 1 : -1);
+      }
+      return 0;
+    })
+    .map((row) => project(row as Record<string, unknown>, select));
+}
 
 function installWorld() {
   const db = dbMock.dbRead;
@@ -108,29 +184,35 @@ function installWorld() {
     world.blocked === undefined ? null : { value: world.blocked }
   );
   db.itemDefinition.findUnique.mockReset();
-  db.itemDefinition.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
-    world.box && world.box.id === where.id ? world.box : null
+  db.itemDefinition.findUnique.mockImplementation(
+    async (q: Query) => answer(world.boxes, q)[0] ?? null
   );
   db.boxTier.findMany.mockReset();
-  db.boxTier.findMany.mockImplementation(
-    async ({ where }: { where: { boxDefinitionId: number } }) =>
-      world.tiers
-        .filter((t) => t.boxDefinitionId === where.boxDefinitionId)
-        .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
-  );
+  db.boxTier.findMany.mockImplementation(async (q: Query) => answer(world.tiers, q, true));
   db.boxContent.findMany.mockReset();
-  db.boxContent.findMany.mockImplementation(
-    async ({ where }: { where: { boxDefinitionId: number; enabled: boolean } }) =>
-      world.contents.filter(
-        (c) => c.boxDefinitionId === where.boxDefinitionId && c.enabled === where.enabled
-      )
-  );
+  db.boxContent.findMany.mockImplementation(async (q: Query) => answer(world.contents, q));
   db.boxOddsSnapshot.findMany.mockReset();
-  db.boxOddsSnapshot.findMany.mockImplementation(async () =>
-    [...world.snapshots].sort((a, b) => a.version - b.version)
+  db.boxOddsSnapshot.findMany.mockImplementation(async (q: Query) =>
+    answer(world.snapshots, q, true)
   );
-  db.cosmeticShopItem.findFirst.mockReset();
-  db.cosmeticShopItem.findFirst.mockImplementation(async () => world.listing);
+  db.cosmeticShopItem.findMany.mockReset();
+  db.cosmeticShopItem.findMany.mockImplementation(async (q: Query) =>
+    answer(world.listings, q, true)
+  );
+  db.$queryRaw.mockReset();
+  db.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!strings.join('?').includes('"UserCosmeticShopPurchases"')) throw new Error('unexpected');
+    const ids = values[0] as number[];
+    return world.listings
+      .filter((l) => ids.includes(l.id) && l.sold > 0)
+      .map((l) => ({ shopItemId: l.id, sold: l.sold }));
+  });
+  db.item.findFirst.mockReset();
+  db.item.findFirst.mockImplementation(async (q: Query) => answer(world.items, q)[0] ?? null);
+  db.boxOpening.findFirst.mockReset();
+  db.boxOpening.findFirst.mockImplementation(
+    async (q: Query) => answer(world.openings, q)[0] ?? null
+  );
   db.userCosmetic.findMany.mockReset();
   db.userCosmetic.findMany.mockImplementation(
     async ({ where }: { where: { userId: number; cosmeticId: { in: number[] } } }) =>
@@ -164,15 +246,27 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(base + step++ * 5 * 60_000);
   world = {
-    box: {
-      id: BOX,
-      type: 'box',
-      status: 'published',
-      version: 1,
-      name: 'Birthday Box',
-      description: 'A hat from your team.',
-      params: { event: EVENT },
-    },
+    boxes: [
+      {
+        id: BOX,
+        type: 'box',
+        status: 'published',
+        version: 1,
+        name: 'Birthday Box',
+        description: 'A hat from your team.',
+        params: { event: EVENT },
+      },
+      // Another box, with its own history and listing: neither may show on this box's page.
+      {
+        id: OTHER_BOX,
+        type: 'box',
+        status: 'published',
+        version: 1,
+        name: 'Other Box',
+        description: null,
+        params: { event: EVENT },
+      },
+    ],
     tiers: TIERS,
     contents: [
       hat(1, COMMON, 'Pink'),
@@ -182,9 +276,22 @@ beforeEach(() => {
       hat(5, RARE),
     ],
     snapshots: [
-      { version: 1, snapshot: seedSnapshot(), createdAt: new Date('2026-11-06T10:00:00Z') },
+      {
+        boxDefinitionId: OTHER_BOX,
+        version: 1,
+        snapshot: { tiers: [{ key: 'x', name: 'X', weight: 1 }], contents: [] },
+        createdAt: new Date('2026-10-01T10:00:00Z'),
+      },
+      {
+        boxDefinitionId: BOX,
+        version: 1,
+        snapshot: seedSnapshot(),
+        createdAt: new Date('2026-11-06T10:00:00Z'),
+      },
     ],
-    listing: { unitAmount: 500 },
+    listings: [listing(), listing({ id: 43, itemDefinitionId: OTHER_BOX, unitAmount: 900 })],
+    items: [],
+    openings: [],
     blocked: undefined,
     owned: [],
   };
@@ -204,7 +311,13 @@ afterAll(() => {
 describe('who sees the odds page', () => {
   it('shows a published box to a signed-out visitor the event is open to', async () => {
     const page = await read();
-    expect(page?.boxDefinitionId).toBe(BOX);
+    expect(page).toMatchObject({
+      boxDefinitionId: BOX,
+      name: 'Birthday Box',
+      description: 'A hat from your team.',
+      version: 1,
+      archived: false,
+    });
     expect(mocks.catalogAccess).toHaveBeenCalledWith(EVENT, undefined);
   });
 
@@ -227,32 +340,73 @@ describe('who sees the odds page', () => {
     world.blocked = ['BE'];
     expect(await read({ countryCode: 'BE' })).toBeNull();
     expect(await read({ countryCode: null })).toBeNull();
+    expect(await read({ countryCode: undefined })).toBeNull();
     expect(await read({ countryCode: 'US' })).not.toBeNull();
   });
 
-  it('shows a draft box to nobody', async () => {
-    world.box!.status = 'draft';
+  it('shows a draft box to nobody, moderators included', async () => {
+    theBox().status = 'draft';
     expect(await read()).toBeNull();
+    expect(await read({ viewer: { id: 5, isModerator: true } })).toBeNull();
   });
 
   it('shows an archived box, marked as no longer sold', async () => {
-    world.box!.status = 'archived';
+    theBox().status = 'archived';
     expect((await read())?.archived).toBe(true);
   });
 
   it('is not a page for anything but a box', async () => {
-    world.box!.type = 'cosmetic';
+    theBox().type = 'cosmetic';
     expect(await read()).toBeNull();
-    world.box = null;
-    expect(await read()).toBeNull();
+    expect(await read({ boxDefinitionId: 999 })).toBeNull();
   });
 
   it('needs no event for a box without one', async () => {
-    world.box!.params = {};
+    theBox().params = {};
+    world.contents = world.contents.map((c) => hat(c.id, c.tierId));
     const page = await read();
     expect(page?.event).toBeNull();
     expect(page?.teams).toEqual([]);
     expect(mocks.catalogAccess).not.toHaveBeenCalled();
+  });
+});
+
+// A box is public once it has gone on sale, or once anyone holds or has opened one. Staged ahead of
+// its listing, only moderators see it.
+describe('before the box goes on sale', () => {
+  const MOD = { id: 5, isModerator: true };
+  const nextWeek = () => new Date(Date.now() + 7 * 24 * 3600_000);
+
+  it('hides a box whose only listing opens later, except from moderators', async () => {
+    world.listings = [listing({ availableFrom: nextWeek() })];
+    expect(await read()).toBeNull();
+    expect(await read({ viewer: { id: 6, isModerator: false } })).toBeNull();
+    expect((await read({ viewer: MOD }))?.price).toBeNull();
+  });
+
+  it("hides a box with no published listing, and isn't fooled by another box's or a draft listing", async () => {
+    world.listings = [
+      listing({ status: 'Draft' }),
+      listing({ id: 43, itemDefinitionId: OTHER_BOX, unitAmount: 900 }),
+    ];
+    expect(await read()).toBeNull();
+  });
+
+  it('shows it once anyone holds one, or has opened one', async () => {
+    world.listings = [];
+    world.items = [{ id: 501n, itemDefinitionId: BOX }];
+    expect(await read()).not.toBeNull();
+    world.items = [{ id: 502n, itemDefinitionId: OTHER_BOX }];
+    expect(await read()).toBeNull();
+    world.openings = [{ boxItemId: 503n, boxDefinitionId: BOX }];
+    expect(await read()).not.toBeNull();
+  });
+
+  it('shows a listing whose window has opened, even sold out or ended, without a price', async () => {
+    world.listings = [listing({ availableQuantity: 10, sold: 10 })];
+    expect(await read()).toMatchObject({ price: null });
+    world.listings = [listing({ availableTo: new Date(Date.now() - 1000) })];
+    expect(await read()).toMatchObject({ price: null });
   });
 });
 
@@ -261,8 +415,27 @@ describe('what the odds page shows', () => {
     const page = await read();
     expect(page?.teams).toEqual(['Blue', 'Pink']);
     expect(page?.event).toEqual({ title: "Civitai's 4th Birthday" });
-    expect(page?.price).toBe(500);
     expect(page?.noun).toBe('hat');
+  });
+
+  it("lists a team the event doesn't, so its hats are never pooled with another's", async () => {
+    mocks.catalogAccess.mockResolvedValue({ title: 'Event', teams: ['Pink'] });
+    expect((await read())?.teams).toEqual(['Pink', 'Blue']);
+  });
+
+  it("prices the box by this box's listing on sale now", async () => {
+    world.listings = [
+      listing({ id: 40, unitAmount: 300, availableFrom: new Date(Date.now() + 3600_000) }),
+      listing({ id: 41, unitAmount: 400, status: 'Unpublished' }),
+      listing({ id: 42, unitAmount: 500 }),
+      listing({ id: 43, itemDefinitionId: OTHER_BOX, unitAmount: 900 }),
+    ];
+    expect((await read())?.price).toBe(500);
+  });
+
+  it('has no price for an archived box', async () => {
+    theBox().status = 'archived';
+    expect((await read())?.price).toBeNull();
   });
 
   it('leaves out disabled contents', async () => {
@@ -316,45 +489,71 @@ describe('what the odds page shows', () => {
 });
 
 describe('the change history', () => {
+  const v2 = () => {
+    const snapshot = seedSnapshot();
+    snapshot.tiers[1].weight = 2;
+    return snapshot;
+  };
+
   it('words the first version as the publish, newest first after it', async () => {
-    const v2 = seedSnapshot();
-    v2.tiers[1].weight = 2;
-    world.snapshots.push({ version: 2, snapshot: v2, createdAt: new Date('2026-11-10T10:00:00Z') });
+    // Stored out of order: the query's own order decides the chain.
+    world.snapshots.unshift({
+      boxDefinitionId: BOX,
+      version: 2,
+      snapshot: v2(),
+      createdAt: new Date('2026-11-10T10:00:00Z'),
+    });
     world.tiers = TIERS.map((t) => (t.key === 'rare' ? { ...t, weight: 2 } : t));
-    world.box!.version = 2;
+    theBox().version = 2;
     const page = await read();
     expect(page?.history.map((h) => [h.version, h.changes])).toEqual([
       [2, ['Rare weight 1 → 2.']],
       [1, ['Published: 5 hats, weights 3 / 1 (Common / Rare).']],
     ]);
+    expect(page?.historyComplete).toBe(true);
     expect(errorsLogged()).toEqual([]);
   });
 
   it('skips and logs an unreadable snapshot', async () => {
-    world.snapshots.unshift({ version: 0, snapshot: { tiers: 'nope' }, createdAt: new Date() });
+    world.snapshots.unshift({
+      boxDefinitionId: BOX,
+      version: 0,
+      snapshot: { tiers: 'nope' },
+      createdAt: new Date(),
+    });
     const page = await read();
     expect(page?.history.map((h) => h.version)).toEqual([1]);
     expect(errorsLogged().map((e) => e.message)).toEqual(['unreadable odds snapshot']);
   });
 
-  it('logs a current version with no snapshot', async () => {
-    world.box!.version = 2;
-    await read();
+  it('logs, and says, when the current version has no snapshot', async () => {
+    theBox().version = 2;
+    expect((await read())?.historyComplete).toBe(false);
     expect(errorsLogged().map((e) => e.message)).toEqual([
       'no odds snapshot for the current version',
     ]);
   });
 
-  it('logs a live box that differs from its current snapshot', async () => {
+  it('logs, and says, when the live box differs from its current snapshot', async () => {
     world.tiers = TIERS.map((t) => (t.key === 'rare' ? { ...t, weight: 2 } : t));
-    await read();
+    expect((await read())?.historyComplete).toBe(false);
     expect(errorsLogged().map((e) => e.message)).toEqual([
       'odds snapshot differs from the live box',
     ]);
   });
 
-  it('logs nothing when the live box matches its snapshot', async () => {
+  it('logs a drifted box once a minute, not on every view', async () => {
+    theBox().version = 3;
     await read();
+    await read();
+    expect(errorsLogged()).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 61_000);
+    await read();
+    expect(errorsLogged()).toHaveLength(2);
+  });
+
+  it('logs nothing when the live box matches its snapshot', async () => {
+    expect((await read())?.historyComplete).toBe(true);
     expect(errorsLogged()).toEqual([]);
   });
 });
@@ -397,6 +596,19 @@ describe('describeSnapshotChange', () => {
     ]);
   });
 
+  it('names a renamed rarity by its new name in content changes', () => {
+    const before = seedSnapshot();
+    const after: BoxOddsSnapshotData = {
+      tiers: [{ key: 'common', name: 'Basic', weight: 3 }, before.tiers[1]],
+      contents: [...before.contents.slice(1), { tier: 'common', cosmeticId: 1009 }],
+    };
+    expect(describeSnapshotChange(before, after, 'hat')).toEqual([
+      'Renamed Common to Basic.',
+      '1 hat added to Basic.',
+      '1 hat removed from Basic.',
+    ]);
+  });
+
   it('says so when a version changes nothing', () => {
     expect(describeSnapshotChange(seedSnapshot(), seedSnapshot(), 'hat')).toEqual([
       'No change to the odds or contents.',
@@ -405,27 +617,37 @@ describe('describeSnapshotChange', () => {
 });
 
 describe('snapshotsMatch', () => {
+  // Live rows in an order unlike the snapshot's: tiers rarest first, contents shuffled.
   const live = () =>
     snapshotOfLiveBox(
-      TIERS,
-      world.contents.map((c) => ({ tierId: c.tierId, cosmeticId: c.reward.cosmeticId }))
+      [...TIERS].reverse(),
+      [...world.contents]
+        .reverse()
+        .map((c) => ({ tierId: c.tierId, cosmeticId: c.reward.cosmeticId }))
     );
 
-  it("reads the live box in the seed's own order", () => {
+  it("reads the live box in the writer's own order, whatever order the rows come in", () => {
     expect(live()).toEqual(seedSnapshot());
     expect(snapshotsMatch(live(), seedSnapshot())).toBe(true);
   });
 
-  it('sees a weight, a tier order, a moved content and a missing content', () => {
-    const weight = seedSnapshot();
-    weight.tiers[0].weight = 4;
-    const order = seedSnapshot();
-    order.tiers.reverse();
-    const moved = seedSnapshot();
-    moved.contents[0].tier = 'rare';
-    const missing = seedSnapshot();
-    missing.contents.pop();
-    for (const changed of [weight, order, moved, missing])
-      expect(snapshotsMatch(live(), changed)).toBe(false);
+  it('matches a snapshot that lists the same contents in another order', () => {
+    const shuffled = seedSnapshot();
+    shuffled.contents.reverse();
+    expect(snapshotsMatch(live(), shuffled)).toBe(true);
+  });
+
+  const changed: [string, (s: BoxOddsSnapshotData) => void][] = [
+    ['a weight', (s) => (s.tiers[0].weight = 4)],
+    ['a tier name', (s) => (s.tiers[0].name = 'Basic')],
+    ['the tier order', (s) => s.tiers.reverse()],
+    ['a moved content', (s) => (s.contents[0].tier = 'rare')],
+    ['a missing content', (s) => s.contents.pop()],
+    ['an extra content', (s) => s.contents.push({ tier: 'rare', cosmeticId: 1099 })],
+  ];
+  it.each(changed)('sees %s', (_, change) => {
+    const snapshot = seedSnapshot();
+    change(snapshot);
+    expect(snapshotsMatch(live(), snapshot)).toBe(false);
   });
 });

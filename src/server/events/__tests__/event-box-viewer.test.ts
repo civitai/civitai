@@ -14,11 +14,12 @@ vi.mock('~/server/events/event-access', async (importOriginal) => ({
   getEventAccess: mocks.access,
 }));
 
-import { getEventBoxViewer } from '../event-shop-item';
+import { getEventBoxCatalogAccess, getEventBoxViewer } from '../event-shop-item';
 
 const VIEWER = { id: 5, isModerator: false };
 const event = (teams: string[] = ['Pink', 'Blue']) => ({
   name: 'birthday2026',
+  title: "Civitai's 4th Birthday",
   startDate: new Date('2026-11-01'),
   endDate: new Date('2026-11-30'),
   teams,
@@ -81,5 +82,50 @@ describe('getEventBoxViewer', () => {
       team: undefined,
     });
     expect(mocks.getUserTeam).not.toHaveBeenCalled();
+  });
+});
+
+// The public odds page's gate: the same event access, for a viewer who may be signed out, and no
+// team read at all.
+describe('getEventBoxCatalogAccess', () => {
+  it('opens the catalog of a readable event to a signed-out visitor, asking about them alone', async () => {
+    expect(await getEventBoxCatalogAccess('birthday2026', undefined)).toEqual({
+      title: "Civitai's 4th Birthday",
+      teams: ['Pink', 'Blue'],
+    });
+    expect(mocks.access).toHaveBeenCalledTimes(1);
+    expect(mocks.access).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'birthday2026' }),
+      undefined
+    );
+    expect(mocks.getUserTeam).not.toHaveBeenCalled();
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('asks about the signed-in viewer as given', async () => {
+    await getEventBoxCatalogAccess('birthday2026', VIEWER);
+    expect(mocks.access).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'birthday2026' }),
+      VIEWER
+    );
+  });
+
+  it.each(['preview', 'open', 'ended'])('opens the catalog of an event in %s', async (access) => {
+    mocks.access.mockResolvedValue(access);
+    expect(await getEventBoxCatalogAccess('birthday2026', undefined)).not.toBeNull();
+  });
+
+  it('keeps the catalog of a closed event, or one whose access cannot be read', async () => {
+    mocks.access.mockResolvedValue('closed');
+    expect(await getEventBoxCatalogAccess('birthday2026', undefined)).toBeNull();
+    mocks.access.mockRejectedValue(new Error('flipt down'));
+    expect(await getEventBoxCatalogAccess('birthday2026', undefined)).toBeNull();
+  });
+
+  it('keeps the catalog of an unregistered or unloadable event', async () => {
+    expect(await getEventBoxCatalogAccess('other', undefined)).toBeNull();
+    expect(mocks.access).not.toHaveBeenCalled();
+    mocks.events.mockRejectedValue(new Error('no events'));
+    expect(await getEventBoxCatalogAccess('birthday2026', undefined)).toBeNull();
   });
 });

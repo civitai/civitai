@@ -65,6 +65,7 @@ const page = (overrides: Partial<MysteryBoxOddsPageData> = {}): MysteryBoxOddsPa
       changes: ['Published: 5 hats, weights 3 / 2 (Common / Rare).'],
     },
   ],
+  historyComplete: true,
   ...overrides,
 });
 
@@ -86,6 +87,7 @@ const rows = (testId: string) =>
   [...container.querySelectorAll(`[data-testid="${testId}"] tbody tr`)].map((tr) =>
     [...tr.querySelectorAll('td')].map((td) => td.textContent?.trim())
   );
+const meta = () => container.querySelector('[data-testid="box-odds-meta"]')?.textContent;
 const hatsShown = () =>
   [...container.querySelectorAll('[data-testid="box-tier"] [title]')].map((el) =>
     el.getAttribute('title')
@@ -139,12 +141,36 @@ describe('MysteryBoxOddsPage', () => {
       ['2', 'Nov 10, 2026', 'Rare weight 2 → 1.'],
       ['1', 'Nov 6, 2026', 'Published: 5 hats, weights 3 / 2 (Common / Rare).'],
     ]);
-    expect(container.textContent).toContain('Version 2 · published Nov 6, 2026 · 500 Buzz');
+    expect(container.querySelector('[data-testid="box-odds-history-incomplete"]')).toBeNull();
   });
 
-  it('says when no change is recorded yet', async () => {
-    await render(page({ history: [] }), 'Blue');
-    expect(container.textContent).toContain('No changes recorded yet.');
+  it('heads the page with the version, first publish, last update, price and event', async () => {
+    await render(page(), 'Blue');
+    expect(meta()).toBe(
+      "Version 2 · published Nov 6, 2026 · updated Nov 10, 2026 · 500 Buzz · Civitai's 4th Birthday"
+    );
+  });
+
+  it('heads a first version with its publish only, and an unsold archived box with no price', async () => {
+    await render(
+      page({ version: 1, history: page().history.slice(1), price: null, archived: true })
+    );
+    expect(meta()).toBe(
+      "Version 1 · published Nov 6, 2026 · Civitai's 4th Birthday · no longer sold"
+    );
+  });
+
+  it('says when the latest change is missing from the history', async () => {
+    await render(page({ historyComplete: false }), 'Blue');
+    expect(
+      container.querySelector('[data-testid="box-odds-history-incomplete"]')?.textContent
+    ).toContain("The latest change to this box isn't in the history yet.");
+  });
+
+  it('shows one team without a picker, still only its own hats', async () => {
+    await render(page({ teams: ['Pink'] }), 'Pink');
+    expect(container.querySelector('.mantine-SegmentedControl-root')).toBeNull();
+    expect(hatsShown()).toEqual(['Hat 4', 'Hat 5', 'Hat 1', 'Hat 2']);
   });
 });
 

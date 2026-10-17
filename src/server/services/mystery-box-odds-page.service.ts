@@ -6,10 +6,14 @@ import { logToAxiom } from '~/server/logging/client';
 import { ITEM_DEFINITION_STATUS, ITEM_TYPE } from '~/server/services/item.service';
 import type { BoxCatalogEntry } from '~/server/services/mystery-box.service';
 import {
+  BOX_TIER_ORDER,
+  BOX_TIER_SELECT,
   boxContentDisplay,
+  boxSaleRefusal,
   getBoxCatalog,
   mysteryBoxesHiddenIn,
 } from '~/server/services/mystery-box.service';
+import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -116,9 +120,23 @@ function rewardNoun(contents: BoxCatalogEntry[]) {
 
 export type MysteryBoxOddsPage = NonNullable<Awaited<ReturnType<typeof getMysteryBoxOddsPage>>>;
 
+// A box whose history can't be read logs once per pod per minute, not on every view.
+const DRIFT_LOG_EVERY_MS = 60_000;
+const driftLoggedAt = new Map<string, number>();
+function logOddsPageError(message: string, fields: { boxDefinitionId: number; version: number }) {
+  const key = `${fields.boxDefinitionId}:${fields.version}:${message}`;
+  const now = Date.now();
+  if (now - (driftLoggedAt.get(key) ?? -Infinity) < DRIFT_LOG_EVERY_MS) return;
+  if (driftLoggedAt.size >= 1000) driftLoggedAt.clear();
+  driftLoggedAt.set(key, now);
+  logToAxiom({ type: 'error', name: 'mystery-box-odds-page', message, ...fields }).catch();
+}
+
 /**
  * A published (or archived) box's public odds page, or null when boxes are off, hidden in the
- * visitor's country, or the box's event is closed to them.
+ * visitor's country, or the box's event is closed to them. A box shows once it has gone on sale (a
+ * published listing whose window has opened) or anyone holds or has opened one; before that, only
+ * to moderators.
  */
 export async function getMysteryBoxOddsPage({
   boxDefinitionId,
@@ -160,11 +178,26 @@ export async function getMysteryBoxOddsPage({
     : undefined;
   if (event === null) return null;
 
-  const [tiers, contents, snapshots, listing] = await Promise.all([
+  const now = new Date();
+  const listings = await dbRead.cosmeticShopItem.findMany({
+    where: { itemDefinitionId: box.id, status: CosmeticShopItemStatus.Published },
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      unitAmount: true,
+      availableQuantity: true,
+      availableFrom: true,
+      availableTo: true,
+    },
+  });
+  const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
+  if (!started && !viewer?.isModerator && !(await boxEverHeld(box.id))) return null;
+
+  const [tiers, contents, snapshots, sold] = await Promise.all([
     dbRead.boxTier.findMany({
       where: { boxDefinitionId: box.id },
-      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-      select: { id: true, key: true, name: true, color: true, weight: true, sortOrder: true },
+      orderBy: BOX_TIER_ORDER,
+      select: BOX_TIER_SELECT,
     }),
     getBoxCatalog(dbRead, box.id),
     dbRead.boxOddsSnapshot.findMany({
@@ -172,12 +205,14 @@ export async function getMysteryBoxOddsPage({
       orderBy: { version: 'asc' },
       select: { version: true, snapshot: true, createdAt: true },
     }),
-    dbRead.cosmeticShopItem.findFirst({
-      where: { itemDefinitionId: box.id, status: CosmeticShopItemStatus.Published },
-      orderBy: { id: 'asc' },
-      select: { unitAmount: true },
-    }),
+    // Only a listing with a quantity needs its sold count.
+    getSoldCounts(listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)),
   ]);
+  // The price of a listing on sale now, as the event page sells it.
+  const onSale =
+    box.status === ITEM_DEFINITION_STATUS.published
+      ? listings.find((l) => !boxSaleRefusal(l, sold.get(l.id) ?? 0, now))
+      : undefined;
 
   const noun = rewardNoun(contents);
   const history: BoxOddsHistoryEntry[] = [];
@@ -186,13 +221,10 @@ export async function getMysteryBoxOddsPage({
   for (const row of snapshots) {
     const parsed = boxOddsSnapshotSchema.safeParse(row.snapshot);
     if (!parsed.success) {
-      logToAxiom({
-        type: 'error',
-        name: 'mystery-box-odds-page',
-        message: 'unreadable odds snapshot',
+      logOddsPageError('unreadable odds snapshot', {
         boxDefinitionId: box.id,
         version: row.version,
-      }).catch();
+      });
       continue;
     }
     history.push({
@@ -203,18 +235,23 @@ export async function getMysteryBoxOddsPage({
     previous = parsed.data;
     if (row.version === box.version) current = parsed.data;
   }
-  if (!current || !snapshotsMatch(current, snapshotOfLiveBox(tiers, contents)))
-    logToAxiom({
-      type: 'error',
-      name: 'mystery-box-odds-page',
-      message: current
+  const historyComplete = !!current && snapshotsMatch(current, snapshotOfLiveBox(tiers, contents));
+  if (!historyComplete)
+    logOddsPageError(
+      current
         ? 'odds snapshot differs from the live box'
         : 'no odds snapshot for the current version',
-      boxDefinitionId: box.id,
-      version: box.version,
-    }).catch();
+      { boxDefinitionId: box.id, version: box.version }
+    );
 
-  const teams = [...new Set(contents.flatMap((c) => (c.team ? [c.team] : [])))];
+  // The event's teams in its order, then any team the event doesn't list, so no team's contents
+  // are ever shown pooled with another's.
+  const contentTeams = [...new Set(contents.flatMap((c) => (c.team ? [c.team] : [])))];
+  const eventTeams = event?.teams ?? [];
+  const teams = [
+    ...eventTeams.filter((team) => contentTeams.includes(team)),
+    ...contentTeams.filter((team) => !eventTeams.includes(team)),
+  ];
   return {
     boxDefinitionId: box.id,
     name: box.name,
@@ -223,12 +260,22 @@ export async function getMysteryBoxOddsPage({
     archived: box.status === ITEM_DEFINITION_STATUS.archived,
     noun,
     event: event ? { title: event.title } : null,
-    /** The event's teams that the box holds anything for, in the event's order. */
-    teams: event ? event.teams.filter((team) => teams.includes(team)) : [],
-    price: listing?.unitAmount ?? null,
+    teams,
+    price: onSale?.unitAmount ?? null,
     tiers,
     contents: contents.map((entry) => ({ ...boxContentDisplay(entry), team: entry.team ?? null })),
     /** Newest first. */
     history: history.reverse(),
+    /** False when the current version's change is missing from the history. */
+    historyComplete,
   };
+}
+
+/** Whether anyone holds, or has opened, one of this box. */
+async function boxEverHeld(boxDefinitionId: number) {
+  const [held, opened] = await Promise.all([
+    dbRead.item.findFirst({ where: { itemDefinitionId: boxDefinitionId }, select: { id: true } }),
+    dbRead.boxOpening.findFirst({ where: { boxDefinitionId }, select: { boxItemId: true } }),
+  ]);
+  return !!held || !!opened;
 }

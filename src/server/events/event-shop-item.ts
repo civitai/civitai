@@ -133,11 +133,9 @@ export async function getEventBoxViewer(
   eventName: string,
   viewer: { id: number; isModerator?: boolean }
 ) {
-  const events = await loadEvents().catch(() => undefined);
-  const event = events?.find((e) => e.name === eventName);
-  if (!event) return null;
-  const access = await getEventAccess(event, viewer).catch(() => 'closed' as const);
-  if (!canReadEvent(access)) return null;
+  const readable = await readableBoxEvent(eventName, viewer);
+  if (!readable) return null;
+  const { event, access } = readable;
   if (!event.teams.length) return { playable: canPlayEvent(access), team: undefined };
   const team = await event.getUserTeam(viewer.id, { strict: true }).catch(() => null);
   return team ? { playable: canPlayEvent(access), team } : null;
@@ -149,12 +147,18 @@ export async function getEventBoxViewer(
  * closed to them, or when it isn't registered or can't be loaded.
  */
 export async function getEventBoxCatalogAccess(eventName: string, viewer: EventViewer) {
+  const readable = await readableBoxEvent(eventName, viewer);
+  if (!readable) return null;
+  return { title: readable.event.title, teams: readable.event.teams };
+}
+
+/** The gate both box reads share: the event, if registered, loadable and readable by the viewer. */
+async function readableBoxEvent(eventName: string, viewer: EventViewer) {
   const events = await loadEvents().catch(() => undefined);
   const event = events?.find((e) => e.name === eventName);
   if (!event) return null;
   const access = await getEventAccess(event, viewer).catch(() => 'closed' as const);
-  if (!canReadEvent(access)) return null;
-  return { title: event.title, teams: event.teams };
+  return canReadEvent(access) ? { event, access } : null;
 }
 
 /**

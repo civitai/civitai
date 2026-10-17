@@ -230,7 +230,7 @@ type BoxArt = { closed?: string; open?: string };
  * Why a box listing can't be sold now (stock, then its sale window), or null when it can. `sold` is
  * read only for a listing with a quantity.
  */
-function boxSaleRefusal(
+export function boxSaleRefusal(
   listing: {
     availableQuantity: number | null;
     availableFrom: Date | null;
@@ -245,6 +245,20 @@ function boxSaleRefusal(
   if (listing.availableTo && listing.availableTo < now) return 'This box is no longer available';
   return null;
 }
+
+/** A box's tiers as every page shows them, in draw order. */
+export const BOX_TIER_SELECT = {
+  id: true,
+  key: true,
+  name: true,
+  color: true,
+  weight: true,
+  sortOrder: true,
+} satisfies Prisma.BoxTierSelect;
+export const BOX_TIER_ORDER = [
+  { sortOrder: 'asc' },
+  { id: 'asc' },
+] satisfies Prisma.BoxTierOrderByWithRelationInput[];
 
 /** The box art for a team, from `params.art[team]` ({ closed, open } image urls). */
 function boxArtFor(params: BoxParams, team: string | undefined): BoxArt | null {
@@ -373,16 +387,8 @@ export async function getMysteryBoxesForEvent({
     }),
     dbRead.boxTier.findMany({
       where: { boxDefinitionId: { in: boxIds } },
-      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-      select: {
-        id: true,
-        boxDefinitionId: true,
-        key: true,
-        name: true,
-        color: true,
-        weight: true,
-        sortOrder: true,
-      },
+      orderBy: BOX_TIER_ORDER,
+      select: { boxDefinitionId: true, ...BOX_TIER_SELECT },
     }),
   ]);
 

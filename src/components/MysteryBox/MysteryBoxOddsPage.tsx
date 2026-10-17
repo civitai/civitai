@@ -44,7 +44,8 @@ export function MysteryBoxOddsPage({
   const tiers = useMemo(() => tierSummaries(view), [view]);
   const color = shownTeam ? teamColor(shownTeam) : undefined;
   const noun = page.noun;
-  const published = page.history[page.history.length - 1]?.createdAt;
+  const published = page.history[page.history.length - 1];
+  const updated = page.history.find((h) => h.version === page.version);
 
   return (
     <Stack gap="xl">
@@ -52,10 +53,13 @@ export function MysteryBoxOddsPage({
         <Title order={1} size="h2">
           {page.name}: odds and contents
         </Title>
-        <Text size="sm" c="dimmed">
+        <Text size="sm" c="dimmed" data-testid="box-odds-meta">
           {[
             `Version ${page.version}`,
-            published && `published ${formatDate(published, 'MMM D, YYYY', true)}`,
+            published && `published ${formatDate(published.createdAt, 'MMM D, YYYY', true)}`,
+            updated &&
+              updated !== published &&
+              `updated ${formatDate(updated.createdAt, 'MMM D, YYYY', true)}`,
             page.price !== null && `${numberWithCommas(page.price)} Buzz`,
             page.event?.title,
             page.archived && 'no longer sold',
@@ -184,9 +188,10 @@ export function MysteryBoxOddsPage({
             Each change covers the whole box, every team&apos;s {noun}s together.
           </Text>
         )}
-        {!page.history.length && (
-          <Text size="sm" c="dimmed">
-            No changes recorded yet.
+        {!page.historyComplete && (
+          <Text size="sm" c="dimmed" data-testid="box-odds-history-incomplete">
+            The latest change to this box isn&apos;t in the history yet. The odds above are the
+            current ones.
           </Text>
         )}
         <Table data-testid="box-odds-history" hidden={!page.history.length}>
