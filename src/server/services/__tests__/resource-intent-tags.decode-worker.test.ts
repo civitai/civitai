@@ -271,6 +271,21 @@ describe('decodeTagIndexInWorker failures through the store', () => {
     expect(exitedBeforeReject).toBe(true);
   });
 
+  it('a worker that answers but would stay alive is terminated', async () => {
+    const terminate = vi.spyOn(Worker.prototype, 'terminate');
+    onTestFinished(() => terminate.mockRestore());
+    const lingering = `
+      const { parentPort } = require('worker_threads');
+      setInterval(() => {}, 1000);
+      parentPort.once('message', () => parentPort.postMessage({
+        ok: false, error: { name: 'Error', message: 'refused' } }));`;
+    const e = await decodeTagIndexInWorker(new Uint8Array(4), { source: lingering }).catch(
+      (x: unknown) => x
+    );
+    expect((e as Error).message).toBe('refused');
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
   it('an abort while the arrays are being assembled stops the assembly', async () => {
     const abort = new AbortController();
     const e = await decodeTagIndexInWorker(Buffer.from(await encoded()), {
