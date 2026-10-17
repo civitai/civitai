@@ -29,20 +29,19 @@ import { RESOURCE_INTENT_TAGS_SPEC, RESOURCE_INTENT_TAGS_SPEC_HASH } from './spe
 import { putSnapshot, type TagIndexObjectStore } from './store';
 
 /**
- * Refuse to build when the newest generator observation is older than this. Their only writer is an
- * external hourly extractor that reads each 2-minute slice about 2 h after it ends, so a healthy
- * newest row is 2–3.5 h old; 6 h means it has missed several runs and the window may have stopped
- * filling.
+ * Refuse to build when more than this share of the training window's hours hold no generator
+ * observation. Generator traffic fills every hour, so an empty hour is a slice the external
+ * extractor never wrote; the share allows about two days of 90 for a stalled extractor's backlog.
  */
-export const TAG_BUILD_MAX_OBSERVATION_AGE_HOURS = 6;
+export const TAG_BUILD_MAX_MISSING_HOUR_SHARE = 0.02;
 
 /**
  * The longest the build holds the event loop between yields while tagging. It shares the process
  * with every other job; a time slice, not a row count, because the audit's cost varies per prompt.
  */
 export const TAG_BUILD_YIELD_MS = 50;
-/** Generator observations whose versions are resolved together. */
-const GEN_BATCH = 20_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 /**
  * Image ids per posted-sample statement: sized for the deployed replica route, which can cancel a
  * statement well before the build's own timeout (the dry run prints each kind's slowest attempt).
@@ -116,7 +115,12 @@ export type TagClickHouse = {
   close: () => Promise<void>;
 };
 
-/** A ClickHouse client whose every query runs read-only (`readonly = 2`). */
+/**
+ * The build's ClickHouse client. It sends no `readonly`, so the session runs at the level the
+ * account's own profile sets, which `assertClickHouseReadonly` then checks: the account must be
+ * read-only by configuration, not by the client's request. The settings it sends need that level to
+ * be 2 (an account at 1 cannot change any setting).
+ */
 export async function readonlyClickHouse(c: TagBuildConfig['clickhouse']): Promise<TagClickHouse> {
   const { createClient } = await import('@clickhouse/client');
   const ch = createClient({
@@ -124,7 +128,7 @@ export async function readonlyClickHouse(c: TagBuildConfig['clickhouse']): Promi
     username: c.user,
     password: c.password,
     request_timeout: 1_900_000,
-    clickhouse_settings: { readonly: '2', max_execution_time: 1800 },
+    clickhouse_settings: { max_execution_time: 1800 },
   });
   return {
     async *rows<T>(query: string) {
@@ -154,36 +158,89 @@ async function firstRow<T>(ch: TagClickHouse, query: string): Promise<T | undefi
   return first;
 }
 
-/** Refuse a ClickHouse session that is not read-only: the build must not be able to write there. */
+/**
+ * Refuse unless the account's own profile makes the session `readonly = 2`: at 0 the account can
+ * write (the build must not be able to), and at 1 it cannot accept the settings the build sends.
+ */
 export async function assertClickHouseReadonly(ch: TagClickHouse): Promise<void> {
   const r = await firstRow<{ ro: number | string }>(ch, `SELECT getSetting('readonly') AS ro`);
-  if (!(Number(r?.ro) >= 1))
-    throw new Error('tag index build: the ClickHouse session is not read-only; refusing');
+  if (Number(r?.ro) !== 2)
+    throw new Error(
+      `tag index build: the ClickHouse account runs at readonly=${String(
+        r?.ro
+      )}; it needs a profile with readonly=2, refusing`
+    );
+}
+
+const chTime = (d: Date) =>
+  `toDateTime('${d.toISOString().slice(0, 19).replace('T', ' ')}', 'UTC')`;
+
+export type ObservationCoverage = {
+  /** Seconds since the newest generator observation, by ClickHouse's clock. */
+  newestAgeSec: number;
+  windowHours: number;
+  missingHours: number;
+};
+
+/**
+ * The training window's generator coverage. Refuses unless some observation lies at or after the
+ * window's end (the extractor has written past it). Hours in the window with no observation are
+ * counted; more than `TAG_BUILD_MAX_MISSING_HOUR_SHARE` of them is refused unless `refuseGaps` is
+ * false (a dry run reports them instead).
+ */
+export async function observationCoverage(
+  ch: TagClickHouse,
+  window: { start: Date; end: Date },
+  refuseGaps: boolean
+): Promise<ObservationCoverage> {
+  const r = await firstRow<Record<'after' | 'hours' | 'newest' | 'now', number | string>>(
+    ch,
+    `SELECT countIf(time >= ${chTime(window.end)}) AS after,
+       uniqExactIf(toStartOfHour(time), time < ${chTime(window.end)}) AS hours,
+       toUnixTimestamp(max(time)) AS newest, toUnixTimestamp(now()) AS now
+     FROM default.resourceIntentGenObservation WHERE time >= ${chTime(window.start)}`
+  );
+  if (!(Number(r?.after) > 0))
+    throw new Error(
+      `tag index build: no generator observation at or after the window end ${window.end.toISOString()}; the extractor has not covered the window, refusing`
+    );
+  const windowHours = Math.round((window.end.getTime() - window.start.getTime()) / HOUR_MS);
+  const missingHours = windowHours - Number(r?.hours);
+  const allowed = Math.floor(windowHours * TAG_BUILD_MAX_MISSING_HOUR_SHARE);
+  if (refuseGaps && missingHours > allowed)
+    throw new Error(
+      `tag index build: ${missingHours} of the window's ${windowHours} hours have no generator observation (allowed ${allowed}); refusing`
+    );
+  return { newestAgeSec: Number(r?.now) - Number(r?.newest), windowHours, missingHours };
 }
 
 /**
- * Seconds since the newest generator observation, by ClickHouse's clock; refuses above
- * `TAG_BUILD_MAX_OBSERVATION_AGE_HOURS`, and when there is none in the last 3 days.
+ * The window's generator observations, one UTC day per query, each read to its end before it is
+ * handed on. ClickHouse aborts a response its client stops reading for longer than its send timeout
+ * (30 s by default; neither a per-query nor a per-profile `http_send_timeout` changed that against
+ * ClickHouse 26.7), and tagging a day's rows takes longer, so no response stays open while rows are
+ * tagged. `limit` caps the rows over all pages.
  */
-export async function assertObservationsFresh(ch: TagClickHouse): Promise<number> {
-  const r = await firstRow<{ newest: number | string; now: number | string; n: number | string }>(
-    ch,
-    `SELECT toUnixTimestamp(max(time)) AS newest, toUnixTimestamp(now()) AS now, count() AS n
-     FROM default.resourceIntentGenObservation WHERE time > now() - INTERVAL 3 DAY`
-  );
-  const age = Number(r?.now) - Number(r?.newest);
-  if (!r || !(Number(r.n) > 0) || !Number.isFinite(age))
-    throw new Error(
-      'tag index build: no generator observation in the last 3 days; the extractor is stalled, refusing'
-    );
-  const maxSec = TAG_BUILD_MAX_OBSERVATION_AGE_HOURS * 3600;
-  if (age > maxSec)
-    throw new Error(
-      `tag index build: the newest generator observation is ${Math.round(
-        age / 60
-      )} min old (limit ${TAG_BUILD_MAX_OBSERVATION_AGE_HOURS} h); the extractor is stalled, refusing`
-    );
-  return age;
+export async function* genObservationPages(
+  ch: TagClickHouse,
+  window: { start: Date; end: Date },
+  limit?: number
+): AsyncGenerator<GenObservation[]> {
+  let left = limit ?? Infinity;
+  for (let t = window.start.getTime(); t < window.end.getTime() && left > 0; t += DAY_MS) {
+    const page: GenObservation[] = [];
+    for await (const r of ch.rows<Parameters<typeof genObservationOf>[0]>(
+      genObservationsSql(
+        new Date(t),
+        new Date(Math.min(t + DAY_MS, window.end.getTime())),
+        TAG_SOURCE_PARAMS.genSliceMinutes,
+        Number.isFinite(left) ? left : undefined
+      )
+    ))
+      page.push(genObservationOf(r));
+    left -= page.length;
+    yield page;
+  }
 }
 
 /** The newest frozen vocabulary, verified against its version; refuses when there is none. */
@@ -222,8 +279,8 @@ function phaseClock() {
   };
 }
 
-async function finalizeAndEncode(acc: TagIndexAccumulator) {
-  const { data, stats } = acc.finalize();
+async function finalizeAndEncode(acc: TagIndexAccumulator, tick: () => Promise<void>) {
+  const { data, stats } = await acc.finalizeCooperative(tick);
   return { payload: await encodeTagIndex(data, RESOURCE_INTENT_TAGS_SPEC_HASH), stats };
 }
 
@@ -233,6 +290,8 @@ export type TagBuildSummary = {
   specHash: string;
   window: { start: string; end: string };
   observationAgeSec: number;
+  /** The window's hours, and those with no generator observation. */
+  observationHours: { window: number; missing: number };
   observations: number;
   genUsers: number;
   postUsers: number;
@@ -241,7 +300,7 @@ export type TagBuildSummary = {
   /** Models seen in training rows whose content was requested (after any `limits.models` cut). */
   contentModelsRequested: number;
   contentModels: number;
-  stats: TagBuildStats;
+  stats: TagBuildStatsWithCoverage;
   /** Wall time per phase. */
   ms: { gen: number; posted: number; content: number; finalizeEncode: number; put: number | null };
   payloadBytes: number;
@@ -249,6 +308,11 @@ export type TagBuildSummary = {
   /** Set when stored: the manifest row and whether this build created it. */
   snapshotId: string | null;
   created: boolean | null;
+};
+
+/** The build's stats as stored on the manifest row: the index's, and the window's coverage. */
+export type TagBuildStatsWithCoverage = TagBuildStats & {
+  observationHours: { window: number; missing: number };
 };
 
 export type TagBuildDeps = {
@@ -260,6 +324,95 @@ export type TagBuildDeps = {
   sql?: CoocSql;
   excludeGenPrompt?: (prompt: string) => boolean;
 };
+
+/**
+ * Read the training data and build the encoded index. The accumulator and every training-side
+ * structure (versions, user sets) live only in this call, so none of it is reachable while the
+ * caller's put decodes the payload.
+ */
+async function readAndBuild(a: {
+  opts: { limits?: { gen?: number; postBatches?: number; models?: number } };
+  deps: TagBuildDeps;
+  config: TagBuildConfig;
+  ch: TagClickHouse;
+  query: TagRawQuery;
+  vocab: Awaited<ReturnType<typeof newestFrozenVocabulary>>;
+  window: { start: Date; end: Date };
+  clock: () => number;
+}) {
+  const { opts, deps, config, ch, query, window, clock } = a;
+  const tick = loopYielder(TAG_BUILD_YIELD_MS);
+  const acc = new TagIndexAccumulator(a.vocab, {
+    addonTypes: RESOURCE_INTENT_TAGS_SPEC.build.addonTypes,
+    excludeGenPrompt: deps.excludeGenPrompt ?? promptExcludedByAuditor,
+  });
+
+  // Generator rows a UTC day at a time, so their prompts are never all held at once.
+  const versions = new Map<number, VersionInfo>();
+  const genUsers = new Set<string>();
+  let observations = 0;
+  for await (const page of genObservationPages(ch, window, opts.limits?.gen)) {
+    observations += page.length;
+    const missing = [...new Set(page.flatMap((o) => o.versionIds))].filter(
+      (id) => !versions.has(id)
+    );
+    for (const [id, v] of await fetchVersionInfo(query, missing)) versions.set(id, v);
+    for (const o of page) {
+      await tick();
+      genUsers.add(o.user);
+      const row = genTrainingRow(o, versions);
+      if (row) acc.addRow(row);
+    }
+  }
+  const genMs = clock();
+
+  const postUsers = new Set<string>();
+  const posted = await readPostedSample(query, {
+    start: window.start,
+    end: window.end,
+    mod: TAG_SOURCE_PARAMS.postedMod,
+    idBatch: TAG_POSTED_ID_BATCH,
+    maxBatches: opts.limits?.postBatches,
+    userKey: (id) => observationUserHash(config.hashKey, id),
+    onBatch: async (rows) => {
+      for (const r of rows) {
+        await tick();
+        postUsers.add(r.user);
+        acc.addRow(r);
+      }
+    },
+  });
+  let genAndPostUsers = 0;
+  for (const u of postUsers) if (genUsers.has(u)) genAndPostUsers++;
+  const postedMs = clock();
+
+  let contentModels = 0;
+  const modelIds = acc.usedModelIds().slice(0, opts.limits?.models);
+  await readModelContent(query, modelIds, window.end, async (models) => {
+    for (const m of models) {
+      await tick();
+      acc.addModel(m);
+      contentModels++;
+    }
+  });
+  const contentMs = clock();
+
+  const { payload, stats } = await finalizeAndEncode(acc, tick);
+  return {
+    payload,
+    stats,
+    counts: {
+      observations,
+      genUsers: genUsers.size,
+      postUsers: postUsers.size,
+      genAndPostUsers,
+      postedRows: posted.rows,
+      contentModelsRequested: modelIds.length,
+      contentModels,
+    },
+    ms: { gen: genMs, posted: postedMs, content: contentMs, finalizeEncode: clock() },
+  };
+}
 
 /**
  * Gate, read, build and encode; then, unless `dryRun`, store it as a production snapshot. Every gate
@@ -279,115 +432,35 @@ export async function runTagIndexBuild(
   const ch = await (deps.clickhouse ?? readonlyClickHouse)(config.clickhouse);
   try {
     await assertClickHouseReadonly(ch);
-    const observationAgeSec = await assertObservationsFresh(ch);
+    const window = tagTrainingWindow(deps.now ?? new Date());
+    const coverage = await observationCoverage(ch, window, !opts.dryRun);
     const query = deps.query ?? tagStandbyQuery();
     const vocab = await newestFrozenVocabulary(query);
-    const window = tagTrainingWindow(deps.now ?? new Date());
-    const tick = loopYielder(TAG_BUILD_YIELD_MS);
-    const acc = new TagIndexAccumulator(vocab, {
-      addonTypes: RESOURCE_INTENT_TAGS_SPEC.build.addonTypes,
-      excludeGenPrompt: deps.excludeGenPrompt ?? promptExcludedByAuditor,
-    });
-
     const clock = phaseClock();
-    // Generator rows, a batch at a time so their prompts are never all held at once.
-    const versions = new Map<number, VersionInfo>();
-    const genUsers = new Set<string>();
-    let observations = 0;
-    let pending: GenObservation[] = [];
-    const flush = async () => {
-      const missing = [...new Set(pending.flatMap((o) => o.versionIds))].filter(
-        (id) => !versions.has(id)
-      );
-      for (const [id, v] of await fetchVersionInfo(query, missing)) versions.set(id, v);
-      for (const o of pending) {
-        await tick();
-        const row = genTrainingRow(o, versions);
-        if (row) acc.addRow(row);
-      }
-      pending = [];
-    };
-    for await (const r of ch.rows<Parameters<typeof genObservationOf>[0]>(
-      genObservationsSql(
-        window.start,
-        window.end,
-        TAG_SOURCE_PARAMS.genSliceMinutes,
-        opts.limits?.gen
-      )
-    )) {
-      const o = genObservationOf(r);
-      observations++;
-      genUsers.add(o.user);
-      pending.push(o);
-      if (pending.length >= GEN_BATCH) await flush();
-    }
-    await flush();
-    const genMs = clock();
-
-    const postUsers = new Set<string>();
-    const posted = await readPostedSample(query, {
-      start: window.start,
-      end: window.end,
-      mod: TAG_SOURCE_PARAMS.postedMod,
-      idBatch: TAG_POSTED_ID_BATCH,
-      maxBatches: opts.limits?.postBatches,
-      userKey: (id) => observationUserHash(config.hashKey, id),
-      onBatch: async (rows) => {
-        for (const r of rows) {
-          await tick();
-          postUsers.add(r.user);
-          acc.addRow(r);
-        }
-      },
-    });
-    let genAndPostUsers = 0;
-    for (const u of postUsers) if (genUsers.has(u)) genAndPostUsers++;
-    const postedMs = clock();
-
-    let contentModels = 0;
-    const modelIds = acc.usedModelIds().slice(0, opts.limits?.models);
-    await readModelContent(query, modelIds, window.end, async (models) => {
-      for (const m of models) {
-        await tick();
-        acc.addModel(m);
-        contentModels++;
-      }
-    });
-    const contentMs = clock();
-
-    // The built arrays live only inside this call, so they can be collected before the put decodes.
-    const { payload, stats } = await finalizeAndEncode(acc);
-    const ms = {
-      gen: genMs,
-      posted: postedMs,
-      content: contentMs,
-      finalizeEncode: clock(),
-      put: null,
+    const built = await readAndBuild({ opts, deps, config, ch, query, vocab, window, clock });
+    const stats: TagBuildStatsWithCoverage = {
+      ...built.stats,
+      observationHours: { window: coverage.windowHours, missing: coverage.missingHours },
     };
     const summary: TagBuildSummary = {
       vocabVersion: vocab.vocabVersion,
       specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
       window: { start: window.start.toISOString(), end: window.end.toISOString() },
-      observationAgeSec,
-      observations,
-      genUsers: genUsers.size,
-      postUsers: postUsers.size,
-      genAndPostUsers,
-      postedRows: posted.rows,
-      contentModelsRequested: modelIds.length,
-      contentModels,
+      observationAgeSec: coverage.newestAgeSec,
+      observationHours: stats.observationHours,
+      ...built.counts,
       stats,
-      ms,
-      payloadBytes: payload.length,
+      ms: { ...built.ms, put: null },
+      payloadBytes: built.payload.length,
       dryRun: opts.dryRun,
       snapshotId: null,
       created: null,
     };
-    if (!objects) return { summary, payload };
+    if (!objects) return { summary, payload: built.payload };
 
     const { manifest, created } = await putSnapshot(
       { sql: deps.sql ?? coocSqlOf(dbWrite), objects },
-      payload,
+      built.payload,
       {
         vocabVersion: vocab.vocabVersion,
         specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
@@ -395,8 +468,13 @@ export async function runTagIndexBuild(
       }
     );
     return {
-      summary: { ...summary, ms: { ...ms, put: clock() }, snapshotId: manifest.id, created },
-      payload,
+      summary: {
+        ...summary,
+        ms: { ...summary.ms, put: clock() },
+        snapshotId: manifest.id,
+        created,
+      },
+      payload: built.payload,
     };
   } finally {
     await ch.close();

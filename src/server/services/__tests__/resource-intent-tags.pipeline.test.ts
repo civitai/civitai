@@ -3,19 +3,21 @@ import { join } from 'path';
 import type { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { serverSchema } from '~/env/server-schema';
+import type * as Build from '~/server/services/resource-intent-tags/build';
 import {
   loopYielder,
   readonlyClickHouse,
   runTagIndexBuild,
-  TAG_BUILD_MAX_OBSERVATION_AGE_HOURS,
+  genObservationPages,
   tagBuildConfig,
   type TagBuildDeps,
   type TagBuildEnv,
   type TagClickHouse,
 } from '~/server/services/resource-intent-tags/pipeline';
 import {
+  type genObservationOf,
   observationKeyFingerprint,
   observationUserHash,
 } from '~/server/services/resource-intent-tags/sources';
@@ -34,6 +36,25 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const logToAxiom = loggingMock.logToAxiom;
 const clickhouseClient = vi.hoisted(() => ({ createClient: vi.fn() }));
+// Every accumulator the pipeline makes, held weakly, so a test can see whether one is still reachable.
+const accumulators = vi.hoisted(() => [] as WeakRef<object>[]);
+const cooperativeFinalizes = vi.hoisted(() => ({ count: 0 }));
+vi.mock('~/server/services/resource-intent-tags/build', async (importOriginal) => {
+  const real = await importOriginal<typeof Build>();
+  class TrackedAccumulator extends real.TagIndexAccumulator {
+    constructor(...args: ConstructorParameters<typeof real.TagIndexAccumulator>) {
+      super(...args);
+      accumulators.push(new WeakRef(this));
+    }
+    finalizeCooperative(
+      ...args: Parameters<InstanceType<typeof real.TagIndexAccumulator>['finalizeCooperative']>
+    ) {
+      cooperativeFinalizes.count++;
+      return super.finalizeCooperative(...args);
+    }
+  }
+  return { ...real, TagIndexAccumulator: TrackedAccumulator };
+});
 vi.mock('@clickhouse/client', () => clickhouseClient);
 
 const migration = (name: string) =>
@@ -92,19 +113,34 @@ type World = {
   deps: TagBuildDeps & { query: NonNullable<TagBuildDeps['query']> };
   chQueries: string[];
   chDrained: string[];
+  workWhileOpen: string[];
+  streamOpen: () => boolean;
   postedBatches: number[][];
   pgReads: string[];
-  objectsMade: ReturnType<typeof vi.fn>;
+  objectsMade: Mock<() => TagIndexObjectStore>;
   store: Map<string, Buffer>;
   closed: ReturnType<typeof vi.fn>;
 };
+
+// Users 42 and 7, hashed as the extractor writes them; 42 also posts below.
+const defaultGenRows = GEN_PROMPTS.map((p, i) => ({
+  u: observationUserHash(KEY, i % 2 ? 7 : 42),
+  p,
+  v: [101, 201],
+  liked: 1,
+  favorite: 0,
+  disliked: 0,
+}));
 
 async function world(
   opts: {
     vocabs?: [Buffer, string, string | null][];
     readonly?: number;
-    ageSec?: number;
-    recentRows?: number;
+    /** Observations at or after the window's end, and window hours holding one (of 2,160). */
+    after?: number;
+    hours?: number;
+    /** Generator rows on the window's first day (the fixture's three prompts by default). */
+    genRows?: Parameters<typeof genObservationOf>[0][];
     env?: TagBuildEnv;
   } = {}
 ): Promise<World> {
@@ -115,42 +151,46 @@ async function world(
   const chDrained: string[] = [];
   const pgReads: string[] = [];
   const postedBatches: number[][] = [];
+  // Work done while a ClickHouse response is still open: ClickHouse aborts a response stalled past
+  // its send timeout, so none may happen.
+  let openStreams = 0;
+  const workWhileOpen: string[] = [];
   const closed = vi.fn(async () => undefined);
   const now = 1_800_000_000;
   const ch: TagClickHouse = {
     async *rows<T>(q: string) {
       chQueries.push(q);
-      // Counted once the generator has yielded its last row and returned.
-      yield* rowsOf<T>(q);
-      chDrained.push(q);
+      openStreams++;
+      try {
+        // Counted once the generator has yielded its last row and returned.
+        yield* rowsOf<T>(q);
+        chDrained.push(q);
+      } finally {
+        openStreams--;
+      }
     },
     close: closed,
   };
   async function* rowsOf<T>(q: string): AsyncGenerator<T> {
     if (q.includes(`getSetting('readonly')`)) yield { ro: opts.readonly ?? 2 } as T;
-    else if (q.includes('max(time)'))
+    else if (q.includes('uniqExactIf'))
       yield {
-        newest: String(now - (opts.ageSec ?? 3 * 3600)),
+        after: String(opts.after ?? 5000),
+        hours: String(opts.hours ?? 2160),
+        newest: String(now - 3 * 3600),
         now: String(now),
-        n: String(opts.recentRows ?? 5000),
       } as T;
-    else if (q.includes('p2m_restricted.promptText'))
-      for (const [i, p] of GEN_PROMPTS.entries())
-        yield {
-          // Users 42 and 7, hashed as the extractor writes them; 42 also posts below.
-          u: observationUserHash(KEY, i % 2 ? 7 : 42),
-          p,
-          v: [101, 201],
-          liked: 1,
-          favorite: 0,
-          disliked: 0,
-        } as T;
-    else throw new Error(`unexpected ClickHouse query: ${q}`);
+    else if (q.includes('p2m_restricted.promptText')) {
+      // Only the window's first day (2026-07-21) holds rows.
+      if (!q.includes(`time >= toDateTime('2026-07-21 00:00:00', 'UTC')`)) return;
+      for (const row of opts.genRows ?? defaultGenRows) yield row as T;
+    } else throw new Error(`unexpected ClickHouse query: ${q}`);
   }
   const base = pgliteSql(db);
   const query = vi.fn(async (sql: Prisma.Sql) => {
     const t = sql.text;
     pgReads.push(t);
+    if (openStreams) workWhileOpen.push('postgres read');
     if (t.includes('"ResourceIntentVocabulary"')) return base.query(sql);
     if (t.includes('FROM "ModelVersion" mv JOIN "Model" m'))
       return [
@@ -205,6 +245,8 @@ async function world(
     db,
     chQueries,
     chDrained,
+    workWhileOpen,
+    streamOpen: () => openStreams > 0,
     postedBatches,
     pgReads,
     objectsMade,
@@ -250,7 +292,10 @@ describe('the happy path (the control every refusal below departs from)', () => 
         [CANDIDATE, 'candidate', null],
       ],
     });
+    const cooperativeBefore = cooperativeFinalizes.count;
     const { summary, payload } = await runTagIndexBuild({ dryRun: false }, w.deps);
+    // The index is computed in slices that yield the event loop.
+    expect(cooperativeFinalizes.count).toBe(cooperativeBefore + 1);
     const newest = await versionOf(w.db, NEW_FROZEN);
     expect(newest).not.toBe(await versionOf(w.db, OLD_FROZEN));
     expect(summary.vocabVersion).toBe(newest);
@@ -292,8 +337,10 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect([...w.store.values()].map((b) => b.length)).toEqual([payload.length]);
     expect(w.closed).toHaveBeenCalledTimes(1);
     // Every ClickHouse result read to its end (a half-read stream aborts the response).
-    expect(w.chQueries).toHaveLength(3);
+    // The two gates' queries, then one generator query per UTC day of the 90-day window.
+    expect(w.chQueries).toHaveLength(2 + 90);
     expect(w.chDrained).toEqual(w.chQueries);
+    expect(w.workWhileOpen).toEqual([]);
   });
 
   it('a dry run needs no bucket, makes no object store and stores nothing', async () => {
@@ -379,41 +426,121 @@ describe("the build's env vars in the server schema", () => {
     });
 });
 
-describe('gate 2: a read-only ClickHouse session', () => {
-  it('refuses a session that is not read-only', async () => {
-    const w = await world({ readonly: 0 });
+describe("gate 2: the ClickHouse account's own profile is readonly=2", () => {
+  for (const level of [0, 1])
+    it(`refuses an account at readonly=${level}`, async () => {
+      const w = await world({ readonly: level });
+      await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+        `the ClickHouse account runs at readonly=${level}; it needs a profile with readonly=2`
+      );
+      expect(w.chQueries).toHaveLength(1);
+      expect(w.deps.query).not.toHaveBeenCalled();
+      expect(w.closed).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("gate 3: the training window's generator coverage", () => {
+  it('refuses when no observation lies at or after the window end, before any training read', async () => {
+    const w = await world({ after: 0 });
     await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
-      'the ClickHouse session is not read-only'
+      'no generator observation at or after the window end 2026-10-19T00:00:00.000Z'
     );
-    expect(w.chQueries).toHaveLength(1);
     expect(w.deps.query).not.toHaveBeenCalled();
-    expect(w.closed).toHaveBeenCalledTimes(1);
+    expectNoTrainingReads(w);
+  });
+
+  it('asks about the window the build trains on', async () => {
+    const w = await world();
+    await runTagIndexBuild({ dryRun: false }, w.deps);
+    const q = w.chQueries[1];
+    expect(q).toContain(`countIf(time >= toDateTime('2026-10-19 00:00:00', 'UTC')) AS after`);
+    expect(q).toContain(
+      `uniqExactIf(toStartOfHour(time), time < toDateTime('2026-10-19 00:00:00', 'UTC'))`
+    );
+    expect(q).toContain(`WHERE time >= toDateTime('2026-07-21 00:00:00', 'UTC')`);
+  });
+
+  it('refuses 44 missing hours of 2,160 (over 2%), before any training read', async () => {
+    const w = await world({ hours: 2160 - 44 });
+    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+      "44 of the window's 2160 hours have no generator observation (allowed 43)"
+    );
+    expect(w.deps.query).not.toHaveBeenCalled();
+    expectNoTrainingReads(w);
+  });
+
+  it('builds with 43 missing hours, and records them on the summary and the manifest row', async () => {
+    const w = await world({ hours: 2160 - 43 });
+    const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
+    expect(summary.observationHours).toEqual({ window: 2160, missing: 43 });
+    expect(summary.stats.observationHours).toEqual({ window: 2160, missing: 43 });
+    const [row] = (
+      await w.db.query<{ h: unknown }>(
+        `SELECT "buildStats"->'observationHours' AS h FROM "ResourceIntentTagIndexSnapshot"`
+      )
+    ).rows;
+    expect(row.h).toEqual({ window: 2160, missing: 43 });
+  });
+
+  it('a dry run reports missing hours over the limit instead of refusing', async () => {
+    const w = await world({
+      hours: 793,
+      env: { ...ENV, RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined },
+    });
+    const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
+    expect(summary.observationHours).toEqual({ window: 2160, missing: 1367 });
   });
 });
 
-describe('gate 3: generator observations no older than the limit', () => {
-  const LIMIT = TAG_BUILD_MAX_OBSERVATION_AGE_HOURS * 3600;
-
-  it('refuses one second past the limit, before any training read', async () => {
-    const w = await world({ ageSec: LIMIT + 1 });
-    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
-      'the newest generator observation is 360 min old (limit 6 h); the extractor is stalled'
-    );
-    expect(w.deps.query).not.toHaveBeenCalled();
-    expectNoTrainingReads(w);
+describe('generator observations are read a day per query, each response read to its end', () => {
+  it('tags nothing and reads no Postgres while a ClickHouse response is open', async () => {
+    // More rows on one day than the old reader buffered before tagging (20,000).
+    const genRows = Array.from({ length: 20_001 }, (_, i) => ({
+      ...defaultGenRows[i % 3],
+      p: `row ${i}`,
+    }));
+    const w = await world({ genRows });
+    w.deps.excludeGenPrompt = () => {
+      if (w.streamOpen()) w.workWhileOpen.push('tagging');
+      return false;
+    };
+    const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
+    expect(summary.observations).toBe(20_001);
+    expect(w.workWhileOpen).toEqual([]);
   });
 
-  it('builds at exactly the limit', async () => {
-    const w = await world({ ageSec: LIMIT });
-    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).resolves.toBeDefined();
-  });
-
-  it('refuses when the last three days hold no observation at all', async () => {
-    const w = await world({ recentRows: 0, ageSec: 60 });
-    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
-      'no generator observation in the last 3 days'
-    );
-    expectNoTrainingReads(w);
+  it('pages cover the window exactly, one UTC day each, and the limit spans the pages', async () => {
+    const asked: string[] = [];
+    const ch: TagClickHouse = {
+      async *rows<T>(q: string) {
+        asked.push(
+          q
+            .match(
+              /time >= (toDateTime\('[^']+', 'UTC'\)) AND time < (toDateTime\('[^']+', 'UTC'\))/
+            )
+            ?.slice(1)
+            .join(' .. ') ?? ''
+        );
+        for (let i = 0; i < 2; i++)
+          yield { u: '1', p: 'x', v: [1], liked: 0, favorite: 0, disliked: 0 } as T;
+      },
+      close: async () => undefined,
+    };
+    const window = {
+      start: new Date('2026-07-21T00:00:00Z'),
+      end: new Date('2026-07-23T12:00:00Z'),
+    };
+    const pages: number[] = [];
+    for await (const page of genObservationPages(ch, window)) pages.push(page.length);
+    expect(pages).toEqual([2, 2, 2]);
+    expect(asked).toEqual([
+      `toDateTime('2026-07-21 00:00:00', 'UTC') .. toDateTime('2026-07-22 00:00:00', 'UTC')`,
+      `toDateTime('2026-07-22 00:00:00', 'UTC') .. toDateTime('2026-07-23 00:00:00', 'UTC')`,
+      `toDateTime('2026-07-23 00:00:00', 'UTC') .. toDateTime('2026-07-23 12:00:00', 'UTC')`,
+    ]);
+    const limited: number[] = [];
+    for await (const page of genObservationPages(ch, window, 3)) limited.push(page.length);
+    expect(limited).toEqual([2, 2]);
   });
 });
 
@@ -456,6 +583,32 @@ describe('generator prompts never reach the slow-audit log', () => {
   });
 });
 
+describe('the put', () => {
+  it('runs with the training-side accumulator already unreachable', async () => {
+    const v8 = await import('v8');
+    const vm = await import('vm');
+    v8.setFlagsFromString('--expose_gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    const w = await world();
+    const before = accumulators.length;
+    let reachableDuringPut: boolean | undefined;
+    const objects = w.objectsMade();
+    w.deps.objects = () => ({
+      ...objects,
+      put: async (key, bytes) => {
+        gc();
+        gc();
+        reachableDuringPut = accumulators[before]?.deref() !== undefined;
+        await objects.put(key, bytes);
+      },
+    });
+    await runTagIndexBuild({ dryRun: false }, w.deps);
+    // Positive control: this build made exactly one accumulator, and the put ran.
+    expect(accumulators.length).toBe(before + 1);
+    expect(reachableDuringPut).toBe(false);
+  });
+});
+
 describe('readonlyClickHouse', () => {
   it('closes a result abandoned mid-stream, and leaves a fully read one alone', async () => {
     const results: { close: ReturnType<typeof vi.fn> }[] = [];
@@ -489,10 +642,12 @@ describe('readonlyClickHouse', () => {
       })()
     ).rejects.toThrow('consumer failed');
     expect(results[1].close).toHaveBeenCalledTimes(1);
-    // Every query the client runs is read-only.
-    expect(settings).toEqual([
-      expect.objectContaining({ clickhouse_settings: expect.objectContaining({ readonly: '2' }) }),
-    ]);
+    // The client sends no readonly: the session runs at the account's own level, which the gate
+    // checks. A client-sent readonly=2 would read back as 2 on a writable account.
+    expect(settings).toHaveLength(1);
+    const sent = (settings[0] as { clickhouse_settings: Record<string, unknown> })
+      .clickhouse_settings;
+    expect(sent).toEqual({ max_execution_time: 1800 });
   });
 });
 

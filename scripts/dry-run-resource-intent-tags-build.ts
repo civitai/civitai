@@ -23,8 +23,9 @@ import { runScriptAndExit } from './lib/run-as-script';
  *       sources share one user namespace
  * The `--limit-*` flags (positive integers) cut the inputs for a quick trial; `--limit-gen` is a
  * LIMIT on the ClickHouse read. The printed counts say what was read. It prints each standby
- * statement kind's attempt times (retries counted separately), the build's peak RSS, and the wall
- * time.
+ * statement kind's attempt times (retries counted separately), the build's peak RSS, its longest
+ * event-loop stall, and the wall time. Unlike the job, it reports missing window hours over the limit
+ * instead of refusing.
  */
 
 const ms = (t0: number) => Math.round(performance.now() - t0);
@@ -48,6 +49,16 @@ async function gc() {
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const tStart = performance.now();
+  // The longest the event loop went without running a 10 ms timer during the build: what every
+  // other job in a shared process would wait.
+  let lastTick = performance.now();
+  let maxLoopGap = 0;
+  const loopTimer = setInterval(() => {
+    const t = performance.now();
+    maxLoopGap = Math.max(maxLoopGap, t - lastTick);
+    lastTick = t;
+  }, 10);
+  loopTimer.unref();
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -130,7 +141,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       compressedMiB: mib(payload.length),
       underCap: payload.length <= TAG_INDEX_MAX_PAYLOAD_BYTES,
     });
-    log('memory', { peakRssMiB: mib(process.resourceUsage().maxRSS * 1024), buildMs: ms(tStart) });
+    clearInterval(loopTimer);
+    log('memory', {
+      peakRssMiB: mib(process.resourceUsage().maxRSS * 1024),
+      buildMs: ms(tStart),
+      maxEventLoopGapMs: Math.round(maxLoopGap),
+    });
 
     await gc();
     const before = process.memoryUsage();
