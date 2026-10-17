@@ -3,6 +3,7 @@ import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
 import {
   COUNTERPARTY_REVIEW_DETECTOR,
   findCounterpartyPairs,
+  PAIR_CEILING,
   type CounterpartyPair,
   type Member,
   type ReviewClickhouse,
@@ -62,11 +63,16 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   }
 
   const pairs = await findCounterpartyPairs(deps.ch, { since: BANKABLE_CUTOVER, min });
+  if (pairs.length >= PAIR_CEILING)
+    deps.log?.('creator-program-counterparty-review-ceiling', { pairs: pairs.length });
   const byUser = new Map<number, CounterpartyPair[]>();
   for (const pair of pairs) byUser.set(pair.userId, [...(byUser.get(pair.userId) ?? []), pair]);
   const members = await deps.findMembers([...byUser.keys()]);
 
   const findings: AbuseReportInput['findings'] = [];
+  // Saved only once the report carrying the repeat has been filed: saved earlier, a failed report
+  // would lose the repeat for good, since the next run would see no new volume.
+  const repeatRecords = new Map<number, WarningRecord>();
   let warned = 0;
   let repeats = 0;
   let failed = 0;
@@ -117,7 +123,7 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     );
     if (!grew.length) continue;
 
-    await deps.warnings.set(member.id, {
+    repeatRecords.set(member.id, {
       ...record,
       counterparties: { ...record.counterparties, ...current },
     });
@@ -150,6 +156,10 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     counters: { pairs: pairs.length, members: members.length, warned, repeats, failed },
     findings,
   });
+  const filed = new Set(findings.map((f) => f.userId));
+  for (const [userId, record] of repeatRecords)
+    if (filed.has(userId)) await deps.warnings.set(userId, record);
+
   deps.log?.('creator-program-counterparty-review-reported', {
     pairs: pairs.length,
     warned,

@@ -28,7 +28,7 @@ describe('readMinimum', () => {
     ['abc', null],
     ['0', null],
     ['-5', null],
-    ['25000', 25_000],
+    ['1234', 1_234],
   ])('reads %j as %j', async (stored, expected) => {
     redisMock.sysRedis.get.mockResolvedValueOnce(stored);
 

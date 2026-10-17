@@ -20,7 +20,7 @@ import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
 export const COUNTERPARTY_REVIEW_DETECTOR = 'creator-program-counterparty';
 
 /** A ceiling on pairs read back, far above what the review files: members are filtered after it. */
-const PAIR_CEILING = 10_000;
+export const PAIR_CEILING = 10_000;
 
 /** Postgres parameter limits for the member lookup. */
 const MEMBER_LOOKUP_CHUNK = 1_000;

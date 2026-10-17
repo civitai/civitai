@@ -10,6 +10,7 @@ import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
 import {
   COUNTERPARTY_REVIEW_DETECTOR,
   counterpartyPairsSql,
+  PAIR_CEILING,
   type Member,
 } from '~/server/services/creator-program-counterparty-review/detect';
 import {
@@ -35,6 +36,7 @@ function world({
   minimum = MIN as number | null,
   now = afterCutover,
   sendWarning = vi.fn(async () => ({ chatId: 500 })),
+  reportFails = () => false,
 } = {}) {
   const store = new Map<number, WarningRecord>();
   const reports: AbuseReportInput[] = [];
@@ -49,7 +51,10 @@ function world({
       set: async (id, record) => void store.set(id, record),
     },
     sendWarning,
-    sendReport: async (report) => void reports.push(report),
+    sendReport: async (report) => {
+      if (reportFails()) throw new Error('board unavailable');
+      reports.push(report);
+    },
     now: () => now,
     log: (name, data) => void logs.push({ name, data }),
   };
@@ -157,6 +162,35 @@ describe('runCounterpartyReview', () => {
 
     // Filed once for that growth, not every day after it.
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ repeats: 0 });
+  });
+
+  it('keeps a repeat for the next run when the report carrying it fails', async () => {
+    let failing = false;
+    const w = world({ rows: [pair(22, 5_000, 4_000)], reportFails: () => failing });
+    await runCounterpartyReview(w.deps);
+
+    w.setRows([pair(22, 6_000, 5_000)]);
+    failing = true;
+    await expect(runCounterpartyReview(w.deps)).rejects.toThrow('board unavailable');
+    expect(w.store.get(creator.id)?.counterparties).toEqual({ '22': 4_000 });
+
+    failing = false;
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ repeats: 1 });
+    expect(w.reports.at(-1)!.findings).toEqual([
+      expect.objectContaining({ userId: creator.id, actioned: false }),
+    ]);
+  });
+
+  it('logs when the pair query reaches its ceiling', async () => {
+    const rows = Array.from({ length: PAIR_CEILING }, (_, i) => pair(1_000 + i, 5_000, 5_000));
+    const w = world({ rows, members: [] });
+
+    await runCounterpartyReview(w.deps);
+
+    expect(w.logs).toContainEqual({
+      name: 'creator-program-counterparty-review-ceiling',
+      data: { pairs: PAIR_CEILING },
+    });
   });
 
   it('files a new counterparty after a warning as a repeat', async () => {
