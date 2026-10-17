@@ -13,22 +13,33 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
  *     did before this cache existed. A Redis failure can never ACCEPT a credential.
  *   - POSITIVE RESULTS ONLY. A credential the database does not know is never cached, so a key works
  *     the moment it is created.
- *   - NO STALE SERVING. `fetchThroughCache` and the stale-while-revalidate builders keep serving the
- *     old value to concurrent readers after a bust; a revoked key must not be served at all.
+ *   - NO STALE SERVING. `fetchThroughCache`'s bust only marks an entry stale, and a reader that loses
+ *     the refill lock is still handed the old value; a revoked key must not be served at all.
+ *     `createCachedObject` (non-SWR) does drop the entry on bust, but it is keyed by numeric id, its
+ *     refill overwrites unconditionally, and its bust marker lives shorter than an entry — this cache
+ *     is keyed by the credential hash and needs the two properties below.
  *   - EXPIRY IS RE-CHECKED ON EVERY HIT against the clock, and an entry never outlives `expiresAt`.
- *   - REVOCATION WRITES A TOMBSTONE rather than deleting the entry, and refills use SET NX. A refill
- *     whose database read began before the revoke cannot land on top of it: the tombstone outlives
- *     any such read, and while it stands every request goes to the database.
+ *   - REVOCATION WRITES A TOMBSTONE rather than deleting the entry, and refills use SET NX. While the
+ *     tombstone stands every request goes to the database, and a refill cannot land on top of it.
+ *     A refill whose database read began before the revoke could still land AFTER the tombstone
+ *     expires if that read stalled long enough, so a refill is also dropped when more than
+ *     `API_KEY_MAX_REFILL_AGE_SECONDS` have passed since its read began. The read began before the
+ *     revoke, so a write within that bound lands while the tombstone (longer) still stands.
  *   - ONLY `User` and `System` keys with no OAuth client are cached. OAuth access tokens bypass the
  *     cache entirely: they are revoked from more places (including another service writing the table
  *     directly) and their request path reads the consent row anyway.
  *
- * Residual window: a revocation whose tombstone write fails (Redis unavailable at that moment) leaves
- * the old entry in place until it expires — at most `API_KEY_PRINCIPAL_TTL_SECONDS`. Every write site
- * that can revoke a cached row is pinned by `api-key-principal-cache.ledger.test.ts`.
+ * Residual window, at most `API_KEY_PRINCIPAL_TTL_SECONDS`: a revocation whose tombstone write fails
+ * (Redis unavailable at that moment), and any change made to the table without going through
+ * `evictCachedApiKeys` — manual SQL, another service — leave a cached row in place until it expires.
+ * Every write site in this repo is pinned by `api-key-principal-cache.ledger.test.ts`.
  */
 export const API_KEY_PRINCIPAL_TTL_SECONDS = 30;
-// Longer than any database read a refill could have started before the revoke.
+// A refill older than this (measured from before its cache read) is not written. A healthy
+// single-row primary read takes milliseconds; skipping the write only costs a later miss.
+export const API_KEY_MAX_REFILL_AGE_SECONDS = 10;
+// Must outlive every refill that could be written: any refill landing after a revoke started its
+// read before it, and is dropped once older than API_KEY_MAX_REFILL_AGE_SECONDS.
 export const API_KEY_TOMBSTONE_TTL_SECONDS = API_KEY_PRINCIPAL_TTL_SECONDS * 2;
 export const API_KEY_LAST_USED_DEBOUNCE_SECONDS = 60 * 60;
 
@@ -106,9 +117,14 @@ export async function readCachedApiKey(hash: string, now: Date): Promise<ApiKeyC
   return { apiKey, fill: false };
 }
 
-/** Cache a row the database just returned. Best-effort and never throws. */
+/**
+ * Cache a row the database just returned. `now` is when the lookup began, taken BEFORE the cache
+ * read: a refill older than `API_KEY_MAX_REFILL_AGE_SECONDS` is dropped (see the module comment).
+ * Best-effort and never throws.
+ */
 export async function cacheApiKey(hash: string, apiKey: CachedApiKey, now: Date) {
   if (!isCacheableApiKey(apiKey)) return;
+  if (Date.now() - now.getTime() > API_KEY_MAX_REFILL_AGE_SECONDS * 1000) return;
   let ttl = API_KEY_PRINCIPAL_TTL_SECONDS;
   if (apiKey.expiresAt !== null) {
     const remaining = Math.floor((new Date(apiKey.expiresAt).getTime() - now.getTime()) / 1000);
@@ -134,7 +150,9 @@ export async function evictCachedApiKeys(hashes: string[]) {
   const unique = [...new Set(hashes.filter(Boolean))];
   if (!unique.length) return;
   const results = await Promise.allSettled(
-    unique.map((hash) =>
+    // Inside an async callback, so a client that throws synchronously rejects one promise rather
+    // than escaping the whole call.
+    unique.map(async (hash) =>
       redis.packed.set<Entry>(
         entryKey(hash),
         { revoked: true },

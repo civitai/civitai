@@ -1,12 +1,17 @@
+import { pack, unpack } from 'msgpackr';
 import { redisMock } from './redis.mock';
 
 type SetOptions = { EX?: number; NX?: boolean; XX?: boolean; KEEPTTL?: boolean };
-type Stored = { value: unknown; expiresAt: number | null };
+type Stored = { value: Buffer; expiresAt: number | null };
 
 /**
  * A key/value store with expiry behind the cache-cluster `redis` mock's `get`/`set`/`del`, plain
  * and `packed`, for tests that need a cache to actually hold what it wrote. Expiry reads
  * `Date.now()`, so fake timers drive it. `NX` and `XX` answer `null` the way Redis does.
+ *
+ * Values are stored msgpack-PACKED and unpacked on every read, as the real `packed` codec does, so
+ * every read hands back a fresh object: a caller mutating what it got cannot reach the next reader
+ * through the fake when it could not through Redis.
  *
  * Call `install()` in a `beforeEach` (after any mock reset); it returns the store so a test can
  * read or seed raw entries.
@@ -21,7 +26,7 @@ export function installFakeCacheRedis() {
       store.delete(key);
       return null;
     }
-    return hit.value;
+    return unpack(hit.value);
   };
 
   const write = (key: string, value: unknown, options: SetOptions = {}) => {
@@ -34,7 +39,7 @@ export function installFakeCacheRedis() {
       : options.KEEPTTL
       ? previous?.expiresAt ?? null
       : null;
-    store.set(key, { value, expiresAt });
+    store.set(key, { value: pack(value), expiresAt });
     return 'OK';
   };
 
@@ -63,5 +68,14 @@ export function installFakeCacheRedis() {
     return true;
   });
 
-  return store;
+  return Object.assign(store, {
+    /** The decoded value at `key`, ignoring expiry (null when absent). */
+    peek: (key: string) => {
+      const hit = store.get(key);
+      return hit ? unpack(hit.value) : null;
+    },
+    /** Write a raw entry, as another writer would. */
+    plant: (key: string, value: unknown, ttlSeconds: number) =>
+      write(key, value, { EX: ttlSeconds }),
+  });
 }

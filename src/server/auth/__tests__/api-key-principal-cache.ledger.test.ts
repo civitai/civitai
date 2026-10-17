@@ -1,4 +1,13 @@
-import { globSync, readFileSync, statSync } from 'fs';
+import {
+  globSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
+import { tmpdir } from 'os';
 import path from 'path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,8 +87,10 @@ const orchestratorKeyRoute = (await import('~/pages/api/user/orchestrator-key'))
 const ROOT = path.resolve(__dirname, '../../../..');
 const PATTERNS = [
   /\.apiKey\s*\.\s*(create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert|delete|deleteMany)\s*\(/g,
-  /\.(insertInto|updateTable|deleteFrom|mergeInto)\(\s*['"]ApiKey['"]\s*\)/g,
-  /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"ApiKey"/gi,
+  // Kysely, with or without an alias: `.deleteFrom('ApiKey')`, `.updateTable('ApiKey as k')`.
+  /\.(insertInto|updateTable|deleteFrom|mergeInto)\(\s*['"]ApiKey(\s+as\s+\w+)?['"]/g,
+  // Raw SQL, any case, quoted or not, with an optional schema: `UPDATE public."ApiKey"`.
+  /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+("?\w+"?\.)?"?apikey"?(?![\w"])/gi,
 ];
 const NOT_CACHED =
   'touches OAuth rows only (clientId set, type Access/Refresh); the cache never holds those';
@@ -110,27 +121,31 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   },
 };
 
-/** Drops comment lines, so prose that quotes a call is not counted as one. */
+/**
+ * Drops comments, so prose that quotes a call is not counted as one. Only a block comment that OPENS
+ * its line is removed: a `/*` inside a string ('apps/*\/src') must not swallow the code after it.
+ * A trailing comment after code is kept, which can only over-count.
+ */
 const code = (text: string) =>
   text
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, '')
     .split('\n')
     .filter((line) => !/^\s*(\/\/|\*)/.test(line))
     .join('\n');
 
-function scan() {
+function scan(root = ROOT) {
   const files = globSync('{src,apps,packages,scripts}/**/*.{ts,tsx,js,mjs,cjs,svelte}', {
-    cwd: ROOT,
+    cwd: root,
     exclude: (f) =>
       /node_modules|\.svelte-kit|(^|\/)dist(\/|$)/.test(typeof f === 'string' ? f : f.name),
   }).filter(
     (f) =>
       !/(__tests__|\.test\.|\.spec\.|\/migrations\/)/.test(f) &&
-      statSync(path.join(ROOT, f)).isFile()
+      statSync(path.join(root, f)).isFile()
   );
   const found: Record<string, number> = {};
   for (const f of files) {
-    const text = code(readFileSync(path.join(ROOT, f), 'utf8'));
+    const text = code(readFileSync(path.join(root, f), 'utf8'));
     const n = PATTERNS.reduce((sum, re) => sum + (text.match(re) ?? []).length, 0);
     if (n) found[f] = n;
   }
@@ -153,6 +168,35 @@ describe('ApiKey write ledger', () => {
     expect(".deleteFrom('ApiKey')").toMatch(new RegExp(kysely.source));
     expect('DELETE FROM "ApiKey" WHERE').toMatch(new RegExp(raw.source, 'i'));
     expect('trpc.apiKey.delete.useMutation(').not.toMatch(new RegExp(prisma.source));
+  });
+
+  it('counts every write shape in a real file, and none of the comments (positive control)', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'apikey-ledger-'));
+    try {
+      mkdirSync(path.join(dir, 'src'));
+      writeFileSync(
+        path.join(dir, 'src', 'fixture.ts'),
+        [
+          "const glob = 'apps/*/src';", // opens a fake block comment for a naive stripper
+          'await dbWrite.apiKey.delete({ where });', // 1
+          'await tx.apiKey',
+          '  .updateMany({ where, data });', // 2
+          "await db.deleteFrom('ApiKey').execute();", // 3
+          "await db.updateTable('ApiKey as k').set({}).execute();", // 4
+          'await sql`DELETE FROM "ApiKey" WHERE id = 1`;', // 5
+          'await sql`update public."ApiKey" set name = 1`;', // 6
+          'await sql`insert into apikey (id) values (1)`;', // 7
+          '/* dbWrite.apiKey.delete({ where }) in a block comment */',
+          '// dbWrite.apiKey.delete({ where }) in a line comment',
+          ' * dbWrite.apiKey.delete({ where }) in a JSDoc line',
+          "await db.selectFrom('ApiKey').execute();", // a read
+          'await sql`UPDATE "ApiKeyUsage" SET n = 1`;', // another table
+        ].join('\n')
+      );
+      expect(scan(dir).found).toEqual({ 'src/fixture.ts': 7 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('lists every ApiKey write in the repository, no more and no fewer', () => {
@@ -217,8 +261,8 @@ const matches = (row: Row, where: Record<string, unknown>): boolean =>
 const dbReads = () => dbMock.dbWrite.apiKey.findFirst.mock.calls.length;
 let store: ReturnType<typeof installFakeCacheRedis>;
 const tombstoned = (hash: string) =>
-  (store.get(`${REDIS_KEYS.CACHES.API_KEY_PRINCIPAL}:${hash}`)?.value as { revoked?: true })
-    ?.revoked === true;
+  (store.peek(`${REDIS_KEYS.CACHES.API_KEY_PRINCIPAL}:${hash}`) as { revoked?: true })?.revoked ===
+  true;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -295,6 +339,16 @@ describe('writes that evict the bearer cache', () => {
     expect(tombstoned('hash-of-personal')).toBe(false);
     expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
+  });
+
+  it('a failed tombstone write does not fail the delete, and the row is gone', async () => {
+    await warm('personal');
+    const { redisMock } = await import('~/__tests__/mocks/redis.mock');
+    redisMock.redis.packed.set.mockImplementation((() => {
+      throw new Error('client not connected');
+    }) as never);
+    await expect(deleteApiKey({ id: 51, userId: 501 })).resolves.toMatchObject({ count: 1 });
+    expect(rows.map((r) => r.id)).toEqual([52]);
   });
 
   it('setApiKeyBuzzLimit serves the new limit on the next request', async () => {

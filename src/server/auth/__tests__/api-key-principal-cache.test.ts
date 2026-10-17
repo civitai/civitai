@@ -14,12 +14,13 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
-const {
-  API_KEY_PRINCIPAL_TTL_SECONDS,
-  API_KEY_TOMBSTONE_TTL_SECONDS,
-  API_KEY_LAST_USED_DEBOUNCE_SECONDS,
-  evictCachedApiKeys,
-} = await import('~/server/auth/api-key-principal-cache');
+const cacheModule = await import('~/server/auth/api-key-principal-cache');
+const { evictCachedApiKeys, cacheApiKey } = cacheModule;
+
+// Literal, not imported: an expectation derived from the constant moves with a mutated constant.
+const ENTRY_TTL_S = 30;
+const TOMBSTONE_TTL_S = 60;
+const LAST_USED_S = 3600;
 
 const HOUR = 60 * 60 * 1000;
 const T0 = new Date('2026-10-17T12:00:00.000Z');
@@ -98,10 +99,10 @@ describe('bearer lookup cache: hit, miss, TTL', () => {
 
   it('goes back to the primary once the entry is older than the TTL', async () => {
     await getSessionFromBearerToken('personal');
-    vi.setSystemTime(T0.getTime() + (API_KEY_PRINCIPAL_TTL_SECONDS - 1) * 1000);
+    vi.setSystemTime(T0.getTime() + (ENTRY_TTL_S - 1) * 1000);
     await getSessionFromBearerToken('personal');
     expect(dbReads()).toBe(1);
-    vi.setSystemTime(T0.getTime() + (API_KEY_PRINCIPAL_TTL_SECONDS + 1) * 1000);
+    vi.setSystemTime(T0.getTime() + (ENTRY_TTL_S + 1) * 1000);
     await getSessionFromBearerToken('personal');
     expect(dbReads()).toBe(2);
   });
@@ -143,16 +144,47 @@ describe('bearer lookup cache: hit, miss, TTL', () => {
   });
 });
 
+describe('bearer lookup cache: constants', () => {
+  it('pins the TTLs and the ordering the tombstone argument rests on', () => {
+    expect(cacheModule.API_KEY_PRINCIPAL_TTL_SECONDS).toBe(30);
+    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBe(60);
+    expect(cacheModule.API_KEY_LAST_USED_DEBOUNCE_SECONDS).toBe(3600);
+    expect(cacheModule.API_KEY_MAX_REFILL_AGE_SECONDS).toBe(10);
+    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBeGreaterThanOrEqual(
+      cacheModule.API_KEY_PRINCIPAL_TTL_SECONDS
+    );
+    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBeGreaterThan(
+      cacheModule.API_KEY_MAX_REFILL_AGE_SECONDS
+    );
+  });
+});
+
 describe('bearer lookup cache: expiry', () => {
   it('rejects a cached key once its expiresAt has passed, though the entry is still in Redis', async () => {
     const expiresAt = new Date(T0.getTime() + 10_000);
     rows = [{ ...personal(), expiresAt }];
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(31);
     // Plant the entry with a long Redis TTL, so only the per-hit clock check can reject it.
-    const entry = store.get(cacheKey('hash-of-personal'))!;
-    entry.expiresAt = T0.getTime() + HOUR;
+    store.plant(cacheKey('hash-of-personal'), store.peek(cacheKey('hash-of-personal')), 3600);
     vi.setSystemTime(expiresAt.getTime() + 1);
     expect(await getSessionFromBearerToken('personal')).toBeNull();
+  });
+
+  it('does not cache a row whose expiry is already within the second', async () => {
+    rows = [{ ...personal(), expiresAt: new Date(T0.getTime() + 400) }];
+    expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(31);
+    expect(store.has(cacheKey('hash-of-personal'))).toBe(false);
+  });
+
+  it('rejects an OAuth entry planted in the cache by another writer', async () => {
+    rows = [];
+    store.plant(
+      cacheKey('hash-of-personal'),
+      { apiKey: { ...personal(), type: 'Access', clientId: 'client-z' } },
+      3600
+    );
+    expect(await getSessionFromBearerToken('personal')).toBeNull();
+    expect(dbReads()).toBe(1);
   });
 
   it('never keeps an entry in Redis past the key’s own expiry', async () => {
@@ -169,7 +201,7 @@ describe('bearer lookup cache: revocation', () => {
     await evictCachedApiKeys(['hash-of-personal']);
     expect(await getSessionFromBearerToken('personal')).toBeNull();
     expect(store.get(cacheKey('hash-of-personal'))?.expiresAt).toBe(
-      T0.getTime() + API_KEY_TOMBSTONE_TTL_SECONDS * 1000
+      T0.getTime() + TOMBSTONE_TTL_S * 1000
     );
   });
 
@@ -187,6 +219,50 @@ describe('bearer lookup cache: revocation', () => {
     release();
     await inFlight;
     expect(await getSessionFromBearerToken('personal')).toBeNull();
+  });
+
+  it('a refill whose primary read stalls past the tombstone does not resurrect the key', async () => {
+    let release!: () => void;
+    dbMock.dbWrite.apiKey.findFirst.mockImplementationOnce((async (args: never) => {
+      const row = await findFirst(args);
+      await new Promise<void>((resolve) => (release = resolve));
+      return row;
+    }) as never);
+    const inFlight = getSessionFromBearerToken('personal');
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    rows = [];
+    await evictCachedApiKeys(['hash-of-personal']);
+    // The read stalls until the tombstone has expired, then returns the pre-revoke row.
+    vi.setSystemTime(T0.getTime() + (TOMBSTONE_TTL_S + 1) * 1000);
+    release();
+    await inFlight;
+    expect(store.peek(cacheKey('hash-of-personal'))).not.toHaveProperty('apiKey');
+    expect(await getSessionFromBearerToken('personal')).toBeNull();
+  });
+
+  it('drops a refill older than the refill bound, and keeps one inside it', async () => {
+    const row = { ...personal() } as never;
+    const started = new Date(T0.getTime());
+    vi.setSystemTime(T0.getTime() + 10_500);
+    await cacheApiKey('hash-of-late', row, started);
+    expect(store.has(cacheKey('hash-of-late'))).toBe(false);
+    vi.setSystemTime(T0.getTime() + 9_500);
+    await cacheApiKey('hash-of-ontime', row, started);
+    expect(store.has(cacheKey('hash-of-ontime'))).toBe(true);
+  });
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('cache cluster down'))],
+    [
+      'throws synchronously',
+      () => {
+        throw new Error('client not connected');
+      },
+    ],
+  ])('eviction resolves when the tombstone write %s', async (_name, impl) => {
+    redisMock.redis.packed.set.mockImplementation(impl as never);
+    await expect(evictCachedApiKeys(['hash-a', 'hash-b'])).resolves.toBeUndefined();
+    expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(2);
   });
 
   it('keeps reading the primary while the tombstone stands, and caches nothing', async () => {
@@ -230,7 +306,7 @@ describe('lastUsedAt throttle', () => {
       where: { id: 31 },
       data: { lastUsedAt: T0 },
     });
-    vi.setSystemTime(T0.getTime() + API_KEY_LAST_USED_DEBOUNCE_SECONDS * 1000 + 1000);
+    vi.setSystemTime(T0.getTime() + LAST_USED_S * 1000 + 1000);
     await getSessionFromBearerToken('personal');
     expect(writes()).toBe(2);
   });

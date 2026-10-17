@@ -36,7 +36,7 @@ vi.mock('~/server/services/user-link.service', async (importOriginal) => ({
 const { getUserCreator, deleteUserCosmeticCache } = await import('~/server/services/user.service');
 const { getUserCreatorHandler } = await import('~/server/controllers/user.controller');
 const { clearSessionCache } = await import('~/server/auth/session-cache');
-const { bustUserCreator, USER_CREATOR_CACHE_TTL } = await import(
+const { bustUserCreator, USER_CREATOR_CACHE_TTL: ttlConstant } = await import(
   '~/server/services/user-creator.service'
 );
 const { upsertManyUserLinksHandler, upsertUserLinkHandler, deleteUserLinkHandler } = await import(
@@ -46,6 +46,8 @@ const { refreshEquippedCosmetics } = await import(
   '~/server/services/creator-milestone-grant.service'
 );
 
+// Literal, not imported: an expectation derived from the constant moves with a mutated constant.
+const TTL_S = 60;
 const ctx = { user: { id: 4101 } };
 const T0 = new Date('2026-10-17T12:00:00.000Z');
 const USER = 4101;
@@ -121,10 +123,10 @@ describe('creator card cache: hit, miss, TTL', () => {
 
   it('reads the database again once the entry is past its TTL', async () => {
     await getUserCreator({ id: USER });
-    vi.setSystemTime(T0.getTime() + (USER_CREATOR_CACHE_TTL - 1) * 1000);
+    vi.setSystemTime(T0.getTime() + (TTL_S - 1) * 1000);
     await getUserCreator({ id: USER });
     expect(userReads()).toBe(1);
-    vi.setSystemTime(T0.getTime() + (USER_CREATOR_CACHE_TTL + 1) * 1000);
+    vi.setSystemTime(T0.getTime() + (TTL_S + 1) * 1000);
     await getUserCreator({ id: USER });
     expect(userReads()).toBe(2);
   });
@@ -152,6 +154,22 @@ describe('creator card cache: hit, miss, TTL', () => {
     expect((await asUser(true))?.excludeFromLeaderboards).toBe(true);
     expect(userReads()).toBe(1);
   });
+
+  it('masking on a cache HIT does not leak into a later hit either', async () => {
+    const asUser = (isModerator: boolean) =>
+      getUserCreatorHandler({
+        input: { id: USER },
+        ctx: { user: { id: 1, isModerator } },
+      } as never);
+    await asUser(true); // miss: fills the entry
+    expect((await asUser(false))?.excludeFromLeaderboards).toBe(false); // hit, masked
+    expect((await asUser(true))?.excludeFromLeaderboards).toBe(true); // hit
+    expect(userReads()).toBe(1);
+  });
+
+  it('pins the TTL', () => {
+    expect(ttlConstant).toBe(60);
+  });
 });
 
 describe('creator card cache: bust on write', () => {
@@ -178,7 +196,7 @@ describe('creator card cache: bust on write', () => {
   it('bustUserCreator busts Redis BEFORE purging the edge tag', async () => {
     let entryAtPurge: unknown;
     purgeCache.mockImplementation(async () => {
-      entryAtPurge = store.get(entryKey(USER))?.value;
+      entryAtPurge = store.peek(entryKey(USER));
     });
     expect(await afterWrite(() => bustUserCreator(USER))).toBe('renamed');
     expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${USER}`] });
@@ -230,12 +248,15 @@ describe('creator card invalidation ledger', () => {
     expect(sources.length).toBeGreaterThan(1000);
   });
 
-  it('spells the user-creator edge tag only in the router and the cache module', () => {
+  it('spells the user-creator edge tag only in the cache module', () => {
     const spelled = sources.filter((f) => read(f).includes('user-creator-')).sort();
-    expect(spelled).toEqual([
-      'src/server/routers/user.router.ts',
-      'src/server/services/user-creator.service.ts',
-    ]);
+    expect(spelled).toEqual(['src/server/services/user-creator.service.ts']);
+  });
+
+  it('the router tags its responses with the same helper the busts purge', () => {
+    expect(read('src/server/routers/user.router.ts')).toMatch(
+      /userCreatorEdgeTag\(input\.id\)[\s\S]*userCreatorEdgeTag\(input\.username\)/
+    );
   });
 
   it('lists every caller of bustUserCreator', () => {

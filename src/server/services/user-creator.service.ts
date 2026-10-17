@@ -184,8 +184,8 @@ export async function bustUserCreatorCache(userIds: number | number[]) {
   }
 }
 
-/** The edge-cache tag `user.getCreator` responses carry for a user id. */
-export const userCreatorEdgeTag = (userId: number) => `user-creator-${userId}`;
+/** The edge-cache tag `user.getCreator` responses carry, by user id or by username. */
+export const userCreatorEdgeTag = (idOrUsername: number | string) => `user-creator-${idOrUsername}`;
 
 /**
  * Drop both copies of these users' creator card: the Redis entry first, then the edge cache.
