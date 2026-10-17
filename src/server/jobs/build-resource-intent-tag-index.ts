@@ -10,6 +10,13 @@ import { applyTagIndexRetention } from '~/server/services/resource-intent-tags/r
 import { RESOURCE_INTENT_TAGS_SPEC_HASH } from '~/server/services/resource-intent-tags/spec';
 import { createJob } from './job';
 
+/**
+ * Several times a full-coverage build's duration, so retried statements, a slower standby and the
+ * eligible set's growth still finish under it without a second build starting
+ * (docs/resource-intent-primitive.md, "Build job").
+ */
+export const LOCK_MINUTES = 120;
+
 export const buildResourceIntentTagIndexJob = createJob(
   'build-resource-intent-tag-index',
   // Weekly, an hour after build-resource-intent-cooc ('0 5 * * 2').
@@ -40,9 +47,8 @@ export const buildResourceIntentTagIndexJob = createJob(
       now: () => new Date(),
     });
   },
-  // A concurrent second build would repeat every read. 90 min outlives a full build with retried
-  // statements (docs/resource-intent-primitive.md, "Build job"); at a weekly cadence a long hold
-  // blocks nothing. The build does not poll `checkIfCanceled`, so it finishes if the scheduler hangs
-  // up.
-  { lockExpiration: 90 * 60, keepLockOnDisconnect: true }
+  // A concurrent second build would repeat every read. See `LOCK_MINUTES`; at a weekly cadence a
+  // long hold blocks nothing. The build does not poll `checkIfCanceled`, so it finishes if the
+  // scheduler hangs up.
+  { lockExpiration: LOCK_MINUTES * 60, keepLockOnDisconnect: true }
 );
