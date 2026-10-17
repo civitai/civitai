@@ -5,6 +5,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   APP_AUTHOR_FEE_DESCRIPTION,
   buzzBankTypesSql,
+  BuzzType,
   GENERATION_TIP_TRANSACTION_PREFIX,
 } from '~/shared/constants/buzz.constants';
 import {
@@ -63,10 +64,25 @@ export const PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL = `(
   OR (type = 'purchase' AND fromAccountId != 0)
 )`;
 
+const userAccountTypesSql = Object.values(BuzzType).map(sqlString).join(', ');
+
+/**
+ * Earnings paid from another user's own Buzz account. These count only beyond what the creator
+ * sent that same user (`SENT_TO_USER_SQL`), netted per user over the whole window, so Buzz passed
+ * back and forth between two accounts earns neither of them anything whichever leg came first.
+ */
+export const RECEIVED_FROM_USER_SQL = `(fromAccountId > 0 AND fromAccountType IN (${userAccountTypesSql}))`;
+
+/**
+ * Buzz a creator sent from any of their own accounts to another user's, whatever the type. Blue
+ * counts too: a purchase paid in Blue reaches the seller as bankable Buzz.
+ */
+export const SENT_TO_USER_SQL = `(fromAccountType IN (${userAccountTypesSql}) AND toAccountId > 0 AND toAccountType IN (${userAccountTypesSql}))`;
+
 export type BankableLedger = {
   /** Yellow + green balance at the cutover. */
   snapshot: number;
-  /** Bankable earnings since the cutover. */
+  /** Bankable earnings since the cutover, net of what the creator sent the users who paid them. */
   earned: number;
   /** Closed months since the cutover: banked, minus extracted, plus extraction fees. */
   consumed: number;
@@ -136,7 +152,7 @@ export async function getBankableLedger(
   const monthStart = dayjs.utc(now).startOf('month').toDate();
   const [snapshot, [sums]] = await Promise.all([
     getCutoverSnapshot(userId, now),
-    clickhouse.$query<{ earned: number; consumed: number }>`
+    clickhouse.$query<{ earned: number; returned: number; consumed: number }>`
       SELECT
         (
           SELECT sum(amount) FROM buzzTransactions
@@ -144,6 +160,21 @@ export async function getBankableLedger(
             AND date >= ${BANKABLE_CUTOVER}
             AND ${BANKABLE_EARNING_PREDICATE_SQL}
         ) AS earned,
+        (
+          SELECT sum(least(received.amount, sent.amount)) FROM (
+            SELECT fromAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
+            WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
+              AND date >= ${BANKABLE_CUTOVER}
+              AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+            GROUP BY counterparty
+          ) AS received
+          INNER JOIN (
+            SELECT toAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
+            WHERE fromAccountId = ${userId} AND ${SENT_TO_USER_SQL}
+              AND date >= ${BANKABLE_CUTOVER}
+            GROUP BY counterparty
+          ) AS sent ON sent.counterparty = received.counterparty
+        ) AS returned,
         (
           SELECT sumIf(amount, type = 'bank')
             + sumIf(amount, type = 'fee' AND description = ${sqlString(EXTRACTION_FEE_DESCRIPTION)})
@@ -159,7 +190,11 @@ export async function getBankableLedger(
     `,
   ]);
 
-  return { snapshot, earned: Number(sums?.earned ?? 0), consumed: Number(sums?.consumed ?? 0) };
+  return {
+    snapshot,
+    earned: Number(sums?.earned ?? 0) - Number(sums?.returned ?? 0),
+    consumed: Number(sums?.consumed ?? 0),
+  };
 }
 
 /**
