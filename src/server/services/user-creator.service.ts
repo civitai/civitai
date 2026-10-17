@@ -105,22 +105,31 @@ export type CachedUserCreator = NonNullable<Awaited<ReturnType<typeof fetchUserC
 export const USER_CREATOR_CACHE_TTL = CacheTTL.xs;
 
 /**
+ * Seconds a bust holds the entry uncached (see WHAT INVALIDATES IT below). Reads in it hit the replica
+ * uncached, so it must outlast replica lag, and each second costs every read of a busted user a
+ * database lookup. 2 s rather than the builder's 10 s default: this card is read on most signed-in
+ * pages and busted on every session invalidation, and its TTL is only 60 s.
+ */
+export const USER_CREATOR_BUST_WINDOW_S = 2;
+
+/**
  * The creator card by user id — the shape the creator card, the header and most other callers ask
  * for, and one of the most frequent lookups on the web tier. Both queries above (the user and the
  * published-model count) are cached together, as one entry per user.
  *
- * WHAT INVALIDATES IT. `bustUserCreatorCache` replaces the entry with the builder's short-lived bust
- * marker, so the next read goes to the database. That read uses the replica, so one landing inside
- * replication lag can re-cache the pre-write card for a TTL — the same exposure the edge cache already
- * had when its purge was refilled from the replica. The builder's refill is also an unconditional SET,
- * so a miss that began before the bust (on any pod) can overwrite the marker with the pre-write card,
- * again for at most a TTL. It is called from:
+ * WHAT INVALIDATES IT. `bustUserCreatorCache` replaces the entry with the builder's bust marker, which
+ * lives `USER_CREATOR_BUST_WINDOW_S`. While it stands every read goes to the database (the replica)
+ * and nothing is written back, so a read landing inside replication lag is served but not re-cached;
+ * the first read after the marker expires refills the entry. The window only covers lag shorter than
+ * itself. The builder's refill is also an unconditional SET, so a miss that began before the bust (on
+ * any pod) can overwrite the marker with the pre-write card, for at most a TTL. It is called from:
  *   - `bustUserCreator`, which every write that already purged the `user-creator-<id>` edge tag now
  *     goes through: profile and user updates, links, showcase, milestone cosmetic grants. The Redis
  *     bust lands BEFORE the edge purge; the other order would let the edge refill from the stale
  *     entry and keep it for its own TTL.
- *   - `clearSessionCache`, i.e. every `refreshSession` / `invalidateSession`: ban, mute, strikes,
- *     account deletion, membership and subscription changes, profile saves.
+ *   - `clearSessionCache`, i.e. every server-side `refreshSession` / `invalidateSession` (session
+ *     invalidation events, not a user's routine session reads): ban, mute, strikes, account deletion,
+ *     membership and subscription changes, profile saves.
  *   - `deleteUserCosmeticCache`, i.e. equipping and unequipping a cosmetic.
  *
  * WHAT IS LEFT TO THE TTL (≤ 60 s, on top of the edge cache's own TTL, which already applied to all of
@@ -143,6 +152,7 @@ function createUserCreatorCache() {
     key: REDIS_KEYS.CACHES.USER_CREATOR,
     idKey: 'id',
     ttl: USER_CREATOR_CACHE_TTL,
+    debounceTime: USER_CREATOR_BUST_WINDOW_S,
     staleWhileRevalidate: false,
     cacheNotFound: false,
     lookupFn: async (ids) => {
