@@ -338,6 +338,7 @@ export async function resolveIngestionError({
       nsfwLevel,
       nsfwLevelLocked: true,
       ingestion: 'Scanned',
+      blockedFor: null,
       scannedAt: new Date(),
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })

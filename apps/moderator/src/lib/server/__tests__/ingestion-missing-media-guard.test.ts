@@ -164,6 +164,14 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
     expect(invalidateThumbnails).toHaveBeenCalledWith(4242, [4100]);
   });
 
+  it('clears blockedFor when it publishes, so no Scanned image keeps a stale block reason', async () => {
+    headObject.mockResolvedValue({ exists: true });
+
+    await resolve();
+
+    expect(published()).toHaveProperty('blockedFor', null);
+  });
+
   it('publishes and logs when the probe THREW — inability to consult is not evidence of loss', async () => {
     // The fail-open half. A rotated credential, a 5xx, or an unset endpoint all surface here as a
     // throw from the storage client; rejecting on any of them would let a verification step block

@@ -3959,6 +3959,7 @@ export const setCollectionItemNsfwLevel = async ({
   const image = await dbRead.image.findUnique({
     where: { id: collectionItem.imageId as number },
     select: {
+      ingestion: true,
       post: {
         select: {
           collectionId: true,
@@ -3979,9 +3980,18 @@ export const setCollectionItemNsfwLevel = async ({
 
   if (!nsfwLevel) throw throwBadRequestError();
 
+  // A rating must not lift a block.
+  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked;
   await dbWrite.image.update({
     where: { id: collectionItem.imageId as number },
-    data: { nsfwLevel, scannedAt: new Date(), ingestion: ImageIngestionStatus.Scanned },
+    data: isBlocked
+      ? { nsfwLevel }
+      : {
+          nsfwLevel,
+          scannedAt: new Date(),
+          ingestion: ImageIngestionStatus.Scanned,
+          blockedFor: null,
+        },
   });
 
   await imagesSearchIndex.queueUpdate([
