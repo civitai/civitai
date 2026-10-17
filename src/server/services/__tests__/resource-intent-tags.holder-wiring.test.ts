@@ -109,6 +109,9 @@ describe('tagIndexSnapshotHolder() wiring', () => {
     await tagIndexSnapshotHolder().resolve();
     expect(spies.decodeWorkerImported).toHaveBeenCalled();
     expect(spies.decodeInWorker).toHaveBeenCalledTimes(1);
+    expect(spies.decodeInWorker).toHaveBeenCalledWith(expect.any(Uint8Array), {
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it('its flag key is the one the doc names (default-off is Flipt state)', () => {

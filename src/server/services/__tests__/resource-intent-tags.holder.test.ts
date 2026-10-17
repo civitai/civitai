@@ -67,6 +67,7 @@ function harness() {
   const objects = new Map<string, Buffer>();
   const calls = { manifest: 0, vocab: 0, get: 0, decode: 0, specHash: 0 };
   let manifestGate: Promise<void> | null = null;
+  let vocabGate: Promise<void> | null = null;
   let failManifest: Error | null = null;
   const specsQueried: unknown[] = [];
   const sql: CoocSql = {
@@ -74,6 +75,7 @@ function harness() {
     query: async <T>(q: { text: string; values: unknown[] }) => {
       if (/FROM "ResourceIntentVocabulary"/.test(q.text)) {
         calls.vocab++;
+        if (vocabGate) await vocabGate;
         return [{ status: 'frozen' }] as T[];
       }
       calls.manifest++;
@@ -82,17 +84,29 @@ function harness() {
       const [spec, except] = q.values;
       specsQueried.push(spec);
       const ready = rows
-        .filter((r) => r.status === 'ready' && r.specHash === spec && r.id !== except)
+        .filter(
+          (r) =>
+            r.status === 'ready' &&
+            r.specHash === spec &&
+            !((except as string[] | undefined) ?? []).includes(r.id)
+        )
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       return ready.slice(0, 1) as T[];
     },
     execute: async () => 0,
   } as unknown as CoocSql;
+  let getGate: Promise<void> | null = null;
   const store: TagIndexObjectStore = {
     prefix: 'p',
     put: async () => undefined,
-    get: async (key) => {
+    // Honours its signal, as the S3 adapter does: an abort rejects a download in progress.
+    get: async (key, _bytes, signal) => {
       calls.get++;
+      if (getGate)
+        await new Promise<void>((resolve, reject) => {
+          void getGate!.then(resolve);
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
       const b = objects.get(key);
       if (!b) throw new TagIndexObjectMissingError(`no object ${key}`);
       return { bytes: Buffer.from(b), sha256: sha(b) };
@@ -148,6 +162,8 @@ function harness() {
     failManifestWith: (e: Error | null) => (failManifest = e),
     gateDecode: (p: Promise<void> | null) => (decodeGate = p),
     failDecodeWith: (e: Error | null) => (failDecode = e),
+    gateGet: (p: Promise<void> | null) => (getGate = p),
+    gateVocab: (p: Promise<void> | null) => (vocabGate = p),
   };
 }
 
@@ -313,6 +329,27 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     );
   });
 
+  it('two refused rows in a row: neither is downloaded again, and the good row below them is served', async () => {
+    const h = harness();
+    const { payloadA, payloadB } = await payloads();
+    h.add(manifestOf('good', payloadA, T0), payloadA);
+    expect((await h.holder.resolve()).snapshot?.id).toBe('good');
+    // Two newer rows whose objects are gone.
+    h.rows.push(manifestOf('bad1', payloadB, new Date(T0.getTime() + 1000), 'b'.repeat(64)));
+    const other = await encodeTagIndex(smallTagIndexData('c'.repeat(64)), SPEC);
+    h.rows.push(manifestOf('bad2', other, new Date(T0.getTime() + 2000), 'c'.repeat(64)));
+    for (let i = 0; i < 5; i++) {
+      h.advance(TAG_INDEX_POLL_MS);
+      await h.holder.resolve();
+      await vi.waitFor(() => expect(h.calls.manifest).toBeGreaterThan(1 + i));
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    // One refusal each; after that, no download at all.
+    expect(h.failures).toEqual(['snapshot_unservable', 'snapshot_unservable']);
+    expect(h.calls.get).toBe(3);
+    expect((await h.holder.resolve()).snapshot?.id).toBe('good');
+  });
+
   it('a decode that fails for a reason that is not the bytes is retried, not refused', async () => {
     const h = harness();
     const { payloadA } = await payloads();
@@ -362,7 +399,7 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     expect((await h.holder.resolve()).snapshot?.id).toBe('s1');
   });
 
-  it('a check running past the load timeout is aborted, its late result discarded, and no check overlaps it', async () => {
+  it('a check running past the load timeout is aborted, its late result discarded, and the next check loads once', async () => {
     vi.useFakeTimers();
     try {
       const h = harness();
@@ -380,21 +417,86 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
       expect(settled).toBe(true);
       await vi.advanceTimersByTimeAsync(TAG_INDEX_LOAD_TIMEOUT_MS);
       expect(h.failures).toEqual(['load_failed']);
-      // Past the retry, the abandoned check's work is still running: no second check starts.
-      h.advance(TAG_INDEX_RETRY_MS);
-      await h.holder.resolve();
-      expect(h.calls.manifest).toBe(1);
-      h.gateManifest(null);
-      release();
+      // Before the retry, nothing new starts; after it, a new check does, although the abandoned
+      // check's database read has not returned.
+      h.advance(TAG_INDEX_RETRY_MS - 1);
+      void h.holder.resolve();
       await vi.advanceTimersByTimeAsync(0);
-      // Its late result is discarded before any download: the abort and the generation stop it.
-      expect(h.calls.vocab).toBe(0);
-      expect(h.calls.get).toBe(0);
-      expect(h.held).toEqual([]);
-      // Once it has stopped, the next request starts a check that loads.
-      await h.holder.resolve();
+      expect(h.calls.manifest).toBe(1);
+      h.advance(1);
+      void h.holder.resolve();
       await vi.advanceTimersByTimeAsync(0);
       expect(h.calls.manifest).toBe(2);
+      h.gateManifest(null);
+      release();
+      await vi.waitFor(() => expect(h.held).toEqual(['s1']));
+      // Only the live check downloaded: the abandoned one stopped at its abort.
+      expect(h.calls.get).toBe(1);
+      expect(h.calls.decode).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a timed-out check stops a download that hangs, and the next check needs no release', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const { payloadA } = await payloads();
+      h.add(manifestOf('s1', payloadA, T0), payloadA);
+      h.gateGet(new Promise<void>(() => undefined));
+      void h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(TAG_INDEX_LOAD_TIMEOUT_MS);
+      expect(h.failures).toEqual(['load_failed']);
+      h.gateGet(null);
+      h.advance(TAG_INDEX_RETRY_MS);
+      void h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.calls.manifest).toBe(2);
+      await vi.waitFor(() => expect(h.held).toEqual(['s1']));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a timed-out check stops waiting on a database read that never returns', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const { payloadA } = await payloads();
+      h.add(manifestOf('s1', payloadA, T0), payloadA);
+      h.gateManifest(new Promise<void>(() => undefined));
+      void h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(TAG_INDEX_LOAD_TIMEOUT_MS);
+      expect(h.failures).toEqual(['load_failed']);
+      h.gateManifest(null);
+      h.advance(TAG_INDEX_RETRY_MS);
+      void h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      // The first read is still pending, yet a second check has started and loads.
+      expect(h.calls.manifest).toBe(2);
+      await vi.waitFor(() => expect(h.held).toEqual(['s1']));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a timed-out check stops waiting on a read inside the load (the vocabulary check)', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const { payloadA } = await payloads();
+      h.add(manifestOf('s1', payloadA, T0), payloadA);
+      h.gateVocab(new Promise<void>(() => undefined));
+      void h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(TAG_INDEX_LOAD_TIMEOUT_MS);
+      expect(h.failures).toEqual(['load_failed']);
+      h.gateVocab(null);
+      h.advance(TAG_INDEX_RETRY_MS);
+      void h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.calls.manifest).toBe(2);
+      await vi.waitFor(() => expect(h.held).toEqual(['s1']));
     } finally {
       vi.useRealTimers();
     }

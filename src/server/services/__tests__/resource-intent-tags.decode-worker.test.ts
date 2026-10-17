@@ -1,5 +1,5 @@
 import { builtinModules } from 'module';
-import { MessageChannel, receiveMessageOnPort } from 'worker_threads';
+import { MessageChannel, receiveMessageOnPort, Worker } from 'worker_threads';
 import { Packr, Unpackr } from 'msgpackr';
 import { describe, expect, it, vi } from 'vitest';
 import { isAllocationFailure } from '~/server/services/resource-intent-cooc/store';
@@ -199,7 +199,7 @@ describe('decodeTagIndexInWorker failures through the store', () => {
     expect(e).not.toBeInstanceOf(TagIndexPayloadCorruptError);
   });
 
-  it('allocation failures keep their code: a worker out of heap, and brotli failing to allocate', async () => {
+  it('allocation failures stay retryable: a decoder failing out of heap passes the store as one, and brotli failing to allocate in the worker keeps its code', async () => {
     const oom = await load(await encoded(), async () => {
       throw Object.assign(new Error('worker heap'), { code: 'ERR_WORKER_OUT_OF_MEMORY' });
     });
@@ -215,6 +215,7 @@ describe('decodeTagIndexInWorker failures through the store', () => {
   });
 
   it('an abort terminates the worker and rejects as unavailable', async () => {
+    const terminate = vi.spyOn(Worker.prototype, 'terminate');
     const abort = new AbortController();
     const hang = `require('worker_threads').parentPort.once('message', () => setInterval(() => {}, 1000));`;
     const pending = decodeTagIndexInWorker(Buffer.from(await encoded()), {
@@ -225,6 +226,29 @@ describe('decodeTagIndexInWorker failures through the store', () => {
     const e = await pending;
     expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
     expect((e as Error).message).toMatch(/aborted/);
+    expect(terminate).toHaveBeenCalledTimes(1);
+    terminate.mockRestore();
+  });
+
+  it('an abort while the arrays are being assembled stops the assembly', async () => {
+    const abort = new AbortController();
+    const e = await decodeTagIndexInWorker(Buffer.from(await encoded()), {
+      signal: abort.signal,
+      pause: async () => abort.abort(),
+      assembleEvery: 3,
+    }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
+    expect((e as Error).message).toMatch(/aborted while assembling/);
+  });
+
+  it('a signal already aborted rejects before any worker starts', async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const e = await decodeTagIndexInWorker(Buffer.from(await encoded()), {
+      signal: abort.signal,
+      source: `throw new Error('a worker was started')`,
+    }).catch((x: unknown) => x);
+    expect((e as Error).message).toMatch(/aborted before it started/);
   });
 });
 

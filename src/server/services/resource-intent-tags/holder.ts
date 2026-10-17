@@ -34,11 +34,12 @@ import {
  * A load streams the object (verifying its size and sha256 against the manifest), then decodes and
  * validates it on a worker thread (`decodeTagIndexInWorker`), so the event loop is not held for the
  * decode. The held index is replaced only once the new one has fully loaded and validated; a failed
- * load keeps it. A snapshot refused as unservable is not downloaded again while it stays newest; the
- * newest ready row after it is served instead. Retiring the served row makes the next check serve
- * the previous ready row, and retiring every row makes it hold nothing (`no_snapshot`). A check
- * still running at `TAG_INDEX_LOAD_TIMEOUT_MS` is aborted (download and decode worker), and no new
- * check starts until its work has stopped, so loads never overlap. Lazy, like the co-occurrence
+ * load keeps it. A snapshot refused as unservable is not downloaded again while a refused row is
+ * newest; the newest ready row no refusal names is served instead. Retiring the served row makes the
+ * next check serve the previous ready row, and retiring every row makes it hold nothing
+ * (`no_snapshot`). A check still running at `TAG_INDEX_LOAD_TIMEOUT_MS` is aborted (its download and
+ * decode worker stop, and it stops waiting on a database read), and no new check starts until it
+ * has settled, so loads do not overlap. Lazy, like the co-occurrence
  * holder (serving design D10): a pod loads on its first request, not at start.
  *
  * Only pods whose code has this spec hash can serve a snapshot built under it, and the query asks
@@ -51,7 +52,7 @@ export const TAG_INDEX_POLL_MS = 5 * 60_000;
 export const TAG_INDEX_POLL_JITTER_MS = 60_000;
 /** A failed check is retried this long after it failed, sooner than the poll. */
 export const TAG_INDEX_RETRY_MS = 60_000;
-/** A check still running after this is abandoned as failed; a late result is discarded. */
+/** A check still running after this is aborted as failed; a late result is discarded. */
 export const TAG_INDEX_LOAD_TIMEOUT_MS = 120_000;
 /**
  * With nothing held, requests arriving in a load's first 10 s wait for it (up to 10 s); once that
@@ -83,7 +84,10 @@ export type TagIndexHolderDeps = {
   now?: () => number;
   /** In [0, 1); scales the poll jitter. */
   random?: () => number;
-  /** A check's outcome; `seconds` is the load's wall time when a download had started. */
+  /**
+   * A check's outcome. `seconds`: wall time since the load began (null when the check loaded
+   * nothing); for a check abandoned at the timeout, since the check began.
+   */
   onLoad?: (
     outcome: TagIndexLoadOutcome,
     seconds: number | null,
@@ -105,6 +109,22 @@ function delay(ms: number): { done: Promise<typeof TIMED_OUT>; cancel: () => voi
 
 type Flight = { done: Promise<void>; waitSpent: boolean };
 
+/**
+ * `p`, or a rejection as soon as `signal` aborts. A database read cannot be cancelled, so an
+ * aborted check stops waiting for it rather than holding `running` until it returns; the read
+ * holds no index memory, and every later step of the abandoned load checks the signal itself.
+ */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  p.catch(() => undefined);
+  return Promise.race([p, aborted]).finally(() => signal.removeEventListener('abort', onAbort!));
+}
+
 const identity = (s: ServedTagIndex): HeldTagIndex => ({
   id: s.id,
   payloadSha256: s.payloadSha256,
@@ -116,13 +136,17 @@ const identity = (s: ServedTagIndex): HeldTagIndex => ({
 export class TagIndexSnapshotHolder {
   private served: ServedTagIndex | null = null;
   private reason: TagIndexFallbackReason = 'loading';
-  /** A snapshot id refused as unservable; not downloaded again until another one is newest. */
-  private rejected: string | null = null;
+  /**
+   * Ids refused as unservable, kept while the newest ready row is one of them: none is downloaded
+   * again, and the newest ready row outside the set is served instead.
+   */
+  private readonly rejected = new Set<string>();
   private nextCheckAt = -Infinity;
   private flight: Flight | null = null;
   /**
-   * The last check's work, until it settles. A check abandoned at the timeout is aborted, but no new
-   * check starts until its work has stopped, so two loads never overlap.
+   * The last check's work, until it settles. A check abandoned at the timeout is aborted (its
+   * download and decode worker stop; it stops waiting on a database read), and no new check starts
+   * until its work has settled, so two loads never overlap.
    */
   private running: Promise<void> | null = null;
   private generation = 0;
@@ -166,7 +190,7 @@ export class TagIndexSnapshotHolder {
     if (this.served) this.deps.onHeld?.(null);
     this.served = null;
     this.reason = 'loading';
-    this.rejected = null;
+    this.rejected.clear();
     this.nextCheckAt = -Infinity;
     this.generation++;
     this.abort?.abort();
@@ -217,7 +241,7 @@ export class TagIndexSnapshotHolder {
     const reason: 'snapshot_unservable' | 'load_failed' = unservable
       ? 'snapshot_unservable'
       : 'load_failed';
-    if (unservable) this.rejected = snapshot;
+    if (unservable) this.rejected.add(snapshot);
     this.nextCheckAt = unservable ? this.pollAfter(at) : at + TAG_INDEX_RETRY_MS;
     if (!this.served) this.reason = reason;
     this.deps.onLoad?.(reason, loadSeconds, snapshot);
@@ -231,17 +255,18 @@ export class TagIndexSnapshotHolder {
   }
 
   /**
-   * The newest ready row, unless it is the one refused as unservable: then the newest ready row
-   * after it, so retiring the served row still rolls back while the newest stays refused.
+   * The newest ready row, unless it was refused as unservable: then the newest ready row no refusal
+   * names, so retiring the served row still rolls back while the newest stays refused, and two
+   * refused rows in a row are not downloaded in turn.
    */
-  private async servable(sql: CoocSql, specHash: string) {
-    const newest = await latestReadyManifest(sql, specHash);
-    if (!newest || newest.id !== this.rejected) {
-      // A different newest row (or none) supersedes the refusal.
-      this.rejected = null;
+  private async servable(sql: CoocSql, specHash: string, signal: AbortSignal) {
+    const newest = await untilAborted(latestReadyManifest(sql, specHash), signal);
+    if (!newest || !this.rejected.has(newest.id)) {
+      // A newest row no refusal names (or none) supersedes the refusals.
+      this.rejected.clear();
       return newest;
     }
-    return latestReadyManifest(sql, specHash, newest.id);
+    return untilAborted(latestReadyManifest(sql, specHash, [...this.rejected]), signal);
   }
 
   private async refresh(gen: number, startedAt: number, signal: AbortSignal): Promise<void> {
@@ -249,12 +274,12 @@ export class TagIndexSnapshotHolder {
     let loadStart = 0;
     try {
       const sql = this.deps.sql();
-      const latest = await this.servable(sql, await this.deps.specHash());
+      const latest = await this.servable(sql, await this.deps.specHash(), signal);
       if (gen !== this.generation) return;
       if (!latest) {
         if (this.served) this.deps.onHeld?.(null);
         this.served = null;
-        this.reason = this.rejected ? 'snapshot_unservable' : 'no_snapshot';
+        this.reason = this.rejected.size ? 'snapshot_unservable' : 'no_snapshot';
       } else if (latest.id !== this.served?.id) {
         if (this.served && latest.payloadSha256 === this.served.payloadSha256) {
           // Another row naming the same bytes (a re-put after a retire): nothing to download.
@@ -263,9 +288,12 @@ export class TagIndexSnapshotHolder {
         } else {
           loading = latest.id;
           loadStart = this.now();
-          const { index } = await loadManifestSnapshot(
-            { sql, objects: this.deps.objects(), decode: this.deps.decode },
-            latest,
+          const { index } = await untilAborted(
+            loadManifestSnapshot(
+              { sql, objects: this.deps.objects(), decode: this.deps.decode },
+              latest,
+              signal
+            ),
             signal
           );
           if (gen !== this.generation) return;
@@ -312,8 +340,7 @@ export function tagIndexSnapshotHolder(): TagIndexSnapshotHolder {
     specHash: async () => (await import('./spec')).RESOURCE_INTENT_TAGS_SPEC_HASH,
     onLoad: (outcome, seconds, snapshotId) => {
       recordTagIndexLoad(outcome, seconds);
-      // The design asked for the load time on a log line as well as in the histogram: on-pod load
-      // time had never been measured for the co-occurrence snapshot.
+      // Per-load time on a log line too; the histogram only aggregates.
       if (outcome === 'success')
         logToAxiom(
           { type: 'resource-intent-tag-index-loaded', snapshotId, seconds },

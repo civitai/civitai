@@ -114,6 +114,36 @@ describe('s3TagIndexObjects', () => {
     expect((err as Error).message).toMatch(/is 3 bytes/);
   });
 
+  it('an abort stops the download mid-stream and destroys the body', async () => {
+    const abort = new AbortController();
+    const destroy = vi.fn();
+    const body = {
+      destroy,
+      async *[Symbol.asyncIterator]() {
+        yield Uint8Array.of(1, 2);
+        abort.abort();
+        yield Uint8Array.of(3);
+        yield Uint8Array.of(4);
+      },
+    };
+    const sent: { abortSignal?: AbortSignal }[] = [];
+    const s3 = {
+      send: vi.fn(async (_cmd: unknown, opts: { abortSignal?: AbortSignal }) => {
+        sent.push(opts);
+        return { ContentLength: 4, Body: body };
+      }),
+    } as unknown as S3Client;
+    const e = await objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    expect((e as Error).name).toBe('AbortError');
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(sent[0].abortSignal).toBe(abort.signal);
+    // Already aborted: nothing is sent.
+    await expect(objectsOver(s3).get('k', 4, abort.signal)).rejects.toThrow();
+    expect(sent).toHaveLength(1);
+  });
+
   it('reports a missing key as unservable, and rethrows any other failure (a missing bucket included) as it is', async () => {
     const notFound = Object.assign(new Error('gone'), {
       name: 'NoSuchKey',

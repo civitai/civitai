@@ -46,6 +46,10 @@ export type DecodeWorkerOptions = {
   source?: string;
   /** Aborting terminates the worker (or stops the assembly) and rejects as unavailable. */
   signal?: AbortSignal;
+  /** How assembly yields to the event loop between slices (tests observe it); a `setImmediate` turn. */
+  pause?: () => Promise<void>;
+  /** Units of assembly work between pauses (`ASSEMBLE_STEP_WORK` unless given). */
+  assembleEvery?: number;
 };
 
 /** Decompress, unpack and validate `payload` on a worker thread; build the scorer's index here. */
@@ -83,11 +87,11 @@ export function decodeTagIndexInWorker(
         const { data, vocabVersion, specHash } = reply.result;
         // An abort while assembling stops it at its next pause.
         const pause = async () => {
-          await nextTurn();
+          await (opts.pause ?? nextTurn)();
           if (signal?.aborted)
             throw new TagIndexDecodeUnavailableError('tag index decode aborted while assembling');
         };
-        assembleTagIndexCooperative(data, pause).then(
+        assembleTagIndexCooperative(data, pause, opts.assembleEvery).then(
           (index) => resolve({ index, vocabVersion, specHash }),
           reject
         );

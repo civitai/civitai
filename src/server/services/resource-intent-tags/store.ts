@@ -207,13 +207,15 @@ export async function putSnapshot(
   return { manifest: existing, created: false };
 }
 
-/** The newest ready manifest built under `specHash`, other than `exceptId` when given. */
+/** The newest ready manifest built under `specHash`, other than those in `exceptIds`. */
 export async function latestReadyManifest(
   sql: CoocSql,
   specHash: string,
-  exceptId?: string
+  exceptIds: readonly string[] = []
 ): Promise<TagIndexSnapshotManifest | null> {
-  const except = exceptId === undefined ? Prisma.empty : Prisma.sql`AND "id" <> ${exceptId}`;
+  const except = exceptIds.length
+    ? Prisma.sql`AND "id" <> ALL(${[...exceptIds]}::text[])`
+    : Prisma.empty;
   const [row] = await sql.query<TagIndexSnapshotManifest>(Prisma.sql`
     SELECT ${COLUMNS} FROM ${T}
     WHERE "specHash" = ${specHash} AND "status" = 'ready' ${except}
