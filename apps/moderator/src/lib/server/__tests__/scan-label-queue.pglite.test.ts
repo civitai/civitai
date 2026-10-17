@@ -81,7 +81,7 @@ async function seedItem(
     blockVotes?: number;
     flaggedAt?: string;
     version?: string;
-    sources?: ('orchestrator-scan' | 'xguard-prompt' | 'control-sample')[];
+    sources?: readonly ('orchestrator-scan' | 'xguard-prompt' | 'control-sample')[];
   } = {}
 ): Promise<number> {
   await pg.query(`INSERT INTO "Image" ("id", "url") VALUES ($1, $2)`, [imageId, `key-${imageId}`]);
@@ -192,7 +192,7 @@ describe('claimNext source mix', () => {
       ['control', CONTROL],
     ] as const)
       for (let n = 0; n < (counts[source] ?? 0); n++)
-        sourceOf.set(await seedItem(imageId++, { ...opts, sources: [...opts.sources] }), source);
+        sourceOf.set(await seedItem(imageId++, opts), source);
     return sourceOf;
   }
 
