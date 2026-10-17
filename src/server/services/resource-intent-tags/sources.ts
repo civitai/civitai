@@ -210,7 +210,7 @@ export async function readPostedSample(
 const MODEL_BATCH = 1000;
 
 /** The prototype's content-image predicate, plus no attached model flagged POI or minor. */
-const CONTENT_IMAGE_ELIGIBLE =
+export const CONTENT_IMAGE_ELIGIBLE =
   Prisma.raw(`AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0
   AND i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false

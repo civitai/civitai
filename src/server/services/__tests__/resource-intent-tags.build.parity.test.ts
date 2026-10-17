@@ -26,8 +26,8 @@ import { RESOURCE_INTENT_TAGS_SPEC } from '~/server/services/resource-intent-tag
  * the fixture to make this pass; regenerate it or fix the port.
  *
  * Tolerances: content scores are rounded to 4 decimals on both sides, so they compare exactly; fits and
- * user-side shares to 1e-12 (summation order differs); scores through the float32 snapshot to a
- * relative 1e-7, with the ranked order exact.
+ * user-side shares to 1e-12 (summation order differs); scores through the float32 snapshot to 1e-7
+ * (absolute below 1, relative above), with the ranked order exact.
  */
 type Pairs = [number, number][];
 type KindJson = {

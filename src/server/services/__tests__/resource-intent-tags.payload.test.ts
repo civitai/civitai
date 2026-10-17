@@ -14,9 +14,11 @@ import {
 import { RESOURCE_INTENT_TAGS_SPEC } from '~/server/services/resource-intent-tags/spec';
 
 /**
- * A small build: four tags (one explicit, one near two others), three ecosystems, two kinds. Several id
- * rows are not fixed points of delta coding (a near set [2, 3], a resource published for [1, 2], a
- * posting list [0, 1, 2]), so an array stored without its deltas cannot round-trip.
+ * A small build: four tags (one explicit, one near two others), three ecosystems, two kinds. The near
+ * sets ([2, 3]), published ecosystems ([1, 2]), posting lists ([0, 1, 2]), model ids and user-side keys
+ * hold rows that are not fixed points of delta coding, so any of those stored without its deltas
+ * cannot round-trip; the user-side resource lists and (tag, ecosystem) ids are, and are covered by the
+ * build parity suite's snapshot cases instead.
  */
 function smallData() {
   const tags = [
@@ -186,11 +188,14 @@ describe('resource-intent-tags snapshot codec', () => {
     }
   );
 
-  it('refuses to encode a popularity count that is not a uint32', async () => {
-    const d = structuredClone(data);
-    d.kinds.addon.ecosystemUsers.value[0] = 2.5;
-    await expect(encodeTagIndex(d, 'd'.repeat(64))).rejects.toThrow('is not a uint32');
-  });
+  it.each([2.5, -1, 2 ** 32])(
+    'refuses to encode a popularity count %s that is not a uint32',
+    async (v) => {
+      const d = structuredClone(data);
+      d.kinds.addon.ecosystemUsers.value[0] = v;
+      await expect(encodeTagIndex(d, 'd'.repeat(64))).rejects.toThrow('is not a uint32');
+    }
+  );
 
   it('refuses a payload above the size cap before decompressing it', async () => {
     await expect(decodeTagIndex(new Uint8Array(TAG_INDEX_MAX_PAYLOAD_BYTES + 1))).rejects.toThrow(
@@ -382,6 +387,14 @@ describe('resource-intent-tags snapshot codec', () => {
     [
       'a pointer that does not start at 0',
       (d) => (d.kinds.addon.postings.ptr[0] = 1),
+      'addon postings pointer bounds',
+    ],
+    [
+      'a pointer that ends past its array',
+      (d) => {
+        const p = d.kinds.addon.postings.ptr;
+        p[p.length - 1] += 1;
+      },
       'addon postings pointer bounds',
     ],
     [

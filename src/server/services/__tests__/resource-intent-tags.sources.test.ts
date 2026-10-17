@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { COOC_ELIGIBLE_REST } from '~/server/services/resource-intent-cooc/build';
 import type { TagModelContent, TagTrainingRow } from '~/server/services/resource-intent-tags/build';
 import {
+  CONTENT_IMAGE_ELIGIBLE,
   fetchVersionInfo,
   genObservationOf,
   genObservationsSql,
@@ -108,8 +109,18 @@ describe('resource-intent-tags sources', () => {
     expect(seen[0].sql).toContain('AND NOT m.poi AND NOT m.minor');
     const hidden = `p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")`;
     expect(seen[1].sql.split(hidden).length - 1).toBe(2);
-    const flaggedAttachment = 'WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor)';
-    expect(seen[1].sql.split(flaggedAttachment).length - 1).toBe(2);
+    expect(seen[1].sql.split(CONTENT_IMAGE_ELIGIBLE.sql).length - 1).toBe(2);
+  });
+
+  it('holds both content-image branches to the moderation predicate, flagged attachments included', () => {
+    // The whole predicate, pinned: each clause is a moderation rule a reword could drop.
+    expect(CONTENT_IMAGE_ELIGIBLE.sql.replace(/\s+/g, ' ')).toBe(
+      `AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0 AND i.ingestion = 'Scanned' ` +
+        `AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL ` +
+        `AND i.minor = false AND i.poi = false AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" fr ` +
+        `JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId" JOIN "Model" fm ON fm.id = fmv."modelId" ` +
+        `WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor))`
+    );
   });
 
   it('samples each hour by its first minutes, inside the window', () => {

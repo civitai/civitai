@@ -242,8 +242,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       'portrait of an elderly fisherman, dramatic lighting, film photo',
       'isometric fantasy castle game asset, pixel art',
     ];
-    // Worst case too: prompts made of the tags with the longest posting lists, at every browsing
-    // level, both kinds. The prompts are built in memory and never printed.
+    // Heavy prompts too: tags with the longest posting lists, every browsing level allowed (31).
+    // Built in memory, never printed.
     const vocabKeys = decoded.index.vocabulary.map((t) => t.key);
     const heavy: string[] = [];
     for (const kind of ['addon', 'checkpoint'] as const) {

@@ -23,8 +23,8 @@ import {
  * imports non-public code and is not in this repository. Never edit the fixture to make this pass;
  * regenerate it or fix the port. The index is this fixture in the build's output shape, validated by
  * `tagIndexFromData` as built (float64, every value to 12 decimals) and also encoded into the snapshot
- * and decoded by the production decoder (float32: candidate scores to a relative 1e-7, the ranked
- * order exactly).
+ * and decoded by the production decoder (float32: candidate scores to 1e-7, absolute below 1 and
+ * relative above, the ranked order exactly).
  */
 type Pairs = [number, number][];
 type KindJson = {
