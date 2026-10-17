@@ -26,6 +26,7 @@ import {
 import {
   bundleRequires,
   buildTagIndexDecodeWorkerModule,
+  FORBIDDEN_INPUTS,
 } from '../../../../scripts/build-tag-index-decode-worker.mjs';
 import { createHash } from 'crypto';
 import { smallTagIndexData } from './resource-intent-tags.fixture';
@@ -52,6 +53,38 @@ describe('decode worker bundle', () => {
     );
     // On failure: node scripts/build-tag-index-decode-worker.mjs
     expect(committed === fresh).toBe(true);
+  });
+
+  it('holds the decoder alone: no build.ts (its tunable constants) and no msgpack packer', () => {
+    const inputs = [...TAG_INDEX_DECODE_WORKER_SOURCE.matchAll(/^\/\/ (\S+\.(?:ts|js))$/gm)].map(
+      (m) => m[1]
+    );
+    // Positive control: the scan finds the bundle's inputs at all.
+    expect(inputs).toContain('src/server/services/resource-intent-tags/payload-decode.ts');
+    expect(
+      inputs.filter((i) => /resource-intent-tags\/build\.ts$|msgpackr\/pack\.js$/.test(i))
+    ).toEqual([]);
+    // The generator's refusal pattern matches build.ts (the packer cannot be reached at all:
+    // `msgpackr` resolves to its unpacker in the bundle).
+    expect(
+      FORBIDDEN_INPUTS.map((re: RegExp) =>
+        re.test('src/server/services/resource-intent-tags/build.ts')
+      )
+    ).toEqual([true]);
+  });
+
+  it('the generator refuses a bundle that pulls in build.ts', async () => {
+    await expect(
+      buildTagIndexDecodeWorkerModule({
+        entrySource: "import { tagFitBound } from './build'; console.log(tagFitBound());",
+      })
+    ).rejects.toThrow(/forbidden inputs: .*resource-intent-tags\/build\.ts/);
+    // Control: an entry that needs only the decoder builds.
+    await expect(
+      buildTagIndexDecodeWorkerModule({
+        entrySource: "import { single } from './payload-decode'; console.log(single(1));",
+      })
+    ).resolves.toMatch(/TAG_INDEX_DECODE_WORKER_SOURCE/);
   });
 
   it('requires only Node builtins, so an eval worker can load it from any cwd', () => {
@@ -102,6 +135,39 @@ describe('decodeTagIndexInWorker', () => {
       caps: { maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES, maxInflatedBytes: 100 },
     }).catch((e: Error) => e);
     expect((inflate as Error & { code?: string }).code).toBe('ERR_BUFFER_TOO_LARGE');
+  });
+
+  it("validates against the fit bound the main thread hands it, not a constant of the bundle's", async () => {
+    const payload = await encoded();
+    // The fixture's fits are within tagFitBound() (2); a bound below them refuses the same bytes.
+    expect((await decodeTagIndexInWorker(Buffer.from(payload))).specHash).toBe(SPEC);
+    const tight = await decodeTagIndexInWorker(Buffer.from(payload), { fitBound: 1e-6 }).catch(
+      (e: Error) => e
+    );
+    expect((tight as Error).message).toMatch(/fit out of range/);
+    // A bound that is not a positive number is refused rather than validated against nothing.
+    for (const fitBound of [NaN, 0, -1])
+      expect(
+        (
+          (await decodeTagIndexInWorker(Buffer.from(payload), { fitBound }).catch(
+            (e: Error) => e
+          )) as Error
+        ).message
+      ).toBe(`tag index decode: fit bound ${fitBound} is not a positive number`);
+  });
+
+  it("without a fit bound given, hands the worker the build's tagFitBound()", async () => {
+    // A fit of 3 is past tagFitBound() (2) and within any looser bound: the encoder does not
+    // check fits, so the worker's validation is what refuses it.
+    const data = smallTagIndexData(VOCAB);
+    data.kinds.addon.fit[0] = 3;
+    const payload = await encodeTagIndex(data, SPEC);
+    const e = await decodeTagIndexInWorker(Buffer.from(payload)).catch((x: Error) => x);
+    expect((e as Error).message).toMatch(/addon fit out of range/);
+    // Control: the same bytes under a bound above 3 decode.
+    expect((await decodeTagIndexInWorker(Buffer.from(payload), { fitBound: 4 })).specHash).toBe(
+      SPEC
+    );
   });
 
   it("without caps given, hands the worker the exported caps (not the bundle's own)", async () => {

@@ -1,6 +1,6 @@
 /**
  * The tag-index decode worker's entry. NOT imported by the app: `scripts/build-tag-index-decode-worker.mjs`
- * bundles it (with `./payload` and its imports) into `decode-worker.source.generated.ts`, which the
+ * bundles it (with `./payload-decode` and its imports) into `decode-worker.source.generated.ts`, which the
  * app runs with `new Worker(source, { eval: true })` (see `./decode-worker`).
  *
  * One message in, one message out: the compressed payload arrives (transferred), and the validated
@@ -9,10 +9,17 @@
  * allocation failure from bad bytes the same way it does on the main thread.
  */
 import { parentPort } from 'worker_threads';
-import { decodeTagIndexData, transferablesOf, type TagIndexDecodeCaps } from './payload';
+import { decodeTagIndexData, transferablesOf, type TagIndexDecodeCaps } from './payload-decode';
 
-/** The caps come from the spawning thread's `TAG_INDEX_DECODE_CAPS`, not this bundle's copy. */
-export type DecodeWorkerRequest = { payload: Uint8Array; caps: TagIndexDecodeCaps };
+/**
+ * Every limit the decode enforces comes from the spawning thread: its `TAG_INDEX_DECODE_CAPS` and
+ * the build's `tagFitBound()`. The bundle carries no tunable constant it could disagree on.
+ */
+export type DecodeWorkerRequest = {
+  payload: Uint8Array;
+  caps: TagIndexDecodeCaps;
+  fitBound: number;
+};
 export type DecodeWorkerReply =
   | { ok: true; result: Awaited<ReturnType<typeof decodeTagIndexData>> }
   | { ok: false; error: { name: string; message: string; code?: string } };
@@ -21,7 +28,7 @@ const port = parentPort;
 if (!port) throw new Error('decode-worker.entry must run in a worker thread');
 
 port.once('message', (msg: DecodeWorkerRequest) => {
-  decodeTagIndexData(msg.payload, msg.caps).then(
+  decodeTagIndexData(msg.payload, msg.caps, msg.fitBound).then(
     (result) => {
       const reply: DecodeWorkerReply = { ok: true, result };
       port.postMessage(reply, transferablesOf(result.data));

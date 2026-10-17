@@ -115,15 +115,12 @@ describe('build-resource-intent-tag-index job', () => {
     ]);
   });
 
-  it("a gate's refusal fails the run loudly, after recording the failure and running retention", async () => {
+  it("a gate's refusal fails the run loudly, after running retention (a failure records no heartbeat)", async () => {
     mockIsFlipt.mockResolvedValue(true);
     mockBuild.mockRejectedValue(new Error('tag index build: no frozen vocabulary; refusing'));
     await expect(run()).rejects.toThrow('no frozen vocabulary');
     expect(mockRetention).toHaveBeenCalledTimes(1);
-    expect(kvWrites.map((w) => w.key)).toEqual([
-      TAG_INDEX_HEARTBEAT_KEYS.buildFailure,
-      TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess,
-    ]);
+    expect(kvWrites.map((w) => w.key)).toEqual([TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess]);
   });
 
   it('runs Tuesdays 06:00 UTC, an hour after the cooc build, with a 90-minute lock', () => {

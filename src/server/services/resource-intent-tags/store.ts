@@ -26,13 +26,8 @@ export type TagIndexObjectStore = {
   ) => Promise<{ bytes: Buffer; sha256: string }>;
 };
 
-/** One stored object as a listing reports it. */
-export type TagIndexObjectInfo = { key: string; lastModified: Date; bytes: number };
-
-/** Object storage as retention needs it: the store's operations, plus listing and deleting. */
+/** Object storage as retention needs it: the store's operations, plus deleting. */
 export type TagIndexObjectSweeper = TagIndexObjectStore & {
-  /** Every object under `${prefix}/`. */
-  list: () => AsyncIterable<TagIndexObjectInfo>;
   /** Deletes one snapshot object; refuses a key that is not `${prefix}/<64 hex>`. */
   delete: (key: string) => Promise<void>;
 };
@@ -220,6 +215,14 @@ export async function putSnapshot(
       new Error('a ready row with this payload conflicted and is gone')
     );
   return { manifest: existing, created: false };
+}
+
+/** Which of `ids` name rows that are still ready. */
+export async function readyIds(sql: CoocSql, ids: readonly string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await sql.query<{ id: string }>(Prisma.sql`
+    SELECT "id" FROM ${T} WHERE "id" = ANY(${[...ids]}::text[]) AND "status" = 'ready'`);
+  return new Set(rows.map((r) => r.id));
 }
 
 /** The newest ready manifest built under `specHash`, other than those in `exceptIds`. */

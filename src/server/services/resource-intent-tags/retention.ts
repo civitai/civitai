@@ -5,9 +5,13 @@ import { isTagIndexObjectKey, type TagIndexObjectSweeper } from './store';
 
 /**
  * Retention for `ResourceIntentTagIndexSnapshot` and its objects. Rows are retired, never deleted
- * (retiring is the only change the table's trigger allows, and it is one-way); an object is deleted
- * only when no ready row names its key, it lies under this store's prefix with a snapshot key's
- * shape, and it was last written longer ago than `TAG_INDEX_OBJECT_GRACE_MS`.
+ * (retiring is the only change the table's trigger allows, and it is one-way). An object is deleted
+ * only when THIS database's retired rows name its key and none of its ready rows does, and the key is
+ * a snapshot key under this store's prefix. Nothing is listed: an object this database never named
+ * is never touched, so a bucket shared with another environment is safe (its snapshots are other
+ * bytes, so other keys). The cost is one leak: an upload whose row insert failed (a build killed
+ * between the two) is named by no row and stays. It is one object, and a later put of the same bytes
+ * reuses its key.
  */
 
 /**
@@ -23,14 +27,6 @@ export const TAG_INDEX_KEEP_READY = 3;
  * retired at once. Four weekly builds: a rollback is a matter of hours or days, not weeks.
  */
 export const TAG_INDEX_OTHER_SPEC_KEEP_DAYS = 28;
-/**
- * An object no ready row names is deleted only once it is older than this. The writer uploads, then
- * inserts its row seconds later; the build that writes runs under a 90-minute lock, so a day is far
- * past any upload whose row is still coming, and a re-put of the same bytes (which rewrites the
- * object) restarts the clock.
- */
-export const TAG_INDEX_OBJECT_GRACE_MS = 24 * 3_600_000;
-
 const DAY_MS = 86_400_000;
 
 export type TagIndexRetentionRow = {
@@ -81,22 +77,20 @@ export function selectTagIndexSnapshotsToRetire(
 export type TagIndexRetentionResult = {
   /** Rows retired by this run. */
   retired: string[];
-  /** Objects deleted: named only by retired rows, and named by no row at all (an orphaned upload). */
-  deleted: { retired: number; orphaned: number; bytes: number };
-  /** Objects kept although no ready row names them, because they are inside the grace period. */
-  keptRecent: number;
-  /** Objects under the prefix whose key is not a snapshot key; never touched. */
+  /**
+   * Objects deleted: those retired rows name and no ready row does. A key deleted by an earlier run
+   * is deleted again (a no-op on a missing key), so this counts keys, not bytes freed.
+   */
+  deleted: number;
+  /** Keys retired rows name that are not snapshot keys under this store's prefix; never touched. */
   foreign: number;
 };
 
 /**
- * Retire what `selectTagIndexSnapshotsToRetire` picks, then delete each object under the store's
- * prefix that no ready row names and that is older than `TAG_INDEX_OBJECT_GRACE_MS`. The ready keys
- * are read after the listing, so a row inserted while the listing ran protects its object. What
- * keeps a concurrent put safe is the grace period, not the job lock (which a long build can outlast,
- * and which is not taken outside production): a fresh upload is never old enough to delete. The one
- * unprotected case is a put of bytes identical to an old unnamed object landing between the ready
- * read and the delete; the weekly job is the only writer and runs this after its own put.
+ * Retire what `selectTagIndexSnapshotsToRetire` picks, then delete each object a retired row names
+ * that no ready row names. The ready rows are read after retiring, so a row inserted meanwhile (a
+ * put of identical bytes, which reuses the key) protects its object; the weekly job is the only
+ * writer and runs this after its own put.
  */
 export async function applyTagIndexRetention(
   deps: { sql: CoocSql; objects: TagIndexObjectSweeper },
@@ -112,36 +106,19 @@ export async function applyTagIndexRetention(
       UPDATE ${T} SET "status" = 'retired'
       WHERE "id" = ANY(${retired}::text[]) AND "status" = 'ready'`);
 
-  const listed = [];
-  for await (const o of objects.list()) listed.push(o);
-  const ready = new Set(
-    (
-      await sql.query<{ objectKey: string }>(Prisma.sql`
-        SELECT DISTINCT "objectKey" FROM ${T} WHERE "status" = 'ready'`)
-    ).map((r) => r.objectKey)
-  );
-  const named = new Set(rows.map((r) => r.objectKey));
-
-  const result: TagIndexRetentionResult = {
-    retired,
-    deleted: { retired: 0, orphaned: 0, bytes: 0 },
-    keptRecent: 0,
-    foreign: 0,
-  };
-  for (const o of listed) {
-    if (!isTagIndexObjectKey(objects.prefix, o.key)) {
+  const keys = await sql.query<{ objectKey: string }>(Prisma.sql`
+    SELECT DISTINCT r."objectKey" FROM ${T} r
+    WHERE r."status" = 'retired'
+      AND NOT EXISTS (
+        SELECT 1 FROM ${T} k WHERE k."status" = 'ready' AND k."objectKey" = r."objectKey")`);
+  const result: TagIndexRetentionResult = { retired, deleted: 0, foreign: 0 };
+  for (const { objectKey } of keys) {
+    if (!isTagIndexObjectKey(objects.prefix, objectKey)) {
       result.foreign++;
       continue;
     }
-    if (ready.has(o.key)) continue;
-    if (opts.now.getTime() - o.lastModified.getTime() < TAG_INDEX_OBJECT_GRACE_MS) {
-      result.keptRecent++;
-      continue;
-    }
-    await objects.delete(o.key);
-    if (named.has(o.key)) result.deleted.retired++;
-    else result.deleted.orphaned++;
-    result.deleted.bytes += o.bytes;
+    await objects.delete(objectKey);
+    result.deleted++;
   }
   return result;
 }

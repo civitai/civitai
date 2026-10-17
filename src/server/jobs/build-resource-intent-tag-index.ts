@@ -18,9 +18,8 @@ export const buildResourceIntentTagIndexJob = createJob(
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_TAG_INDEX_BUILD)))
       return { skipped: 'flag off' };
     // Retention runs here, after the build, rather than as a job of its own: snapshots change only
-    // when this job runs, and its 24-hour grace (not the lock) keeps it off a fresh upload. It runs
-    // whether or not the build succeeded, since a failed build is what leaves an unreferenced upload
-    // behind (docs/resource-intent-primitive.md).
+    // when this job runs. It runs whether or not the build succeeded, and deletes only objects this
+    // database's retired rows name (docs/resource-intent-primitive.md, "Retention").
     return runTagIndexJob({
       build: async () => (await runTagIndexBuild({ dryRun: false }, { env })).summary,
       retention: async () => {

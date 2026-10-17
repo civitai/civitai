@@ -1,19 +1,16 @@
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import type { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyTagIndexRetention,
   selectTagIndexSnapshotsToRetire,
   TAG_INDEX_KEEP_READY,
-  TAG_INDEX_OBJECT_GRACE_MS,
   TAG_INDEX_OTHER_SPEC_KEEP_DAYS,
   type TagIndexRetentionRow,
 } from '~/server/services/resource-intent-tags/retention';
 import {
   isTagIndexObjectKey,
-  type TagIndexObjectInfo,
   type TagIndexObjectSweeper,
 } from '~/server/services/resource-intent-tags/store';
 import { asFixtureWriter, pgliteSql, utcPglite } from './resource-intent-cooc.harness';
@@ -101,9 +98,16 @@ describe('isTagIndexObjectKey', () => {
   });
 });
 
-type Seed = { label: string; specHash?: string; status?: 'ready' | 'retired'; ageDays: number };
+type Seed = {
+  label: string;
+  specHash?: string;
+  status?: 'ready' | 'retired';
+  ageDays: number;
+  /** The row's objectKey, when not the snapshot key of its label. */
+  key?: string;
+};
 
-async function freshStore(seeds: Seed[], objects: { label: string; ageMs: number }[]) {
+async function freshStore(seeds: Seed[], objectLabels: string[]) {
   const db = await utcPglite(
     migration('20261029120000_resource_intent_tags'),
     migration('20261103120000_resource_intent_tag_index_snapshot')
@@ -130,32 +134,37 @@ async function freshStore(seeds: Seed[], objects: { label: string; ageMs: number
           vocabVersion,
           s.specHash ?? SPEC,
           hex(s.label),
-          keyOf(s.label),
+          s.key ?? keyOf(s.label),
           ago(s.ageDays * DAY),
         ]
       );
   });
-  const store = new Map<string, TagIndexObjectInfo>();
-  for (const o of objects) {
-    const key = o.label.includes('/') ? o.label : keyOf(o.label);
-    store.set(key, { key, lastModified: ago(o.ageMs), bytes: 10 });
-  }
+  // The bucket: every object present, by key. Retention can only delete, never list.
+  const store = new Set(objectLabels.map((l) => (l.includes('/') ? l : keyOf(l))));
   const deleted: string[] = [];
-  const sweeper: TagIndexObjectSweeper = {
-    prefix: PREFIX,
-    put: async () => undefined,
-    get: async () => {
-      throw new Error('not used');
+  let listed = 0;
+  const sweeper: TagIndexObjectSweeper = Object.assign(
+    <TagIndexObjectSweeper>{
+      prefix: PREFIX,
+      put: async () => undefined,
+      get: async () => {
+        throw new Error('not used');
+      },
+      // Records every call, refusing nothing, so retention's own key check is what the tests see.
+      delete: async (key: string) => {
+        deleted.push(key);
+        store.delete(key);
+      },
     },
-    list: async function* () {
-      for (const o of store.values()) yield o;
-    },
-    // Records every call, refusing nothing, so retention's own key check is what the tests see.
-    delete: async (key) => {
-      deleted.push(key);
-      store.delete(key);
-    },
-  };
+    {
+      // A listing, should anything ask for one (retention must not: a bucket another environment
+      // shares would then expose its objects). Every object reads as old.
+      list: async function* () {
+        listed++;
+        for (const key of store) yield { key, lastModified: new Date(0), bytes: 10 };
+      },
+    }
+  );
   const statuses = async () =>
     Object.fromEntries(
       (
@@ -164,13 +173,20 @@ async function freshStore(seeds: Seed[], objects: { label: string; ageMs: number
         )
       ).rows.map((r) => [r.id, `${r.status}${r.retiredAt ? '+at' : ''}`])
     );
-  return { db, sql: pgliteSql(db), sweeper, store, deleted, statuses };
+  return {
+    db,
+    sql: pgliteSql(db),
+    sweeper,
+    store,
+    deleted,
+    statuses,
+    vocabVersion,
+    listed: () => listed,
+  };
 }
 
-const OLD = TAG_INDEX_OBJECT_GRACE_MS + 60_000;
-
 describe('applyTagIndexRetention', () => {
-  it('retires beyond the keep window through the trigger, then deletes only unnamed, old, snapshot-shaped objects', async () => {
+  it('retires beyond the keep window through the trigger, then deletes only the objects its retired rows name', async () => {
     const s = await freshStore(
       [
         { label: 'w0', ageDays: 0 },
@@ -181,17 +197,7 @@ describe('applyTagIndexRetention', () => {
         { label: 'gone', ageDays: 60, status: 'retired' },
         { label: 'old-spec', specHash: OLD_SPEC, ageDays: 5 },
       ],
-      [
-        ...['w0', 'w1', 'w2', 'w3', 'w4', 'gone', 'old-spec'].map((label) => ({
-          label,
-          ageMs: OLD,
-        })),
-        { label: 'orphan-old', ageMs: OLD },
-        { label: 'orphan-new', ageMs: TAG_INDEX_OBJECT_GRACE_MS - 60_000 },
-        // An upload two hours old, past the build job's 90-minute lock: still inside the grace.
-        { label: 'orphan-2h', ageMs: 2 * 3_600_000 },
-        { label: `${PREFIX}/README`, ageMs: OLD },
-      ]
+      ['w0', 'w1', 'w2', 'w3', 'w4', 'gone', 'old-spec', 'other-env', `${PREFIX}/README`]
     );
     const result = await applyTagIndexRetention(
       { sql: s.sql, objects: s.sweeper },
@@ -207,23 +213,33 @@ describe('applyTagIndexRetention', () => {
       w3: 'retired+at',
       w4: 'retired+at',
     });
-    expect(s.deleted.sort()).toEqual(
-      [keyOf('gone'), keyOf('orphan-old'), keyOf('w3'), keyOf('w4')].sort()
-    );
-    expect(result.deleted).toEqual({ retired: 3, orphaned: 1, bytes: 40 });
-    expect(result.keptRecent).toBe(2);
-    expect(result.foreign).toBe(1);
-    expect([...s.store.keys()].sort()).toEqual(
+    expect(s.deleted.sort()).toEqual([keyOf('gone'), keyOf('w3'), keyOf('w4')].sort());
+    expect(result).toMatchObject({ deleted: 3, foreign: 0 });
+    expect([...s.store].sort()).toEqual(
       [
         keyOf('w0'),
         keyOf('w1'),
         keyOf('w2'),
         keyOf('old-spec'),
-        keyOf('orphan-new'),
-        keyOf('orphan-2h'),
+        keyOf('other-env'),
         `${PREFIX}/README`,
       ].sort()
     );
+  });
+
+  it("an unnamed snapshot-shaped object (another environment's, in a shared bucket) survives", async () => {
+    const s = await freshStore(
+      [
+        { label: 'mine-old', ageDays: 90, status: 'retired' },
+        { label: 'mine', ageDays: 1 },
+      ],
+      ['mine-old', 'mine', 'theirs-1', 'theirs-2']
+    );
+    await applyTagIndexRetention({ sql: s.sql, objects: s.sweeper }, { now: NOW, specHash: SPEC });
+    expect(s.deleted).toEqual([keyOf('mine-old')]);
+    expect(s.store.has(keyOf('theirs-1'))).toBe(true);
+    expect(s.store.has(keyOf('theirs-2'))).toBe(true);
+    expect(s.listed()).toBe(0);
   });
 
   it('keeps an object a ready row names even when a retired row names it too (a re-put)', async () => {
@@ -232,7 +248,7 @@ describe('applyTagIndexRetention', () => {
         { label: 'same', ageDays: 30, status: 'retired' },
         { label: 'same', ageDays: 1 },
       ],
-      [{ label: 'same', ageMs: OLD }]
+      ['same']
     );
     const result = await applyTagIndexRetention(
       { sql: s.sql, objects: s.sweeper },
@@ -242,41 +258,51 @@ describe('applyTagIndexRetention', () => {
     expect(s.deleted).toEqual([]);
   });
 
+  it('a ready row inserted after the retire (a put of the same bytes) protects its object', async () => {
+    const s = await freshStore(
+      [0, 7, 14, 21].map((d) => ({ label: `w${d}`, ageDays: d })),
+      ['w0', 'w7', 'w14', 'w21']
+    );
+    const execute = s.sql.execute;
+    s.sql.execute = async (q) => {
+      const n = await execute(q);
+      // The retire just happened; the build now re-puts w21's bytes as a fresh ready row.
+      await s.db.query(
+        `INSERT INTO "ResourceIntentTagIndexSnapshot"
+           ("vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey", "buildStats")
+         VALUES ($1, $2, $3, 10, $4, '{}')`,
+        [s.vocabVersion, SPEC, hex('w21'), keyOf('w21')]
+      );
+      return n;
+    };
+    const result = await applyTagIndexRetention(
+      { sql: s.sql, objects: s.sweeper },
+      { now: NOW, specHash: SPEC }
+    );
+    expect(result.retired).toEqual(['w21']);
+    expect(s.deleted).toEqual([]);
+  });
+
+  it('a retired row naming a key that is not a snapshot key under the prefix is counted, never deleted', async () => {
+    const s = await freshStore(
+      [{ label: 'elsewhere', ageDays: 60, status: 'retired', key: `other/${hex('elsewhere')}` }],
+      [`other/${hex('elsewhere')}`]
+    );
+    const result = await applyTagIndexRetention(
+      { sql: s.sql, objects: s.sweeper },
+      { now: NOW, specHash: SPEC }
+    );
+    expect(result).toEqual({ retired: [], deleted: 0, foreign: 1 });
+    expect(s.deleted).toEqual([]);
+  });
+
   it('a run with nothing to do changes nothing', async () => {
-    const s = await freshStore([{ label: 'only', ageDays: 3 }], [{ label: 'only', ageMs: OLD }]);
+    const s = await freshStore([{ label: 'only', ageDays: 3 }], ['only']);
     const before = await s.statuses();
     expect(
       await applyTagIndexRetention({ sql: s.sql, objects: s.sweeper }, { now: NOW, specHash: SPEC })
-    ).toEqual({
-      retired: [],
-      deleted: { retired: 0, orphaned: 0, bytes: 0 },
-      keptRecent: 0,
-      foreign: 0,
-    });
+    ).toEqual({ retired: [], deleted: 0, foreign: 0 });
     expect(await s.statuses()).toEqual(before);
     expect(s.deleted).toEqual([]);
   });
-
-  it('a row inserted while the listing runs protects its object', async () => {
-    const s = await freshStore([], [{ label: 'late', ageMs: OLD }]);
-    const list = s.sweeper.list;
-    s.sweeper.list = async function* () {
-      for await (const o of list()) yield o;
-      await insertLateRow(s.db);
-    };
-    await applyTagIndexRetention({ sql: s.sql, objects: s.sweeper }, { now: NOW, specHash: SPEC });
-    expect(s.deleted).toEqual([]);
-  });
 });
-
-async function insertLateRow(db: PGlite) {
-  const { rows } = await db.query<{ vocabVersion: string }>(
-    `SELECT "vocabVersion" FROM "ResourceIntentVocabulary" LIMIT 1`
-  );
-  await db.query(
-    `INSERT INTO "ResourceIntentTagIndexSnapshot"
-       ("vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey", "buildStats")
-     VALUES ($1, $2, $3, 10, $4, '{}')`,
-    [rows[0].vocabVersion, SPEC, hex('late'), keyOf('late')]
-  );
-}

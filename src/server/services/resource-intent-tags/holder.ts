@@ -15,6 +15,7 @@ import type { TagIndex } from './score';
 import {
   latestReadyManifest,
   loadManifestSnapshot,
+  readyIds,
   TagIndexSnapshotUnservableError,
   untilAborted,
   type TagIndexObjectStore,
@@ -35,8 +36,8 @@ import {
  * A load streams the object (verifying its size and sha256 against the manifest), then decodes and
  * validates it on a worker thread (`decodeTagIndexInWorker`), so the event loop is not held for the
  * decode. The held index is replaced only once the new one has fully loaded and validated; a failed
- * load keeps it. A snapshot refused as unservable is not downloaded again while a refused row is
- * newest; the newest ready row no refusal names is served instead. Retiring the served row makes the
+ * load keeps it. A snapshot refused as unservable is not downloaded again while its row is ready;
+ * the newest ready row no refusal names is served instead. Retiring the served row makes the
  * next check serve the previous ready row, and retiring every row makes it hold nothing
  * (`no_snapshot`). A check still running at `TAG_INDEX_LOAD_TIMEOUT_MS` is aborted (its download and
  * decode worker stop, and it stops waiting on a database read), and no new check starts until it
@@ -122,8 +123,8 @@ export class TagIndexSnapshotHolder {
   private served: ServedTagIndex | null = null;
   private reason: TagIndexFallbackReason = 'loading';
   /**
-   * Ids refused as unservable, kept while the newest ready row is one of them: none is downloaded
-   * again, and the newest ready row outside the set is served instead.
+   * Ids refused as unservable, each kept while its row is still ready: none is downloaded again,
+   * and the newest ready row outside the set is served instead.
    */
   private readonly rejected = new Set<string>();
   private nextCheckAt = -Infinity;
@@ -240,16 +241,14 @@ export class TagIndexSnapshotHolder {
   }
 
   /**
-   * The newest ready row, unless it was refused as unservable: then the newest ready row no refusal
-   * names, so retiring the served row still rolls back while the newest stays refused, and two
-   * refused rows in a row are not downloaded in turn.
+   * The newest ready row no refusal names. A refusal is forgotten only once its row is no longer
+   * ready (retired), so retiring the served row still rolls back past refused rows, and a refused
+   * row is never downloaded again while it stays ready, newest or not.
    */
   private async servable(sql: CoocSql, specHash: string, signal: AbortSignal) {
-    const newest = await untilAborted(latestReadyManifest(sql, specHash), signal);
-    if (!newest || !this.rejected.has(newest.id)) {
-      // A newest row no refusal names (or none) supersedes the refusals.
-      this.rejected.clear();
-      return newest;
+    if (this.rejected.size) {
+      const ready = await untilAborted(readyIds(sql, [...this.rejected]), signal);
+      for (const id of [...this.rejected]) if (!ready.has(id)) this.rejected.delete(id);
     }
     return untilAborted(latestReadyManifest(sql, specHash, [...this.rejected]), signal);
   }

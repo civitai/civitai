@@ -1,5 +1,6 @@
 import { Worker } from 'worker_threads';
 
+import { tagFitBound } from './build';
 import { TAG_INDEX_DECODE_WORKER_SOURCE } from './decode-worker.source.generated';
 import type { DecodeWorkerReply, DecodeWorkerRequest } from './decode-worker.entry';
 import {
@@ -58,6 +59,8 @@ export type DecodeWorkerOptions = {
   assembleEvery?: number;
   /** The size caps the worker enforces: `TAG_INDEX_DECODE_CAPS` unless given. */
   caps?: TagIndexDecodeCaps;
+  /** The fit bound the worker validates against: the build's `tagFitBound()` unless given. */
+  fitBound?: number;
 };
 
 /** Decompress, unpack and validate `payload` on a worker thread; build the scorer's index here. */
@@ -135,6 +138,7 @@ export function decodeTagIndexInWorker(
       const request: DecodeWorkerRequest = {
         payload: new Uint8Array(buffer),
         caps: opts.caps ?? TAG_INDEX_DECODE_CAPS,
+        fitBound: opts.fitBound ?? tagFitBound(),
       };
       worker.postMessage(request, [buffer]);
     } catch (e) {

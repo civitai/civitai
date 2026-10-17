@@ -10,8 +10,8 @@ import '~/server/prom/challenge.metrics';
 // cached for a minute).
 import '~/server/prom/resource-intent-cooc.metrics';
 // Side-effect import: registers the v1 tag index's metrics: the holder's load counters (seeded at 0)
-// and held-snapshot gauges, the weekly job's persisted heartbeats (KeyValue, cached for a minute),
-// and the newest ready snapshot's createdAt (read only while the build flag is on).
+// and held-snapshot gauges, and the weekly job's persisted heartbeats (KeyValue) and the newest
+// ready snapshot's createdAt, both cached for a minute and read only while the build flag is on.
 import '~/server/prom/resource-intent-tags.metrics';
 // Side-effect import: registers the session-resolution metrics, including the UNLABELLED
 // session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if

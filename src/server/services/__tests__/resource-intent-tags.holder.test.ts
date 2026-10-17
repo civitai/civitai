@@ -65,7 +65,15 @@ function harness() {
   let clock = 1_000_000;
   const rows: Manifest[] = [];
   const objects = new Map<string, Buffer>();
-  const calls = { manifest: 0, vocab: 0, get: 0, getAborted: 0, decode: 0, specHash: 0 };
+  const calls = {
+    manifest: 0,
+    readyIds: 0,
+    vocab: 0,
+    get: 0,
+    getAborted: 0,
+    decode: 0,
+    specHash: 0,
+  };
   let manifestGate: Promise<void> | null = null;
   let vocabGate: Promise<void> | null = null;
   let failManifest: Error | null = null;
@@ -73,6 +81,16 @@ function harness() {
   const sql: CoocSql = {
     // latestReadyManifest's statement, by its bound values: [specHash] or [specHash, exceptId].
     query: async <T>(q: { text: string; values: unknown[] }) => {
+      // readyIds: which of the bound ids are still ready.
+      if (/"id" = ANY\(/.test(q.text)) {
+        calls.readyIds++;
+        const [ids] = q.values as [string[]];
+        return rows
+          .filter((r) => r.status === 'ready' && ids.includes(r.id))
+          .map((r) => ({
+            id: r.id,
+          })) as T[];
+      }
       if (/FROM "ResourceIntentVocabulary"/.test(q.text)) {
         calls.vocab++;
         if (vocabGate) await vocabGate;
@@ -188,6 +206,7 @@ describe('TagIndexSnapshotHolder with the flag off', () => {
     }
     expect(h.calls).toEqual({
       manifest: 0,
+      readyIds: 0,
       vocab: 0,
       get: 0,
       getAborted: 0,
@@ -330,7 +349,8 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     // The next poll does not download it again.
     h.advance(TAG_INDEX_POLL_MS);
     await h.holder.resolve();
-    await vi.waitFor(() => expect(h.calls.manifest).toBe(4));
+    await vi.waitFor(() => expect(h.calls.manifest).toBe(3));
+    expect(h.calls.readyIds).toBe(1);
     expect(h.calls.get).toBe(2);
     expect((await h.holder.resolve()).snapshot?.id).toBe('good');
     // A newer good row supersedes the refusal and loads.
@@ -338,6 +358,40 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     h.advance(TAG_INDEX_POLL_MS);
     await h.holder.resolve();
     await vi.waitFor(async () => expect((await h.holder.resolve()).snapshot?.id).toBe('newer'));
+  });
+
+  it('a refusal outlives a newer row: good served, bad1 refused, bad2 refused, bad1 never downloaded again', async () => {
+    const h = harness();
+    const { payloadA, payloadB } = await payloads();
+    const other = await encodeTagIndex(smallTagIndexData('c'.repeat(64)), SPEC);
+    h.add(manifestOf('good', payloadA, T0), payloadA);
+    expect((await h.holder.resolve()).snapshot?.id).toBe('good');
+    const poll = async (manifestReads: number) => {
+      h.advance(TAG_INDEX_POLL_MS);
+      await h.holder.resolve();
+      await vi.waitFor(() => expect(h.calls.manifest).toBe(manifestReads));
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    // bad1 lands (its object is gone) and is refused.
+    h.rows.push(manifestOf('bad1', payloadB, new Date(T0.getTime() + 1000), 'b'.repeat(64)));
+    await poll(2);
+    expect(h.failures).toEqual(['snapshot_unservable']);
+    expect(h.calls.get).toBe(2);
+    // bad2 lands, newer still, and is refused too.
+    h.rows.push(manifestOf('bad2', other, new Date(T0.getTime() + 2000), 'c'.repeat(64)));
+    await poll(3);
+    expect(h.failures).toEqual(['snapshot_unservable', 'snapshot_unservable']);
+    expect(h.calls.get).toBe(3);
+    // Later polls download neither again: bad1 is still ready, so its refusal stands.
+    await poll(4);
+    await poll(5);
+    expect(h.calls.get).toBe(3);
+    expect(h.failures).toHaveLength(2);
+    expect((await h.holder.resolve()).snapshot?.id).toBe('good');
+    // Retiring bad1 forgets its refusal (nothing left to refuse); bad2's stands.
+    h.rows.find((r) => r.id === 'bad1')!.status = 'retired';
+    await poll(6);
+    expect(h.calls.get).toBe(3);
   });
 
   it('retiring the served row rolls back even while the newest row is refused', async () => {
@@ -365,6 +419,13 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
         fallbackReason: 'snapshot_unservable',
       })
     );
+    // Retiring the refused row too forgets its refusal: nothing ready at all.
+    h.rows.find((r) => r.id === 'bad')!.status = 'retired';
+    h.advance(TAG_INDEX_POLL_MS);
+    await h.holder.resolve();
+    await vi.waitFor(async () =>
+      expect(await h.holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'no_snapshot' })
+    );
   });
 
   it('two refused rows in a row: neither is downloaded again, and the good row below them is served', async () => {
@@ -376,9 +437,8 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     h.rows.push(manifestOf('bad1', payloadB, new Date(T0.getTime() + 1000), 'b'.repeat(64)));
     const other = await encodeTagIndex(smallTagIndexData('c'.repeat(64)), SPEC);
     h.rows.push(manifestOf('bad2', other, new Date(T0.getTime() + 2000), 'c'.repeat(64)));
-    // Manifest reads per check: 1 while the newest is not refused, 2 (newest, then the fallback)
-    // once it is: 1, then 1, 2, 2, 2, 2.
-    const expected = [2, 4, 6, 8, 10];
+    // One manifest read per check (refused rows excluded in it): 1, then one per poll.
+    const expected = [2, 3, 4, 5, 6];
     for (let i = 0; i < 5; i++) {
       h.advance(TAG_INDEX_POLL_MS);
       await h.holder.resolve();

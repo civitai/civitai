@@ -70,7 +70,7 @@ describe('runTagIndexJob', () => {
     });
   });
 
-  it('a failed build records a failure, still runs retention, and fails the run', async () => {
+  it('a failed build records nothing of its own (a stale success is the signal), still runs retention, and fails the run', async () => {
     const { kv, rows } = durableKv();
     const retention = vi.fn(async () => ({ retired: [] }));
     await expect(
@@ -84,10 +84,11 @@ describe('runTagIndexJob', () => {
       })
     ).rejects.toThrow('no frozen vocabulary');
     expect(retention).toHaveBeenCalledTimes(1);
+    // Only retention's heartbeat: no build-failure key (it was written once, and read by nothing).
     expect(Object.fromEntries(rows)).toEqual({
-      [TAG_INDEX_HEARTBEAT_KEYS.buildFailure]: NOW.getTime(),
       [TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess]: NOW.getTime(),
     });
+    expect(rows.has('job:build-resource-intent-tag-index:last-failure')).toBe(false);
   });
 
   it('a failed retention is reported, not thrown, and writes no retention heartbeat', async () => {
@@ -107,27 +108,6 @@ describe('runTagIndexJob', () => {
     expect([...rows.keys()]).toEqual([TAG_INDEX_HEARTBEAT_KEYS.buildSuccess]);
   });
 
-  it('a failure heartbeat that cannot be written still runs retention and rethrows the build error', async () => {
-    const { kv } = durableKv();
-    const upsert = kv.keyValue.upsert;
-    (kv.keyValue as { upsert: unknown }).upsert = vi.fn(async (a: { where: { key: string } }) => {
-      if (a.where.key === TAG_INDEX_HEARTBEAT_KEYS.buildFailure) throw new Error('kv down');
-      return upsert(a as never);
-    });
-    const retention = vi.fn(async () => ({}));
-    await expect(
-      runTagIndexJob({
-        build: async () => {
-          throw new Error('build broke');
-        },
-        retention,
-        kv,
-        now: () => NOW,
-      })
-    ).rejects.toThrow('build broke');
-    expect(retention).toHaveBeenCalledTimes(1);
-  });
-
   it('a build-success heartbeat that cannot be written fails the run, after retention', async () => {
     const { kv } = durableKv();
     const upsert = kv.keyValue.upsert;
@@ -144,10 +124,11 @@ describe('runTagIndexJob', () => {
 });
 
 describe('heartbeat gauges', () => {
-  async function scrape(kv: TagIndexHeartbeatStore) {
+  async function scrape(kv: TagIndexHeartbeatStore, enabled = async () => true) {
     const registry = new client.Registry();
     const { gauges, refresh } = createTagIndexHeartbeatGauges(
       () => readTagIndexHeartbeats(kv),
+      enabled,
       registry
     );
     await registry.metrics();
@@ -164,28 +145,46 @@ describe('heartbeat gauges', () => {
     const { kv, rows } = durableKv();
     expect(await scrape(kv)).toEqual({
       [TAG_INDEX_METRICS.buildLastSuccess]: [],
-      [TAG_INDEX_METRICS.buildLastFailure]: [],
       [TAG_INDEX_METRICS.retentionLastSuccess]: [],
     });
-    const fail = new Date(NOW.getTime() - 7 * 86_400_000);
-    rows.set(TAG_INDEX_HEARTBEAT_KEYS.buildFailure, fail.getTime());
     rows.set(TAG_INDEX_HEARTBEAT_KEYS.buildSuccess, NOW.getTime());
     rows.set(TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess, NOW.getTime() + 5000);
     expect(await scrape(kv)).toEqual({
       [TAG_INDEX_METRICS.buildLastSuccess]: [sec(NOW)],
-      [TAG_INDEX_METRICS.buildLastFailure]: [sec(fail)],
       [TAG_INDEX_METRICS.retentionLastSuccess]: [sec(NOW) + 5],
     });
+  });
+
+  it('read nothing while the build flag is off, so a pod with every flag off does no I/O for them', async () => {
+    const { kv, rows } = durableKv();
+    rows.set(TAG_INDEX_HEARTBEAT_KEYS.buildSuccess, NOW.getTime());
+    const findMany = vi.spyOn(kv.keyValue, 'findMany');
+    expect(await scrape(kv, async () => false)).toEqual({
+      [TAG_INDEX_METRICS.buildLastSuccess]: [],
+      [TAG_INDEX_METRICS.retentionLastSuccess]: [],
+    });
+    expect(findMany).not.toHaveBeenCalled();
+    // Positive control: the same store, flag on, is read.
+    expect((await scrape(kv))[TAG_INDEX_METRICS.buildLastSuccess]).toEqual([sec(NOW)]);
+    expect(findMany).toHaveBeenCalled();
+  });
+
+  it('the build-failure heartbeat is gone: no key, no gauge', () => {
+    expect(Object.values(TAG_INDEX_HEARTBEAT_KEYS)).toEqual([
+      'job:build-resource-intent-tag-index:last-success',
+      'job:resource-intent-tag-index-retention:last-success',
+    ]);
+    expect(Object.values(TAG_INDEX_METRICS)).not.toContain(
+      'civitai_app_resource_intent_tag_index_build_last_failure_timestamp_seconds'
+    );
   });
 
   it('a stored value that is not a positive number is no heartbeat', async () => {
     const { kv, rows } = durableKv();
     rows.set(TAG_INDEX_HEARTBEAT_KEYS.buildSuccess, ['1']);
-    rows.set(TAG_INDEX_HEARTBEAT_KEYS.buildFailure, 0);
     rows.set(TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess, '1700000000000');
     expect(await readTagIndexHeartbeats(kv)).toEqual({
       buildSuccess: null,
-      buildFailure: null,
       retentionSuccess: null,
     });
   });

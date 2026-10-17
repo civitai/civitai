@@ -2,7 +2,6 @@ import { createHash } from 'crypto';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
-  ListObjectsV2Command,
   PutObjectCommand,
   type S3Client,
 } from '@aws-sdk/client-s3';
@@ -37,8 +36,8 @@ const OTHER_BUCKETS = [
 /**
  * Tag-index snapshot objects in `RESOURCE_INTENT_TAG_INDEX_BUCKET` under `TAG_INDEX_OBJECT_PREFIX`,
  * through the S3_UPLOAD_* client. The prefix is fixed, so the bucket alone separates environments.
- * `list` and `delete` are retention's: `list` sees only keys under `${prefix}/`, and `delete` refuses
- * any key that is not a snapshot key there.
+ * `delete` is retention's, and refuses any key that is not a snapshot key there. Nothing lists the
+ * bucket (retention deletes only keys its own rows name), so no ListBucket permission is needed.
  */
 export function s3TagIndexObjects(
   opts: { s3?: S3Client; bucket?: string; prefix?: string } = {}
@@ -118,20 +117,6 @@ export function s3TagIndexObjects(
       } finally {
         signal?.removeEventListener('abort', onAbort);
       }
-    },
-    list: async function* () {
-      let ContinuationToken: string | undefined;
-      do {
-        const page = await s3.send(
-          new ListObjectsV2Command({ Bucket: bucket, Prefix: `${prefix}/`, ContinuationToken })
-        );
-        for (const o of page.Contents ?? []) {
-          if (!o.Key) continue;
-          // No timestamp reads as written now: such an object is never old enough to delete.
-          yield { key: o.Key, lastModified: o.LastModified ?? new Date(), bytes: o.Size ?? 0 };
-        }
-        ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
-      } while (ContinuationToken);
     },
     delete: async (key) => {
       if (!isTagIndexObjectKey(prefix, key))

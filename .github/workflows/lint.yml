@@ -707,6 +707,14 @@ jobs:
           test -f packages/civitai-db-schema/src/enums.ts
           pnpm run db:check-generated
 
+      # Same reasons as the step above: a TRACKED generated file must match its generator, and
+      # the unit test that also checks this runs in `unit`, which is continue-on-error on PRs. The
+      # tag-index decode worker runs from this bundle, so a stale one is the decoder that ships.
+      # `--check` regenerates in memory and compares, so it writes nothing, and a missing file
+      # counts as out of date (exit 1), not as a pass.
+      - name: Generated tag-index decode worker matches its generator
+        run: node scripts/build-tag-index-decode-worker.mjs --check
+
       - name: Package unit tests
         run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
 

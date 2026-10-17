@@ -24,7 +24,6 @@ export const TAG_INDEX_METRICS = {
   snapshotAge: M + 'snapshot_age_seconds',
   snapshotInfo: M + 'snapshot_info',
   buildLastSuccess: M + 'build_last_success_timestamp_seconds',
-  buildLastFailure: M + 'build_last_failure_timestamp_seconds',
   retentionLastSuccess: M + 'retention_last_success_timestamp_seconds',
   newestReadyCreated: M + 'newest_ready_created_timestamp_seconds',
 } as const;
@@ -133,18 +132,21 @@ export function setHeldTagIndex(held: HeldTagIndex | null) {
   state.held = held;
 }
 
-type Heartbeats = Record<'buildSuccess' | 'buildFailure' | 'retentionSuccess', Date | null>;
+type Heartbeats = Record<'buildSuccess' | 'retentionSuccess', Date | null>;
 
 /**
- * The job's three persisted heartbeats, from one cached KeyValue read: last build success, last
- * build failure, last retention success. Each is absent until its first write.
+ * The job's two persisted heartbeats, from one cached KeyValue read: last build success and last
+ * retention success. Each is absent until its first write, and both are absent (and nothing is
+ * read) while `enabled` (the build flag) reads false, so a pod with every flag off does no I/O for
+ * them.
  */
 export function createTagIndexHeartbeatGauges(
   read: () => Promise<Heartbeats>,
+  enabled: () => Promise<boolean>,
   registry: client.Registry,
   now: () => number = Date.now
 ) {
-  const heartbeats = cachedRead(read, 60_000, now);
+  const heartbeats = cachedRead(async () => ((await enabled()) ? read() : null), 60_000, now);
   const gauge = (
     name: string,
     help: string,
@@ -170,12 +172,6 @@ export function createTagIndexHeartbeatGauges(
         TAG_INDEX_METRICS.buildLastSuccess,
         'Unix seconds at which the weekly tag-index build last stored a snapshot (persisted)',
         'buildSuccess',
-        'build-resource-intent-tag-index'
-      ),
-      gauge(
-        TAG_INDEX_METRICS.buildLastFailure,
-        'Unix seconds at which the weekly tag-index build last failed (persisted). A run lost with its pod records nothing: alert on a stale success, not on this.',
-        'buildFailure',
         'build-resource-intent-tag-index'
       ),
       gauge(
@@ -217,16 +213,26 @@ export function createNewestReadyGauge(
   };
 }
 
-// Keyed on the first of the three gauges: a second graph finds it and creates none of them.
+/** Whether the build flag is on: both database-reading gauges read nothing while it is off. */
+const buildFlagOn = async () => {
+  const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
+  return isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_TAG_INDEX_BUILD);
+};
+
+// Keyed on the first of the two gauges: a second graph finds it and creates neither.
 registerInstrumentationMetric(TAG_INDEX_METRICS.buildLastSuccess, () => {
-  const { gauges } = createTagIndexHeartbeatGauges(async () => {
-    // Lazy, so importing this module (the metrics route does) does not load the DB graph.
-    const [{ dbRead }, { readTagIndexHeartbeats }] = await Promise.all([
-      import('~/server/db/client'),
-      import('~/server/services/resource-intent-tags/heartbeat'),
-    ]);
-    return readTagIndexHeartbeats(dbRead);
-  }, instrumentationRegistry);
+  const { gauges } = createTagIndexHeartbeatGauges(
+    async () => {
+      // Lazy, so importing this module (the metrics route does) does not load the DB graph.
+      const [{ dbRead }, { readTagIndexHeartbeats }] = await Promise.all([
+        import('~/server/db/client'),
+        import('~/server/services/resource-intent-tags/heartbeat'),
+      ]);
+      return readTagIndexHeartbeats(dbRead);
+    },
+    buildFlagOn,
+    instrumentationRegistry
+  );
   return gauges[0];
 });
 
@@ -242,10 +248,7 @@ registerInstrumentationMetric(
         ]);
         return readNewestReadyCreatedAt(coocSqlOf(dbRead));
       },
-      async () => {
-        const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
-        return isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_TAG_INDEX_BUILD);
-      },
+      buildFlagOn,
       instrumentationRegistry
     ).gauge
 );

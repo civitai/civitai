@@ -7,12 +7,11 @@ import { isUndefinedTable, type CoocSql } from '~/server/services/resource-inten
  * The weekly tag-index job's heartbeats, persisted in `KeyValue` as epoch milliseconds (the
  * co-occurrence retention heartbeat's encoding), so they survive pod restarts and are the same on
  * every pod; `~/server/prom/resource-intent-tags.metrics` exports them. The build records its last
- * success and its last failure; retention, which the same job runs after every build attempt, its
- * last success. A run that dies with its pod writes nothing, so a stale success is the signal.
+ * success; retention, which the same job runs after every build attempt, its last success. A failed
+ * run, or one that dies with its pod, writes nothing, so a stale success is the signal.
  */
 export const TAG_INDEX_HEARTBEAT_KEYS = {
   buildSuccess: 'job:build-resource-intent-tag-index:last-success',
-  buildFailure: 'job:build-resource-intent-tag-index:last-failure',
   retentionSuccess: 'job:resource-intent-tag-index-retention:last-success',
 } as const;
 export type TagIndexHeartbeat = keyof typeof TAG_INDEX_HEARTBEAT_KEYS;
@@ -33,7 +32,6 @@ export async function readTagIndexHeartbeats(
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
   return {
     buildSuccess: heartbeatDate(byKey.get(TAG_INDEX_HEARTBEAT_KEYS.buildSuccess)),
-    buildFailure: heartbeatDate(byKey.get(TAG_INDEX_HEARTBEAT_KEYS.buildFailure)),
     retentionSuccess: heartbeatDate(byKey.get(TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess)),
   };
 }
@@ -73,7 +71,7 @@ export type TagIndexJobResult<B, R> = {
 };
 
 /**
- * One run of the weekly job: the build, its heartbeat (success or failure), then retention whatever
+ * One run of the weekly job: the build, its success heartbeat if it succeeded, then retention whatever
  * the build did (a failed build is what leaves an unreferenced upload behind), then retention's
  * heartbeat if it succeeded. A failed build is rethrown after retention ran, so the job still counts
  * as failed; a retention failure is returned, not thrown, and its stale heartbeat reports it. A
@@ -94,7 +92,6 @@ export async function runTagIndexJob<B, R>(deps: {
     await writeTagIndexHeartbeat(deps.kv, 'buildSuccess', deps.now()).catch((e: unknown) => {
       heartbeatError = e;
     });
-  else await writeTagIndexHeartbeat(deps.kv, 'buildFailure', deps.now()).catch(() => undefined);
 
   let retention: R | { error: string };
   try {

@@ -17,12 +17,12 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __toESM = (mod, isNodeMode, target2) => (target2 = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
   // If the importer is in node compatibility mode or this is not an ESM
   // file that has been converted to a CommonJS file using a Babel-
   // compatible transform (i.e. "__esModule" has not been set), then set
   // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target2, "default", { value: mod, enumerable: true }) : target2,
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
@@ -32,7 +32,7 @@ var decode_worker_entry_exports = {};
 module.exports = __toCommonJS(decode_worker_entry_exports);
 var import_worker_threads = require("worker_threads");
 
-// src/server/services/resource-intent-tags/payload.ts
+// src/server/services/resource-intent-tags/payload-decode.ts
 var import_os = require("os");
 var import_util = require("util");
 var import_zlib = __toESM(require("zlib"));
@@ -923,7 +923,7 @@ currentExtensions[66] = (data) => {
   }
   if (data.byteLength !== headLength) {
     let view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    let decode3 = (start, end) => {
+    let decode2 = (start, end) => {
       let length = end - start;
       if (length <= 40) {
         let out = view.getBigUint64(start);
@@ -934,11 +934,11 @@ currentExtensions[66] = (data) => {
         return out;
       }
       let middle = start + (length >> 4 << 3);
-      let left = decode3(start, middle);
-      let right = decode3(middle, end);
+      let left = decode2(start, middle);
+      let right = decode2(middle, end);
       return left << BigInt((end - middle) * 8) | right;
     };
-    head = head << BigInt((view.byteLength - headLength) * 8) | decode3(headLength, view.byteLength);
+    head = head << BigInt((view.byteLength - headLength) * 8) | decode2(headLength, view.byteLength);
   }
   return head;
 };
@@ -967,28 +967,28 @@ currentExtensions[105] = (data) => {
   if (!referenceMap)
     referenceMap = /* @__PURE__ */ new Map();
   let token = src[position];
-  let target2;
+  let target;
   if (token >= 144 && token < 160 || token == 220 || token == 221)
-    target2 = [];
+    target = [];
   else if (token >= 128 && token < 144 || token == 222 || token == 223)
-    target2 = /* @__PURE__ */ new Map();
+    target = /* @__PURE__ */ new Map();
   else if ((token >= 199 && token <= 201 || token >= 212 && token <= 216) && src[position + 1] === 115)
-    target2 = /* @__PURE__ */ new Set();
+    target = /* @__PURE__ */ new Set();
   else
-    target2 = {};
-  let refEntry = { target: target2 };
+    target = {};
+  let refEntry = { target };
   referenceMap.set(id, refEntry);
   let targetProperties = read();
   if (!refEntry.used) {
     return refEntry.target = targetProperties;
   } else {
-    Object.assign(target2, targetProperties);
+    Object.assign(target, targetProperties);
   }
-  if (target2 instanceof Map)
-    for (let [k, v] of targetProperties.entries()) target2.set(k, v);
-  if (target2 instanceof Set)
-    for (let i of Array.from(targetProperties)) target2.add(i);
-  return target2;
+  if (target instanceof Map)
+    for (let [k, v] of targetProperties.entries()) target.set(k, v);
+  if (target instanceof Set)
+    for (let i of Array.from(targetProperties)) target.add(i);
+  return target;
 };
 currentExtensions[112] = (data) => {
   if (currentUnpackr.structuredClone === false) throw new Error("Structured clone extension is disabled");
@@ -1090,1073 +1090,8 @@ var defaultUnpackr = new Unpackr({ useRecords: false });
 var unpack = defaultUnpackr.unpack;
 var unpackMultiple = defaultUnpackr.unpackMultiple;
 var decode = defaultUnpackr.unpack;
-var FLOAT32_OPTIONS = {
-  NEVER: 0,
-  ALWAYS: 1,
-  DECIMAL_ROUND: 3,
-  DECIMAL_FIT: 4
-};
 var f32Array = new Float32Array(1);
 var u8Array = new Uint8Array(f32Array.buffer, 0, 4);
-
-// node_modules/.pnpm/msgpackr@1.11.5/node_modules/msgpackr/pack.js
-var textEncoder;
-try {
-  textEncoder = new TextEncoder();
-} catch (error) {
-}
-var extensions;
-var extensionClasses;
-var hasNodeBuffer = typeof Buffer !== "undefined";
-var ByteArrayAllocate = hasNodeBuffer ? function(length) {
-  return Buffer.allocUnsafeSlow(length);
-} : Uint8Array;
-var ByteArray = hasNodeBuffer ? Buffer : Uint8Array;
-var MAX_BUFFER_SIZE = hasNodeBuffer ? 4294967296 : 2144337920;
-var target;
-var keysTarget;
-var targetView;
-var position2 = 0;
-var safeEnd;
-var bundledStrings2 = null;
-var writeStructSlots;
-var MAX_BUNDLE_SIZE = 21760;
-var hasNonLatin = /[\\u0080-\\uFFFF]/;
-var RECORD_SYMBOL = Symbol("record-id");
-var Packr = class extends Unpackr {
-  constructor(options) {
-    super(options);
-    this.offset = 0;
-    let typeBuffer;
-    let start;
-    let hasSharedUpdate;
-    let structures;
-    let referenceMap2;
-    let encodeUtf8 = ByteArray.prototype.utf8Write ? function(string, position3) {
-      return target.utf8Write(string, position3, target.byteLength - position3);
-    } : textEncoder && textEncoder.encodeInto ? function(string, position3) {
-      return textEncoder.encodeInto(string, target.subarray(position3)).written;
-    } : false;
-    let packr2 = this;
-    if (!options)
-      options = {};
-    let isSequential = options && options.sequential;
-    let hasSharedStructures = options.structures || options.saveStructures;
-    let maxSharedStructures = options.maxSharedStructures;
-    if (maxSharedStructures == null)
-      maxSharedStructures = hasSharedStructures ? 32 : 0;
-    if (maxSharedStructures > 8160)
-      throw new Error("Maximum maxSharedStructure is 8160");
-    if (options.structuredClone && options.moreTypes == void 0) {
-      this.moreTypes = true;
-    }
-    let maxOwnStructures = options.maxOwnStructures;
-    if (maxOwnStructures == null)
-      maxOwnStructures = hasSharedStructures ? 32 : 64;
-    if (!this.structures && options.useRecords != false)
-      this.structures = [];
-    let useTwoByteRecords = maxSharedStructures > 32 || maxOwnStructures + maxSharedStructures > 64;
-    let sharedLimitId = maxSharedStructures + 64;
-    let maxStructureId = maxSharedStructures + maxOwnStructures + 64;
-    if (maxStructureId > 8256) {
-      throw new Error("Maximum maxSharedStructure + maxOwnStructure is 8192");
-    }
-    let recordIdsToRemove = [];
-    let transitionsCount = 0;
-    let serializationsSinceTransitionRebuild = 0;
-    this.pack = this.encode = function(value, encodeOptions) {
-      if (!target) {
-        target = new ByteArrayAllocate(8192);
-        targetView = target.dataView || (target.dataView = new DataView(target.buffer, 0, 8192));
-        position2 = 0;
-      }
-      safeEnd = target.length - 10;
-      if (safeEnd - position2 < 2048) {
-        target = new ByteArrayAllocate(target.length);
-        targetView = target.dataView || (target.dataView = new DataView(target.buffer, 0, target.length));
-        safeEnd = target.length - 10;
-        position2 = 0;
-      } else
-        position2 = position2 + 7 & 2147483640;
-      start = position2;
-      if (encodeOptions & RESERVE_START_SPACE) position2 += encodeOptions & 255;
-      referenceMap2 = packr2.structuredClone ? /* @__PURE__ */ new Map() : null;
-      if (packr2.bundleStrings && typeof value !== "string") {
-        bundledStrings2 = [];
-        bundledStrings2.size = Infinity;
-      } else
-        bundledStrings2 = null;
-      structures = packr2.structures;
-      if (structures) {
-        if (structures.uninitialized)
-          structures = packr2._mergeStructures(packr2.getStructures());
-        let sharedLength = structures.sharedLength || 0;
-        if (sharedLength > maxSharedStructures) {
-          throw new Error("Shared structures is larger than maximum shared structures, try increasing maxSharedStructures to " + structures.sharedLength);
-        }
-        if (!structures.transitions) {
-          structures.transitions = /* @__PURE__ */ Object.create(null);
-          for (let i = 0; i < sharedLength; i++) {
-            let keys = structures[i];
-            if (!keys)
-              continue;
-            let nextTransition, transition = structures.transitions;
-            for (let j = 0, l = keys.length; j < l; j++) {
-              let key = keys[j];
-              nextTransition = transition[key];
-              if (!nextTransition) {
-                nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
-              }
-              transition = nextTransition;
-            }
-            transition[RECORD_SYMBOL] = i + 64;
-          }
-          this.lastNamedStructuresLength = sharedLength;
-        }
-        if (!isSequential) {
-          structures.nextId = sharedLength + 64;
-        }
-      }
-      if (hasSharedUpdate)
-        hasSharedUpdate = false;
-      let encodingError;
-      try {
-        if (packr2.randomAccessStructure && value && value.constructor && value.constructor === Object)
-          writeStruct(value);
-        else
-          pack2(value);
-        let lastBundle = bundledStrings2;
-        if (bundledStrings2)
-          writeBundles(start, pack2, 0);
-        if (referenceMap2 && referenceMap2.idsToInsert) {
-          let idsToInsert = referenceMap2.idsToInsert.sort((a, b) => a.offset > b.offset ? 1 : -1);
-          let i = idsToInsert.length;
-          let incrementPosition = -1;
-          while (lastBundle && i > 0) {
-            let insertionPoint = idsToInsert[--i].offset + start;
-            if (insertionPoint < lastBundle.stringsPosition + start && incrementPosition === -1)
-              incrementPosition = 0;
-            if (insertionPoint > lastBundle.position + start) {
-              if (incrementPosition >= 0)
-                incrementPosition += 6;
-            } else {
-              if (incrementPosition >= 0) {
-                targetView.setUint32(
-                  lastBundle.position + start,
-                  targetView.getUint32(lastBundle.position + start) + incrementPosition
-                );
-                incrementPosition = -1;
-              }
-              lastBundle = lastBundle.previous;
-              i++;
-            }
-          }
-          if (incrementPosition >= 0 && lastBundle) {
-            targetView.setUint32(
-              lastBundle.position + start,
-              targetView.getUint32(lastBundle.position + start) + incrementPosition
-            );
-          }
-          position2 += idsToInsert.length * 6;
-          if (position2 > safeEnd)
-            makeRoom(position2);
-          packr2.offset = position2;
-          let serialized = insertIds(target.subarray(start, position2), idsToInsert);
-          referenceMap2 = null;
-          return serialized;
-        }
-        packr2.offset = position2;
-        if (encodeOptions & REUSE_BUFFER_MODE) {
-          target.start = start;
-          target.end = position2;
-          return target;
-        }
-        return target.subarray(start, position2);
-      } catch (error) {
-        encodingError = error;
-        throw error;
-      } finally {
-        if (structures) {
-          resetStructures();
-          if (hasSharedUpdate && packr2.saveStructures) {
-            let sharedLength = structures.sharedLength || 0;
-            let returnBuffer = target.subarray(start, position2);
-            let newSharedData = prepareStructures(structures, packr2);
-            if (!encodingError) {
-              if (packr2.saveStructures(newSharedData, newSharedData.isCompatible) === false) {
-                return packr2.pack(value, encodeOptions);
-              }
-              packr2.lastNamedStructuresLength = sharedLength;
-              if (target.length > 1073741824) target = null;
-              return returnBuffer;
-            }
-          }
-        }
-        if (target.length > 1073741824) target = null;
-        if (encodeOptions & RESET_BUFFER_MODE)
-          position2 = start;
-      }
-    };
-    const resetStructures = () => {
-      if (serializationsSinceTransitionRebuild < 10)
-        serializationsSinceTransitionRebuild++;
-      let sharedLength = structures.sharedLength || 0;
-      if (structures.length > sharedLength && !isSequential)
-        structures.length = sharedLength;
-      if (transitionsCount > 1e4) {
-        structures.transitions = null;
-        serializationsSinceTransitionRebuild = 0;
-        transitionsCount = 0;
-        if (recordIdsToRemove.length > 0)
-          recordIdsToRemove = [];
-      } else if (recordIdsToRemove.length > 0 && !isSequential) {
-        for (let i = 0, l = recordIdsToRemove.length; i < l; i++) {
-          recordIdsToRemove[i][RECORD_SYMBOL] = 0;
-        }
-        recordIdsToRemove = [];
-      }
-    };
-    const packArray = (value) => {
-      var length = value.length;
-      if (length < 16) {
-        target[position2++] = 144 | length;
-      } else if (length < 65536) {
-        target[position2++] = 220;
-        target[position2++] = length >> 8;
-        target[position2++] = length & 255;
-      } else {
-        target[position2++] = 221;
-        targetView.setUint32(position2, length);
-        position2 += 4;
-      }
-      for (let i = 0; i < length; i++) {
-        pack2(value[i]);
-      }
-    };
-    const pack2 = (value) => {
-      if (position2 > safeEnd)
-        target = makeRoom(position2);
-      var type = typeof value;
-      var length;
-      if (type === "string") {
-        let strLength = value.length;
-        if (bundledStrings2 && strLength >= 4 && strLength < 4096) {
-          if ((bundledStrings2.size += strLength) > MAX_BUNDLE_SIZE) {
-            let extStart;
-            let maxBytes2 = (bundledStrings2[0] ? bundledStrings2[0].length * 3 + bundledStrings2[1].length : 0) + 10;
-            if (position2 + maxBytes2 > safeEnd)
-              target = makeRoom(position2 + maxBytes2);
-            let lastBundle;
-            if (bundledStrings2.position) {
-              lastBundle = bundledStrings2;
-              target[position2] = 200;
-              position2 += 3;
-              target[position2++] = 98;
-              extStart = position2 - start;
-              position2 += 4;
-              writeBundles(start, pack2, 0);
-              targetView.setUint16(extStart + start - 3, position2 - start - extStart);
-            } else {
-              target[position2++] = 214;
-              target[position2++] = 98;
-              extStart = position2 - start;
-              position2 += 4;
-            }
-            bundledStrings2 = ["", ""];
-            bundledStrings2.previous = lastBundle;
-            bundledStrings2.size = 0;
-            bundledStrings2.position = extStart;
-          }
-          let twoByte = hasNonLatin.test(value);
-          bundledStrings2[twoByte ? 0 : 1] += value;
-          target[position2++] = 193;
-          pack2(twoByte ? -strLength : strLength);
-          return;
-        }
-        let headerSize;
-        if (strLength < 32) {
-          headerSize = 1;
-        } else if (strLength < 256) {
-          headerSize = 2;
-        } else if (strLength < 65536) {
-          headerSize = 3;
-        } else {
-          headerSize = 5;
-        }
-        let maxBytes = strLength * 3;
-        if (position2 + maxBytes > safeEnd)
-          target = makeRoom(position2 + maxBytes);
-        if (strLength < 64 || !encodeUtf8) {
-          let i, c1, c2, strPosition = position2 + headerSize;
-          for (i = 0; i < strLength; i++) {
-            c1 = value.charCodeAt(i);
-            if (c1 < 128) {
-              target[strPosition++] = c1;
-            } else if (c1 < 2048) {
-              target[strPosition++] = c1 >> 6 | 192;
-              target[strPosition++] = c1 & 63 | 128;
-            } else if ((c1 & 64512) === 55296 && ((c2 = value.charCodeAt(i + 1)) & 64512) === 56320) {
-              c1 = 65536 + ((c1 & 1023) << 10) + (c2 & 1023);
-              i++;
-              target[strPosition++] = c1 >> 18 | 240;
-              target[strPosition++] = c1 >> 12 & 63 | 128;
-              target[strPosition++] = c1 >> 6 & 63 | 128;
-              target[strPosition++] = c1 & 63 | 128;
-            } else {
-              target[strPosition++] = c1 >> 12 | 224;
-              target[strPosition++] = c1 >> 6 & 63 | 128;
-              target[strPosition++] = c1 & 63 | 128;
-            }
-          }
-          length = strPosition - position2 - headerSize;
-        } else {
-          length = encodeUtf8(value, position2 + headerSize);
-        }
-        if (length < 32) {
-          target[position2++] = 160 | length;
-        } else if (length < 256) {
-          if (headerSize < 2) {
-            target.copyWithin(position2 + 2, position2 + 1, position2 + 1 + length);
-          }
-          target[position2++] = 217;
-          target[position2++] = length;
-        } else if (length < 65536) {
-          if (headerSize < 3) {
-            target.copyWithin(position2 + 3, position2 + 2, position2 + 2 + length);
-          }
-          target[position2++] = 218;
-          target[position2++] = length >> 8;
-          target[position2++] = length & 255;
-        } else {
-          if (headerSize < 5) {
-            target.copyWithin(position2 + 5, position2 + 3, position2 + 3 + length);
-          }
-          target[position2++] = 219;
-          targetView.setUint32(position2, length);
-          position2 += 4;
-        }
-        position2 += length;
-      } else if (type === "number") {
-        if (value >>> 0 === value) {
-          if (value < 32 || value < 128 && this.useRecords === false || value < 64 && !this.randomAccessStructure) {
-            target[position2++] = value;
-          } else if (value < 256) {
-            target[position2++] = 204;
-            target[position2++] = value;
-          } else if (value < 65536) {
-            target[position2++] = 205;
-            target[position2++] = value >> 8;
-            target[position2++] = value & 255;
-          } else {
-            target[position2++] = 206;
-            targetView.setUint32(position2, value);
-            position2 += 4;
-          }
-        } else if (value >> 0 === value) {
-          if (value >= -32) {
-            target[position2++] = 256 + value;
-          } else if (value >= -128) {
-            target[position2++] = 208;
-            target[position2++] = value + 256;
-          } else if (value >= -32768) {
-            target[position2++] = 209;
-            targetView.setInt16(position2, value);
-            position2 += 2;
-          } else {
-            target[position2++] = 210;
-            targetView.setInt32(position2, value);
-            position2 += 4;
-          }
-        } else {
-          let useFloat32;
-          if ((useFloat32 = this.useFloat32) > 0 && value < 4294967296 && value >= -2147483648) {
-            target[position2++] = 202;
-            targetView.setFloat32(position2, value);
-            let xShifted;
-            if (useFloat32 < 4 || // this checks for rounding of numbers that were encoded in 32-bit float to nearest significant decimal digit that could be preserved
-            (xShifted = value * mult10[(target[position2] & 127) << 1 | target[position2 + 1] >> 7]) >> 0 === xShifted) {
-              position2 += 4;
-              return;
-            } else
-              position2--;
-          }
-          target[position2++] = 203;
-          targetView.setFloat64(position2, value);
-          position2 += 8;
-        }
-      } else if (type === "object" || type === "function") {
-        if (!value)
-          target[position2++] = 192;
-        else {
-          if (referenceMap2) {
-            let referee = referenceMap2.get(value);
-            if (referee) {
-              if (!referee.id) {
-                let idsToInsert = referenceMap2.idsToInsert || (referenceMap2.idsToInsert = []);
-                referee.id = idsToInsert.push(referee);
-              }
-              target[position2++] = 214;
-              target[position2++] = 112;
-              targetView.setUint32(position2, referee.id);
-              position2 += 4;
-              return;
-            } else
-              referenceMap2.set(value, { offset: position2 - start });
-          }
-          let constructor = value.constructor;
-          if (constructor === Object) {
-            writeObject(value);
-          } else if (constructor === Array) {
-            packArray(value);
-          } else if (constructor === Map) {
-            if (this.mapAsEmptyObject) target[position2++] = 128;
-            else {
-              length = value.size;
-              if (length < 16) {
-                target[position2++] = 128 | length;
-              } else if (length < 65536) {
-                target[position2++] = 222;
-                target[position2++] = length >> 8;
-                target[position2++] = length & 255;
-              } else {
-                target[position2++] = 223;
-                targetView.setUint32(position2, length);
-                position2 += 4;
-              }
-              for (let [key, entryValue] of value) {
-                pack2(key);
-                pack2(entryValue);
-              }
-            }
-          } else {
-            for (let i = 0, l = extensions.length; i < l; i++) {
-              let extensionClass = extensionClasses[i];
-              if (value instanceof extensionClass) {
-                let extension = extensions[i];
-                if (extension.write) {
-                  if (extension.type) {
-                    target[position2++] = 212;
-                    target[position2++] = extension.type;
-                    target[position2++] = 0;
-                  }
-                  let writeResult = extension.write.call(this, value);
-                  if (writeResult === value) {
-                    if (Array.isArray(value)) {
-                      packArray(value);
-                    } else {
-                      writeObject(value);
-                    }
-                  } else {
-                    pack2(writeResult);
-                  }
-                  return;
-                }
-                let currentTarget = target;
-                let currentTargetView = targetView;
-                let currentPosition = position2;
-                target = null;
-                let result;
-                try {
-                  result = extension.pack.call(this, value, (size) => {
-                    target = currentTarget;
-                    currentTarget = null;
-                    position2 += size;
-                    if (position2 > safeEnd)
-                      makeRoom(position2);
-                    return {
-                      target,
-                      targetView,
-                      position: position2 - size
-                    };
-                  }, pack2);
-                } finally {
-                  if (currentTarget) {
-                    target = currentTarget;
-                    targetView = currentTargetView;
-                    position2 = currentPosition;
-                    safeEnd = target.length - 10;
-                  }
-                }
-                if (result) {
-                  if (result.length + position2 > safeEnd)
-                    makeRoom(result.length + position2);
-                  position2 = writeExtensionData(result, target, position2, extension.type);
-                }
-                return;
-              }
-            }
-            if (Array.isArray(value)) {
-              packArray(value);
-            } else {
-              if (value.toJSON) {
-                const json = value.toJSON();
-                if (json !== value)
-                  return pack2(json);
-              }
-              if (type === "function")
-                return pack2(this.writeFunction && this.writeFunction(value));
-              writeObject(value);
-            }
-          }
-        }
-      } else if (type === "boolean") {
-        target[position2++] = value ? 195 : 194;
-      } else if (type === "bigint") {
-        if (value < 9223372036854776e3 && value >= -9223372036854776e3) {
-          target[position2++] = 211;
-          targetView.setBigInt64(position2, value);
-        } else if (value < 18446744073709552e3 && value > 0) {
-          target[position2++] = 207;
-          targetView.setBigUint64(position2, value);
-        } else {
-          if (this.largeBigIntToFloat) {
-            target[position2++] = 203;
-            targetView.setFloat64(position2, Number(value));
-          } else if (this.largeBigIntToString) {
-            return pack2(value.toString());
-          } else if (this.useBigIntExtension || this.moreTypes) {
-            let empty = value < 0 ? BigInt(-1) : BigInt(0);
-            let array;
-            if (value >> BigInt(65536) === empty) {
-              let mask = BigInt(18446744073709552e3) - BigInt(1);
-              let chunks = [];
-              while (true) {
-                chunks.push(value & mask);
-                if (value >> BigInt(63) === empty) break;
-                value >>= BigInt(64);
-              }
-              array = new Uint8Array(new BigUint64Array(chunks).buffer);
-              array.reverse();
-            } else {
-              let invert = value < 0;
-              let string = (invert ? ~value : value).toString(16);
-              if (string.length % 2) {
-                string = "0" + string;
-              } else if (parseInt(string.charAt(0), 16) >= 8) {
-                string = "00" + string;
-              }
-              if (hasNodeBuffer) {
-                array = Buffer.from(string, "hex");
-              } else {
-                array = new Uint8Array(string.length / 2);
-                for (let i = 0; i < array.length; i++) {
-                  array[i] = parseInt(string.slice(i * 2, i * 2 + 2), 16);
-                }
-              }
-              if (invert) {
-                for (let i = 0; i < array.length; i++) array[i] = ~array[i];
-              }
-            }
-            if (array.length + position2 > safeEnd)
-              makeRoom(array.length + position2);
-            position2 = writeExtensionData(array, target, position2, 66);
-            return;
-          } else {
-            throw new RangeError(value + " was too large to fit in MessagePack 64-bit integer format, use useBigIntExtension, or set largeBigIntToFloat to convert to float-64, or set largeBigIntToString to convert to string");
-          }
-        }
-        position2 += 8;
-      } else if (type === "undefined") {
-        if (this.encodeUndefinedAsNil)
-          target[position2++] = 192;
-        else {
-          target[position2++] = 212;
-          target[position2++] = 0;
-          target[position2++] = 0;
-        }
-      } else {
-        throw new Error("Unknown type: " + type);
-      }
-    };
-    const writePlainObject = this.variableMapSize || this.coercibleKeyAsNumber || this.skipValues ? (object) => {
-      let keys;
-      if (this.skipValues) {
-        keys = [];
-        for (let key2 in object) {
-          if ((typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key2)) && !this.skipValues.includes(object[key2]))
-            keys.push(key2);
-        }
-      } else {
-        keys = Object.keys(object);
-      }
-      let length = keys.length;
-      if (length < 16) {
-        target[position2++] = 128 | length;
-      } else if (length < 65536) {
-        target[position2++] = 222;
-        target[position2++] = length >> 8;
-        target[position2++] = length & 255;
-      } else {
-        target[position2++] = 223;
-        targetView.setUint32(position2, length);
-        position2 += 4;
-      }
-      let key;
-      if (this.coercibleKeyAsNumber) {
-        for (let i = 0; i < length; i++) {
-          key = keys[i];
-          let num = Number(key);
-          pack2(isNaN(num) ? key : num);
-          pack2(object[key]);
-        }
-      } else {
-        for (let i = 0; i < length; i++) {
-          pack2(key = keys[i]);
-          pack2(object[key]);
-        }
-      }
-    } : (object) => {
-      target[position2++] = 222;
-      let objectOffset = position2 - start;
-      position2 += 2;
-      let size = 0;
-      for (let key in object) {
-        if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
-          pack2(key);
-          pack2(object[key]);
-          size++;
-        }
-      }
-      if (size > 65535) {
-        throw new Error('Object is too large to serialize with fast 16-bit map size, use the "variableMapSize" option to serialize this object');
-      }
-      target[objectOffset++ + start] = size >> 8;
-      target[objectOffset + start] = size & 255;
-    };
-    const writeRecord = this.useRecords === false ? writePlainObject : options.progressiveRecords && !useTwoByteRecords ? (
-      // this is about 2% faster for highly stable structures, since it only requires one for-in loop (but much more expensive when new structure needs to be written)
-      (object) => {
-        let nextTransition, transition = structures.transitions || (structures.transitions = /* @__PURE__ */ Object.create(null));
-        let objectOffset = position2++ - start;
-        let wroteKeys;
-        for (let key in object) {
-          if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
-            nextTransition = transition[key];
-            if (nextTransition)
-              transition = nextTransition;
-            else {
-              let keys = Object.keys(object);
-              let lastTransition = transition;
-              transition = structures.transitions;
-              let newTransitions = 0;
-              for (let i = 0, l = keys.length; i < l; i++) {
-                let key2 = keys[i];
-                nextTransition = transition[key2];
-                if (!nextTransition) {
-                  nextTransition = transition[key2] = /* @__PURE__ */ Object.create(null);
-                  newTransitions++;
-                }
-                transition = nextTransition;
-              }
-              if (objectOffset + start + 1 == position2) {
-                position2--;
-                newRecord(transition, keys, newTransitions);
-              } else
-                insertNewRecord(transition, keys, objectOffset, newTransitions);
-              wroteKeys = true;
-              transition = lastTransition[key];
-            }
-            pack2(object[key]);
-          }
-        }
-        if (!wroteKeys) {
-          let recordId = transition[RECORD_SYMBOL];
-          if (recordId)
-            target[objectOffset + start] = recordId;
-          else
-            insertNewRecord(transition, Object.keys(object), objectOffset, 0);
-        }
-      }
-    ) : (object) => {
-      let nextTransition, transition = structures.transitions || (structures.transitions = /* @__PURE__ */ Object.create(null));
-      let newTransitions = 0;
-      for (let key in object) if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
-        nextTransition = transition[key];
-        if (!nextTransition) {
-          nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
-          newTransitions++;
-        }
-        transition = nextTransition;
-      }
-      let recordId = transition[RECORD_SYMBOL];
-      if (recordId) {
-        if (recordId >= 96 && useTwoByteRecords) {
-          target[position2++] = ((recordId -= 96) & 31) + 96;
-          target[position2++] = recordId >> 5;
-        } else
-          target[position2++] = recordId;
-      } else {
-        newRecord(transition, transition.__keys__ || Object.keys(object), newTransitions);
-      }
-      for (let key in object)
-        if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
-          pack2(object[key]);
-        }
-    };
-    const checkUseRecords = typeof this.useRecords == "function" && this.useRecords;
-    const writeObject = checkUseRecords ? (object) => {
-      checkUseRecords(object) ? writeRecord(object) : writePlainObject(object);
-    } : writeRecord;
-    const makeRoom = (end) => {
-      let newSize;
-      if (end > 16777216) {
-        if (end - start > MAX_BUFFER_SIZE)
-          throw new Error("Packed buffer would be larger than maximum buffer size");
-        newSize = Math.min(
-          MAX_BUFFER_SIZE,
-          Math.round(Math.max((end - start) * (end > 67108864 ? 1.25 : 2), 4194304) / 4096) * 4096
-        );
-      } else
-        newSize = (Math.max(end - start << 2, target.length - 1) >> 12) + 1 << 12;
-      let newBuffer = new ByteArrayAllocate(newSize);
-      targetView = newBuffer.dataView || (newBuffer.dataView = new DataView(newBuffer.buffer, 0, newSize));
-      end = Math.min(end, target.length);
-      if (target.copy)
-        target.copy(newBuffer, 0, start, end);
-      else
-        newBuffer.set(target.slice(start, end));
-      position2 -= start;
-      start = 0;
-      safeEnd = newBuffer.length - 10;
-      return target = newBuffer;
-    };
-    const newRecord = (transition, keys, newTransitions) => {
-      let recordId = structures.nextId;
-      if (!recordId)
-        recordId = 64;
-      if (recordId < sharedLimitId && this.shouldShareStructure && !this.shouldShareStructure(keys)) {
-        recordId = structures.nextOwnId;
-        if (!(recordId < maxStructureId))
-          recordId = sharedLimitId;
-        structures.nextOwnId = recordId + 1;
-      } else {
-        if (recordId >= maxStructureId)
-          recordId = sharedLimitId;
-        structures.nextId = recordId + 1;
-      }
-      let highByte = keys.highByte = recordId >= 96 && useTwoByteRecords ? recordId - 96 >> 5 : -1;
-      transition[RECORD_SYMBOL] = recordId;
-      transition.__keys__ = keys;
-      structures[recordId - 64] = keys;
-      if (recordId < sharedLimitId) {
-        keys.isShared = true;
-        structures.sharedLength = recordId - 63;
-        hasSharedUpdate = true;
-        if (highByte >= 0) {
-          target[position2++] = (recordId & 31) + 96;
-          target[position2++] = highByte;
-        } else {
-          target[position2++] = recordId;
-        }
-      } else {
-        if (highByte >= 0) {
-          target[position2++] = 213;
-          target[position2++] = 114;
-          target[position2++] = (recordId & 31) + 96;
-          target[position2++] = highByte;
-        } else {
-          target[position2++] = 212;
-          target[position2++] = 114;
-          target[position2++] = recordId;
-        }
-        if (newTransitions)
-          transitionsCount += serializationsSinceTransitionRebuild * newTransitions;
-        if (recordIdsToRemove.length >= maxOwnStructures)
-          recordIdsToRemove.shift()[RECORD_SYMBOL] = 0;
-        recordIdsToRemove.push(transition);
-        pack2(keys);
-      }
-    };
-    const insertNewRecord = (transition, keys, insertionOffset, newTransitions) => {
-      let mainTarget = target;
-      let mainPosition = position2;
-      let mainSafeEnd = safeEnd;
-      let mainStart = start;
-      target = keysTarget;
-      position2 = 0;
-      start = 0;
-      if (!target)
-        keysTarget = target = new ByteArrayAllocate(8192);
-      safeEnd = target.length - 10;
-      newRecord(transition, keys, newTransitions);
-      keysTarget = target;
-      let keysPosition = position2;
-      target = mainTarget;
-      position2 = mainPosition;
-      safeEnd = mainSafeEnd;
-      start = mainStart;
-      if (keysPosition > 1) {
-        let newEnd = position2 + keysPosition - 1;
-        if (newEnd > safeEnd)
-          makeRoom(newEnd);
-        let insertionPosition = insertionOffset + start;
-        target.copyWithin(insertionPosition + keysPosition, insertionPosition + 1, position2);
-        target.set(keysTarget.slice(0, keysPosition), insertionPosition);
-        position2 = newEnd;
-      } else {
-        target[insertionOffset + start] = keysTarget[0];
-      }
-    };
-    const writeStruct = (object) => {
-      let newPosition = writeStructSlots(object, target, start, position2, structures, makeRoom, (value, newPosition2, notifySharedUpdate) => {
-        if (notifySharedUpdate)
-          return hasSharedUpdate = true;
-        position2 = newPosition2;
-        let startTarget = target;
-        pack2(value);
-        resetStructures();
-        if (startTarget !== target) {
-          return { position: position2, targetView, target };
-        }
-        return position2;
-      }, this);
-      if (newPosition === 0)
-        return writeObject(object);
-      position2 = newPosition;
-    };
-  }
-  useBuffer(buffer) {
-    target = buffer;
-    target.dataView || (target.dataView = new DataView(target.buffer, target.byteOffset, target.byteLength));
-    targetView = target.dataView;
-    position2 = 0;
-  }
-  set position(value) {
-    position2 = value;
-  }
-  get position() {
-    return position2;
-  }
-  clearSharedData() {
-    if (this.structures)
-      this.structures = [];
-    if (this.typedStructs)
-      this.typedStructs = [];
-  }
-};
-extensionClasses = [Date, Set, Error, RegExp, ArrayBuffer, Object.getPrototypeOf(Uint8Array.prototype).constructor, DataView, C1Type];
-extensions = [{
-  pack(date, allocateForWrite, pack2) {
-    let seconds = date.getTime() / 1e3;
-    if ((this.useTimestamp32 || date.getMilliseconds() === 0) && seconds >= 0 && seconds < 4294967296) {
-      let { target: target2, targetView: targetView2, position: position3 } = allocateForWrite(6);
-      target2[position3++] = 214;
-      target2[position3++] = 255;
-      targetView2.setUint32(position3, seconds);
-    } else if (seconds > 0 && seconds < 4294967296) {
-      let { target: target2, targetView: targetView2, position: position3 } = allocateForWrite(10);
-      target2[position3++] = 215;
-      target2[position3++] = 255;
-      targetView2.setUint32(position3, date.getMilliseconds() * 4e6 + (seconds / 1e3 / 4294967296 >> 0));
-      targetView2.setUint32(position3 + 4, seconds);
-    } else if (isNaN(seconds)) {
-      if (this.onInvalidDate) {
-        allocateForWrite(0);
-        return pack2(this.onInvalidDate());
-      }
-      let { target: target2, targetView: targetView2, position: position3 } = allocateForWrite(3);
-      target2[position3++] = 212;
-      target2[position3++] = 255;
-      target2[position3++] = 255;
-    } else {
-      let { target: target2, targetView: targetView2, position: position3 } = allocateForWrite(15);
-      target2[position3++] = 199;
-      target2[position3++] = 12;
-      target2[position3++] = 255;
-      targetView2.setUint32(position3, date.getMilliseconds() * 1e6);
-      targetView2.setBigInt64(position3 + 4, BigInt(Math.floor(seconds)));
-    }
-  }
-}, {
-  pack(set, allocateForWrite, pack2) {
-    if (this.setAsEmptyObject) {
-      allocateForWrite(0);
-      return pack2({});
-    }
-    let array = Array.from(set);
-    let { target: target2, position: position3 } = allocateForWrite(this.moreTypes ? 3 : 0);
-    if (this.moreTypes) {
-      target2[position3++] = 212;
-      target2[position3++] = 115;
-      target2[position3++] = 0;
-    }
-    pack2(array);
-  }
-}, {
-  pack(error, allocateForWrite, pack2) {
-    let { target: target2, position: position3 } = allocateForWrite(this.moreTypes ? 3 : 0);
-    if (this.moreTypes) {
-      target2[position3++] = 212;
-      target2[position3++] = 101;
-      target2[position3++] = 0;
-    }
-    pack2([error.name, error.message, error.cause]);
-  }
-}, {
-  pack(regex, allocateForWrite, pack2) {
-    let { target: target2, position: position3 } = allocateForWrite(this.moreTypes ? 3 : 0);
-    if (this.moreTypes) {
-      target2[position3++] = 212;
-      target2[position3++] = 120;
-      target2[position3++] = 0;
-    }
-    pack2([regex.source, regex.flags]);
-  }
-}, {
-  pack(arrayBuffer, allocateForWrite) {
-    if (this.moreTypes)
-      writeExtBuffer(arrayBuffer, 16, allocateForWrite);
-    else
-      writeBuffer(hasNodeBuffer ? Buffer.from(arrayBuffer) : new Uint8Array(arrayBuffer), allocateForWrite);
-  }
-}, {
-  pack(typedArray, allocateForWrite) {
-    let constructor = typedArray.constructor;
-    if (constructor !== ByteArray && this.moreTypes)
-      writeExtBuffer(typedArray, typedArrays.indexOf(constructor.name), allocateForWrite);
-    else
-      writeBuffer(typedArray, allocateForWrite);
-  }
-}, {
-  pack(arrayBuffer, allocateForWrite) {
-    if (this.moreTypes)
-      writeExtBuffer(arrayBuffer, 17, allocateForWrite);
-    else
-      writeBuffer(hasNodeBuffer ? Buffer.from(arrayBuffer) : new Uint8Array(arrayBuffer), allocateForWrite);
-  }
-}, {
-  pack(c1, allocateForWrite) {
-    let { target: target2, position: position3 } = allocateForWrite(1);
-    target2[position3] = 193;
-  }
-}];
-function writeExtBuffer(typedArray, type, allocateForWrite, encode2) {
-  let length = typedArray.byteLength;
-  if (length + 1 < 256) {
-    var { target: target2, position: position3 } = allocateForWrite(4 + length);
-    target2[position3++] = 199;
-    target2[position3++] = length + 1;
-  } else if (length + 1 < 65536) {
-    var { target: target2, position: position3 } = allocateForWrite(5 + length);
-    target2[position3++] = 200;
-    target2[position3++] = length + 1 >> 8;
-    target2[position3++] = length + 1 & 255;
-  } else {
-    var { target: target2, position: position3, targetView: targetView2 } = allocateForWrite(7 + length);
-    target2[position3++] = 201;
-    targetView2.setUint32(position3, length + 1);
-    position3 += 4;
-  }
-  target2[position3++] = 116;
-  target2[position3++] = type;
-  if (!typedArray.buffer) typedArray = new Uint8Array(typedArray);
-  target2.set(new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength), position3);
-}
-function writeBuffer(buffer, allocateForWrite) {
-  let length = buffer.byteLength;
-  var target2, position3;
-  if (length < 256) {
-    var { target: target2, position: position3 } = allocateForWrite(length + 2);
-    target2[position3++] = 196;
-    target2[position3++] = length;
-  } else if (length < 65536) {
-    var { target: target2, position: position3 } = allocateForWrite(length + 3);
-    target2[position3++] = 197;
-    target2[position3++] = length >> 8;
-    target2[position3++] = length & 255;
-  } else {
-    var { target: target2, position: position3, targetView: targetView2 } = allocateForWrite(length + 5);
-    target2[position3++] = 198;
-    targetView2.setUint32(position3, length);
-    position3 += 4;
-  }
-  target2.set(buffer, position3);
-}
-function writeExtensionData(result, target2, position3, type) {
-  let length = result.length;
-  switch (length) {
-    case 1:
-      target2[position3++] = 212;
-      break;
-    case 2:
-      target2[position3++] = 213;
-      break;
-    case 4:
-      target2[position3++] = 214;
-      break;
-    case 8:
-      target2[position3++] = 215;
-      break;
-    case 16:
-      target2[position3++] = 216;
-      break;
-    default:
-      if (length < 256) {
-        target2[position3++] = 199;
-        target2[position3++] = length;
-      } else if (length < 65536) {
-        target2[position3++] = 200;
-        target2[position3++] = length >> 8;
-        target2[position3++] = length & 255;
-      } else {
-        target2[position3++] = 201;
-        target2[position3++] = length >> 24;
-        target2[position3++] = length >> 16 & 255;
-        target2[position3++] = length >> 8 & 255;
-        target2[position3++] = length & 255;
-      }
-  }
-  target2[position3++] = type;
-  target2.set(result, position3);
-  position3 += length;
-  return position3;
-}
-function insertIds(serialized, idsToInsert) {
-  let nextId;
-  let distanceToMove = idsToInsert.length * 6;
-  let lastEnd = serialized.length - distanceToMove;
-  while (nextId = idsToInsert.pop()) {
-    let offset = nextId.offset;
-    let id = nextId.id;
-    serialized.copyWithin(offset + distanceToMove, offset, lastEnd);
-    distanceToMove -= 6;
-    let position3 = offset + distanceToMove;
-    serialized[position3++] = 214;
-    serialized[position3++] = 105;
-    serialized[position3++] = id >> 24;
-    serialized[position3++] = id >> 16 & 255;
-    serialized[position3++] = id >> 8 & 255;
-    serialized[position3++] = id & 255;
-    lastEnd = offset;
-  }
-  return serialized;
-}
-function writeBundles(start, pack2, incrementPosition) {
-  if (bundledStrings2.length > 0) {
-    targetView.setUint32(bundledStrings2.position + start, position2 + incrementPosition - bundledStrings2.position - start);
-    bundledStrings2.stringsPosition = position2 - start;
-    let writeStrings = bundledStrings2;
-    bundledStrings2 = null;
-    pack2(writeStrings[0]);
-    pack2(writeStrings[1]);
-  }
-}
-function prepareStructures(structures, packr2) {
-  structures.isCompatible = (existingStructures) => {
-    let compatible = !existingStructures || (packr2.lastNamedStructuresLength || 0) === existingStructures.length;
-    if (!compatible)
-      packr2._mergeStructures(existingStructures);
-    return compatible;
-  };
-  return structures;
-}
-var defaultPackr = new Packr({ useRecords: false });
-var pack = defaultPackr.pack;
-var encode = defaultPackr.pack;
-var { NEVER, ALWAYS, DECIMAL_ROUND, DECIMAL_FIT } = FLOAT32_OPTIONS;
-var REUSE_BUFFER_MODE = 512;
-var RESET_BUFFER_MODE = 1024;
-var RESERVE_START_SPACE = 2048;
 
 // src/server/services/resource-intent-tags/extract.ts
 var WORD = String.raw\`\\p{L}\\p{N}_\`;
@@ -2180,43 +1115,12 @@ function compareCodePoints(a, b) {
   }
 }
 
-// src/server/services/resource-intent-tags/build.ts
-var TAG_BUILD_PARAMS = {
-  /** Per-user outcome normalisation. */
-  outcome: { genUserPrior: 10, postUserPrior: 5, tipBonus: 1, disliked: -1 },
-  /** Shrinkage priors of the fits, and the user-side score's relevance and lift. */
-  fit: {
-    resourcePrior: 20,
-    tagPrior: 10,
-    ecosystemPrior: 10,
-    fitExponent: 1,
-    liftExponent: 0.5,
-    relevancePrior: 5,
-    /** A (resource, tag) pair needs this many users for its own fit and user-side share. */
-    minTagUsers: 2
-  },
-  content: {
-    /** Showcase and gallery prompts count only when a resource has at least this many of them. */
-    minPrompts: 3,
-    promptPrior: 3,
-    minScore: 0.1,
-    scoreDecimals: 4,
-    /** Noisy-OR weight of each content source. */
-    weights: { showcase: 1, gallery: 0.6, tags: 0.8, trigger: 0.5, name: 0.8, description: 0.3 }
-  }
-};
-function tagFitBound(params = TAG_BUILD_PARAMS.outcome) {
-  return Math.max(1 - params.disliked, 1 + params.tipBonus);
-}
-var FINALIZE_STEP_WORK = 1 << 16;
-
-// src/server/services/resource-intent-tags/payload.ts
+// src/server/services/resource-intent-tags/payload-decode.ts
 var TAG_INDEX_PAYLOAD_FORMAT = "resource-intent-tags/1";
 var TAG_INDEX_MAX_PAYLOAD_BYTES = 128 * 1024 * 1024;
 var TAG_INDEX_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
 var C_SCALE = 1e4;
-var packr = new Packr({ useRecords: false, mapsAsObjects: true });
-var brotliCompress = (0, import_util.promisify)(import_zlib.default.brotliCompress);
+var unpackr = new Unpackr({ useRecords: false, mapsAsObjects: true });
 var brotliDecompress = (0, import_util.promisify)(import_zlib.default.brotliDecompress);
 function fail(what) {
   throw new Error(\`tag index payload invalid: \${what}\`);
@@ -2323,13 +1227,9 @@ function decodeKind(raw, kind) {
 async function decompressTagIndex(payload, maxInflatedBytes = TAG_INDEX_MAX_INFLATED_BYTES) {
   return brotliDecompress(payload, { maxOutputLength: maxInflatedBytes });
 }
-var TAG_INDEX_DECODE_CAPS = {
-  maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES,
-  maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES
-};
 var HEX64 = /^[0-9a-f]{64}$/;
 function unpackTagIndexData(raw) {
-  const doc = packr.unpack(raw);
+  const doc = unpackr.unpack(raw);
   if (!doc || doc.format !== TAG_INDEX_PAYLOAD_FORMAT) fail("unknown format");
   const specHash = doc.specHash;
   if (typeof specHash !== "string" || !HEX64.test(specHash)) fail("specHash");
@@ -2402,13 +1302,12 @@ function checkSparse(s, keyLimit, n, what, valueOk) {
   checkIds(s.ptr, s.resource, n, \`\${what} resource\`);
   for (const v of s.value) if (!valueOk(v)) fail(\`\${what} value\`);
 }
-function checkKind(k, V, E, kind) {
+function checkKind(k, V, E, kind, bound) {
   const what = (x) => \`\${kind} \${x}\`;
   const ids = k.modelIds;
   const n = ids.length;
   for (let i = 1; i < n; i++) if (ids[i] <= ids[i - 1]) fail(what("model ids not ascending"));
   if (k.fit.length !== n) fail(what("fit length"));
-  const bound = tagFitBound();
   for (const v of k.fit) {
     if (!finite(v)) fail(what("fit not finite"));
     if (Math.abs(v) > bound) fail(what("fit out of range"));
@@ -2430,7 +1329,9 @@ function checkKind(k, V, E, kind) {
   checkSparse(k.userByTag, V, n, what("userByTag"), positive);
   checkSparse(k.userByEcosystem, E, n, what("userByEcosystem"), positive);
 }
-function validateTagIndexData(data) {
+function validateTagIndexData(data, fitBound) {
+  if (!(Number.isFinite(fitBound) && fitBound > 0))
+    throw new Error(\`tag index decode: fit bound \${fitBound} is not a positive number\`);
   if (typeof data.vocabVersion !== "string" || !HEX64.test(data.vocabVersion)) fail("vocabVersion");
   const V = data.vocabulary.length;
   if (!V) fail("vocabulary keys");
@@ -2463,17 +1364,17 @@ function validateTagIndexData(data) {
   for (let k = 0; k < tc.count.length; k++)
     if (tc.count[k] < 1 || tc.count[k] > data.ecosystems[tc.ecosystem[k]].observations)
       fail("tagEcosystemCounts count");
-  checkKind(data.kinds.addon, V, E, "addon");
-  checkKind(data.kinds.checkpoint, V, E, "checkpoint");
+  checkKind(data.kinds.addon, V, E, "addon", fitBound);
+  checkKind(data.kinds.checkpoint, V, E, "checkpoint", fitBound);
 }
 var ASSEMBLE_STEP_WORK = 1 << 13;
-async function decodeTagIndexData(payload, caps = TAG_INDEX_DECODE_CAPS) {
+async function decodeTagIndexData(payload, caps, fitBound) {
   if (payload.length > caps.maxPayloadBytes)
     throw new Error(\`tag index payload \${payload.length} bytes exceeds \${caps.maxPayloadBytes}\`);
   const { data, specHash } = unpackTagIndexData(
     await decompressTagIndex(payload, caps.maxInflatedBytes)
   );
-  validateTagIndexData(data);
+  validateTagIndexData(data, fitBound);
   return { data, vocabVersion: data.vocabVersion, specHash };
 }
 function transferablesOf(data) {
@@ -2495,7 +1396,7 @@ function transferablesOf(data) {
 var port = import_worker_threads.parentPort;
 if (!port) throw new Error("decode-worker.entry must run in a worker thread");
 port.once("message", (msg) => {
-  decodeTagIndexData(msg.payload, msg.caps).then(
+  decodeTagIndexData(msg.payload, msg.caps, msg.fitBound).then(
     (result) => {
       const reply = { ok: true, result };
       port.postMessage(reply, transferablesOf(result.data));

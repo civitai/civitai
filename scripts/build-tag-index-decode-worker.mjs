@@ -6,12 +6,19 @@
 // and the caller falls back, silently). An eval'd worker has no tracing surface; the same
 // reasoning made the event-loop watchdog worker an inline string (src/server/eventloop-watchdog.ts).
 // Unlike that one, this source is generated from type-checked TypeScript (`decode-worker.entry.ts`
-// and `payload.ts`), so the decoder the worker runs is the decoder the tests run.
+// and `payload-decode.ts`), so the decoder the worker runs is the decoder the tests run.
 //
 // The bundle may require only Node builtins: an eval'd worker resolves bare requires from the
 // process's cwd, which in the standalone image holds only traced packages. So msgpackr is bundled
-// from its pure-JS entry (no optional native addon), and `he` (imported by build.ts for its HTML
-// decoding, which decoding a snapshot never reaches) is replaced by a stub that throws.
+// from its pure-JS unpacker (`unpack.js`: no optional native addon, and no packer).
+//
+// The bundle must not contain `build.ts` (the build's tunable constants, e.g. TAG_BUILD_PARAMS and
+// `tagFitBound`): every limit the worker enforces is handed to it by the main thread, so a tuning
+// change cannot leave the worker disagreeing with the code that spawned it. The generator refuses a
+// bundle that pulls in `build.ts`; msgpack's packer cannot get in, because `msgpackr` resolves to
+// the unpacker here.
+//
+// CI: the `packages` job (not continue-on-error) runs `--check`.
 //
 //   node scripts/build-tag-index-decode-worker.mjs           # (re)write the generated module
 //   node scripts/build-tag-index-decode-worker.mjs --check   # exit 1 if it is out of date
@@ -29,17 +36,8 @@ const DIR = 'src/server/services/resource-intent-tags';
 export const DECODE_WORKER_ENTRY = `${DIR}/decode-worker.entry.ts`;
 export const DECODE_WORKER_MODULE = `${DIR}/decode-worker.source.generated.ts`;
 
-const stubHe = {
-  name: 'stub-he',
-  setup(build) {
-    build.onResolve({ filter: /^he$/ }, () => ({ path: 'he', namespace: 'stub-he' }));
-    build.onLoad({ filter: /.*/, namespace: 'stub-he' }, () => ({
-      contents:
-        "export function decode() { throw new Error('he is not available in the tag-index decode worker'); }",
-      loader: 'js',
-    }));
-  },
-};
+/** Inputs the bundle must not contain (see the header). */
+export const FORBIDDEN_INPUTS = [/src\/server\/services\/resource-intent-tags\/build\.ts$/];
 
 /** Node builtins the bundle requires, by name; anything else is refused. */
 export function bundleRequires(code) {
@@ -49,15 +47,30 @@ export function bundleRequires(code) {
 const isBuiltin = (name) =>
   builtinModules.includes(name.replace(/^node:/, '')) || name.startsWith('node:');
 
-/** The generated module's full text. */
-export async function buildTagIndexDecodeWorkerModule() {
+/**
+ * The generated module's full text. `entrySource` (tests only) bundles that text, resolved from the
+ * entry's directory, in place of the entry file.
+ */
+export async function buildTagIndexDecodeWorkerModule({ entrySource } = {}) {
   const require = createRequire(path.join(root, 'package.json'));
   // msgpackr's `node` export is a CJS build that tries an optional native addon; its pure-JS ESM
-  // entry decodes identically.
-  const msgpackrJs = path.join(path.dirname(path.dirname(require.resolve('msgpackr'))), 'index.js');
+  // unpacker decodes identically (payload-decode.ts imports only `Unpackr`).
+  const msgpackrJs = path.join(
+    path.dirname(path.dirname(require.resolve('msgpackr'))),
+    'unpack.js'
+  );
   const result = await esbuild.build({
     absWorkingDir: root,
-    entryPoints: [DECODE_WORKER_ENTRY],
+    ...(entrySource === undefined
+      ? { entryPoints: [DECODE_WORKER_ENTRY] }
+      : {
+          stdin: {
+            contents: entrySource,
+            resolveDir: path.join(root, DIR),
+            sourcefile: 'entry-under-test.ts',
+            loader: 'ts',
+          },
+        }),
     bundle: true,
     platform: 'node',
     format: 'cjs',
@@ -65,11 +78,15 @@ export async function buildTagIndexDecodeWorkerModule() {
     write: false,
     tsconfig: path.join(root, 'tsconfig.json'),
     alias: { msgpackr: msgpackrJs },
-    plugins: [stubHe],
     legalComments: 'none',
     logLevel: 'silent',
+    metafile: true,
   });
   const code = result.outputFiles[0].text;
+  const inputs = Object.keys(result.metafile.inputs);
+  const forbidden = inputs.filter((i) => FORBIDDEN_INPUTS.some((re) => re.test(i)));
+  if (forbidden.length)
+    throw new Error(`decode worker bundle contains forbidden inputs: ${forbidden.join(', ')}`);
   const foreign = bundleRequires(code).filter((name) => !isBuiltin(name));
   if (foreign.length)
     throw new Error(`decode worker bundle requires non-builtin modules: ${foreign.join(', ')}`);
