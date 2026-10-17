@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildStorylineLaneMap } from '~/components/Storyline/storyline-lane-map.utils';
+import {
+  buildStorylineLaneMap,
+  storylineMayBranch,
+} from '~/components/Storyline/storyline-lane-map.utils';
 import { parseIdListParam, STORYLINE_VIA_PARAM } from '~/components/Storyline/storyline-mode.utils';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 
@@ -86,9 +89,38 @@ describe('buildStorylineLaneMap', () => {
     expect(node(map, 22)?.href).toBe('/images/2200?storylineChapter=22');
   });
 
+  it('carries a capped read through, for the note under the map', () => {
+    const capped = buildStorylineLaneMap({
+      rootChapterId: 1,
+      chapters: ids.map(visible),
+      edges,
+      truncated: true,
+    });
+    expect(capped?.truncated).toBe(true);
+    expect(map?.truncated).toBe(false);
+  });
+
   it('is null without chapter 1', () => {
     expect(
       buildStorylineLaneMap({ rootChapterId: null, chapters: [], edges: [], truncated: false })
     ).toBeNull();
+  });
+});
+
+describe('storylineMayBranch', () => {
+  const path = (forkAt?: number) =>
+    Array.from({ length: 3 }, (_, i) => ({ childCount: i === forkAt ? 2 : 1 }));
+
+  it('reads the map when the canon path forks', () => {
+    expect(storylineMayBranch({ chapterCount: 4, mainPath: path(1) })).toBe(true);
+  });
+
+  it('reads it when the canon path stops short of a fork further on', () => {
+    // Chapter 3 has no canon child; the story forks below it, off the canon path.
+    expect(storylineMayBranch({ chapterCount: 6, mainPath: path() })).toBe(true);
+  });
+
+  it('skips it when every chapter is on the canon path', () => {
+    expect(storylineMayBranch({ chapterCount: 3, mainPath: path() })).toBe(false);
   });
 });

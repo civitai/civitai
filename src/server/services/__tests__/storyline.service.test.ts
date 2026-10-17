@@ -2744,6 +2744,35 @@ describe('covers and cast', () => {
     });
   });
 
+  it("applies the reader's image gate to the map's chapters too", async () => {
+    getAllHiddenForUser.mockResolvedValue({
+      hiddenImages: [{ id: 77, hidden: true }],
+      hiddenTags: [{ id: 5, hidden: true }],
+    });
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, post: chapterPost(101, OWNER) },
+      {
+        id: 2,
+        depth: 1,
+        removedAt: null,
+        post: chapterPost(102, STRANGER, { tosViolation: true }),
+      },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      { chapterId: 2, parentChapterId: 1, canon: true },
+    ] as never);
+    answerRaw([]);
+    const { chapters } = await getStorylineGraph({ id: 10, viewer: { id: 99 }, browsingLevel: PG });
+    expect(chapters.map((c) => [c.chapterId, c.tombstone, c.firstImage?.id ?? null])).toEqual([
+      [1, null, 1101],
+      [2, 'removed', null],
+    ]);
+    const reads = rawCalls().filter((call) => isFirstImageRead(call.text));
+    expect(reads).toHaveLength(1);
+    // The same bound values as the path's read: posts, the reader, their level, hidden lists.
+    expect(reads[0].values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+  });
+
   describe('the storyline page', () => {
     const page = (viewer: { id: number; isModerator?: boolean } | undefined) =>
       getStoryline({ id: 10, viewer, browsingLevel: PG });

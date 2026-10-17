@@ -190,6 +190,30 @@ describe('layoutStorylineLanes', () => {
     expect(lanes.links).toHaveLength(6);
   });
 
+  it('does not wait on a parent it cannot reach', () => {
+    // 3 is given but nothing leads to it, so 2 is reached through 1 alone.
+    const lanes = layoutStorylineLanes(
+      1,
+      [1, 2, 3],
+      graph([
+        ['2*', 1],
+        ['2*', 3],
+      ])
+    );
+    expect(placed(lanes)).toEqual({ 1: [0, 0], 2: [1, 0] });
+  });
+
+  it('reuses lane 0 once the canon path ends', () => {
+    // The canon path is 1 -> 2 and ends; 3 opens lane 1, and its fork at row 2 takes lane 0.
+    const lanes = layout([
+      ['2*', 1],
+      [3, 1],
+      ['4*', 3],
+      [5, 3],
+    ]);
+    expect(placed(lanes)).toMatchObject({ 2: [1, 0], 3: [1, 1], 4: [2, 1], 5: [2, 0] });
+  });
+
   it('returns nothing without chapter 1', () => {
     expect(layoutStorylineLanes(1, [2, 3], graph([['3*', 2]]))).toEqual({
       nodes: [],

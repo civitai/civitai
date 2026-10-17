@@ -31,6 +31,7 @@ import {
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
 import { StorylineLaneMap, useStorylineLaneMap } from '~/components/Storyline/StorylineLaneMap';
+import { storylineMayBranch } from '~/components/Storyline/storyline-lane-map.utils';
 import {
   getForkShare,
   getStorylineChapterName,
@@ -307,14 +308,9 @@ function StorylineChapters({ storyline }: { storyline: Storyline }) {
   );
 }
 
-/**
- * Every branch, where it forks off and where it rejoins. Read only when some chapter is off the
- * canon path, which any fork leaves; the canon path alone can stop short of a fork, at the first
- * chapter the owner did not write or at its length cap.
- */
+/** Every branch, where it forks off and where it rejoins. */
 function StorylineMapSection({ storyline }: { storyline: Storyline }) {
-  const branched = storyline.chapterCount > storyline.mainPath.length;
-  const { map } = useStorylineLaneMap(storyline.id, { enabled: branched });
+  const { map } = useStorylineLaneMap(storyline.id, { enabled: storylineMayBranch(storyline) });
   if (!map) return null;
   return (
     <Section
