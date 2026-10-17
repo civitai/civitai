@@ -3,7 +3,7 @@ import path from 'path';
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { queues, onReactionRemoved, chInsert, logToAxiom } = vi.hoisted(() => ({
+const { queues, onReactionRemoved, chInsert } = vi.hoisted(() => ({
   queues: {
     article: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
     post: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
@@ -15,7 +15,6 @@ const { queues, onReactionRemoved, chInsert, logToAxiom } = vi.hoisted(() => ({
   chInsert: vi.fn<(input: { table: string; values: unknown[] }) => Promise<undefined>>(
     async () => undefined
   ),
-  logToAxiom: vi.fn<(input: unknown) => Promise<undefined>>(async () => undefined),
 }));
 
 vi.mock('~/server/metrics', () => ({
@@ -27,9 +26,9 @@ vi.mock('~/server/metrics', () => ({
 }));
 vi.mock('~/server/events/points/hooks', () => ({ onReactionRemoved }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { insert: chInsert } }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   countUserReactions,
   IMAGE_ROWS_PER_RUN,
@@ -273,7 +272,7 @@ describe('removeUserReactions', () => {
 
     const result = await removeUserReactions(USER);
 
-    expect(logToAxiom).toHaveBeenCalledWith(
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'user-reaction-erasure-follow-up',
         details: { table: 'ArticleReaction', step: 'queue', entityIds: [20, 21] },
