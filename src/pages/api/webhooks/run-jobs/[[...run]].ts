@@ -10,6 +10,7 @@ import {
   appealTrainingCopyJob,
 } from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
+import { scanLabelControlSampleJob } from '~/server/jobs/scan-label-control-sample';
 import { scanLabelCopyJob } from '~/server/jobs/scan-label-copy';
 import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
@@ -291,6 +292,7 @@ export const jobs: Job[] = [
   appealDecisionRecordsJob,
   appealTrainingCopyJob,
   scanLabelCopyJob,
+  scanLabelControlSampleJob,
   scanLabelCopySweepJob,
   announcementMediaCheckJob,
   blurbFanoutJob,

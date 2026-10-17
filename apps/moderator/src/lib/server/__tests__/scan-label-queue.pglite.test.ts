@@ -29,7 +29,7 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { claimNext, castVote, getCounters, getOpenFlaggerVersions } = await import(
+const { claimNext, castVote, getCounters, getOpenFlaggerVersions, sourceOrder } = await import(
   '../scan-label.service'
 );
 
@@ -75,20 +75,29 @@ async function seedItem(
     blockVotes = 0,
     flaggedAt = '2026-10-13T08:00:00Z',
     version = 'scan@1',
-  }: { votes?: number; blockVotes?: number; flaggedAt?: string; version?: string } = {}
+    sources = ['orchestrator-scan'],
+  }: {
+    votes?: number;
+    blockVotes?: number;
+    flaggedAt?: string;
+    version?: string;
+    sources?: ('orchestrator-scan' | 'xguard-prompt' | 'control-sample')[];
+  } = {}
 ): Promise<number> {
   await pg.query(`INSERT INTO "Image" ("id", "url") VALUES ($1, $2)`, [imageId, `key-${imageId}`]);
+  const lane = sources.includes('control-sample') ? 'control' : 'flagged';
   const { rows } = await pg.query<{ id: number }>(
-    `INSERT INTO "ScanLabelItem" ("imageId", "firstFlaggedAt", "votes", "blockVotes")
-     VALUES ($1, $2, $3, $4) RETURNING id`,
-    [imageId, flaggedAt, votes, blockVotes]
+    `INSERT INTO "ScanLabelItem" ("imageId", "lane", "firstFlaggedAt", "votes", "blockVotes")
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [imageId, lane, flaggedAt, votes, blockVotes]
   );
   const itemId = rows[0].id;
-  await pg.query(
-    `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
-     VALUES ($1, 'orchestrator-scan', $2, $3, $4)`,
-    [itemId, version, `wf-${imageId}`, flaggedAt]
-  );
+  for (const source of sources)
+    await pg.query(
+      `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+       VALUES ($1, $2, $3, $4, $5)`,
+      [itemId, source, version, `wf-${imageId}-${source}`, flaggedAt]
+    );
   // Prior votes come from moderators 900+, so they never collide with the test's own voters.
   for (let i = 0; i < votes; i++)
     await pg.query(
@@ -153,6 +162,110 @@ describe('claimNext order', () => {
     expect((await claimNext(2, { flaggerVersion: 'scan@2' }, NOW))!.itemId).toBe(d13);
     expect(await claimNext(3, { day: '2026-10-12', flaggerVersion: 'scan@2' }, NOW)).toBeNull();
     expect(await getOpenFlaggerVersions()).toEqual(['scan@2', 'scan@1']);
+  });
+});
+
+describe('claimNext source mix', () => {
+  const UPLOAD = { sources: ['orchestrator-scan'] } as const;
+  const PROMPT = { sources: ['xguard-prompt'] } as const;
+  const CONTROL = { sources: ['control-sample'] } as const;
+
+  /** Each hundredth of [0, 1) exactly once per 100 draws, interleaved. */
+  const everyHundredth = () => {
+    let k = 0;
+    return () => (((k++ * 37) % 100) + 0.5) / 100;
+  };
+  /** mulberry32: a small seeded PRNG, so the counts below are fixed. */
+  const seeded = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  async function seedMany(counts: { upload?: number; prompt?: number; control?: number }) {
+    const sourceOf = new Map<number, string>();
+    let imageId = 1;
+    for (const [source, opts] of [
+      ['upload', UPLOAD],
+      ['prompt', PROMPT],
+      ['control', CONTROL],
+    ] as const)
+      for (let n = 0; n < (counts[source] ?? 0); n++)
+        sourceOf.set(await seedItem(imageId++, { ...opts, sources: [...opts.sources] }), source);
+    return sourceOf;
+  }
+
+  async function pull(sourceOf: Map<number, string>, n: number, rng: () => number) {
+    const served: Record<string, number> = {};
+    for (let userId = 1; userId <= n; userId++) {
+      const card = await claimNext(userId, {}, NOW, rng);
+      const source = card ? sourceOf.get(card.itemId)! : 'none';
+      served[source] = (served[source] ?? 0) + 1;
+    }
+    return served;
+  }
+
+  it('serves exactly the mix over every hundred draws', async () => {
+    const sourceOf = await seedMany({ upload: 20, prompt: 20, control: 5 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({
+      upload: 45,
+      prompt: 45,
+      control: 10,
+    });
+  });
+
+  it('the seeded draw converges on the mix', () => {
+    const rng = seeded(7);
+    const drawn: Record<string, number> = {};
+    for (let n = 0; n < 100_000; n++) {
+      const [first] = sourceOrder(rng);
+      drawn[first] = (drawn[first] ?? 0) + 1;
+    }
+    expect(drawn).toEqual({ upload: 44_987, prompt: 44_972, control: 10_041 });
+  });
+
+  it('serves the drawn source on every claim of a seeded run', async () => {
+    const sourceOf = await seedMany({ upload: 60, prompt: 60, control: 20 });
+    const replay = seeded(7);
+    const expected: Record<string, number> = {};
+    for (let n = 0; n < 300; n++) {
+      const [first] = sourceOrder(replay);
+      expected[first] = (expected[first] ?? 0) + 1;
+    }
+    expect(expected).toEqual({ upload: 122, prompt: 141, control: 37 });
+    expect(await pull(sourceOf, 300, seeded(7))).toEqual(expected);
+  });
+
+  it('passes an empty source’s draws to the heaviest source left', async () => {
+    const sourceOf = await seedMany({ upload: 20, prompt: 20 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ upload: 55, prompt: 45 });
+  });
+
+  it('serves whatever is left when only one source has items', async () => {
+    const sourceOf = await seedMany({ prompt: 10 });
+    expect(await pull(sourceOf, 30, everyHundredth())).toEqual({ prompt: 30 });
+  });
+
+  it('falls back when the drawn source holds only items the voter already voted on', async () => {
+    const voted = await seedItem(1, { ...UPLOAD, votes: 1 });
+    const prompt = await seedItem(2, PROMPT);
+    const card = await claimNext(900, {}, NOW, () => 0);
+    expect(card!.itemId).toBe(prompt);
+    expect(card!.itemId).not.toBe(voted);
+  });
+
+  it('files an item with both scan flags under upload, and a control item under control only', async () => {
+    const both = await seedItem(1, {
+      sources: ['xguard-prompt', 'orchestrator-scan'],
+      flaggedAt: '2026-10-13T07:00:00Z',
+    });
+    const prompt = await seedItem(2, { ...PROMPT, flaggedAt: '2026-10-13T08:00:00Z' });
+    const control = await seedItem(3, { ...CONTROL, flaggedAt: '2026-10-13T09:00:00Z' });
+    // Each draw lands in one source's band of QUEUE_MIX; the newest item would win without the mix.
+    expect((await claimNext(1, {}, NOW, () => 0.1))!.itemId).toBe(both);
+    expect((await claimNext(2, {}, NOW, () => 0.5))!.itemId).toBe(prompt);
+    expect((await claimNext(3, {}, NOW, () => 0.95))!.itemId).toBe(control);
   });
 });
 
