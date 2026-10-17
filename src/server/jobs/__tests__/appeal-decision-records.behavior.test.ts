@@ -602,6 +602,21 @@ describe('sweepLabelStore', () => {
     expect(await excludedIds()).toEqual([110]);
   });
 
+  it('excludes a subject whose image is gone when another image with its file is excluded', async () => {
+    await judged(113);
+    await judged(114);
+    await holder.db.query(
+      `INSERT INTO "Image" ("id", "userId", "url", "needsReview") VALUES (115, 9, 'x', 'csam')`
+    );
+
+    // judged() snapshots url "x" for both; neither image row exists, only 115 shares the file.
+    await holder.db.query(
+      `UPDATE label_store.subject SET snapshot = '{"url": "y"}' WHERE "subjectId" = '114'`
+    );
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([113]);
+  });
+
   it('counts a subject once, and nothing on the next run', async () => {
     await image(107, { blockedFor: 'CSAM' });
     await judged(107);

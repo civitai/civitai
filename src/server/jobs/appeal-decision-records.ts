@@ -129,7 +129,7 @@ export async function sweepLabelStore() {
       SELECT DISTINCT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL
     ),
     subjects AS (
-      SELECT s."subjectId", s."ownerHash",
+      SELECT s."subjectId", s."ownerHash", s.snapshot->>'url' AS url,
         CASE WHEN s."subjectId" ~ '^[0-9]{1,10}$' AND s."subjectId"::bigint <= 2147483647
           THEN s."subjectId"::int END AS "imageId"
       FROM label_store.subject s
@@ -146,10 +146,12 @@ export async function sweepLabelStore() {
             AND (li."needsReview" = 'csam' OR li."blockedFor" = 'CSAM'
               OR li."userId" IN (SELECT "userId" FROM reported_users))
         )
-        -- Another image sharing the stored file.
+        -- Another image sharing the stored file, found by the snapshot's url once the subject's own
+        -- image row is gone.
         OR EXISTS (
-          SELECT 1 FROM "Image" li JOIN "Image" so ON so.url = li.url AND so.id <> li.id
-          WHERE li.id = s."imageId"
+          SELECT 1 FROM "Image" so
+          WHERE so.url = coalesce((SELECT li.url FROM "Image" li WHERE li.id = s."imageId"), s.url)
+            AND so.id IS DISTINCT FROM s."imageId"
             AND (so."needsReview" = 'csam' OR so."blockedFor" = 'CSAM'
               OR so."userId" IN (SELECT "userId" FROM reported_users)
               OR so.id::text IN (SELECT id FROM reported_images))
