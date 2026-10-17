@@ -53,8 +53,8 @@ importers:
         specifier: 0.2.0-beta.98
         version: 0.2.0-beta.98
       '@civitai/components-chat':
-        specifier: ^0.10.1
-        version: 0.10.1(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
+        specifier: ^0.10.3
+        version: 0.10.3(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -2332,15 +2332,15 @@ packages:
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/components-chat@0.10.1':
-    resolution: {integrity: sha512-vDpENnUwvrp3Z3sCxGLFE1Xs6XDMqPgtQKoUz0rK1cc0NKpWssK3q0iDjOmxo6XsEJdJJjYtFFxYVZtO1080Hw==}
+  '@civitai/components-chat@0.10.3':
+    resolution: {integrity: sha512-8bh9cwWrLrvaDeX408SJ2+lDUKDxsVbeBGEv8F8ikWcZvncj+5+0EElbSaNGejns7R9bCjLZWWeK81hpr8+Yhw==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
       lit: ^3.3.0
 
-  '@civitai/components@0.12.0':
-    resolution: {integrity: sha512-9RuAougTZIFNk5lEWpdcWxL+Gfn5MPcqvO1CfXnotMjSh5A2x2DK9wo65y0d/MPR9HzyzpOFb0P/YGxYH8aYmA==}
+  '@civitai/components@0.13.0':
+    resolution: {integrity: sha512-/xP5upRRy+HPEPFELRmIZHiQ8JpTnm1tqTzRhX58JHACLwT8mB0qAM/EoKQ1dj71uioQf/Kj/s3ljRe+hnK5Og==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.1.0 <1.0.0'
@@ -13957,10 +13957,10 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/components-chat@0.10.1(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
+  '@civitai/components-chat@0.10.3(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
-      '@civitai/components': 0.12.0(@civitai/sdk@0.11.0)
+      '@civitai/components': 0.13.0(@civitai/sdk@0.11.0)
       '@civitai/sdk': 0.11.0
       '@modelcontextprotocol/sdk': 1.32.1(zod@4.0.17)
       ai: 6.0.289(zod@4.0.17)
@@ -13973,7 +13973,7 @@ snapshots:
       - supports-color
       - zod
 
-  '@civitai/components@0.12.0(@civitai/sdk@0.11.0)':
+  '@civitai/components@0.13.0(@civitai/sdk@0.11.0)':
     dependencies:
       '@civitai/theme': 0.5.2
       lit: 3.3.3
