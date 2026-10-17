@@ -123,6 +123,26 @@ export async function getEventBuyerTeam(eventName: string, userId: number) {
 }
 
 /**
+ * How a viewer sees an event's mystery boxes: whether they may buy (the event is playable for them)
+ * and which team's contents to show. Null when the event is unregistered, unloadable or closed to
+ * them, or their team can't be read. Read only: unlike `getEventBuyerTeam` it places no one, so the
+ * purchase and the open still confirm the team they draw from.
+ */
+export async function getEventBoxViewer(
+  eventName: string,
+  viewer: { id: number; isModerator?: boolean }
+) {
+  const events = await loadEvents().catch(() => undefined);
+  const event = events?.find((e) => e.name === eventName);
+  if (!event) return null;
+  const access = await getEventAccess(event, viewer).catch(() => 'closed' as const);
+  if (!canReadEvent(access)) return null;
+  if (!event.teams.length) return { playable: canPlayEvent(access), team: undefined };
+  const team = await event.getUserTeam(viewer.id, { strict: true }).catch(() => null);
+  return team ? { playable: canPlayEvent(access), team } : null;
+}
+
+/**
  * Builds a predicate for whether a viewer sees a cosmetic in the shop. Ordinary
  * cosmetics always show. An event item shows only while its event is playable
  * for the viewer: to anonymous viewers in every team (buying needs sign-in,

@@ -14,6 +14,8 @@ import {
 } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
+import { MysteryBoxCard } from '~/components/MysteryBox/MysteryBoxCard';
+import { useEventMysteryBoxes } from '~/components/MysteryBox/useEventMysteryBoxes';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 type MyHat = RouterOutput['event']['getMyHats'][number];
@@ -43,6 +45,10 @@ export function MyEventHats({
   ended: boolean;
 }) {
   const total = hats.reduce((sum, h) => sum + h.points, 0);
+  const boxes = useEventMysteryBoxes(event);
+  const boxPrice = boxes.find((box) => box.listing)?.listing?.unitAmount;
+  // Once the event ends the shelf is gone, and an unopened box still opens: it shows here.
+  const heldBoxes = ended ? boxes.filter((box) => box.heldBoxItemIds.length) : [];
   // Re-reads the clock every half minute, so a hat's Move button unlocks when its cooldown ends.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -71,6 +77,10 @@ export function MyEventHats({
           </>
         }
       />
+
+      {heldBoxes.map((box) => (
+        <MysteryBoxCard key={box.boxDefinitionId} event={event} view={box} color={teamColor} />
+      ))}
 
       {/* Equal rows, so the "Get another hat" card is a hat card's size even alone on its row. */}
       <SimpleGrid
@@ -161,6 +171,11 @@ export function MyEventHats({
             <Text size="xs" c="dimmed">
               One more post scoring for your team.
             </Text>
+            {boxPrice != null && (
+              <Text size="xs" c="dimmed" data-testid="get-another-hat-box">
+                or try the Mystery Box · {numberWithCommas(boxPrice)}
+              </Text>
+            )}
           </a>
         )}
       </SimpleGrid>

@@ -6,6 +6,7 @@ import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import {
   assertEventShopItemPurchasable,
   getEventBuyerTeam,
+  getEventBoxViewer,
   isEventShopItemData,
 } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
@@ -23,6 +24,7 @@ import {
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
 } from '~/server/services/item.service';
+import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import {
   assertConfirmedPrice,
@@ -40,8 +42,10 @@ import {
   shopPurchaseTransactionId,
 } from '~/server/services/shop-purchase-charge';
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
+import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
@@ -85,37 +89,59 @@ export function isMysteryBoxBlockedIn(countryCode: string | null | undefined, bl
   return blocked.includes(code);
 }
 
+// For showing boxes only. Purchase and open read the list uncached, so a change refuses at once
+// even where a pod still shows a box.
+const blockedRegionsForDisplay = createTtlMemo(getMysteryBoxBlockedRegions, 60_000, () =>
+  Date.now()
+);
+
+/** Whether to show mystery boxes in this country. A list that can't be read hides them. */
+async function mysteryBoxesHiddenIn(countryCode: string | null | undefined) {
+  const blocked = await blockedRegionsForDisplay().catch(() => null);
+  return !blocked || isMysteryBoxBlockedIn(countryCode, blocked);
+}
+
 export type BoxPoolEntry = {
   contentId: number;
   tierId: number;
   rewardDefinitionId: number;
   cosmeticId: number;
+  cosmeticName: string | null;
   cosmeticData: unknown;
   cosmeticType: CosmeticType | null;
 };
 
+export type BoxContentForUser = BoxPoolEntry & {
+  /** Still in this user's pool: not owned from any source, and not drawn from this box before. */
+  left: boolean;
+};
+
 /**
- * What this box can still give this user: its enabled contents, less any cosmetic made for another
- * team than `team`, less any cosmetic the user owns from any source, less anything they already
- * drew from this box (a reward removed from them since stays drawn: `BoxOpening` allows each once).
- * Read inside a transaction holding `lockItemHolder` for the user when the answer decides a grant or
- * a claim.
+ * Everything this box holds for this user: its enabled contents, less any cosmetic made for another
+ * team than `team`, each marked whether it is still `left` for them. Owned from any source, or
+ * already drawn from this box (a reward removed from them since stays drawn: `BoxOpening` allows each
+ * once), is not left.
  *
  * v1 boxes hold cosmetics only; any other reward kind is left out here and refused at purchase
  * (`assertBoxSellable`).
  */
-export async function getBoxPoolForUser(
+export async function getBoxContentsForUser(
   client: Prisma.TransactionClient,
   { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
-): Promise<BoxPoolEntry[]> {
+): Promise<BoxContentForUser[]> {
   const contents = await client.boxContent.findMany({
     where: { boxDefinitionId, enabled: true },
+    orderBy: { id: 'asc' },
     select: {
       id: true,
       tierId: true,
       rewardDefinitionId: true,
       reward: {
-        select: { type: true, cosmeticId: true, cosmetic: { select: { data: true, type: true } } },
+        select: {
+          type: true,
+          cosmeticId: true,
+          cosmetic: { select: { name: true, data: true, type: true } },
+        },
       },
     },
   });
@@ -132,6 +158,7 @@ export async function getBoxPoolForUser(
         tierId: content.tierId,
         rewardDefinitionId: content.rewardDefinitionId,
         cosmeticId,
+        cosmeticName: cosmetic?.name ?? null,
         cosmeticData: cosmetic?.data ?? null,
         cosmeticType: cosmetic?.type ?? null,
       },
@@ -149,9 +176,22 @@ export async function getBoxPoolForUser(
   });
   const ownedIds = new Set(owned.map((row) => row.cosmeticId));
   const drawnIds = new Set(drawn.map((row) => row.rewardDefinitionId));
-  return forTeam.filter(
-    (entry) => !ownedIds.has(entry.cosmeticId) && !drawnIds.has(entry.rewardDefinitionId)
-  );
+  return forTeam.map((entry) => ({
+    ...entry,
+    left: !ownedIds.has(entry.cosmeticId) && !drawnIds.has(entry.rewardDefinitionId),
+  }));
+}
+
+/**
+ * What this box can still give this user (`getBoxContentsForUser`, left only). Read inside a
+ * transaction holding `lockItemHolder` for the user when the answer decides a grant or a claim.
+ */
+export async function getBoxPoolForUser(
+  client: Prisma.TransactionClient,
+  params: { boxDefinitionId: number; userId: number; team?: string }
+): Promise<BoxPoolEntry[]> {
+  const contents = await getBoxContentsForUser(client, params);
+  return contents.filter((entry) => entry.left).map(({ left: _left, ...entry }) => entry);
 }
 
 /**
@@ -165,7 +205,216 @@ async function assertBoxSellable(client: Prisma.TransactionClient, boxDefinition
   if (other > 0) throw throwBadRequestError('This box is not available');
 }
 
-type BoxParams = { event?: unknown };
+type BoxParams = { event?: unknown; art?: unknown };
+
+type BoxArt = { closed?: string; open?: string };
+
+/**
+ * Why a box listing can't be sold now (stock, then its sale window), or null when it can. `sold` is
+ * read only for a listing with a quantity.
+ */
+function boxSaleRefusal(
+  listing: {
+    availableQuantity: number | null;
+    availableFrom: Date | null;
+    availableTo: Date | null;
+  },
+  sold: number,
+  now: Date
+) {
+  if (listing.availableQuantity !== null && sold >= listing.availableQuantity)
+    return 'This box is out of stock';
+  if (listing.availableFrom && listing.availableFrom > now) return 'This box is not available yet';
+  if (listing.availableTo && listing.availableTo < now) return 'This box is no longer available';
+  return null;
+}
+
+/** The box art for a team, from `params.art[team]` ({ closed, open } image urls). */
+function boxArtFor(params: BoxParams, team: string | undefined): BoxArt | null {
+  const art = (params.art as Record<string, unknown> | undefined)?.[team ?? ''];
+  if (!art || typeof art !== 'object') return null;
+  const { closed, open } = art as Record<string, unknown>;
+  return {
+    closed: typeof closed === 'string' ? closed : undefined,
+    open: typeof open === 'string' ? open : undefined,
+  };
+}
+
+export type MysteryBoxView = {
+  boxDefinitionId: number;
+  name: string;
+  description: string | null;
+  /** The version a purchase or an open must name (`expectedVersion`). */
+  version: number;
+  /** The team whose contents are shown; undefined for an event without teams. */
+  team: string | undefined;
+  art: BoxArt | null;
+  /**
+   * The listing selling it, when one is on sale and the event is playable for the viewer. A box no
+   * longer sold can still be opened.
+   */
+  listing: {
+    shopItemId: number;
+    title: string;
+    unitAmount: number;
+    availableTo: Date | null;
+  } | null;
+  tiers: {
+    id: number;
+    key: string;
+    name: string;
+    color: string | null;
+    weight: number;
+    sortOrder: number;
+  }[];
+  /** Everything the box holds for the viewer's team; odds are `computeBoxOdds` over the `left` ones. */
+  contents: {
+    contentId: number;
+    tierId: number;
+    cosmeticId: number;
+    name: string | null;
+    url: string | null;
+    fit: unknown;
+    left: boolean;
+  }[];
+  /** The viewer's unopened boxes of it, as `Item.id` strings. */
+  heldBoxItemIds: string[];
+};
+
+/**
+ * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
+ * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
+ * the event is closed to them; once it ends, only the boxes they hold.
+ */
+export async function getMysteryBoxesForEvent({
+  userId,
+  isModerator,
+  event,
+  mysteryBoxEnabled,
+  countryCode,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  event: string;
+  mysteryBoxEnabled: boolean | undefined;
+  countryCode: string | null | undefined;
+}): Promise<MysteryBoxView[]> {
+  if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
+  // The event's own gate first: a box's contents are not shown before the event is open to them.
+  const viewer = await getEventBoxViewer(event, { id: userId, isModerator });
+  if (!viewer) return [];
+  const { team, playable } = viewer;
+
+  // Archived boxes too: one still held still opens.
+  const boxes = await dbRead.itemDefinition.findMany({
+    where: {
+      type: ITEM_TYPE.box,
+      status: { in: [ITEM_DEFINITION_STATUS.published, ITEM_DEFINITION_STATUS.archived] },
+      params: { path: ['event'], equals: event },
+    },
+    select: { id: true, name: true, description: true, version: true, status: true, params: true },
+    orderBy: { id: 'asc' },
+  });
+  if (!boxes.length) return [];
+  const boxIds = boxes.map((box) => box.id);
+
+  const [listings, held, tiers] = await Promise.all([
+    dbRead.cosmeticShopItem.findMany({
+      where: { itemDefinitionId: { in: boxIds }, status: CosmeticShopItemStatus.Published },
+      select: {
+        id: true,
+        itemDefinitionId: true,
+        title: true,
+        unitAmount: true,
+        availableQuantity: true,
+        availableFrom: true,
+        availableTo: true,
+      },
+      orderBy: { id: 'asc' },
+    }),
+    dbRead.item.findMany({
+      where: { holderType: 'user', holderId: userId, itemDefinitionId: { in: boxIds } },
+      select: { id: true, itemDefinitionId: true },
+      orderBy: { id: 'asc' },
+    }),
+    dbRead.boxTier.findMany({
+      where: { boxDefinitionId: { in: boxIds } },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        boxDefinitionId: true,
+        key: true,
+        name: true,
+        color: true,
+        weight: true,
+        sortOrder: true,
+      },
+    }),
+  ]);
+
+  // Only a listing with a quantity needs its sold count, read for those ids alone.
+  const sold = await getSoldCounts(
+    listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
+  );
+  const now = new Date();
+  const views = await Promise.all(
+    boxes.map(async (box): Promise<MysteryBoxView | null> => {
+      const listing =
+        playable && box.status === ITEM_DEFINITION_STATUS.published
+          ? listings.find(
+              (l) => l.itemDefinitionId === box.id && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
+            )
+          : undefined;
+      const heldBoxItemIds = held
+        .filter((item) => item.itemDefinitionId === box.id)
+        .map((item) => item.id.toString());
+      if (!listing && !heldBoxItemIds.length) return null;
+
+      const contents = await getBoxContentsForUser(dbRead, {
+        boxDefinitionId: box.id,
+        userId,
+        team,
+      });
+      return {
+        boxDefinitionId: box.id,
+        name: box.name,
+        description: box.description,
+        version: box.version,
+        team,
+        art: boxArtFor((box.params ?? {}) as BoxParams, team),
+        listing: listing
+          ? {
+              shopItemId: listing.id,
+              title: listing.title,
+              unitAmount: listing.unitAmount,
+              availableTo: listing.availableTo,
+            }
+          : null,
+        tiers: tiers
+          .filter((tier) => tier.boxDefinitionId === box.id)
+          .map(({ boxDefinitionId: _box, ...tier }) => tier),
+        contents: contents.map((entry) => {
+          const data = (entry.cosmeticData ?? {}) as {
+            url?: unknown;
+            fit?: { bounds?: unknown; canvas?: unknown } | null;
+          };
+          return {
+            contentId: entry.contentId,
+            tierId: entry.tierId,
+            cosmeticId: entry.cosmeticId,
+            name: entry.cosmeticName,
+            url: typeof data.url === 'string' ? data.url : null,
+            // A preview sizes the art by these two; the outline and brim are for wearing it.
+            fit: data.fit ? { bounds: data.fit.bounds, canvas: data.fit.canvas } : null,
+            left: entry.left,
+          };
+        }),
+        heldBoxItemIds,
+      };
+    })
+  );
+  return views.filter((view): view is MysteryBoxView => view !== null);
+}
 
 // How long a purchase still settling counts against what is left for its buyer, from its last
 // attempt. A purchase settles in seconds; one idle longer is stuck and stops reserving. If its key is
@@ -288,15 +537,8 @@ export async function purchaseMysteryBox({
   // was made; any other request is held to them.
   await runPurchaseChecks(pendingClaim, async () => {
     if (chargedBefore) return;
-    if (
-      shopItem.availableQuantity !== null &&
-      shopItem._count.purchases >= shopItem.availableQuantity
-    )
-      throw throwBadRequestError('This box is out of stock');
-    if (shopItem.availableFrom && shopItem.availableFrom > new Date())
-      throw throwBadRequestError('This box is not available yet');
-    if (shopItem.availableTo && shopItem.availableTo < new Date())
-      throw throwBadRequestError('This box is no longer available');
+    const refusal = boxSaleRefusal(shopItem, shopItem._count.purchases, new Date());
+    if (refusal) throw throwBadRequestError(refusal);
 
     assertConfirmedPrice({
       existingClaim,
@@ -561,7 +803,7 @@ export async function openMysteryBox({
         data: {
           userId,
           cosmeticId: reward.cosmeticId,
-          claimKey: `box-open-${item.id}`,
+          claimKey: boxOpenClaimKey(item.id),
           remaining: stickerUsesFromCosmeticData(reward.cosmeticData),
         },
       });

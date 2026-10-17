@@ -14,3 +14,7 @@ export const openMysteryBoxInput = z.object({
 });
 
 export type OpenMysteryBoxInput = z.infer<typeof openMysteryBoxInput>;
+
+export const getEventMysteryBoxesInput = z.object({ event: z.string().min(1).max(100) });
+
+export type GetEventMysteryBoxesInput = z.infer<typeof getEventMysteryBoxesInput>;
