@@ -11,9 +11,16 @@ export type JsonLengthUnit = 'utf16' | 'utf8';
  * Running state of one `jsonLengthWithin` check. `visits` is the inline-media value budget,
  * so the measure gives up at the same value count the inline-media search does. `chars` is
  * the length counted so far, in the chosen unit. `scanned` counts the string code units read
- * to find escapes: the measure's work, which tests read.
+ * to find escapes: the measure's work, which tests read. `nulOrLoneSurrogate` is set once a string
+ * the measure read holds a NUL or an unpaired surrogate, the characters `JSON.stringify` writes as
+ * a `\u0000` or `\udXXX` escape. A measure that returns `false` leaves later strings unread, so the
+ * flag only covers the whole value when the measure returns `true`.
  */
-export type JsonLengthMeter = InlineMediaBudget & { chars: number; scanned: number };
+export type JsonLengthMeter = InlineMediaBudget & {
+  chars: number;
+  scanned: number;
+  nulOrLoneSurrogate?: boolean;
+};
 
 /** The length `JSON.stringify(s)` has in `unit`. */
 function quotedLength(s: string, unit: JsonLengthUnit, meter: JsonLengthMeter): number {
@@ -27,6 +34,7 @@ function quotedLength(s: string, unit: JsonLengthUnit, meter: JsonLengthMeter): 
       else if (c < 0x20) {
         // \b \t \n \f \r get a two-character escape; every other control character is \u00XX.
         length += c === 0x08 || c === 0x09 || c === 0x0a || c === 0x0c || c === 0x0d ? 1 : 5;
+        if (c === 0) meter.nulOrLoneSurrogate = true;
       }
     } else if (c >= 0xd800 && c <= 0xdfff) {
       const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
@@ -35,6 +43,7 @@ function quotedLength(s: string, unit: JsonLengthUnit, meter: JsonLengthMeter): 
         if (utf8) length += 2; // two code units, four UTF-8 bytes
       } else {
         length += 5; // a lone surrogate is written as the ASCII escape \uXXXX
+        meter.nulOrLoneSurrogate = true;
       }
     } else if (utf8) {
       length += c < 0x800 ? 1 : 2;
