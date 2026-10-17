@@ -40,19 +40,23 @@ describe('assertSourceMetadataWithinCap', () => {
     );
   });
 
-  it('accepts more values than the inline-media walk budget (262,144) when the JSON fits', () => {
-    // 300,000 values in ~600 KB. Refused only if the value budget is set below 300,000; the
-    // budget's upper bound is pinned by the 1,048,576-value case below.
-    const sourceMetadataMap = {
-      'https://a/1.png': { params: { seeds: new Array(300_000).fill(0) } },
-    };
+  it('accepts a large batch: 300 images of 600-value metadata', () => {
+    // About 405 counted values per entry, so roughly 120,000 in all: a batch well past any real
+    // one, under the 262,144 budget. The budget's exact edge is pinned by the case below.
+    const entry = () => ({
+      params: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`p${i}`, i])),
+      resources: Array.from({ length: 100 }, (_, i) => ({ id: i })),
+    });
+    const sourceMetadataMap = Object.fromEntries(
+      Array.from({ length: 300 }, (_, i) => [`https://a/${i}.png`, entry()])
+    );
     expect(() => assertSourceMetadataWithinCap(undefined, sourceMetadataMap)).not.toThrow();
   });
 
-  it('refuses metadata with more than 1,048,576 values', () => {
-    const at = { 'https://a/1.png': { s: new Array(1024 * 1024 - 4).fill(0) } };
+  it('refuses metadata with more than 262,144 values', () => {
+    const at = { 'https://a/1.png': { s: new Array(256 * 1024 - 4).fill(0) } };
     expect(() => assertSourceMetadataWithinCap(undefined, at)).not.toThrow();
-    const over = { 'https://a/1.png': { s: new Array(1024 * 1024).fill(0) } };
+    const over = { 'https://a/1.png': { s: new Array(256 * 1024).fill(0) } };
     expect(() => assertSourceMetadataWithinCap(undefined, over)).toThrow(
       expect.objectContaining(TOO_LARGE)
     );
