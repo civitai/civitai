@@ -1,13 +1,20 @@
 import { pack, unpack } from 'msgpackr';
 import { redisMock } from './redis.mock';
 
-type SetOptions = { EX?: number; NX?: boolean; XX?: boolean; KEEPTTL?: boolean };
+type SetOptions = {
+  EX?: number;
+  PXAT?: number;
+  NX?: boolean;
+  XX?: boolean;
+  KEEPTTL?: boolean;
+};
 type Stored = { value: Buffer; expiresAt: number | null };
 
 /**
  * A key/value store with expiry behind the cache-cluster `redis` mock's `get`/`set`/`del`, plain
  * and `packed`, for tests that need a cache to actually hold what it wrote. Expiry reads
- * `Date.now()`, so fake timers drive it. `NX` and `XX` answer `null` the way Redis does.
+ * `Date.now()`, so fake timers drive it. `EX` counts from the call, `PXAT` is absolute. `NX` and `XX`
+ * answer `null` the way Redis does.
  *
  * Values are stored msgpack-PACKED and unpacked on every read, as the real `packed` codec does, so
  * every read hands back a fresh object: a caller mutating what it got cannot reach the next reader
@@ -34,11 +41,16 @@ export function installFakeCacheRedis() {
     if (options.NX && existing !== null) return null;
     if (options.XX && existing === null) return null;
     const previous = store.get(key);
-    const expiresAt = options.EX
-      ? Date.now() + options.EX * 1000
-      : options.KEEPTTL
-      ? previous?.expiresAt ?? null
-      : null;
+    // A relative EX counts from when the command ARRIVES (this call); PXAT is an absolute instant, so
+    // one already in the past stores a key that is expired on arrival, as Redis does.
+    const expiresAt =
+      options.PXAT !== undefined
+        ? options.PXAT
+        : options.EX
+        ? Date.now() + options.EX * 1000
+        : options.KEEPTTL
+        ? previous?.expiresAt ?? null
+        : null;
     store.set(key, { value: pack(value), expiresAt });
     return 'OK';
   };

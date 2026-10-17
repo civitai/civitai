@@ -23,6 +23,8 @@ const TOMBSTONE_TTL_S = 900;
 const LAST_USED_S = 3600;
 
 const HOUR = 60 * 60 * 1000;
+/** A lookup that began at `t`, on both clocks (the monotonic one follows the fake wall clock here). */
+const at = (t: Date) => ({ startedAt: t.getTime(), startedAtWallMs: t.getTime() });
 const T0 = new Date('2026-10-17T12:00:00.000Z');
 
 type Row = {
@@ -173,10 +175,19 @@ describe('bearer lookup cache: expiry', () => {
     expect(await getSessionFromBearerToken('personal')).toBeNull();
   });
 
-  it('does not cache a row whose expiry is already within the second', async () => {
+  it('caches a row expiring within the second only until that instant', async () => {
     rows = [{ ...personal(), expiresAt: new Date(T0.getTime() + 400) }];
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(31);
-    expect(store.has(cacheKey('hash-of-personal'))).toBe(false);
+    expect(store.get(cacheKey('hash-of-personal'))?.expiresAt).toBe(T0.getTime() + 400);
+  });
+
+  it('writes nothing for a key that expired while its row was being read', async () => {
+    // Reaches the "expiry already past" guard: the lookup is young (2 s, inside the age bound), but
+    // the key's own expiresAt passed during the read.
+    const row = { ...personal(), expiresAt: new Date(T0.getTime() + 1_000) } as never;
+    vi.setSystemTime(T0.getTime() + 2_000);
+    await cacheApiKey('hash-of-expired', row, at(T0));
+    expect(store.has(cacheKey('hash-of-expired'))).toBe(false);
   });
 
   it('rejects an OAuth entry planted in the cache by another writer', async () => {
@@ -245,7 +256,7 @@ describe('bearer lookup cache: revocation', () => {
 
   it('drops a refill older than the refill bound, and keeps one inside it', async () => {
     const row = { ...personal() } as never;
-    const started = { startedAt: T0.getTime() };
+    const started = at(T0);
     vi.setSystemTime(T0.getTime() + 10_500);
     await cacheApiKey('hash-of-late', row, started);
     expect(store.has(cacheKey('hash-of-late'))).toBe(false);
@@ -280,15 +291,43 @@ describe('bearer lookup cache: revocation', () => {
     expect(await getSessionFromBearerToken('personal')).toBeNull();
   });
 
-  it('caches a refill only for what is left of the 30 s from its lookup start', async () => {
+  it('caches a refill only until 30 s after its lookup start', async () => {
     const row = { ...personal() } as never;
     vi.setSystemTime(T0.getTime() + 8_000);
-    await cacheApiKey('hash-of-aged', row, { startedAt: T0.getTime() });
-    // 30 s budget - 8 s already spent = 22 s.
+    await cacheApiKey('hash-of-aged', row, at(T0));
+    // Written 8 s in: 22 s left, i.e. it expires at lookup start + 30 s.
     expect(store.get(cacheKey('hash-of-aged'))?.expiresAt).toBe(T0.getTime() + 30_000);
+    // A 30 s-old lookup is stopped by the 10 s age bound, before any expiry arithmetic.
     vi.setSystemTime(T0.getTime() + 30_000);
-    await cacheApiKey('hash-of-spent', row, { startedAt: T0.getTime() });
+    await cacheApiKey('hash-of-spent', row, at(T0));
     expect(store.has(cacheKey('hash-of-spent'))).toBe(false);
+  });
+
+  it('a refill delayed in the client with NO tombstone still expires 30 s after its lookup', async () => {
+    // Out-of-band delete (no tombstone): the SET is issued 2 s into the lookup and delivered 60 s
+    // later. A relative expiry would start counting on arrival and keep the deleted row for 28 s more.
+    const realSet = redisMock.redis.packed.set.getMockImplementation()!;
+    let deliver!: () => void;
+    redisMock.redis.packed.set.mockImplementation(
+      ((key: string, value: unknown, options: never) =>
+        new Promise((resolve) => {
+          deliver = () => resolve(realSet(key, value, options));
+        })) as never
+    );
+    dbMock.dbWrite.apiKey.findFirst.mockImplementationOnce((async (args: never) => {
+      const row = await findFirst(args);
+      vi.setSystemTime(T0.getTime() + 2_000);
+      return row;
+    }) as never);
+    const inFlight = getSessionFromBearerToken('personal');
+    await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+    rows = []; // deleted by hand, nothing evicts
+    vi.setSystemTime(T0.getTime() + 62_000);
+    deliver();
+    await inFlight;
+    redisMock.redis.packed.set.mockImplementation(realSet as never);
+    expect(await getSessionFromBearerToken('personal')).toBeNull();
+    expect(dbReads()).toBe(2);
   });
 
   it('measures the refill age on the monotonic clock, not the wall clock', async () => {
@@ -296,7 +335,7 @@ describe('bearer lookup cache: revocation', () => {
     const row = { ...personal() } as never;
     vi.mocked(performance.now).mockReturnValue(T0.getTime() + 11_000);
     vi.setSystemTime(T0.getTime() - 5_000);
-    await cacheApiKey('hash-of-stepped', row, { startedAt: T0.getTime() });
+    await cacheApiKey('hash-of-stepped', row, at(T0));
     expect(store.has(cacheKey('hash-of-stepped'))).toBe(false);
   });
 

@@ -20,8 +20,9 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
  *     is keyed by the credential hash and needs the two properties below.
  *   - EXPIRY IS RE-CHECKED ON EVERY HIT against the clock, and an entry never outlives `expiresAt`.
  *   - EVERY ENTRY EXPIRES WITHIN `API_KEY_PRINCIPAL_TTL_SECONDS` OF THE LOOKUP THAT PRODUCED IT, not of
- *     the write: the write's TTL is what is left of that budget, so a slow refill is cached for less.
- *     That is what makes the residual window below true from the lookup start.
+ *     the write: it is written with an absolute expiry at lookup start + TTL, so a slow or late-
+ *     delivered refill is cached for less, or lands already expired. That is what makes the residual
+ *     window below true from the lookup start.
  *   - REVOCATION WRITES A TOMBSTONE rather than deleting the entry, and refills use SET NX. While the
  *     tombstone stands every request goes to the database, and a refill cannot land on top of it.
  *     A refill whose read began before the revoke must therefore REACH Redis before the tombstone
@@ -30,19 +31,24 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
  *          its lookup began (monotonic clock), so a stalled database read cannot issue one late;
  *       2. the bound in (1) is on issue time, not arrival: the cache client queues commands while a
  *          shard reconnects, so an issued SET can arrive much later. The tombstone is therefore
- *          long (`API_KEY_TOMBSTONE_TTL_SECONDS`, 15 min) — tombstones are tiny and exist only for
- *          revoked keys — so a queued refill arriving inside it is still refused.
- *     What is left: a Redis connection that stays down, with the refill queued, for longer than the
- *     tombstone TTL.
+ *          long (`API_KEY_TOMBSTONE_TTL_SECONDS`, 15 min), so a queued refill arriving inside it is
+ *          still refused. Tombstones are tiny, but they are not only for deleted keys: a spend-limit
+ *          change (`setApiKeyBuzzLimit`) tombstones a LIVE key, which then reads the primary on
+ *          every request for those 15 min. That is deliberate — a plain delete would let a queued
+ *          refill carrying the old `buzzLimit` land.
+ *     A refill queued for LONGER than the tombstone is harmless too: its absolute expiry (lookup
+ *     start + 30 s, and the lookup began before the revoke) is long past when it lands.
  *   - ONLY `User` and `System` keys with no OAuth client are cached. OAuth access tokens bypass the
  *     cache entirely: they are revoked from more places (including another service writing the table
  *     directly) and their request path reads the consent row anyway.
  *
- * Residual window, at most `API_KEY_PRINCIPAL_TTL_SECONDS` from the lookup that cached the row: a
- * revocation whose tombstone write fails
- * (Redis unavailable at that moment), and any change made to the table without going through
- * `evictCachedApiKeys` — manual SQL, another service — leave a cached row in place until it expires.
- * Every write site in this repo is pinned by `api-key-principal-cache.ledger.test.ts`.
+ * Residual window, at most `API_KEY_PRINCIPAL_TTL_SECONDS` from the lookup that cached the row (so at
+ * most that long after the change), however late the cache write is delivered: a revocation whose
+ * tombstone write fails (Redis unavailable at that moment), and any change made to the table without
+ * going through `evictCachedApiKeys` — manual SQL, another service — leave a cached row in place
+ * until it expires. The expiry is computed on the app's clock and enforced on Redis's, so clock skew
+ * between them moves the bound by that skew. Every write site in this repo is pinned by
+ * `api-key-principal-cache.ledger.test.ts`.
  */
 export const API_KEY_PRINCIPAL_TTL_SECONDS = 30;
 // A refill older than this (measured from before its cache read) is not written. A healthy
@@ -127,30 +133,39 @@ export async function readCachedApiKey(hash: string, now: Date): Promise<ApiKeyC
   return { apiKey, fill: false };
 }
 
-/** When a lookup began, read BEFORE its cache read. `startedAt` is `performance.now()`. */
-export type LookupStart = { startedAt: number };
-export const startLookup = (): LookupStart => ({ startedAt: performance.now() });
+/**
+ * When a lookup began, read BEFORE its cache read, on both clocks at the same moment:
+ * `startedAt` is `performance.now()` (for the refill-age bound) and `startedAtWallMs` is `Date.now()`
+ * (for the entry's absolute expiry, since Redis expiry is wall-clock).
+ */
+export type LookupStart = { startedAt: number; startedAtWallMs: number };
+export const startLookup = (): LookupStart => ({
+  startedAt: performance.now(),
+  startedAtWallMs: Date.now(),
+});
 
 /**
- * Cache a row the database just returned, for what is left of the lookup's TTL budget. A refill
- * older than `API_KEY_MAX_REFILL_AGE_SECONDS` is not written (see the module comment). Ages are
- * measured on the monotonic clock, so a wall-clock step back cannot make a lookup look younger.
- * Best-effort and never throws.
+ * Cache a row the database just returned, until `API_KEY_PRINCIPAL_TTL_SECONDS` after its lookup
+ * began (or the key's `expiresAt`, if sooner). A refill older than `API_KEY_MAX_REFILL_AGE_SECONDS`
+ * on the monotonic clock is not written (see the module comment). Best-effort and never throws.
+ *
+ * The expiry is ABSOLUTE (`PXAT`), not a relative `EX`: Redis starts a relative countdown when the
+ * SET arrives, and a refill can wait in the client's offline queue through a reconnect. With an
+ * absolute expiry a late arrival is already past it when it lands, so "within 30 s of the lookup"
+ * holds however late the write is delivered.
  */
 export async function cacheApiKey(hash: string, apiKey: CachedApiKey, lookup: LookupStart) {
   if (!isCacheableApiKey(apiKey)) return;
   const ageMs = performance.now() - lookup.startedAt;
   if (ageMs > API_KEY_MAX_REFILL_AGE_SECONDS * 1000) return;
-  let ttl = Math.floor((API_KEY_PRINCIPAL_TTL_SECONDS * 1000 - ageMs) / 1000);
-  if (apiKey.expiresAt !== null) {
-    // Against the wall clock at write time: `expiresAt` is a wall-clock instant.
-    const remaining = Math.floor((new Date(apiKey.expiresAt).getTime() - Date.now()) / 1000);
-    ttl = Math.min(ttl, remaining);
-  }
-  if (ttl <= 0) return;
+  let expireAtMs = lookup.startedAtWallMs + API_KEY_PRINCIPAL_TTL_SECONDS * 1000;
+  if (apiKey.expiresAt !== null)
+    expireAtMs = Math.min(expireAtMs, new Date(apiKey.expiresAt).getTime());
+  // Already past (e.g. the key expired while its row was being read): nothing worth writing.
+  if (expireAtMs <= Date.now()) return;
   try {
     // NX: a tombstone written by a revoke wins over a refill that started before it.
-    await redis.packed.set<Entry>(entryKey(hash), { apiKey }, { EX: ttl, NX: true });
+    await redis.packed.set<Entry>(entryKey(hash), { apiKey }, { PXAT: expireAtMs, NX: true });
   } catch (error) {
     report(error, 'write');
   }
