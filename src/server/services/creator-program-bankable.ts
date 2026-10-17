@@ -68,8 +68,8 @@ const userAccountTypesSql = Object.values(BuzzType).map(sqlString).join(', ');
 
 /**
  * Earnings paid from another user's own Buzz account. These count only beyond what the creator
- * sent that same user (`SENT_TO_USER_SQL`), netted per user over the whole window, so Buzz passed
- * back and forth between two accounts earns neither of them anything whichever leg came first.
+ * sent that same user (`SENT_TO_USER_SQL`), netted per user over the whole window, whichever
+ * transfer came first.
  */
 export const RECEIVED_FROM_USER_SQL = `(fromAccountId > 0 AND fromAccountType IN (${userAccountTypesSql}))`;
 
