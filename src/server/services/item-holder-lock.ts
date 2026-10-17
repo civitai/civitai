@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
-const ITEM_HOLDER_LOCK_CLASS = 0x49480001;
+export const ITEM_HOLDER_LOCK_CLASS = 0x49480001;
 
 /**
  * Serialises everything that grants a cosmetic to one user or reads what they own to decide a

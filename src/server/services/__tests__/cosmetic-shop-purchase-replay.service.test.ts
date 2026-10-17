@@ -61,6 +61,7 @@ vi.mock('~/server/services/cosmetic-pack.service', async (importOriginal) => ({
 
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE, runPurchaseChecks } from '../shop-purchase-charge';
+import { ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -242,12 +243,13 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     await purchase();
 
     expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
-    const [sql, , lockedUser] = mocks.executeRaw.mock.calls[0] as [
+    const [sql, lockClass, lockedUser] = mocks.executeRaw.mock.calls[0] as [
       readonly string[],
       number,
       number
     ];
     expect(sql.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
+    expect(lockClass).toBe(ITEM_HOLDER_LOCK_CLASS);
     expect(lockedUser).toBe(BUYER_ID);
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.userCosmeticCreate.mock.invocationCallOrder[0]
