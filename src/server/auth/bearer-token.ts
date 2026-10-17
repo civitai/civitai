@@ -11,6 +11,7 @@ import {
   claimLastUsedWrite,
   readCachedApiKey,
   releaseLastUsedWrite,
+  startLookup,
 } from './api-key-principal-cache';
 
 export type BearerTokenOptions = {
@@ -26,6 +27,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   const token = generateSecretHash(key.trim());
 
   const now = new Date();
+  const lookup = startLookup();
   // Personal and system keys are served from a short-lived Redis copy of this row; see
   // api-key-principal-cache.ts for what may be cached and how a revocation evicts it. A miss, a
   // revoked or expired entry, or any Redis error reads the primary exactly as before.
@@ -51,7 +53,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
         expiresAt: true,
       },
     });
-    if (apiKey && cached.fill) await cacheApiKey(token, apiKey, now);
+    if (apiKey && cached.fill) await cacheApiKey(token, apiKey, lookup);
   }
   if (!apiKey) return null;
   if (

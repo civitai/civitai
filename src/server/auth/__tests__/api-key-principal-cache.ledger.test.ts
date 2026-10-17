@@ -21,6 +21,7 @@ import type * as OrchestratorCivitai from '~/server/services/orchestrator/civita
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
+import { stripCodeComments } from '~/test-utils/strip-code-comments';
 
 /**
  * 🔴 The bearer path caches ApiKey rows (api-key-principal-cache.ts). A write that revokes or changes
@@ -121,18 +122,6 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   },
 };
 
-/**
- * Drops comments, so prose that quotes a call is not counted as one. Only a block comment that OPENS
- * its line is removed: a `/*` inside a string ('apps/*\/src') must not swallow the code after it.
- * A trailing comment after code is kept, which can only over-count.
- */
-const code = (text: string) =>
-  text
-    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, '')
-    .split('\n')
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join('\n');
-
 function scan(root = ROOT) {
   const files = globSync('{src,apps,packages,scripts}/**/*.{ts,tsx,js,mjs,cjs,svelte}', {
     cwd: root,
@@ -145,7 +134,7 @@ function scan(root = ROOT) {
   );
   const found: Record<string, number> = {};
   for (const f of files) {
-    const text = code(readFileSync(path.join(root, f), 'utf8'));
+    const text = stripCodeComments(readFileSync(path.join(root, f), 'utf8'));
     const n = PATTERNS.reduce((sum, re) => sum + (text.match(re) ?? []).length, 0);
     if (n) found[f] = n;
   }
@@ -186,6 +175,9 @@ describe('ApiKey write ledger', () => {
           'await sql`DELETE FROM "ApiKey" WHERE id = 1`;', // 5
           'await sql`update public."ApiKey" set name = 1`;', // 6
           'await sql`insert into apikey (id) values (1)`;', // 7
+          '/* opens and closes */ await db.apiKey.delete({ where });', // 8
+          'doSomething(); /* a comment opened after code',
+          ' */ await db.apiKey.upsert({ where });', // 9: code after a close on a later line
           '/* dbWrite.apiKey.delete({ where }) in a block comment */',
           '// dbWrite.apiKey.delete({ where }) in a line comment',
           ' * dbWrite.apiKey.delete({ where }) in a JSDoc line',
@@ -193,7 +185,7 @@ describe('ApiKey write ledger', () => {
           'await sql`UPDATE "ApiKeyUsage" SET n = 1`;', // another table
         ].join('\n')
       );
-      expect(scan(dir).found).toEqual({ 'src/fixture.ts': 7 });
+      expect(scan(dir).found).toEqual({ 'src/fixture.ts': 9 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

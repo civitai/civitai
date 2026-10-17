@@ -6,6 +6,7 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type * as Cloudflare from '~/server/cloudflare/client';
+import { stripCodeComments } from '~/test-utils/strip-code-comments';
 import type * as SessionClient from '~/server/auth/session-client';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as UserLinkService from '~/server/services/user-link.service';
@@ -155,6 +156,8 @@ describe('creator card cache: hit, miss, TTL', () => {
     expect(userReads()).toBe(1);
   });
 
+  // INVARIANT GUARD, not regression coverage: with no in-process copy every read decodes a fresh
+  // object, so this only goes red if a per-pod L1 or memo sharing objects is added to the read path.
   it('masking on a cache HIT does not leak into a later hit either', async () => {
     const asUser = (isModerator: boolean) =>
       getUserCreatorHandler({
@@ -243,6 +246,21 @@ describe('creator card invalidation ledger', () => {
     (f) => !/(__tests__|\.test\.|\.spec\.)/.test(f) && statSync(path.join(ROOT, f)).isFile()
   );
   const read = (f: string) => readFileSync(path.join(ROOT, f), 'utf8');
+  /** Calls of `name(` in code, not in comments: a commented-out call is not a bust. */
+  const callsIn = (text: string, name: string) =>
+    (stripCodeComments(text).match(new RegExp(`\\b${name}\\(`, 'g')) ?? []).length;
+
+  it('does not count a commented-out call (instrument control)', () => {
+    const text = [
+      '// await bustUserCreator(id);',
+      '/* await bustUserCreator(id); */',
+      '  /**',
+      '   * bustUserCreator(id) in a doc comment',
+      '   */',
+      'await bustUserCreator(id);',
+    ].join('\n');
+    expect(callsIn(text, 'bustUserCreator')).toBe(1);
+  });
 
   it('finds the source tree (instrument control)', () => {
     expect(sources.length).toBeGreaterThan(1000);
@@ -263,7 +281,7 @@ describe('creator card invalidation ledger', () => {
     const calls: Record<string, number> = {};
     for (const f of sources) {
       if (f === 'src/server/services/user-creator.service.ts') continue;
-      const n = (read(f).match(/\bbustUserCreator\(/g) ?? []).length;
+      const n = callsIn(read(f), 'bustUserCreator');
       if (n) calls[f] = n;
     }
     expect(calls).toEqual({
@@ -278,7 +296,7 @@ describe('creator card invalidation ledger', () => {
     const calls: Record<string, number> = {};
     for (const f of sources) {
       if (f === 'src/server/services/user-creator.service.ts') continue;
-      const n = (read(f).match(/\bbustUserCreatorCache\(/g) ?? []).length;
+      const n = callsIn(read(f), 'bustUserCreatorCache');
       if (n) calls[f] = n;
     }
     expect(calls).toEqual({

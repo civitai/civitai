@@ -112,7 +112,9 @@ export const USER_CREATOR_CACHE_TTL = CacheTTL.xs;
  * WHAT INVALIDATES IT. `bustUserCreatorCache` replaces the entry with the builder's short-lived bust
  * marker, so the next read goes to the database. That read uses the replica, so one landing inside
  * replication lag can re-cache the pre-write card for a TTL — the same exposure the edge cache already
- * had when its purge was refilled from the replica. It is called from:
+ * had when its purge was refilled from the replica. The builder's refill is also an unconditional SET,
+ * so a miss that began before the bust (on any pod) can overwrite the marker with the pre-write card,
+ * again for at most a TTL. It is called from:
  *   - `bustUserCreator`, which every write that already purged the `user-creator-<id>` edge tag now
  *     goes through: profile and user updates, links, showcase, milestone cosmetic grants. The Redis
  *     bust lands BEFORE the edge purge; the other order would let the edge refill from the stale

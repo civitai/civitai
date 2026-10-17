@@ -19,7 +19,7 @@ const { evictCachedApiKeys, cacheApiKey } = cacheModule;
 
 // Literal, not imported: an expectation derived from the constant moves with a mutated constant.
 const ENTRY_TTL_S = 30;
-const TOMBSTONE_TTL_S = 60;
+const TOMBSTONE_TTL_S = 900;
 const LAST_USED_S = 3600;
 
 const HOUR = 60 * 60 * 1000;
@@ -70,6 +70,8 @@ let store: ReturnType<typeof installFakeCacheRedis>;
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
+  // The refill age runs on the monotonic clock; by default let it follow the fake wall clock.
+  vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
   vi.setSystemTime(T0);
   rows = [personal()];
   store = installFakeCacheRedis();
@@ -81,6 +83,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.mocked(performance.now).mockRestore();
 });
 
 describe('bearer lookup cache: hit, miss, TTL', () => {
@@ -147,7 +150,7 @@ describe('bearer lookup cache: hit, miss, TTL', () => {
 describe('bearer lookup cache: constants', () => {
   it('pins the TTLs and the ordering the tombstone argument rests on', () => {
     expect(cacheModule.API_KEY_PRINCIPAL_TTL_SECONDS).toBe(30);
-    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBe(60);
+    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBe(900);
     expect(cacheModule.API_KEY_LAST_USED_DEBOUNCE_SECONDS).toBe(3600);
     expect(cacheModule.API_KEY_MAX_REFILL_AGE_SECONDS).toBe(10);
     expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBeGreaterThanOrEqual(
@@ -242,13 +245,59 @@ describe('bearer lookup cache: revocation', () => {
 
   it('drops a refill older than the refill bound, and keeps one inside it', async () => {
     const row = { ...personal() } as never;
-    const started = new Date(T0.getTime());
+    const started = { startedAt: T0.getTime() };
     vi.setSystemTime(T0.getTime() + 10_500);
     await cacheApiKey('hash-of-late', row, started);
     expect(store.has(cacheKey('hash-of-late'))).toBe(false);
     vi.setSystemTime(T0.getTime() + 9_500);
     await cacheApiKey('hash-of-ontime', row, started);
     expect(store.has(cacheKey('hash-of-ontime'))).toBe(true);
+  });
+
+  it('a refill queued in the client through a 5-minute reconnect still meets the tombstone', async () => {
+    // The refill is ISSUED in time (inside the age bound) but only REACHES Redis after the revoke
+    // and five minutes of reconnect, the way node-redis's offline queue delivers it.
+    const realSet = redisMock.redis.packed.set.getMockImplementation()!;
+    let deliver!: () => void;
+    redisMock.redis.packed.set.mockImplementation(((
+      key: string,
+      value: unknown,
+      options: never
+    ) => {
+      if (!(value as { apiKey?: unknown }).apiKey) return realSet(key, value, options);
+      return new Promise((resolve) => {
+        deliver = () => resolve(realSet(key, value, options));
+      });
+    }) as never);
+    const inFlight = getSessionFromBearerToken('personal');
+    await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+    rows = [];
+    await evictCachedApiKeys(['hash-of-personal']);
+    vi.setSystemTime(T0.getTime() + 5 * 60 * 1000);
+    deliver();
+    await inFlight;
+    expect(store.peek(cacheKey('hash-of-personal'))).not.toHaveProperty('apiKey');
+    expect(await getSessionFromBearerToken('personal')).toBeNull();
+  });
+
+  it('caches a refill only for what is left of the 30 s from its lookup start', async () => {
+    const row = { ...personal() } as never;
+    vi.setSystemTime(T0.getTime() + 8_000);
+    await cacheApiKey('hash-of-aged', row, { startedAt: T0.getTime() });
+    // 30 s budget - 8 s already spent = 22 s.
+    expect(store.get(cacheKey('hash-of-aged'))?.expiresAt).toBe(T0.getTime() + 30_000);
+    vi.setSystemTime(T0.getTime() + 30_000);
+    await cacheApiKey('hash-of-spent', row, { startedAt: T0.getTime() });
+    expect(store.has(cacheKey('hash-of-spent'))).toBe(false);
+  });
+
+  it('measures the refill age on the monotonic clock, not the wall clock', async () => {
+    // NTP steps the wall clock back 5 s while 11 s really pass.
+    const row = { ...personal() } as never;
+    vi.mocked(performance.now).mockReturnValue(T0.getTime() + 11_000);
+    vi.setSystemTime(T0.getTime() - 5_000);
+    await cacheApiKey('hash-of-stepped', row, { startedAt: T0.getTime() });
+    expect(store.has(cacheKey('hash-of-stepped'))).toBe(false);
   });
 
   it.each([
