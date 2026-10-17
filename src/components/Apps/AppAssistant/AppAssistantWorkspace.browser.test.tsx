@@ -62,6 +62,7 @@ const m = vi.hoisted(() => ({
   }),
   /** Set to keep the next resume pending until the test settles it. */
   deferOpen: false,
+  resume: vi.fn(),
   settleOpen: null as null | (() => void),
   compose: vi.fn(async () => undefined),
   getToken: vi.fn<(opts?: unknown) => Promise<string>>(async () => 'sandbox-token'),
@@ -119,6 +120,7 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
             }
             opts?.onSuccess?.(served);
           };
+          m.resume(app);
           if (m.deferOpen) m.settleOpen = settle;
           else settle();
         },
@@ -213,6 +215,7 @@ beforeEach(() => {
   m.sendsHeld = 0;
   m.delivered = [];
   m.deferOpen = false;
+  m.resume.mockClear();
   m.settleOpen = null;
   m.compose.mockClear();
   localStorage.clear();
@@ -524,14 +527,27 @@ describe('AppAssistantWorkspace auto-resume', () => {
     const screen = await mount();
     await openFirst();
     expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    m.sendsHeld = 1000;
+    // Held once while the chat lists the app's tools; the user sends their own before the retry.
+    m.sendsHeld = 1;
     runs(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     expect(m.chat!.onBeforeSend!('Actually, a light mode')).toBe(false);
-    const sends = m.send.mock.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    expect(m.send.mock.calls.length).toBe(sends);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(m.send).toHaveBeenCalledTimes(1);
     expect(m.delivered).toEqual([]);
+  });
+
+  test('a second message while it resumes resumes it once and goes with the first', async () => {
+    m.list = paused();
+    const screen = await mount();
+    await openFirst();
+    m.deferOpen = true;
+    expect(m.chat!.onBeforeSend!('first')).toBe(true);
+    expect(m.chat!.onBeforeSend!('second')).toBe(true);
+    expect(m.resume.mock.calls).toEqual([['app-aaaa']]);
+    m.settleOpen!();
+    runs(screen);
+    await vi.waitFor(() => expect(m.delivered).toEqual(['first\n\nsecond']));
   });
 
   test('opening another chat while a message is released stops it going there', async () => {
@@ -544,7 +560,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     runs(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     m.chat!.onChatChange!('chat-2');
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await new Promise((resolve) => setTimeout(resolve, 1200));
     expect(m.send).toHaveBeenCalledTimes(1);
     expect(m.delivered).toEqual([]);
   });
@@ -702,15 +718,17 @@ describe('AppAssistantWorkspace Build it', () => {
     card.remove();
   });
 
-  test('Build it pressed while the chat still holds goes once it can', async () => {
+  test('Build it pressed while the chat still holds stays, and goes when pressed again', async () => {
     const card = (await checklistCard())();
     document.body.append(card);
     m.sendsHeld = 1;
-    await page.getByRole('button', { name: 'Build it' }).click();
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']), {
-      timeout: 3000,
-    });
-    expect(m.compose.mock.calls).toEqual([['Looks good — build it.'], ['']]);
+    const build = page.getByRole('button', { name: 'Build it' });
+    await build.click();
+    expect(m.delivered).toEqual([]);
+    await build.click();
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
+    await expect.element(build).not.toBeInTheDocument();
+    expect(m.compose).not.toHaveBeenCalled();
     card.remove();
   });
 

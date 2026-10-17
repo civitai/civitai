@@ -241,7 +241,7 @@ export function AppAssistantWorkspace({
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
-        onBuild: () => void releaseHeld(chatRef, replaying, BUILD_IT_MESSAGE),
+        onBuild: () => void chatRef.current?.send(BUILD_IT_MESSAGE),
       }),
     [appTools]
   );
@@ -342,7 +342,13 @@ export function AppAssistantWorkspace({
       if (app) remember(app.name);
       if (app?.state !== 'suspended') return false;
       const resuming = heldRef.current !== null;
-      heldRef.current = { text, app: app.app, chatId: chatRemembers.current.chatId };
+      // A follow-up while it resumes goes with the first, which has already left the message box.
+      const before = heldRef.current?.text;
+      heldRef.current = {
+        text: before ? `${before}\n\n${text}` : text,
+        app: app.app,
+        chatId: chatRemembers.current.chatId,
+      };
       setHeld(heldRef.current);
       if (!resuming)
         resumeRef.current(app.app, {
