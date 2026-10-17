@@ -35,7 +35,8 @@ export function s3TagIndexObjects(
       const res = await s3
         .send(new GetObjectCommand({ Bucket: bucket, Key: key }))
         .catch((e: unknown) => {
-          // NoSuchKey only: a wrong bucket (NoSuchBucket, also a 404) is a deployment error, not this snapshot's.
+          // NoSuchKey only: a wrong bucket (NoSuchBucket, also a 404) is a deployment error,
+          // not this snapshot's.
           if ((e as { name?: string } | null)?.name === 'NoSuchKey')
             throw new TagIndexObjectMissingError(`tag index object ${key} not found`);
           throw e;
