@@ -711,7 +711,8 @@ jobs:
       # the unit test that also checks this runs in `unit`, which is continue-on-error on PRs. The
       # tag-index decode worker runs from this bundle, so a stale one is the decoder that ships.
       # `--check` regenerates in memory and compares, so it writes nothing, and a missing file
-      # counts as out of date (exit 1), not as a pass.
+      # counts as out of date (exit 1), not as a pass. Like every check here it shows red but does
+      # not block a merge (`main` has no required_status_checks).
       - name: Generated tag-index decode worker matches its generator
         run: node scripts/build-tag-index-decode-worker.mjs --check
 

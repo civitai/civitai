@@ -7,9 +7,11 @@ import { isTagIndexObjectKey, type TagIndexObjectSweeper } from './store';
  * Retention for `ResourceIntentTagIndexSnapshot` and its objects. Rows are retired, never deleted
  * (retiring is the only change the table's trigger allows, and it is one-way). An object is deleted
  * only when THIS database's retired rows name its key and none of its ready rows does, and the key is
- * a snapshot key under this store's prefix. Nothing is listed: an object this database never named
- * is never touched, so a bucket shared with another environment is safe (its snapshots are other
- * bytes, so other keys). The cost is one leak: an upload whose row insert failed (a build killed
+ * a snapshot key under this store's prefix. Nothing is listed, so nothing outside this database's
+ * own retired rows is touched. That does NOT make a shared bucket safe: the payload depends only on
+ * the input data and the build day, so two environments can produce the same key, and one's
+ * retention could delete an object the other serves; each environment needs its own bucket (see
+ * the store). The cost of not listing is one leak: an upload whose row insert failed (a build killed
  * between the two) is named by no row and stays. It is one object, and a later put of the same bytes
  * reuses its key.
  */
@@ -112,13 +114,27 @@ export async function applyTagIndexRetention(
       AND NOT EXISTS (
         SELECT 1 FROM ${T} k WHERE k."status" = 'ready' AND k."objectKey" = r."objectKey")`);
   const result: TagIndexRetentionResult = { retired, deleted: 0, foreign: 0 };
+  // One key's failure must not stop the rest (a key that always fails would otherwise end
+  // retention for good): every key is tried, then any failure fails the sweep, so its heartbeat
+  // goes stale and the job reports the error.
+  const failures: string[] = [];
   for (const { objectKey } of keys) {
     if (!isTagIndexObjectKey(objects.prefix, objectKey)) {
       result.foreign++;
       continue;
     }
-    await objects.delete(objectKey);
-    result.deleted++;
+    try {
+      await objects.delete(objectKey);
+      result.deleted++;
+    } catch (e) {
+      failures.push(`${objectKey}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
+  if (failures.length)
+    throw new Error(
+      `tag index retention: ${failures.length} of ${keys.length} deletes failed (${
+        result.deleted
+      } deleted, ${result.retired.length} retired): ${failures.join('; ')}`
+    );
   return result;
 }

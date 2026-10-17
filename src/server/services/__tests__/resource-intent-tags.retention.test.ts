@@ -296,6 +296,37 @@ describe('applyTagIndexRetention', () => {
     expect(s.deleted).toEqual([]);
   });
 
+  it('a delete that fails does not stop the others; the sweep then fails, naming it', async () => {
+    const s = await freshStore(
+      [
+        { label: 'r1', ageDays: 60, status: 'retired' },
+        { label: 'r2', ageDays: 61, status: 'retired' },
+        { label: 'r3', ageDays: 62, status: 'retired' },
+      ],
+      ['r1', 'r2', 'r3']
+    );
+    const del = s.sweeper.delete;
+    let failedKey = '';
+    s.sweeper.delete = async (key: string) => {
+      if (!failedKey) {
+        failedKey = key;
+        throw new Error('AccessDenied');
+      }
+      return del(key);
+    };
+    const e = await applyTagIndexRetention(
+      { sql: s.sql, objects: s.sweeper },
+      { now: NOW, specHash: SPEC }
+    ).catch((x: Error) => x);
+    // The other two were still deleted.
+    expect(s.deleted.sort()).toEqual(
+      [keyOf('r1'), keyOf('r2'), keyOf('r3')].filter((k) => k !== failedKey).sort()
+    );
+    expect((e as Error).message).toBe(
+      `tag index retention: 1 of 3 deletes failed (2 deleted, 0 retired): ${failedKey}: AccessDenied`
+    );
+  });
+
   it('a run with nothing to do changes nothing', async () => {
     const s = await freshStore([{ label: 'only', ageDays: 3 }], ['only']);
     const before = await s.statuses();
