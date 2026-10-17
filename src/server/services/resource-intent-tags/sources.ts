@@ -1,18 +1,20 @@
 import { createHmac } from 'crypto';
 import { Prisma } from '@prisma/client';
-import { COOC_ELIGIBLE_REST } from '~/server/services/resource-intent-cooc/build';
+import type { CoocRawQuery, CoocTxRunner } from '~/server/services/resource-intent-cooc/build';
+import { COOC_ELIGIBLE_REST, coocRetry } from '~/server/services/resource-intent-cooc/build';
 import type { TagModelContent, TagTrainingRow, TrainingResource } from './build';
 
 /**
  * The content-tag build's inputs, read the way the prototype read them: posted images and model content
- * from a Postgres standby, generator observations from ClickHouse. Each reader takes its query function,
- * so the caller decides the connection; every Postgres statement is run through `standbyQuery`.
+ * from a Postgres standby, generator observations from ClickHouse. Each reader takes its query
+ * function; pass one built with `standbyQuery`. Unlike the prototype, no input reaches the index from
+ * a model flagged POI or minor, or from a Private or Unsearchable post.
  */
 
 /** What the build reads: its window and the prototype's sample rates and content limits. */
 export const TAG_SOURCE_PARAMS = {
   trainDays: 90,
-  /** The window ends this many whole UTC days before the build. */
+  /** The window ends this many days before the build day's UTC midnight. */
   gapDays: 1,
   /** Generator observations in each hour's first minutes: 2 of 60, the prototype's sample. */
   genSliceMinutes: 2,
@@ -26,19 +28,13 @@ export const TAG_SOURCE_PARAMS = {
   },
 } as const;
 
-export type TagRawQuery = (sql: Prisma.Sql) => Promise<unknown[]>;
-
-type TagTxClient = {
-  $executeRawUnsafe: (query: string) => Promise<number>;
-  $queryRaw: <T = unknown>(query: Prisma.Sql) => Promise<T>;
-};
-export type TagTxRunner = <T>(fn: (tx: TagTxClient) => Promise<T>) => Promise<T>;
+export type TagRawQuery = CoocRawQuery;
 
 /**
  * Each statement in its own READ ONLY transaction under `statement_timeout`, refused unless the server
  * is a standby: a misrouted connection fails instead of reading the primary.
  */
-export function standbyQuery(run: TagTxRunner, timeoutMs: number): TagRawQuery {
+export function standbyQuery(run: CoocTxRunner, timeoutMs: number): TagRawQuery {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error('statement timeout must be a positive integer of milliseconds');
   return (sql) =>
@@ -53,31 +49,33 @@ export function standbyQuery(run: TagTxRunner, timeoutMs: number): TagRawQuery {
     });
 }
 
-/** Each statement retried up to `tries` times, waiting `delayMs` then twice that, and so on. */
-export function retryingQuery(query: TagRawQuery, tries = 3, delayMs = 2000): TagRawQuery {
-  return async (sql) => {
-    for (let i = 1; ; i++) {
-      try {
-        return await query(sql);
-      } catch (e) {
-        if (i >= tries) throw e;
-        await new Promise((r) => setTimeout(r, delayMs * i));
-      }
-    }
-  };
+/** Each statement retried as the co-occurrence builder retries its reads. */
+export function retryingQuery(query: TagRawQuery, delayMs?: number): TagRawQuery {
+  return (sql) => coocRetry(() => query(sql), delayMs);
 }
 
-export type VersionInfo = { modelId: number; type: string; baseModel: string };
+export type VersionInfo = {
+  modelId: number;
+  type: string;
+  baseModel: string;
+  /** The model is flagged POI or minor. */
+  flagged: boolean;
+};
 
-/** A generator observation's resources; versions the map does not know are skipped. */
+/**
+ * A generator observation's resources, versions the map does not know skipped; null when any resource
+ * is a flagged model, as a posted image attaching one is not eligible either.
+ */
 export function resourcesOfVersions(
   versionIds: readonly number[],
   versions: ReadonlyMap<number, VersionInfo>
-): TrainingResource[] {
+): TrainingResource[] | null {
   const out: TrainingResource[] = [];
   for (const id of versionIds) {
     const v = versions.get(id);
-    if (v) out.push({ modelId: v.modelId, type: v.type, baseModel: v.baseModel });
+    if (!v) continue;
+    if (v.flagged) return null;
+    out.push({ modelId: v.modelId, type: v.type, baseModel: v.baseModel });
   }
   return out;
 }
@@ -102,16 +100,10 @@ export async function fetchVersionInfo(
   for (let i = 0; i < versionIds.length; i += VERSION_CHUNK) {
     const chunk = versionIds.slice(i, i + VERSION_CHUNK);
     const rows = (await query(Prisma.sql`
-      SELECT mv.id, mv."modelId", m.type::text AS type, mv."baseModel"
+      SELECT mv.id, mv."modelId", m.type::text AS type, mv."baseModel", (m.poi OR m.minor) AS flagged
       FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.id = ANY(${chunk}::int[])`)) as {
-      id: number;
-      modelId: number;
-      type: string;
-      baseModel: string;
-    }[];
-    for (const r of rows)
-      out.set(r.id, { modelId: r.modelId, type: r.type, baseModel: r.baseModel });
+      WHERE mv.id = ANY(${chunk}::int[])`)) as (VersionInfo & { id: number })[];
+    for (const { id, ...v } of rows) out.set(id, v);
   }
   return out;
 }
@@ -136,12 +128,13 @@ async function firstImageIdAtOrAfter(query: TagRawQuery, t: Date): Promise<numbe
   return lo;
 }
 
+const DAY_MS = 86_400_000;
+
 /** The UTC-day-aligned training window of a build run at `now`. */
 export function tagTrainingWindow(now: Date): { start: Date; end: Date } {
-  const day = 24 * 60 * 60 * 1000;
   const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const end = new Date(midnight - TAG_SOURCE_PARAMS.gapDays * day);
-  return { start: new Date(end.getTime() - TAG_SOURCE_PARAMS.trainDays * day), end };
+  const end = new Date(midnight - TAG_SOURCE_PARAMS.gapDays * DAY_MS);
+  return { start: new Date(end.getTime() - TAG_SOURCE_PARAMS.trainDays * DAY_MS), end };
 }
 
 export type PostedSampleParams = {
@@ -217,9 +210,10 @@ export async function readPostedSample(
 const MODEL_BATCH = 1000;
 
 /**
- * Each model's content sources: name, description, Civitai tags, every version's base model and trigger
- * words, and the prompts of rated images on its newest versions created before `end` — the creator's
- * own showcase posts, and one image from each of other users' newest gallery posts.
+ * Each unflagged model's content sources: name, description, Civitai tags, every version's base model
+ * and trigger words, and the prompts of rated images on its newest versions created before `end` — the
+ * creator's own showcase posts, and one image from each of other users' newest gallery posts. Images
+ * pass the prototype's content predicate; posts must be neither Private nor Unsearchable.
  */
 export async function readModelContent(
   query: TagRawQuery,
@@ -237,7 +231,7 @@ export async function readModelContent(
                   WHERE tom."modelId" = m.id), '[]'::json) AS tags,
         coalesce((SELECT json_agg(json_build_object('baseModel', mv."baseModel", 'trainedWords', mv."trainedWords"))
                   FROM "ModelVersion" mv WHERE mv."modelId" = m.id), '[]'::json) AS versions
-      FROM "Model" m WHERE m.id = ANY(${ids}::int[])`)) as {
+      FROM "Model" m WHERE m.id = ANY(${ids}::int[]) AND NOT m.poi AND NOT m.minor`)) as {
       id: number;
       name: string;
       type: string;
@@ -255,6 +249,7 @@ export async function readModelContent(
         (SELECT true AS c, i.meta->>'prompt' AS p
          FROM "Post" p JOIN "Image" i ON i."postId" = p.id
          WHERE p."modelVersionId" = vs.v AND p."userId" = vs.cu AND p."publishedAt" IS NOT NULL
+           AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
            AND p."publishedAt" < ${end} AND i."createdAt" < ${end} AND i."hideMeta" = false
            AND length(i.meta->>'prompt') > 0 AND i.ingestion = 'Scanned' AND i."tosViolation" = false
            AND i."needsReview" IS NULL AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false
@@ -263,7 +258,7 @@ export async function readModelContent(
         (SELECT false, i.meta->>'prompt'
          FROM (SELECT p.id FROM "Post" p WHERE p."modelVersionId" = vs.v AND p."userId" <> vs.cu
                  AND p."publishedAt" IS NOT NULL AND p."publishedAt" < ${end}
-                 AND p.availability != 'Private'::"Availability"
+                 AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
                ORDER BY p.id DESC LIMIT ${C.galleryPostsPerVersion}::int) pp
          CROSS JOIN LATERAL (SELECT i.* FROM "Image" i WHERE i."postId" = pp.id AND i."createdAt" < ${end}
                  AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0 AND i.ingestion = 'Scanned'
@@ -336,9 +331,9 @@ export function genObservationOf(r: {
   u: string;
   p: string;
   v: (number | string)[];
-  liked: number | boolean;
-  favorite: number | boolean;
-  disliked: number | boolean;
+  liked: number | string | boolean;
+  favorite: number | string | boolean;
+  disliked: number | string | boolean;
 }): GenObservation {
   return {
     user: r.u,
@@ -350,15 +345,18 @@ export function genObservationOf(r: {
   };
 }
 
+/** The observation as a training row; null when it used a flagged model. */
 export function genTrainingRow(
   o: GenObservation,
   versions: ReadonlyMap<number, VersionInfo>
-): TagTrainingRow {
+): TagTrainingRow | null {
+  const resources = resourcesOfVersions(o.versionIds, versions);
+  if (!resources) return null;
   return {
     source: 'gen',
     user: o.user,
     prompt: o.prompt,
-    resources: resourcesOfVersions(o.versionIds, versions),
+    resources,
     liked: o.liked,
     favorite: o.favorite,
     disliked: o.disliked,

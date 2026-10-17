@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
@@ -26,7 +27,7 @@ import { RESOURCE_INTENT_TAGS_SPEC } from '~/server/services/resource-intent-tag
  *
  * Tolerances: content scores are rounded to 4 decimals on both sides, so they compare exactly; fits and
  * user-side shares to 1e-12 (summation order differs); scores through the float32 snapshot to a
- * relative 1e-6, with the ranked order exact.
+ * relative 1e-7, with the ranked order exact.
  */
 type Pairs = [number, number][];
 type KindJson = {
@@ -93,23 +94,27 @@ const vocab = parseTagVocabulary(
 );
 const key = (t: number) => vocab.tags[t].key;
 const versions = new Map<number, VersionInfo>(
-  golden.versions.map(([v, modelId, type, baseModel]) => [v, { modelId, type, baseModel }])
+  golden.versions.map(([v, modelId, type, baseModel]) => [
+    v,
+    { modelId, type, baseModel, flagged: false },
+  ])
 );
 
 function trainingRows(): TagTrainingRow[] {
   return [
-    ...golden.genRows.map((r) =>
-      genTrainingRow(
-        {
-          user: r.u,
-          prompt: r.p,
-          versionIds: r.versionIds,
-          liked: r.liked,
-          favorite: r.favorite,
-          disliked: r.disliked,
-        },
-        versions
-      )
+    ...golden.genRows.map(
+      (r) =>
+        genTrainingRow(
+          {
+            user: r.u,
+            prompt: r.p,
+            versionIds: r.versionIds,
+            liked: r.liked,
+            favorite: r.favorite,
+            disliked: r.disliked,
+          },
+          versions
+        ) as TagTrainingRow
     ),
     ...golden.postRows.map(
       (r): TagTrainingRow => ({
@@ -261,7 +266,7 @@ describe('resource-intent-tags build parity with the prototype', () => {
       expect(r.ecosystems).toEqual(c.ecosystems);
       expect(r.ecosystem).toBe(c.ecosystem);
       expect(r.candidates.map((x) => x.modelId)).toEqual(c.ranked.map(([m]) => m));
-      r.candidates.forEach((x, i) => expect(close(x.score, c.ranked[i][1], 1e-6)).toBe(true));
+      r.candidates.forEach((x, i) => expect(close(x.score, c.ranked[i][1], 1e-7)).toBe(true));
     }
   );
 });
@@ -285,5 +290,43 @@ describe('resource-intent-tags build: the auditor exclusion', () => {
       return false;
     });
     expect(seen.length).toBe(golden.genRows.length);
+  });
+});
+
+describe('parseTagVocabulary', () => {
+  const tags = [
+    { id: 0, key: 'amber kite', users: 30, idf: 1.2, explicit: false, near: [1] },
+    { id: 1, key: 'brass owl', users: 40, idf: 0.9, explicit: true, near: [0] },
+  ];
+  const bytes = (t: unknown, schema = 'p2m-vocab/2') =>
+    Buffer.from(JSON.stringify({ schema, tags: t }));
+
+  it('versions the payload by the sha256 of its exact bytes', () => {
+    const b = bytes(tags);
+    expect(parseTagVocabulary(b).vocabVersion).toBe(createHash('sha256').update(b).digest('hex'));
+    const spaced = Buffer.from(JSON.stringify({ schema: 'p2m-vocab/2', tags }, null, 1));
+    expect(parseTagVocabulary(spaced).vocabVersion).not.toBe(parseTagVocabulary(b).vocabVersion);
+  });
+
+  it.each<[string, Buffer, string]>([
+    ['another schema', bytes(tags, 'p2m-vocab/1'), 'schema'],
+    ['an id that is not its position', bytes([tags[1], tags[0]]), 'id is not its position'],
+    [
+      'keys out of code-point order',
+      bytes([
+        { ...tags[1], id: 0, near: [1] },
+        { ...tags[0], id: 1, near: [0] },
+      ]),
+      'key order',
+    ],
+    [
+      'a near set that is not symmetric',
+      bytes([tags[0], { ...tags[1], near: [] }]),
+      'not symmetric',
+    ],
+    ['a near set holding its own tag', bytes([{ ...tags[0], near: [0] }, tags[1]]), 'near id'],
+    ['a non-finite idf', bytes([{ ...tags[0], idf: 'x' }, tags[1]]), 'idf'],
+  ])('refuses %s', (_name, b, message) => {
+    expect(() => parseTagVocabulary(b)).toThrow(message);
   });
 });

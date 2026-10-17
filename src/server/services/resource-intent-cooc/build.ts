@@ -81,7 +81,7 @@ export function timedCoocQuery(run: CoocTxRunner, timeoutMs: number): CoocRawQue
 }
 
 /** The screen's retry, ported: 3 tries, waiting `delayMs` then twice that. */
-async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
+export async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {

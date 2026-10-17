@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type * as Audit from '~/utils/metadata/audit';
+import {
+  auditPrompt,
+  includesMinor,
+  includesPoi,
+  MAX_AUDIT_PROMPT_LENGTH,
+} from '~/utils/metadata/audit';
 import { promptExcludedByAuditor } from '~/server/services/resource-intent-tags/prompt-exclusion';
 
 const THROWS = 'sentinel prompt the auditor throws on';
@@ -21,16 +27,23 @@ describe('promptExcludedByAuditor', () => {
     );
   });
 
-  it('excludes what the generator gate blocks', () => {
-    expect(promptExcludedByAuditor('9 year old girl')).toBe(true);
+  it('excludes what only the regex audit rejects', () => {
+    const long = 'a quiet harbor at dusk, '.repeat(Math.ceil(MAX_AUDIT_PROMPT_LENGTH / 20));
+    expect(auditPrompt(long).success).toBe(false);
+    expect(includesMinor(long)).toBeFalsy();
+    expect(promptExcludedByAuditor(long)).toBe(true);
   });
 
-  it('excludes what only the minor check flags (the generator gate passes it)', () => {
+  it('excludes what only the minor check flags', () => {
+    expect(auditPrompt('a little girl').success).toBe(true);
     expect(promptExcludedByAuditor('a little girl')).toBe(true);
   });
 
-  it('excludes a platform POI name', () => {
-    expect(promptExcludedByAuditor('a drawing of diddl-maus')).toBe(true);
+  it('excludes a platform POI name (the regex audit runs the POI check)', () => {
+    const poi = 'a drawing of diddl-maus';
+    expect(includesPoi(poi)).toBeTruthy();
+    expect(includesMinor(poi)).toBeFalsy();
+    expect(promptExcludedByAuditor(poi)).toBe(true);
   });
 
   it('fails closed when the auditor throws', () => {

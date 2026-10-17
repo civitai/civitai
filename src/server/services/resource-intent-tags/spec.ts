@@ -20,8 +20,9 @@ import { scoreTagRequest, TAG_SCORE_PARAMS } from './score';
 import { TAG_SOURCE_PARAMS } from './sources';
 
 /**
- * The v1 content-tag arm's extractor, build and scorer constants, as the prototype mined, built and
- * screened with them, and the browsing levels that let a request match an explicit tag.
+ * The v1 content-tag arm's extractor, build, source and scorer constants and snapshot format, as the
+ * prototype mined, built and screened with them, and the browsing levels that let a request match an
+ * explicit tag.
  */
 export const RESOURCE_INTENT_TAGS_SPEC = {
   maxSegmentTokens: TAG_MAX_SEGMENT_TOKENS,

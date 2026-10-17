@@ -41,7 +41,7 @@ export type TagKind = 'addon' | 'checkpoint';
 /** One tag of the frozen vocabulary. Its id is its position. */
 export type TagVocabularyEntry = GroupingTag & { explicit: boolean };
 
-/** Snapshot values are float32; the scorer accumulates in float64 either way. */
+/** Snapshot values are float32; keep the scorer's accumulators Float64Array. */
 export type FloatArray = Float32Array | Float64Array;
 
 /** A sparse list of values over one kind's resources: `resource` holds indices into that kind's arrays. */

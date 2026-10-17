@@ -66,9 +66,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const { dbRead } = await import('~/server/db/client');
   const B = await import('~/server/services/resource-intent-tags/build');
   const S = await import('~/server/services/resource-intent-tags/sources');
-  const { encodeTagIndex, decodeTagIndex, packTagIndex } = await import(
-    '~/server/services/resource-intent-tags/payload'
-  );
+  const {
+    compressTagIndex,
+    decompressTagIndex,
+    packTagIndex,
+    TAG_INDEX_MAX_PAYLOAD_BYTES,
+    unpackTagIndex,
+  } = await import('~/server/services/resource-intent-tags/payload');
   const { promptExcludedByAuditor } = await import(
     '~/server/services/resource-intent-tags/prompt-exclusion'
   );
@@ -76,11 +80,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     '~/server/services/resource-intent-tags/spec'
   );
   const { scoreTagRequest } = await import('~/server/services/resource-intent-tags/score');
-  const out: Record<string, unknown> = { specHash: RESOURCE_INTENT_TAGS_SPEC_HASH };
-  const log = (k: string, v: unknown) => {
-    out[k] = v;
+  const log = (k: string, v: unknown) =>
     console.log(`[dry-run-resource-intent-tags] ${k} ${JSON.stringify(v)}`);
-  };
 
   const query = S.retryingQuery(
     S.standbyQuery((fn) => dbRead.$transaction(fn, { maxWait: 30_000, timeout: 310_000 }), 280_000)
@@ -98,7 +99,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (!(Number(ro[0]?.ro) >= 1)) throw new Error('ClickHouse session is not readonly; refusing');
 
   try {
-    // 1. The frozen vocabulary.
     const [v] = (await query(Prisma.sql`
       SELECT "vocabVersion", payload FROM "ResourceIntentVocabulary"
       WHERE status = 'frozen' ORDER BY "frozenAt" DESC NULLS LAST LIMIT 1`)) as {
@@ -113,10 +113,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       vocabVersion: vocab.vocabVersion,
       vocabularyTags: vocab.tags.length,
       vocabularyBytes: v.payload.length,
+      specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
       window: { start: window.start.toISOString(), end: window.end.toISOString() },
     });
 
-    // 2. Generator observations (ClickHouse), then their versions (standby).
     let t0 = performance.now();
     const gen: GenObservation[] = [];
     const rs = await ch.query({
@@ -147,10 +147,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       excludeGenPrompt: promptExcludedByAuditor,
     });
     t0 = performance.now();
-    for (const o of gen.splice(0)) acc.addRow(S.genTrainingRow(o, versions));
-    log('genTagMs', ms(t0));
+    let flaggedModelRows = 0;
+    for (const o of gen.splice(0)) {
+      const row = S.genTrainingRow(o, versions);
+      if (row) acc.addRow(row);
+      else flaggedModelRows++;
+    }
+    log('genRows', { flaggedModelRows, tagMs: ms(t0) });
 
-    // 3. Posted sample (standby).
     t0 = performance.now();
     const posted = await S.readPostedSample(query, {
       start: window.start,
@@ -165,7 +169,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     });
     log('post', { ...posted, ms: ms(t0) });
 
-    // 4. Content of every model seen in use (standby).
     t0 = performance.now();
     const modelIds = acc.usedModelIds().slice(0, limit(values['limit-models']));
     let contentModels = 0;
@@ -175,7 +178,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     });
     log('content', { modelsRequested: modelIds.length, modelsRead: contentModels, ms: ms(t0) });
 
-    // 5. Build, encode, decode.
     t0 = performance.now();
     const { data, stats } = acc.finalize();
     log('build', { ...stats, ms: ms(t0) });
@@ -183,32 +185,36 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     const raw = packTagIndex(data, RESOURCE_INTENT_TAGS_SPEC_HASH);
     const packMs = ms(t0);
     t0 = performance.now();
-    const payload = await encodeTagIndex(data, RESOURCE_INTENT_TAGS_SPEC_HASH);
+    const payload = await compressTagIndex(raw);
     log('payload', {
       rawBytes: raw.length,
       rawMiB: mib(raw.length),
       compressedBytes: payload.length,
       compressedMiB: mib(payload.length),
+      underCap: payload.length <= TAG_INDEX_MAX_PAYLOAD_BYTES,
       packMs,
-      encodeMs: ms(t0),
+      compressMs: ms(t0),
     });
 
     await gc();
     const before = process.memoryUsage();
     t0 = performance.now();
-    const decoded = await decodeTagIndex(payload);
-    const decodeMs = ms(t0);
+    const inflated = await decompressTagIndex(payload);
+    const decompressMs = ms(t0);
+    t0 = performance.now();
+    const decoded = unpackTagIndex(inflated);
+    const unpackMs = ms(t0);
     await gc();
     const after = process.memoryUsage();
     log('decode', {
-      ms: decodeMs,
+      decompressMs,
+      unpackMs,
       heapUsedMiB: mib(after.heapUsed - before.heapUsed),
       arrayBuffersMiB: mib(after.arrayBuffers - before.arrayBuffers),
       externalMiB: mib(after.external - before.external),
       rssMiB: mib(after.rss - before.rss),
     });
 
-    // 6. Posting-list shape, and request latency on the real index (synthetic prompts).
     for (const kind of ['addon', 'checkpoint'] as const) {
       const k = decoded.index.kinds[kind];
       const lens = Array.from(

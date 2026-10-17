@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest';
 import type { SparseByKey, TagIndexData } from '~/server/services/resource-intent-tags/build';
 import type { TagKind } from '~/server/services/resource-intent-tags/score';
 import { compareCodePoints } from '~/server/services/resource-intent-tags/extract';
-import { decodeTagIndex, encodeTagIndex } from '~/server/services/resource-intent-tags/payload';
+import {
+  decodeTagIndex,
+  encodeTagIndex,
+  tagIndexFromData,
+} from '~/server/services/resource-intent-tags/payload';
 import {
   resolveEcosystems,
   scoreTagRequest,
@@ -17,9 +21,10 @@ import {
  * The generator built the index in the prototype's own data structures, ran the prototype's functions
  * on these requests and wrote what they returned; it also exported the index in the shape below. It
  * imports non-public code and is not in this repository. Never edit the fixture to make this pass;
- * regenerate it or fix the port. The index is this fixture written in the build's output shape, encoded
- * into the snapshot and decoded by the production decoder, so candidate scores carry the snapshot's
- * float32 values: they compare to a relative 1e-6, the ranked order exactly.
+ * regenerate it or fix the port. The index is this fixture in the build's output shape, validated by
+ * `tagIndexFromData` as built (float64, every value to 12 decimals) and also encoded into the snapshot
+ * and decoded by the production decoder (float32: candidate scores to a relative 1e-7, the ranked
+ * order exactly).
  */
 type Pairs = [number, number][];
 type KindJson = {
@@ -136,8 +141,11 @@ function goldenData(g: Golden): TagIndexData {
   };
 }
 
-const { index } = await decodeTagIndex(await encodeTagIndex(goldenData(golden), 'b'.repeat(64)));
-const close = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
+const index = tagIndexFromData(goldenData(golden));
+const { index: decoded } = await decodeTagIndex(
+  await encodeTagIndex(goldenData(golden), 'b'.repeat(64))
+);
+const close = (a: number, b: number) => Math.abs(a - b) <= 1e-7 * Math.max(1, Math.abs(b));
 
 describe('resource-intent-tags scorer parity with the prototype', () => {
   it('the fixture is the one this test was written for', () => {
@@ -182,7 +190,16 @@ describe('resource-intent-tags scorer parity with the prototype', () => {
     const expected = c.ranked as Pairs;
     expect(r.candidates.length).toBe(c.candidateCount);
     expect(r.candidates.map((x) => x.modelId)).toEqual(expected.map(([m]) => m));
-    r.candidates.forEach((x, i) => expect(close(x.score, expected[i][1])).toBe(true));
+    r.candidates.forEach((x, i) => expect(x.score).toBeCloseTo(expected[i][1], 12));
+    // Through the snapshot: the same list, scores as float32 values carry them.
+    const d = scoreTagRequest(decoded, {
+      prompt: c.prompt,
+      kind: c.kind,
+      browsingLevel: c.browsingLevel,
+      baseModel: c.baseModel,
+    });
+    expect(d.candidates.map((x) => x.modelId)).toEqual(expected.map(([m]) => m));
+    d.candidates.forEach((x, i) => expect(close(x.score, expected[i][1])).toBe(true));
   });
 
   it("a candidate cap below the list length keeps the uncapped ranking's leading order, ties included", () => {

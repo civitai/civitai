@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { decode as decodeHtmlEntities } from 'he';
 import { canonicalTagKey, compareCodePoints, tagKeys, tagSegments, TAG_STOPWORDS } from './extract';
-import type { TagVocabularyEntry } from './score';
+import type { FloatArray, TagVocabularyEntry } from './score';
 
 /**
  * Builder side of the v1 content-tag index: the frozen vocabulary, each resource's content tags, the
@@ -266,17 +266,17 @@ export type SparseByKey = {
   keys: Uint32Array;
   ptr: Uint32Array;
   resource: Uint32Array;
-  value: Float64Array;
+  value: FloatArray;
 };
 
 export type TagIndexKindData = {
   modelIds: Uint32Array;
-  fit: Float64Array;
+  fit: FloatArray;
   /** Per resource, its ecosystem ids, CSR. */
   ecosystemPtr: Uint32Array;
   ecosystemIds: Uint32Array;
   /** Per tag id, CSR over the whole vocabulary. `fit` is NaN where the pair has no fit of its own. */
-  postings: { ptr: Uint32Array; resource: Uint32Array; c: Float64Array; fit: Float64Array };
+  postings: { ptr: Uint32Array; resource: Uint32Array; c: FloatArray; fit: FloatArray };
   ecosystemUsers: SparseByKey;
   userByTag: SparseByKey;
   userByEcosystem: SparseByKey;
@@ -284,7 +284,7 @@ export type TagIndexKindData = {
 
 export type TagIndexData = {
   vocabVersion: string;
-  /** Counted independently of `ecosystems`, so a decoder can tell that none was left out. */
+  /** Not derived from `ecosystems`, so a decoder can tell if one was dropped after counting. */
   rowsWithEcosystem: number;
   vocabulary: readonly (TagVocabularyEntry & { users: number })[];
   ecosystems: { name: string; users: number; observations: number }[];
@@ -416,7 +416,7 @@ export class TagIndexAccumulator {
     private readonly vocab: TagVocabulary,
     opts: {
       addonTypes: readonly string[];
-      /** True when the platform prompt auditor flags a generator prompt; the row is then dropped. */
+      /** True drops the generator row (counted as `excludedByAuditor`). */
       excludeGenPrompt: (prompt: string) => boolean;
       params?: TagBuildParams;
     }

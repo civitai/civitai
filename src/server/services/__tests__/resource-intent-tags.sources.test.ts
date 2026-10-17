@@ -1,11 +1,14 @@
 import type { Prisma } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import type { TagTrainingRow } from '~/server/services/resource-intent-tags/build';
+import { COOC_ELIGIBLE_REST } from '~/server/services/resource-intent-cooc/build';
+import type { TagModelContent, TagTrainingRow } from '~/server/services/resource-intent-tags/build';
 import {
+  fetchVersionInfo,
   genObservationOf,
   genObservationsSql,
   genTrainingRow,
   observationUserHash,
+  readModelContent,
   readPostedSample,
   retryingQuery,
   standbyQuery,
@@ -38,13 +41,73 @@ describe('resource-intent-tags sources', () => {
       disliked: false,
     });
     const versions = new Map([
-      [5, { modelId: 50, type: 'Checkpoint', baseModel: 'E1' }],
-      [9, { modelId: 90, type: 'LORA', baseModel: 'E1' }],
+      [5, { modelId: 50, type: 'Checkpoint', baseModel: 'E1', flagged: false }],
+      [9, { modelId: 90, type: 'LORA', baseModel: 'E1', flagged: false }],
     ]);
-    expect(genTrainingRow(o, versions).resources).toEqual([
+    expect(genTrainingRow(o, versions)?.resources).toEqual([
       { modelId: 50, type: 'Checkpoint', baseModel: 'E1' },
       { modelId: 90, type: 'LORA', baseModel: 'E1' },
     ]);
+    // A POI- or minor-flagged model anywhere in the observation drops it, as for a posted image.
+    versions.set(6, { modelId: 60, type: 'LORA', baseModel: 'E1', flagged: true });
+    expect(genTrainingRow(o, versions)).toBeNull();
+  });
+
+  it('reads version flags, and excludes deleted accounts from the observations', async () => {
+    const seen: string[] = [];
+    const query = async (q: Prisma.Sql) => {
+      seen.push(q.sql);
+      return [{ id: 6, modelId: 60, type: 'LORA', baseModel: 'E1', flagged: true }];
+    };
+    expect([...(await fetchVersionInfo(query, [6]))]).toEqual([
+      [6, { modelId: 60, type: 'LORA', baseModel: 'E1', flagged: true }],
+    ]);
+    expect(seen[0]).toContain('(m.poi OR m.minor) AS flagged');
+    const sql = genObservationsSql(new Date('2026-09-01'), new Date('2026-10-01'), 2);
+    expect(sql).toContain('userHash NOT IN (SELECT userHash FROM p2m_restricted.deletedUsers)');
+  });
+
+  it("reads only unflagged models' content, and no Private or Unsearchable post", async () => {
+    const seen: Prisma.Sql[] = [];
+    const query = async (q: Prisma.Sql) => {
+      seen.push(q);
+      return q.sql.includes('"TagsOnModels"')
+        ? [
+            {
+              id: 4,
+              name: 'n',
+              type: 'LORA',
+              description: 'd',
+              tags: ['t'],
+              versions: [
+                { baseModel: 'E1', trainedWords: ['w'] },
+                { baseModel: null, trainedWords: null },
+              ],
+            },
+          ]
+        : [
+            { modelId: 4, showcase: true, prompt: 's' },
+            { modelId: 4, showcase: false, prompt: 'g' },
+          ];
+    };
+    const got: TagModelContent[] = [];
+    await readModelContent(query, [4], new Date('2026-10-01'), (m) => void got.push(...m));
+    expect(got).toEqual([
+      {
+        modelId: 4,
+        type: 'LORA',
+        name: 'n',
+        description: 'd',
+        tags: ['t'],
+        trigger: ['w'],
+        baseModels: ['E1'],
+        showcase: ['s'],
+        gallery: ['g'],
+      },
+    ]);
+    expect(seen[0].sql).toContain('AND NOT m.poi AND NOT m.minor');
+    const hidden = `p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")`;
+    expect(seen[1].sql.split(hidden).length - 1).toBe(2);
   });
 
   it('samples each hour by its first minutes, inside the window', () => {
@@ -86,17 +149,24 @@ describe('resource-intent-tags sources', () => {
     expect(primaryLog).not.toContain('SELECT 1');
     const log: string[] = [];
     await expect(run(true, log)({ sql: 'SELECT 1' } as Prisma.Sql)).resolves.toEqual([{ id: 1 }]);
-    expect(log[0]).toBe('SET TRANSACTION READ ONLY');
-    expect(log.at(-1)).toBe('SELECT 1');
+    expect(log).toEqual([
+      'SET TRANSACTION READ ONLY',
+      'SET LOCAL statement_timeout = 1000',
+      'SELECT pg_is_in_recovery() AS standby',
+      'SELECT 1',
+    ]);
+    expect(() => standbyQuery(async () => [] as never, 1.5)).toThrow('positive integer');
   });
 
-  it('hands on a posted image whose attachments resolve to nothing with no resources', async () => {
+  it('reads the posted sample with the co-occurrence eligibility, and hands on an image whose attachments resolve to nothing with no resources', async () => {
+    const batchSql: string[] = [];
     const query = async (q: Prisma.Sql) => {
       if (q.sql.includes('max(id)')) return [{ max: 100 }];
       if (q.sql.includes('ORDER BY id LIMIT 1')) {
         const id = q.values[0] as number;
         return [{ id, createdAt: new Date(id < 40 ? '2026-01-01' : '2026-03-01') }];
       }
+      batchSql.push(q.sql);
       return [
         { userId: 1, prompt: 'a', resources: null, reactions: 0, tips: 0 },
         {
@@ -118,6 +188,8 @@ describe('resource-intent-tags sources', () => {
       onBatch: (rows) => void got.push(...rows),
     });
     expect(r).toMatchObject({ idLo: 40, batches: 1 });
+    expect(batchSql.length).toBe(1);
+    expect(batchSql[0]).toContain(COOC_ELIGIBLE_REST);
     expect(got.map((x) => [x.user, x.resources.length])).toEqual([
       ['u1', 0],
       ['u2', 1],
@@ -130,10 +202,10 @@ describe('resource-intent-tags sources', () => {
       if (++calls < 3) throw new Error('connection closed');
       return [{ ok: 1 }];
     };
-    await expect(retryingQuery(flaky, 3, 0)({} as Prisma.Sql)).resolves.toEqual([{ ok: 1 }]);
+    await expect(retryingQuery(flaky, 0)({} as Prisma.Sql)).resolves.toEqual([{ ok: 1 }]);
     expect(calls).toBe(3);
     calls = -10;
-    await expect(retryingQuery(flaky, 3, 0)({} as Prisma.Sql)).rejects.toThrow('connection closed');
+    await expect(retryingQuery(flaky, 0)({} as Prisma.Sql)).rejects.toThrow('connection closed');
     expect(calls).toBe(-7);
   });
 });
