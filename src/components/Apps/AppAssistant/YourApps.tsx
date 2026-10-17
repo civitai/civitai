@@ -24,14 +24,14 @@ export function AppError({ error }: { error: unknown }) {
   if (isRunningLimit(error))
     return (
       <Alert color="yellow" variant="light" title="Only one app can run at a time">
-        Another of your apps started at the same moment. Try again: opening an app pauses the
-        others.
+        Another of your apps started at the same moment. Send your message again: starting this app
+        pauses the others.
       </Alert>
     );
   if (error instanceof SandboxApiError && error.kind === 'limit')
     return (
       <Alert color="yellow" variant="light" title="You have as many apps as you can keep">
-        Delete an app you no longer need from your apps (tap the app name at the top), then try
+        Delete an app you no longer need from the app switcher at the top of the page, then try
         again.
       </Alert>
     );
@@ -55,7 +55,7 @@ interface AppActions {
   onRemoved: (name: string) => void;
 }
 
-/** Pause and Delete for one app. A paused app starts again when the user next sends a message. */
+/** Pause and Delete for one app. */
 export function AppMenu({ sandbox, sandboxes, onRemoved }: AppActions & { sandbox: Sandbox }) {
   const { suspend, remove } = sandboxes;
   const confirmDelete = () =>
@@ -167,9 +167,9 @@ export function YourAppsList({
         })}
       </Stack>
       <Text size="xs" c="dimmed">
-        You can keep 3 apps, and one runs at a time: opening another pauses the one that runs. An
-        app also pauses after 30 minutes idle or 8 hours running, and starts again when you send it
-        a message. It is deleted after 14 days unused.
+        You can keep 3 apps, and one runs at a time: sending a message to a paused app starts it and
+        pauses the one that runs. An app also pauses after 30 minutes idle or 8 hours running, and
+        is deleted after 14 days unused.
       </Text>
     </Stack>
   );

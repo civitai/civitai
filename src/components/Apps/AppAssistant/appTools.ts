@@ -11,10 +11,10 @@ export const NO_APP_REFUSAL =
   'There is no app yet to plan features for. Start the app the user described first, then list its features.';
 export const APPS_LOADING = 'Your apps are still loading. Try again in a moment.';
 export const KEEP_LIMIT =
-  'You already have as many apps as you can keep. Delete one you no longer need: tap the app name at the top of the page to see your apps. Then ask again.';
-// Opening an app pauses the one that runs, so this is another tab starting one at the same moment.
+  'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.';
+// openApp pauses the others and retries once, so this is that retry refused.
 export const RUNNING_LIMIT =
-  'Another of your apps started at the same moment, so this one could not. Ask again: opening an app pauses the others.';
+  'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.';
 export const APPS_CHANGING = 'Your apps were changing at the same moment. Try again.';
 export const APPS_UNREACHABLE = 'Your apps could not be reached right now. Try again in a moment.';
 
@@ -100,7 +100,7 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
         return {
           app: openNow.app,
           state: resumed.sandbox.state,
-          note: `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name. Tell the user its files are gone, then call set_checklist with the features they asked for; its tools arrive with your next reply.`,
+          note: `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name. Tell the user its files are gone and ask them to tap Build it or say what to change, then call set_checklist with the features they asked for; its tools arrive with your next reply.`,
         };
       }
       return {

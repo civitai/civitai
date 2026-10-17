@@ -346,7 +346,7 @@ describe('what the user can read when create_app fails', () => {
     [
       'the kept-apps limit',
       new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit'),
-      'You already have as many apps as you can keep. Delete one you no longer need: tap the app name at the top of the page to see your apps. Then ask again.',
+      'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
     ],
     [
       'the running limit',
@@ -355,7 +355,7 @@ describe('what the user can read when create_app fails', () => {
         409,
         'limit'
       ),
-      'Another of your apps started at the same moment, so this one could not. Ask again: opening an app pauses the others.',
+      'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.',
     ],
     [
       'a concurrent change',

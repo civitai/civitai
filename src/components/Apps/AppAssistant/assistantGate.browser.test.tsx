@@ -58,14 +58,17 @@ describe('Build it under the checklist', () => {
   const buildButton = (card: HTMLElement) =>
     [...card.querySelectorAll('button')].find((b) => b.textContent === 'Build it') ?? null;
 
-  test('the card of a checklist that waits for the user offers Build it, once', async () => {
-    const { card, onBuild } = await shownChecklist();
+  test('the card of a checklist that waits for the user offers Build it until the user answers', async () => {
+    const { gate, card, onBuild } = await shownChecklist();
     const shown = card();
     document.body.append(shown);
     const button = buildButton(shown)!;
     expect(getComputedStyle(button).minHeight).toBe('44px');
     button.click();
     expect(onBuild).toHaveBeenCalledTimes(1);
+    // A press the chat could not send yet (its reply still ending) can be pressed again.
+    expect(buildButton(shown)).not.toBeNull();
+    gate.answered();
     expect(buildButton(shown)).toBeNull();
     expect(buildButton(card())).toBeNull();
     shown.remove();

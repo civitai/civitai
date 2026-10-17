@@ -48,6 +48,7 @@ import {
   YourAppsList,
 } from '~/components/Apps/AppAssistant/YourApps';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
+import { sleep } from '~/utils/errorHandling';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
@@ -96,26 +97,34 @@ function EnableCard({
 const RELEASE_TRIES = 40;
 const RELEASE_INTERVAL_MS = 500;
 
+/** A message the page is sending as the user's; `went` once the chat let it through. */
+export interface Release {
+  text: string;
+  went: boolean;
+}
+
 /**
- * Sends a held message as the user's. The chat holds on its own while it lists a just-added app's tools
- * and says nothing when that ends, so the message waits in the message box and is sent again until
- * it goes; after that the box is cleared. If it never goes, it stays there for the user to send.
+ * Sends `text` as the user's. The chat holds silently while it lists a just-added app's tools, and a
+ * send while it holds would only fill an empty message box, so the text waits in the box and is sent
+ * again until it goes; then the box is cleared. Stopped (another message went, or the user moved on)
+ * or never let through, it stays in the box for the user.
  */
 export async function releaseHeld(
   chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
-  replaying: { current: string | null },
+  replaying: { current: Release | null },
   text: string,
   interval = RELEASE_INTERVAL_MS
 ) {
-  replaying.current = text;
+  const release: Release = { text, went: false };
+  replaying.current = release;
+  const live = () => replaying.current === release && !release.went;
   await chatRef.current?.compose(text);
-  for (let i = 0; i < RELEASE_TRIES && replaying.current === text; i++) {
+  for (let i = 0; i < RELEASE_TRIES && live(); i++) {
     await chatRef.current?.send(text);
-    if (replaying.current !== text) break;
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    if (live()) await sleep(interval);
   }
-  if (replaying.current === text) replaying.current = null;
-  else await chatRef.current?.compose('');
+  if (replaying.current === release) replaying.current = null;
+  if (release.went) await chatRef.current?.compose('');
 }
 
 export function AppAssistantWorkspace({
@@ -173,10 +182,21 @@ export function AppAssistantWorkspace({
   const switcherTitleId = useId();
   const chatRef = useRef<CivitaiChat | null>(null);
   // A message sent while the open app was paused, held until the app runs again.
-  const [held, setHeld] = useState<{ text: string; app: string } | null>(null);
-  const replaying = useRef<string | null>(null);
+  const [held, setHeld] = useState<{ text: string; app: string; chatId: string | null } | null>(
+    null
+  );
+  const replaying = useRef<Release | null>(null);
   const chatApps = useMemo(() => createChatAppStore(String(userId ?? 'anon')), [userId]);
   const [chatId, setChatId] = useState<string | null>(null);
+  // Read by the tools, which are built once.
+  const chatRemembers = useRef({ chatApps, chatId });
+  chatRemembers.current = { chatApps, chatId };
+  /** This chat now works on `name`, so reopening it reopens that app. */
+  const remember = useCallback((name: string) => {
+    const { chatApps, chatId } = chatRemembers.current;
+    if (chatId) chatApps.set(chatId, name);
+  }, []);
+  const previewShown = useRef(false);
 
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
@@ -208,10 +228,11 @@ export function AppAssistantWorkspace({
           // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
           live.current.active = opened.sandbox;
           setActiveName(opened.sandbox.name);
+          remember(opened.sandbox.name);
           return opened;
         },
       }),
-    []
+    [remember]
   );
   const gate = useMemo(
     () =>
@@ -220,7 +241,7 @@ export function AppAssistantWorkspace({
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
-        onBuild: () => void chatRef.current?.send(BUILD_IT_MESSAGE),
+        onBuild: () => void releaseHeld(chatRef, replaying, BUILD_IT_MESSAGE),
       }),
     [appTools]
   );
@@ -242,7 +263,11 @@ export function AppAssistantWorkspace({
         setSession: (next) => {
           live.current.session = next;
           setSession(next);
-          if (next) setTab('preview');
+          // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
+          if (next && !previewShown.current) {
+            previewShown.current = true;
+            setTab('preview');
+          }
         },
       }),
       ...appTools.tools,
@@ -284,7 +309,10 @@ export function AppAssistantWorkspace({
 
   // A preview belongs to the sandbox it was started from; tear it down when that changes or the
   // page goes away. The tunnel also expires on its own.
-  useEffect(() => stopPreview, [activeName, stopPreview]);
+  useEffect(() => {
+    previewShown.current = false;
+    return stopPreview;
+  }, [activeName, stopPreview]);
   // `session` too: a preview start already in flight can land after the suspend or revoke.
   useEffect(() => {
     if (session && (active?.state === 'suspended' || revoked)) stopPreview();
@@ -293,7 +321,6 @@ export function AppAssistantWorkspace({
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
 
-  // Resuming pauses whichever other app runs, so a paused app starts again only once a message needs it.
   const resumeRef = useRef(sandboxes.open.mutate);
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
@@ -307,51 +334,57 @@ export function AppAssistantWorkspace({
   const onBeforeSend = useCallback(
     (text: string) => {
       gate.answered();
-      // Any message going out ends a release in progress: it is that message, or the user sent another.
-      if (replaying.current !== null) {
-        const released = replaying.current === text;
-        replaying.current = null;
-        if (released) return false;
-      }
+      const release = replaying.current;
+      if (release?.text === text) release.went = true;
+      // The user sent something else: stop sending the page's message.
+      else if (release) replaying.current = null;
       const app = live.current.active;
+      if (app) remember(app.name);
       if (app?.state !== 'suspended') return false;
       const resuming = heldRef.current !== null;
-      heldRef.current = { text, app: app.app };
+      heldRef.current = { text, app: app.app, chatId: chatRemembers.current.chatId };
       setHeld(heldRef.current);
       if (!resuming)
         resumeRef.current(app.app, {
-          onSuccess: ({ sandbox }: { sandbox: Sandbox }) => setActiveName(sandbox.name),
-          // Its error shows on the page.
+          // Unless the user moved on meanwhile.
+          onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+            if (heldRef.current?.app === sandbox.app) setActiveName(sandbox.name);
+          },
           onError: giveBack,
         });
       return true;
     },
-    [gate, giveBack]
+    [gate, giveBack, remember]
   );
+  // A message on its way out belongs to the chat and app it was written in.
+  useEffect(() => {
+    replaying.current = null;
+  }, [activeName, chatId]);
   useEffect(() => {
     if (!held) return;
-    // The app was closed or another opened meanwhile: the message was meant for the paused one.
-    if (!active || active.app !== held.app) return giveBack();
-    if (active.state !== 'running' || !mcpServers.length) return;
+    // The app was closed, another opened, or another chat opened meanwhile.
+    if (!active || active.app !== held.app || chatId !== held.chatId) return giveBack();
+    if (active.state !== 'running') return;
+    // Running, but its tools are not handed to the chat (an address outside the sandbox service).
+    if (!mcpServers.length) return giveBack();
     heldRef.current = null;
     setHeld(null);
     void releaseHeld(chatRef, replaying, held.text);
-  }, [held, active, mcpServers, giveBack]);
+  }, [held, active, chatId, mcpServers, giveBack]);
 
   const onChatChange = useCallback(
     (id: string | null) => {
       gate.answered();
+      chatRemembers.current.chatId = id;
       setChatId(id);
       const app = id ? chatApps.get(id) : null;
       if (app) setActiveName(app);
     },
     [chatApps, gate]
   );
-  useEffect(() => {
-    if (chatId && activeName) chatApps.set(chatId, activeName);
-  }, [chatId, activeName, chatApps]);
 
   const status = active && (held ? APP_STATUS.starting : APP_STATUS[active.state]);
+  // Not resumed here: resuming pauses the running app, so it waits for a message that needs this one.
   const selectApp = (sandbox: Sandbox) => {
     setActiveName(sandbox.name);
     setSwitcherOpen(false);

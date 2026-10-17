@@ -121,7 +121,7 @@ export const BUILD_IT_MESSAGE = 'Looks good — build it.';
 export interface AssistantGate {
   /** Forget what was verified, e.g. when another sandbox opens. */
   reset(): void;
-  /** The user answered the checklist some other way (sent a message, opened another chat): Build it goes. */
+  /** The user answered the checklist another way (sent a message, opened another chat): remove Build it. */
   answered(): void;
   beforeToolCall: ChatToolGate;
   onToolResult(result: ChatToolResult): void;
@@ -302,10 +302,8 @@ export function createAssistantGate({
       button.textContent = 'Build it';
       button.style.cssText =
         'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
-      button.addEventListener('click', () => {
-        answered();
-        onBuild();
-      });
+      // It goes once the message does (`answered`): a send while the reply is still ending does nothing.
+      button.addEventListener('click', onBuild);
       buildButtons.push(button);
       card.append(button);
       return card;
