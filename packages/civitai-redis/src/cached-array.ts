@@ -513,7 +513,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             const result = dbResults[id];
             if (!result) {
               if (cacheNotFound) {
-                if (writeBack) toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+                // dontCache too: NX against the marker only guards while the marker outlives the
+                // lookup, and an in-window empty result may be replica lag.
+                if (writeBack && !dontCache.has(id))
+                  toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
                 actualMisses++;
               }
               // When cacheNotFound=false, don't count as a miss since we don't cache it.

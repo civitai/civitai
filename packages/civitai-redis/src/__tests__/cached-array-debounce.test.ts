@@ -64,9 +64,14 @@ function build({ debounceTime = 10 }: { debounceTime?: number } = {}) {
     clearByPattern: async () => undefined,
   });
   let version = 0;
-  const lookupFn = vi.fn(async (ids: number[]) =>
-    Object.fromEntries(ids.map((id) => [id, { id, v: `db-${id}-v${version}` }]))
-  );
+  // Ids >= 100 have no row. `duringLookup` runs inside the lookup, e.g. to move the clock.
+  let duringLookup: () => void = () => undefined;
+  const lookupFn = vi.fn(async (ids: number[]) => {
+    duringLookup();
+    return Object.fromEntries(
+      ids.filter((id) => id < 100).map((id) => [id, { id, v: `db-${id}-v${version}` }])
+    );
+  });
   const cache = createCachedObject<Row>({
     key: KEY,
     idKey: 'id',
@@ -80,7 +85,21 @@ function build({ debounceTime = 10 }: { debounceTime?: number } = {}) {
     redis.packed.set.mock.calls
       .filter(([, value]) => !(value as { debounce?: boolean }).debounce)
       .map(([key]) => key);
-  return { cache, store, read, redis, lookupFn, valueWrites, bumpOrigin: () => version++ };
+  const notFoundWrites = () =>
+    redis.packed.set.mock.calls
+      .filter(([, value]) => (value as { notFound?: boolean }).notFound)
+      .map(([key]) => key);
+  return {
+    cache,
+    store,
+    read,
+    redis,
+    lookupFn,
+    valueWrites,
+    notFoundWrites,
+    bumpOrigin: () => version++,
+    onLookup: (fn: () => void) => (duringLookup = fn),
+  };
 }
 
 describe('createCachedObject bust() debounce window (non-SWR)', () => {
@@ -144,5 +163,16 @@ describe('createCachedObject bust() debounce window (non-SWR)', () => {
     await t.cache.fetch([1, 2]);
 
     expect(t.valueWrites()).toEqual([keyFor(2)]);
+  });
+
+  it('an empty result read inside the window is not negatively cached, even if the marker expires mid-lookup', async () => {
+    const t = build({ debounceTime: 10 });
+    await t.cache.bust(100); // id 100 has no row
+    vi.setSystemTime(T0 + 3_000); // the read lands inside the window...
+    // ...and its lookup outlives the marker, so NX against the marker no longer blocks the write.
+    t.onLookup(() => vi.setSystemTime(T0 + 15_000));
+    await t.cache.fetch([100]);
+
+    expect(t.notFoundWrites()).toEqual([]);
   });
 });

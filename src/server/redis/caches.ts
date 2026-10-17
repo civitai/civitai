@@ -285,6 +285,8 @@ export const cosmeticEntityCaches = Object.fromEntries(
       idKey: 'equippedToId',
       cacheNotFound: false,
       staleWhileRevalidate: false,
+      // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
+      debounceTime: 1,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData"
@@ -350,6 +352,8 @@ export const eventDecorationEntityCaches = Object.fromEntries(
       // misses are cached too. Equip, unequip and revoke refresh, which overwrites a cached miss.
       notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,
+      // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
+      debounceTime: 1,
       lookupFn: async (ids) => {
         const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
