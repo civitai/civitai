@@ -43,6 +43,17 @@ export async function countHeldItems(
   return _sum.quantity ?? 0;
 }
 
+/** One held item, with its definition's params, if this user holds it. */
+export function findHeldItemById(
+  client: Prisma.TransactionClient,
+  { id, userId }: { id: bigint; userId: number }
+) {
+  return client.item.findFirst({
+    where: { id, holderType: USER_HOLDER, holderId: userId },
+    select: { id: true, itemDefinitionId: true, itemDefinition: { select: { params: true } } },
+  });
+}
+
 /** The held item a grant with this `sourceKey` made, if this user still holds it. */
 export function findHeldItemBySource(
   client: Prisma.TransactionClient,
