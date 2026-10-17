@@ -8,21 +8,31 @@ import {
 import { trackedReasons } from '~/utils/login-helpers';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 
-/**
- * The longest free-form tracking payload (`details`, `filters`), in JSON characters. Measured
- * before anything serializes it, without building the string; an unserializable value is left to
- * the code that serializes it, as before.
+/*
+ * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
+ * serializes the value, without building the string; an unserializable value is left to the code
+ * that serializes it, as before. Each cap leaves headroom over the largest payloads seen for its
+ * input.
  */
+
+/** The longest `trackSearch` `filters` payload. */
 export const TRACK_FREEFORM_MAX_CHARS = 64 * 1024;
-const TRACK_FREEFORM_TOO_LARGE = `exceeds ${TRACK_FREEFORM_MAX_CHARS} serialized characters`;
-function freeformWithinCap(value: unknown) {
-  return measureJsonLength([value], TRACK_FREEFORM_MAX_CHARS) !== 'over';
+/** The longest `addView` `details` payload, and the longest whole `addAction` input. */
+export const TRACK_DETAILS_MAX_CHARS = 256 * 1024;
+
+/** A zod refinement refusing a value whose JSON is longer than `maxChars`, naming that limit. */
+function withinChars(maxChars: number) {
+  return [
+    (value: unknown) => measureJsonLength([value], maxChars) !== 'over',
+    { message: `exceeds ${maxChars} serialized characters` },
+  ] as const;
 }
-const boundedFreeform = z
-  .object({})
-  .passthrough()
-  .optional()
-  .refine(freeformWithinCap, { message: TRACK_FREEFORM_TOO_LARGE });
+const boundedFreeform = (maxChars: number) =>
+  z
+    .object({})
+    .passthrough()
+    .optional()
+    .refine(...withinChars(maxChars));
 
 // Both lists mirror the `views` / `daily_views` Enum8 columns, ordered by the ordinal the column stores —
 // so index + 1 is that ordinal, and the test's snapshot pins it. A value the columns carry but these omit is
@@ -131,7 +141,7 @@ export const addViewSchema = z.object({
   entityId: z.number(),
   ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),
   nsfw: z.boolean().optional(),
-  details: boundedFreeform,
+  details: boundedFreeform(TRACK_DETAILS_MAX_CHARS),
   nsfwLevel: z.number().optional(),
   browsingLevel: z.number().optional(),
 });
@@ -323,7 +333,7 @@ export type TrackSearchInput = z.infer<typeof trackSearchSchema>;
 export const trackSearchSchema = z.object({
   query: z.string().trim(),
   index: z.string(),
-  filters: boundedFreeform,
+  filters: boundedFreeform(TRACK_FREEFORM_MAX_CHARS),
 });
 
 // action tracking schemas
@@ -881,11 +891,12 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   announcementClickSchema,
   appsBuildActionSchema,
 ]);
-// What `track.addAction` parses: the action, with its JSON length capped. Kept off
-// `trackActionSchema` itself, whose arms are read through `.options`.
-export const trackActionInputSchema = trackActionSchema.refine(freeformWithinCap, {
-  message: TRACK_FREEFORM_TOO_LARGE,
-});
+// What `track.addAction` parses: the action, with its whole JSON length capped at
+// `TRACK_DETAILS_MAX_CHARS`. Kept off `trackActionSchema` itself, whose arms are read through
+// `.options`.
+export const trackActionInputSchema = trackActionSchema.refine(
+  ...withinChars(TRACK_DETAILS_MAX_CHARS)
+);
 
 // Feed impression event — an entity was actually SEEN in a feed, as opposed to
 // opened. `views` only records the latter, so every view count on the platform

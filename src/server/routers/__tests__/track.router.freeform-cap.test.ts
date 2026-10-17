@@ -27,29 +27,46 @@ const codeOf = (p: Promise<unknown>) =>
     (e: { code?: string }) => e.code ?? 'UNKNOWN'
   );
 
+// Literal limits: 64K for search filters, 256K for view details and a whole action.
+const FILTERS_CAP = 65_536;
+const DETAILS_CAP = 262_144;
+
 const cancel = (pad: number) => ({
   type: 'Membership_Cancel' as const,
   details: { reason: 'r', from: 'f', note: 'x'.repeat(pad) },
 });
+const search = (pad: number) => ({
+  query: 'cat',
+  index: 'models',
+  filters: { note: 'x'.repeat(pad) },
+});
+const view = (pad: number) => ({
+  type: 'ModelView' as const,
+  entityType: 'Model' as const,
+  entityId: 1,
+  details: { note: 'x'.repeat(pad) },
+});
 
-describe('track router free-form payload cap', () => {
+describe('track router free-form payload caps', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('addAction refuses an action over the cap before the tracker sees it', async () => {
-    expect(await codeOf(caller().addAction(cancel(64 * 1024)))).toBe('BAD_REQUEST');
+  it('addAction accepts an action over the filters cap and refuses one over its own cap', async () => {
+    expect(await codeOf(caller().addAction(cancel(DETAILS_CAP)))).toBe('BAD_REQUEST');
     expect(track.action).not.toHaveBeenCalled();
-    // Positive control: the same action under the cap reaches the tracker.
-    expect(await codeOf(caller().addAction(cancel(10)))).toBe('OK');
+    // A large action, well over the filters cap, reaches the tracker.
+    expect(await codeOf(caller().addAction(cancel(2 * FILTERS_CAP)))).toBe('OK');
     expect(track.action).toHaveBeenCalledTimes(1);
   });
 
+  it('addView accepts details over the filters cap and refuses details over its own cap', async () => {
+    expect(await codeOf(caller().addView(view(DETAILS_CAP)))).toBe('BAD_REQUEST');
+    expect(track.view).not.toHaveBeenCalled();
+    expect(await codeOf(caller().addView(view(2 * FILTERS_CAP)))).toBe('OK');
+    expect(track.view).toHaveBeenCalledTimes(1);
+  });
+
   it('trackSearch refuses filters over the cap before the tracker sees them', async () => {
-    const search = (pad: number) => ({
-      query: 'cat',
-      index: 'models',
-      filters: { note: 'x'.repeat(pad) },
-    });
-    expect(await codeOf(caller().trackSearch(search(64 * 1024)))).toBe('BAD_REQUEST');
+    expect(await codeOf(caller().trackSearch(search(FILTERS_CAP)))).toBe('BAD_REQUEST');
     expect(track.search).not.toHaveBeenCalled();
     expect(await codeOf(caller().trackSearch(search(10)))).toBe('OK');
     expect(track.search).toHaveBeenCalledTimes(1);
