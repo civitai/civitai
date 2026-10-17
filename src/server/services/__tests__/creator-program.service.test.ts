@@ -9,6 +9,8 @@ import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constant
 import {
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
+  RECEIVED_FROM_USER_SQL,
+  SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
@@ -256,6 +258,58 @@ describe('userCapCache peak-earning query', () => {
     // String.raw, not a plain template: `\s` in one is the letter s, which cannot consume the
     // query's indentation, so the pattern matches nothing and this test fails outright.
     expect(sql).toMatch(new RegExp(String.raw`\n\s*AND toAccountType IN \(${bankable}\)`));
+  });
+
+  // Pinned whole: a wrong join key or window still returns a plausible peak. The sent leg has no
+  // upper date bound, so Buzz sent back this month still nets an earlier month.
+  it('nets out of each month what the creator sent the users who paid them', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    try {
+      const { sql } = await runLookup([userId]);
+
+      const bankable = buzzBankTypes.map((type) => `'${type}'`).join(', ');
+      const since = `toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), 12))`;
+      const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+      expect(squash(sql)).toBe(
+        squash(`SELECT id, month, gross - returned AS earned
+        FROM (
+          SELECT toAccountId as id, toStartOfMonth(date) as month, SUM(amount) as gross
+          FROM buzzTransactions
+          WHERE ${PEAK_EARNING_PREDICATE_SQL}
+          AND toAccountType IN (${bankable})
+          AND toAccountId IN (${userId})
+          AND ${since}
+          AND toStartOfMonth(date) < toStartOfMonth(now())
+          GROUP BY month, toAccountId
+        ) AS earnings
+        LEFT JOIN (
+          SELECT received.id AS id, received.month AS month, SUM(least(received.amount, sent.amount)) AS returned
+          FROM (
+            SELECT toAccountId AS id, toStartOfMonth(date) AS month, fromAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${PEAK_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+            AND toAccountType IN (${bankable})
+            AND toAccountId IN (${userId})
+            AND ${since}
+            AND toStartOfMonth(date) < toStartOfMonth(now())
+            GROUP BY id, month, counterparty
+          ) AS received
+          INNER JOIN (
+            SELECT fromAccountId AS id, toAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${SENT_TO_USER_SQL}
+            AND fromAccountId IN (${userId})
+            AND ${since}
+            GROUP BY id, counterparty
+          ) AS sent ON sent.id = received.id AND sent.counterparty = received.counterparty
+          GROUP BY id, month
+        ) AS netted USING (id, month)
+        ORDER BY earned DESC
+        LIMIT 1 BY id;`)
+      );
+    } finally {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    }
   });
 
   it('derives the cap from the peak month returned by ClickHouse', async () => {
