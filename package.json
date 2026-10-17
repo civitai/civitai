@@ -135,7 +135,7 @@
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/client": "0.2.0-beta.98",
-    "@civitai/components-chat": "^0.9.0",
+    "@civitai/components-chat": "^0.10.1",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
