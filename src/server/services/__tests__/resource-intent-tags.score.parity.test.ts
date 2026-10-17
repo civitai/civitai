@@ -1,13 +1,14 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import type {
-  ResourceValues,
-  TagIndex,
-  TagIndexKind,
-  TagKind,
-} from '~/server/services/resource-intent-tags/score';
+import type { SparseByKey, TagIndexData } from '~/server/services/resource-intent-tags/build';
+import type { TagKind } from '~/server/services/resource-intent-tags/score';
 import { compareCodePoints } from '~/server/services/resource-intent-tags/extract';
+import {
+  decodeTagIndex,
+  encodeTagIndex,
+  tagIndexFromData,
+} from '~/server/services/resource-intent-tags/payload';
 import {
   resolveEcosystems,
   scoreTagRequest,
@@ -20,8 +21,10 @@ import {
  * The generator built the index in the prototype's own data structures, ran the prototype's functions
  * on these requests and wrote what they returned; it also exported the index in the shape below. It
  * imports non-public code and is not in this repository. Never edit the fixture to make this pass;
- * regenerate it or fix the port. When the snapshot decoder lands, encode this fixture in the wire
- * format, build `index` with the production decoder, and delete `buildIndex`.
+ * regenerate it or fix the port. The index is this fixture in the build's output shape, validated by
+ * `tagIndexFromData` as built (float64, every value to 12 decimals) and also encoded into the snapshot
+ * and decoded by the production decoder (float32: candidate scores to 1e-7, absolute below 1 and
+ * relative above, the ranked order exactly).
  */
 type Pairs = [number, number][];
 type KindJson = {
@@ -59,58 +62,90 @@ const golden = JSON.parse(
   readFileSync(join(__dirname, 'fixtures/resource-intent-tags-score-golden.json'), 'utf8')
 ) as Golden;
 
-function buildIndex(g: Golden): TagIndex {
+/** The fixture's index in the build's output shape (`TagIndexData`), which the encoder takes. */
+function goldenData(g: Golden): TagIndexData {
   const idByKey = new Map(g.vocabulary.map((t, i) => [t.key, i]));
   const ecoId = new Map(g.ecosystems.map((e, i) => [e.name, i]));
+  const sparse = (
+    byKey: Record<string, Pairs>,
+    id: (k: string) => number,
+    idx: Map<number, number>
+  ): SparseByKey => {
+    const keys = Object.keys(byKey).sort((a, b) => id(a) - id(b));
+    const ptr = [0];
+    const entries = keys.flatMap((k) => {
+      const e = byKey[k].map(([m, v]) => [idx.get(m) as number, v]).sort((a, b) => a[0] - b[0]);
+      ptr.push(ptr[ptr.length - 1] + e.length);
+      return e;
+    });
+    return {
+      keys: Uint32Array.from(keys, id),
+      ptr: Uint32Array.from(ptr),
+      resource: Uint32Array.from(entries, (e) => e[0]),
+      value: Float64Array.from(entries, (e) => e[1]),
+    };
+  };
   const tagId = (k: string) => idByKey.get(k) as number;
   const eco = (n: string) => ecoId.get(n) as number;
-  const kind = (k: KindJson): TagIndexKind => {
+  const kind = (k: KindJson) => {
     const idx = new Map(k.modelIds.map((m, i) => [m, i]));
-    const values = (pairs: Pairs): ResourceValues => ({
-      resource: Uint32Array.from(pairs, ([m]) => idx.get(m) as number),
-      value: Float64Array.from(pairs, ([, v]) => v),
-    });
     const ptr = new Uint32Array(g.vocabulary.length + 1);
     const entries: [number, number, number][] = [];
-    for (let t = 0; t < g.vocabulary.length; t++) {
-      for (const [m, c, fit] of k.postings[g.vocabulary[t].key] ?? [])
+    g.vocabulary.forEach((t, i) => {
+      for (const [m, c, fit] of k.postings[t.key] ?? [])
         entries.push([idx.get(m) as number, c, fit ?? NaN]);
-      ptr[t + 1] = entries.length;
-    }
+      ptr[i + 1] = entries.length;
+    });
+    const ecoPtr = [0];
+    const ecoIds = k.ecosystems.flatMap((es) => {
+      ecoPtr.push(ecoPtr[ecoPtr.length - 1] + es.length);
+      return es.map(eco).sort((a, b) => a - b);
+    });
     return {
-      modelIds: k.modelIds,
+      modelIds: Uint32Array.from(k.modelIds),
       fit: Float64Array.from(k.fit),
-      ecosystems: k.ecosystems.map((es) => es.map(eco)),
+      ecosystemPtr: Uint32Array.from(ecoPtr),
+      ecosystemIds: Uint32Array.from(ecoIds),
       postings: {
         ptr,
         resource: Uint32Array.from(entries, (e) => e[0]),
         c: Float64Array.from(entries, (e) => e[1]),
         fit: Float64Array.from(entries, (e) => e[2]),
       },
-      ecosystemUsers: new Map(
-        Object.entries(k.ecosystemUsers).map(([e, p]) => [eco(e), values(p)])
-      ),
-      userByTag: new Map(Object.entries(k.userByTag).map(([t, p]) => [tagId(t), values(p)])),
-      userByEcosystem: new Map(
-        Object.entries(k.userByEcosystem).map(([e, p]) => [eco(e), values(p)])
-      ),
+      ecosystemUsers: sparse(k.ecosystemUsers, eco, idx),
+      userByTag: sparse(k.userByTag, tagId, idx),
+      userByEcosystem: sparse(k.userByEcosystem, eco, idx),
     };
   };
+  const counts = { ptr: [0], ecosystem: [] as number[], count: [] as number[] };
+  g.vocabulary.forEach((t) => {
+    for (const [e, n] of Object.entries(g.tagEcosystemCounts[t.key] ?? {}).sort(
+      ([a], [b]) => eco(a) - eco(b)
+    )) {
+      counts.ecosystem.push(eco(e));
+      counts.count.push(n);
+    }
+    counts.ptr.push(counts.ecosystem.length);
+  });
   return {
-    vocabulary: g.vocabulary,
-    idByKey,
+    vocabVersion: 'a'.repeat(64),
+    rowsWithEcosystem: g.ecosystems.reduce((n, e) => n + e.observations, 0),
+    vocabulary: g.vocabulary.map((t) => ({ ...t, users: 1 })),
     ecosystems: g.ecosystems,
-    tagEcosystemCounts: new Map(
-      Object.entries(g.tagEcosystemCounts).map(([t, c]) => [
-        tagId(t),
-        new Map(Object.entries(c).map(([e, n]) => [eco(e), n])),
-      ])
-    ),
+    tagEcosystemCounts: {
+      ptr: Uint32Array.from(counts.ptr),
+      ecosystem: Uint32Array.from(counts.ecosystem),
+      count: Uint32Array.from(counts.count),
+    },
     kinds: { addon: kind(g.kinds.addon), checkpoint: kind(g.kinds.checkpoint) },
   };
 }
 
-const index = buildIndex(golden);
+const index = tagIndexFromData(goldenData(golden));
+const { index: decoded } = await decodeTagIndex(
+  await encodeTagIndex(goldenData(golden), 'b'.repeat(64))
+);
+const close = (a: number, b: number) => Math.abs(a - b) <= 1e-7 * Math.max(1, Math.abs(b));
 
 describe('resource-intent-tags scorer parity with the prototype', () => {
   it('the fixture is the one this test was written for', () => {
@@ -156,6 +191,15 @@ describe('resource-intent-tags scorer parity with the prototype', () => {
     expect(r.candidates.length).toBe(c.candidateCount);
     expect(r.candidates.map((x) => x.modelId)).toEqual(expected.map(([m]) => m));
     r.candidates.forEach((x, i) => expect(x.score).toBeCloseTo(expected[i][1], 12));
+    // Through the float32 snapshot: same order, scores to 1e-7.
+    const d = scoreTagRequest(decoded, {
+      prompt: c.prompt,
+      kind: c.kind,
+      browsingLevel: c.browsingLevel,
+      baseModel: c.baseModel,
+    });
+    expect(d.candidates.map((x) => x.modelId)).toEqual(expected.map(([m]) => m));
+    d.candidates.forEach((x, i) => expect(close(x.score, expected[i][1])).toBe(true));
   });
 
   it("a candidate cap below the list length keeps the uncapped ranking's leading order, ties included", () => {

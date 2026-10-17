@@ -1,7 +1,10 @@
 import { createHash } from 'crypto';
 
 import { NsfwLevel } from '~/server/common/enums';
+import { ROLE_MODEL_TYPES } from '~/server/schema/resource-intent.schema';
 import { matureBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { TagTrainingRow } from './build';
+import { TAG_BUILD_PARAMS, TagIndexAccumulator } from './build';
 import {
   compareCodePoints,
   matchVocabularyKeys,
@@ -11,12 +14,15 @@ import {
   tagKeySets,
   tagSegments,
 } from './extract';
+import { packTagIndex, TAG_INDEX_PAYLOAD_FORMAT } from './payload';
 import type { TagIndex, TagIndexKind, TagVocabularyEntry } from './score';
 import { scoreTagRequest, TAG_SCORE_PARAMS } from './score';
+import { TAG_SOURCE_PARAMS } from './sources';
 
 /**
- * The v1 content-tag arm's extractor and scorer constants, as the prototype mined and screened with
- * them, and the browsing levels that let a request match an explicit tag.
+ * The v1 content-tag arm's extractor, build, source and scorer constants and snapshot format, as the
+ * prototype mined, built and screened with them, and the browsing levels that let a request match an
+ * explicit tag.
  */
 export const RESOURCE_INTENT_TAGS_SPEC = {
   maxSegmentTokens: TAG_MAX_SEGMENT_TOKENS,
@@ -24,6 +30,13 @@ export const RESOURCE_INTENT_TAGS_SPEC = {
   stopwords: [...TAG_STOPWORDS].sort(compareCodePoints),
   score: TAG_SCORE_PARAMS,
   matureLevels: matureBrowsingLevelsFlag,
+  build: {
+    ...TAG_BUILD_PARAMS,
+    /** The resource types indexed as add-ons: every type a role admits, as the co-occurrence index. */
+    addonTypes: [...new Set(Object.values(ROLE_MODEL_TYPES).flatMap((t) => t ?? []))].sort(),
+  },
+  sources: TAG_SOURCE_PARAMS,
+  payloadFormat: TAG_INDEX_PAYLOAD_FORMAT,
 } as const;
 
 /**
@@ -116,14 +129,101 @@ function scorerFingerprint() {
 }
 
 /**
- * Hashes what the extractor produces on the fingerprint prompts and what the scorer produces on the
- * fingerprint index, plus the constants. A behaviour change those fixtures do not exercise does not
- * move it.
+ * A build over a two-model, five-row fixture, as the snapshot bytes it packs to: every content source,
+ * both outcome kinds, a two-checkpoint row with no ecosystem and a resource seen only in use.
+ */
+function buildFingerprint() {
+  const tags = FP_TAGS.map((t, i) => ({ ...t, users: 10 + i }));
+  const acc = new TagIndexAccumulator(
+    { vocabVersion: 'f'.repeat(64), tags, idByKey: new Map(tags.map((t, i) => [t.key, i])) },
+    { addonTypes: RESOURCE_INTENT_TAGS_SPEC.build.addonTypes, excludeGenPrompt: () => false }
+  );
+  acc.addModel({
+    modelId: 21,
+    type: 'LORA',
+    name: 'Brass Owl Style',
+    description: '<p>for <b>cobalt fern</b> &amp; more</p>',
+    tags: ['dusk harbor'],
+    trigger: ['amber kite, owl'],
+    baseModels: ['E1', 'E2'],
+    showcase: ['brass owl, cobalt fern', 'brass owl', 'dusk harbor'],
+    gallery: ['a brass owl perched over the dusk harbor at night'],
+  });
+  acc.addModel({
+    modelId: 22,
+    type: 'Checkpoint',
+    name: 'Base',
+    description: '',
+    tags: [],
+    trigger: [],
+    baseModels: ['E1'],
+    showcase: [],
+    gallery: [],
+  });
+  const lora = { modelId: 21, type: 'LORA', baseModel: 'E1' };
+  const ckpt = { modelId: 22, type: 'Checkpoint', baseModel: 'E1' };
+  const other = { modelId: 23, type: 'TextualInversion', baseModel: 'E2' };
+  const rows: TagTrainingRow[] = [
+    {
+      source: 'gen',
+      user: 'a',
+      prompt: 'brass owl, dusk harbor',
+      resources: [ckpt, lora],
+      liked: true,
+      favorite: false,
+      disliked: false,
+    },
+    {
+      source: 'gen',
+      user: 'a',
+      prompt: 'brass owl',
+      resources: [ckpt, lora, other],
+      liked: false,
+      favorite: false,
+      disliked: true,
+    },
+    {
+      source: 'gen',
+      user: 'b',
+      prompt: 'brass owl, cobalt fern',
+      resources: [ckpt, lora],
+      liked: false,
+      favorite: true,
+      disliked: false,
+    },
+    {
+      source: 'post',
+      user: 'b',
+      prompt: 'brass owl, amber kite',
+      resources: [ckpt, other],
+      reactions: 7,
+      tips: 1,
+    },
+    {
+      source: 'post',
+      user: 'c',
+      prompt: 'brass owl, dusk harbor',
+      resources: [ckpt, { ...ckpt, modelId: 24, baseModel: 'E2' }, lora],
+      reactions: 0,
+      tips: 0,
+    },
+  ];
+  for (const r of rows) acc.addRow(r);
+  return createHash('sha256')
+    .update(packTagIndex(acc.finalize().data, '0'.repeat(64)))
+    .digest('hex');
+}
+
+/**
+ * Hashes what the extractor produces on the fingerprint prompts, what the build packs on its fixture
+ * and what the scorer produces on the fingerprint index, plus the constants. A behaviour change those
+ * fixtures do not exercise does not move it.
  */
 function tagsFingerprint() {
   const vocabulary = new Set(FINGERPRINT_VOCABULARY);
   return {
     spec: RESOURCE_INTENT_TAGS_SPEC,
+    build: buildFingerprint(),
     scorer: scorerFingerprint(),
     out: RESOURCE_INTENT_TAGS_FINGERPRINT_PROMPTS.map((p) => {
       const { segment, gram } = tagKeySets(p);

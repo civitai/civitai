@@ -12,8 +12,7 @@ import { keptWeights } from './groups';
  *   S(r) = M(r)·exp(λ·F(r)) + β_U·U(r) + β_P·P(r)
  *
  * `src/server/services/__tests__/resource-intent-tags.score.parity.test.ts` holds it to the prototype's
- * own output on a synthetic index. Nothing here reads a database; the index is filled by a snapshot
- * decoder that does not exist yet.
+ * own output on a synthetic index. Nothing here reads a database; `./payload` decodes the index.
  */
 
 /** The scorer's constants, as the prototype registered and screened them. Change only with a new screen. */
@@ -42,15 +41,18 @@ export type TagKind = 'addon' | 'checkpoint';
 /** One tag of the frozen vocabulary. Its id is its position. */
 export type TagVocabularyEntry = GroupingTag & { explicit: boolean };
 
+/** Snapshot values are float32; keep the scorer's accumulators Float64Array. */
+export type FloatArray = Float32Array | Float64Array;
+
 /** A sparse list of values over one kind's resources: `resource` holds indices into that kind's arrays. */
-export type ResourceValues = { resource: Uint32Array; value: Float64Array };
+export type ResourceValues = { resource: Uint32Array; value: FloatArray };
 
 /** One kind's part of the index. */
 export type TagIndexKind = {
   /** Model ids, ascending: a resource's index is its position, so index order breaks score ties. */
   modelIds: readonly number[];
   /** Each resource's own shrunk outcome fit: finite, 0 without evidence. */
-  fit: Float64Array;
+  fit: FloatArray;
   /** Ecosystem ids each resource is published for. */
   ecosystems: readonly (readonly number[])[];
   /**
@@ -58,7 +60,7 @@ export type TagIndexKind = {
    * content score (0 for a pair known only from use); `fit` the (resource, tag) shrunk fit, NaN where
    * the snapshot has none.
    */
-  postings: { ptr: Uint32Array; resource: Uint32Array; c: Float64Array; fit: Float64Array };
+  postings: { ptr: Uint32Array; resource: Uint32Array; c: FloatArray; fit: FloatArray };
   /** Per ecosystem id: users of each resource there (the popularity prior). */
   ecosystemUsers: ReadonlyMap<number, ResourceValues>;
   /**
