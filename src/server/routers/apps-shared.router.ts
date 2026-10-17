@@ -42,7 +42,7 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
-import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import type { JsonLengthMeter } from '~/server/schema/blocks/json-length';
 import { isUlidShaped, newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
@@ -460,8 +460,9 @@ const JSONB_UNSTORABLE_MESSAGE = 'value contains a NUL character or an unpaired 
 
 /**
  * Values one shared value's measure may visit. Every value JSON.stringify writes costs at least
- * two bytes of the cap (a one-character value and its separator), so no value within the cap needs
- * more; one with more is refused as over the cap rather than walked further.
+ * two bytes of the cap (a one-character value and its separator), so a value within the cap that
+ * writes out every entry needs no more. One with more (only possible with entries JSON.stringify
+ * leaves out, such as `undefined` properties) is refused as over the cap rather than walked further.
  */
 const SHARED_VALUE_MAX_VISITS = SHARED_VALUE_BYTE_CAP / 2;
 
@@ -490,13 +491,9 @@ export function measureSharedValue(
   meter: JsonLengthMeter = { visits: 0, chars: 0, scanned: 0 }
 ): 'ok' | 'over-cap' | 'unserializable' | 'unstorable' {
   meter.maxVisits = SHARED_VALUE_MAX_VISITS;
-  let within: boolean;
-  try {
-    within = jsonLengthWithin([value], SHARED_VALUE_BYTE_CAP, { unit: 'utf8', meter });
-  } catch {
-    return 'unserializable';
-  }
-  if (!within) return 'over-cap';
+  const measured = measureJsonLength([value], SHARED_VALUE_BYTE_CAP, { unit: 'utf8', meter });
+  if (measured === 'over') return 'over-cap';
+  if (measured === 'unserializable') return 'unserializable';
   return meter.nulOrLoneSurrogate ? 'unstorable' : 'ok';
 }
 

@@ -1,6 +1,6 @@
 import type { ChatCompletionInput } from '@civitai/client';
 import * as z from 'zod';
-import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import type { BlockStep, OrchestratorStepTemplate } from './index';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -823,16 +823,13 @@ export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
  * app author looking for a cycle that is not there.
  */
 const toolParametersSchema = z.unknown().transform((value, ctx) => {
-  // The cap is checked before the value is serialized, without building the string. A value
-  // the measure cannot read (it throws where JSON.stringify throws) is left to the stringify
-  // below, so it gets that message.
-  let withinCap = true;
-  try {
-    withinCap = jsonLengthWithin([value], MAX_TOOL_PARAMETERS_CHARS);
-  } catch {
-    withinCap = true;
-  }
-  if (!withinCap) {
+  // The cap is checked before the value is serialized, without building the string. An
+  // unserializable value is left to the stringify below, so it gets that message. Every value
+  // JSON.stringify writes costs at least two characters, so the value budget is half the cap.
+  const measured = measureJsonLength([value], MAX_TOOL_PARAMETERS_CHARS, {
+    meter: { visits: 0, chars: 0, scanned: 0, maxVisits: MAX_TOOL_PARAMETERS_CHARS / 2 },
+  });
+  if (measured === 'over') {
     ctx.addIssue({ code: 'custom', message: TOOL_PARAMETERS_OVER_CAP_MESSAGE });
     return z.NEVER;
   }

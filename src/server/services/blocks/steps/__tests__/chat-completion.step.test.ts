@@ -1004,7 +1004,7 @@ describe('chat-completion — tools / toolChoice param surface', () => {
       );
     });
 
-    it('refuses parameters that repeat one object past the cap without serializing them', () => {
+    it('refuses parameters far over the cap without serializing them', () => {
       const node = { type: 'string', description: 'x'.repeat(1_000) };
       const parameters = {
         type: 'object',
@@ -1031,6 +1031,17 @@ describe('chat-completion — tools / toolChoice param surface', () => {
         'tool parameters exceed 4096 serialized characters'
       );
       expect(stringified).toBeLessThan(10_000);
+    });
+
+    it('refuses parameters with more entries than fit in the cap, even ones left out of the JSON', () => {
+      const parameters = {
+        type: 'object',
+        ...Object.fromEntries(Array.from({ length: 3_000 }, (_, i) => [`k${i}`, undefined])),
+      };
+      expect(JSON.stringify(parameters).length).toBeLessThan(100);
+      expect(withParameters(parameters).error?.issues.map((i) => i.message)).toContain(
+        'tool parameters exceed 4096 serialized characters'
+      );
     });
 
     it('keeps the serialize message for a value JSON.stringify cannot write', () => {

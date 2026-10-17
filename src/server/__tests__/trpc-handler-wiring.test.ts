@@ -362,7 +362,7 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
 
   describe('onError: an input over the logged length', () => {
     const LIMIT = 256 * 1024;
-    const MARKER = `[input over ${LIMIT} characters, not logged]`;
+    const MARKER = `[input over ${LIMIT} characters or 16384 values, not logged]`;
     const logged = async (input: unknown) => {
       vi.mocked(logToAxiom).mockClear();
       await h.options?.onError?.({
@@ -384,7 +384,16 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
       expect(await logged(ofLength(LIMIT + 1))).toBe(MARKER);
     });
 
-    it('is not serialized when it repeats one object past the limit', async () => {
+    it('is logged as a marker when it holds more values than the limit', async () => {
+      // The input object, its key and its items: 16,385 values here, 16,384 one item fewer.
+      const values = new Array(16_383).fill(0);
+      expect(JSON.stringify({ values }).length).toBeLessThan(LIMIT);
+      expect(await logged({ values })).toBe(MARKER);
+      const fewer = { values: values.slice(1) };
+      expect(await logged(fewer)).toBe(JSON.stringify(fewer));
+    });
+
+    it('is not serialized when its JSON is far over the limit', async () => {
       const chunk = { s: 'x'.repeat(4_096), blockToken: TOKEN };
       const input = { items: new Array(20_000).fill(chunk) };
       const stringify = JSON.stringify;

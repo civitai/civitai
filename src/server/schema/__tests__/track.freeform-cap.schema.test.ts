@@ -32,7 +32,7 @@ describe('free-form tracking payload cap', () => {
     expect(messages(trackSearchSchema.safeParse({ ...SEARCH, filters: over }))).toEqual([MESSAGE]);
   });
 
-  it('caps an action as a whole', () => {
+  it('caps an action through its details', () => {
     expect(trackActionInputSchema.safeParse(CANCEL).success).toBe(true);
     const over = {
       ...CANCEL,
@@ -41,12 +41,20 @@ describe('free-form tracking payload cap', () => {
     expect(messages(trackActionInputSchema.safeParse(over))).toEqual([MESSAGE]);
   });
 
+  it('refuses a payload with more entries than fit in the cap, even ones left out of the JSON', () => {
+    const filters = Object.fromEntries(
+      Array.from({ length: 40_000 }, (_, i) => [`k${i}`, undefined])
+    );
+    expect(JSON.stringify(filters).length).toBe(2);
+    expect(messages(trackSearchSchema.safeParse({ ...SEARCH, filters }))).toEqual([MESSAGE]);
+  });
+
   it('accepts an event with no free-form payload', () => {
     expect(addViewSchema.safeParse(VIEW).success).toBe(true);
     expect(trackSearchSchema.safeParse(SEARCH).success).toBe(true);
   });
 
-  it('refuses a payload that repeats one object past the cap without serializing it', () => {
+  it('refuses a payload far over the cap without serializing it', () => {
     const filters = { tags: new Array(10_000).fill({ name: 'x'.repeat(1_000) }) };
     const stringify = JSON.stringify;
     let stringified = 0;

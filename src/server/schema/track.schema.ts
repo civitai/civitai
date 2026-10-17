@@ -6,21 +6,19 @@ import {
   BRIDGE_MESSAGE_OUTCOMES,
 } from '~/components/AppBlocks/bridgeLabels';
 import { trackedReasons } from '~/utils/login-helpers';
-import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
 
 /**
  * The longest free-form tracking payload (`details`, `filters`), in JSON characters. Measured
- * before anything serializes it, without building the string; a value the measure cannot read
- * (it throws where JSON.stringify throws) is left to the code that serializes it, as before.
+ * before anything serializes it, without building the string; an unserializable value is left to
+ * the code that serializes it, as before. Every value JSON.stringify writes costs at least two
+ * characters, so the value budget is half the cap.
  */
 export const TRACK_FREEFORM_MAX_CHARS = 64 * 1024;
 const TRACK_FREEFORM_TOO_LARGE = `exceeds ${TRACK_FREEFORM_MAX_CHARS} serialized characters`;
 function freeformWithinCap(value: unknown) {
-  try {
-    return jsonLengthWithin([value], TRACK_FREEFORM_MAX_CHARS);
-  } catch {
-    return true;
-  }
+  const meter = { visits: 0, chars: 0, scanned: 0, maxVisits: TRACK_FREEFORM_MAX_CHARS / 2 };
+  return measureJsonLength([value], TRACK_FREEFORM_MAX_CHARS, { meter }) !== 'over';
 }
 const boundedFreeform = z
   .object({})

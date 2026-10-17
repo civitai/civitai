@@ -31,6 +31,14 @@ describe('assertSourceMetadataWithinCap', () => {
     );
   });
 
+  it('accepts metadata with more values than the default walk budget when its JSON fits', () => {
+    // 300,000 values in ~600 KB: the cap is on characters, and the value budget follows it.
+    const sourceMetadataMap = {
+      'https://a/1.png': { params: { seeds: new Array(300_000).fill(0) } },
+    };
+    expect(() => assertSourceMetadataWithinCap(undefined, sourceMetadataMap)).not.toThrow();
+  });
+
   it('accepts ordinary metadata and no metadata', () => {
     expect(() => assertSourceMetadataWithinCap(undefined, undefined)).not.toThrow();
     expect(() =>
@@ -41,7 +49,7 @@ describe('assertSourceMetadataWithinCap', () => {
     ).not.toThrow();
   });
 
-  it('refuses metadata that repeats one object past the cap without serializing it', () => {
+  it('refuses metadata far over the cap without serializing it', () => {
     const node = { prompt: 'x'.repeat(10_000) };
     const map = Object.fromEntries(
       Array.from({ length: 5_000 }, (_, i) => [`https://a/${i}.png`, { params: node }])

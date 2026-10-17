@@ -26,7 +26,7 @@ import {
   inlineMediaMessage,
 } from '~/server/schema/blocks/inline-media';
 import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
-import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+import { jsonLengthWithin, measureJsonLength } from '~/server/schema/blocks/json-length';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -917,16 +917,15 @@ const ECHOED_MODE_MAX_CHARS = 200;
 
 /**
  * A non-string `mode` as JSON, measured before it is serialized so only a short one is built;
- * a longer one is described instead. A value the measure cannot read is left to JSON.stringify.
+ * a longer one is described instead. An unserializable value is left to JSON.stringify.
  */
 function echoedModeValue(raw: unknown): string {
-  let short = true;
-  try {
-    short = jsonLengthWithin([raw], ECHOED_MODE_MAX_CHARS);
-  } catch {
-    short = true;
-  }
-  return short ? JSON.stringify(raw) : `a value over ${ECHOED_MODE_MAX_CHARS} characters`;
+  const measured = measureJsonLength([raw], ECHOED_MODE_MAX_CHARS, {
+    meter: { visits: 0, chars: 0, scanned: 0, maxVisits: ECHOED_MODE_MAX_CHARS / 2 },
+  });
+  return measured === 'over'
+    ? `a value over ${ECHOED_MODE_MAX_CHARS} characters`
+    : JSON.stringify(raw);
 }
 
 const blockCustomComfyMemberSchema = z.discriminatedUnion(

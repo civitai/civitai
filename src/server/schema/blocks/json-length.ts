@@ -172,3 +172,23 @@ export const jsonLengthWithin = (
   }
   return true;
 };
+
+/**
+ * `jsonLengthWithin` as a verdict, for a caller that serializes the value itself once it is known
+ * to be within `limit`: `'within'`, `'over'` (the length passed `limit`, or the value budget ran
+ * out), or `'unserializable'` where the measure throws because `JSON.stringify` would (a bigint, a
+ * cycle, a throwing `toJSON` or getter) before reaching `limit`. A caller that wants
+ * JSON.stringify's own error for that value can treat `'unserializable'` like `'within'` and let
+ * its stringify throw.
+ */
+export const measureJsonLength = (
+  values: unknown[],
+  limit: number,
+  options: { unit?: JsonLengthUnit; meter?: JsonLengthMeter } = {}
+): 'within' | 'over' | 'unserializable' => {
+  try {
+    return jsonLengthWithin(values, limit, options) ? 'within' : 'over';
+  } catch {
+    return 'unserializable';
+  }
+};

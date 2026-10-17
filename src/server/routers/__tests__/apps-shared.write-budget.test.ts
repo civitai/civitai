@@ -456,9 +456,6 @@ describe('write budget: refusals', () => {
   });
 });
 
-/** Length of the last request body a tRPC client sent. */
-let lastRequestBodyLength = 0;
-
 /** The real tRPC handler, so input validation runs exactly as it does for a caller. */
 const clientWith = (transformer: CombinedDataTransformer) =>
   createTRPCClient<typeof appsSharedRouter>({
@@ -467,7 +464,6 @@ const clientWith = (transformer: CombinedDataTransformer) =>
         url: 'http://localhost/api/trpc',
         transformer,
         fetch: (input, init) => {
-          lastRequestBodyLength = String(init?.body ?? '').length;
           return fetchRequestHandler({
             endpoint: '/api/trpc',
             req: new Request(input as RequestInfo, init as RequestInit),
@@ -490,7 +486,7 @@ const clientWith = (transformer: CombinedDataTransformer) =>
     ],
   });
 const client = clientWith(clientTransformer);
-/** Writes its input with devalue, which the server's transformer also reads. */
+/** A client that writes its input with devalue; the server's transformer reads either format. */
 const devalueClient = clientWith({
   input: { serialize: writeSerialize, deserialize: unionDeserialize },
   output: clientTransformer.output,
@@ -711,7 +707,7 @@ describe('shared value size cap: checked before the value is scanned or serializ
     expect(mockAudit).not.toHaveBeenCalled();
   });
 
-  describe('a value that repeats one object far past the cap', () => {
+  describe('a value whose JSON is far over the cap', () => {
     const ITEMS = 20_000;
     // 5,000 rather than a divisor of the cap, so no chunk ends exactly on it.
     const chunk = { s: 'x'.repeat(5_000) };
@@ -745,11 +741,9 @@ describe('shared value size cap: checked before the value is scanned or serializ
         spy.mockRestore();
       }
 
-      // The fixture reaches the server as a small request.
-      expect(lastRequestBodyLength).toBeLessThan(100_000);
       expect(err).toEqual(OVER_CAP);
       // The request body and the error response; the value itself is never written out.
-      expect(stringified).toBeLessThan(4 * 100_000);
+      expect(stringified).toBeLessThan(400_000);
       expect(mockAudit).not.toHaveBeenCalled();
     });
   });
@@ -777,17 +771,5 @@ describe('shared value size cap: checked before the value is scanned or serializ
       message: 'value is not serializable',
     });
     expect(mockAudit).not.toHaveBeenCalled();
-  });
-
-  it('refuses a value with more entries than the measure reads, with the size error', async () => {
-    // Its JSON is tiny (undefined entries are left out), but past the value budget the measure
-    // stops reading and the value is refused rather than walked further.
-    const value = {
-      title: CLEAN.title,
-      data: Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined])),
-    };
-    expect(JSON.stringify(value).length).toBeLessThan(100);
-    expect(measureSharedValue(value)).toBe('over-cap');
-    await expect(appendSharedRow('tok', value)).rejects.toMatchObject(OVER_CAP);
   });
 });

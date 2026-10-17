@@ -7761,12 +7761,27 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
 
       it('a long NON-STRING `mode` is described, not echoed', async () => {
         const node = { note: 'x'.repeat(1_000) };
-        const issues = await rejectionIssues({
-          kind: 'customComfy',
-          mode: new Array(1_000).fill(node),
-          recipe: 'starter-comfy-txt2img',
-          params: { prompt: 'a cat' },
-        });
+        const mode = new Array(1_000).fill(node);
+        const stringify = JSON.stringify;
+        let serializedMode = 0;
+        const spy = vi
+          .spyOn(JSON, 'stringify')
+          .mockImplementation((...args: Parameters<typeof stringify>) => {
+            if (args[0] === mode) serializedMode++;
+            return stringify(...args);
+          });
+        let issues;
+        try {
+          issues = await rejectionIssues({
+            kind: 'customComfy',
+            mode,
+            recipe: 'starter-comfy-txt2img',
+            params: { prompt: 'a cat' },
+          });
+        } finally {
+          spy.mockRestore();
+        }
+        expect(serializedMode).toBe(0);
         expect(issues[0].message).toBe(
           'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
             ` ${RECIPE_ARM}. ${INLINE_ARM}.`

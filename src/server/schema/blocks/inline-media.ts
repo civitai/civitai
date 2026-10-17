@@ -24,7 +24,8 @@ export type InlineMediaPath = (string | number)[];
  * Shared by every field of one body, so many fields cannot each spend a full budget.
  * `stringChars` is a lower bound on the body's JSON length, counted from the strings the
  * search has passed; `inspected` counts the characters handed to the patterns. `maxVisits`
- * lowers the value budget below `INLINE_MEDIA_MAX_VISITS` for a caller with a smaller cap.
+ * replaces `INLINE_MEDIA_MAX_VISITS` as the value budget, for a caller whose own cap needs a
+ * smaller or larger one.
  */
 export type InlineMediaBudget = {
   visits: number;
@@ -82,7 +83,7 @@ export function walkJsonValues(
   budget: InlineMediaBudget,
   visit: JsonWalkVisitor
 ): JsonWalkFrame | null | typeof INLINE_MEDIA_TOO_MANY_VALUES {
-  const maxVisits = Math.min(budget.maxVisits ?? INLINE_MEDIA_MAX_VISITS, INLINE_MEDIA_MAX_VISITS);
+  const maxVisits = budget.maxVisits ?? INLINE_MEDIA_MAX_VISITS;
   const stack: JsonWalkFrame[] = [{ value, key: null, parent: null }];
   if (++budget.visits > maxVisits) return INLINE_MEDIA_TOO_MANY_VALUES;
   while (stack.length > 0) {
