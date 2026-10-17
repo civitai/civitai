@@ -496,6 +496,18 @@ describe('resource-intent-tags snapshot codec', () => {
     expect(validateEdited(edit)).toThrow(message);
   });
 
+  it('bounds fits at 2, the range of the outcomes they average', () => {
+    expect(tagFitBound()).toBe(2);
+  });
+
+  it('accepts fits inside the bound but beyond 1', () => {
+    const d = structuredClone(data);
+    d.kinds.addon.fit[0] = 1.9;
+    const { fit } = d.kinds.addon.postings;
+    fit[fit.findIndex((v) => !Number.isNaN(v))] = -1.9;
+    expect(() => tagIndexFromData(d)).not.toThrow();
+  });
+
   it('accepts fits exactly at the fit bound', () => {
     const d = structuredClone(data);
     d.kinds.addon.fit[0] = tagFitBound();

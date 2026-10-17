@@ -39,6 +39,10 @@ describe('resource-intent-tags sources', () => {
     expect(observationUserHash(testKey, id)).toBe(expected);
   });
 
+  it.each([1.5, 2 ** 53])('refuses user id %s, which is not a safe integer', (id) => {
+    expect(() => observationUserHash(testKey, id)).toThrow('is not an integer');
+  });
+
   it("fingerprints a key exactly as the observations' writer does", () => {
     expect(observationKeyFingerprint(testKey)).toBe('cef65755129e1225');
   });
