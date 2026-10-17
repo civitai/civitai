@@ -299,7 +299,8 @@ const buy = ({
   countryCode = 'US',
   isModerator,
 }: {
-  idempotencyKey?: string;
+  /** null: no key sent. */
+  idempotencyKey?: string | null;
   expectedVersion?: number;
   /** null: no confirmed price sent. */
   expectedUnitAmount?: number | null;
@@ -312,7 +313,7 @@ const buy = ({
     userId: BUYER_ID,
     shopItemId: SHOP_ITEM_ID,
     isModerator,
-    idempotencyKey,
+    idempotencyKey: idempotencyKey ?? undefined,
     expectedUnitAmount: expectedUnitAmount ?? undefined,
     expectedVersion,
     payWith,
@@ -591,11 +592,14 @@ describe('buying a mystery box', () => {
       status: 'pending',
       updatedAt: new Date(Date.now() - 20 * 60 * 1000),
     } as never);
-    const results = await Promise.allSettled([
-      buy({ idempotencyKey: KEY_A }),
-      buy({ idempotencyKey: KEY_B }),
-    ]);
-    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    let second: Promise<unknown> | undefined;
+    mocks.createMultiTx.mockImplementationOnce(async () => {
+      second = buy({ idempotencyKey: KEY_B });
+      await second.catch(() => undefined);
+      return legs();
+    });
+    await buy({ idempotencyKey: KEY_A });
+    await expect(second).rejects.toThrow('unopened boxes already cover');
     expect(world.items).toHaveLength(1);
   });
 
@@ -980,6 +984,74 @@ describe('buying a mystery box', () => {
     expect(reasons).toEqual([expect.stringContaining(PURCHASE_ALREADY_COMPLETED_MESSAGE)]);
     expect(world.items).toHaveLength(1);
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+
+  // The event may have ended since an uncharged claim was made; nothing vouches for it.
+  it('asks the event gate as a new purchase when resuming an uncharged claim', async () => {
+    dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+      ...boxRow,
+      params: { event: 'birthday2026' },
+    });
+    mocks.assertEventPurchasable.mockImplementation(
+      async ({ resumingClaim }: { resumingClaim?: boolean }) => {
+        if (!resumingClaim) throw new Error('This item is not available');
+      }
+    );
+    claims.rows.set(txId(KEY_A), {
+      transactionId: txId(KEY_A),
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      amount: PRICE,
+      attempts: 1,
+      status: 'pending',
+    });
+    await expect(buy()).rejects.toMatchObject({ message: PURCHASE_STATE_UNKNOWN_MESSAGE });
+    expect(mocks.assertEventPurchasable).toHaveBeenCalledWith(
+      expect.objectContaining({ resumingClaim: false })
+    );
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  describe('without an idempotency key', () => {
+    it('sells, under a fresh charge prefix', async () => {
+      await buy({ idempotencyKey: null });
+      expect(world.items).toHaveLength(1);
+      const prefix = mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix as string;
+      expect(prefix.startsWith(`item-purchase-v1-${BUYER_ID}-${SHOP_ITEM_ID}-`)).toBe(true);
+      expect(world.items[0].sourceKey).toBe(prefix);
+    });
+
+    it('sells only one of two concurrent presses when one thing is left', async () => {
+      world.contents = [hat(1)];
+      const results = await Promise.allSettled([
+        buy({ idempotencyKey: null }),
+        buy({ idempotencyKey: null }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+      expect(world.items).toHaveLength(1);
+    });
+
+    // No key: nobody else shares this prefix, so a unique violation is this request's own failure
+    // and its charge is refunded.
+    it('refunds a grant that fails on a unique violation', async () => {
+      const tx = makeTx(async () => undefined);
+      dbMock.dbWrite.$transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
+        claims.rollbackOnThrow(() =>
+          fn({
+            ...tx,
+            item: {
+              ...tx.item,
+              create: async () => {
+                throw p2002();
+              },
+            },
+          })
+        )
+      );
+      await expect(buy({ idempotencyKey: null })).rejects.toThrow('Failed to purchase box');
+      expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('refunds and refuses when the grant fails', async () => {

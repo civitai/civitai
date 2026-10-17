@@ -212,8 +212,8 @@ export const isConsumableCosmeticType = (type: CosmeticType): boolean =>
  */
 export const isPackShopItem = (item: {
   cosmeticId: number | null;
-  /** A mystery box listing has no cosmetic either. */
-  itemDefinitionId?: number | null;
+  /** A mystery box listing has no cosmetic either. Required, so a row selected without it fails to compile. */
+  itemDefinitionId: number | null;
 }): boolean => item.cosmeticId == null && item.itemDefinitionId == null;
 
 export type PackMemberPricing = {

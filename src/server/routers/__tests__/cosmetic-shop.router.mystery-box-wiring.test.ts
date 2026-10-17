@@ -31,10 +31,12 @@ vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }))
 
 import { cosmeticShopRouter } from '../cosmetic-shop.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 const buyer = {
   id: 2,
-  isModerator: false,
+  // A moderator, so a hard-coded `isModerator: false` in the router is visible.
+  isModerator: true,
   tier: 'free',
   username: 'buyer',
   onboarding: 0x1f,
@@ -75,7 +77,14 @@ describe('purchaseShopItem hands the service the mystery box flag and the buyer 
   it('passes the country from the request', async () => {
     await purchase({ mysteryBox: true }, { 'cf-ipcountry': 'BE' });
     expect(mockPurchase).toHaveBeenCalledWith(
-      expect.objectContaining({ countryCode: 'BE', expectedVersion: 3, userId: buyer.id })
+      expect.objectContaining({
+        countryCode: 'BE',
+        expectedVersion: 3,
+        userId: buyer.id,
+        isModerator: true,
+        // The Buzz account a box is charged from on this domain.
+        buzzType: getAllowedAccountTypes({ mysteryBox: true } as never)[0],
+      })
     );
   });
 });

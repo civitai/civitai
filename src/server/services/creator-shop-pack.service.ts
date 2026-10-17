@@ -15,6 +15,7 @@ import {
   creatorCosmeticTypes,
   isCreatorCosmeticType,
   isConsumableCosmeticType,
+  isPackShopItem,
   packMembersMissing,
   packPriceFloor,
   type PackMemberPricing,
@@ -322,9 +323,7 @@ export const updateCreatorShopPack = async ({
     },
   });
   if (!existing) throw throwNotFoundError('Pack not found');
-  // A mystery box listing has no cosmetic either.
-  if (existing.cosmeticId != null || existing.itemDefinitionId != null)
-    throw throwBadRequestError('This listing is not a pack');
+  if (!isPackShopItem(existing)) throw throwBadRequestError('This listing is not a pack');
   if (!isModerator && existing.addedById !== userId)
     throw throwBadRequestError('You can only manage your own shop items');
 
@@ -503,8 +502,7 @@ export const getPackDetail = async ({
     },
   });
   if (!item) throw throwNotFoundError('Pack not found');
-  if (item.cosmeticId != null || item.itemDefinitionId != null)
-    throw throwBadRequestError('This listing is not a pack');
+  if (!isPackShopItem(item)) throw throwBadRequestError('This listing is not a pack');
   // Named once: this decides both who may read a pack that is not on sale and
   // who is answered about its review state. Two spellings of it drift apart on
   // the first tightening.
