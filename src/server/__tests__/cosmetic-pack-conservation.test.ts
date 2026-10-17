@@ -15,7 +15,7 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
   claims.rollbackOnThrow(() =>
     fn({
       cosmeticShopPurchaseClaim: claims.txDelegate,
-      $executeRaw: (...a: unknown[]) => executeRaw(...a),
+      $executeRaw: (...a: unknown[]) => (isHolderLock(a) ? holderLock(...a) : executeRaw(...a)),
       userCosmetic: {
         findMany: (...a: unknown[]) => ownedFindMany(...a),
         createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
@@ -45,6 +45,10 @@ const spend = vi.fn();
 const pay = vi.fn();
 const refund = vi.fn();
 const executeRaw = vi.fn();
+// The per-user grant lock (item-holder-lock.ts), kept apart from the consumable grants counted below.
+const holderLock = vi.fn();
+const isHolderLock = (a: unknown[]) =>
+  (a[0] as readonly string[]).join('').includes('pg_advisory_xact_lock');
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 const createManyComponents = vi.fn();
 const createManyUserCosmetic = vi.fn();
@@ -464,6 +468,14 @@ describe.each(SHAPES)(
     it('either moves money or does not complete', async () => {
       const { charged } = await setup();
       expect(charged).toBeGreaterThan(0);
+    });
+
+    it("takes the buyer's grant lock inside the grant transaction", async () => {
+      await setup();
+      expect(holderLock).toHaveBeenCalledTimes(1);
+      const [sql, , lockedUser] = holderLock.mock.calls[0] as [readonly string[], number, number];
+      expect(lockedUser).toBe(buyerId);
+      expect(sql.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
     });
 
     it('charges exactly what the pricing rules say, independently computed', async () => {

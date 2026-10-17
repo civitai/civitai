@@ -81,6 +81,7 @@ import {
   resumeShopPurchase,
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
+import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -1260,6 +1261,7 @@ export const purchaseCosmeticShopItem = async ({
   try {
     const data = await dbWrite.$transaction(async (tx) => {
       await markClaimPaid(tx, transactionId);
+      await lockItemHolder(tx, userId);
 
       // Create purchase:
       await tx.userCosmeticShopPurchases.create({

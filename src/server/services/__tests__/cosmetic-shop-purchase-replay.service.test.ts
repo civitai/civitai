@@ -26,6 +26,7 @@ const { mocks } = vi.hoisted(() => ({
     listMultiTx: vi.fn(),
     getBlockedPairIds: vi.fn(),
     purchaseCosmeticPack: vi.fn(),
+    executeRaw: vi.fn(),
   },
 }));
 
@@ -83,6 +84,7 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
       userCosmetic: { create: mocks.userCosmeticCreate },
       cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: mocks.executeRaw,
     })
   )
 );
@@ -230,6 +232,26 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
     expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toBe(TX);
     expect(claims.rows.get(TX)?.status).toBe('paid');
+  });
+
+  // A mystery box open decides "not owned" from a read under this lock; a grant that skips it
+  // can land between that read and the box's grant (item-holder-lock.ts).
+  it("takes the buyer's grant lock in the grant transaction, before granting", async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+
+    await purchase();
+
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, , lockedUser] = mocks.executeRaw.mock.calls[0] as [
+      readonly string[],
+      number,
+      number
+    ];
+    expect(sql.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
+    expect(lockedUser).toBe(BUYER_ID);
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.userCosmeticCreate.mock.invocationCallOrder[0]
+    );
   });
 
   it('claims the purchase before any money moves', async () => {

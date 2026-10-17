@@ -108,6 +108,7 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
       userCosmetic: { create: mocks.userCosmeticCreate },
       cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: vi.fn(),
     })
   )
 );
