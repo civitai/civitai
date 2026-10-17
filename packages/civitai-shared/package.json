@@ -23,6 +23,7 @@
     "./rated-entity-sql": "./src/rated-entity-sql.ts",
     "./rating-review": "./src/rating-review.ts",
     "./crucible": "./src/crucible.ts",
+    "./box-odds": "./src/box-odds.ts",
     "./json-ld": "./src/json-ld.ts",
     "./resolution-reasons": "./src/resolution-reasons.ts",
     "./site-appeal": "./src/site-appeal.ts",

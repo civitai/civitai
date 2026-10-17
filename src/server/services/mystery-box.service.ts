@@ -1,11 +1,15 @@
 import type { Prisma } from '@prisma/client';
+import { computeBoxOdds, drawFromOdds } from '@civitai/shared/box-odds';
+import { randomInt } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import {
   assertEventShopItemPurchasable,
   getEventBuyerTeam,
   isEventShopItemData,
 } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import {
   createMultiAccountBuzzTransaction,
@@ -13,6 +17,7 @@ import {
 } from '~/server/services/buzz.service';
 import {
   countHeldItems,
+  findHeldItemById,
   findHeldItemBySource,
   grantItem,
   ITEM_DEFINITION_STATUS,
@@ -37,7 +42,8 @@ import {
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
 /**
  * Countries where mystery boxes are not shown or sold: a `KeyValue` row holding a JSON array of
@@ -84,12 +90,16 @@ export type BoxPoolEntry = {
   tierId: number;
   rewardDefinitionId: number;
   cosmeticId: number;
+  cosmeticData: unknown;
+  cosmeticType: CosmeticType | null;
 };
 
 /**
  * What this box can still give this user: its enabled contents, less any cosmetic made for another
- * team than `team`, less any cosmetic the user owns from any source. Read inside a transaction
- * holding `lockItemHolder` for the user when the answer decides a grant or a claim.
+ * team than `team`, less any cosmetic the user owns from any source, less anything they already
+ * drew from this box (a reward removed from them since stays drawn: `BoxOpening` allows each once).
+ * Read inside a transaction holding `lockItemHolder` for the user when the answer decides a grant or
+ * a claim.
  *
  * v1 boxes hold cosmetics only; any other reward kind is left out here and refused at purchase
  * (`assertBoxSellable`).
@@ -104,7 +114,9 @@ export async function getBoxPoolForUser(
       id: true,
       tierId: true,
       rewardDefinitionId: true,
-      reward: { select: { type: true, cosmeticId: true, cosmetic: { select: { data: true } } } },
+      reward: {
+        select: { type: true, cosmeticId: true, cosmetic: { select: { data: true, type: true } } },
+      },
     },
   });
 
@@ -120,6 +132,8 @@ export async function getBoxPoolForUser(
         tierId: content.tierId,
         rewardDefinitionId: content.rewardDefinitionId,
         cosmeticId,
+        cosmeticData: cosmetic?.data ?? null,
+        cosmeticType: cosmetic?.type ?? null,
       },
     ];
   });
@@ -129,8 +143,15 @@ export async function getBoxPoolForUser(
     where: { userId, cosmeticId: { in: forTeam.map((entry) => entry.cosmeticId) } },
     select: { cosmeticId: true },
   });
+  const drawn = await client.boxOpening.findMany({
+    where: { userId, boxDefinitionId, rewardType: ITEM_TYPE.cosmetic },
+    select: { rewardDefinitionId: true },
+  });
   const ownedIds = new Set(owned.map((row) => row.cosmeticId));
-  return forTeam.filter((entry) => !ownedIds.has(entry.cosmeticId));
+  const drawnIds = new Set(drawn.map((row) => row.rewardDefinitionId));
+  return forTeam.filter(
+    (entry) => !ownedIds.has(entry.cosmeticId) && !drawnIds.has(entry.rewardDefinitionId)
+  );
 }
 
 /**
@@ -393,4 +414,216 @@ export async function purchaseMysteryBox({
     );
     throw throwBadRequestError('Failed to purchase box');
   }
+}
+
+export const BOX_OPENING_REWARD_STATUS = { granted: 'granted' } as const;
+
+export type MysteryBoxOpenResult = {
+  /** The opened box's `Item.id`, as a string: it is a BIGINT. */
+  boxItemId: string;
+  boxDefinitionId: number;
+  boxVersion: number;
+  tierId: number;
+  contentId: number;
+  rewardDefinitionId: number;
+  rewardType: string;
+  cosmeticId: number | null;
+  /** The odds this draw ran under, from the opening's own record. */
+  odds: { tierWeight: number; eligibleWeight: number; tierPoolSize: number };
+  /** True when this answers an open that already happened (a retry or a double-click). */
+  replayed: boolean;
+};
+
+type BoxOpeningRow = {
+  boxItemId: bigint;
+  boxDefinitionId: number;
+  boxVersion: number;
+  userId: number;
+  tierId: number;
+  contentId: number;
+  rewardDefinitionId: number;
+  rewardType: string;
+  tierWeight: number;
+  eligibleWeight: number;
+  tierPoolSize: number;
+};
+
+const openingResult = (
+  opening: BoxOpeningRow,
+  cosmeticId: number | null,
+  replayed: boolean
+): MysteryBoxOpenResult => ({
+  boxItemId: opening.boxItemId.toString(),
+  boxDefinitionId: opening.boxDefinitionId,
+  boxVersion: opening.boxVersion,
+  tierId: opening.tierId,
+  contentId: opening.contentId,
+  rewardDefinitionId: opening.rewardDefinitionId,
+  rewardType: opening.rewardType,
+  cosmeticId,
+  odds: {
+    tierWeight: opening.tierWeight,
+    eligibleWeight: opening.eligibleWeight,
+    tierPoolSize: opening.tierPoolSize,
+  },
+  replayed,
+});
+
+const NOT_YOUR_BOX = 'This box is not yours to open';
+
+/** The open that already happened for this box, answered again; refuses another user's. */
+async function replayOpening(client: Prisma.TransactionClient, boxItemId: bigint, userId: number) {
+  const opening = await client.boxOpening.findUnique({ where: { boxItemId } });
+  if (!opening || opening.userId !== userId) throw throwBadRequestError(NOT_YOUR_BOX);
+  const reward = await client.itemDefinition.findUnique({
+    where: { id: opening.rewardDefinitionId },
+    select: { cosmeticId: true },
+  });
+  return openingResult(opening, reward?.cosmeticId ?? null, true);
+}
+
+/**
+ * Opens one held mystery box: draws one reward from what the box still has for the holder, grants
+ * it, records the draw and removes the box, all in one transaction. No money moves.
+ *
+ * Under the holder's item-holder lock, so the pool read, the draw and the grant see every other
+ * grant to this user (a shelf purchase, another box) either wholly before or wholly after. A box that
+ * has nothing left for its holder is kept, not opened.
+ */
+export async function openMysteryBox({
+  userId,
+  boxItemId: boxItemIdInput,
+  expectedVersion,
+  mysteryBoxEnabled,
+  countryCode,
+}: {
+  userId: number;
+  boxItemId: string;
+  expectedVersion: number;
+  mysteryBoxEnabled: boolean | undefined;
+  countryCode: string | null | undefined;
+}): Promise<MysteryBoxOpenResult> {
+  if (!mysteryBoxEnabled) throw throwBadRequestError('Mystery boxes are not available right now');
+  if (isMysteryBoxBlockedIn(countryCode, await getMysteryBoxBlockedRegions()))
+    throw throwBadRequestError('Mystery boxes are not available in your region');
+
+  const boxItemId = BigInt(boxItemIdInput);
+
+  // The box's event decides the pool's team. Read before the transaction: the team lookup is not
+  // on the transaction's connection, and nothing may wait on a second connection under the lock.
+  const held = await findHeldItemById(dbWrite, { id: boxItemId, userId });
+  if (!held) return replayOpening(dbWrite, boxItemId, userId);
+  const params = (held.itemDefinition.params ?? {}) as BoxParams;
+  const team = isEventShopItemData(params)
+    ? await getEventBuyerTeam(params.event, userId)
+    : undefined;
+
+  const opened = await dbWrite
+    .$transaction(async (tx) => {
+      // First, before any other row: every path granting to this user takes the same lock first.
+      await lockItemHolder(tx, userId);
+
+      const [item] = await tx.$queryRaw<
+        { id: bigint; itemDefinitionId: number; sourceKey: string }[]
+      >`
+        SELECT "id", "itemDefinitionId", "sourceKey" FROM "Item"
+        WHERE "id" = ${boxItemId} AND "holderType" = 'user' AND "holderId" = ${userId}
+        FOR UPDATE
+      `;
+      // Opened by a request that held the lock before this one.
+      if (!item)
+        return { kind: 'replay' as const, result: await replayOpening(tx, boxItemId, userId) };
+
+      const box = await tx.itemDefinition.findUnique({
+        where: { id: item.itemDefinitionId },
+        select: { id: true, type: true, version: true },
+      });
+      if (!box || box.type !== ITEM_TYPE.box)
+        throw throwBadRequestError('This box cannot be opened');
+      // The holder was shown this version's contents and odds.
+      if (expectedVersion !== box.version)
+        throw throwBadRequestError("This box's contents changed. Check them and try again.");
+
+      const pool = await getBoxPoolForUser(tx, { boxDefinitionId: box.id, userId, team });
+      if (!pool.length)
+        throw throwBadRequestError(
+          "You've collected everything in this box. It stays with you until new contents arrive."
+        );
+      const tiers = await tx.boxTier.findMany({
+        where: { boxDefinitionId: box.id },
+        select: { id: true, weight: true, sortOrder: true },
+      });
+      const draw = drawFromOdds(computeBoxOdds(tiers, pool), randomInt);
+      const reward = pool.find((entry) => entry.contentId === draw.contentId);
+      if (!reward) throw new Error(`box ${box.id} drew content ${draw.contentId} outside its pool`);
+
+      await tx.userCosmetic.create({
+        data: {
+          userId,
+          cosmeticId: reward.cosmeticId,
+          claimKey: `box-open-${item.id}`,
+          remaining: stickerUsesFromCosmeticData(reward.cosmeticData),
+        },
+      });
+      const opening = await tx.boxOpening.create({
+        data: {
+          boxItemId: item.id,
+          boxDefinitionId: box.id,
+          boxVersion: box.version,
+          userId,
+          boxSourceKey: item.sourceKey,
+          tierId: draw.tierId,
+          contentId: draw.contentId,
+          rewardDefinitionId: reward.rewardDefinitionId,
+          rewardType: ITEM_TYPE.cosmetic,
+          tierWeight: draw.tierWeight,
+          eligibleWeight: draw.eligibleWeight,
+          tierRoll: draw.tierRoll,
+          tierPoolSize: draw.tierPoolSize,
+          itemRoll: draw.itemRoll,
+          rewardStatus: BOX_OPENING_REWARD_STATUS.granted,
+        },
+      });
+      await tx.item.delete({ where: { id: item.id } });
+
+      return {
+        kind: 'opened' as const,
+        result: openingResult(opening, reward.cosmeticId, false),
+        draw,
+        sourceKey: item.sourceKey,
+        cosmeticEvent: (reward.cosmeticData as { event?: unknown } | null)?.event,
+        grantedSticker: reward.cosmeticType === CosmeticType.Sticker,
+      };
+    })
+    .catch((error) => {
+      // The backstop unique index on what a user has drawn from a box: the lock should make this
+      // unreachable. Nothing committed, so the box is still held.
+      if (isPrismaUniqueViolation(error))
+        throw throwBadRequestError('This box could not be opened. Please try again.');
+      throw error;
+    });
+
+  if (opened.kind === 'replay') return opened.result;
+
+  const { result, draw, sourceKey, cosmeticEvent, grantedSticker } = opened;
+  logToAxiom({
+    type: 'info',
+    name: 'mystery-box-open',
+    userId,
+    boxItemId: result.boxItemId,
+    boxSourceKey: sourceKey,
+    boxDefinitionId: result.boxDefinitionId,
+    boxVersion: result.boxVersion,
+    rewardDefinitionId: result.rewardDefinitionId,
+    cosmeticId: result.cosmeticId,
+    ...draw,
+  }).catch();
+
+  // The box is already opened: a cache miss here must not read as a failed open.
+  if (grantedSticker) await refreshOwnedStickerCache([userId]).catch(() => undefined);
+  // An event hat counts on its owner's team roster, if they are listed.
+  if (typeof cosmeticEvent === 'string')
+    void syncEventRosterMember(userId, { event: cosmeticEvent, onlyIfListed: true });
+
+  return result;
 }
