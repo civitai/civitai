@@ -23,7 +23,8 @@ import type {
  */
 
 export const TAG_INDEX_PAYLOAD_FORMAT = 'resource-intent-tags/1';
-export const TAG_INDEX_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
+/** Sized for object storage (design P6c): the real index measured 80.5 MiB compressed. */
+export const TAG_INDEX_MAX_PAYLOAD_BYTES = 128 * 1024 * 1024;
 /**
  * Caps brotli's output; keep it well above a real build's msgpack size
  * (docs/resource-intent-primitive.md, Snapshot).

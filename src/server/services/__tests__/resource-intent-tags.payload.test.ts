@@ -204,6 +204,24 @@ describe('resource-intent-tags snapshot codec', () => {
     );
   });
 
+  // Literal sizes, not the constant: the cap must admit a payload the size of the real index.
+  it.each([
+    ['128 MiB + 1', 128 * 1024 * 1024 + 1, true],
+    ['128 MiB', 128 * 1024 * 1024, false],
+    ['the real index (84,426,646 B, 2026-10 dry run)', 84_426_646, false],
+  ])(
+    'size cap at %s (%i bytes): refused before decompression = %s',
+    async (_name, size, refused) => {
+      const err = await decodeTagIndex(new Uint8Array(size)).then(
+        () => null,
+        (e: Error) => e
+      );
+      // Below the cap the zero bytes reach brotli, which fails on them for its own reason.
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message.includes('exceeds')).toBe(refused);
+    }
+  );
+
   it.each<[string, (d: Doc) => void, string]>([
     ['an unknown format', (d) => (d.format = 'resource-intent-tags/0'), 'unknown format'],
     ['a malformed spec hash', (d) => (d.specHash = 'D'.repeat(64)), 'invalid: specHash'],
