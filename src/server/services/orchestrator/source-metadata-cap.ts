@@ -10,14 +10,13 @@ import { measureJsonLength } from '~/server/schema/blocks/json-length';
 export const SOURCE_METADATA_MAX_CHARS = 17 * 1024 * 1024;
 
 /**
- * Values the measure may visit: 1,048,576, far above what an image's generation metadata holds and
- * four times the inline-media walk budget, so a request carrying several images with large
- * workflows still fits. Walk cost depends on shape: an array of this many numbers takes about a
- * tenth of a second, while a single flat object with this many keys takes roughly half a second,
- * varying with the host. Half the character cap, `measureJsonLength`'s own default, would allow
- * roughly eight times as many values.
+ * Values the measure may visit: 262,144, the same as the inline-media walk budget. An image's
+ * stored generation metadata holds a few hundred values, so a batch of hundreds of images still
+ * fits. The budget is what bounds the walk's cost (the character cap equals the body limit), and
+ * the cost grows with it: a quarter of the previous 1,048,576, whose worst case, a single flat
+ * object, took roughly half a second.
  */
-const SOURCE_METADATA_MAX_VALUES = 1024 * 1024;
+const SOURCE_METADATA_MAX_VALUES = 256 * 1024;
 
 export const SOURCE_METADATA_TOO_LARGE_MESSAGE = 'sourceMetadata is too large';
 
