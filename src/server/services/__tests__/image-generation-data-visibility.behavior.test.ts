@@ -259,6 +259,40 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(ANON)).toBe(false);
   });
 
+  // A stored meta number outside double range reaches this function as Infinity (node-postgres's
+  // JSON.parse). Prisma's engine threw on it instead, so the request failed. These pin what the
+  // endpoint does with it now.
+  it('drops the whole meta when a schema-typed field like seed is out of range', async () => {
+    await seed({});
+    imageRow.mockResolvedValue({
+      hideMeta: false,
+      generationProcess: 'txt2img',
+      meta: { prompt: 'a prompt', seed: Infinity },
+      type: 'image',
+      tools: [],
+      techniques: [],
+    } as never);
+    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(ANON) });
+    expect(data.meta).toBeUndefined();
+    expect(data.process).toBeUndefined();
+    expect(data.canRemix).toBe(false);
+  });
+
+  it('passes an out-of-range value in an untyped meta key through as Infinity', async () => {
+    await seed({});
+    imageRow.mockResolvedValue({
+      hideMeta: false,
+      generationProcess: null,
+      meta: { prompt: 'a prompt', customScale: Infinity },
+      type: 'image',
+      tools: [],
+      techniques: [],
+    } as never);
+    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(ANON) });
+    expect(data.meta?.prompt).toBe('a prompt');
+    expect((data.meta as Record<string, unknown>).customScale).toBe(Infinity);
+  });
+
   it('reads the image row from the read replica client, for the requested id', async () => {
     // `toBe`, not a structural match: kyselyRead and kyselyWrite are distinct clients that compare
     // deep-equal, so only identity catches the read routed at the writer.

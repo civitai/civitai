@@ -77,23 +77,19 @@ const viaPrisma = (prisma: PrismaClient, id: number) =>
 
 type Row = Awaited<ReturnType<typeof viaPrisma>>;
 
-/**
- * Every image row the comparison runs, with what makes it distinct. Images 9-11 are rows the
- * caller's visibility check hides from most viewers. The read itself has no visibility logic, so
- * they read like any other row, and are compared to make sure of that.
- */
+/** Every image row the comparison runs, labelled by what that row varies. */
 const IMAGES: Array<[label: string, id: number]> = [
   ['with meta, ordered tools (one disabled, one null priority) and techniques', 1],
   ['with no meta, tools or techniques (a video)', 2],
   ['with hidden meta', 3],
   ['whose meta is not an object', 4],
   ['with an on-site comfy graph', 5],
-  ['rated R, with media links in its meta', 6],
-  ['made from a source image', 7],
-  ['that is a source image', 8],
-  ['awaiting review', 9],
-  ['rated Blocked', 10],
-  ['with no post', 11],
+  ['with media links in its meta (inpainting)', 6],
+  ['whose meta records a source image', 7],
+  ['whose tool and technique both carry notes', 8],
+  ['with one tool and a technique without notes', 9],
+  ['with one tool and no techniques', 10],
+  ['with only a disabled tool, plus a technique', 11],
   ['whose meta is a JSON null (audio)', 12],
   ['with an engine-recorded process', 13],
   ['that does not exist', 999],
@@ -281,8 +277,11 @@ describe.skipIf(!parityUrl)('getImageGenerationFields returns exactly what Prism
     expect(byTool(kyselyRow as Row)).toStrictEqual(byTool(prismaRow));
   });
 
-  // The one KNOWN divergence. A stored meta number outside double range made Prisma's engine throw
-  // (the request failed). node-postgres's JSON.parse reads it as Infinity, which serializes as null.
+  // The one KNOWN divergence at the row. A stored meta number outside double range made Prisma's
+  // engine throw (the request failed). node-postgres's JSON.parse reads it as Infinity instead.
+  // What the endpoint then does with it is pinned in image-generation-data-visibility.behavior.test.ts:
+  // in a schema-typed field such as `seed`, the meta fails to parse and the whole meta is dropped
+  // (`meta` undefined, `canRemix` false). In an untyped key, Infinity passes through to the response.
   it('reads a meta number outside double range as Infinity, where Prisma threw', async () => {
     await expect(viaPrisma(prisma, 15)).rejects.toThrow(/number out of range/);
     const row = await getImageGenerationFields(kysely, 15);
