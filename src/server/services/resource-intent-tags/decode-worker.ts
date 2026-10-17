@@ -78,8 +78,15 @@ export function decodeTagIndexInWorker(
       return;
     }
     let settled = false;
-    const onAbort = () =>
-      finish(() => reject(new TagIndexDecodeUnavailableError('tag index decode aborted')));
+    // An abort rejects only once the worker has exited, so whoever waits on this knows the thread
+    // (and the buffers it holds) is gone.
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      void worker
+        .terminate()
+        .finally(() => reject(new TagIndexDecodeUnavailableError('tag index decode aborted')));
+    };
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;

@@ -113,7 +113,7 @@ const COLUMNS = Prisma.raw(
 
 /**
  * `p`, or a rejection as soon as `signal` aborts. A database read cannot be cancelled, so an aborted
- * load stops waiting for it rather than until it returns; the read holds no index memory.
+ * check stops waiting for it; the read holds no index memory.
  */
 export function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason);

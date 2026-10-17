@@ -144,6 +144,66 @@ describe('s3TagIndexObjects', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it.each([
+    ['fails with a premature close', true],
+    ['simply ends', false],
+  ])(
+    'a body the abort destroys, which then %s, is reported as the abort, not a short object',
+    async (_what, throws) => {
+      const abort = new AbortController();
+      let destroyed = false;
+      const body = {
+        destroy: () => {
+          destroyed = true;
+        },
+        async *[Symbol.asyncIterator]() {
+          yield Uint8Array.of(1, 2);
+          abort.abort();
+          await new Promise((r) => setTimeout(r, 0));
+          if (destroyed && throws)
+            throw Object.assign(new Error('premature close'), {
+              code: 'ERR_STREAM_PREMATURE_CLOSE',
+            });
+          if (destroyed) return;
+          yield Uint8Array.of(3, 4);
+        },
+      };
+      const s3 = {
+        send: vi.fn(async () => ({ ContentLength: 4, Body: body })),
+      } as unknown as S3Client;
+      const e = await objectsOver(s3)
+        .get('k', 4, abort.signal)
+        .catch((x: unknown) => x);
+      expect((e as Error).name).toBe('AbortError');
+      expect(e).not.toBeInstanceOf(TagIndexPayloadSizeError);
+    }
+  );
+
+  it('an abort that lands while the request is in flight allocates nothing for the body', async () => {
+    const abort = new AbortController();
+    const alloc = vi.spyOn(Buffer, 'allocUnsafe');
+    const s3 = {
+      send: vi.fn(async () => {
+        abort.abort();
+        return {
+          ContentLength: 4,
+          Body: {
+            destroy: vi.fn(),
+            async *[Symbol.asyncIterator]() {
+              yield* [];
+            },
+          },
+        };
+      }),
+    } as unknown as S3Client;
+    const e = await objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    expect((e as Error).name).toBe('AbortError');
+    expect(alloc.mock.calls.filter(([n]) => n === 4)).toEqual([]);
+    alloc.mockRestore();
+  });
+
   it('an abort stops reading a body that cannot be destroyed, at its next chunk', async () => {
     const abort = new AbortController();
     let yielded = 0;

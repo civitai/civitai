@@ -14,7 +14,6 @@ import {
   decompressTagIndex,
   decodeTagIndexData,
   encodeTagIndex,
-  TAG_INDEX_DECODE_CAPS,
   TAG_INDEX_MAX_INFLATED_BYTES,
   TAG_INDEX_MAX_PAYLOAD_BYTES,
   transferablesOf,
@@ -95,10 +94,6 @@ describe('decodeTagIndexInWorker', () => {
 
   it("enforces the caps it is handed by the main thread, not its bundle's copy", async () => {
     const payload = await encoded();
-    expect(TAG_INDEX_DECODE_CAPS).toEqual({
-      maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES,
-      maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES,
-    });
     const small = await decodeTagIndexInWorker(Buffer.from(payload), {
       caps: { maxPayloadBytes: 10, maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES },
     }).catch((e: Error) => e);
@@ -234,18 +229,33 @@ describe('decodeTagIndexInWorker failures through the store', () => {
   });
 
   it('an abort terminates the worker and rejects as unavailable', async () => {
-    const terminate = vi.spyOn(Worker.prototype, 'terminate');
+    let exited = false;
+    let exitedBeforeReject = false;
+    const realTerminate = Worker.prototype.terminate;
+    const terminate = vi
+      .spyOn(Worker.prototype, 'terminate')
+      .mockImplementation(function (this: Worker) {
+        return realTerminate.call(this).then((code) => {
+          exited = true;
+          return code;
+        });
+      });
     const abort = new AbortController();
     const hang = `require('worker_threads').parentPort.once('message', () => setInterval(() => {}, 1000));`;
     const pending = decodeTagIndexInWorker(Buffer.from(await encoded()), {
       source: hang,
       signal: abort.signal,
-    }).catch((x: unknown) => x);
+    }).catch((x: unknown) => {
+      exitedBeforeReject = exited;
+      return x;
+    });
     abort.abort();
     const e = await pending;
     expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
     expect((e as Error).message).toMatch(/aborted/);
     expect(terminate).toHaveBeenCalledTimes(1);
+    // The rejection waited for the worker to exit.
+    expect(exitedBeforeReject).toBe(true);
     terminate.mockRestore();
   });
 
