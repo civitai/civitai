@@ -22,9 +22,9 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts` — see Testing below.
 
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
-  endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. Its
-  parity is pinned at the level of the whole endpoint response — Kysely vs the original Prisma
-  `findUnique`, across a matrix of images and viewers — by
+  endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
+  endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs
+  the original Prisma `findUnique`, key order included, by
   `<civitai>/src/server/services/__tests__/image-generation-data.kysely-parity.test.ts`.
 
 ## Client access — executor injection
@@ -229,9 +229,10 @@ before**, which is the whole risk of porting a live read path. For that, run BOT
 SAME rows in the SAME database and deep-compare the results, rather than asserting the Kysely result against
 a hand-written expectation (which only re-states what the new code does). This lives in the consuming app,
 since the package itself must stay Prisma-free: `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts`
-for single-query ports, with its schema fixture alongside. A port inside a larger service function can
-instead compare the whole function's response, as
-`<civitai>/src/server/services/__tests__/image-generation-data.kysely-parity.test.ts` does. Cover the empty
+for single-query ports, with its schema fixture alongside. A port whose rows feed a larger service
+function can get its own suite, as
+`<civitai>/src/server/services/__tests__/image-generation-data.kysely-parity.test.ts` does. Compare at the
+row when everything downstream is a pure function of it. Cover the empty
 result, an empty input array (the `IN ()` guard), and cross-user/cross-entity isolation — a dropped
 predicate shows up as extra rows, not as an empty diff.
 

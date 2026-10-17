@@ -8,8 +8,7 @@ beforeEach(() => {
   harness.queries.length = 0;
 });
 
-// Pins the EXACT SQL. Behaviour parity with the Prisma read it replaced — the whole
-// getImageGenerationData response, compared against the Prisma original over the same rows — is
+// Pins the EXACT SQL. Parity with the Prisma read it replaced (row for row, key order included) is
 // covered against a real database by
 // src/server/services/__tests__/image-generation-data.kysely-parity.test.ts.
 describe('image.db', () => {
@@ -19,13 +18,13 @@ describe('image.db', () => {
     const { sql, parameters } = harness.lastQuery();
     expect(sql).toBe(
       'select "Image"."hideMeta", "Image"."generationProcess", "Image"."meta", "Image"."type", ' +
-        "(select coalesce(json_agg(agg), '[]') from (" +
-        'select "ImageTool"."notes", ' +
+        // Tools are ordered INSIDE the aggregate: json_agg does not promise a sorted subquery's order.
+        '(select coalesce(json_agg(json_build_object(\'notes\', "ImageTool"."notes", \'tool\', ' +
         'json_build_object(\'id\', "Tool"."id", \'name\', "Tool"."name", \'icon\', "Tool"."icon", ' +
-        '\'domain\', "Tool"."domain", \'priority\', "Tool"."priority") as "tool" ' +
+        '\'domain\', "Tool"."domain", \'priority\', "Tool"."priority")) ' +
+        'order by "Tool"."priority" asc), \'[]\') as "tools" ' +
         'from "ImageTool" inner join "Tool" on "Tool"."id" = "ImageTool"."toolId" ' +
-        'where "ImageTool"."imageId" = "Image"."id" order by "Tool"."priority" asc' +
-        ') as agg) as "tools", ' +
+        'where "ImageTool"."imageId" = "Image"."id") as "tools", ' +
         "(select coalesce(json_agg(agg), '[]') from (" +
         'select "ImageTechnique"."notes", ' +
         'json_build_object(\'id\', "Technique"."id", \'name\', "Technique"."name") as "technique" ' +
