@@ -1,5 +1,7 @@
 import type {
   MingAiToolkitTrainingInput,
+  MossImageBaseAiToolkitTrainingInput,
+  MossImageSftAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
@@ -36,7 +38,7 @@ import type {
  * commented out upstream. AIRs for AI-Toolkit-only ecosystems that upstream
  * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3) are copied as-is.
  * `flux3klein` (2026-10-15) is the one card with NO source entry — Flux.3 Klein
- * trains in the Training Studio only.
+ * trains in the Training Studio only. `mossimage` (2026-10-16) likewise.
  */
 
 export type LabelType = 'tag' | 'caption';
@@ -174,6 +176,37 @@ export const MODEL_CARDS: ModelCard[] = [
         baseModel: 'Flux.2 Klein 4B-base',
         ecosystem: 'flux2klein',
         modelVariant: '4b',
+      },
+    ],
+  },
+  {
+    type: 'mossimage',
+    name: 'MOSS Image',
+    code: 'MO',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with OpenMOSS MOSS Image.',
+    released: '2026-10-11',
+    flag: 'new',
+    flagKey: 'moss-image-training',
+    versions: [
+      {
+        key: 'mossimage_sft',
+        label: 'SFT',
+        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+        baseModel: 'MOSS Image',
+        ecosystem: 'mossImage' satisfies MossImageSftAiToolkitTrainingInput['ecosystem'],
+        modelVariant: 'sft' satisfies MossImageSftAiToolkitTrainingInput['modelVariant'],
+        isNew: true,
+      },
+      {
+        key: 'mossimage_base',
+        label: 'Base',
+        air: 'urn:air:mossimage_base:checkpoint:civitai:3005406@3409868',
+        baseModel: 'MOSS Image Base',
+        ecosystem: 'mossImage' satisfies MossImageBaseAiToolkitTrainingInput['ecosystem'],
+        modelVariant: 'base' satisfies MossImageBaseAiToolkitTrainingInput['modelVariant'],
+        isNew: true,
       },
     ],
   },
@@ -1067,6 +1100,31 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 2,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // Flux.2 Klein's defaults; the orchestrator fixes batch at 1 for mossImage.
+  mossimage_sft: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  mossimage_base: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
     noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
