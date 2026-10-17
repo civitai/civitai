@@ -27,6 +27,8 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
+  countReactions,
+  removeReactions,
   purgeAllContent,
   removeSocial,
   resolveRestriction,
@@ -76,6 +78,8 @@ const membershipCodeFail = (message: string) =>
 const creatorScoreFail = (message: string) =>
   fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
+const reactionsFail = (message: string) =>
+  fail(400, { scope: 'reactions' as const, error: message });
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
 const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
@@ -662,6 +666,30 @@ export const actions: Actions = {
     });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
+  }),
+
+  countReactions: requiresGrant('user.removeReactions', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return reactionsFail(input);
+    const result = await countReactions(input.userId);
+    if (!result.ok) return reactionsFail(result.error);
+    return { success: true, reactionCounts: result.counts };
+  }),
+
+  // The username confirmation is the endpoint's, as on deleteAccount.
+  removeReactions: requiresGrant('user.removeReactions', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ username: z.string().optional() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return reactionsFail(input);
+    const result = await removeReactions(input);
+    if (!result.ok) return reactionsFail(result.error);
+    return {
+      success: true,
+      reactionsRemoved: result.removed,
+      reactionsRemaining: result.remaining,
+    };
   }),
 
   // No mute id any more: the mute lives on the account, so the account id is the whole scope. The old

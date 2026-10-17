@@ -50,6 +50,10 @@ export const PERMISSIONS = [
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
   // `src/server/services/moderator-grants.ts`), so rename the two together.
   { id: 'user.deleteAccount', label: 'Delete an account on its owner’s behalf (erasure request)' },
+  // Same kind of right, narrower blast radius: the account stays, its reactions go. Checked again by
+  // the main app's `/api/mod/user/reactions` and `/remove-reactions` by this literal
+  // (`ModeratorGrantId`), so rename the two together.
+  { id: 'user.removeReactions', label: 'Remove all of an account’s reactions (erasure request)' },
   // Money: a membership code is worth up to six months of a paid tier. Checked again by the main
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.

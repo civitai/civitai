@@ -229,6 +229,7 @@ export type ModEndpoint =
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
+  | 'user/remove-reactions'
   | 'user/toggle-moderator'
   | 'user/unmute'
   | 'user/update-identity';
@@ -252,7 +253,8 @@ export const callModEndpoint = (
 export type ModReadEndpoint =
   | 'creator-services/deal-file-url'
   | 'creator-services/deal-files'
-  | 'creator-services/disputes';
+  | 'creator-services/disputes'
+  | 'user/reactions';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
 export const readModEndpoint = (
@@ -1494,6 +1496,56 @@ export async function deleteAccount(input: {
     });
 
   return { ok: true };
+}
+
+/** Rows per reaction table, keyed by table name, as the main app reports them. */
+export type ReactionCounts = Record<string, number>;
+
+const isCounts = (v: unknown): v is ReactionCounts =>
+  !!v &&
+  typeof v === 'object' &&
+  !Array.isArray(v) &&
+  Object.values(v).every((n) => typeof n === 'number');
+
+export async function countReactions(
+  userId: number
+): Promise<{ ok: true; counts: ReactionCounts } | { ok: false; error: string }> {
+  const result = await readModEndpoint('user/reactions', { userId }, 'Count reactions');
+  if (!result.ok) return { ok: false, error: result.error };
+  const { counts } = result.body;
+  if (!isCounts(counts))
+    return { ok: false, error: 'Count reactions returned an unexpected answer.' };
+  return { ok: true, counts };
+}
+
+// Re-running the removal is safe (it deletes whatever is left), so a lost response sends the operator
+// to count again rather than warning them off a retry.
+const REMOVE_REACTIONS_MAY_HAVE_COMPLETED =
+  'Could not confirm the removal. Count the reactions again to see what is left.';
+
+/** The endpoint writes its own ModActivity row, as `user/delete` does, so no `logAction` here. */
+export async function removeReactions(input: {
+  userId: number;
+  /** REQUIRED by the endpoint for any account that has one, as on `deleteAccount`. */
+  username?: string;
+}): Promise<
+  { ok: true; removed: ReactionCounts; remaining: number } | { ok: false; error: string }
+> {
+  const body: Record<string, unknown> = { userId: input.userId };
+  if (input.username) body.username = input.username;
+
+  const result = await callModEndpoint('user/remove-reactions', body, 'Remove reactions', 60_000);
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, REMOVE_REACTIONS_MAY_HAVE_COMPLETED) };
+
+  const { removed, remaining, auditRecorded } = result.body;
+  if (!isCounts(removed) || typeof remaining !== 'number')
+    return { ok: false, error: REMOVE_REACTIONS_MAY_HAVE_COMPLETED };
+  if (auditRecorded === false)
+    console.error('[user-actions] reactions removed but the ModActivity row failed', {
+      userId: input.userId,
+    });
+  return { ok: true, removed, remaining };
 }
 
 // PROFILE TEXT (Retool's UpdateUserDeets / UpdateUserProfile). The moderation case is a bio, profile
