@@ -284,7 +284,7 @@ export type TagIndexKindData = {
 
 export type TagIndexData = {
   vocabVersion: string;
-  /** Not derived from `ecosystems`, so a decoder can tell if one was dropped after counting. */
+  /** Not derived from `ecosystems`, so `tagIndexFromData` can tell if one was dropped after counting. */
   rowsWithEcosystem: number;
   vocabulary: readonly (TagVocabularyEntry & { users: number })[];
   ecosystems: { name: string; users: number; observations: number }[];

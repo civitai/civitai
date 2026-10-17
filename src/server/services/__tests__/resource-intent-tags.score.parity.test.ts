@@ -191,7 +191,7 @@ describe('resource-intent-tags scorer parity with the prototype', () => {
     expect(r.candidates.length).toBe(c.candidateCount);
     expect(r.candidates.map((x) => x.modelId)).toEqual(expected.map(([m]) => m));
     r.candidates.forEach((x, i) => expect(x.score).toBeCloseTo(expected[i][1], 12));
-    // Through the snapshot: the same list, scores as float32 values carry them.
+    // Through the float32 snapshot: same order, scores to 1e-7.
     const d = scoreTagRequest(decoded, {
       prompt: c.prompt,
       kind: c.kind,

@@ -108,6 +108,8 @@ describe('resource-intent-tags sources', () => {
     expect(seen[0].sql).toContain('AND NOT m.poi AND NOT m.minor');
     const hidden = `p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")`;
     expect(seen[1].sql.split(hidden).length - 1).toBe(2);
+    const flaggedAttachment = 'WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor)';
+    expect(seen[1].sql.split(flaggedAttachment).length - 1).toBe(2);
   });
 
   it('samples each hour by its first minutes, inside the window', () => {

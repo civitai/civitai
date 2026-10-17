@@ -209,11 +209,19 @@ export async function readPostedSample(
 
 const MODEL_BATCH = 1000;
 
+/** The prototype's content-image predicate, plus no attached model flagged POI or minor. */
+const CONTENT_IMAGE_ELIGIBLE =
+  Prisma.raw(`AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0
+  AND i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
+  AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false
+  AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" fr JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId"
+                  JOIN "Model" fm ON fm.id = fmv."modelId" WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor))`);
+
 /**
  * Each unflagged model's content sources: name, description, Civitai tags, every version's base model
  * and trigger words, and the prompts of rated images on its newest versions created before `end` — the
  * creator's own showcase posts, and one image from each of other users' newest gallery posts. Images
- * pass the prototype's content predicate; posts must be neither Private nor Unsearchable.
+ * pass `CONTENT_IMAGE_ELIGIBLE`; posts must be neither Private nor Unsearchable.
  */
 export async function readModelContent(
   query: TagRawQuery,
@@ -250,9 +258,8 @@ export async function readModelContent(
          FROM "Post" p JOIN "Image" i ON i."postId" = p.id
          WHERE p."modelVersionId" = vs.v AND p."userId" = vs.cu AND p."publishedAt" IS NOT NULL
            AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
-           AND p."publishedAt" < ${end} AND i."createdAt" < ${end} AND i."hideMeta" = false
-           AND length(i.meta->>'prompt') > 0 AND i.ingestion = 'Scanned' AND i."tosViolation" = false
-           AND i."needsReview" IS NULL AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false
+           AND p."publishedAt" < ${end} AND i."createdAt" < ${end}
+           ${CONTENT_IMAGE_ELIGIBLE}
          ORDER BY i.id DESC LIMIT ${C.showcasePerVersion}::int)
         UNION ALL
         (SELECT false, i.meta->>'prompt'
@@ -261,9 +268,7 @@ export async function readModelContent(
                  AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
                ORDER BY p.id DESC LIMIT ${C.galleryPostsPerVersion}::int) pp
          CROSS JOIN LATERAL (SELECT i.* FROM "Image" i WHERE i."postId" = pp.id AND i."createdAt" < ${end}
-                 AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0 AND i.ingestion = 'Scanned'
-                 AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
-                 AND i.minor = false AND i.poi = false ORDER BY i.id LIMIT 1) i)
+                 ${CONTENT_IMAGE_ELIGIBLE} ORDER BY i.id LIMIT 1) i)
       ) x`)) as { modelId: number; showcase: boolean; prompt: string }[];
     const prompts = new Map<number, { showcase: string[]; gallery: string[] }>();
     for (const im of images) {

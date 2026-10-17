@@ -1,3 +1,4 @@
+import { endianness } from 'os';
 import { promisify } from 'util';
 import zlib from 'zlib';
 import { Packr } from 'msgpackr';
@@ -16,14 +17,13 @@ import type {
  * the spec hash in the header. Lossless against the build except for float32 values (idf stays
  * float64): content scores, which the build rounds to 4 decimals, travel as exact integers c·10⁴;
  * ascending ids as deltas; CSR pointers as row lengths; a pair fit only where the pair has one, under
- * a presence bitmap; every multi-byte array byte-plane shuffled, which is what lets brotli compress
- * them. `tagIndexFromData` refuses any index that breaks a precondition the scorer (`./score`)
+ * a presence bitmap; every multi-byte array byte-plane shuffled (for brotli). `tagIndexFromData` refuses any index that breaks a precondition the scorer (`./score`)
  * relies on, decoded or built in memory.
  */
 
 export const TAG_INDEX_PAYLOAD_FORMAT = 'resource-intent-tags/1';
 export const TAG_INDEX_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
-/** About 2.8× the 183.5 MiB a real build packed to (2026-10-17): bounds a pod's decode transient. */
+/** Bounds the inflate buffer; keep it well above a real build's packed size (see the doc). */
 const TAG_INDEX_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
 const BROTLI_QUALITY = 9;
 const C_SCALE = 10_000;
@@ -54,6 +54,10 @@ function shuffle(a: Wide): Buffer {
   return out;
 }
 
+const LITTLE_ENDIAN = endianness() === 'LE';
+const viewOf = (le: Uint8Array, Ctor: WideCtor) =>
+  new (Ctor as unknown as new (b: ArrayBuffer) => Wide)(le.buffer as ArrayBuffer);
+
 function unshuffle<T extends Wide>(bin: unknown, Ctor: WideCtor, what: string): T {
   if (!(bin instanceof Uint8Array)) fail(`${what} is not binary`);
   const b = bin as Uint8Array;
@@ -62,6 +66,8 @@ function unshuffle<T extends Wide>(bin: unknown, Ctor: WideCtor, what: string): 
   const n = b.length / size;
   const le = new Uint8Array(b.length);
   for (let k = 0; k < size; k++) for (let i = 0; i < n; i++) le[i * size + k] = b[k * n + i];
+  // `le` is a fresh, aligned buffer: on a little-endian host it already is the array.
+  if (LITTLE_ENDIAN) return viewOf(le, Ctor) as T;
   const out = new Ctor(n) as T;
   const dv = new DataView(le.buffer);
   if (out instanceof Uint16Array) for (let i = 0; i < n; i++) out[i] = dv.getUint16(i * 2, true);
@@ -115,6 +121,10 @@ function undeltas(ptr: Uint32Array, d: Uint32Array, what: string): Uint32Array {
 const single = (n: number) => Uint32Array.of(0, n);
 
 function encodeSparse(s: SparseByKey, integer: boolean) {
+  if (integer)
+    for (const v of s.value)
+      if (!Number.isInteger(v) || v < 0 || v > 0xffffffff)
+        throw new Error(`tag index: count ${v} is not a uint32`);
   return {
     keys: shuffle(deltas(single(s.keys.length), s.keys)),
     len: shuffle(lengths(s.ptr)),
@@ -132,7 +142,7 @@ function decodeSparse(raw: Record<string, unknown>, what: string, integer: boole
     ptr,
     resource: undeltas(ptr, u32(raw.resource, `${what} resource`), what),
     value: integer
-      ? Float32Array.from(u32(raw.value, `${what} value`))
+      ? new Float32Array(u32(raw.value, `${what} value`))
       : unshuffle<Float32Array>(raw.value, Float32Array, `${what} value`),
   };
 }
@@ -140,7 +150,10 @@ function decodeSparse(raw: Record<string, unknown>, what: string, integer: boole
 function encodeKind(k: TagIndexKindData) {
   const { ptr, resource, c, fit } = k.postings;
   const present = new Uint8Array(Math.ceil(fit.length / 8));
-  const fits: number[] = [];
+  let nFits = 0;
+  for (const v of fit) if (!Number.isNaN(v)) nFits++;
+  const fits = new Float32Array(nFits);
+  let j = 0;
   const cInt = new Uint16Array(c.length);
   for (let i = 0; i < c.length; i++) {
     const scaled = Math.round(c[i] * C_SCALE);
@@ -151,7 +164,7 @@ function encodeKind(k: TagIndexKindData) {
     cInt[i] = scaled;
     if (!Number.isNaN(fit[i])) {
       present[i >> 3] |= 1 << (i & 7);
-      fits.push(fit[i]);
+      fits[j++] = fit[i];
     }
   }
   return {
@@ -164,7 +177,7 @@ function encodeKind(k: TagIndexKindData) {
       resource: shuffle(deltas(ptr, resource)),
       c: shuffle(cInt),
       fitPresent: Buffer.from(present),
-      fit: shuffle(Float32Array.from(fits)),
+      fit: shuffle(fits),
     },
     ecosystemUsers: encodeSparse(k.ecosystemUsers, true),
     userByTag: encodeSparse(k.userByTag, false),
@@ -283,7 +296,7 @@ export async function decompressTagIndex(payload: Uint8Array): Promise<Buffer> {
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
-/** The arrays of a packed snapshot, unvalidated: `tagIndexFromData` validates. */
+/** The arrays of a packed snapshot, checked for shape only; `tagIndexFromData` validates the index. */
 export function unpackTagIndexData(raw: Uint8Array): {
   data: TagIndexData;
   specHash: string;

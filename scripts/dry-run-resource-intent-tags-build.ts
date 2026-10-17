@@ -242,20 +242,49 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       'portrait of an elderly fisherman, dramatic lighting, film photo',
       'isometric fantasy castle game asset, pixel art',
     ];
-    const lat: number[] = [];
-    const statuses: string[] = [];
-    for (let rep = 0; rep < 5; rep++)
-      for (const prompt of synthetic) {
-        const t = performance.now();
-        const r = scoreTagRequest(decoded.index, { prompt, kind: 'addon', browsingLevel: 3 });
-        lat.push(performance.now() - t);
-        if (!rep) statuses.push(`${r.status}:${r.candidates.length}`);
+    // Worst case too: prompts made of the tags with the longest posting lists, at every browsing
+    // level, both kinds. The prompts are built in memory and never printed.
+    const vocabKeys = decoded.index.vocabulary.map((t) => t.key);
+    const heavy: string[] = [];
+    for (const kind of ['addon', 'checkpoint'] as const) {
+      const ptr = decoded.index.kinds[kind].postings.ptr;
+      const longest = vocabKeys
+        .map((_, t) => t)
+        .sort((x, y) => ptr[y + 1] - ptr[y] - (ptr[x + 1] - ptr[x]))
+        .slice(0, 20);
+      for (let i = 0; i < 20; i += 5)
+        heavy.push(
+          longest
+            .slice(i, i + 5)
+            .map((t) => vocabKeys[t])
+            .join(', ')
+        );
+    }
+    const probes = [
+      ...synthetic.map((prompt) => ({ prompt, browsingLevel: 3, set: 'synthetic' })),
+      ...heavy.map((prompt) => ({ prompt, browsingLevel: 31, set: 'heavy' })),
+    ];
+    for (const set of ['synthetic', 'heavy'])
+      for (const kind of ['addon', 'checkpoint'] as const) {
+        const lat: number[] = [];
+        const statuses: Record<string, number> = {};
+        for (let rep = 0; rep < 5; rep++)
+          for (const p of probes.filter((x) => x.set === set)) {
+            const t = performance.now();
+            const r = scoreTagRequest(decoded.index, {
+              prompt: p.prompt,
+              kind,
+              browsingLevel: p.browsingLevel,
+            });
+            lat.push(performance.now() - t);
+            if (!rep) statuses[r.status] = (statuses[r.status] ?? 0) + 1;
+          }
+        log(`score.${set}.${kind}`, {
+          requests: lat.length,
+          ms: quantiles(lat.map((x) => Math.round(x * 100) / 100)),
+          statuses,
+        });
       }
-    log('score', {
-      requests: lat.length,
-      ms: quantiles(lat.map((x) => Math.round(x * 100) / 100)),
-      statusCandidates: statuses,
-    });
   } finally {
     await ch.close();
     await dbRead.$disconnect();

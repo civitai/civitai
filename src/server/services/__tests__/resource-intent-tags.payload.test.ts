@@ -13,12 +13,17 @@ import {
 } from '~/server/services/resource-intent-tags/payload';
 import { RESOURCE_INTENT_TAGS_SPEC } from '~/server/services/resource-intent-tags/spec';
 
-/** A small build: three tags (one explicit, two near each other), three ecosystems, two kinds. */
+/**
+ * A small build: four tags (one explicit, one near two others), three ecosystems, two kinds. Several id
+ * rows are not fixed points of delta coding (a near set [2, 3], a resource published for [1, 2], a
+ * posting list [0, 1, 2]), so an array stored without its deltas cannot round-trip.
+ */
 function smallData() {
   const tags = [
-    { key: 'amber kite', idf: Math.log(100 / 30), users: 30, explicit: false, near: [1] },
-    { key: 'brass owl', idf: Math.log(100 / 60), users: 60, explicit: true, near: [0] },
-    { key: 'cobalt fern', idf: Math.log(100 / 90), users: 90, explicit: false, near: [] },
+    { key: 'amber kite', idf: Math.log(100 / 30), users: 30, explicit: false, near: [2, 3] },
+    { key: 'brass owl', idf: Math.log(100 / 60), users: 60, explicit: true, near: [] },
+    { key: 'cobalt fern', idf: Math.log(100 / 90), users: 90, explicit: false, near: [0] },
+    { key: 'dusk harbor', idf: Math.log(100 / 70), users: 70, explicit: false, near: [0] },
   ];
   const acc = new TagIndexAccumulator(
     { vocabVersion: 'c'.repeat(64), tags, idByKey: new Map(tags.map((t, i) => [t.key, i])) },
@@ -39,6 +44,14 @@ function smallData() {
     type: 'LORA',
     name: 'Brass Owl, Cobalt Fern',
     baseModels: ['E3'],
+    showcase: [],
+  });
+  acc.addModel({
+    ...content,
+    modelId: 11,
+    type: 'LORA',
+    name: 'Amber Kite, Cobalt Fern, Dusk Harbor',
+    baseModels: ['E2', 'E3'],
     showcase: [],
   });
   acc.addModel({
@@ -110,10 +123,18 @@ describe('resource-intent-tags snapshot codec', () => {
       data.vocabulary.map((t) => [t.key, t.idf, t.explicit, t.near])
     );
     expect(index.ecosystems).toEqual(data.ecosystems);
+    expect(data.vocabulary[0].near).toEqual([2, 3]);
+    const p = data.kinds.addon.postings;
+    expect([...p.resource.subarray(p.ptr[2], p.ptr[3])]).toEqual([0, 1, 2]);
     for (const kind of ['addon', 'checkpoint'] as const) {
       const k = data.kinds[kind];
       const d = index.kinds[kind];
       expect(d.modelIds).toEqual([...k.modelIds]);
+      expect(d.ecosystems).toEqual(
+        d.modelIds.map((_, i) => [
+          ...k.ecosystemIds.subarray(k.ecosystemPtr[i], k.ecosystemPtr[i + 1]),
+        ])
+      );
       expect([...d.fit]).toEqual([...k.fit].map(Math.fround));
       expect([...d.postings.ptr]).toEqual([...k.postings.ptr]);
       expect([...d.postings.resource]).toEqual([...k.postings.resource]);
@@ -149,10 +170,26 @@ describe('resource-intent-tags snapshot codec', () => {
     ]);
   });
 
-  it('refuses to encode a content score that is not a multiple of 1/10000', async () => {
+  it('carries a content score of exactly 1', async () => {
     const d = structuredClone(data);
-    d.kinds.addon.postings.c[0] = 0.12345;
-    await expect(encodeTagIndex(d, 'd'.repeat(64))).rejects.toThrow('not a multiple of 1/10000');
+    d.kinds.addon.postings.c[0] = 1;
+    const { index } = await decodeTagIndex(await encodeTagIndex(d, 'd'.repeat(64)));
+    expect(index.kinds.addon.postings.c[0]).toBe(1);
+  });
+
+  it.each([0.12345, 1.5, -0.1])(
+    'refuses to encode a content score %s that is not a multiple of 1/10000 in [0, 1]',
+    async (c) => {
+      const d = structuredClone(data);
+      d.kinds.addon.postings.c[0] = c;
+      await expect(encodeTagIndex(d, 'd'.repeat(64))).rejects.toThrow('not a multiple of 1/10000');
+    }
+  );
+
+  it('refuses to encode a popularity count that is not a uint32', async () => {
+    const d = structuredClone(data);
+    d.kinds.addon.ecosystemUsers.value[0] = 2.5;
+    await expect(encodeTagIndex(d, 'd'.repeat(64))).rejects.toThrow('is not a uint32');
   });
 
   it('refuses a payload above the size cap before decompressing it', async () => {
@@ -184,13 +221,21 @@ describe('resource-intent-tags snapshot codec', () => {
     ],
     [
       'an explicit flag that is neither 0 nor 1',
-      (d) => (d.vocabulary.explicit = Buffer.from([2, 0, 0])),
+      (d) => (d.vocabulary.explicit = Buffer.from([2, 0, 0, 0])),
       'explicit flag',
     ],
     ['a field that is not binary', (d) => (d.kinds.addon.fit = [1, 2]), 'addon fit is not binary'],
     [
+      'a fit presence bitmap of the wrong length',
+      (d) => {
+        const f = d.kinds.addon.postings.fitPresent;
+        d.kinds.addon.postings.fitPresent = Buffer.concat([f, Buffer.alloc(1)]);
+      },
+      'addon postings fit presence',
+    ],
+    [
       'a near pointer of the wrong length',
-      (d) => (d.vocabulary.nearLen = Buffer.from([1, 1, 0, 0, 0, 0, 0, 0])),
+      (d) => (d.vocabulary.nearLen = Buffer.from([2, 2, 0, 0, 0, 0, 0, 0])),
       'near pointer length',
     ],
   ])('refuses %s on the wire', (_name, edit, message) => {
@@ -198,17 +243,17 @@ describe('resource-intent-tags snapshot codec', () => {
   });
 
   const n = (d: TagIndexData) => d.kinds.addon.modelIds.length;
-  it.each<[string, (d: TagIndexData) => void, string]>([
+  it.each<[string, (d: TagIndexData) => void, string | RegExp]>([
     ['an empty vocabulary', (d) => (d.vocabulary = []), 'vocabulary keys'],
     [
       'vocabulary keys out of order',
       (d) => {
-        d.vocabulary = [d.vocabulary[1], d.vocabulary[0], d.vocabulary[2]];
+        d.vocabulary = [d.vocabulary[1], d.vocabulary[0], ...d.vocabulary.slice(2)];
       },
       'vocabulary key order',
     ],
     ['a non-finite idf', (d) => (d.vocabulary[2].idf = NaN), 'idf not finite'],
-    ['a near id out of range', (d) => (d.vocabulary[2].near = [3]), 'near id out of range'],
+    ['a near id out of range', (d) => (d.vocabulary[2].near = [4]), 'near id out of range'],
     [
       'a near set holding its own tag',
       (d) => (d.vocabulary[0].near = [0]),
@@ -320,7 +365,7 @@ describe('resource-intent-tags snapshot codec', () => {
       'a user-side key out of range',
       (d) => {
         const k = d.kinds.addon.userByTag.keys;
-        k[k.length - 1] = 3;
+        k[k.length - 1] = 4;
       },
       'addon userByTag key id out of range',
     ],
@@ -328,9 +373,50 @@ describe('resource-intent-tags snapshot codec', () => {
       'user-side keys out of order',
       (d) => {
         const k = d.kinds.addon.userByEcosystem.keys;
-        d.kinds.addon.userByEcosystem.keys = Uint32Array.from([k[0], ...k]);
+        [k[0], k[1]] = [k[1], k[0]];
       },
-      'addon userByEcosystem',
+      'addon userByEcosystem key id order',
+    ],
+    ['an empty vocabulary key', (d) => (d.vocabulary[3].key = ''), /vocabulary key$/],
+    ['an empty ecosystem name', (d) => (d.ecosystems[0].name = ''), /ecosystem name$/],
+    [
+      'a pointer that does not start at 0',
+      (d) => (d.kinds.addon.postings.ptr[0] = 1),
+      'addon postings pointer bounds',
+    ],
+    [
+      'a decreasing pointer',
+      (d) => {
+        const p = d.kinds.addon.postings.ptr;
+        p[1] = p[p.length - 1];
+      },
+      'addon postings pointer order',
+    ],
+    [
+      '(tag, ecosystem) arrays of different lengths',
+      (d) => {
+        d.tagEcosystemCounts.count = d.tagEcosystemCounts.count.slice(1);
+      },
+      'tagEcosystemCounts arrays',
+    ],
+    [
+      'a (tag, ecosystem) count below 1',
+      (d) => (d.tagEcosystemCounts.count[0] = 0),
+      'tagEcosystemCounts count',
+    ],
+    [
+      'postings arrays of different lengths',
+      (d) => {
+        d.kinds.addon.postings.c = d.kinds.addon.postings.c.slice(1);
+      },
+      'addon postings arrays',
+    ],
+    [
+      'user-side arrays of different lengths',
+      (d) => {
+        d.kinds.addon.userByTag.value = d.kinds.addon.userByTag.value.slice(1);
+      },
+      'addon userByTag arrays',
     ],
     [
       'a non-positive user-side share',
