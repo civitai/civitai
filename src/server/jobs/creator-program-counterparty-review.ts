@@ -19,7 +19,7 @@ import { createJob } from './job';
 const SYSTEM_USER_ID = constants.system.user.id;
 const { COUNTERPARTY_REVIEW_MIN, COUNTERPARTY_REVIEW_WARNINGS } = REDIS_SYS_KEYS.CREATOR_PROGRAM;
 
-async function readMinimum() {
+export async function readMinimum() {
   const value = Number(decodeRedisString(await sysRedis.get(COUNTERPARTY_REVIEW_MIN)));
   return Number.isFinite(value) && value > 0 ? value : null;
 }
@@ -39,7 +39,7 @@ async function setWarning(userId: number, record: WarningRecord) {
 }
 
 /** The same 1:1 chat from the Civitai account that staff outreach uses. */
-async function sendWarning(member: { id: number; username: string | null }) {
+export async function sendWarning(member: { id: number; username: string | null }) {
   const chat = await upsertChat({
     userIds: [SYSTEM_USER_ID, member.id],
     userId: SYSTEM_USER_ID,
