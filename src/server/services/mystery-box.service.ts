@@ -20,17 +20,18 @@ import {
 } from '~/server/services/item.service';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import {
+  assertConfirmedPrice,
   beginShopPurchase,
   chargeForShopPurchase,
   chargeRetryOptions,
-  claimShopPurchase,
+  claimShopPurchaseUnderLock,
+  countPendingShopPurchaseClaims,
+  findShopPurchaseClaim,
   markClaimPaid,
   purchaseStateUnknown,
   refundCallOptions,
   refundClaimedCharge,
-  resumeShopPurchase,
   runPurchaseChecks,
-  SHOP_PURCHASE_CLAIM_STATUS,
   shopPurchaseTransactionId,
 } from '~/server/services/shop-purchase-charge';
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
@@ -67,11 +68,15 @@ export async function getMysteryBoxBlockedRegions(): Promise<string[]> {
   return value.map((code) => code.trim().toUpperCase());
 }
 
-/** A visitor with no known country is blocked whenever any country is. */
+/**
+ * A visitor with no known country is blocked whenever any country is. Known means an ISO 3166
+ * alpha-2 code: the CDN also sends non-country placeholders (XX for unknown, T1 for Tor).
+ */
 export function isMysteryBoxBlockedIn(countryCode: string | null | undefined, blocked: string[]) {
   if (!blocked.length) return false;
-  if (!countryCode) return true;
-  return blocked.includes(countryCode.toUpperCase());
+  const code = countryCode?.trim().toUpperCase();
+  if (!code || !/^[A-Z]{2}$/.test(code) || code === 'XX') return true;
+  return blocked.includes(code);
 }
 
 export type BoxPoolEntry = {
@@ -140,6 +145,10 @@ async function assertBoxSellable(client: Prisma.TransactionClient, boxDefinition
 }
 
 type BoxParams = { event?: unknown };
+
+// How long a purchase still settling counts against what is left for its buyer. A purchase settles
+// in seconds; one older than this is stuck, and is reconciled by hand rather than held against them.
+const PENDING_CLAIM_RESERVES_MS = 15 * 60 * 1000;
 
 export type MysteryBoxShopItem = {
   id: number;
@@ -260,17 +269,17 @@ export async function purchaseMysteryBox({
       shopItem.availableQuantity !== null &&
       shopItem._count.purchases >= shopItem.availableQuantity
     )
-      throw throwBadRequestError('This box is sold out');
+      throw throwBadRequestError('This box is out of stock');
     if (shopItem.availableFrom && shopItem.availableFrom > new Date())
       throw throwBadRequestError('This box is not available yet');
     if (shopItem.availableTo && shopItem.availableTo < new Date())
       throw throwBadRequestError('This box is no longer available');
 
-    const confirmed = existingClaim ? existingClaim.amount : expectedUnitAmount;
-    if (confirmed !== undefined && confirmed !== shopItem.unitAmount)
-      throw throwBadRequestError(
-        `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
-      );
+    assertConfirmedPrice({
+      existingClaim,
+      expectedAmount: expectedUnitAmount,
+      amountDue: shopItem.unitAmount,
+    });
 
     // The buyer was shown this version's contents and odds.
     if (expectedVersion !== box.version)
@@ -283,16 +292,24 @@ export async function purchaseMysteryBox({
 
   const claim = await dbWrite.$transaction(async (tx) => {
     await lockItemHolder(tx, userId);
-    if (!chargedBefore)
+    // A request with the same key that claimed while this one was on its way here: its purchase
+    // was checked when it claimed, and resuming it answers 'already completed' once it is paid.
+    const sameKeyClaim = existingClaim ? null : await findShopPurchaseClaim(transactionId, tx);
+    if (!chargedBefore && !sameKeyClaim)
       await runPurchaseChecks(pendingClaim, async () => {
         await assertBoxSellable(tx, box.id);
         const left = (await getBoxPoolForUser(tx, { boxDefinitionId: box.id, userId, team }))
           .length;
         const held = await countHeldItems(tx, { itemDefinitionId: box.id, userId });
-        const pending = await countPendingBoxClaims(tx, {
-          boxDefinitionId: box.id,
+        const listings = await tx.cosmeticShopItem.findMany({
+          where: { itemDefinitionId: box.id },
+          select: { id: true },
+        });
+        const pending = await countPendingShopPurchaseClaims(tx, {
           userId,
+          shopItemIds: listings.map((listing) => listing.id),
           exceptTransactionId: transactionId,
+          since: new Date(Date.now() - PENDING_CLAIM_RESERVES_MS),
         });
         if (left <= held + pending)
           throw throwBadRequestError(
@@ -301,11 +318,14 @@ export async function purchaseMysteryBox({
               : "You've collected everything in this box"
           );
       });
-    // The claim is written on its own connection and commits at once; this transaction only holds
-    // the lock until it has. A competing purchase waiting on the lock then counts it as pending.
-    return existingClaim
-      ? resumeShopPurchase(claimContext(existingClaim.amount), existingClaim, expectedUnitAmount)
-      : claimShopPurchase(claimContext(shopItem.unitAmount), expectedUnitAmount);
+    // Committed with the checks above, before the lock is released: a competing purchase waiting on
+    // the lock then counts it as pending.
+    return claimShopPurchaseUnderLock(
+      tx,
+      claimContext(shopItem.unitAmount),
+      existingClaim ?? sameKeyClaim,
+      expectedUnitAmount
+    );
   });
 
   const unitAmount = claim.amount;
@@ -371,27 +391,4 @@ export async function purchaseMysteryBox({
     );
     throw throwBadRequestError('Failed to purchase box');
   }
-}
-
-/** This user's unsettled purchases of any listing selling this box, other than the current one. */
-async function countPendingBoxClaims(
-  tx: Prisma.TransactionClient,
-  {
-    boxDefinitionId,
-    userId,
-    exceptTransactionId,
-  }: { boxDefinitionId: number; userId: number; exceptTransactionId: string }
-) {
-  const listings = await tx.cosmeticShopItem.findMany({
-    where: { itemDefinitionId: boxDefinitionId },
-    select: { id: true },
-  });
-  return tx.cosmeticShopPurchaseClaim.count({
-    where: {
-      userId,
-      status: SHOP_PURCHASE_CLAIM_STATUS.pending,
-      shopItemId: { in: listings.map((listing) => listing.id) },
-      transactionId: { not: exceptTransactionId },
-    },
-  });
 }

@@ -60,6 +60,7 @@ import {
 } from '../mystery-box.service';
 import { ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
+import { PURCHASE_ALREADY_COMPLETED_MESSAGE } from '~/shared/constants/cosmetic-shop.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   installShopPurchaseClaimFake,
@@ -145,6 +146,32 @@ const p2002 = () =>
     clientVersion: 'test',
   });
 
+type ContentWhere = {
+  boxDefinitionId: number;
+  enabled: boolean;
+  reward?: { type: { not?: string; equals?: string } | string };
+};
+type ContentSelect = {
+  id?: boolean;
+  tierId?: boolean;
+  rewardDefinitionId?: boolean;
+  reward?: {
+    select: {
+      type?: boolean;
+      cosmeticId?: boolean;
+      cosmetic?: { select: { data?: boolean } };
+    };
+  };
+};
+const matchesContent = (where: ContentWhere) => (c: Content) => {
+  if (c.boxDefinitionId !== where.boxDefinitionId || c.enabled !== where.enabled) return false;
+  const type = where.reward?.type;
+  if (type === undefined) return true;
+  if (typeof type === 'string') return c.reward.type === type;
+  if (type.not !== undefined) return c.reward.type !== type.not;
+  return c.reward.type === type.equals;
+};
+
 const makeTx = (onLock: () => Promise<void>) => ({
   $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
     if (strings.join('?').includes('pg_advisory_xact_lock')) {
@@ -154,19 +181,30 @@ const makeTx = (onLock: () => Promise<void>) => ({
     return 1;
   },
   boxContent: {
-    findMany: async ({ where }: { where: { boxDefinitionId: number; enabled: boolean } }) => {
+    // Projects `select` the way Prisma does, so a field the service forgets to select is missing here
+    // too rather than handed over whole.
+    findMany: async ({ where, select }: { where: ContentWhere; select: ContentSelect }) => {
       world.log.push('read:contents');
-      return world.contents.filter(
-        (c) => c.boxDefinitionId === where.boxDefinitionId && c.enabled === where.enabled
-      );
+      const reward = select.reward?.select;
+      return world.contents.filter(matchesContent(where)).map((c) => ({
+        ...(select.id ? { id: c.id } : {}),
+        ...(select.tierId ? { tierId: c.tierId } : {}),
+        ...(select.rewardDefinitionId ? { rewardDefinitionId: c.rewardDefinitionId } : {}),
+        ...(reward
+          ? {
+              reward: {
+                ...(reward.type ? { type: c.reward.type } : {}),
+                ...(reward.cosmeticId ? { cosmeticId: c.reward.cosmeticId } : {}),
+                ...(reward.cosmetic?.select?.data
+                  ? { cosmetic: c.reward.cosmetic && { data: c.reward.cosmetic.data } }
+                  : {}),
+              },
+            }
+          : {}),
+      }));
     },
-    count: async ({ where }: { where: { boxDefinitionId: number; enabled: boolean } }) =>
-      world.contents.filter(
-        (c) =>
-          c.boxDefinitionId === where.boxDefinitionId &&
-          c.enabled === where.enabled &&
-          c.reward.type !== 'cosmetic'
-      ).length,
+    count: async ({ where }: { where: ContentWhere }) =>
+      world.contents.filter(matchesContent(where)).length,
   },
   userCosmetic: {
     findMany: async ({ where }: { where: { userId: number; cosmeticId: { in: number[] } } }) =>
@@ -191,10 +229,15 @@ const makeTx = (onLock: () => Promise<void>) => ({
     },
   },
   cosmeticShopItem: {
-    findMany: async () => [{ id: SHOP_ITEM_ID }],
+    findMany: async ({ where }: { where: { itemDefinitionId?: number } }) =>
+      where.itemDefinitionId === BOX_ID ? [{ id: SHOP_ITEM_ID }] : [],
   },
   cosmeticShopPurchaseClaim: {
     ...claims.txDelegate,
+    create: async (args: Parameters<typeof claims.txDelegate.create>[0]) => {
+      world.log.push('claim:create');
+      return claims.txDelegate.create(args);
+    },
     updateMany: async (args: Parameters<typeof claims.txDelegate.updateMany>[0]) => {
       world.log.push(`claim:${args.data.status ?? 'update'}`);
       return claims.txDelegate.updateMany(args);
@@ -207,6 +250,7 @@ const makeTx = (onLock: () => Promise<void>) => ({
         status: string;
         shopItemId: { in: number[] };
         transactionId: { not: string };
+        createdAt: { gte: Date };
       };
     }) => {
       world.log.push('read:pending');
@@ -215,7 +259,9 @@ const makeTx = (onLock: () => Promise<void>) => ({
           c.userId === where.userId &&
           c.status === where.status &&
           where.shopItemId.in.includes(c.shopItemId) &&
-          c.transactionId !== where.transactionId.not
+          c.transactionId !== where.transactionId.not &&
+          // The fake stamps no createdAt; an unstamped claim was made just now.
+          ((c as { createdAt?: Date }).createdAt ?? new Date()) >= where.createdAt.gte
       ).length;
     },
   },
@@ -296,6 +342,7 @@ beforeEach(() => {
     try {
       return await fn(tx);
     } finally {
+      world.log.push('end');
       release?.();
     }
   });
@@ -365,10 +412,22 @@ describe('buying a mystery box', () => {
       'read:contents',
       'read:held',
       'read:pending',
+      // Written and committed before the lock is released, so a waiting purchase counts it.
+      'claim:create',
+      'end',
       lock,
       'claim:paid',
       'grant:item',
+      'end',
     ]);
+  });
+
+  // On a second pooled connection, a claim written while same-user waiters hold the rest of the
+  // pool waits for a connection that only the lock holder can free.
+  it('writes the claim on the lock-holding transaction, not a second connection', async () => {
+    await buy();
+    expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).not.toHaveBeenCalled();
+    expect(claims.rows.get(txId(KEY_A))?.status).toBe('paid');
   });
 
   it('answers a replay of a completed purchase with the same box, charging once', async () => {
@@ -487,6 +546,36 @@ describe('buying a mystery box', () => {
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
+  it('stops counting a pending purchase once it is old enough to be stuck', async () => {
+    world.contents = [hat(1)];
+    claims.rows.set(txId(KEY_B), {
+      transactionId: txId(KEY_B),
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      amount: PRICE,
+      attempts: 1,
+      status: 'pending',
+      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+    } as never);
+    await buy();
+    expect(world.items).toHaveLength(1);
+  });
+
+  // The second request read no claim and no held box before the first claimed, then reached the
+  // lock after the first's box existed. It must be answered from the first's claim, not refused
+  // because that box now covers the last thing left.
+  it('answers a same-key double submit on the last thing left from the first claim', async () => {
+    world.contents = [hat(1)];
+    await buy();
+    dbMock.dbWrite.item.findFirst.mockResolvedValueOnce(null);
+    dbMock.dbWrite.cosmeticShopPurchaseClaim.findUnique.mockResolvedValueOnce(null);
+
+    await expect(buy()).rejects.toThrow(PURCHASE_ALREADY_COMPLETED_MESSAGE);
+    expect(world.items).toHaveLength(1);
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+
   it('sells only one of two concurrent purchases when one thing is left', async () => {
     world.contents = [hat(1)];
     const results = await Promise.allSettled([
@@ -523,7 +612,168 @@ describe('buying a mystery box', () => {
       expect.objectContaining({ userId: BUYER_ID, data: { event: 'birthday2026' } })
     );
     expect(mocks.getEventBuyerTeam).toHaveBeenCalledWith('birthday2026', BUYER_ID);
+    expect(mocks.assertEventPurchasable).toHaveBeenCalledTimes(1);
     nothingClaimedOrCharged();
+  });
+
+  it('sells an event box from the buyer’s own team when only the other team’s are owned', async () => {
+    dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+      ...boxRow,
+      params: { event: 'birthday2026' },
+    });
+    mocks.getEventBuyerTeam.mockResolvedValue('red');
+    world.contents = [hat(1, { team: 'blue' }), hat(2, { team: 'red' })];
+
+    await buy();
+
+    expect(world.items).toHaveLength(1);
+    expect(mocks.assertEventPurchasable).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an event box the event gate refuses, before any claim', async () => {
+    dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+      ...boxRow,
+      params: { event: 'birthday2026' },
+    });
+    mocks.assertEventPurchasable.mockRejectedValue(new Error('This item is not available'));
+    await expect(buy()).rejects.toThrow('This item is not available');
+    nothingClaimedOrCharged();
+  });
+
+  it('refuses an event box when the buyer’s team cannot be confirmed, before any claim', async () => {
+    dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+      ...boxRow,
+      params: { event: 'birthday2026' },
+    });
+    mocks.getEventBuyerTeam.mockRejectedValue(new Error("We couldn't confirm your team."));
+    await expect(buy()).rejects.toThrow("couldn't confirm your team");
+    nothingClaimedOrCharged();
+  });
+
+  it('sells to a buyer outside the blocked countries', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: ['BE'] });
+    await buy({ countryCode: 'US' });
+    expect(world.items).toHaveLength(1);
+  });
+
+  describe('refuses a listing outside its stock or sale window, before any claim', () => {
+    it('out of stock', async () => {
+      dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+        ...listing,
+        availableQuantity: 3,
+        _count: { purchases: 3 },
+      });
+      await expect(buy()).rejects.toThrow('out of stock');
+      nothingClaimedOrCharged();
+    });
+
+    it('not open yet', async () => {
+      dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+        ...listing,
+        availableFrom: new Date(Date.now() + 60_000),
+      });
+      await expect(buy()).rejects.toThrow('not available yet');
+      nothingClaimedOrCharged();
+    });
+
+    it('closed', async () => {
+      dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+        ...listing,
+        availableTo: new Date(Date.now() - 60_000),
+      });
+      await expect(buy()).rejects.toThrow('no longer available');
+      nothingClaimedOrCharged();
+    });
+  });
+
+  describe('resuming a pending claim of its own', () => {
+    const seedOwnClaim = () =>
+      claims.rows.set(txId(KEY_A), {
+        transactionId: txId(KEY_A),
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+    const duplicateLegs = () => ({
+      ...legs(),
+      transactionIds: legs().transactionIds.map((l) => ({ ...l, duplicate: true })),
+    });
+
+    // Not counted as a competing purchase: with one thing left, that would refuse it forever.
+    it('sells on a retry whose earlier attempt claimed but charged nothing', async () => {
+      world.contents = [hat(1)];
+      seedOwnClaim();
+      await buy();
+      expect(world.items).toHaveLength(1);
+      expect(claims.rows.get(txId(KEY_A))?.status).toBe('paid');
+    });
+
+    // Paid already: today's state must not strand the buyer with a charge and no box.
+    it('grants a charged claim even when nothing is left for the buyer now', async () => {
+      seedOwnClaim();
+      mocks.listMultiTx.mockResolvedValue([{ amount: PRICE }]);
+      mocks.createMultiTx.mockResolvedValue(duplicateLegs());
+      world.owned = [
+        { userId: BUYER_ID, cosmeticId: 1001 },
+        { userId: BUYER_ID, cosmeticId: 1002 },
+      ];
+      await buy();
+      expect(world.items).toHaveLength(1);
+      expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+    });
+
+    it('grants a charged claim after the listing sold out and changed price', async () => {
+      seedOwnClaim();
+      mocks.listMultiTx.mockResolvedValue([{ amount: PRICE }]);
+      mocks.createMultiTx.mockResolvedValue(duplicateLegs());
+      dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+        ...listing,
+        unitAmount: PRICE + 100,
+        availableQuantity: 1,
+        _count: { purchases: 1 },
+      });
+      await buy();
+      expect(world.items).toHaveLength(1);
+      expect(mocks.createMultiTx.mock.calls[0][0].amount).toBe(PRICE);
+    });
+  });
+
+  // A request with the same key recorded it first and owns the charge's prefix.
+  it('answers a grant that loses to a same-key request as state unknown, without refunding', async () => {
+    world.items.push({
+      id: 7n,
+      itemDefinitionId: BOX_ID,
+      holderId: 2,
+      sourceKey: txId(KEY_A),
+      quantity: 1,
+    });
+    await expect(buy()).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: PURCHASE_STATE_UNKNOWN_MESSAGE,
+    });
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('refunds when the box grant itself fails', async () => {
+    const tx = makeTx(async () => undefined);
+    dbMock.dbWrite.$transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
+      claims.rollbackOnThrow(() =>
+        fn({
+          ...tx,
+          item: {
+            ...tx.item,
+            create: async () => {
+              throw new Error('db down');
+            },
+          },
+        })
+      )
+    );
+    await expect(buy()).rejects.toThrow('Failed to purchase box');
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+    expect(claims.rows.get(txId(KEY_A))?.status).toBe('refunded');
   });
 
   it('refunds and refuses when the grant fails', async () => {
@@ -615,6 +865,10 @@ describe('the mystery box region block', () => {
 
   it('blocks an unknown country whenever any country is blocked', () => {
     expect(isMysteryBoxBlockedIn(null, ['BE'])).toBe(true);
+    // CDN placeholders, not countries.
+    expect(isMysteryBoxBlockedIn('XX', ['BE'])).toBe(true);
+    expect(isMysteryBoxBlockedIn('T1', ['BE'])).toBe(true);
+    expect(isMysteryBoxBlockedIn('XX', [])).toBe(false);
   });
 
   it('refuses everywhere on a malformed list rather than nowhere', async () => {

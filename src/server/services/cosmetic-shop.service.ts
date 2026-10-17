@@ -70,6 +70,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import {
+  assertConfirmedPrice,
   beginShopPurchase,
   chargeForShopPurchase,
   chargeRetryOptions,
@@ -1211,12 +1212,11 @@ export const purchaseCosmeticShopItem = async ({
   // instead; an uncharged one must also still be at today's price.
   await runPurchaseChecks(pendingClaim, async () => {
     if (chargedBefore) return;
-    const confirmed = existingClaim ? existingClaim.amount : expectedUnitAmount;
-    if (confirmed !== undefined && confirmed !== shopItem.unitAmount) {
-      throw throwBadRequestError(
-        `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
-      );
-    }
+    assertConfirmedPrice({
+      existingClaim,
+      expectedAmount: expectedUnitAmount,
+      amountDue: shopItem.unitAmount,
+    });
   });
 
   const meta = shopItemMeta;
