@@ -214,6 +214,77 @@ describe('layoutStorylineLanes', () => {
     expect(placed(lanes)).toMatchObject({ 2: [1, 0], 3: [1, 1], 4: [2, 1], 5: [2, 0] });
   });
 
+  it("keeps a canon rejoin's cell from a later run, so the canon chapter stays in lane 0", () => {
+    // 4 -> 12 is canon and runs down lane 0 to row 5, where 13 also joins 12. 13's link to 10
+    // runs through row 5 too, opened a row later, and must not take lane 0 there.
+    const pairs: [number | `${number}*`, number][] = [
+      ['2*', 1],
+      ['3*', 2],
+      ['4*', 3],
+      [5, 3],
+      [6, 3],
+      ['13*', 5],
+      ['7*', 6],
+      ['11*', 7],
+      ['12*', 4],
+      ['12*', 13],
+      ['10*', 11],
+      [10, 13],
+    ];
+    const lanes = layout(pairs);
+    expect(placed(lanes)).toMatchObject({ 4: [3, 0], 13: [4, 1], 12: [5, 0], 10: [6, 2] });
+    expect(link(lanes, 13, 10)?.runLane).not.toBe(0);
+    // Control: without the run from 13, nothing competes for the cell, and 12 has it too.
+    expect(placed(layout(pairs.slice(0, -1)))[12]).toEqual([5, 0]);
+  });
+
+  it('counts a repeated link once and leaves out a loop instead of placing a chapter twice', () => {
+    // A corrupt read: 2 -> 3 twice, and a loop 3 -> 4 -> 3 beside a loop back into chapter 1.
+    const lanes = layout([
+      ['2*', 1],
+      ['3*', 2],
+      ['3*', 2],
+      ['4*', 3],
+      ['3*', 4],
+      ['1*', 2],
+    ]);
+    expect(lanes.nodes.map((n) => n.chapterId)).toEqual([1, 2]);
+    expect(placed(lanes)[1]).toEqual([0, 0]);
+    const keys = lanes.links.map((l) => `${l.parentChapterId}:${l.chapterId}`);
+    expect(keys).toEqual(['1:2']);
+    const at = ({ lane, row }: { lane: number; row: number }) => ({ x: lane * 10, y: row * 10 });
+    for (const l of lanes.links) expect(storylineLanePath(l, at)).not.toMatch(/NaN|undefined/);
+    // Control: the same story without the loops places all of it, the repeat still counted once.
+    const whole = layout([
+      ['2*', 1],
+      ['3*', 2],
+      ['3*', 2],
+      ['4*', 3],
+    ]);
+    expect(whole.nodes.map((n) => n.chapterId)).toEqual([1, 2, 3, 4]);
+    expect(whole.links).toHaveLength(3);
+    // A repeated fork is still a fork: one parent, drawn in the lane it opens.
+    const fork = layout([
+      ['2*', 1],
+      [3, 1],
+      [3, 1],
+    ]);
+    expect(link(fork, 1, 3)).toMatchObject({ to: { lane: 1 }, lane: 1 });
+  });
+
+  it('gives back the cell a rejoin was kept but did not take', () => {
+    // 2 and 3 both carry their lane on into 4, which takes lane 0; 5 opens on the same row and
+    // gets lane 1, the cell kept for 4 there and not taken.
+    const lanes = layout([
+      ['2*', 1],
+      [3, 1],
+      ['4*', 2],
+      ['4*', 3],
+      [5, 2],
+    ]);
+    expect(placed(lanes)).toMatchObject({ 2: [1, 0], 3: [1, 1], 4: [2, 0], 5: [2, 1] });
+  });
+
   it('returns nothing without chapter 1', () => {
     expect(layoutStorylineLanes(1, [2, 3], graph([['3*', 2]]))).toEqual({
       nodes: [],
@@ -332,6 +403,13 @@ describe('layoutStorylineLanes soundness', () => {
       if (l.runLane !== null)
         for (let row = l.from.row + 1; row < l.to.row; row++) claim(l.runLane, row, name);
     }
+    // The canon chain from chapter 1 holds lane 0 all the way down.
+    for (let id: number | undefined = 1; id !== undefined; ) {
+      const node = at.get(id);
+      if (node && node.lane !== 0) problems.push(`canon chapter ${id} in lane ${node.lane}`);
+      const from: number = id;
+      id = edges.find((e) => e.parentChapterId === from && e.canon)?.chapterId;
+    }
     for (const n of lanes.nodes) {
       const parents = edges.filter((e) => e.chapterId === n.chapterId);
       const want = parents.length
@@ -412,8 +490,9 @@ describe('layoutStorylineLanes soundness', () => {
       };
       for (let id = 2; id <= count; id++) {
         add(edges, id, 1 + pick(id - 1));
-        // Later links into it from other earlier chapters, written after the story grew.
-        if (random() < 0.25)
+        // Later links into it from other earlier chapters, written after the story grew; every
+        // other story is heavy with rejoins.
+        if (random() < (story % 2 ? 0.6 : 0.25))
           for (const parent of new Set([1 + pick(id - 1), 1 + pick(id - 1)]))
             if (!edges.some((e) => e.chapterId === id && e.parentChapterId === parent))
               add(links, id, parent);
@@ -439,5 +518,10 @@ describe('layoutStorylineLanes soundness', () => {
       nodes: lanes.nodes.map((n) => (n.chapterId === 12 ? { ...n, row: 5 } : n)),
     };
     expect(soundness(graph(demo), skipped)).toContain('chapter 12 on row 5, not 4');
+    const offCanon = {
+      ...lanes,
+      nodes: lanes.nodes.map((n) => (n.chapterId === 30 ? { ...n, lane: 1 } : n)),
+    };
+    expect(soundness(graph(demo), offCanon)).toContain('canon chapter 30 in lane 1');
   });
 });

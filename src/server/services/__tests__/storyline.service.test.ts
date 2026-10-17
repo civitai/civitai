@@ -11,6 +11,7 @@ import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import type * as NotificationService from '~/server/services/notification.service';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 
 const {
   enforceBlockedBrowsingTags,
@@ -2771,6 +2772,10 @@ describe('covers and cast', () => {
     expect(reads).toHaveLength(1);
     // The same bound values as the path's read: posts, the reader, their level, hidden lists.
     expect(reads[0].values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+    // One row past the cap, so the read can tell a full map from a cut one without reading more.
+    expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
+      take: STORYLINE_GRAPH_LIMIT + 1,
+    });
   });
 
   describe('the storyline page', () => {
