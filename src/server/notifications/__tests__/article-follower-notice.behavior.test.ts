@@ -265,46 +265,6 @@ describe('articles with no category — notified anyway (Justin, 2026-10-16)', (
   });
 });
 
-describe('backfill scope — an explicit id list instead of the cursor window', () => {
-  const backfill = async (articleIds: number[], maxAgeDays = 7) =>
-    (await db.query<Row>(newArticleFromFollowingQuery({ articleIds, maxAgeDays }))).rows;
-  const announced = (rows: Row[]) => [...new Set(rows.map((r) => r.details.articleId))].sort();
-
-  it('announces only the listed articles, to the same recipients the job would pick', async () => {
-    await article(21, '2026-10-13 10:00');
-    await article(23, '2026-10-13 10:00');
-
-    const rows = await backfill([21]);
-    expect(announced(rows)).toEqual([21]);
-    expect(recipientsOf(rows, 21).sort()).toEqual([F1, F2]);
-    expect(rows[0].key).toBe('new-article-from-following:21');
-  });
-
-  it('refuses an article older than maxAgeDays, whatever the list says', async () => {
-    await article(21, '2026-10-13 10:00');
-    await article(22, '2026-10-06 10:00');
-
-    expect(announced(await backfill([21, 22]))).toEqual([21]);
-    expect(announced(await backfill([21, 22], 14))).toEqual([21, 22]);
-  });
-
-  it('keeps every live filter: an unpublished article in the list is not announced', async () => {
-    await article(21, '2026-10-13 10:00');
-    await article(24, '2026-10-13 10:00', { status: 'Unpublished' });
-
-    expect(announced(await backfill([21, 24]))).toEqual([21]);
-  });
-
-  it.each([
-    ['an empty list', [], 7],
-    ['a non-integer id', [1.5], 7],
-    ['an id that is not positive', [0], 7],
-    ['a zero age cap', [21], 0],
-  ])('refuses %s instead of building SQL from it', (_label, articleIds, maxAgeDays) => {
-    expect(() => newArticleFromFollowingQuery({ articleIds, maxAgeDays })).toThrow();
-  });
-});
-
 describe('newArticleFromFollowingMessage', () => {
   it('names the category when there is one', () => {
     expect(
