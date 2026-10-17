@@ -224,7 +224,12 @@ describe('what it accepts', () => {
     expect((await call({ predictions: batch(501) })).status).toBe(400);
     expect(await stored()).toHaveLength(0);
 
-    expect((await call({ predictions: batch(500) })).status).toBe(200);
+    const { status, payload } = await call({ predictions: batch(500) });
+    expect(status).toBe(200);
+    // Across the service's statement chunks, results stay in input order.
+    expect((payload.results as { sourceRef: string }[]).map((r) => r.sourceRef)).toEqual(
+      batch(500).map((p) => p.sourceRef)
+    );
     expect(await stored()).toHaveLength(500);
   });
 

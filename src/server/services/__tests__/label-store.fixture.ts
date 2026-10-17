@@ -7,15 +7,19 @@ export const LABEL_STORE_MIGRATION = path.resolve(
   '../../../../packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/migration.sql'
 );
 
-/** The site tables the label store hooks into, with the columns it reads. */
+/** A hand-written subset of the site tables the label store hooks into. */
 const SOURCE_TABLES = `
   CREATE TABLE "Image" (
     "id" integer PRIMARY KEY,
     "userId" integer NOT NULL,
     "url" text NOT NULL,
     "pHash" bigint,
-    "meta" jsonb
+    "meta" jsonb,
+    "needsReview" text,
+    "blockedFor" text
   );
+  CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+  CREATE TABLE "Appeal" ("id" serial PRIMARY KEY, "userId" integer NOT NULL);
   CREATE TABLE "ScanLabelItem" (
     "id" serial PRIMARY KEY,
     "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,

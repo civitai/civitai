@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import { PG_INT4_MAX } from '~/server/common/constants';
 import { submitPredictions } from '~/server/services/label-store.service';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -13,11 +14,11 @@ const smallJson = (maxChars: number) =>
 
 const predictionSchema = z.strictObject({
   subjectType: z.literal('image'),
-  subjectId: z.coerce.number().int().positive().max(2_147_483_647).transform(String),
+  subjectId: z.coerce.number().int().positive().max(PG_INT4_MAX).transform(String),
   contentHash: z
     .string()
     .regex(/^[0-9a-f]{64}$/)
-    .describe('Lowercase hex sha256 of the image URL.'),
+    .describe('Lowercase hex sha256 of Image.url as stored (the storage key, not a full URL).'),
   question: z
     .string()
     .max(64)
@@ -32,7 +33,7 @@ const predictionSchema = z.strictObject({
     .min(1)
     .max(200)
     .describe(
-      'Your id for the run or prediction. A repeat for the same image and question is a duplicate.'
+      'Your id for the run or prediction. The same sourceRef again for the same image and question is a duplicate.'
     ),
   predictedAt: z.iso.datetime({ offset: true }).optional(),
   confidence: z.number().min(0).max(1).optional(),

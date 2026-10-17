@@ -576,6 +576,18 @@ describe('sweepLabelStore', () => {
     expect(await excludedIds()).toEqual([105]);
   });
 
+  it('excludes the subject of a live image whose owner a report names', async () => {
+    // Judged before the image row existed, so the subject carries no owner hash.
+    await judged(108);
+    await judged(109);
+    await image(108, { userId: 8 });
+    await image(109, { userId: 9 });
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([108]);
+  });
+
   it('counts a subject once, and nothing on the next run', async () => {
     await image(107, { blockedFor: 'CSAM' });
     await judged(107);

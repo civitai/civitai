@@ -116,8 +116,7 @@ export const PERMISSIONS = [
     id: 'creatorServices.resolveDispute',
     label: 'Resolve a Creator Services dispute (refund or release Buzz)',
   },
-  // Checked by the main app's `/api/mod/label-store/predictions` by this literal (`ModeratorGrantId`):
-  // what a pipeline writes is training data, so not every moderator may.
+  // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
 ] as const satisfies readonly { id: string; label: string }[];
 

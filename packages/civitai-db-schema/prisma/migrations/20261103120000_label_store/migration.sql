@@ -5,20 +5,19 @@
 -- tables, so the site's own writes need no grants. One scoped role, created by infra, reads the views at
 -- the bottom. Pipelines submit predictions through an authenticated site endpoint, never a DB login.
 --
--- Site-write paths catch their own errors into record_failure (the count to watch), so a bad label never
--- fails the vote, flag or appeal that produced it; they wait at most 2s for a lock, and a statement
--- timeout still cancels both. submit_prediction raises.
+-- Site-write paths catch their own errors into record_failure (the count to watch), so a bad label
+-- never fails the vote, flag or appeal that produced it. They wait at most 2s for a lock; a statement
+-- timeout still cancels the write. submit_prediction raises.
 --
 -- Apply after 20261023140000 (scan label copy sweep) and 20261020120000 (appeal decision record). Then
 -- run CALL label_store.backfill_batches() once, outside a transaction: it commits per batch, so live
--- writes are never held behind it. It is idempotent; so is backfill(), the one-transaction form for
--- small tables.
+-- writes are never held behind it. It is idempotent; so is backfill(), the one-transaction form, for
+-- tests only.
 --
 -- 🔴 CREATE OR REPLACE TRIGGER takes SHARE ROW EXCLUSIVE (blocks writes) on each source table. Each one
 -- runs in its own transaction with lock_timeout = 5s; re-run the file on a timeout.
 
 CREATE SCHEMA IF NOT EXISTS label_store;
-ALTER DEFAULT PRIVILEGES IN SCHEMA label_store REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 
 -- Key for the person hashes below. Generated per database; never leaves it.
 CREATE TABLE IF NOT EXISTS label_store.secret (
@@ -46,8 +45,6 @@ CREATE TABLE IF NOT EXISTS label_store.subject (
   UNIQUE ("subjectType", "subjectId", "contentHash")
 );
 CREATE INDEX IF NOT EXISTS subject_owner_idx ON label_store.subject ("ownerHash");
-CREATE INDEX IF NOT EXISTS subject_content_idx ON label_store.subject ("contentHash");
-CREATE INDEX IF NOT EXISTS subject_site_idx ON label_store.subject ("subjectType", "subjectId");
 
 CREATE TABLE IF NOT EXISTS label_store.label (
   "id"              BIGSERIAL PRIMARY KEY,
@@ -129,7 +126,7 @@ CREATE TABLE IF NOT EXISTS label_store.change (
   "questionVersion" INTEGER,
   "refId"           BIGINT,   -- the label or prediction id
   "at"              TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
-  -- The writing transaction: ids are assigned before commit, so only (txid, id) orders by commit.
+  -- Ids are assigned before commit, so a cursor on id alone can skip a row; changes_feed pages on (txid, id).
   "txid"            BIGINT NOT NULL DEFAULT (pg_current_xact_id()::text::bigint)
 );
 CREATE INDEX IF NOT EXISTS change_txid_idx ON label_store.change ("txid", "id");
@@ -163,6 +160,16 @@ SET search_path = label_store, pg_temp
 AS $$
   SELECT encode(sha256(convert_to(s."key" || ':' || p_kind || ':' || p_user_id, 'UTF8')), 'hex')
   FROM label_store.secret s
+$$;
+
+-- Writers hold it shared and erasure exclusive, so a write in flight when an erasure starts either
+-- commits before the erasure deletes or sees its tombstone.
+CREATE OR REPLACE FUNCTION label_store.erasure_lock_key(p_kind TEXT, p_ref TEXT)
+RETURNS BIGINT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT hashtextextended('label_store:' || p_kind || ':' || p_ref, 0)
 $$;
 
 CREATE OR REPLACE FUNCTION label_store.text_hash(p_text TEXT)
@@ -209,6 +216,9 @@ DECLARE
   v_owner_hash TEXT;
   v_subject    BIGINT;
 BEGIN
+  PERFORM pg_advisory_xact_lock_shared(
+    label_store.erasure_lock_key('subject', p_subject_type || ':' || p_subject_id)
+  );
   IF EXISTS (
     SELECT 1 FROM label_store.erased_subject e
     WHERE e."subjectType" = p_subject_type AND e."subjectId" = p_subject_id
@@ -221,6 +231,7 @@ BEGIN
   END IF;
   IF v_owner IS NOT NULL THEN
     v_owner_hash := label_store.person_hash('owner', v_owner);
+    PERFORM pg_advisory_xact_lock_shared(label_store.erasure_lock_key('owner', v_owner_hash));
     IF EXISTS (SELECT 1 FROM label_store.erased_owner e WHERE e."ownerHash" = v_owner_hash) THEN
       RAISE EXCEPTION 'the owner of subject % % was erased', p_subject_type, p_subject_id;
     END IF;
@@ -235,13 +246,13 @@ BEGIN
   END IF;
 
   UPDATE label_store.subject s SET
-    "pHash" = COALESCE(s."pHash", p_phash),
     -- An excluded subject keeps no content, whatever a later judgement brings.
+    "pHash" = CASE WHEN s."excludedAt" IS NULL THEN COALESCE(s."pHash", p_phash) END,
     "snapshot" = CASE WHEN s."excludedAt" IS NULL THEN COALESCE(s."snapshot", p_snapshot) END,
     "ownerHash" = COALESCE(s."ownerHash", v_owner_hash)
   WHERE s."subjectType" = p_subject_type AND s."subjectId" = p_subject_id
     AND s."contentHash" = p_content_hash
-    AND ((s."pHash" IS NULL AND p_phash IS NOT NULL)
+    AND ((s."pHash" IS NULL AND s."excludedAt" IS NULL AND p_phash IS NOT NULL)
       OR (s."snapshot" IS NULL AND s."excludedAt" IS NULL AND p_snapshot IS NOT NULL)
       OR (s."ownerHash" IS NULL AND v_owner_hash IS NOT NULL))
   RETURNING s."id" INTO v_subject;
@@ -290,8 +301,7 @@ BEGIN
   ORDER BY t.n DESC, t."value"
   LIMIT 1;
 
-  -- No human labels, no consensus row.
-  IF v_total IS NULL THEN
+    IF v_total IS NULL THEN
     RETURN;
   END IF;
 
@@ -346,7 +356,7 @@ BEGIN
 END;
 $$;
 
--- Raise on bad input. Return the new id, or NULL when sourceRef was already recorded.
+-- Returns the new id, or NULL when sourceRef was already recorded.
 CREATE OR REPLACE FUNCTION label_store.put_label(
   p_subject BIGINT, p_family TEXT, p_question TEXT, p_question_version INTEGER, p_value TEXT,
   p_labeller_kind TEXT, p_labeller_ref TEXT, p_source_ref TEXT, p_labelled_at TIMESTAMPTZ,
@@ -538,7 +548,8 @@ $$;
 
 -- The endpoint's batch: a JSON array of submit_prediction arguments in camelCase. Each item stands
 -- alone, so one refused item (an erased subject) does not refuse the rest. status: 'recorded',
--- 'duplicate' (already recorded for this subject and question) or 'rejected' with the reason.
+-- 'duplicate' (this sourceRef was already recorded for the subject, question and version) or
+-- 'rejected' with the reason.
 CREATE OR REPLACE FUNCTION label_store.submit_predictions(p_items JSONB)
 RETURNS TABLE ("ord" INTEGER, "id" BIGINT, "status" TEXT, "error" TEXT)
 LANGUAGE plpgsql
@@ -592,6 +603,7 @@ DECLARE
   v_n INTEGER;
 BEGIN
   IF p_reason = 'erasure' THEN
+    PERFORM pg_advisory_xact_lock(label_store.erasure_lock_key('subject', p_subject_type || ':' || p_subject_id));
     INSERT INTO label_store.erased_subject ("subjectType", "subjectId")
     VALUES (p_subject_type, p_subject_id)
     ON CONFLICT DO NOTHING;
@@ -609,6 +621,7 @@ BEGIN
     UPDATE label_store.subject
     SET "excludedAt" = now(),
         "excludedReason" = p_reason,
+        "pHash" = NULL,
         "snapshot" = NULL,
         "bytesRef" = NULL,
         "bytesExpireAt" = NULL
@@ -634,6 +647,7 @@ DECLARE
   v_hash TEXT := label_store.person_hash('owner', p_user_id);
   v_n    INTEGER;
 BEGIN
+  PERFORM pg_advisory_xact_lock(label_store.erasure_lock_key('owner', v_hash));
   INSERT INTO label_store.erased_owner ("ownerHash") VALUES (v_hash) ON CONFLICT DO NOTHING;
   WITH gone AS (
     DELETE FROM label_store.subject WHERE "ownerHash" = v_hash
@@ -649,6 +663,28 @@ BEGIN
 END;
 $$;
 
+-- The site's exclusion rule for a live image, as `excludedImageRow` in
+-- src/server/jobs/appeal-decision-records.ts applies it nightly; edit both together. Checked when a
+-- judgement lands, so an excluded image is never trainable while it waits for the sweep.
+CREATE OR REPLACE FUNCTION label_store.image_excluded(p_image_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public."Image" i
+    WHERE i."id" = p_image_id AND (
+      i."needsReview" = 'csam' OR i."blockedFor" = 'CSAM'
+      OR i."userId" IN (SELECT c."userId" FROM public."CsamReport" c WHERE c."userId" IS NOT NULL)
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM public."CsamReport" c
+    WHERE c."images" @> jsonb_build_array(jsonb_build_object('id', p_image_id))
+  )
+$$;
+
 -- Site producers take a source row, so the trigger and the backfill run the same code.
 
 -- 'control-sample' flags are a sampling marker, not a verdict, and record nothing.
@@ -662,6 +698,7 @@ AS $$
 DECLARE
   v_src TEXT := 'ScanLabelFlag:' || f."workflowId";
   im    RECORD;
+  v_id  BIGINT;
 BEGIN
   IF f."source" = 'control-sample' THEN
     RETURN NULL;
@@ -674,7 +711,7 @@ BEGIN
     PERFORM label_store.note_failure(v_src, 'image not found');
     RETURN NULL;
   END IF;
-  RETURN label_store.record_prediction(
+  v_id := label_store.record_prediction(
     p_subject_type => 'image',
     p_subject_id => im.id::text,
     p_content_hash => label_store.text_hash(im."url"),
@@ -693,6 +730,10 @@ BEGIN
     p_phash => im."pHash",
     p_owner_user_id => im."userId"
   );
+  IF label_store.image_excluded(im.id) THEN
+    PERFORM label_store.exclude('image', im.id::text, 'safety');
+  END IF;
+  RETURN v_id;
 EXCEPTION WHEN OTHERS THEN
   PERFORM label_store.note_failure(v_src, SQLSTATE || ': ' || SQLERRM);
   RETURN NULL;
@@ -709,6 +750,7 @@ AS $$
 DECLARE
   v_src TEXT := 'ScanLabelVote:' || v."itemId";
   im    RECORD;
+  v_id  BIGINT;
 BEGIN
   v_src := v_src || ':' || label_store.person_hash('labeller', v."userId");
   SELECT i."imageId" AS id, m."url", m."pHash", m."userId", m."meta"
@@ -719,7 +761,7 @@ BEGIN
     PERFORM label_store.note_failure(v_src, 'image not found');
     RETURN NULL;
   END IF;
-  RETURN label_store.record_label(
+  v_id := label_store.record_label(
     p_subject_type => 'image',
     p_subject_id => im.id::text,
     p_content_hash => label_store.text_hash(im."url"),
@@ -739,14 +781,17 @@ BEGIN
     p_phash => im."pHash",
     p_owner_user_id => im."userId"
   );
+  IF label_store.image_excluded(im.id) THEN
+    PERFORM label_store.exclude('image', im.id::text, 'safety');
+  END IF;
+  RETURN v_id;
 EXCEPTION WHEN OTHERS THEN
   PERFORM label_store.note_failure(v_src, SQLSTATE || ': ' || SQLERRM);
   RETURN NULL;
 END;
 $$;
 
--- An appeal decision answers image.appeal. The record holds the image as it was at decision time, so this
--- works after the image is gone.
+-- Built from the record alone, so it works after the image is gone. The appellant owns the image.
 CREATE OR REPLACE FUNCTION label_store.from_appeal_decision(a public."AppealDecisionRecord")
 RETURNS BIGINT
 LANGUAGE plpgsql
@@ -772,7 +817,8 @@ BEGIN
       'url', a."imageUrl", 'nsfwLevel', a."nsfwLevel", 'aiNsfwLevel', a."aiNsfwLevel",
       'blockedFor', a."blockedFor", 'nsfwLevelReason', a."nsfwLevelReason"
     )),
-    p_phash => a."pHash"
+    p_phash => a."pHash",
+    p_owner_user_id => (SELECT ap."userId" FROM public."Appeal" ap WHERE ap."id" = a."appealId")
   );
 EXCEPTION WHEN OTHERS THEN
   PERFORM label_store.note_failure(v_src, SQLSTATE || ': ' || SQLERRM);
@@ -804,7 +850,6 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- A withdrawn copy takes the bytes with it. Withdrawn as excluded also takes the subject out of training.
 CREATE OR REPLACE FUNCTION label_store.from_scan_label_withdrawal(o public."ScanLabelCopyObject")
 RETURNS VOID
 LANGUAGE plpgsql
@@ -910,10 +955,11 @@ BEGIN
 END;
 $$;
 
--- backfill(), committing every p_batch source rows so live writes never wait behind it. CALL outside a
--- transaction block. Transaction control rules out SECURITY DEFINER and a SET clause, so this runs as
--- the caller (the owner) with every name qualified. Progress is RAISE NOTICE.
-CREATE OR REPLACE PROCEDURE label_store.backfill_batches(p_batch INTEGER DEFAULT 2000)
+-- backfill(), committing every p_batch source rows so live writes never wait behind it. A row opens two
+-- subtransactions, and a transaction holding more than 64 slows every snapshot on the primary and its
+-- replicas, hence 25. CALL outside a transaction block. Transaction control rules out SECURITY DEFINER
+-- and a SET clause, so this runs as the caller (the owner) with every name qualified.
+CREATE OR REPLACE PROCEDURE label_store.backfill_batches(p_batch INTEGER DEFAULT 25)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -973,9 +1019,9 @@ END;
 $$;
 
 -- Readers see only these views, which run with their owner's rights. Never select "ownerHash" or the
--- secret here.
+-- secret here. security_barrier: a reader's own conditions run only on rows a view returns.
 
-CREATE OR REPLACE VIEW label_store.labels_feed AS
+CREATE OR REPLACE VIEW label_store.labels_feed WITH (security_barrier) AS
 SELECT
   l."id", l."subjectId", s."subjectType", s."subjectId" AS "siteId", s."contentHash", s."pHash",
   l."family", l."question", l."questionVersion", l."value", l."reason", l."reasonNote",
@@ -984,7 +1030,7 @@ SELECT
 FROM label_store.label l
 JOIN label_store.subject s ON s."id" = l."subjectId";
 
-CREATE OR REPLACE VIEW label_store.predictions_feed AS
+CREATE OR REPLACE VIEW label_store.predictions_feed WITH (security_barrier) AS
 SELECT
   p."id", p."subjectId", s."subjectType", s."subjectId" AS "siteId", s."contentHash", s."pHash",
   p."family", p."question", p."questionVersion", p."value", p."confidence", p."scores", p."modelRef",
@@ -995,12 +1041,12 @@ JOIN label_store.subject s ON s."id" = p."subjectId";
 
 -- Only rows from transactions older than every running one, so nothing can later appear below a
 -- reader's (txid, id) cursor.
-CREATE OR REPLACE VIEW label_store.changes_feed AS
+CREATE OR REPLACE VIEW label_store.changes_feed WITH (security_barrier) AS
 SELECT "txid", "id", "kind", "subjectId", "question", "questionVersion", "refId", "at"
 FROM label_store.change
 WHERE "txid" < pg_snapshot_xmin(pg_current_snapshot())::text::bigint;
 
-CREATE OR REPLACE VIEW label_store.training_examples AS
+CREATE OR REPLACE VIEW label_store.training_examples WITH (security_barrier) AS
 SELECT
   s."id" AS "subjectId", s."subjectType", s."subjectId" AS "siteId", s."contentHash", s."pHash",
   CASE WHEN s."bytesExpireAt" > now() THEN s."bytesRef" END AS "bytesRef",
@@ -1011,13 +1057,13 @@ FROM label_store.consensus c
 JOIN label_store.subject s ON s."id" = c."subjectId"
 WHERE c."trainable" AND s."excludedAt" IS NULL;
 
-CREATE OR REPLACE VIEW label_store.pipeline_failures AS
+CREATE OR REPLACE VIEW label_store.pipeline_failures WITH (security_barrier) AS
 SELECT * FROM label_store.training_examples WHERE "modelAgrees" = false;
 
--- Owner-only.
+-- Covers only routines that exist now: a routine added later needs its own REVOKE.
 REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA label_store FROM PUBLIC;
 
--- The reader role is created by infra; grant when it exists. Re-run this block after.
+-- label_reader is created by infra; re-run this block once it exists.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'label_reader') THEN

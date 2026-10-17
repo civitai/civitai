@@ -33,7 +33,8 @@ beforeEach(async () => {
   await db.pg.exec(`
     TRUNCATE label_store.subject, label_store.change, label_store.record_failure,
       label_store.erased_subject, label_store.erased_owner RESTART IDENTITY CASCADE;
-    TRUNCATE "ScanLabelCopyObject", "AppealDecisionRecord", "Image" RESTART IDENTITY CASCADE;
+    TRUNCATE "ScanLabelCopyObject", "AppealDecisionRecord", "Image", "CsamReport", "Appeal"
+      RESTART IDENTITY CASCADE;
   `);
   await db.pg.query(
     `INSERT INTO "Image" ("id", "userId", "url", "pHash", "meta")
@@ -329,6 +330,7 @@ describe('exclusion', () => {
     expect(await rows(`SELECT * FROM label_store.subject`)).toEqual([
       expect.objectContaining({
         excludedReason: 'removed',
+        pHash: null,
         snapshot: null,
         bytesRef: null,
         bytesExpireAt: null,
@@ -350,17 +352,41 @@ describe('exclusion', () => {
     expect(await rows(`SELECT * FROM label_store.training_examples`)).toEqual([]);
   });
 
-  it('a later label that fills another field still leaves the snapshot out', async () => {
+  it('a later label that fills another field still leaves the content out', async () => {
+    // Judged before the image row exists, so the subject has no owner yet.
     await db.pg.query(
-      `SELECT label_store.submit_prediction('image', '${IMAGE}', $1, 'image.block', 'block', 'm@1', 'p-1')`,
-      [HASH]
+      `SELECT label_store.submit_prediction('image', '601', $1, 'image.block', 'block', 'm@1', 'p-1')`,
+      [sha256('u-601')]
     );
-    await excludeImage('safety');
-    await vote(MODS[0], false);
+    await db.pg.query(`SELECT label_store.exclude('image', '601', 'safety')`);
+    await db.pg.exec(`
+      INSERT INTO "Image" ("id", "userId", "url", "pHash", "meta") VALUES (601, 12, 'u-601', 78, '{}');
+      INSERT INTO "ScanLabelItem" ("id", "imageId") VALUES (9, 601);
+      INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES (9, 21, true);
+    `);
 
-    expect(await rows(`SELECT "pHash", "snapshot" FROM label_store.subject`)).toEqual([
-      { pHash: 77, snapshot: null },
-    ]);
+    expect(
+      await rows(
+        `SELECT "ownerHash" IS NOT NULL AS owned, "pHash", "snapshot" FROM label_store.subject`
+      )
+    ).toEqual([{ owned: true, pHash: null, snapshot: null }]);
+  });
+
+  it.each([
+    ['flagged for review', `UPDATE "Image" SET "needsReview" = 'csam'`],
+    ['blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM'`],
+    ['named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 501}]')`],
+    ['owned by a reported user', `INSERT INTO "CsamReport" ("userId") VALUES (11)`],
+  ])('an image already %s is excluded when its judgement lands', async (_, setup) => {
+    await db.pg.exec(setup);
+    for (const m of MODS.slice(0, 3)) await vote(m, false);
+    await flag();
+
+    expect(
+      await rows(`SELECT "excludedReason", "snapshot", "pHash" FROM label_store.subject`)
+    ).toEqual([{ excludedReason: 'safety', snapshot: null, pHash: null }]);
+    expect(await rows(`SELECT * FROM label_store.training_examples`)).toEqual([]);
+    expect(await failures()).toEqual([]);
   });
 
   it('a copy after exclusion is ignored', async () => {
@@ -428,19 +454,39 @@ describe('erasure', () => {
     ]);
   });
 
-  it('an appeal subject recorded after its image is gone has no owner hash', async () => {
+  it('an appeal subject recorded after its image is gone is still erasable by owner', async () => {
     await db.pg.query(`DELETE FROM "Image" WHERE "id" = $1`, [IMAGE]);
+    await db.pg.query(`INSERT INTO "Appeal" ("id", "userId") VALUES (900, $1), (901, 12)`, [OWNER]);
     await db.pg.query(
       `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel", "decision", "decidedAt")
-       VALUES (900, $1, 'u-501', 16, 'Rejected', now())`,
+       VALUES (900, $1, 'u-501', 16, 'Rejected', now()), (901, 502, 'u-502', 1, 'Rejected', now())`,
       [IMAGE]
     );
 
-    // erase_owner cannot reach it; exclude('image', id, 'erasure') can.
-    expect(await rows(`SELECT "ownerHash" FROM label_store.subject`)).toEqual([
-      { ownerHash: null },
+    expect(await rows(`SELECT label_store.erase_owner(${OWNER}) AS n`)).toEqual([{ n: 1 }]);
+    expect(await rows(`SELECT "subjectId" FROM label_store.subject`)).toEqual([
+      { subjectId: '502' },
     ]);
-    expect(await rows(`SELECT label_store.erase_owner(${OWNER}) AS n`)).toEqual([{ n: 0 }]);
+  });
+
+  it('a writer holds the subject and owner locks shared, and erasure takes them exclusively', async () => {
+    const advisory = () =>
+      rows<{ mode: string }>(`SELECT mode FROM pg_locks WHERE locktype = 'advisory' ORDER BY mode`);
+    await db.pg.exec('BEGIN');
+    try {
+      await vote(MODS[0], false);
+      expect(await advisory()).toEqual([{ mode: 'ShareLock' }, { mode: 'ShareLock' }]);
+    } finally {
+      await db.pg.exec('COMMIT');
+    }
+    await db.pg.exec('BEGIN');
+    try {
+      await db.pg.query(`SELECT label_store.exclude('image', '${IMAGE}', 'erasure')`);
+      await db.pg.query(`SELECT label_store.erase_owner(${OWNER})`);
+      expect(await advisory()).toEqual([{ mode: 'ExclusiveLock' }, { mode: 'ExclusiveLock' }]);
+    } finally {
+      await db.pg.exec('COMMIT');
+    }
   });
 });
 
@@ -605,6 +651,34 @@ describe('the reader role', () => {
 
     expect(routines.length).toBeGreaterThan(20);
     expect(routines.filter((r) => r.reader || r.public)).toEqual([]);
+  });
+
+  it('every reader view is a security barrier, and the feed still pages on its index', async () => {
+    expect(
+      await rows(
+        `SELECT c.relname, c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'label_store' AND c.relkind = 'v' ORDER BY c.relname`
+      )
+    ).toEqual(
+      [
+        'changes_feed',
+        'labels_feed',
+        'pipeline_failures',
+        'predictions_feed',
+        'training_examples',
+      ].map((relname) => ({ relname, reloptions: ['security_barrier=true'] }))
+    );
+    await db.pg.exec('SET enable_seqscan = off; SET ROLE label_reader');
+    try {
+      const plan = await rows<{ 'QUERY PLAN': string }>(
+        `EXPLAIN SELECT * FROM label_store.changes_feed WHERE ("txid", "id") > (0, 0) ORDER BY "txid", "id" LIMIT 10`
+      );
+      const text = plan.map((p) => p['QUERY PLAN']).join(' | ');
+      expect(text).toContain('change_txid_idx');
+      expect(text).toMatch(/Index Cond: [^|]*ROW\(txid, id\) > ROW\(0, 0\)/);
+    } finally {
+      await db.pg.exec('RESET ROLE; RESET enable_seqscan');
+    }
   });
 
   it('the reader can select exactly the five views, and no view exposes an owner hash', async () => {

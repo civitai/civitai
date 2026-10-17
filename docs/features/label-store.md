@@ -49,11 +49,13 @@ call a `p_source_ref` that is unique to the source row: a retry with the same re
 
 Wired today by triggers: scan label flags (predictions) and votes (labels), image appeal decisions, and
 scan label byte copies and withdrawals. `CALL label_store.backfill_batches()` replays those source tables,
-committing every 2000 rows; `backfill()` does it in one transaction. Both are idempotent.
+committing every 25 rows; `backfill()` does it in one transaction, for tests. Both are idempotent. A
+judgement on an image the site already excludes is recorded and excluded at once.
 
-Pipelines submit predictions to `POST /api/mod/label-store/predictions` with a full-access personal API
-key of a moderator account holding the moderator-app permission `labelStore.submitPrediction`. Up to 500 per call; each is recorded, a duplicate, or rejected with a reason. The
-endpoint's reference is on `/moderator/api`.
+Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
+moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back
+recorded, a duplicate, or rejected with a reason. The ref is stored as `pipeline:<sourceRef>` under family
+`pipeline`, so it never collides with a site producer's. The endpoint's reference is on `/moderator/api`.
 
 ```sql
 SELECT label_store.record_label(

@@ -114,19 +114,31 @@ export async function sweepLabelStore() {
     SELECT to_regclass('label_store.subject') IS NOT NULL AS present
   `;
   if (!present) return 0;
-  const imageId = Prisma.sql`(CASE WHEN s."subjectId" ~ '^[0-9]{1,9}$' THEN s."subjectId"::int END)`;
+  // excludedImageRow's rule, with the report sets read once: per subject, it scans CsamReport twice.
   const [{ excluded }] = await dbWrite.$queryRaw<{ excluded: number }[]>`
-    SELECT count(label_store.exclude('image', s."subjectId", 'safety'))::int AS excluded
-    FROM label_store.subject s
-    WHERE s."subjectType" = 'image' AND s."excludedAt" IS NULL AND (
-      ${reportNamesImage(imageId)}
-      OR EXISTS (
-        SELECT 1 FROM "Image" li WHERE li.id = ${imageId} AND ${excludedImageRow(Prisma.raw('li'))}
-      )
-      OR s."ownerHash" IN (
-        SELECT label_store.person_hash('owner', c."userId") FROM "CsamReport" c WHERE c."userId" IS NOT NULL
+    WITH reported_images AS (
+      SELECT DISTINCT e->>'id' AS id
+      FROM "CsamReport" c,
+        jsonb_array_elements(CASE WHEN jsonb_typeof(c.images) = 'array' THEN c.images ELSE '[]' END) e
+    ),
+    reported_users AS (
+      SELECT DISTINCT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL
+    ),
+    hit AS (
+      SELECT DISTINCT s."subjectId"
+      FROM label_store.subject s
+      WHERE s."subjectType" = 'image' AND s."excludedAt" IS NULL AND (
+        s."subjectId" IN (SELECT id FROM reported_images)
+        OR s."ownerHash" IN (SELECT label_store.person_hash('owner', "userId") FROM reported_users)
+        OR EXISTS (
+          SELECT 1 FROM "Image" li
+          WHERE li.id = (CASE WHEN s."subjectId" ~ '^[0-9]{1,9}$' THEN s."subjectId"::int END)
+            AND (li."needsReview" = 'csam' OR li."blockedFor" = 'CSAM'
+              OR li."userId" IN (SELECT "userId" FROM reported_users))
+        )
       )
     )
+    SELECT coalesce(sum(label_store.exclude('image', "subjectId", 'safety')), 0)::int AS excluded FROM hit
   `;
   return excluded;
 }
@@ -532,7 +544,16 @@ export async function recordRestoredLevels() {
 
 export async function runAppealDecisionRecords(lookup?: RemovalLabelLookup) {
   // The store first: deleting a record also excludes its image from the store, under a vaguer reason.
-  const storeExcluded = await sweepLabelStore();
+  // A store failure must not stop the record sweep.
+  const storeExcluded = await sweepLabelStore().catch((e: Error) => {
+    logToAxiom({
+      type: 'error',
+      name: JOB_LOG_NAME,
+      message: 'Label store sweep failed',
+      details: { error: e.message },
+    });
+    return 0;
+  });
   const { swept, labels, expired, objects } = await sweepExcludedRecords();
   const labelled = await fillRemovalLabels(lookup);
   const { restored, corrected } = await recordRestoredLevels();
