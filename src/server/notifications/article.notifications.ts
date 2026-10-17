@@ -27,7 +27,27 @@ export function newArticleFromFollowingMessage(details: {
   return `${details.username} published a ${kind}: "${details.articleTitle}"`;
 }
 
-export function newArticleFromFollowingQuery({ lastSent }: { lastSent: string }) {
+/**
+ * Which articles to announce: the job's window behind its cursor, or (for a one-off backfill) an
+ * explicit id list, still bounded by age so a mistyped id cannot announce something old.
+ */
+export type NewArticleFromFollowingScope =
+  | { lastSent: string }
+  | { articleIds: number[]; maxAgeDays: number };
+
+function articleScopeSql(scope: NewArticleFromFollowingScope) {
+  if ('lastSent' in scope)
+    return `a."publishedAt" > '${scope.lastSent}'::timestamp - INTERVAL '${PUBLISHED_LOOKBACK}'`;
+  const { articleIds, maxAgeDays } = scope;
+  if (!articleIds.length || !articleIds.every((id) => Number.isInteger(id) && id > 0))
+    throw new Error('articleIds must be a non-empty list of positive integers');
+  if (!Number.isInteger(maxAgeDays) || maxAgeDays < 1)
+    throw new Error('maxAgeDays must be a positive integer');
+  return `a.id IN (${articleIds.join(', ')})
+          AND a."publishedAt" > now() - INTERVAL '${maxAgeDays} days'`;
+}
+
+export function newArticleFromFollowingQuery(scope: NewArticleFromFollowingScope) {
   return `
       WITH new_article AS (
         SELECT DISTINCT
@@ -57,7 +77,7 @@ export function newArticleFromFollowingQuery({ lastSent }: { lastSent: string })
         ) ac ON true
         JOIN "User" u ON u.id = a."userId"
         JOIN "UserEngagement" ue ON ue."targetUserId" = a."userId" AND a."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
-        WHERE a."publishedAt" > '${lastSent}'::timestamp - INTERVAL '${PUBLISHED_LOOKBACK}'
+        WHERE ${articleScopeSql(scope)}
           AND a."publishedAt" <= now()
           AND a.status = 'Published'
           AND NOT a."tosViolation"
