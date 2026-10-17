@@ -10,7 +10,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS "ItemDefinition" (
   "id"                SERIAL PRIMARY KEY,
   -- Text + CHECK, not an enum: a new type is a CHECK change, with no deploy-first enum step.
-  "type"              TEXT NOT NULL CHECK ("type" IN ('cosmetic', 'box')),
+  "type"              TEXT NOT NULL CONSTRAINT "ItemDefinition_type_check" CHECK ("type" IN ('cosmetic', 'box')),
   "name"              TEXT NOT NULL,
   "description"       TEXT,
   "imageUrl"          TEXT,
@@ -21,21 +21,21 @@ CREATE TABLE IF NOT EXISTS "ItemDefinition" (
   "flags"             INTEGER NOT NULL DEFAULT 0,
   "quantityAvailable" INTEGER,
   "version"           INTEGER NOT NULL DEFAULT 1,
-  "status"            TEXT NOT NULL DEFAULT 'draft' CHECK ("status" IN ('draft', 'published', 'archived')),
+  "status"            TEXT NOT NULL DEFAULT 'draft' CONSTRAINT "ItemDefinition_status_check" CHECK ("status" IN ('draft', 'published', 'archived')),
   "createdById"       INTEGER,
   "updatedById"       INTEGER,
   "createdAt"         TIMESTAMP(3) NOT NULL DEFAULT now(),
   "updatedAt"         TIMESTAMP(3) NOT NULL DEFAULT now(),
-  CHECK ("type" <> 'cosmetic' OR "cosmeticId" IS NOT NULL)
+  CONSTRAINT "ItemDefinition_cosmetic_has_cosmeticId_check" CHECK ("type" <> 'cosmetic' OR "cosmeticId" IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS "ItemDefinition_type_status_idx" ON "ItemDefinition" ("type", "status");
 
 CREATE TABLE IF NOT EXISTS "Item" (
   "id"               BIGSERIAL PRIMARY KEY,
   "itemDefinitionId" INTEGER NOT NULL REFERENCES "ItemDefinition"("id") ON DELETE RESTRICT,
-  "holderType"       TEXT NOT NULL CHECK ("holderType" IN ('user')),
+  "holderType"       TEXT NOT NULL CONSTRAINT "Item_holderType_check" CHECK ("holderType" IN ('user')),
   "holderId"         INTEGER NOT NULL,
-  "quantity"         INTEGER NOT NULL DEFAULT 1 CHECK ("quantity" > 0),
+  "quantity"         INTEGER NOT NULL DEFAULT 1 CONSTRAINT "Item_quantity_check" CHECK ("quantity" > 0),
   "expiresAt"        TIMESTAMP(3),
   "data"             JSONB NOT NULL DEFAULT '{}',
   "sourceKey"        TEXT NOT NULL UNIQUE,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS "BoxTier" (
   "boxDefinitionId" INTEGER NOT NULL REFERENCES "ItemDefinition"("id") ON DELETE CASCADE,
   "key"             TEXT NOT NULL,
   "name"            TEXT NOT NULL,
-  "weight"          INTEGER NOT NULL CHECK ("weight" > 0),
+  "weight"          INTEGER NOT NULL CONSTRAINT "BoxTier_weight_check" CHECK ("weight" > 0),
   "color"           TEXT,
   "sortOrder"       INTEGER NOT NULL DEFAULT 0,
   UNIQUE ("boxDefinitionId", "key")
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS "BoxOpening" (
   "tierRoll"           INTEGER NOT NULL,
   "tierPoolSize"       INTEGER NOT NULL,
   "itemRoll"           INTEGER NOT NULL,
-  "rewardStatus"       TEXT NOT NULL CHECK ("rewardStatus" IN ('granted')),
+  "rewardStatus"       TEXT NOT NULL CONSTRAINT "BoxOpening_rewardStatus_check" CHECK ("rewardStatus" IN ('granted')),
   "createdAt"          TIMESTAMP(3) NOT NULL DEFAULT now()
 );
 -- A user can draw a given cosmetic from a box once. The service's per-user lock is the primary guard;
