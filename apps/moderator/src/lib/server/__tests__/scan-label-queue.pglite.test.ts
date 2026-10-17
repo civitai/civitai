@@ -261,16 +261,40 @@ describe('claimNext source mix', () => {
   });
 
   it('files an item with both scan flags under upload, and a control item under control only', async () => {
-    const both = await seedItem(1, {
+    const prompt = await seedItem(1, { ...PROMPT, flaggedAt: '2026-10-13T07:00:00Z' });
+    const both = await seedItem(2, {
       sources: ['xguard-prompt', 'orchestrator-scan'],
-      flaggedAt: '2026-10-13T07:00:00Z',
+      flaggedAt: '2026-10-13T08:00:00Z',
     });
-    const prompt = await seedItem(2, { ...PROMPT, flaggedAt: '2026-10-13T08:00:00Z' });
-    const control = await seedItem(3, { ...CONTROL, flaggedAt: '2026-10-13T09:00:00Z' });
-    // Each draw lands in one source's band of QUEUE_MIX; the newest item would win without the mix.
+    // A scanner can flag an image after it was sampled; the item stays in the control lane.
+    const control = await seedItem(3, {
+      sources: ['control-sample', 'orchestrator-scan'],
+      flaggedAt: '2026-10-13T09:00:00Z',
+    });
+    // Each draw lands in one source's band of QUEUE_MIX; each source's pick is not the newest item.
     expect((await claimNext(1, {}, NOW, () => 0.1))!.itemId).toBe(both);
     expect((await claimNext(2, {}, NOW, () => 0.5))!.itemId).toBe(prompt);
     expect((await claimNext(3, {}, NOW, () => 0.95))!.itemId).toBe(control);
+  });
+
+  it('serves a filtered view in queue order, without drawing', async () => {
+    const upload = await seedItem(1, { ...UPLOAD, flaggedAt: '2026-10-13T07:00:00Z' });
+    const prompt = await seedItem(2, { ...PROMPT, flaggedAt: '2026-10-13T08:00:00Z' });
+    const noDraw = () => {
+      throw new Error('a filtered claim drew a source');
+    };
+    expect((await claimNext(1, { day: '2026-10-13' }, NOW, noDraw))!.itemId).toBe(prompt);
+    expect((await claimNext(2, { flaggerVersion: 'scan@1' }, NOW, noDraw))!.itemId).toBe(prompt);
+    expect(upload).not.toBe(prompt);
+  });
+
+  it('draws once per new claim, not when handing back a held lease', async () => {
+    await seedMany({ upload: 2, prompt: 2 });
+    let draws = 0;
+    const counted = () => (draws++, 0.1);
+    await claimNext(1, {}, NOW, counted);
+    await claimNext(1, {}, later(1000), counted);
+    expect(draws).toBe(1);
   });
 });
 

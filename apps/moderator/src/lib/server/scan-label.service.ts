@@ -119,7 +119,8 @@ export function sourceOrder(rng: () => number): QueueSource[] {
 
 /**
  * A live lease on an open item in the current filter is returned as-is, so a reload cannot pile up
- * leases. A live lease outside the filter is released. A new claim draws its source by `QUEUE_MIX`.
+ * leases. A live lease outside the filter is released. An unfiltered claim draws its source by
+ * `QUEUE_MIX`; a filtered one serves its slice in queue order.
  */
 export async function claimNext(
   userId: number,
@@ -155,12 +156,12 @@ export async function claimNext(
 
     const tried: number[] = [];
     let attempts = 0;
-    for (const source of sourceOrder(rng)) {
+    const filtered = !!(filters.day || filters.flaggerVersion);
+    for (const source of filtered ? [null] : sourceOrder(rng)) {
       while (attempts < MAX_CLAIM_ATTEMPTS) {
         attempts++;
         let q = openItems(trx, filters)
           .select(['i.id', 'i.votes'])
-          .where(inSource(source))
           .where(({ not, exists, selectFrom }) =>
             not(
               exists(
@@ -186,6 +187,7 @@ export async function claimNext(
             '<',
             VOTES_PER_ITEM
           );
+        if (source) q = q.where(inSource(source));
         if (tried.length) q = q.where('i.id', 'not in', tried);
         const candidate = await q
           .orderBy('i.votes', 'desc')

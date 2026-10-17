@@ -26,32 +26,43 @@ type Deps = {
   inRollout?: (imageId: number) => Promise<boolean>;
 };
 
-/**
- * An id bound such that images from it on were created at or after `cutoff`, found by bisecting the
- * primary key; `maxId + 1` when none were.
- */
-async function idSince(cutoff: Date, maxId: number): Promise<number> {
-  const createdSince = async (id: number) => {
-    const [row] = await dbWrite.$queryRaw<{ createdAt: Date }[]>`
-      SELECT "createdAt" FROM "Image" WHERE id >= ${id} ORDER BY id LIMIT 1
-    `;
-    return !!row && row.createdAt >= cutoff;
-  };
-  if (!(await createdSince(maxId))) return maxId + 1;
-  let lo = 0;
-  let hi = maxId;
-  while (hi - lo > 1) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (await createdSince(mid)) hi = mid;
-    else lo = mid;
-  }
-  return hi;
+/** The id of the first image created at or after `cutoff`, or `fallback` when there is none. */
+async function idCreatedSince(cutoff: Date, fallback: number) {
+  const [row] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Image" WHERE "createdAt" >= ${cutoff} ORDER BY "createdAt" LIMIT 1
+  `;
+  return row?.id ?? fallback;
 }
 
 /**
+ * Checked when choosing and again in the insert, so an image that changes in between is not added.
+ * A post at the queue writer's cap is skipped: its unqueued images may have been flagged and dropped.
+ */
+const sampleable = (img: Prisma.Sql, from: Date, until: Date) => Prisma.sql`(
+  ${img}."createdAt" >= ${from}
+  AND ${img}."createdAt" < ${until}
+  AND ${img}."postId" IS NOT NULL
+  AND ${img}.ingestion = 'Scanned'
+  AND ${img}."needsReview" IS NULL
+  AND ${img}."blockedFor" IS NULL
+  AND NOT ${img}."tosViolation"
+  AND ${img}."nsfwLevel" <> 32
+  AND NOT COALESCE(${excludedImageRow(img)}, false)
+  AND NOT EXISTS (
+    SELECT 1 FROM "Image" sibling
+    JOIN "ScanLabelItem" q ON q."imageId" = sibling.id
+    WHERE sibling."postId" = ${img}."postId" AND (sibling.id = ${img}.id OR q.lane = 'control')
+  )
+  AND (
+    SELECT count(*) FROM "Image" sibling
+    JOIN "ScanLabelItem" q ON q."imageId" = sibling.id
+    WHERE sibling."postId" = ${img}."postId" AND q.lane = 'flagged'
+  ) < ${SCAN_LABEL_MAX_ITEMS_PER_POST}
+)`;
+
+/**
  * Adds a random sample of recent uploads that nothing flagged to the control lane, topping it up to
- * `CONTROL_STOCK` open items within the per-run and per-day caps. One image per post, and none from a
- * post at the queue writer's cap, whose unqueued images may have been flagged and skipped.
+ * `CONTROL_STOCK` open items within the per-run and per-day caps. At most one per post, ever.
  */
 export async function feedScanLabelControlSample({
   now = new Date(),
@@ -72,8 +83,10 @@ export async function feedScanLabelControlSample({
     SELECT max(id) AS "maxId" FROM "Image"
   `;
   if (!maxId) return { added: 0, ...lane };
-  const lo = await idSince(new Date(now.getTime() - WINDOW_MS), maxId);
-  const hi = await idSince(new Date(now.getTime() - SETTLE_MS), maxId);
+  const from = new Date(now.getTime() - WINDOW_MS);
+  const until = new Date(now.getTime() - SETTLE_MS);
+  const lo = await idCreatedSince(from, maxId + 1);
+  const hi = await idCreatedSince(until, maxId + 1);
   if (hi <= lo) return { added: 0, ...lane };
 
   const starts = Array.from(
@@ -89,21 +102,7 @@ export async function feedScanLabelControlSample({
       CROSS JOIN LATERAL (
         SELECT img.id, img."postId"
         FROM "Image" img
-        WHERE img.id >= s.start
-          AND img.id < ${hi}
-          AND img."postId" IS NOT NULL
-          AND img.ingestion = 'Scanned'
-          AND img."needsReview" IS NULL
-          AND img."blockedFor" IS NULL
-          AND NOT img."tosViolation"
-          AND img."nsfwLevel" <> 32
-          AND NOT COALESCE(${excludedImageRow(img)}, false)
-          AND NOT EXISTS (SELECT 1 FROM "ScanLabelItem" own WHERE own."imageId" = img.id)
-          AND (
-            SELECT count(*) FROM "Image" sibling
-            JOIN "ScanLabelItem" q ON q."imageId" = sibling.id
-            WHERE sibling."postId" = img."postId"
-          ) < ${SCAN_LABEL_MAX_ITEMS_PER_POST}
+        WHERE img.id >= s.start AND img.id < ${hi} AND ${sampleable(img, from, until)}
         ORDER BY img.id
         LIMIT 1
       ) c
@@ -123,7 +122,9 @@ export async function feedScanLabelControlSample({
   const added = await dbWrite.$executeRaw`
     WITH item AS (
       INSERT INTO "ScanLabelItem" ("imageId", lane, "firstFlaggedAt", status, "createdAt")
-      SELECT id, 'control', ${now}, 'open', ${now} FROM "Image" WHERE id = ANY(${chosen}::int[])
+      SELECT img.id, 'control', ${now}, 'open', ${now}
+      FROM "Image" img
+      WHERE img.id = ANY(${chosen}::int[]) AND ${sampleable(img, from, until)}
       ON CONFLICT ("imageId") DO NOTHING
       RETURNING id, "imageId"
     )

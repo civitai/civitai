@@ -4,6 +4,7 @@ import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { isFlipt } from '~/server/flipt/client';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -99,6 +100,12 @@ const spread = () => {
 };
 const everyone = async () => true;
 
+/** Draws that start at each of `ids`, in order, for a window of ids [lo, hi). */
+const startingAt = (ids: number[], lo: number, hi: number) => {
+  let k = 0;
+  return () => (ids[k++ % ids.length] - lo + 0.5) / (hi - lo);
+};
+
 describe('feedScanLabelControlSample exclusions', () => {
   it('samples only recent, settled uploads that passed and are not queued', async () => {
     await image(1, { createdAt: hoursAgo(80) }); // before the window
@@ -111,6 +118,7 @@ describe('feedScanLabelControlSample exclusions', () => {
     await image(8);
     await image(9, { needsReview: 'minor' });
     await image(11, { nsfwLevel: 32 });
+    await image(12, { createdAt: hoursAgo(0.3) }); // a low id created in the settle hour
     await image(13, { userId: 99 });
     await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (99)`);
     await image(14);
@@ -128,19 +136,37 @@ describe('feedScanLabelControlSample exclusions', () => {
     // Post 300 is below the cap.
     for (const id of [27, 28, 29]) await image(id, { postId: 300 });
     for (const id of [28, 29]) await queued(id);
-    await image(30, { createdAt: hoursAgo(0.5) }); // still settling
+    // Post 400 already gave a control sample.
+    for (const id of [33, 34]) await image(id, { postId: 400 });
+    await queued(33, { lane: 'control', status: 'decided', createdAt: hoursAgo(40) });
+    await image(39, { createdAt: hoursAgo(1.2) }); // settled
+    await image(40, { createdAt: hoursAgo(0.5) }); // still settling
 
+    // The window is ids [2, 40); one draw starts at each.
+    const everyId = Array.from({ length: 38 }, (_, k) => 2 + k);
     const result = await feedScanLabelControlSample({
       now: NOW,
-      rng: spread(),
+      rng: startingAt(everyId, 2, 40),
       inRollout: async (id) => id !== 23,
     });
 
-    const sampled = await controlImages();
+    const sampled = (await controlImages()).filter((id) => id !== 33);
     const fromPost200 = sampled.filter((id) => id === 25 || id === 26);
     expect(fromPost200).toHaveLength(1);
-    expect(sampled.filter((id) => id !== 25 && id !== 26)).toEqual([2, 4, 6, 8, 27]);
-    expect(result).toMatchObject({ added: 6 });
+    expect(sampled.filter((id) => id !== 25 && id !== 26)).toEqual([2, 4, 6, 8, 27, 39]);
+    expect(result).toMatchObject({ added: 7 });
+  });
+
+  it('takes the first draws, in draw order, when more images qualify than it needs', async () => {
+    for (let id = 1; id <= 20; id++) await image(id);
+    await image(21, { createdAt: hoursAgo(0.5) });
+    const draws = [20, 3, 17, 5, 11, 8, 14, 2, 19, 6, 13, 9];
+    await feedScanLabelControlSample({
+      now: NOW,
+      rng: startingAt(draws, 1, 21),
+      inRollout: everyone,
+    });
+    expect(await controlImages()).toEqual(draws.slice(0, 10).sort((a, b) => a - b));
   });
 
   it('records each sample with a control flag', async () => {
@@ -156,11 +182,59 @@ describe('feedScanLabelControlSample exclusions', () => {
         status: 'open',
         firstFlaggedAt: NOW,
         source: 'control-sample',
-        flaggerVersion: CONTROL_SAMPLE_VERSION,
+        flaggerVersion: 'control-sample@2026-10-17',
         workflowId: 'control-sample:2',
         snapshot: { nsfwLevel: 4 },
       },
     ]);
+    expect(CONTROL_SAMPLE_VERSION).toBe('control-sample@2026-10-17');
+  });
+
+  it('asks the queue writer’s flag about each image by default', async () => {
+    await image(2);
+    vi.mocked(isFlipt).mockResolvedValueOnce(true);
+    expect(await feedScanLabelControlSample({ now: NOW, rng: spread() })).toMatchObject({
+      added: 1,
+    });
+    expect(isFlipt).toHaveBeenCalledWith('scan-label-queue-writer', '2');
+  });
+
+  it('leaves an image the writer queued meanwhile in its flagged item', async () => {
+    await image(2);
+    await image(4);
+    const result = await feedScanLabelControlSample({
+      now: NOW,
+      rng: spread(),
+      inRollout: async (id) => {
+        if (id === 2) await queued(2);
+        return true;
+      },
+    });
+    expect(result).toMatchObject({ added: 1 });
+    const { rows } = await holder.db.query(
+      `SELECT i."imageId", i.lane, array_agg(f.source) FILTER (WHERE f.source IS NOT NULL) AS sources
+       FROM "ScanLabelItem" i LEFT JOIN "ScanLabelFlag" f ON f."itemId" = i.id
+       GROUP BY i."imageId", i.lane ORDER BY i."imageId"`
+    );
+    expect(rows).toEqual([
+      { imageId: 2, lane: 'flagged', sources: null },
+      { imageId: 4, lane: 'control', sources: ['control-sample'] },
+    ]);
+  });
+
+  it('does not add an image that stopped qualifying after it was chosen', async () => {
+    await image(2);
+    await image(4);
+    const result = await feedScanLabelControlSample({
+      now: NOW,
+      rng: spread(),
+      inRollout: async (id) => {
+        if (id === 2) await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'X' WHERE id = 2`);
+        return true;
+      },
+    });
+    expect(result).toMatchObject({ added: 1 });
+    expect(await controlImages()).toEqual([4]);
   });
 
   it('adds nothing when no upload is in the window', async () => {
@@ -174,10 +248,20 @@ describe('feedScanLabelControlSample exclusions', () => {
 });
 
 describe('feedScanLabelControlSample caps', () => {
+  let nextId = 201;
   beforeEach(async () => {
+    nextId = 201;
     for (let id = 1; id <= 59; id++) await image(id);
   });
   const feed = () => feedScanLabelControlSample({ now: NOW, rng: spread(), inRollout: everyone });
+  /** Control items on settling images (ids 201+), so they never collide with a sample. */
+  async function controlItems(n: number, opts: { status: string; createdAt: Date }) {
+    for (let k = 0; k < n; k++) {
+      const id = nextId++;
+      await image(id, { createdAt: hoursAgo(0.5) });
+      await queued(id, { lane: 'control', ...opts });
+    }
+  }
 
   it('adds at most ten a run, and tops the open lane up to thirty, no further', async () => {
     const added = [];
@@ -186,18 +270,14 @@ describe('feedScanLabelControlSample caps', () => {
   });
 
   it('fills only the gap to thirty open', async () => {
-    for (let id = 201; id <= 225; id++) {
-      await image(id, { createdAt: hoursAgo(0.5) }); // settling, so never sampled
-      await queued(id, { lane: 'control', createdAt: hoursAgo(30) });
-    }
+    await controlItems(25, { status: 'open', createdAt: hoursAgo(30) });
     expect((await feed()).added).toBe(5);
   });
 
-  it('adds no more than sixty in 24 hours, however many are decided', async () => {
-    for (let id = 201; id <= 255; id++) {
-      await image(id, { createdAt: hoursAgo(0.5) }); // settling, so never sampled
-      await queued(id, { lane: 'control', status: 'decided', createdAt: hoursAgo(23) });
-    }
+  it('counts every control item of the last 24 hours against sixty, whatever its status', async () => {
+    await controlItems(20, { status: 'open', createdAt: hoursAgo(23) });
+    await controlItems(20, { status: 'void', createdAt: hoursAgo(23) });
+    await controlItems(15, { status: 'decided', createdAt: hoursAgo(23) });
     // 55 added in the last day: room for five.
     expect((await feed()).added).toBe(5);
     await holder.db.exec(`UPDATE "ScanLabelItem" SET status = 'decided'`);
@@ -205,10 +285,7 @@ describe('feedScanLabelControlSample caps', () => {
   });
 
   it('does not count control items older than a day against the daily cap', async () => {
-    for (let id = 201; id <= 260; id++) {
-      await image(id, { createdAt: hoursAgo(0.5) }); // settling, so never sampled
-      await queued(id, { lane: 'control', status: 'decided', createdAt: hoursAgo(25) });
-    }
+    await controlItems(60, { status: 'decided', createdAt: hoursAgo(25) });
     expect((await feed()).added).toBe(10);
   });
 });
