@@ -413,7 +413,6 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const cacheArray = cacheResults.filter((x) => x !== null) as T[];
       const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x])) as Record<string, any>;
 
-      const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
       const cacheMisses = new Set<number>();
       const dontCache = new Set<number>();
       const debounced = new Set<number>();
@@ -425,9 +424,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const cached = cache[id];
         if (cached) {
           if (cached.notFound) continue;
+          // A readable marker is inside its window by construction: bust() writes it with
+          // EX = the window (the per-call debounceTime, else the cache's), so Redis ends the window
+          // and the marker needs no timestamp. Inside it the lookup is served but not written back.
           if (cached.debounce) {
             debounced.add(id);
-            if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
+            dontCache.add(id);
             cacheMisses.add(id);
             continue;
           }

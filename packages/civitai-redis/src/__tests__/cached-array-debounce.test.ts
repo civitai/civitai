@@ -1,0 +1,148 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createCacheBuilders, type CacheBuilderDeps } from '../cached-array';
+import type { RedisKeyTemplateCache } from '../client';
+
+/**
+ * On a non-SWR cache, `bust()` writes a debounce marker with `EX = debounceTime`. While that marker
+ * is readable, a fetch must go to the origin and NOT write the result back — the window exists so a
+ * read from a lagging replica cannot be re-cached for a full ttl right after a write. Once the marker
+ * expires the id is a plain miss and is cached again.
+ *
+ * The redis stub is a Map that honours `EX` against the (fake) clock, so the marker expires exactly
+ * as it would in Redis.
+ */
+
+type Row = { id: number; v: string };
+const KEY = 'packed:caches:test-debounce' as RedisKeyTemplateCache;
+const keyFor = (id: number) => `${KEY}:${id}`;
+const T0 = new Date('2026-01-01T00:00:00Z').getTime();
+
+function build({ debounceTime = 10 }: { debounceTime?: number } = {}) {
+  const store = new Map<string, { value: unknown; expiresAt: number }>();
+  const read = (k: string) => {
+    const e = store.get(k);
+    if (!e) return null;
+    if (Date.now() >= e.expiresAt) {
+      store.delete(k);
+      return null;
+    }
+    return e.value;
+  };
+  const redis = {
+    packed: {
+      mGet: vi.fn(async (keys: RedisKeyTemplateCache[]) => keys.map((k) => read(k))),
+      set: vi.fn(
+        async (
+          key: RedisKeyTemplateCache,
+          value: unknown,
+          opts?: { EX?: number; NX?: boolean }
+        ) => {
+          if (opts?.NX && read(key) !== null) return null;
+          store.set(key, { value, expiresAt: Date.now() + (opts?.EX ?? Infinity) * 1000 });
+          return 'OK';
+        }
+      ),
+    },
+    del: vi.fn(async () => 1),
+    setNxKeepTtlWithEx: vi.fn(async () => true),
+  };
+  const noop = () => undefined;
+  const { createCachedObject } = createCacheBuilders({
+    redis: redis as unknown as CacheBuilderDeps['redis'],
+    defaultTtl: 300,
+    metrics: {
+      hit: noop,
+      miss: noop,
+      revalidate: noop,
+      failOpenDegraded: noop,
+      failOpenOriginFetch: noop,
+      missWouldJoin: noop,
+    },
+    logFailOpen: noop,
+    logRefreshError: noop,
+    log: noop,
+    clearByPattern: async () => undefined,
+  });
+  let version = 0;
+  const lookupFn = vi.fn(async (ids: number[]) =>
+    Object.fromEntries(ids.map((id) => [id, { id, v: `db-${id}-v${version}` }]))
+  );
+  const cache = createCachedObject<Row>({
+    key: KEY,
+    idKey: 'id',
+    lookupFn,
+    ttl: 3600,
+    debounceTime,
+    staleWhileRevalidate: false,
+  });
+  // Ids the fetch path wrote a real value (not the marker) for.
+  const valueWrites = () =>
+    redis.packed.set.mock.calls
+      .filter(([, value]) => !(value as { debounce?: boolean }).debounce)
+      .map(([key]) => key);
+  return { cache, store, read, redis, lookupFn, valueWrites, bumpOrigin: () => version++ };
+}
+
+describe('createCachedObject bust() debounce window (non-SWR)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a fetch inside the window goes to origin and is NOT written back', async () => {
+    const t = build({ debounceTime: 10 });
+    await t.cache.fetch([1]); // warm
+    expect(t.valueWrites()).toEqual([keyFor(1)]);
+
+    await t.cache.bust(1);
+    vi.setSystemTime(T0 + 3_000); // 3s into a 10s window — well clear of either edge
+    t.bumpOrigin();
+    const inside = await t.cache.fetch([1]);
+
+    expect(inside).toEqual({ 1: { id: 1, v: 'db-1-v1' } });
+    // Only the warm-up write; the in-window lookup must not re-cache.
+    expect(t.valueWrites()).toEqual([keyFor(1)]);
+    expect(t.read(keyFor(1))).toMatchObject({ id: 1, debounce: true });
+
+    // Every read inside the window keeps going to origin.
+    vi.setSystemTime(T0 + 7_000);
+    await t.cache.fetch([1]);
+    expect(t.lookupFn).toHaveBeenCalledTimes(3);
+    expect(t.valueWrites()).toEqual([keyFor(1)]);
+  });
+
+  it('a fetch after the window is cached again', async () => {
+    const t = build({ debounceTime: 10 });
+    await t.cache.bust(1);
+    vi.setSystemTime(T0 + 15_000); // 5s past a 10s marker
+    await t.cache.fetch([1]);
+
+    expect(t.valueWrites()).toEqual([keyFor(1)]);
+    expect(t.read(keyFor(1))).toMatchObject({ id: 1, v: 'db-1-v0' });
+
+    // ...and the next read is a hit.
+    await t.cache.fetch([1]);
+    expect(t.lookupFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('a per-call debounceTime longer than the cache default holds for its full length', async () => {
+    const t = build({ debounceTime: 10 });
+    await t.cache.bust(1, { debounceTime: 60 });
+    vi.setSystemTime(T0 + 30_000); // past the cache default, inside the per-call window
+    await t.cache.fetch([1]);
+
+    expect(t.valueWrites()).toEqual([]);
+  });
+
+  it('only the busted id is held back; its batch neighbours are cached', async () => {
+    const t = build({ debounceTime: 10 });
+    await t.cache.bust(1);
+    vi.setSystemTime(T0 + 3_000);
+    await t.cache.fetch([1, 2]);
+
+    expect(t.valueWrites()).toEqual([keyFor(2)]);
+  });
+});

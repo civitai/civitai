@@ -270,7 +270,8 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
 
   it('a debounce-marker id never joins', async () => {
     const t = build();
-    // The marker exactly as bust() writes it (no cachedAt), so both fetches look up AND write.
+    // The marker exactly as bust() writes it: both fetches look up, and neither writes, since a
+    // readable marker is inside its window.
     const marker = { id: 2, debounce: true };
     t.nextRead(marker);
     const a = t.cache.fetch([2]);
@@ -282,29 +283,14 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
 
     expect(t.total()).toBe(0);
     expect(t.lookupFn).toHaveBeenCalledTimes(2);
-    expect(t.sets).toEqual([`${KEY}:2`, `${KEY}:2`]);
-  });
-
-  it('a debounce-marker id outside the debounce window still registers for later fetches', async () => {
-    const t = build();
-    t.nextRead({ id: 2, debounce: true }); // as bust() writes it
-    const a = t.cache.fetch([2]);
-    await t.parked(1); // a registers before b looks
-    const b = t.cache.fetch([2]); // plain miss
-    await t.parked(2);
-    t.gates.forEach((g) => g.resolve());
-    await Promise.all([a, b]);
-
-    expect(t.total()).toBe(1);
-    expect(t.lookupFn).toHaveBeenCalledTimes(2);
+    expect(t.sets).toEqual([]);
   });
 
   it('an id inside the debounce window (dontCache) is not registered, so nothing joins it', async () => {
-    // Dormant today: bust() writes its marker without cachedAt, so no production marker is ever
-    // inside the window (true on main and in #5488 alike). Pinned so the rule still mirrors #5488
-    // if markers start carrying cachedAt.
+    // A marker exists only inside its window (bust() writes it with EX = the window), so every
+    // marker read is this case.
     const t = build();
-    t.nextRead({ id: 2, debounce: true, cachedAt: new Date() });
+    t.nextRead({ id: 2, debounce: true }); // as bust() writes it
     const a = t.cache.fetch([2]);
     await t.parked(1); // a has passed the registration point before b looks
     const b = t.cache.fetch([2]); // plain miss
