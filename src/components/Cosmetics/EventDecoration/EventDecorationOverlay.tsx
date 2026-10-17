@@ -141,6 +141,9 @@ function CardHat({
         // The card underneath is a link.
         e.preventDefault();
         e.stopPropagation();
+        // Safari and Firefox do not focus a clicked button, so Escape would target the page and a
+        // modal around the card would close instead of the popover.
+        e.currentTarget.focus();
         setBurst((x) => x + 1);
         if (wornOn) setOpened((x) => !x);
       }}

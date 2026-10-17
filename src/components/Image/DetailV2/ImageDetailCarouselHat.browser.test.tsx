@@ -26,6 +26,7 @@ const svg = (w: number, h: number, fill: string) =>
 const HAT = svg(10, 10, '#e64980');
 
 const mocks = vi.hoisted(() => ({
+  state: { cover: false },
   image: (hatted: boolean, width = 2000, height = 1000) => ({
     id: 1,
     nsfwLevel: 1,
@@ -63,11 +64,19 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
     ),
 }));
 vi.mock('~/components/ImageHash/ImageHash', () => ({ MediaHash: () => null }));
-// A sticker overlay host stays mounted between the picture and the hat, as in the app, so the hat
-// has to look past it for the media.
+// The sticker overlay's host, after the hat as in the app; with `cover` it holds a sticker spread
+// over the whole picture, which has to paint and take the pointer above the hat.
 vi.mock('~/components/Sticker/ImageStickerOverlay', () => ({
   ImageStickerOverlay: () => (
-    <div data-media-overlay="" data-testid="sticker-host" className="absolute inset-0" />
+    <div
+      data-media-overlay=""
+      data-testid="sticker-host"
+      className="pointer-events-none absolute inset-0"
+    >
+      {mocks.state.cover && (
+        <div data-testid="sticker" className="pointer-events-auto absolute inset-0 isolate" />
+      )}
+    </div>
   ),
 }));
 
@@ -80,9 +89,24 @@ import { getHatLayout } from '~/components/Cosmetics/EventDecoration/event-decor
 const onClose = vi.fn();
 let setSlot: (size: { width: number; height: number }) => void = () => undefined;
 
-function Viewer({ image }: { image: ReturnType<typeof mocks.image> }) {
+function Viewer({ image, bare }: { image: ReturnType<typeof mocks.image>; bare?: boolean }) {
   const [slot, set] = useState({ width: 800, height: 600 });
   setSlot = set;
+  const stage = (
+    <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <ImageDetailCarousel
+          images={[image]}
+          index={0}
+          canNavigate={false}
+          next={() => undefined}
+          previous={() => undefined}
+        />
+      </div>
+    </div>
+  );
+  // Bare for hit-testing: the modal in this harness does not hit-test (elementFromPoint gives BODY).
+  if (bare) return stage;
   // The modal the image detail opens in (ImageDetailModal), whose Escape is what closes the viewer.
   return (
     <PageModal
@@ -95,17 +119,7 @@ function Viewer({ image }: { image: ReturnType<typeof mocks.image> }) {
       padding={0}
       fullScreen
     >
-      <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          <ImageDetailCarousel
-            images={[image]}
-            index={0}
-            canNavigate={false}
-            next={() => undefined}
-            previous={() => undefined}
-          />
-        </div>
-      </div>
+      {stage}
     </PageModal>
   );
 }
@@ -128,6 +142,7 @@ async function expectOnPictureCorner() {
 
 beforeEach(() => {
   onClose.mockClear();
+  mocks.state.cover = false;
 });
 
 describe('the image detail wears the image hat on the picture', () => {
@@ -175,6 +190,44 @@ describe('the image detail wears the image hat on the picture', () => {
 
     await userEvent.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('Escape with focus inside the open popover closes only the popover', async () => {
+    renderWithProviders(<Viewer image={mocks.image(true)} />);
+    await vi.waitFor(() => expect(hat()).not.toBeNull());
+    hat()!.focus();
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() => expect(popover()).not.toBeNull());
+
+    // A click inside the dropdown focuses it (it is tabIndex -1).
+    (popover() as HTMLElement).focus();
+    expect(document.activeElement).toBe(popover());
+    await userEvent.keyboard('{Escape}');
+    await vi.waitFor(() => expect(popover()).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test('a click focuses the hat, which Safari and Firefox do not do for a button', async () => {
+    renderWithProviders(<Viewer image={mocks.image(true)} />);
+    await vi.waitFor(() => expect(hat()).not.toBeNull());
+    // A dispatched click, like those browsers' mouse click, moves no focus by itself.
+    hat()!.click();
+    await vi.waitFor(() => expect(popover()).not.toBeNull());
+    expect(document.activeElement).toBe(hat());
+  });
+
+  test('stickers paint and take the pointer above the hat', async () => {
+    mocks.state.cover = true;
+    renderWithProviders(<Viewer image={mocks.image(true)} bare />);
+    await vi.waitFor(() => expect(hat()).not.toBeNull());
+    await expectOnPictureCorner();
+    // Every point of the hat is under the sticker, so the sticker is what the pointer reaches.
+    const h = rect(hat());
+    const hits = new Set<string | null>();
+    for (let x = h.left + 2; x < h.right - 2; x += 4)
+      for (let y = h.top + 2; y < h.bottom - 2; y += 4)
+        hits.add(document.elementFromPoint(x, y)?.getAttribute('data-testid') ?? null);
+    expect([...hits]).toEqual(['sticker']);
   });
 
   test('gate: no hat when the image carries none', async () => {

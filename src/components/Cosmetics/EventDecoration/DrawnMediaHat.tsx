@@ -7,7 +7,9 @@ import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/use
  * image detail): the slot's corner is often empty space, so the hat goes on the box the media is
  * drawn in, at the feed-card size and smaller on a narrower picture.
  *
- * Comes after the media, like ImageStickerOverlay, inside a positioned parent.
+ * Comes after the media and BEFORE ImageStickerOverlay, inside a positioned parent: `isolate` keeps
+ * the hat's own z-index inside this host, so stickers (and a sticker being placed) paint and take
+ * the pointer above the hat where they overlap.
  */
 export function DrawnMediaHat({
   imageId,
@@ -23,7 +25,7 @@ export function DrawnMediaHat({
       ref={hostRef}
       {...{ [MEDIA_OVERLAY_ATTR]: '' }}
       data-testid="drawn-media-hat"
-      className="pointer-events-none absolute inset-0"
+      className="pointer-events-none absolute inset-0 isolate"
     >
       {box && (
         <div className="pointer-events-none absolute" style={box}>

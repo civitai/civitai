@@ -345,8 +345,9 @@ function ImageContent({
               }}
             />
           )}
-          {safe && <ImageStickerOverlay imageId={image.id} />}
+          {/* The hat before the stickers, so stickers paint and take the pointer above it. */}
           <DrawnMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          {safe && <ImageStickerOverlay imageId={image.id} />}
         </div>
       )}
     </ImageGuardContent>
