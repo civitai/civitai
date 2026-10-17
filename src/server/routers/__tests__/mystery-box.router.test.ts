@@ -30,7 +30,8 @@ const holder = {
 const open = (
   features: Record<string, boolean>,
   headers: Record<string, string> = {},
-  input: { boxItemId: string; expectedVersion: number } = { boxItemId: '501', expectedVersion: 3 }
+  input: { boxItemId: string; expectedVersion: number } = { boxItemId: '501', expectedVersion: 3 },
+  ctx: { user?: typeof holder | null; apiKeyId?: number | null } = {}
 ) =>
   mysteryBoxRouter
     .createCaller({
@@ -43,8 +44,17 @@ const open = (
       cache: { edgeTTL: 0 },
       features: features as never,
       track: undefined,
+      ...ctx,
     } as never)
     .open(input);
+
+const rejectsWithCode = async (promise: Promise<unknown>, code: string) => {
+  const error = await promise.then(
+    () => undefined,
+    (e: unknown) => e
+  );
+  expect(error).toMatchObject({ code });
+};
 
 describe('mysteryBox.open hands the service the flag, the country and the holder', () => {
   beforeEach(() => mockOpen.mockClear());
@@ -68,18 +78,36 @@ describe('mysteryBox.open hands the service the flag, the country and the holder
     });
   });
 
-  it.each([['0'], ['-1'], ['1.5'], ['9223372036854775808'], ['abc']])(
-    'refuses box id %s before the service',
+  it.each([['0'], ['-1'], ['1.5'], ['9223372036854775808'], ['99999999999999999999'], ['abc']])(
+    'refuses box id %s as a bad request, before the service',
     async (boxItemId) => {
-      await expect(
-        open({ mysteryBox: true }, {}, { boxItemId, expectedVersion: 3 })
-      ).rejects.toThrow();
+      await rejectsWithCode(
+        open({ mysteryBox: true }, {}, { boxItemId, expectedVersion: 3 }),
+        'BAD_REQUEST'
+      );
       expect(mockOpen).not.toHaveBeenCalled();
     }
   );
 
+  it.each([[0], [-1], [1.5]])('refuses expected version %s', async (expectedVersion) => {
+    await rejectsWithCode(
+      open({ mysteryBox: true }, {}, { boxItemId: '501', expectedVersion }),
+      'BAD_REQUEST'
+    );
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
   it('accepts the largest BIGINT id', async () => {
     await open({ mysteryBox: true }, {}, { boxItemId: '9223372036854775807', expectedVersion: 3 });
     expect(mockOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a signed-out caller and an API key', async () => {
+    await rejectsWithCode(
+      open({ mysteryBox: true }, {}, undefined, { user: null }),
+      'UNAUTHORIZED'
+    );
+    await rejectsWithCode(open({ mysteryBox: true }, {}, undefined, { apiKeyId: 7 }), 'FORBIDDEN');
+    expect(mockOpen).not.toHaveBeenCalled();
   });
 });

@@ -42,7 +42,7 @@ import {
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
 /**
@@ -91,6 +91,7 @@ export type BoxPoolEntry = {
   rewardDefinitionId: number;
   cosmeticId: number;
   cosmeticData: unknown;
+  cosmeticType: CosmeticType | null;
 };
 
 /**
@@ -113,7 +114,9 @@ export async function getBoxPoolForUser(
       id: true,
       tierId: true,
       rewardDefinitionId: true,
-      reward: { select: { type: true, cosmeticId: true, cosmetic: { select: { data: true } } } },
+      reward: {
+        select: { type: true, cosmeticId: true, cosmetic: { select: { data: true, type: true } } },
+      },
     },
   });
 
@@ -130,6 +133,7 @@ export async function getBoxPoolForUser(
         rewardDefinitionId: content.rewardDefinitionId,
         cosmeticId,
         cosmeticData: cosmetic?.data ?? null,
+        cosmeticType: cosmetic?.type ?? null,
       },
     ];
   });
@@ -588,6 +592,7 @@ export async function openMysteryBox({
         draw,
         sourceKey: item.sourceKey,
         cosmeticEvent: (reward.cosmeticData as { event?: unknown } | null)?.event,
+        grantedSticker: reward.cosmeticType === CosmeticType.Sticker,
       };
     })
     .catch((error) => {
@@ -600,7 +605,7 @@ export async function openMysteryBox({
 
   if (opened.kind === 'replay') return opened.result;
 
-  const { result, draw, sourceKey, cosmeticEvent } = opened;
+  const { result, draw, sourceKey, cosmeticEvent, grantedSticker } = opened;
   logToAxiom({
     type: 'info',
     name: 'mystery-box-open',
@@ -614,7 +619,8 @@ export async function openMysteryBox({
     ...draw,
   }).catch();
 
-  await refreshOwnedStickerCache([userId]).catch(() => undefined);
+  // The box is already opened: a cache miss here must not read as a failed open.
+  if (grantedSticker) await refreshOwnedStickerCache([userId]).catch(() => undefined);
   // An event hat counts on its owner's team roster, if they are listed.
   if (typeof cosmeticEvent === 'string')
     void syncEventRosterMember(userId, { event: cosmeticEvent, onlyIfListed: true });

@@ -14,6 +14,7 @@ const { mocks } = vi.hoisted(() => ({
     randomInt: vi.fn(),
     getEventBuyerTeam: vi.fn(),
     syncRoster: vi.fn(),
+    refreshStickers: vi.fn(),
   },
 }));
 
@@ -31,7 +32,7 @@ vi.mock('~/server/events/points/roster-sync', async (importOriginal) => ({
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof RedisCaches>()),
-  refreshOwnedStickerCache: vi.fn(async () => undefined),
+  refreshOwnedStickerCache: mocks.refreshStickers,
 }));
 
 import { openMysteryBox } from '../mystery-box.service';
@@ -41,7 +42,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const HOLDER = 1;
 const OTHER_USER = 2;
 const BOX_ID = 9;
-const VERSION = 3;
+// Distinct from every content id and roll in the fixtures, so swapped audit fields show.
+const VERSION = 5;
 const BOX_ITEM = 501n;
 const SOURCE_KEY = 'item-purchase-v1-1-42-key';
 // Common weighs 3, Rare 1. Ids run against sortOrder so the walk order is visible.
@@ -54,18 +56,33 @@ type Content = {
   tierId: number;
   rewardDefinitionId: number;
   enabled: boolean;
-  reward: { type: string; cosmeticId: number | null; cosmetic: { data: unknown } | null };
+  reward: {
+    type: string;
+    cosmeticId: number | null;
+    cosmetic: { data: unknown; type: string } | null;
+  };
 };
-const hat = (n: number, tierId: number, data: unknown = {}): Content => ({
+const hat = (
+  n: number,
+  tierId: number,
+  data: unknown = {},
+  type = 'ContentDecoration'
+): Content => ({
   id: n,
   boxDefinitionId: BOX_ID,
   tierId,
   rewardDefinitionId: 100 + n,
   enabled: true,
-  reward: { type: 'cosmetic', cosmeticId: 1000 + n, cosmetic: { data } },
+  reward: { type: 'cosmetic', cosmeticId: 1000 + n, cosmetic: { data, type } },
 });
 
-type ItemRow = { id: bigint; itemDefinitionId: number; holderId: number; sourceKey: string };
+type ItemRow = {
+  id: bigint;
+  itemDefinitionId: number;
+  holderType: string;
+  holderId: number;
+  sourceKey: string;
+};
 type Opening = Record<string, unknown> & { boxItemId: bigint; userId: number };
 
 let world: {
@@ -127,7 +144,10 @@ const makeTx = (onLock: () => Promise<void>) => ({
       throw new Error(`unexpected ${sql}`);
     world.log.push('select:item');
     const [id, holderId] = values;
-    return world.items.filter((i) => i.id === id && i.holderId === holderId);
+    const usersOnly = sql.includes(`"holderType" = 'user'`);
+    return world.items.filter(
+      (i) => i.id === id && i.holderId === holderId && (!usersOnly || i.holderType === 'user')
+    );
   },
   itemDefinition: {
     findUnique: async ({
@@ -227,9 +247,10 @@ const open = ({
     countryCode,
   });
 
-const holderBox = (id = BOX_ITEM, holderId = HOLDER): ItemRow => ({
+const holderBox = (id = BOX_ITEM, holderId = HOLDER, holderType = 'user'): ItemRow => ({
   id,
   itemDefinitionId: BOX_ID,
+  holderType,
   holderId,
   sourceKey: `${SOURCE_KEY}-${id}`,
 });
@@ -260,9 +281,14 @@ beforeEach(() => {
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
   dbMock.dbWrite.item.findFirst.mockReset();
   dbMock.dbWrite.item.findFirst.mockImplementation(
-    async ({ where }: { where: { id: bigint; holderId: number } }) => {
+    async ({ where }: { where: { id: bigint; holderType?: string; holderId: number } }) => {
       world.log.push('read:held');
-      const row = world.items.find((i) => i.id === where.id && i.holderId === where.holderId);
+      const row = world.items.find(
+        (i) =>
+          i.id === where.id &&
+          i.holderId === where.holderId &&
+          (where.holderType === undefined || i.holderType === where.holderType)
+      );
       return row && { ...row, itemDefinition: { params: world.box.params } };
     }
   );
@@ -279,8 +305,19 @@ beforeEach(() => {
     const tx = makeTx(async () => {
       release = await acquireLock();
     });
+    world.log.push('begin');
+    // A failed transaction leaves nothing behind. Restoring a snapshot is only sound while one
+    // transaction at a time can fail, which holds here: the concurrent tests' losers replay.
+    const before = {
+      owned: [...world.owned],
+      items: [...world.items],
+      openings: new Map(world.openings),
+    };
     try {
       return await fn(tx);
+    } catch (error) {
+      Object.assign(world, before);
+      throw error;
     } finally {
       world.log.push('end');
       release?.();
@@ -289,6 +326,7 @@ beforeEach(() => {
 
   mocks.randomInt.mockImplementation(() => 0);
   mocks.getEventBuyerTeam.mockResolvedValue(undefined);
+  mocks.refreshStickers.mockResolvedValue(undefined);
 });
 
 describe('opening a mystery box', () => {
@@ -343,9 +381,8 @@ describe('opening a mystery box', () => {
 
   it('takes the holder lock first, before any row of the box is read', async () => {
     await open();
-    const inTx = world.log.slice(world.log.indexOf(`lock:${ITEM_HOLDER_LOCK_CLASS},${HOLDER}`));
-    expect(inTx[0]).toBe(`lock:${ITEM_HOLDER_LOCK_CLASS},${HOLDER}`);
-    expect(inTx[1]).toBe('select:item');
+    const inTx = world.log.slice(world.log.indexOf('begin') + 1);
+    expect(inTx.slice(0, 2)).toEqual([`lock:${ITEM_HOLDER_LOCK_CLASS},${HOLDER}`, 'select:item']);
     expect(world.log.filter((l) => l.startsWith('lock:'))).toHaveLength(1);
   });
 
@@ -399,10 +436,11 @@ describe('opening a mystery box', () => {
 
   it("draws an event box from the holder's team only", async () => {
     world.box.params = { event: 'birthday' };
+    // The hats name a different event than the box, so the roster sync's source shows.
     world.contents = [
-      hat(1, COMMON, { event: 'birthday', team: 'red' }),
-      hat(2, COMMON, { event: 'birthday', team: 'blue' }),
-      hat(3, RARE, { event: 'birthday', team: 'red' }),
+      hat(1, COMMON, { event: 'birthday-hats', team: 'red' }),
+      hat(2, COMMON, { event: 'birthday-hats', team: 'blue' }),
+      hat(3, RARE, { event: 'birthday-hats', team: 'red' }),
     ];
     mocks.getEventBuyerTeam.mockResolvedValue('blue');
 
@@ -413,17 +451,34 @@ describe('opening a mystery box', () => {
       cosmeticId: 1002,
       odds: { eligibleWeight: 3, tierPoolSize: 1 },
     });
-    // An event hat updates its owner's roster entry, after the open commits.
-    expect(mocks.syncRoster).toHaveBeenCalledWith(HOLDER, {
-      event: 'birthday',
-      onlyIfListed: true,
-    });
+    // An event hat updates its owner's roster entry for the hat's event, after the open commits.
+    expect(mocks.syncRoster.mock.calls).toEqual([
+      [HOLDER, { event: 'birthday-hats', onlyIfListed: true }],
+    ]);
   });
 
-  it('a consumable reward is granted with its uses', async () => {
-    world.contents = [hat(1, COMMON, { uses: 5 })];
+  it('a reward with no event touches no roster', async () => {
+    await open();
+    expect(mocks.syncRoster).not.toHaveBeenCalled();
+  });
+
+  it('a consumable sticker is granted with its uses and refreshes the owned-sticker cache', async () => {
+    world.contents = [hat(1, COMMON, { uses: 5 }, 'Sticker')];
     await open();
     expect(world.owned).toEqual([expect.objectContaining({ cosmeticId: 1001, remaining: 5 })]);
+    expect(mocks.refreshStickers.mock.calls).toEqual([[[HOLDER]]]);
+  });
+
+  it('a hat leaves the sticker cache alone', async () => {
+    await open();
+    expect(mocks.refreshStickers).not.toHaveBeenCalled();
+  });
+
+  it('a cache failure after commit does not fail the open', async () => {
+    world.contents = [hat(1, COMMON, {}, 'Sticker')];
+    mocks.refreshStickers.mockRejectedValue(new Error('redis down'));
+    await expect(open()).resolves.toMatchObject({ cosmeticId: 1001, replayed: false });
+    expect(world.items).toEqual([]);
   });
 
   it("a held box opens after its definition is archived: the box is the holder's", async () => {
@@ -480,6 +535,20 @@ describe('refusals keep the box', () => {
     expect(world.items).toHaveLength(1);
   });
 
+  it('a box held by another kind of holder with the same id', async () => {
+    world.items = [holderBox(BOX_ITEM, HOLDER, 'faction')];
+    await expect(open()).rejects.toThrow('not yours');
+    expect(world.owned).toEqual([]);
+    expect(world.items).toHaveLength(1);
+  });
+
+  it('an item that is not a box, before anything is drawn', async () => {
+    world.box.type = 'cosmetic';
+    await expect(open()).rejects.toThrow('cannot be opened');
+    nothingOpened();
+    expect(mocks.randomInt).not.toHaveBeenCalled();
+  });
+
   it('a box edited since the holder saw it, before anything is drawn', async () => {
     await expect(open({ expectedVersion: VERSION - 1 })).rejects.toThrow('contents changed');
     nothingOpened();
@@ -525,6 +594,7 @@ describe('refusals keep the box', () => {
       )
     );
     await expect(open()).rejects.toThrow('could not be opened');
-    expect(world.items).toHaveLength(1);
+    nothingOpened();
+    expect(mocks.syncRoster).not.toHaveBeenCalled();
   });
 });

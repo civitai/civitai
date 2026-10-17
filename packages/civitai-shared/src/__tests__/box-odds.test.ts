@@ -160,6 +160,15 @@ describe('box odds: rolls replay', () => {
     expect(drawWithRolls(tied, { tierRoll: 0, itemRoll: 0 }).contentId).toBe(70);
   });
 
+  it('orders a tier by content id as numbers, not as text', () => {
+    const mixed = computeBoxOdds(
+      [{ id: 1, weight: 1, sortOrder: 0 }],
+      [100, 9, 10].map((contentId) => ({ contentId, tierId: 1 }))
+    );
+    expect(mixed.tiers[0].contentIds).toEqual([9, 10, 100]);
+    expect(drawWithRolls(mixed, { tierRoll: 0, itemRoll: 0 }).contentId).toBe(9);
+  });
+
   it('records every audit field', () => {
     expect(drawWithRolls(odds, { tierRoll: 80, itemRoll: 3 })).toEqual({
       tierId: 2,
@@ -189,15 +198,15 @@ describe('drawFromOdds', () => {
     ['an item roll at the tier size', [0, 35]],
   ])('throws on %s rather than skewing the odds', (_, rolls) => {
     const randomInt = vi.fn().mockReturnValueOnce(rolls[0]).mockReturnValueOnce(rolls[1]);
-    expect(() => drawFromOdds(odds, randomInt)).toThrow(RangeError);
+    expect(() => drawFromOdds(odds, randomInt)).toThrow(/Roll -?[\d.]+ is outside \[0, \d+\)/);
   });
 });
 
 describe('computeBoxOdds refuses a box it cannot draw honestly', () => {
-  it.each([0, -3, 1.5, Number.NaN])('a tier weight of %s', (weight) => {
+  it.each([0, -3, 1.5, Number.NaN, 2 ** 53])('a tier weight of %s', (weight) => {
     expect(() =>
       computeBoxOdds([{ id: 1, weight, sortOrder: 0 }], [{ contentId: 1, tierId: 1 }])
-    ).toThrow(RangeError);
+    ).toThrow('weights are positive integers');
   });
 
   it('a reward in a tier the box does not have', () => {
