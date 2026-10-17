@@ -192,6 +192,8 @@ export type TechniqueType = "Image" | "Video";
 
 export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
+export type AppealCategory = "Account" | "Article" | "Model" | "Other";
+
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
@@ -4293,6 +4295,8 @@ export interface Appeal {
   internalNotes: string | null;
   buzzTransactionId: string | null;
   entityRemovedAt: Date | null;
+  category: AppealCategory | null;
+  context: JsonValue | null;
 }
 
 export interface RemovalScoreExemption {

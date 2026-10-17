@@ -344,7 +344,7 @@ LEFT JOIN LATERAL (
          count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
          count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
   FROM "Appeal" pa
-  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' ${exclude}
+  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.category IS NULL ${exclude}
 ) ap ON TRUE
 `;
 
@@ -462,7 +462,7 @@ export async function getMinorFlagAppealsForReview({
       FROM "Appeal" a
       JOIN "Model" m ON m.id = a."entityId"
       LEFT JOIN "User" u ON u.id = m."userId"
-      WHERE a."entityType" = 'Model'
+      WHERE a."entityType" = 'Model' AND a.category IS NULL
         -- Cast rather than bind the enum: the value goes over as text and Postgres has no
         -- AppealStatus = text operator.
         AND a.status::text = 'Pending'
@@ -525,7 +525,7 @@ export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearc
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     ${search && 'username' in search ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
-    WHERE a."entityType" = 'Model'
+    WHERE a."entityType" = 'Model' AND a.category IS NULL
       AND a.status::text = 'Pending'
       AND ${searchPredicate(search, {
         modelId: 'm.id',
@@ -619,6 +619,7 @@ export async function getRedetectedModels({
              EXISTS (
                SELECT 1 FROM "Appeal" a
                WHERE a."entityType" = 'Model' AND a."entityId" = m.id AND a.status::text = 'Pending'
+                 AND a.category IS NULL
              ) AS "hasPendingAppeal"
       FROM "Model" m
       ${redetectedLabelsJoin}

@@ -6877,6 +6877,15 @@ enum AppealStatus {
   Void
 }
 
+/// Set only on an appeal filed through the site appeal form (`/appeal`); NULL on every appeal filed
+/// from an in-app button. Each value is its own moderator queue.
+enum AppealCategory {
+  Account
+  Article
+  Model
+  Other
+}
+
 model Appeal {
   id                Int          @id @default(autoincrement())
   userId            Int
@@ -6895,6 +6904,9 @@ model Appeal {
   internalNotes     String?
   buzzTransactionId String?
   entityRemovedAt   DateTime?
+  category          AppealCategory?
+  /// What the form collected beyond the message (`SiteAppealContext`).
+  context           Json?
 
   @@index([entityType, entityId, userId])
   @@index([userId])

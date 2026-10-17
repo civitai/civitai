@@ -3685,7 +3685,9 @@ describe('getStoryline — title appeal', () => {
     const asOwner = await page(byScan, { id: OWNER });
     expect(asOwner).toMatchObject({ titleAppealable: true, titleAppeal: lastAppeal });
     expect(r.appeal.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { entityType: 'Storyline', entityId: 10, userId: OWNER } })
+      expect.objectContaining({
+        where: { entityType: 'Storyline', entityId: 10, userId: OWNER, category: null },
+      })
     );
     for (const field of ['tosViolationByScan', 'tosViolationByModerator'])
       expect(asOwner).not.toHaveProperty(field);

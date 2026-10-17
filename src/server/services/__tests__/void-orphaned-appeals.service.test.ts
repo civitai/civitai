@@ -463,6 +463,7 @@ describe('getAppealCount', () => {
         userId: 1,
         status: { in: [AppealStatus.Pending, AppealStatus.Rejected] },
         createdAt: { gte: startDate },
+        category: null,
         NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
       },
     });
@@ -488,6 +489,7 @@ describe('resolveEntityAppeal', () => {
           status: AppealStatus.Pending,
           entityType: EntityType.Image,
           entityRemovedAt: null,
+          category: null,
         },
       })
     );
