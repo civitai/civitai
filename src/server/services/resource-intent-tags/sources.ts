@@ -64,12 +64,12 @@ export function retryingQuery(query: TagRawQuery, delayMs?: number): TagRawQuery
 }
 
 /**
- * The model (alias `m`) is listed: not Private, and not Archived or TakenDown (`mode` holds only
- * those two). The one predicate every read that admits a model to the index applies: eligibility,
- * the resources of generator and posted rows, and model content, so a used model that is no longer
- * listed is kept out exactly as an unused one is.
+ * The model (alias `m`) is listed: Published (`status`; Private is an availability, not a status),
+ * not Private, and not Archived or TakenDown (`mode` holds only those two). The one predicate every
+ * read that admits a model to the index applies: eligibility, the resources of generator and posted
+ * rows, and model content, so a used model that is not listed is kept out exactly as an unused one is.
  */
-export const MODEL_LISTED_SQL = `m.availability <> 'Private'::"Availability" AND m.mode IS NULL`;
+export const MODEL_LISTED_SQL = `m.status = 'Published' AND m.availability <> 'Private'::"Availability" AND m.mode IS NULL`;
 const MODEL_LISTED = Prisma.raw(MODEL_LISTED_SQL);
 
 export type VersionInfo = {
@@ -83,20 +83,21 @@ export type VersionInfo = {
 };
 
 /**
- * A generator observation's resources, versions the map does not know and unlisted models skipped
- * (the row still counts for its other resources, as a posted row's does); null when any resource is a
- * flagged model, as a posted image attaching one is not eligible either.
+ * A generator observation's resources, versions the map does not know skipped, and unlisted models
+ * too unless `includeUnlisted`; null when any resource is a flagged model, as a posted image attaching
+ * one is not eligible either.
  */
 export function resourcesOfVersions(
   versionIds: readonly number[],
-  versions: ReadonlyMap<number, VersionInfo>
+  versions: ReadonlyMap<number, VersionInfo>,
+  includeUnlisted = false
 ): TrainingResource[] | null {
   const out: TrainingResource[] = [];
   for (const id of versionIds) {
     const v = versions.get(id);
     if (!v) continue;
     if (v.flagged) return null;
-    if (v.unlisted) continue;
+    if (v.unlisted && !includeUnlisted) continue;
     out.push({ modelId: v.modelId, type: v.type, baseModel: v.baseModel });
   }
   return out;
@@ -223,18 +224,18 @@ export async function readPostedSample(
           AND EXISTS (SELECT 1 FROM "ImageResourceNew" r WHERE r."imageId" = i.id)
       )
       SELECT s."userId", s.prompt,
-        (SELECT jsonb_agg(DISTINCT jsonb_build_object('modelId', m.id, 'type', m.type::text, 'baseModel', mv."baseModel"))
+        (SELECT jsonb_agg(DISTINCT jsonb_build_object('modelId', m.id, 'type', m.type::text, 'baseModel', mv."baseModel", 'listed', ${MODEL_LISTED}))
            FROM "ImageResourceNew" irn
            JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
            JOIN "Model" m ON m.id = mv."modelId"
-           WHERE irn."imageId" = s.id AND ${MODEL_LISTED}) AS resources,
+           WHERE irn."imageId" = s.id) AS resources,
         (SELECT count(*) FROM "ImageReaction" WHERE "imageId" = s.id)::int AS reactions,
         (SELECT count(*) FROM "BuzzTip" WHERE "entityType" = 'Image' AND "entityId" = s.id)::int AS tips
       FROM s`)) as {
       userId: number;
       prompt: string;
-      /** NULL when no attachment resolves to a listed model's version: the row is then dropped. */
-      resources: TrainingResource[] | null;
+      /** NULL when no attachment resolves to a version. */
+      resources: (TrainingResource & { listed: boolean })[] | null;
       reactions: number;
       tips: number;
     }[];
@@ -245,7 +246,7 @@ export async function readPostedSample(
         source: 'post' as const,
         user: p.userKey(r.userId),
         prompt: r.prompt,
-        resources: r.resources ?? [],
+        ...listedResources(r.resources ?? []),
         reactions: r.reactions,
         tips: r.tips,
       }))
@@ -273,7 +274,7 @@ export async function readEligibleModelIds(
   for (let after = 0; ; ) {
     const rows = (await query(Prisma.sql`
       SELECT m.id FROM "Model" m
-      WHERE m.id > ${after}::int AND m.status = 'Published' AND NOT m.poi AND NOT m.minor
+      WHERE m.id > ${after}::int AND NOT m.poi AND NOT m.minor
         AND ${MODEL_LISTED}
         AND m.type::text = ANY(${[...types]}::text[])
         AND EXISTS (SELECT 1 FROM "ModelVersion" mv
@@ -297,6 +298,21 @@ export function unionAscending(a: readonly number[], b: readonly number[]): numb
     if (!out.length || out[out.length - 1] !== v) out.push(v);
   }
   return out;
+}
+
+/**
+ * A posted row's resources: the listed ones kept, and every one, listed or not, for its ecosystem
+ * (`ecosystemResources`, when that is more).
+ */
+function listedResources(all: readonly (TrainingResource & { listed: boolean })[]): {
+  resources: TrainingResource[];
+  ecosystemResources?: TrainingResource[];
+} {
+  const strip = ({ modelId, type, baseModel }: TrainingResource) => ({ modelId, type, baseModel });
+  const resources = all.filter((r) => r.listed).map(strip);
+  return resources.length === all.length
+    ? { resources }
+    : { resources, ecosystemResources: all.map(strip) };
 }
 
 const MODEL_BATCH = 1000;
@@ -334,6 +350,7 @@ export async function readModelContent(
   const stop = { failed: false };
   let next = 0;
   const fill = () => {
+    if (stop.failed) return;
     while (next < batches.length && inFlight.length < concurrency) {
       const p = readContentBatch(query, batches[next++], end, stop);
       // Rethrown where it is awaited; this also keeps a read-ahead that fails after an earlier
@@ -378,7 +395,8 @@ async function readContentBatch(
     tags: string[];
     versions: { baseModel: string | null; trainedWords: string[] | null }[];
   }[];
-  // The read already failed elsewhere: nothing will use this batch.
+  // Another batch failed, so the read throws that failure: skip the rest of this one. What it hands
+  // on (nothing) reaches no index.
   if (stop.failed) return [];
   const images = (await query(Prisma.sql`
     WITH ms AS (SELECT unnest(${ids}::int[]) AS id),
@@ -510,11 +528,14 @@ export function genTrainingRow(
 ): TagTrainingRow | null {
   const resources = resourcesOfVersions(o.versionIds, versions);
   if (!resources) return null;
+  const all = resourcesOfVersions(o.versionIds, versions, true) as TrainingResource[];
   return {
     source: 'gen',
     user: o.user,
     prompt: o.prompt,
     resources,
+    // The ecosystem from every checkpoint the row used, listed or not.
+    ...(all.length !== resources.length ? { ecosystemResources: all } : {}),
     liked: o.liked,
     favorite: o.favorite,
     disliked: o.disliked,

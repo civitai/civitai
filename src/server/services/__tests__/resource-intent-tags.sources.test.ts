@@ -6,7 +6,12 @@ import {
   COOC_ELIGIBLE_IMAGE,
   COOC_ELIGIBLE_REST,
 } from '~/server/services/resource-intent-cooc/build';
-import type { TagModelContent, TagTrainingRow } from '~/server/services/resource-intent-tags/build';
+import {
+  parseTagVocabulary,
+  TagIndexAccumulator,
+  type TagModelContent,
+  type TagTrainingRow,
+} from '~/server/services/resource-intent-tags/build';
 import {
   assertObservationKey,
   CONTENT_IMAGE_ELIGIBLE,
@@ -26,6 +31,7 @@ import {
   standbyQuery,
   tagTrainingWindow,
   unionAscending,
+  type VersionInfo,
 } from '~/server/services/resource-intent-tags/sources';
 
 describe('resource-intent-tags sources', () => {
@@ -231,7 +237,7 @@ describe('resource-intent-tags sources', () => {
         {
           userId: 2,
           prompt: 'b',
-          resources: [{ modelId: 3, type: 'LORA', baseModel: 'E' }],
+          resources: [{ modelId: 3, type: 'LORA', baseModel: 'E', listed: true }],
           reactions: 4,
           tips: 1,
         },
@@ -292,8 +298,8 @@ describe('the eligible models (full coverage)', () => {
     // The whole statement: each clause is an eligibility rule a reword could drop.
     expect(seen[0].sql.replace(/\s+/g, ' ').trim()).toBe(
       'SELECT m.id FROM "Model" m WHERE m.id > ?::int AND ' +
-        "m.status = 'Published' AND NOT m.poi AND NOT m.minor AND " +
-        `m.availability <> 'Private'::"Availability" AND m.mode IS NULL AND ` +
+        'NOT m.poi AND NOT m.minor AND ' +
+        `m.status = 'Published' AND m.availability <> 'Private'::"Availability" AND m.mode IS NULL AND ` +
         'm.type::text = ANY(?::text[]) ' +
         'AND EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND ' +
         "mv.status = 'Published') ORDER BY m.id LIMIT ?::int"
@@ -489,6 +495,28 @@ describe('content batches are read ahead, and handed on in id order', () => {
     expect(statements).not.toContain('images 2001');
   });
 
+  it('batch one slow, batch two failing first: no statement after the failure, no batch launched', async () => {
+    const statements: string[] = [];
+    const query = async (q: Prisma.Sql) => {
+      const ids = q.values.find(Array.isArray) as number[];
+      const kind = q.sql.includes('"TagsOnModels"') ? 'meta' : 'images';
+      statements.push(`${kind} ${ids[0]}`);
+      if (ids[0] === 1001) throw new Error('batch two failed');
+      // Batch two fails at once; batches one (slowest) and three answer their meta after that.
+      if (kind === 'meta' && ids[0] !== 1001)
+        await new Promise((r) => setTimeout(r, ids[0] === 1 ? 10 : 1));
+      return kind === 'meta'
+        ? ids.map((id) => ({ id, name: '', type: 'LORA', description: '', tags: [], versions: [] }))
+        : [];
+    };
+    await expect(readModelContent(query, ids, new Date(), () => undefined)).rejects.toThrow(
+      'batch two failed'
+    );
+    await new Promise((r) => setTimeout(r, 30));
+    // The three read at once, and nothing after: no image read, no fourth batch.
+    expect(statements).toEqual(['meta 1', 'meta 1001', 'meta 2001']);
+  });
+
   it('a failed batch fails the read, and hands on nothing after it', async () => {
     const handed: number[] = [];
     const query = async (q: Prisma.Sql) => {
@@ -509,7 +537,7 @@ describe('content batches are read ahead, and handed on in id order', () => {
   });
 });
 
-describe('only listed models reach the index: not Private, Archived or TakenDown', () => {
+describe('only listed models reach the index: Published, not Private, Archived or TakenDown', () => {
   // The columns the model-admitting reads look at, with the app's own enum types.
   const SCHEMA = `
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
@@ -518,21 +546,26 @@ describe('only listed models reach the index: not Private, Archived or TakenDown
       availability "Availability", mode "ModelModifier");
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, status text, "baseModel" text);
   `;
-  // id: [availability, mode]. 1, 5 and 6 are listed; 2, 3 and 4 are one each of the three excluded.
-  const MODELS: [number, string, string | null][] = [
-    [1, 'Public', null],
-    [2, 'Private', null],
-    [3, 'Public', 'Archived'],
-    [4, 'Public', 'TakenDown'],
-    [5, 'Unsearchable', null],
-    [6, 'EarlyAccess', null],
+  // id: [availability, mode, status]. 1, 5 and 6 are listed; 2, 3 and 4 are one each of Private,
+  // Archived and TakenDown; 7–10 one each of the statuses that are not Published.
+  const MODELS: [number, string, string | null, string][] = [
+    [1, 'Public', null, 'Published'],
+    [2, 'Private', null, 'Published'],
+    [3, 'Public', 'Archived', 'Published'],
+    [4, 'Public', 'TakenDown', 'Published'],
+    [5, 'Unsearchable', null, 'Published'],
+    [6, 'EarlyAccess', null, 'Published'],
+    [7, 'Public', null, 'Deleted'],
+    [8, 'Public', null, 'Unpublished'],
+    [9, 'Public', null, 'UnpublishedViolation'],
+    [10, 'Public', null, 'Draft'],
   ];
   async function db() {
     const d = await utcPglite(SCHEMA);
-    for (const [id, availability, mode] of MODELS) {
+    for (const [id, availability, mode, status] of MODELS) {
       await d.query(
-        `INSERT INTO "Model" VALUES ($1, 'Published', false, false, 'LORA', $2::"Availability", $3::"ModelModifier")`,
-        [id, availability, mode]
+        `INSERT INTO "Model" VALUES ($1, $4, false, false, 'LORA', $2::"Availability", $3::"ModelModifier")`,
+        [id, availability, mode, status]
       );
       await d.query(`INSERT INTO "ModelVersion" VALUES ($1, $2, 'Published', 'SDXL 1.0')`, [
         id * 10,
@@ -553,7 +586,9 @@ describe('only listed models reach the index: not Private, Archived or TakenDown
       (q) => sql.query(q),
       MODELS.map(([id]) => id * 10)
     );
-    expect([...versions].filter(([, v]) => v.unlisted).map(([id]) => id)).toEqual([20, 30, 40]);
+    expect([...versions].filter(([, v]) => v.unlisted).map(([id]) => id)).toEqual([
+      20, 30, 40, 70, 80, 90, 100,
+    ]);
     const row = genTrainingRow(
       {
         user: 'u',
@@ -590,8 +625,109 @@ describe('only listed models reach the index: not Private, Archived or TakenDown
     const posted = seen.find((q) => q.sql.includes('jsonb_agg(DISTINCT'));
     expect(meta?.sql).toContain(`AND ${MODEL_LISTED_SQL}`);
     expect(posted?.sql.replace(/\s+/g, ' ')).toContain(
-      `WHERE irn."imageId" = s.id AND ${MODEL_LISTED_SQL}) AS resources`
+      `'baseModel', mv."baseModel", 'listed', ${MODEL_LISTED_SQL}))`
     );
-    expect(MODEL_LISTED_SQL).toBe(`m.availability <> 'Private'::"Availability" AND m.mode IS NULL`);
+    expect(MODEL_LISTED_SQL).toBe(
+      `m.status = 'Published' AND m.availability <> 'Private'::"Availability" AND m.mode IS NULL`
+    );
+  });
+});
+
+describe("a row's ecosystem comes from every checkpoint it used, listed or not", () => {
+  const vocab = parseTagVocabulary(
+    Buffer.from(
+      JSON.stringify({
+        schema: 'p2m-vocab/2',
+        tags: [{ id: 0, key: 'castle', idf: 1, users: 3, explicit: false, near: [] }],
+      })
+    )
+  );
+  const v = (modelId: number, type: string, baseModel: string, unlisted: boolean): VersionInfo => ({
+    modelId,
+    type,
+    baseModel,
+    flagged: false,
+    unlisted,
+  });
+  /** The ecosystems one generator row and one posted row with the same resources are counted under. */
+  function ecosystemsOf(versions: Map<number, VersionInfo>) {
+    const acc = new TagIndexAccumulator(vocab, {
+      addonTypes: ['LORA'],
+      excludeGenPrompt: () => false,
+    });
+    const gen = genTrainingRow(
+      {
+        user: 'u',
+        prompt: 'castle',
+        versionIds: [...versions.keys()],
+        liked: true,
+        favorite: false,
+        disliked: false,
+      },
+      versions
+    );
+    acc.addRow(gen as TagTrainingRow);
+    const { data } = acc.finalize();
+    return { resources: gen?.resources.map((r) => r.modelId), ecosystems: data.ecosystems };
+  }
+
+  it('an unlisted SDXL checkpoint beside a listed SDXL LoRA: the row keeps SDXL', () => {
+    const got = ecosystemsOf(
+      new Map([
+        [10, v(1, 'Checkpoint', 'SDXL 1.0', true)],
+        [20, v(2, 'LORA', 'SDXL 1.0', false)],
+      ])
+    );
+    expect(got.resources).toEqual([2]);
+    expect(got.ecosystems).toEqual([{ name: 'SDXL 1.0', users: 1, observations: 1 }]);
+  });
+
+  it('an unlisted Pony checkpoint beside a listed SDXL checkpoint: still no single ecosystem', () => {
+    const got = ecosystemsOf(
+      new Map([
+        [10, v(1, 'Checkpoint', 'Pony', true)],
+        [20, v(2, 'Checkpoint', 'SDXL 1.0', false)],
+      ])
+    );
+    expect(got.resources).toEqual([2]);
+    expect(got.ecosystems.filter((e) => e.observations > 0)).toEqual([]);
+  });
+
+  it('a posted row does the same: its unlisted attachments count for the ecosystem only', async () => {
+    const rows: TagTrainingRow[] = [];
+    const query = async (q: Prisma.Sql) => {
+      if (q.sql.includes('max(id)')) return [{ max: 10 }];
+      if (q.sql.includes('FROM "Image" WHERE id >='))
+        return [{ id: q.values[0], createdAt: new Date('2026-01-15') }];
+      return [
+        {
+          userId: 1,
+          prompt: 'castle',
+          resources: [
+            { modelId: 1, type: 'Checkpoint', baseModel: 'SDXL 1.0', listed: false },
+            { modelId: 2, type: 'LORA', baseModel: 'SDXL 1.0', listed: true },
+          ],
+          reactions: 0,
+          tips: 0,
+        },
+      ];
+    };
+    await readPostedSample(query, {
+      start: new Date('2026-01-01'),
+      end: new Date('2026-02-01'),
+      mod: 6,
+      idBatch: 100,
+      userKey: String,
+      onBatch: (r) => void rows.push(...r),
+    });
+    expect(rows[0].resources).toEqual([{ modelId: 2, type: 'LORA', baseModel: 'SDXL 1.0' }]);
+    const acc = new TagIndexAccumulator(vocab, {
+      addonTypes: ['LORA'],
+      excludeGenPrompt: () => false,
+    });
+    acc.addRow(rows[0]);
+    expect(acc.finalize().data.ecosystems).toEqual([
+      { name: 'SDXL 1.0', users: 1, observations: 1 },
+    ]);
   });
 });

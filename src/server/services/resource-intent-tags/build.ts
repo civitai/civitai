@@ -259,6 +259,11 @@ type TrainingRowBase = {
   /** Any stable identifier; both sources must share one namespace. */
   user: string;
   prompt: string;
+  /**
+   * Every resource the row used, kept or not, when that is more than `resources`: the row's
+   * ecosystem is a property of what was generated (`rowEcosystem`).
+   */
+  ecosystemResources?: readonly TrainingResource[];
   resources: readonly TrainingResource[];
 };
 export type TagTrainingRow =
@@ -616,7 +621,7 @@ export class TagIndexAccumulator {
       this.rowValue.push(Math.log1p(row.reactions));
       this.rowTipped.push(row.tips > 0 ? 1 : 0);
     }
-    const eco = rowEcosystem(row.resources);
+    const eco = rowEcosystem(row.ecosystemResources ?? row.resources);
     this.rowEco.push(eco ? this.eco(eco) + 1 : 0);
     for (const t of promptTagIds(row.prompt, this.vocab.idByKey)) this.rowTags.push(t);
     this.rowTagEnd.push(this.rowTags.length);

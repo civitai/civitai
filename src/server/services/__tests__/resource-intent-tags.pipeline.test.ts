@@ -263,15 +263,15 @@ async function world(
     if (t.includes('jsonb_agg(DISTINCT')) {
       postedBatches.push(sql.values.slice(0, 2).map(Number));
       const resources = [
-        { modelId: 1, type: 'LORA', baseModel: 'SDXL 1.0' },
-        { modelId: 2, type: 'Checkpoint', baseModel: 'SDXL 1.0' },
+        { modelId: 1, type: 'LORA', baseModel: 'SDXL 1.0', listed: true },
+        { modelId: 2, type: 'Checkpoint', baseModel: 'SDXL 1.0', listed: true },
       ];
       return [
         { userId: 42, prompt: 'castle, watercolor', resources, reactions: 3, tips: 1 },
         { userId: 43, prompt: 'lighthouse', resources, reactions: 0, tips: 0 },
       ];
     }
-    if (t.includes("m.status = 'Published'")) {
+    if (t.includes('ORDER BY m.id LIMIT')) {
       const [after, types, page] = sql.values as [number, string[], number];
       // Only models of the types the statement asks for (model 1 and 3 are LORAs, 4 a Checkpoint).
       const typeOf = (id: number) => CONTENT.find((m) => m.id === id)?.type ?? 'LORA';
@@ -434,9 +434,7 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect(entries[0].c).toBeCloseTo(0.8, 6);
     expect(entries[0].fit).toBeNaN();
     // The eligibility read happened once, before the content read.
-    const eligibleAt = w.pgReads.flatMap((q, i) =>
-      q.includes("m.status = 'Published'") ? [i] : []
-    );
+    const eligibleAt = w.pgReads.flatMap((q, i) => (q.includes('ORDER BY m.id LIMIT') ? [i] : []));
     expect(eligibleAt).toHaveLength(1);
     expect(eligibleAt[0]).toBeLessThan(
       w.pgReads.findIndex((q) => q.includes('FROM "Model" m WHERE m.id = ANY'))

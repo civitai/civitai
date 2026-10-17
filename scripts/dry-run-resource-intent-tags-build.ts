@@ -110,7 +110,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const failedAttempts: Record<string, number> = {};
   const statementMs: Record<string, number[]> = {};
   const kindOf = (text: string) =>
-    text.includes("m.status = 'Published'")
+    text.includes('ORDER BY m.id LIMIT')
       ? 'eligibleIds'
       : text.includes('jsonb_agg(DISTINCT')
       ? 'postedBatch'
