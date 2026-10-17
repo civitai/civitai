@@ -18,6 +18,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
@@ -65,7 +66,7 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
           <Title className={classes.title} order={1} lineClamp={1}>
             {title}{' '}
           </Title>
-          {currentUser && metadata.description && (
+          {currentUser && (metadata.description || metadata.selectionNote) && (
             <Popover withArrow width={380}>
               <Popover.Target>
                 <Box
@@ -83,11 +84,13 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
                 <Text fw={500} size="lg" mb="xs">
                   {title}
                 </Text>
-                <Text component="div" size="sm" mb="xs">
-                  <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
-                    {metadata.description}
-                  </CustomMarkdown>
-                </Text>
+                {metadata.description && (
+                  <Text component="div" size="sm" mb="xs">
+                    <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+                      {metadata.description}
+                    </CustomMarkdown>
+                  </Text>
+                )}
                 {metadata.link && (
                   <Link legacyBehavior href={metadata.link} passHref>
                     <Anchor size="sm">
@@ -98,6 +101,7 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
                     </Anchor>
                   </Link>
                 )}
+                <SelectionNote note={metadata.selectionNote} />
               </Popover.Dropdown>
             </Popover>
           )}
