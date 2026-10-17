@@ -48,14 +48,16 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 
 const REMOVED = { ImageReaction: 3, ArticleReaction: 1 };
 const COUNTS = { ImageReaction: 3, ArticleReaction: 1, CommentReaction: 0 };
-const removeUserReactions = vi.fn(async (_userId: number) => ({ removed: REMOVED, remaining: 0 }));
-const countUserReactions = vi.fn(async (_userId: number) => COUNTS);
+const removeUserReactions = vi.fn<
+  (userId: number) => Promise<{ removed: typeof REMOVED; remaining: number }>
+>(async () => ({ removed: REMOVED, remaining: 0 }));
+const countUserReactions = vi.fn<(userId: number) => Promise<typeof COUNTS>>(async () => COUNTS);
 vi.mock('~/server/services/user-reaction-erasure.service', () => ({
   IMAGE_ROWS_PER_RUN: 25_000,
   removeUserReactions: (id: number) => removeUserReactions(id),
   countUserReactions: (id: number) => countUserReactions(id),
 }));
-const trackModActivity = vi.fn(async (..._a: unknown[]) => undefined);
+const trackModActivity = vi.fn<(...a: unknown[]) => Promise<undefined>>(async () => undefined);
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: (...a: unknown[]) => trackModActivity(...a),
 }));

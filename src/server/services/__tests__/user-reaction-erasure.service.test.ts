@@ -3,13 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { queues, onReactionRemoved } = vi.hoisted(() => ({
   queues: {
-    article: vi.fn(async (_ids: number[]) => undefined),
-    post: vi.fn(async (_ids: number[]) => undefined),
-    bountyEntry: vi.fn(async (_ids: number[]) => undefined),
-    question: vi.fn(async (_ids: number[]) => undefined),
-    answer: vi.fn(async (_ids: number[]) => undefined),
+    article: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
+    post: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
+    bountyEntry: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
+    question: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
+    answer: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
   },
-  onReactionRemoved: vi.fn(async (_input: unknown) => undefined),
+  onReactionRemoved: vi.fn<(input: unknown) => Promise<undefined>>(async () => undefined),
 }));
 
 vi.mock('~/server/metrics', () => ({
