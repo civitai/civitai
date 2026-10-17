@@ -270,6 +270,44 @@ describe('useModelSaleBadge — provider-less cards, signed in', () => {
     expect(all.filter((s) => s !== 'error')).toEqual([]);
     expect(escaped).toBeUndefined();
   });
+
+  it('fails only the chunk whose request failed; every other chunk still gets its sales', async () => {
+    // Three chunks, the last one partial, and every id on sale — so a card that wrongly settles
+    // `error` also visibly loses a badge it should have had.
+    const ids = Array.from(
+      { length: MODEL_SALE_IDS_PER_REQUEST * 2 + 37 },
+      (_, i) => 70000 + i * 3
+    );
+    for (const id of ids) recorded.onSale.set(id, RUNNING);
+    // 🔴 ORDERING IS THE POINT. The first chunk rejects at once; the others answer only after a
+    // further timer tick. A promise settles once, so if the later chunks resolved FIRST, a reject
+    // that fanned out to every card in the flush would hit already-settled promises and be
+    // invisible. Rejecting first is the ordering in which a too-wide reject actually lands.
+    const calls: number[][] = [];
+    vi.spyOn(CardContext.modelSaleBatcher, 'fetch').mockImplementation((chunk: number[]) => {
+      calls.push(chunk);
+      if (calls.length === 1) return Promise.reject(new Error('chunk boom'));
+      return new Promise((resolve) => {
+        setTimeout(() => resolve(recorded.query({ ids: chunk }) as never), 10);
+      });
+    });
+
+    const { results, client } = await renderCards(ids, { signedIn: true });
+
+    expect(calls).toHaveLength(3);
+    const failed = new Set(calls[0]);
+    // Non-vacuous on both sides: a full chunk failed, and the rest of the surface is not empty.
+    expect(failed.size).toBe(MODEL_SALE_IDS_PER_REQUEST);
+    const rest = ids.filter((id) => !failed.has(id));
+    expect(rest).toHaveLength(ids.length - MODEL_SALE_IDS_PER_REQUEST);
+
+    const stateOf = (id: number) =>
+      client.getQueryState(['model.getActiveSales.byModel', id])?.status;
+    expect([...failed].filter((id) => stateOf(id) !== 'error')).toEqual([]);
+    expect(rest.filter((id) => stateOf(id) !== 'success')).toEqual([]);
+    expect(rest.filter((id) => !results.get(id))).toEqual([]);
+    for (const id of failed) expect(results.get(id)).toBeUndefined();
+  });
 });
 
 describe('useModelSaleBadge — provider-less cards, anonymous', () => {
