@@ -15,10 +15,11 @@ import { RESOURCE_INTENT_TAGS_SPEC } from '~/server/services/resource-intent-tag
 
 /**
  * A small build: four tags (one explicit, one near two others), three ecosystems, two kinds. The near
- * sets ([2, 3]), published ecosystems ([1, 2]), posting lists ([0, 1, 2]), model ids and user-side keys
- * hold rows that are not fixed points of delta coding, so any of those stored without its deltas
- * cannot round-trip; the user-side resource lists and (tag, ecosystem) ids are, and are covered by the
- * build parity suite's snapshot cases instead.
+ * sets ([2, 3]), published ecosystems ([1, 2]), posting lists ([0, 1, 2]), add-on model ids
+ * ([3, 7, 11]) and per-tag user-side keys ([0, 1, 2]) hold rows that are not fixed points of delta
+ * coding, so any of those stored without its deltas cannot round-trip. The per-ecosystem keys, the
+ * sparse tables' resource lists and the (tag, ecosystem) ids are fixed points here, and are covered by
+ * the build parity suite's snapshot cases instead.
  */
 function smallData() {
   const tags = [
@@ -387,6 +388,14 @@ describe('resource-intent-tags snapshot codec', () => {
     [
       'a pointer that does not start at 0',
       (d) => (d.kinds.addon.postings.ptr[0] = 1),
+      'addon postings pointer bounds',
+    ],
+    [
+      'a pointer that ends short of its array',
+      (d) => {
+        const p = d.kinds.addon.postings.ptr;
+        p[p.length - 1] -= 1;
+      },
       'addon postings pointer bounds',
     ],
     [

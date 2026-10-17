@@ -24,7 +24,10 @@ import type {
 
 export const TAG_INDEX_PAYLOAD_FORMAT = 'resource-intent-tags/1';
 export const TAG_INDEX_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
-/** Caps brotli's output; keep it well above a real build's msgpack size (docs/resource-intent-primitive.md, Snapshot). */
+/**
+ * Caps brotli's output; keep it well above a real build's msgpack size
+ * (docs/resource-intent-primitive.md, Snapshot).
+ */
 const TAG_INDEX_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
 const BROTLI_QUALITY = 9;
 const C_SCALE = 10_000;
@@ -68,7 +71,7 @@ function unshuffle<T extends Wide>(bin: unknown, Ctor: WideCtor, what: string): 
   if (!LITTLE_ENDIAN) throw new Error('tag index: decoding needs a little-endian host');
   const le = new Uint8Array(b.length);
   for (let k = 0; k < size; k++) for (let i = 0; i < n; i++) le[i * size + k] = b[k * n + i];
-  // `le` is a fresh, aligned buffer, so on a little-endian host it already is the array.
+  // `le` is a fresh, aligned buffer, so it already is the array.
   return viewOf(le, Ctor) as T;
 }
 
@@ -289,7 +292,10 @@ export async function decompressTagIndex(payload: Uint8Array): Promise<Buffer> {
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
-/** The arrays of a packed snapshot, checked for format and shape; `tagIndexFromData` validates the index. */
+/**
+ * The arrays of a packed snapshot, checked for format and shape; `tagIndexFromData` validates the
+ * index.
+ */
 export function unpackTagIndexData(raw: Uint8Array): {
   data: TagIndexData;
   specHash: string;
