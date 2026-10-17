@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
+import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
 
 /**
@@ -18,8 +19,13 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: async () => ({ emptyResult: false }),
 }));
 
-const { getStorylineChildren, getStorylineLinkTargets, linkStorylineChapter, setCanonChapter } =
-  await import('~/server/services/storyline.service');
+const {
+  getStorylineChildren,
+  getStorylineGraph,
+  getStorylineLinkTargets,
+  linkStorylineChapter,
+  setCanonChapter,
+} = await import('~/server/services/storyline.service');
 
 const OWNER = 10;
 const STRANGER = 20;
@@ -236,5 +242,54 @@ describe('setCanonChapter on a chapter with two parents', () => {
       false
     );
     expect(db.row('storylineChapterEdge', { chapterId: 14 })?.canon).toBe(true);
+  });
+});
+
+describe('getStorylineGraph', () => {
+  const graph = () => getStorylineGraph({ id: STORYLINE, viewer: undefined, browsingLevel: PG });
+
+  it('returns every chapter and link, both ways into a rejoin, tombstoned as the path is', async () => {
+    await link(24, R);
+    db.update('storylineChapter', { id: 22 }, { removedAt: new Date() });
+    db.update('post', { id: 120 }, { nsfwLevel: 4 });
+
+    const { rootChapterId, chapters, edges, truncated } = await graph();
+    expect(rootChapterId).toBe(1);
+    expect(truncated).toBe(false);
+    expect(chapters.map((c) => c.chapterId)).toEqual([1, 2, 3, 11, 21, 12, 22, 13, 23, 24, R]);
+    expect(edges.filter((e) => e.chapterId === R)).toEqual([
+      { chapterId: R, parentChapterId: 13, canon: true },
+      { chapterId: R, parentChapterId: 24, canon: true },
+    ]);
+    expect(edges).toHaveLength(11);
+
+    const byId = new Map(chapters.map((c) => [c.chapterId, c]));
+    expect(byId.get(22)).toMatchObject({ tombstone: 'removed', post: null, firstImage: null });
+    expect(byId.get(12)).toMatchObject({ tombstone: 'aboveStoryRating', post: null });
+    // Control: the chapters after them are whole, so the branch stays followable.
+    expect(byId.get(23)).toMatchObject({ tombstone: null, post: { id: 230, title: 'chapter 23' } });
+    expect(byId.get(13)).toMatchObject({ tombstone: null, post: { id: 130 } });
+  });
+
+  it('reads at most the chapters nearest chapter 1, and only links between them', async () => {
+    // A side branch long enough to pass the cap, whose far end also leads into R.
+    const LONG = Array.from({ length: STORYLINE_GRAPH_LIMIT }, (_, i) => 1000 + i);
+    LONG.forEach((id, i) => {
+      chapter(id, 3 + i);
+      edge(id, i ? LONG[i - 1] : 3, false);
+    });
+    edge(R, LONG[LONG.length - 1], false);
+
+    const { chapters, edges, truncated } = await graph();
+    expect(truncated).toBe(true);
+    expect(chapters).toHaveLength(STORYLINE_GRAPH_LIMIT);
+    const ids = new Set(chapters.map((c) => c.chapterId));
+    expect(ids.has(R)).toBe(true);
+    expect(ids.has(LONG[LONG.length - 1])).toBe(false);
+    expect(edges.every((e) => ids.has(e.chapterId) && ids.has(e.parentChapterId))).toBe(true);
+    expect(edges.filter((e) => e.chapterId === R).map((e) => e.parentChapterId)).toEqual([13]);
+    // Every chapter read has its first parent read too, so the map reaches all of them.
+    for (const c of chapters)
+      if (c.chapterId !== 1) expect(edges.some((e) => e.chapterId === c.chapterId)).toBe(true);
   });
 });

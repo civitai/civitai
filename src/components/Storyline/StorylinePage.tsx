@@ -3,6 +3,7 @@ import {
   IconBook2,
   IconEyeOff,
   IconGitFork,
+  IconGitMerge,
   IconPlayerPlayFilled,
   IconPlus,
   IconSettings,
@@ -29,6 +30,7 @@ import {
 } from '~/components/Storyline/StorylineChips';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
+import { StorylineLaneMap, useStorylineLaneMap } from '~/components/Storyline/StorylineLaneMap';
 import {
   getForkShare,
   getStorylineChapterName,
@@ -101,7 +103,10 @@ export function StorylinePage({ id }: { id: number }) {
         )}
 
         <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-[minmax(0,1fr)_320px]">
-          <StorylineChapters storyline={storyline} />
+          <div className="flex min-w-0 flex-col gap-5">
+            <StorylineChapters storyline={storyline} />
+            <StorylineMapSection storyline={storyline} />
+          </div>
           {/* Spans both rows on desktop; on a phone it comes before the discussion. */}
           <div className="flex flex-col gap-5 md:col-start-2 md:row-span-2 md:row-start-1">
             <StorylineContributors contributors={storyline.contributors} />
@@ -298,6 +303,30 @@ function StorylineChapters({ storyline }: { storyline: Storyline }) {
           />
         ))}
       </ol>
+    </Section>
+  );
+}
+
+/**
+ * Every branch, where it forks off and where it rejoins. Read only once the canon path forks:
+ * every branch leaves from it, so a story whose path never forks has nothing more to draw.
+ */
+function StorylineMapSection({ storyline }: { storyline: Storyline }) {
+  const forks = storyline.mainPath.some((chapter) => chapter.childCount > 1);
+  const { map } = useStorylineLaneMap(storyline.id, { enabled: forks });
+  if (!map) return null;
+  return (
+    <Section
+      icon={<IconGitMerge size={20} />}
+      title="Story map"
+      id="storyline-map"
+      aside={
+        <Text size="sm" c="dimmed">
+          Every branch
+        </Text>
+      }
+    >
+      <StorylineLaneMap map={map} />
     </Section>
   );
 }

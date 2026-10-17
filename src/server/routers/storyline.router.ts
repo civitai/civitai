@@ -30,6 +30,7 @@ import {
   getStorylineEarlyAccessStats,
   getStorylineEarlyAccessStatus,
   getStorylineForkShares,
+  getStorylineGraph,
   getStorylineLinkTargets,
   getStorylinesForPosts,
   getStorylinesInfinite,
@@ -78,6 +79,14 @@ export const storylineRouter = router({
     getStorylinePath({
       chapterId: input.chapterId,
       via: input.via,
+      viewer: ctx.user,
+      browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  getGraph: storylineReadProcedure.input(getStorylineSchema).query(({ input, ctx }) =>
+    getStorylineGraph({
+      id: input.id,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
     })

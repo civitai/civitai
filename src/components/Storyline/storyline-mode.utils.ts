@@ -43,6 +43,22 @@ export function routeVia(route: { chapterId: number; parentCount?: number }[]) {
   );
 }
 
+/** A link that opens storyline mode at a chapter's first image, on the route `via` names. */
+export function storylineReadHref({
+  imageId,
+  chapterId,
+  via = [],
+}: {
+  imageId: number;
+  chapterId: number;
+  via?: number[];
+}) {
+  const query = new URLSearchParams({ [STORYLINE_CHAPTER_PARAM]: String(chapterId) });
+  if (via.length) query.set(STORYLINE_VIA_PARAM, via.join(','));
+  // A comma list reads as one: `storylineVia=4,7` rather than `4%2C7`.
+  return `/images/${imageId}?${query.toString().replace(/%2C/g, ',')}`;
+}
+
 /** Path order first, then each post's own image order: the image query itself orders by recency. */
 export function orderPathImages<
   T extends { id: number; postId: number | null; index: number | null }

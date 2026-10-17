@@ -41,6 +41,7 @@ import type {
 } from '~/shared/utils/storyline';
 import {
   STORYLINE_CHILDREN_LIMIT,
+  STORYLINE_GRAPH_LIMIT,
   STORYLINE_MAX_COLLABORATORS,
   STORYLINE_MAX_CONTRIBUTORS,
   STORYLINE_PATH_LIMIT,
@@ -1528,6 +1529,58 @@ export async function getStorylineCanonAhead({
   });
   // The route starts at the chapter asked about; the reader is already on it.
   return route.slice(1);
+}
+
+/**
+ * Every chapter of a storyline and every link between them, for the Story page's map, with
+ * tombstones as in the reading path. At most `STORYLINE_GRAPH_LIMIT` chapters, nearest chapter 1
+ * first, so each one returned has its first parent too; `truncated` says there are more. Links
+ * come oldest first, only between chapters returned.
+ */
+export async function getStorylineGraph({
+  id,
+  viewer,
+  browsingLevel,
+}: {
+  id: number;
+  viewer: Viewer;
+  browsingLevel: number;
+}) {
+  const { storyline, blockedUserIds } = await getStorylineForRead(id, viewer, browsingLevel);
+  const rows = await dbRead.storylineChapter.findMany({
+    where: { storylineId: id },
+    select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+    orderBy: [{ depth: 'asc' }, { id: 'asc' }],
+    take: STORYLINE_GRAPH_LIMIT + 1,
+  });
+  const chapters = rows.slice(0, STORYLINE_GRAPH_LIMIT);
+  const ids = new Set(chapters.map((c) => c.id));
+  const edges = ids.size
+    ? await dbRead.storylineChapterEdge.findMany({
+        where: { storylineId: id, chapterId: { in: [...ids] } },
+        select: { chapterId: true, parentChapterId: true, canon: true },
+        orderBy: [{ createdAt: 'asc' }, { parentChapterId: 'asc' }],
+      })
+    : [];
+
+  const tombstoneOf = (post: StorylineChapterPost | null, removed: boolean) =>
+    getStorylineChapterTombstone({
+      post,
+      removed,
+      viewer,
+      maxNsfwLevel: storyline.maxNsfwLevel,
+      browsingLevel,
+      blockedUserIds,
+    });
+  return {
+    rootChapterId: chapters[0]?.depth === 0 ? chapters[0].id : null,
+    chapters: await withFirstImages(
+      getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
+      chapters.map((c) => toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)))
+    ),
+    edges: edges.filter((e) => ids.has(e.parentChapterId)),
+    truncated: rows.length > STORYLINE_GRAPH_LIMIT,
+  };
 }
 
 /**

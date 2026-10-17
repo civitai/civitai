@@ -14,6 +14,9 @@ import {
   parseIdParam,
   resolvePendingContinue,
   routeVia,
+  STORYLINE_CHAPTER_PARAM,
+  STORYLINE_VIA_PARAM,
+  storylineReadHref,
   uniquePostIds,
   withStorylineNavigation,
 } from '~/components/Storyline/storyline-mode.utils';
@@ -402,5 +405,29 @@ describe('canonAheadForkStops', () => {
   it('counts the limit in forks, not in stops, so a long straight run does not hide them', () => {
     const line = [stop(1, 1), stop(2, 1), stop(3, 3), stop(4, 1), stop(5, 3), stop(6, 2)];
     expect(canonAheadForkStops(line, 2)).toEqual([3, 5]);
+  });
+});
+
+describe('storylineReadHref', () => {
+  // As image detail reads it back.
+  const read = (href: string) => {
+    const url = new URL(href, 'https://civitai.com');
+    return {
+      path: url.pathname,
+      chapterId: parseIdParam(url.searchParams.get(STORYLINE_CHAPTER_PARAM)),
+      via: parseIdListParam(url.searchParams.get(STORYLINE_VIA_PARAM)),
+    };
+  };
+
+  it('opens the chapter on the route its via names', () => {
+    const href = storylineReadHref({ imageId: 900, chapterId: 60, via: [42, 13] });
+    expect(read(href)).toEqual({ path: '/images/900', chapterId: 60, via: [42, 13] });
+    expect(href).toContain(`${STORYLINE_VIA_PARAM}=42,13`);
+  });
+
+  it('carries no via on a route with no rejoin, so the link is the one used everywhere else', () => {
+    expect(storylineReadHref({ imageId: 900, chapterId: 3 })).toBe(
+      `/images/900?${STORYLINE_CHAPTER_PARAM}=3`
+    );
   });
 });

@@ -27,6 +27,9 @@ section).
 - **Where branches meet.** Two branches can rejoin at one chapter. The reader's path and chapter
   numbers follow the way they came (the URL carries it, so a shared link reproduces the route), and
   the map marks a chapter where another branch joins.
+- **Story map.** Once a story forks, its page draws every branch as lanes: the main path straight
+  down the first, each branch beside it, curving out where it forks and back in where it rejoins.
+  A chapter on it opens in storyline mode along the route the map draws to it.
 - **Continuing it.** At the end of a chapter a reader can submit a post they already made as the next
   chapter ("Use a post you made"), for the storyline's price in Buzz or free. It goes to the creator's
   review unless the reader is an endorsed collaborator. A storyline that is closed or open only to
