@@ -823,7 +823,8 @@ export const publishModelHandler = async ({
   ctx,
 }: {
   input: PublishModelSchema;
-  ctx: ProtectedContext;
+  // Narrowed so `/api/mod/model/republish` can run the same path with its own actor and tracker.
+  ctx: Pick<ProtectedContext, 'user' | 'track'>;
 }) => {
   try {
     const model = await dbRead.model.findUnique({

@@ -1,5 +1,6 @@
 import { createEmail } from '@civitai/email';
 import { env } from '$env/dynamic/private';
+import { siteAppealDecisionText, type SiteAppealCategory } from '@civitai/shared/site-appeal';
 
 export type AppealResolutionEmailData = {
   to: string;
@@ -56,4 +57,45 @@ export const appealResolutionEmail = createEmail<AppealResolutionEmailData, neve
       items.length ? `Affected content:\n${lines}\n\n` : ''
     }Terms of Service: https://civitai.com/content/tos`;
   },
+});
+
+export type SiteAppealResolutionEmailData = {
+  to: string;
+  username: string;
+  category: SiteAppealCategory;
+  approved: boolean;
+  restored: boolean;
+  /** Where the appellant reads the decision, including the moderator's message. */
+  appealUrl: string;
+};
+
+// The site appeal form's decision. Same rule as above: the moderator's message stays out of the email;
+// the appeal page shows it, and that page is reachable from the banned screen.
+export const siteAppealResolutionEmail = createEmail<SiteAppealResolutionEmailData, never>({
+  header: ({ to, approved }) => ({
+    to,
+    from: env.EMAIL_FROM,
+    subject: approved ? 'Civitai - Appeal approved' : 'Civitai - Appeal decision',
+  }),
+  html: ({ username, category, approved, restored, appealUrl }) => {
+    const heading = approved ? 'Appeal Approved' : 'Appeal Decision';
+    const text = siteAppealDecisionText({ category, approved, restored });
+    return `
+      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
+        <h2 style="color: ${approved ? '#12b886' : '#e03131'};">${heading}</h2>
+        <p>Hi ${escapeHtml(username)},</p>
+        <p>${escapeHtml(text)}</p>
+        <p><a href="${escapeHtml(appealUrl)}">See the decision</a></p>
+        <p style="color: #666; font-size: 13px;">
+          For more information, see our
+          <a href="https://civitai.com/content/tos">Terms of Service</a>.
+        </p>
+      </div>`;
+  },
+  text: ({ username, category, approved, restored, appealUrl }) =>
+    `Hi ${username},\n\n${siteAppealDecisionText({
+      category,
+      approved,
+      restored,
+    })}\n\nSee the decision: ${appealUrl}\n\nTerms of Service: https://civitai.com/content/tos`,
 });
