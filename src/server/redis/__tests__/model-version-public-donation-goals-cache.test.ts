@@ -187,6 +187,7 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
     mockDbRead.donationGoal.findMany.mockResolvedValue([row()]);
     mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]); // replica: pre-donation
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 5 }]);
     mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
     mockDbWrite.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 300 }]); // primary: post-donation
     const cache = buildCache();
@@ -198,6 +199,25 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     expect(afterRefresh[5].goal?.total).toBe(300);
     // Served from the refreshed entry: no further replica lookup.
     expect(mockDbRead.donationGoal.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('refresh() of a version not yet on the replica checks existence on the primary and caches it', async () => {
+    // ensureDonationGoal refreshes right after a version and its goal are created. If existence were
+    // read from the replica only, the lookup would return {} and refresh() would delete the entry.
+    mockDbRead.modelVersion.findMany.mockResolvedValue([]); // replica: version not there yet
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 5 }]);
+    mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbWrite.$queryRaw.mockResolvedValue([]); // no donations yet
+    const cache = buildCache();
+
+    await cache.refresh(5);
+
+    expect(delMock).not.toHaveBeenCalled();
+    const fetched = await cache.fetch([5]);
+    expect(fetched[5].goal?.id).toBe(10);
+    expect(fetched[5].goal?.total).toBe(0);
+    // Served from the refreshed entry, not a read-path lookup.
+    expect(mockDbRead.modelVersion.findMany).not.toHaveBeenCalled();
   });
 
   // The early-access-window + creator opt-out DISPLAY filters live at read time in getDonationGoals
