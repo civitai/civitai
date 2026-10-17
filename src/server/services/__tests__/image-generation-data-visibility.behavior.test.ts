@@ -24,12 +24,20 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   amIBlockedByUser: vi.fn(),
 }));
+// The image row is read through @civitai/db-queries (Kysely over the app's own pg pool), not the
+// Prisma client, so it is stubbed at that module. Its parity with the Prisma read it replaced is
+// pinned against a real database in image-generation-data.kysely-parity.test.ts.
+vi.mock('@civitai/db-queries/image', () => ({ getImageGenerationFields: vi.fn() }));
 
 import { getImageGenerationData } from '../image.service';
 import { imageResourcesCache } from '~/server/redis/caches';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import type { MediaViewer } from '~/server/utils/image-media-visibility';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { getImageGenerationFields } from '@civitai/db-queries/image';
+import { kyselyRead } from '~/server/db/kyselyDb';
+
+const imageRow = vi.mocked(getImageGenerationFields);
 
 const OWNER = 10;
 const VIEWER = 20;
@@ -81,7 +89,7 @@ beforeEach(async () => {
   );
   vi.mocked(amIBlockedByUser).mockReset().mockResolvedValue(false);
   vi.spyOn(imageResourcesCache, 'fetch').mockResolvedValue({});
-  dbMock.dbRead.image.findUnique.mockResolvedValue({
+  imageRow.mockReset().mockResolvedValue({
     hideMeta: false,
     generationProcess: null,
     meta: { prompt: 'a prompt' },
@@ -245,6 +253,22 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(MOD)).toBe(false);
   });
 
+  it('answers NOT_FOUND when the image row is gone after the visibility check passed', async () => {
+    await seed({});
+    imageRow.mockResolvedValue(null);
+    expect(await sees(ANON)).toBe(false);
+  });
+
+  it('reads the image row from the read replica client, for the requested id', async () => {
+    // `toBe`, not a structural match: kyselyRead and kyselyWrite are distinct clients that compare
+    // deep-equal, so only identity catches the read routed at the writer.
+    await seed({});
+    expect(await sees(ANON)).toBe(true);
+    expect(imageRow).toHaveBeenCalledTimes(1);
+    expect(imageRow.mock.calls[0][0]).toBe(kyselyRead);
+    expect(imageRow.mock.calls[0][1]).toBe(1);
+  });
+
   describe.each(HIDDEN)('an image %s', (_label, state) => {
     beforeEach(() => seed(state));
 
@@ -323,7 +347,7 @@ describe('getImageGenerationData media links', () => {
   const MARKERS = [SOURCE, HOMEPAGE, 'image-key-without', 'data:image', 'protocol-relative'];
 
   function mockImageRow(overrides: Record<string, unknown> = {}) {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({
+    imageRow.mockResolvedValue({
       hideMeta: false,
       generationProcess: null,
       meta: MEDIA_META,
@@ -432,7 +456,7 @@ describe('getImageGenerationData source media', () => {
   const SOURCE_OWNER = 40;
 
   function mockMeta(sourceImageIds: number[]) {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({
+    imageRow.mockResolvedValue({
       hideMeta: false,
       generationProcess: null,
       meta: {
@@ -555,7 +579,7 @@ describe('getImageGenerationData source media', () => {
 
   it('reads the sources even when another extra field does not parse', async () => {
     await seedEdit(4);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({
+    imageRow.mockResolvedValue({
       hideMeta: false,
       generationProcess: null,
       meta: {
