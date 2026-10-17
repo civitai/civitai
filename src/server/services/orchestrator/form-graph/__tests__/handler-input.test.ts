@@ -376,6 +376,19 @@ describe('moss-image.handler', () => {
     expect((firstInput(steps) as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
   });
 
+  // Turbo (DMD) LoRAs run at 8 steps, CFG 1; the floor sits below that for 4-step distills.
+  it.each([8, 4])('SFT with a turbo LoRA reaches the orchestrator at %i steps', async (n) => {
+    const steps = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MossImage',
+      prompt: 'a cat',
+      steps: n,
+      cfgScale: 1,
+      resources: [{ id: 111, baseModel: 'MOSS Image', model: { type: 'LORA' }, strength: 1 }],
+    });
+    expect(firstInput(steps)).toMatchObject({ model: 'sft', steps: n, cfgScale: 1 });
+  });
+
   it('the Base ecosystem selects the base model and keeps the graph defaults', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
