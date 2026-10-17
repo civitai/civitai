@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serverSchema } from '~/env/server-schema';
 import {
   loopYielder,
+  readonlyClickHouse,
   runTagIndexBuild,
   TAG_BUILD_MAX_OBSERVATION_AGE_HOURS,
   tagBuildConfig,
@@ -32,6 +33,8 @@ import { pgliteSql, utcPglite } from './resource-intent-cooc.harness';
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const logToAxiom = loggingMock.logToAxiom;
+const clickhouseClient = vi.hoisted(() => ({ createClient: vi.fn() }));
+vi.mock('@clickhouse/client', () => clickhouseClient);
 
 const migration = (name: string) =>
   readFileSync(
@@ -185,14 +188,7 @@ async function world(
           tags: ['watercolor'],
           versions: [{ baseModel: 'SDXL 1.0', trainedWords: ['lighthouse'] }],
         },
-        {
-          id: 2,
-          name: 'castle model',
-          type: 'Checkpoint',
-          description: '',
-          tags: [],
-          versions: [{ baseModel: 'SDXL 1.0', trainedWords: null }],
-        },
+        // Model 2 is requested but returns no row (as a model flagged since its use would).
       ];
     throw new Error(`unexpected Postgres read: ${t}`);
   });
@@ -269,15 +265,15 @@ describe('the happy path (the control every refusal below departs from)', () => 
       genAndPostUsers: 1,
       postedRows: 2,
       contentModelsRequested: 2,
-      contentModels: 2,
+      contentModels: 1,
       payloadBytes: payload.length,
     });
-    // Every input reached the index: generator and posted rows, three users, both models' content.
+    // Every input reached the index: generator and posted rows, three users, model 1's content.
     expect(summary.stats).toMatchObject({
       rows: { gen: 3, post: 2 },
       users: 3,
-      models: { content: 2, used: 2, addon: 1, checkpoint: 1 },
-      modelsWithContentTag: 2,
+      models: { content: 1, used: 2, addon: 1, checkpoint: 1 },
+      modelsWithContentTag: 1,
     });
     expect(w.postedBatches).toEqual([[1, 6]]);
     const rows = (
@@ -457,6 +453,46 @@ describe('generator prompts never reach the slow-audit log', () => {
     expect(logged).not.toContain('secret prompt');
     expect(logged).not.toContain('rawPrompt');
     expect(logged).not.toContain('promptHash');
+  });
+});
+
+describe('readonlyClickHouse', () => {
+  it('closes a result abandoned mid-stream, and leaves a fully read one alone', async () => {
+    const results: { close: ReturnType<typeof vi.fn> }[] = [];
+    const settings: unknown[] = [];
+    clickhouseClient.createClient.mockImplementation((config: unknown) => {
+      settings.push(config);
+      return {
+        query: async () => {
+          const rs = {
+            close: vi.fn(),
+            async *stream() {
+              yield [{ json: () => ({ n: 1 }) }, { json: () => ({ n: 2 }) }];
+              yield [{ json: () => ({ n: 3 }) }];
+            },
+          };
+          results.push(rs);
+          return rs;
+        },
+        close: async () => undefined,
+      };
+    });
+    const ch = await readonlyClickHouse({ url: 'https://ch.invalid', user: 'u', password: 'p' });
+    const all: unknown[] = [];
+    for await (const r of ch.rows(`SELECT 1`)) all.push(r);
+    expect(all).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+    expect(results[0].close).not.toHaveBeenCalled();
+    await expect(
+      (async () => {
+        for await (const r of ch.rows<{ n: number }>(`SELECT 2`))
+          if (r.n === 2) throw new Error('consumer failed');
+      })()
+    ).rejects.toThrow('consumer failed');
+    expect(results[1].close).toHaveBeenCalledTimes(1);
+    // Every query the client runs is read-only.
+    expect(settings).toEqual([
+      expect.objectContaining({ clickhouse_settings: expect.objectContaining({ readonly: '2' }) }),
+    ]);
   });
 });
 

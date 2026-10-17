@@ -29,11 +29,6 @@ import { RESOURCE_INTENT_TAGS_SPEC, RESOURCE_INTENT_TAGS_SPEC_HASH } from './spe
 import { putSnapshot, type TagIndexObjectStore } from './store';
 
 /**
- * Every gate runs before the first read of training data: a misconfigured or stale environment fails
- * loudly instead of building something wrong.
- */
-
-/**
  * Refuse to build when the newest generator observation is older than this. Their only writer is an
  * external hourly extractor that reads each 2-minute slice about 2 h after it ends, so a healthy
  * newest row is 2–3.5 h old; 6 h means it has missed several runs and the window may have stopped
@@ -49,8 +44,8 @@ export const TAG_BUILD_YIELD_MS = 50;
 /** Generator observations whose versions are resolved together. */
 const GEN_BATCH = 20_000;
 /**
- * Image ids per posted-sample statement. A deployed job's replica route can cancel a statement well
- * before the build's own timeout; at 250k the slowest batch of a dry run on that route took 37 s.
+ * Image ids per posted-sample statement: sized for the deployed replica route, which can cancel a
+ * statement well before the build's own timeout (the dry run prints each kind's slowest attempt).
  */
 export const TAG_POSTED_ID_BATCH = 125_000;
 
@@ -140,8 +135,8 @@ export async function readonlyClickHouse(c: TagBuildConfig['clickhouse']): Promi
           for (const row of batch as { json: <R>() => R }[]) yield row.json<T>();
         done = true;
       } finally {
-        // Abandoned mid-stream (a throw while consuming): release the socket rather than leave a
-        // half-read response on it.
+        // Not read to the end: close the result set rather than leave a half-read response on the
+        // socket.
         if (!done) rs.close();
       }
     },
@@ -206,9 +201,14 @@ export async function newestFrozenVocabulary(query: TagRawQuery) {
   return vocab;
 }
 
-/** The standby reads, each statement READ ONLY under the co-occurrence build's timeout, retried. */
-export function tagStandbyQuery(): TagRawQuery {
-  return retryingQuery(standbyQuery(coocReplicaRunner, COOC_STATEMENT_TIMEOUT_MS));
+/**
+ * The standby reads, each statement READ ONLY under the co-occurrence build's timeout, retried.
+ * `eachAttempt` wraps every attempt inside the retry (the dry run times them).
+ */
+export function tagStandbyQuery(
+  eachAttempt: (attempt: TagRawQuery) => TagRawQuery = (attempt) => attempt
+): TagRawQuery {
+  return retryingQuery(eachAttempt(standbyQuery(coocReplicaRunner, COOC_STATEMENT_TIMEOUT_MS)));
 }
 
 /** Milliseconds since the previous call (or since it was made). */
@@ -238,7 +238,7 @@ export type TagBuildSummary = {
   postUsers: number;
   genAndPostUsers: number;
   postedRows: number;
-  /** Models whose content was requested (those seen in training rows) and read. */
+  /** Models seen in training rows whose content was requested (after any `limits.models` cut). */
   contentModelsRequested: number;
   contentModels: number;
   stats: TagBuildStats;
@@ -261,7 +261,10 @@ export type TagBuildDeps = {
   excludeGenPrompt?: (prompt: string) => boolean;
 };
 
-/** Gate, read, build and encode; then, unless `dryRun`, store it as a production snapshot. */
+/**
+ * Gate, read, build and encode; then, unless `dryRun`, store it as a production snapshot. Every gate
+ * runs before the first training read, so a misconfigured or stale environment fails loudly.
+ */
 export async function runTagIndexBuild(
   opts: {
     dryRun: boolean;

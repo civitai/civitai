@@ -80,7 +80,7 @@ export type CoocBuildSummary = {
 /**
  * One replica transaction per statement, for statements capped at `COOC_STATEMENT_TIMEOUT_MS`. The
  * interactive transaction gets headroom over the statement cap, so the database's cancellation, not
- * Prisma's, ends a slow statement. The tag-index build runs its reads through it too.
+ * Prisma's, ends a slow statement.
  */
 export const coocReplicaRunner: CoocTxRunner = (fn) =>
   dbRead.$transaction(fn, { maxWait: 30_000, timeout: COOC_STATEMENT_TIMEOUT_MS + 30_000 });

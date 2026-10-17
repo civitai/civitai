@@ -74,13 +74,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const { decompressTagIndex, TAG_INDEX_MAX_PAYLOAD_BYTES, unpackTagIndex } = await import(
     '~/server/services/resource-intent-tags/payload'
   );
-  const { runTagIndexBuild } = await import('~/server/services/resource-intent-tags/pipeline');
-  const { COOC_STATEMENT_TIMEOUT_MS } = await import(
-    '~/server/services/resource-intent-cooc/build'
-  );
-  const { coocReplicaRunner } = await import('~/server/services/resource-intent-cooc/pipeline');
-  const { retryingQuery, standbyQuery } = await import(
-    '~/server/services/resource-intent-tags/sources'
+  const { runTagIndexBuild, tagStandbyQuery } = await import(
+    '~/server/services/resource-intent-tags/pipeline'
   );
   const { scoreTagRequest } = await import('~/server/services/resource-intent-tags/score');
   const log = (k: string, v: unknown) =>
@@ -89,7 +84,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   // The job's standby reads (`tagStandbyQuery`), each ATTEMPT timed by kind inside the retry: the
   // replica route a deployed job reads through may cap statements tighter than the build's own
   // timeout, so the slowest attempt, and any that failed, matter.
-  const standby = standbyQuery(coocReplicaRunner, COOC_STATEMENT_TIMEOUT_MS);
   const failedAttempts: Record<string, number> = {};
   const statementMs: Record<string, number[]> = {};
   const kindOf = (text: string) =>
@@ -104,10 +98,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       : text.includes('"Image"')
       ? 'imageIdSearch'
       : 'other';
-  const query = retryingQuery(async (sql) => {
+  const query = tagStandbyQuery((attempt) => async (sql) => {
     const t = performance.now();
     try {
-      return await standby(sql);
+      return await attempt(sql);
     } catch (e) {
       failedAttempts[kindOf(sql.text)] = (failedAttempts[kindOf(sql.text)] ?? 0) + 1;
       throw e;
