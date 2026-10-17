@@ -181,6 +181,25 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     expect(second[999]).toBeUndefined();
   });
 
+  it('refresh() after a donation caches the PRIMARY total, even while the replica lags', async () => {
+    // The donation path refreshes rather than busts, so what refresh() caches must include the
+    // just-committed donation: the goal and its total come from the primary (fromWrite).
+    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]); // replica: pre-donation
+    mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 300 }]); // primary: post-donation
+    const cache = buildCache();
+    expect((await cache.fetch([5]))[5].goal?.total).toBe(250);
+
+    await cache.refresh(5);
+    const afterRefresh = await cache.fetch([5]);
+
+    expect(afterRefresh[5].goal?.total).toBe(300);
+    // Served from the refreshed entry: no further replica lookup.
+    expect(mockDbRead.donationGoal.findMany).toHaveBeenCalledTimes(1);
+  });
+
   // The early-access-window + creator opt-out DISPLAY filters live at read time in getDonationGoals
   // (see donation-goals-accessor.test.ts) — the cache holds only the raw active goal + total.
 });
