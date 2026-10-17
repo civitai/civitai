@@ -1,5 +1,3 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as Job from '~/server/jobs/job';
@@ -31,6 +29,7 @@ vi.mock('~/server/jobs/job', async (importOriginal) => ({
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
+import { jobsArrayEntries } from './run-jobs-array';
 
 const run = () =>
   (buildResourceIntentTagIndexJob as unknown as { run: () => Promise<unknown> }).run();
@@ -82,11 +81,6 @@ describe('build-resource-intent-tag-index job', () => {
   });
 
   it('is registered with the scheduler', () => {
-    const route = readFileSync(
-      join(process.cwd(), 'src/pages/api/webhooks/run-jobs/[[...run]].ts'),
-      'utf8'
-    );
-    const list = route.slice(route.indexOf('export const jobs: Job[] = ['));
-    expect(list).toMatch(/\n\s+buildResourceIntentTagIndexJob,\n/);
+    expect(jobsArrayEntries()).toContain('buildResourceIntentTagIndexJob');
   });
 });

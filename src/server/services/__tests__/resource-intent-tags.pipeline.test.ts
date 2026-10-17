@@ -14,7 +14,10 @@ import {
   type TagBuildEnv,
   type TagClickHouse,
 } from '~/server/services/resource-intent-tags/pipeline';
-import { observationKeyFingerprint } from '~/server/services/resource-intent-tags/sources';
+import {
+  observationKeyFingerprint,
+  observationUserHash,
+} from '~/server/services/resource-intent-tags/sources';
 import { RESOURCE_INTENT_TAGS_SPEC_HASH } from '~/server/services/resource-intent-tags/spec';
 import type { TagIndexObjectStore } from '~/server/services/resource-intent-tags/store';
 import { __flushPendingEmitsForTest } from '~/utils/metadata/audit-slow-log';
@@ -85,6 +88,8 @@ type World = {
   db: PGlite;
   deps: TagBuildDeps & { query: NonNullable<TagBuildDeps['query']> };
   chQueries: string[];
+  chDrained: string[];
+  postedBatches: number[][];
   pgReads: string[];
   objectsMade: ReturnType<typeof vi.fn>;
   store: Map<string, Buffer>;
@@ -104,33 +109,41 @@ async function world(
   for (const [p, s, f] of opts.vocabs ?? [[NEW_FROZEN, 'frozen', '2026-10-10T00:00:00Z']])
     await insertVocab(db, p, s, f);
   const chQueries: string[] = [];
+  const chDrained: string[] = [];
   const pgReads: string[] = [];
+  const postedBatches: number[][] = [];
   const closed = vi.fn(async () => undefined);
   const now = 1_800_000_000;
   const ch: TagClickHouse = {
     async *rows<T>(q: string) {
       chQueries.push(q);
-      if (q.includes(`getSetting('readonly')`)) yield { ro: opts.readonly ?? 2 } as T;
-      else if (q.includes('max(time)'))
-        yield {
-          newest: String(now - (opts.ageSec ?? 3 * 3600)),
-          now: String(now),
-          n: String(opts.recentRows ?? 5000),
-        } as T;
-      else if (q.includes('p2m_restricted.promptText'))
-        for (const [i, p] of GEN_PROMPTS.entries())
-          yield {
-            u: String(1000 + (i % 2)),
-            p,
-            v: [101, 201],
-            liked: 1,
-            favorite: 0,
-            disliked: 0,
-          } as T;
-      else throw new Error(`unexpected ClickHouse query: ${q}`);
+      // Counted once the generator has yielded its last row and returned.
+      yield* rowsOf<T>(q);
+      chDrained.push(q);
     },
     close: closed,
   };
+  async function* rowsOf<T>(q: string): AsyncGenerator<T> {
+    if (q.includes(`getSetting('readonly')`)) yield { ro: opts.readonly ?? 2 } as T;
+    else if (q.includes('max(time)'))
+      yield {
+        newest: String(now - (opts.ageSec ?? 3 * 3600)),
+        now: String(now),
+        n: String(opts.recentRows ?? 5000),
+      } as T;
+    else if (q.includes('p2m_restricted.promptText'))
+      for (const [i, p] of GEN_PROMPTS.entries())
+        yield {
+          // Users 42 and 7, hashed as the extractor writes them; 42 also posts below.
+          u: observationUserHash(KEY, i % 2 ? 7 : 42),
+          p,
+          v: [101, 201],
+          liked: 1,
+          favorite: 0,
+          disliked: 0,
+        } as T;
+    else throw new Error(`unexpected ClickHouse query: ${q}`);
+  }
   const base = pgliteSql(db);
   const query = vi.fn(async (sql: Prisma.Sql) => {
     const t = sql.text;
@@ -141,7 +154,26 @@ async function world(
         { id: 101, modelId: 1, type: 'LORA', baseModel: 'SDXL 1.0', flagged: false },
         { id: 201, modelId: 2, type: 'Checkpoint', baseModel: 'SDXL 1.0', flagged: false },
       ];
-    if (t.includes('max(id) AS max FROM "Image"')) return [{ max: null }];
+    // Images 1–10: 1–5 inside the training window, 6–10 after its end, so the sample is ids [1, 6).
+    if (t.includes('max(id) AS max FROM "Image"')) return [{ max: 10 }];
+    if (t.includes('FROM "Image" WHERE id >=')) {
+      const id = Number(sql.values[0]);
+      if (id > 10) return [];
+      return [
+        { id, createdAt: new Date(id <= 5 ? '2026-08-01T00:00:00Z' : '2026-10-19T12:00:00Z') },
+      ];
+    }
+    if (t.includes('jsonb_agg(DISTINCT')) {
+      postedBatches.push(sql.values.slice(0, 2).map(Number));
+      const resources = [
+        { modelId: 1, type: 'LORA', baseModel: 'SDXL 1.0' },
+        { modelId: 2, type: 'Checkpoint', baseModel: 'SDXL 1.0' },
+      ];
+      return [
+        { userId: 42, prompt: 'castle, watercolor', resources, reactions: 3, tips: 1 },
+        { userId: 43, prompt: 'lighthouse', resources, reactions: 0, tips: 0 },
+      ];
+    }
     if (t.includes('WITH ms AS')) return [];
     if (t.includes('FROM "Model" m WHERE m.id = ANY'))
       return [
@@ -176,6 +208,8 @@ async function world(
   return {
     db,
     chQueries,
+    chDrained,
+    postedBatches,
     pgReads,
     objectsMade,
     store,
@@ -191,7 +225,7 @@ async function world(
   };
 }
 
-/** Nothing past the gates ran: no observation, Postgres training read, upload or ClickHouse client. */
+/** Nothing past the gates ran: no prompt-text read, no Postgres read but the vocabulary's, no upload. */
 function expectNoTrainingReads(w: World) {
   expect(w.chQueries.some((q) => q.includes('p2m_restricted.promptText'))).toBe(false);
   expect(w.pgReads.some((q) => !q.includes('"ResourceIntentVocabulary"'))).toBe(false);
@@ -230,11 +264,22 @@ describe('the happy path (the control every refusal below departs from)', () => 
       created: true,
       observations: 3,
       genUsers: 2,
-      postUsers: 0,
-      genAndPostUsers: 0,
+      // Posted users hashed with the observations' key: user 42 is one person across both sources.
+      postUsers: 2,
+      genAndPostUsers: 1,
+      postedRows: 2,
+      contentModelsRequested: 2,
       contentModels: 2,
       payloadBytes: payload.length,
     });
+    // Every input reached the index: generator and posted rows, three users, both models' content.
+    expect(summary.stats).toMatchObject({
+      rows: { gen: 3, post: 2 },
+      users: 3,
+      models: { content: 2, used: 2, addon: 1, checkpoint: 1 },
+      modelsWithContentTag: 2,
+    });
+    expect(w.postedBatches).toEqual([[1, 6]]);
     const rows = (
       await w.db.query<{ id: string; vocabVersion: string; specHash: string; status: string }>(
         `SELECT id, "vocabVersion", "specHash", status FROM "ResourceIntentTagIndexSnapshot"`
@@ -250,6 +295,9 @@ describe('the happy path (the control every refusal below departs from)', () => 
     ]);
     expect([...w.store.values()].map((b) => b.length)).toEqual([payload.length]);
     expect(w.closed).toHaveBeenCalledTimes(1);
+    // Every ClickHouse result read to its end (a half-read stream aborts the response).
+    expect(w.chQueries).toHaveLength(3);
+    expect(w.chDrained).toEqual(w.chQueries);
   });
 
   it('a dry run needs no bucket, makes no object store and stores nothing', async () => {
@@ -349,8 +397,6 @@ describe('gate 2: a read-only ClickHouse session', () => {
 
 describe('gate 3: generator observations no older than the limit', () => {
   const LIMIT = TAG_BUILD_MAX_OBSERVATION_AGE_HOURS * 3600;
-
-  it('is six hours', () => expect(TAG_BUILD_MAX_OBSERVATION_AGE_HOURS).toBe(6));
 
   it('refuses one second past the limit, before any training read', async () => {
     const w = await world({ ageSec: LIMIT + 1 });

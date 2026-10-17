@@ -36,9 +36,8 @@
  * operator can set `AUDIT_SLOW_LOG_RAW=false` to drop it and rely on the shape
  * fingerprint alone.
  *
- * A caller auditing text that must never reach a log (a batch job over users' private generator
- * prompts) passes `privateInput: true` instead of relying on that env var: the line then carries
- * the timings, lengths and shape fingerprint only — no raw text and no hash of it, whatever
+ * Callers auditing private text (a batch job over users' generator prompts) pass
+ * `privateInput: true`: the line then omits the raw text and both hashes, whatever
  * `AUDIT_SLOW_LOG_RAW` says.
  */
 

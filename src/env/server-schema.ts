@@ -981,10 +981,8 @@ export const serverSchema = z
         .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'not an S3 bucket name')
         .optional()
     ),
-    // The weekly tag-index build's generator-observation reads: a ClickHouse user that can read the
-    // observations and their prompt text, and the key their user ids were hashed with plus the
-    // fingerprint it was written under. Unset or empty: the build refuses before reading anything.
-    // Validated by the build, not here, so a malformed value fails that job and nothing else.
+    // The tag-index build's ClickHouse identity and observation hash key. Validated by the build,
+    // not here, so an empty or malformed value fails that job, not every pod's start.
     P2M_CLICKHOUSE_URL: z.preprocess((v) => v || undefined, z.string().optional()),
     P2M_CLICKHOUSE_USER: z.preprocess((v) => v || undefined, z.string().optional()),
     P2M_CLICKHOUSE_PASSWORD: z.preprocess((v) => v || undefined, z.string().optional()),

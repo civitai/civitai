@@ -13,9 +13,9 @@ export const buildResourceIntentTagIndexJob = createJob(
     const { summary } = await runTagIndexBuild({ dryRun: false }, { env });
     return summary;
   },
-  // A concurrent second build would repeat every read (ending in the same snapshot at best). The
-  // build measured ~35 min end to end in its dry run; 90 min outlives it with room for retried
-  // statements, and at a weekly cadence a long hold blocks nothing scheduled. The build does not
-  // poll `checkIfCanceled`, so it finishes if the scheduler hangs up.
+  // A concurrent second build would repeat every read. 90 min outlives a full build with retried
+  // statements (docs/resource-intent-primitive.md, "Build job"); at a weekly cadence a long hold
+  // blocks nothing. The build does not poll `checkIfCanceled`, so it finishes if the scheduler hangs
+  // up.
   { lockExpiration: 90 * 60, keepLockOnDisconnect: true }
 );

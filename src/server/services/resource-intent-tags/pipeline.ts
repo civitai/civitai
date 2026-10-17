@@ -1,10 +1,8 @@
 import { Prisma } from '@prisma/client';
 
-import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  COOC_STATEMENT_TIMEOUT_MS,
-  type CoocTxRunner,
-} from '~/server/services/resource-intent-cooc/build';
+import { dbWrite } from '~/server/db/client';
+import { COOC_STATEMENT_TIMEOUT_MS } from '~/server/services/resource-intent-cooc/build';
+import { coocReplicaRunner } from '~/server/services/resource-intent-cooc/pipeline';
 import { coocSqlOf, type CoocSql } from '~/server/services/resource-intent-cooc/store';
 import { parseTagVocabulary, TagIndexAccumulator, type TagBuildStats } from './build';
 import { s3TagIndexObjects } from './objects';
@@ -31,29 +29,30 @@ import { RESOURCE_INTENT_TAGS_SPEC, RESOURCE_INTENT_TAGS_SPEC_HASH } from './spe
 import { putSnapshot, type TagIndexObjectStore } from './store';
 
 /**
- * The weekly tag-index build: gates, then the reads, the build, the encode and (unless a dry run) the
- * put. Every gate runs before the first read of training data, so a misconfigured or stale
- * environment fails loudly instead of building something wrong.
+ * Every gate runs before the first read of training data: a misconfigured or stale environment fails
+ * loudly instead of building something wrong.
  */
 
 /**
- * Refuse to build when the newest generator observation is older than this. The observations are
- * written only by an external hourly extractor, which reads each 2-minute slice about 2 h after it
- * ends, so a healthy table's newest row is about 2–3.5 h old; its own lag alert fires at 4 h (one
- * missed run plus slack). 6 h is that alert plus two more missed runs: the extractor has then been
- * down for at least three runs, and a build now would train on a window it may have stopped
+ * Refuse to build when the newest generator observation is older than this. Their only writer is an
+ * external hourly extractor that reads each 2-minute slice about 2 h after it ends, so a healthy
+ * newest row is 2–3.5 h old; 6 h means it has missed several runs and the window may have stopped
  * filling.
  */
 export const TAG_BUILD_MAX_OBSERVATION_AGE_HOURS = 6;
 
 /**
- * The longest the build keeps the event loop between yields while tagging. The job shares its
- * process with every other job on the pod; a fixed row count is not a bound, because the prompt
- * audit's cost varies per prompt (the dry run measured 1,000 generator rows taking up to 0.92 s).
+ * The longest the build holds the event loop between yields while tagging. It shares the process
+ * with every other job; a time slice, not a row count, because the audit's cost varies per prompt.
  */
 export const TAG_BUILD_YIELD_MS = 50;
 /** Generator observations whose versions are resolved together. */
 const GEN_BATCH = 20_000;
+/**
+ * Image ids per posted-sample statement. A deployed job's replica route can cancel a statement well
+ * before the build's own timeout; at 250k the slowest batch of a dry run on that route took 37 s.
+ */
+export const TAG_POSTED_ID_BATCH = 125_000;
 
 /** Call once per unit of work: yields to the event loop once `sliceMs` have passed since the last yield. */
 export function loopYielder(sliceMs: number, now: () => number = () => performance.now()) {
@@ -135,16 +134,29 @@ export async function readonlyClickHouse(c: TagBuildConfig['clickhouse']): Promi
   return {
     async *rows<T>(query: string) {
       const rs = await ch.query({ query, format: 'JSONEachRow' });
-      for await (const batch of rs.stream())
-        for (const row of batch as { json: <R>() => R }[]) yield row.json<T>();
+      let done = false;
+      try {
+        for await (const batch of rs.stream())
+          for (const row of batch as { json: <R>() => R }[]) yield row.json<T>();
+        done = true;
+      } finally {
+        // Abandoned mid-stream (a throw while consuming): release the socket rather than leave a
+        // half-read response on it.
+        if (!done) rs.close();
+      }
     },
     close: () => ch.close(),
   };
 }
 
+/**
+ * The first row of a one-row query. Reads the stream to its end: a stream left half-read aborts the
+ * response mid-socket.
+ */
 async function firstRow<T>(ch: TagClickHouse, query: string): Promise<T | undefined> {
-  for await (const r of ch.rows<T>(query)) return r;
-  return undefined;
+  let first: T | undefined;
+  for await (const r of ch.rows<T>(query)) first ??= r;
+  return first;
 }
 
 /** Refuse a ClickHouse session that is not read-only: the build must not be able to write there. */
@@ -196,9 +208,18 @@ export async function newestFrozenVocabulary(query: TagRawQuery) {
 
 /** The standby reads, each statement READ ONLY under the co-occurrence build's timeout, retried. */
 export function tagStandbyQuery(): TagRawQuery {
-  const run: CoocTxRunner = (fn) =>
-    dbRead.$transaction(fn, { maxWait: 30_000, timeout: COOC_STATEMENT_TIMEOUT_MS + 30_000 });
-  return retryingQuery(standbyQuery(run, COOC_STATEMENT_TIMEOUT_MS));
+  return retryingQuery(standbyQuery(coocReplicaRunner, COOC_STATEMENT_TIMEOUT_MS));
+}
+
+/** Milliseconds since the previous call (or since it was made). */
+function phaseClock() {
+  let last = performance.now();
+  return () => {
+    const now = performance.now();
+    const ms = Math.round(now - last);
+    last = now;
+    return ms;
+  };
 }
 
 async function finalizeAndEncode(acc: TagIndexAccumulator) {
@@ -217,8 +238,12 @@ export type TagBuildSummary = {
   postUsers: number;
   genAndPostUsers: number;
   postedRows: number;
+  /** Models whose content was requested (those seen in training rows) and read. */
+  contentModelsRequested: number;
   contentModels: number;
   stats: TagBuildStats;
+  /** Wall time per phase. */
+  ms: { gen: number; posted: number; content: number; finalizeEncode: number; put: number | null };
   payloadBytes: number;
   dryRun: boolean;
   /** Set when stored: the manifest row and whether this build created it. */
@@ -236,11 +261,7 @@ export type TagBuildDeps = {
   excludeGenPrompt?: (prompt: string) => boolean;
 };
 
-/**
- * Gate, read, build and encode; then, unless `dryRun`, store it as a production snapshot. The gates,
- * in order: the environment (and the snapshot bucket's object store, unless a dry run); a read-only
- * ClickHouse session; generator observations no older than the limit; a frozen vocabulary.
- */
+/** Gate, read, build and encode; then, unless `dryRun`, store it as a production snapshot. */
 export async function runTagIndexBuild(
   opts: {
     dryRun: boolean;
@@ -265,6 +286,7 @@ export async function runTagIndexBuild(
       excludeGenPrompt: deps.excludeGenPrompt ?? promptExcludedByAuditor,
     });
 
+    const clock = phaseClock();
     // Generator rows, a batch at a time so their prompts are never all held at once.
     const versions = new Map<number, VersionInfo>();
     const genUsers = new Set<string>();
@@ -297,13 +319,14 @@ export async function runTagIndexBuild(
       if (pending.length >= GEN_BATCH) await flush();
     }
     await flush();
+    const genMs = clock();
 
     const postUsers = new Set<string>();
     const posted = await readPostedSample(query, {
       start: window.start,
       end: window.end,
       mod: TAG_SOURCE_PARAMS.postedMod,
-      idBatch: 250_000,
+      idBatch: TAG_POSTED_ID_BATCH,
       maxBatches: opts.limits?.postBatches,
       userKey: (id) => observationUserHash(config.hashKey, id),
       onBatch: async (rows) => {
@@ -316,6 +339,7 @@ export async function runTagIndexBuild(
     });
     let genAndPostUsers = 0;
     for (const u of postUsers) if (genUsers.has(u)) genAndPostUsers++;
+    const postedMs = clock();
 
     let contentModels = 0;
     const modelIds = acc.usedModelIds().slice(0, opts.limits?.models);
@@ -326,9 +350,17 @@ export async function runTagIndexBuild(
         contentModels++;
       }
     });
+    const contentMs = clock();
 
     // The built arrays live only inside this call, so they can be collected before the put decodes.
     const { payload, stats } = await finalizeAndEncode(acc);
+    const ms = {
+      gen: genMs,
+      posted: postedMs,
+      content: contentMs,
+      finalizeEncode: clock(),
+      put: null,
+    };
     const summary: TagBuildSummary = {
       vocabVersion: vocab.vocabVersion,
       specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
@@ -339,8 +371,10 @@ export async function runTagIndexBuild(
       postUsers: postUsers.size,
       genAndPostUsers,
       postedRows: posted.rows,
+      contentModelsRequested: modelIds.length,
       contentModels,
       stats,
+      ms,
       payloadBytes: payload.length,
       dryRun: opts.dryRun,
       snapshotId: null,
@@ -357,7 +391,10 @@ export async function runTagIndexBuild(
         buildStats: stats,
       }
     );
-    return { summary: { ...summary, snapshotId: manifest.id, created }, payload };
+    return {
+      summary: { ...summary, ms: { ...ms, put: clock() }, snapshotId: manifest.id, created },
+      payload,
+    };
   } finally {
     await ch.close();
   }

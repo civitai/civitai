@@ -22,8 +22,9 @@ import { runScriptAndExit } from './lib/run-as-script';
  *       under; a key with another fingerprint is refused. Posted users are hashed with it so both
  *       sources share one user namespace
  * The `--limit-*` flags (positive integers) cut the inputs for a quick trial; `--limit-gen` is a
- * LIMIT on the ClickHouse read. The printed counts say what was read. The last lines print the
- * process's peak RSS and the wall time.
+ * LIMIT on the ClickHouse read. The printed counts say what was read. It prints each standby
+ * statement kind's attempt times (retries counted separately), the build's peak RSS, and the wall
+ * time.
  */
 
 const ms = (t0: number) => Math.round(performance.now() - t0);
@@ -74,16 +75,59 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     '~/server/services/resource-intent-tags/payload'
   );
   const { runTagIndexBuild } = await import('~/server/services/resource-intent-tags/pipeline');
+  const { COOC_STATEMENT_TIMEOUT_MS } = await import(
+    '~/server/services/resource-intent-cooc/build'
+  );
+  const { coocReplicaRunner } = await import('~/server/services/resource-intent-cooc/pipeline');
+  const { retryingQuery, standbyQuery } = await import(
+    '~/server/services/resource-intent-tags/sources'
+  );
   const { scoreTagRequest } = await import('~/server/services/resource-intent-tags/score');
   const log = (k: string, v: unknown) =>
     console.log(`[dry-run-resource-intent-tags] ${k} ${JSON.stringify(v)}`);
+
+  // The job's standby reads (`tagStandbyQuery`), each ATTEMPT timed by kind inside the retry: the
+  // replica route a deployed job reads through may cap statements tighter than the build's own
+  // timeout, so the slowest attempt, and any that failed, matter.
+  const standby = standbyQuery(coocReplicaRunner, COOC_STATEMENT_TIMEOUT_MS);
+  const failedAttempts: Record<string, number> = {};
+  const statementMs: Record<string, number[]> = {};
+  const kindOf = (text: string) =>
+    text.includes('jsonb_agg(DISTINCT')
+      ? 'postedBatch'
+      : text.includes('WITH ms AS')
+      ? 'contentImages'
+      : text.includes('FROM "Model" m WHERE')
+      ? 'contentModels'
+      : text.includes('"ModelVersion" mv JOIN')
+      ? 'versions'
+      : text.includes('"Image"')
+      ? 'imageIdSearch'
+      : 'other';
+  const query = retryingQuery(async (sql) => {
+    const t = performance.now();
+    try {
+      return await standby(sql);
+    } catch (e) {
+      failedAttempts[kindOf(sql.text)] = (failedAttempts[kindOf(sql.text)] ?? 0) + 1;
+      throw e;
+    } finally {
+      (statementMs[kindOf(sql.text)] ??= []).push(performance.now() - t);
+    }
+  });
 
   try {
     const { summary, payload } = await runTagIndexBuild(
       { dryRun: true, limits },
       // The job reads the parsed app env; here the raw environment carries the same names.
-      { env: process.env as TagBuildEnv }
+      { env: process.env as TagBuildEnv, query }
     );
+    for (const [kind, xs] of Object.entries(statementMs))
+      log(`statements.${kind}`, {
+        attempts: xs.length,
+        failed: failedAttempts[kind] ?? 0,
+        ms: quantiles(xs.map((x) => Math.round(x))),
+      });
     const { stats, ...rest } = summary;
     log('input', rest);
     log('build', stats);
