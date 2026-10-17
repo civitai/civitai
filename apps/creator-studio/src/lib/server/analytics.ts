@@ -219,7 +219,7 @@ export const getTopArticles = createCache({
 // Keyed on userId as well as imageId: the fetch refuses images the caller doesn't own, so a cache entry is
 // only ever valid for the owner it was fetched for.
 export const getImageViewDetail = createCache({
-  name: 'analytics:image-views:v1',
+  name: 'analytics:image-views:v2',
   fetch: ({
     userId,
     imageId,
