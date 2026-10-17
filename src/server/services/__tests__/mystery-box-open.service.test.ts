@@ -2,7 +2,6 @@ import type * as Crypto from 'crypto';
 import type * as EventShopItem from '~/server/events/event-shop-item';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as RosterSync from '~/server/events/points/roster-sync';
-import type * as LoggingClient from '~/server/logging/client';
 import { Prisma } from '@prisma/client';
 import { computeBoxOdds } from '@civitai/shared/box-odds';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,7 +15,6 @@ const { mocks } = vi.hoisted(() => ({
     getEventBuyerTeam: vi.fn(),
     syncRoster: vi.fn(),
     refreshStickers: vi.fn(),
-    log: vi.fn(),
   },
 }));
 
@@ -32,10 +30,6 @@ vi.mock('~/server/events/points/roster-sync', async (importOriginal) => ({
   ...(await importOriginal<typeof RosterSync>()),
   syncEventRosterMember: mocks.syncRoster,
 }));
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: mocks.log,
-}));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof RedisCaches>()),
   refreshOwnedStickerCache: mocks.refreshStickers,
@@ -44,6 +38,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 import { openMysteryBox } from '../mystery-box.service';
 import { ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const HOLDER = 1;
 const OTHER_USER = 2;
@@ -343,7 +338,7 @@ beforeEach(() => {
   mocks.syncRoster.mockImplementation(async () => {
     world.log.push('sync:roster');
   });
-  mocks.log.mockResolvedValue(undefined);
+  loggingMock.logToAxiom.mockClear();
 });
 
 describe('opening a mystery box', () => {
@@ -544,14 +539,14 @@ describe('opening a mystery box', () => {
     nothingOpened();
     expect(mocks.refreshStickers).not.toHaveBeenCalled();
     expect(mocks.syncRoster).not.toHaveBeenCalled();
-    expect(mocks.log).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it('logs each draw once, and a replay not again', async () => {
     mocks.randomInt.mockReturnValueOnce(3).mockReturnValueOnce(0);
     await open();
     await open();
-    expect(mocks.log.mock.calls).toEqual([
+    expect(loggingMock.logToAxiom.mock.calls).toEqual([
       [
         expect.objectContaining({
           name: 'mystery-box-open',
@@ -599,7 +594,7 @@ describe('an open that already happened', () => {
     expect([a.replayed, b.replayed].sort()).toEqual([false, true]);
     expect({ ...a, replayed: true }).toEqual({ ...b, replayed: true });
     // The one that waited on the lock answers from the record: one draw, one log line.
-    expect(mocks.log).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
   });
 
   it("another user's opened box is not answered", async () => {
