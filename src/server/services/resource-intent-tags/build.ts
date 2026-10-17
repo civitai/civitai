@@ -267,7 +267,7 @@ export type TagTrainingRow =
 
 /** A row's ecosystem: the base model of its checkpoints when they agree on exactly one. */
 export function rowEcosystem(resources: readonly TrainingResource[]): string | null {
-  const bms = new Set(resources.filter((r) => r.type === 'Checkpoint').map((r) => r.baseModel));
+  const bms = new Set(resources.filter((r) => r.type === CHECKPOINT_TYPE).map((r) => r.baseModel));
   if (bms.size !== 1) return null;
   return [...bms][0] || null;
 }
