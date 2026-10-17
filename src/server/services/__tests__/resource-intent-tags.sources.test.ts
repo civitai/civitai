@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
+import { pgliteSql, utcPglite } from './resource-intent-cooc.harness';
 import {
   COOC_ELIGIBLE_ATTACHMENTS,
   COOC_ELIGIBLE_IMAGE,
@@ -16,6 +17,7 @@ import {
   observationKeyFingerprint,
   observationUserHash,
   CONTENT_READ_CONCURRENCY,
+  MODEL_LISTED_SQL,
   ELIGIBLE_MODEL_PAGE,
   readEligibleModelIds,
   readModelContent,
@@ -290,7 +292,9 @@ describe('the eligible models (full coverage)', () => {
     // The whole statement: each clause is an eligibility rule a reword could drop.
     expect(seen[0].sql.replace(/\s+/g, ' ').trim()).toBe(
       'SELECT m.id FROM "Model" m WHERE m.id > ?::int AND ' +
-        "m.status = 'Published' AND NOT m.poi AND NOT m.minor AND m.type::text = ANY(?::text[]) " +
+        "m.status = 'Published' AND NOT m.poi AND NOT m.minor AND " +
+        `m.availability <> 'Private'::"Availability" AND m.mode IS NULL AND ` +
+        'm.type::text = ANY(?::text[]) ' +
         'AND EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND ' +
         "mv.status = 'Published') ORDER BY m.id LIMIT ?::int"
     );
@@ -481,5 +485,92 @@ describe('content batches are read ahead, and handed on in id order', () => {
       await expect(readModelContent(query, ids, new Date(), () => undefined, bad)).rejects.toThrow(
         'positive integer'
       );
+  });
+});
+
+describe('only listed models reach the index: not Private, Archived or TakenDown', () => {
+  // The columns the model-admitting reads look at, with the app's own enum types.
+  const SCHEMA = `
+    CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
+    CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "Model" (id int PRIMARY KEY, status text, poi boolean, minor boolean, type text,
+      availability "Availability", mode "ModelModifier");
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, status text, "baseModel" text);
+  `;
+  // id: [availability, mode]. 1, 5 and 6 are listed; 2, 3 and 4 are one each of the three excluded.
+  const MODELS: [number, string, string | null][] = [
+    [1, 'Public', null],
+    [2, 'Private', null],
+    [3, 'Public', 'Archived'],
+    [4, 'Public', 'TakenDown'],
+    [5, 'Unsearchable', null],
+    [6, 'EarlyAccess', null],
+  ];
+  async function db() {
+    const d = await utcPglite(SCHEMA);
+    for (const [id, availability, mode] of MODELS) {
+      await d.query(
+        `INSERT INTO "Model" VALUES ($1, 'Published', false, false, 'LORA', $2::"Availability", $3::"ModelModifier")`,
+        [id, availability, mode]
+      );
+      await d.query(`INSERT INTO "ModelVersion" VALUES ($1, $2, 'Published', 'SDXL 1.0')`, [
+        id * 10,
+        id,
+      ]);
+    }
+    return pgliteSql(d);
+  }
+
+  it('the eligibility read admits only the listed models', async () => {
+    const sql = await db();
+    expect(await readEligibleModelIds((q) => sql.query(q), ['LORA'])).toEqual([1, 5, 6]);
+  });
+
+  it('a generator row drops an unlisted model it used, and keeps the rest of the row', async () => {
+    const sql = await db();
+    const versions = await fetchVersionInfo(
+      (q) => sql.query(q),
+      MODELS.map(([id]) => id * 10)
+    );
+    expect([...versions].filter(([, v]) => v.unlisted).map(([id]) => id)).toEqual([20, 30, 40]);
+    const row = genTrainingRow(
+      {
+        user: 'u',
+        prompt: 'p',
+        versionIds: MODELS.map(([id]) => id * 10),
+        liked: true,
+        favorite: false,
+        disliked: false,
+      },
+      versions
+    );
+    expect(row?.resources.map((r) => r.modelId)).toEqual([1, 5, 6]);
+  });
+
+  it('the posted-row resources and the model content use the same predicate', async () => {
+    const seen: Prisma.Sql[] = [];
+    const query = async (q: Prisma.Sql) => {
+      seen.push(q);
+      if (q.sql.includes('max(id)')) return [{ max: 10 }];
+      if (q.sql.includes('FROM "Image" WHERE id >='))
+        return [{ id: q.values[0], createdAt: new Date('2026-01-15') }];
+      return [];
+    };
+    await readModelContent(query, [1], new Date(), () => undefined);
+    await readPostedSample(query, {
+      start: new Date('2026-01-01'),
+      end: new Date('2026-02-01'),
+      mod: 6,
+      idBatch: 100,
+      userKey: String,
+      onBatch: () => undefined,
+    });
+    const meta = seen.find((q) => q.sql.includes('"TagsOnModels"'));
+    const posted = seen.find((q) => q.sql.includes('jsonb_agg(DISTINCT'));
+    expect(meta?.sql).toContain(`AND ${MODEL_LISTED_SQL}`);
+    expect(posted?.sql.replace(/\s+/g, ' ')).toContain(
+      `WHERE irn."imageId" = s.id AND ${MODEL_LISTED_SQL}) AS resources`
+    );
+    expect(MODEL_LISTED_SQL).toBe(`m.availability <> 'Private'::"Availability" AND m.mode IS NULL`);
   });
 });

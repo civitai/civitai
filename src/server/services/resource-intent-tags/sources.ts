@@ -63,17 +63,29 @@ export function retryingQuery(query: TagRawQuery, delayMs?: number): TagRawQuery
   return (sql) => coocRetry(() => query(sql), delayMs);
 }
 
+/**
+ * The model (alias `m`) is listed: not Private, and not Archived or TakenDown (`mode` holds only
+ * those two). The one predicate every read that admits a model to the index applies: eligibility,
+ * the resources of generator and posted rows, and model content, so a used model that is no longer
+ * listed is kept out exactly as an unused one is.
+ */
+export const MODEL_LISTED_SQL = `m.availability <> 'Private'::"Availability" AND m.mode IS NULL`;
+const MODEL_LISTED = Prisma.raw(MODEL_LISTED_SQL);
+
 export type VersionInfo = {
   modelId: number;
   type: string;
   baseModel: string;
   /** The model is flagged POI or minor. */
   flagged: boolean;
+  /** The model is not listed (`MODEL_LISTED_SQL`). */
+  unlisted: boolean;
 };
 
 /**
- * A generator observation's resources, versions the map does not know skipped; null when any resource
- * is a flagged model, as a posted image attaching one is not eligible either.
+ * A generator observation's resources, versions the map does not know and unlisted models skipped
+ * (the row still counts for its other resources, as a posted row's does); null when any resource is a
+ * flagged model, as a posted image attaching one is not eligible either.
  */
 export function resourcesOfVersions(
   versionIds: readonly number[],
@@ -84,6 +96,7 @@ export function resourcesOfVersions(
     const v = versions.get(id);
     if (!v) continue;
     if (v.flagged) return null;
+    if (v.unlisted) continue;
     out.push({ modelId: v.modelId, type: v.type, baseModel: v.baseModel });
   }
   return out;
@@ -133,7 +146,8 @@ export async function fetchVersionInfo(
   for (let i = 0; i < versionIds.length; i += VERSION_CHUNK) {
     const chunk = versionIds.slice(i, i + VERSION_CHUNK);
     const rows = (await query(Prisma.sql`
-      SELECT mv.id, mv."modelId", m.type::text AS type, mv."baseModel", (m.poi OR m.minor) AS flagged
+      SELECT mv.id, mv."modelId", m.type::text AS type, mv."baseModel", (m.poi OR m.minor) AS flagged,
+        NOT (${MODEL_LISTED}) AS unlisted
       FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
       WHERE mv.id = ANY(${chunk}::int[])`)) as (VersionInfo & { id: number })[];
     for (const { id, ...v } of rows) out.set(id, v);
@@ -213,13 +227,13 @@ export async function readPostedSample(
            FROM "ImageResourceNew" irn
            JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
            JOIN "Model" m ON m.id = mv."modelId"
-           WHERE irn."imageId" = s.id) AS resources,
+           WHERE irn."imageId" = s.id AND ${MODEL_LISTED}) AS resources,
         (SELECT count(*) FROM "ImageReaction" WHERE "imageId" = s.id)::int AS reactions,
         (SELECT count(*) FROM "BuzzTip" WHERE "entityType" = 'Image' AND "entityId" = s.id)::int AS tips
       FROM s`)) as {
       userId: number;
       prompt: string;
-      /** NULL when no attachment resolves to a version: the row is then dropped. */
+      /** NULL when no attachment resolves to a listed model's version: the row is then dropped. */
       resources: TrainingResource[] | null;
       reactions: number;
       tips: number;
@@ -244,8 +258,9 @@ export async function readPostedSample(
 export const ELIGIBLE_MODEL_PAGE = 50_000;
 
 /**
- * Every model the index covers, used in a training row or not: published, not flagged POI or minor,
- * of one of `types`, with at least one published version. Ascending, read in keyset pages so no
+ * Every model the index covers, used in a training row or not: published, listed
+ * (`MODEL_LISTED_SQL`), not flagged POI or minor, of one of `types`, with at least one published
+ * version. Ascending, read in keyset pages so no
  * statement scans the whole table at once.
  */
 export async function readEligibleModelIds(
@@ -259,6 +274,7 @@ export async function readEligibleModelIds(
     const rows = (await query(Prisma.sql`
       SELECT m.id FROM "Model" m
       WHERE m.id > ${after}::int AND m.status = 'Published' AND NOT m.poi AND NOT m.minor
+        AND ${MODEL_LISTED}
         AND m.type::text = ANY(${[...types]}::text[])
         AND EXISTS (SELECT 1 FROM "ModelVersion" mv
                     WHERE mv."modelId" = m.id AND mv.status = 'Published')
@@ -294,7 +310,7 @@ export const CONTENT_READ_CONCURRENCY = 3;
 export const CONTENT_IMAGE_ELIGIBLE = Prisma.raw(COOC_ELIGIBLE_IMAGE + COOC_ELIGIBLE_ATTACHMENTS);
 
 /**
- * Each unflagged model's content sources: name, description, Civitai tags, every version's base model
+ * Each listed, unflagged model's content sources: name, description, Civitai tags, every version's base model
  * and trigger words, and the prompts of rated images on its newest versions created before `end` — the
  * creator's own showcase posts, and one image from each of other users' newest gallery posts. Images
  * pass `CONTENT_IMAGE_ELIGIBLE`; posts must be neither Private nor Unsearchable.
@@ -345,7 +361,8 @@ async function readContentBatch(
                 WHERE tom."modelId" = m.id), '[]'::json) AS tags,
       coalesce((SELECT json_agg(json_build_object('baseModel', mv."baseModel", 'trainedWords', mv."trainedWords"))
                 FROM "ModelVersion" mv WHERE mv."modelId" = m.id), '[]'::json) AS versions
-    FROM "Model" m WHERE m.id = ANY(${ids}::int[]) AND NOT m.poi AND NOT m.minor`)) as {
+    FROM "Model" m WHERE m.id = ANY(${ids}::int[]) AND NOT m.poi AND NOT m.minor
+      AND ${MODEL_LISTED}`)) as {
     id: number;
     name: string;
     type: string;
