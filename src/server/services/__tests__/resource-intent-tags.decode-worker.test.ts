@@ -14,6 +14,9 @@ import {
   decompressTagIndex,
   decodeTagIndexData,
   encodeTagIndex,
+  TAG_INDEX_DECODE_CAPS,
+  TAG_INDEX_MAX_INFLATED_BYTES,
+  TAG_INDEX_MAX_PAYLOAD_BYTES,
   transferablesOf,
 } from '~/server/services/resource-intent-tags/payload';
 import {
@@ -88,6 +91,22 @@ describe('decodeTagIndexInWorker', () => {
     } finally {
       unpack.mockRestore();
     }
+  });
+
+  it("enforces the caps it is handed by the main thread, not its bundle's copy", async () => {
+    const payload = await encoded();
+    expect(TAG_INDEX_DECODE_CAPS).toEqual({
+      maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES,
+      maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES,
+    });
+    const small = await decodeTagIndexInWorker(Buffer.from(payload), {
+      caps: { maxPayloadBytes: 10, maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES },
+    }).catch((e: Error) => e);
+    expect((small as Error).message).toBe(`tag index payload ${payload.length} bytes exceeds 10`);
+    const inflate = await decodeTagIndexInWorker(Buffer.from(payload), {
+      caps: { maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES, maxInflatedBytes: 100 },
+    }).catch((e: Error) => e);
+    expect((inflate as Error & { code?: string }).code).toBe('ERR_BUFFER_TOO_LARGE');
   });
 
   it('takes the payload buffer (transferred, not copied)', async () => {
@@ -248,6 +267,7 @@ describe('decodeTagIndexInWorker failures through the store', () => {
       signal: abort.signal,
       source: `throw new Error('a worker was started')`,
     }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
     expect((e as Error).message).toMatch(/aborted before it started/);
   });
 });

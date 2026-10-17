@@ -30,7 +30,7 @@ export const TAG_INDEX_MAX_PAYLOAD_BYTES = 128 * 1024 * 1024;
  * Caps brotli's output; keep it well above a real build's msgpack size
  * (docs/resource-intent-primitive.md, Snapshot).
  */
-const TAG_INDEX_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
+export const TAG_INDEX_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
 const BROTLI_QUALITY = 9;
 const C_SCALE = 10_000;
 
@@ -288,9 +288,19 @@ export async function encodeTagIndex(data: TagIndexData, specHash: string): Prom
   return payload;
 }
 
-export async function decompressTagIndex(payload: Uint8Array): Promise<Buffer> {
-  return brotliDecompress(payload, { maxOutputLength: TAG_INDEX_MAX_INFLATED_BYTES });
+export async function decompressTagIndex(
+  payload: Uint8Array,
+  maxInflatedBytes = TAG_INDEX_MAX_INFLATED_BYTES
+): Promise<Buffer> {
+  return brotliDecompress(payload, { maxOutputLength: maxInflatedBytes });
 }
+
+/** The size caps a decode enforces. */
+export type TagIndexDecodeCaps = { maxPayloadBytes: number; maxInflatedBytes: number };
+export const TAG_INDEX_DECODE_CAPS: TagIndexDecodeCaps = {
+  maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES,
+  maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES,
+};
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -582,16 +592,18 @@ export type DecodedTagIndex = {
 /**
  * Decompress, unpack and validate, without building the scorer's maps: the part the decode worker
  * runs. Does NOT compare the spec hash with the running code's, or the vocabulary version with the
- * frozen one: the caller must.
+ * frozen one: the caller must. `caps` default to this module's exported caps; the decode worker is
+ * handed them by the main thread, so it enforces the caps of the code that spawned it.
  */
 export async function decodeTagIndexData(
-  payload: Uint8Array
+  payload: Uint8Array,
+  caps: TagIndexDecodeCaps = TAG_INDEX_DECODE_CAPS
 ): Promise<{ data: TagIndexData; vocabVersion: string; specHash: string }> {
-  if (payload.length > TAG_INDEX_MAX_PAYLOAD_BYTES)
-    throw new Error(
-      `tag index payload ${payload.length} bytes exceeds ${TAG_INDEX_MAX_PAYLOAD_BYTES}`
-    );
-  const { data, specHash } = unpackTagIndexData(await decompressTagIndex(payload));
+  if (payload.length > caps.maxPayloadBytes)
+    throw new Error(`tag index payload ${payload.length} bytes exceeds ${caps.maxPayloadBytes}`);
+  const { data, specHash } = unpackTagIndexData(
+    await decompressTagIndex(payload, caps.maxInflatedBytes)
+  );
   validateTagIndexData(data);
   return { data, vocabVersion: data.vocabVersion, specHash };
 }

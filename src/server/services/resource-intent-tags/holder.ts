@@ -16,6 +16,7 @@ import {
   latestReadyManifest,
   loadManifestSnapshot,
   TagIndexSnapshotUnservableError,
+  untilAborted,
   type TagIndexObjectStore,
 } from './store';
 
@@ -108,22 +109,6 @@ function delay(ms: number): { done: Promise<typeof TIMED_OUT>; cancel: () => voi
 }
 
 type Flight = { done: Promise<void>; waitSpent: boolean };
-
-/**
- * `p`, or a rejection as soon as `signal` aborts. A database read cannot be cancelled, so an
- * aborted check stops waiting for it rather than holding `running` until it returns; the read
- * holds no index memory, and every later step of the abandoned load checks the signal itself.
- */
-function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  let onAbort: (() => void) | undefined;
-  const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason);
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-  p.catch(() => undefined);
-  return Promise.race([p, aborted]).finally(() => signal.removeEventListener('abort', onAbort!));
-}
 
 const identity = (s: ServedTagIndex): HeldTagIndex => ({
   id: s.id,
@@ -288,12 +273,11 @@ export class TagIndexSnapshotHolder {
         } else {
           loading = latest.id;
           loadStart = this.now();
-          const { index } = await untilAborted(
-            loadManifestSnapshot(
-              { sql, objects: this.deps.objects(), decode: this.deps.decode },
-              latest,
-              signal
-            ),
+          // Not raced against the signal: `running` must track the load itself, which stops on the
+          // abort (its reads, download, decode worker and assembly all take the signal).
+          const { index } = await loadManifestSnapshot(
+            { sql, objects: this.deps.objects(), decode: this.deps.decode },
+            latest,
             signal
           );
           if (gen !== this.generation) return;

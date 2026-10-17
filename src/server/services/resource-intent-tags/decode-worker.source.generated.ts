@@ -2320,9 +2320,13 @@ function decodeKind(raw, kind) {
     )
   };
 }
-async function decompressTagIndex(payload) {
-  return brotliDecompress(payload, { maxOutputLength: TAG_INDEX_MAX_INFLATED_BYTES });
+async function decompressTagIndex(payload, maxInflatedBytes = TAG_INDEX_MAX_INFLATED_BYTES) {
+  return brotliDecompress(payload, { maxOutputLength: maxInflatedBytes });
 }
+var TAG_INDEX_DECODE_CAPS = {
+  maxPayloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES,
+  maxInflatedBytes: TAG_INDEX_MAX_INFLATED_BYTES
+};
 var HEX64 = /^[0-9a-f]{64}$/;
 function unpackTagIndexData(raw) {
   const doc = packr.unpack(raw);
@@ -2463,12 +2467,12 @@ function validateTagIndexData(data) {
   checkKind(data.kinds.checkpoint, V, E, "checkpoint");
 }
 var ASSEMBLE_STEP_WORK = 1 << 13;
-async function decodeTagIndexData(payload) {
-  if (payload.length > TAG_INDEX_MAX_PAYLOAD_BYTES)
-    throw new Error(
-      \`tag index payload \${payload.length} bytes exceeds \${TAG_INDEX_MAX_PAYLOAD_BYTES}\`
-    );
-  const { data, specHash } = unpackTagIndexData(await decompressTagIndex(payload));
+async function decodeTagIndexData(payload, caps = TAG_INDEX_DECODE_CAPS) {
+  if (payload.length > caps.maxPayloadBytes)
+    throw new Error(\`tag index payload \${payload.length} bytes exceeds \${caps.maxPayloadBytes}\`);
+  const { data, specHash } = unpackTagIndexData(
+    await decompressTagIndex(payload, caps.maxInflatedBytes)
+  );
   validateTagIndexData(data);
   return { data, vocabVersion: data.vocabVersion, specHash };
 }
@@ -2491,7 +2495,7 @@ function transferablesOf(data) {
 var port = import_worker_threads.parentPort;
 if (!port) throw new Error("decode-worker.entry must run in a worker thread");
 port.once("message", (msg) => {
-  decodeTagIndexData(msg.payload).then(
+  decodeTagIndexData(msg.payload, msg.caps).then(
     (result) => {
       const reply = { ok: true, result };
       port.postMessage(reply, transferablesOf(result.data));

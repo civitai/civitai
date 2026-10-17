@@ -9,9 +9,10 @@
  * allocation failure from bad bytes the same way it does on the main thread.
  */
 import { parentPort } from 'worker_threads';
-import { decodeTagIndexData, transferablesOf } from './payload';
+import { decodeTagIndexData, transferablesOf, type TagIndexDecodeCaps } from './payload';
 
-export type DecodeWorkerRequest = { payload: Uint8Array };
+/** The caps come from the spawning thread's `TAG_INDEX_DECODE_CAPS`, not this bundle's copy. */
+export type DecodeWorkerRequest = { payload: Uint8Array; caps: TagIndexDecodeCaps };
 export type DecodeWorkerReply =
   | { ok: true; result: Awaited<ReturnType<typeof decodeTagIndexData>> }
   | { ok: false; error: { name: string; message: string; code?: string } };
@@ -20,7 +21,7 @@ const port = parentPort;
 if (!port) throw new Error('decode-worker.entry must run in a worker thread');
 
 port.once('message', (msg: DecodeWorkerRequest) => {
-  decodeTagIndexData(msg.payload).then(
+  decodeTagIndexData(msg.payload, msg.caps).then(
     (result) => {
       const reply: DecodeWorkerReply = { ok: true, result };
       port.postMessage(reply, transferablesOf(result.data));

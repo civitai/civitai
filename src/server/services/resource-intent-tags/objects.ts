@@ -74,31 +74,50 @@ export function s3TagIndexObjects(
         });
       const body = res.Body as (AsyncIterable<Uint8Array> & { destroy?: () => void }) | undefined;
       if (!body) throw new Error(`tag index object ${key} has no body`);
-      const sizeError = (got: string) => {
+      if (signal?.aborted) {
         body.destroy?.();
-        return new TagIndexPayloadSizeError(
-          `tag index object ${key} is ${got} bytes, manifest says ${expectedBytes}`
-        );
-      };
-      // Refuse before reading: the body of a wrong object can be far larger than any snapshot.
-      if (typeof res.ContentLength === 'number' && res.ContentLength !== expectedBytes)
-        throw sizeError(String(res.ContentLength));
-      // One buffer of the known size, filled and hashed as the body streams in.
-      const bytes = Buffer.allocUnsafe(expectedBytes);
-      const hash = createHash('sha256');
-      let n = 0;
-      for await (const chunk of body) {
-        if (signal?.aborted) {
-          body.destroy?.();
-          signal.throwIfAborted();
-        }
-        if (n + chunk.length > expectedBytes) throw sizeError(`over ${expectedBytes}`);
-        bytes.set(chunk, n);
-        hash.update(chunk);
-        n += chunk.length;
+        signal.throwIfAborted();
       }
-      if (n !== expectedBytes) throw sizeError(String(n));
-      return { bytes, sha256: hash.digest('hex') };
+      // An abort while the body stalls must not wait for its next chunk.
+      const onAbort = () => body.destroy?.();
+      signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        const sizeError = (got: string) => {
+          body.destroy?.();
+          return new TagIndexPayloadSizeError(
+            `tag index object ${key} is ${got} bytes, manifest says ${expectedBytes}`
+          );
+        };
+        // Refuse before reading: the body of a wrong object can be far larger than any snapshot.
+        if (typeof res.ContentLength === 'number' && res.ContentLength !== expectedBytes)
+          throw sizeError(String(res.ContentLength));
+        // One buffer of the known size, filled and hashed as the body streams in.
+        const bytes = Buffer.allocUnsafe(expectedBytes);
+        const hash = createHash('sha256');
+        let n = 0;
+        try {
+          for await (const chunk of body) {
+            if (signal?.aborted) {
+              body.destroy?.();
+              signal.throwIfAborted();
+            }
+            if (n + chunk.length > expectedBytes) throw sizeError(`over ${expectedBytes}`);
+            bytes.set(chunk, n);
+            hash.update(chunk);
+            n += chunk.length;
+          }
+        } catch (e) {
+          // A body the abort destroyed fails with a premature close: report the abort.
+          signal?.throwIfAborted();
+          throw e;
+        }
+        // A body destroyed by the abort can end early: that is the abort, not a short object.
+        signal?.throwIfAborted();
+        if (n !== expectedBytes) throw sizeError(String(n));
+        return { bytes, sha256: hash.digest('hex') };
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+      }
     },
     list: async function* () {
       let ContinuationToken: string | undefined;

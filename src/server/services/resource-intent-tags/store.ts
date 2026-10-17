@@ -111,6 +111,21 @@ const COLUMNS = Prisma.raw(
    "buildStats", "createdAt", "retiredAt"`
 );
 
+/**
+ * `p`, or a rejection as soon as `signal` aborts. A database read cannot be cancelled, so an aborted
+ * load stops waiting for it rather than until it returns; the read holds no index memory.
+ */
+export function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  p.catch(() => undefined);
+  return Promise.race([p, aborted]).finally(() => signal.removeEventListener('abort', onAbort!));
+}
+
 async function vocabularyStatus(sql: CoocSql, vocabVersion: string): Promise<string | null> {
   const [row] = await sql.query<{ status: string }>(Prisma.sql`
     SELECT "status" FROM "ResourceIntentVocabulary" WHERE "vocabVersion" = ${vocabVersion}`);
@@ -238,7 +253,8 @@ export async function loadManifestSnapshot(
   signal?: AbortSignal
 ): Promise<{ manifest: TagIndexSnapshotManifest; index: TagIndex }> {
   const what = `tag index snapshot ${manifest.id}`;
-  if ((await vocabularyStatus(deps.sql, manifest.vocabVersion)) === 'candidate')
+  const status = vocabularyStatus(deps.sql, manifest.vocabVersion);
+  if ((await (signal ? untilAborted(status, signal) : status)) === 'candidate')
     throw new TagIndexVocabularyNotFrozenError(
       `${what}: vocabulary ${manifest.vocabVersion} is a candidate`
     );

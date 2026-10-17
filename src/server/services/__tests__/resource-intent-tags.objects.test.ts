@@ -137,11 +137,57 @@ describe('s3TagIndexObjects', () => {
       .get('k', 4, abort.signal)
       .catch((x: unknown) => x);
     expect((e as Error).name).toBe('AbortError');
-    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(destroy).toHaveBeenCalled();
     expect(sent[0].abortSignal).toBe(abort.signal);
     // Already aborted: nothing is sent.
     await expect(objectsOver(s3).get('k', 4, abort.signal)).rejects.toThrow();
     expect(sent).toHaveLength(1);
+  });
+
+  it('an abort stops reading a body that cannot be destroyed, at its next chunk', async () => {
+    const abort = new AbortController();
+    let yielded = 0;
+    const body = {
+      async *[Symbol.asyncIterator]() {
+        for (const c of [Uint8Array.of(1), Uint8Array.of(2), Uint8Array.of(3), Uint8Array.of(4)]) {
+          yielded++;
+          if (yielded === 2) abort.abort();
+          yield c;
+        }
+      },
+    };
+    const s3 = {
+      send: vi.fn(async () => ({ ContentLength: 4, Body: body })),
+    } as unknown as S3Client;
+    const e = await objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    expect((e as Error).name).toBe('AbortError');
+    expect(yielded).toBe(2);
+  });
+
+  it('an abort while the body stalls destroys it at once, and is reported as the abort', async () => {
+    const abort = new AbortController();
+    let stalled!: () => void;
+    const body = Object.assign(
+      (async function* () {
+        yield Uint8Array.of(1, 2);
+        await new Promise<void>((r) => (stalled = r));
+        yield Uint8Array.of(3, 4);
+      })(),
+      { destroy: vi.fn(() => stalled?.()) }
+    );
+    const s3 = {
+      send: vi.fn(async () => ({ ContentLength: 4, Body: body })),
+    } as unknown as S3Client;
+    const pending = objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    await new Promise((r) => setTimeout(r, 5));
+    abort.abort();
+    const e = await pending;
+    expect(body.destroy).toHaveBeenCalled();
+    expect((e as Error).name).toBe('AbortError');
   });
 
   it('reports a missing key as unservable, and rethrows any other failure (a missing bucket included) as it is', async () => {

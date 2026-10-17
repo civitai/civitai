@@ -1,8 +1,13 @@
 import { Worker } from 'worker_threads';
 
 import { TAG_INDEX_DECODE_WORKER_SOURCE } from './decode-worker.source.generated';
-import type { DecodeWorkerReply } from './decode-worker.entry';
-import { assembleTagIndexCooperative, type DecodedTagIndex } from './payload';
+import type { DecodeWorkerReply, DecodeWorkerRequest } from './decode-worker.entry';
+import {
+  assembleTagIndexCooperative,
+  TAG_INDEX_DECODE_CAPS,
+  type DecodedTagIndex,
+  type TagIndexDecodeCaps,
+} from './payload';
 import { TagIndexDecodeUnavailableError } from './decode-errors';
 
 /**
@@ -50,6 +55,8 @@ export type DecodeWorkerOptions = {
   pause?: () => Promise<void>;
   /** Units of assembly work between pauses (`ASSEMBLE_STEP_WORK` unless given). */
   assembleEvery?: number;
+  /** The size caps the worker enforces: `TAG_INDEX_DECODE_CAPS` unless given. */
+  caps?: TagIndexDecodeCaps;
 };
 
 /** Decompress, unpack and validate `payload` on a worker thread; build the scorer's index here. */
@@ -117,7 +124,11 @@ export function decodeTagIndexInWorker(
     );
     try {
       const buffer = ownBuffer(payload);
-      worker.postMessage({ payload: new Uint8Array(buffer) }, [buffer]);
+      const request: DecodeWorkerRequest = {
+        payload: new Uint8Array(buffer),
+        caps: opts.caps ?? TAG_INDEX_DECODE_CAPS,
+      };
+      worker.postMessage(request, [buffer]);
     } catch (e) {
       finish(() =>
         reject(

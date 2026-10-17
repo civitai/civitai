@@ -65,7 +65,7 @@ function harness() {
   let clock = 1_000_000;
   const rows: Manifest[] = [];
   const objects = new Map<string, Buffer>();
-  const calls = { manifest: 0, vocab: 0, get: 0, decode: 0, specHash: 0 };
+  const calls = { manifest: 0, vocab: 0, get: 0, getAborted: 0, decode: 0, specHash: 0 };
   let manifestGate: Promise<void> | null = null;
   let vocabGate: Promise<void> | null = null;
   let failManifest: Error | null = null;
@@ -105,7 +105,14 @@ function harness() {
       if (getGate)
         await new Promise<void>((resolve, reject) => {
           void getGate!.then(resolve);
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          signal?.addEventListener(
+            'abort',
+            () => {
+              calls.getAborted++;
+              reject(signal.reason);
+            },
+            { once: true }
+          );
         });
       const b = objects.get(key);
       if (!b) throw new TagIndexObjectMissingError(`no object ${key}`);
@@ -179,7 +186,14 @@ describe('TagIndexSnapshotHolder with the flag off', () => {
       expect(await h.holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'disabled' });
       h.advance(TAG_INDEX_POLL_MS + TAG_INDEX_POLL_JITTER_MS);
     }
-    expect(h.calls).toEqual({ manifest: 0, vocab: 0, get: 0, decode: 0, specHash: 0 });
+    expect(h.calls).toEqual({
+      manifest: 0,
+      vocab: 0,
+      get: 0,
+      getAborted: 0,
+      decode: 0,
+      specHash: 0,
+    });
     expect(h.loads).toEqual([]);
     expect(h.held).toEqual([]);
   });
@@ -197,6 +211,30 @@ describe('TagIndexSnapshotHolder with the flag off', () => {
     expect(h.calls).toEqual(callsWhileOff);
     h.setEnabled(true);
     expect((await h.holder.resolve()).snapshot?.id).toBe('s1');
+    expect(h.calls.decode).toBe(2);
+  });
+
+  it('turning the flag off and on during a load starts no second load until the first has stopped', async () => {
+    const h = harness();
+    const { payloadA } = await payloads();
+    h.add(manifestOf('s1', payloadA, T0), payloadA);
+    let release!: () => void;
+    // A decode that ignores the abort, standing for one still tearing down.
+    h.gateDecode(new Promise<void>((r) => (release = r)));
+    void h.holder.resolve();
+    await vi.waitFor(() => expect(h.calls.decode).toBe(1));
+    h.setEnabled(false);
+    await h.holder.resolve();
+    h.setEnabled(true);
+    // Let the aborted check unwind as far as it will, then ask again: still no second check.
+    await new Promise((r) => setTimeout(r, 10));
+    void h.holder.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(h.calls.manifest).toBe(1);
+    expect(h.calls.decode).toBe(1);
+    h.gateDecode(null);
+    release();
+    await vi.waitFor(async () => expect((await h.holder.resolve()).snapshot?.id).toBe('s1'));
     expect(h.calls.decode).toBe(2);
   });
 
@@ -338,10 +376,13 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     h.rows.push(manifestOf('bad1', payloadB, new Date(T0.getTime() + 1000), 'b'.repeat(64)));
     const other = await encodeTagIndex(smallTagIndexData('c'.repeat(64)), SPEC);
     h.rows.push(manifestOf('bad2', other, new Date(T0.getTime() + 2000), 'c'.repeat(64)));
+    // Manifest reads per check: 1 while the newest is not refused, 2 (newest, then the fallback)
+    // once it is: 1, then 1, 2, 2, 2, 2.
+    const expected = [2, 4, 6, 8, 10];
     for (let i = 0; i < 5; i++) {
       h.advance(TAG_INDEX_POLL_MS);
       await h.holder.resolve();
-      await vi.waitFor(() => expect(h.calls.manifest).toBeGreaterThan(1 + i));
+      await vi.waitFor(() => expect(h.calls.manifest).toBe(expected[i]));
       await new Promise((r) => setTimeout(r, 0));
     }
     // One refusal each; after that, no download at all.
@@ -448,6 +489,8 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
       void h.holder.resolve();
       await vi.advanceTimersByTimeAsync(TAG_INDEX_LOAD_TIMEOUT_MS);
       expect(h.failures).toEqual(['load_failed']);
+      // The download itself was told to stop.
+      expect(h.calls.getAborted).toBe(1);
       h.gateGet(null);
       h.advance(TAG_INDEX_RETRY_MS);
       void h.holder.resolve();
