@@ -3170,6 +3170,9 @@ function createUserSettingsCache() {
     idKey: 'userId',
     ttl: CacheTTL.hour * 4,
     staleWhileRevalidate: false,
+    // The bust window keeps a replica read from being re-cached; this lookup reads the primary, so
+    // a longer window would only add uncached primary reads. 1 is the minimum (it is the marker's EX).
+    debounceTime: 1,
     lookupFn: async (ids) => {
       const rows = await dbWrite.$queryRaw<
         {

@@ -99,7 +99,7 @@ const createUserCapCache = () => {
     dontCacheFn: (data) => !data?.cap,
     cacheNotFound: false,
     staleWhileRevalidate: false,
-    debounceTime: 1, // 10s debounce is too long for this cache.
+    debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
@@ -697,7 +697,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CASH,
   idKey: 'id',
   staleWhileRevalidate: false,
-  debounceTime: 1, // 10s debounce is too long for this cache.
+  debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 

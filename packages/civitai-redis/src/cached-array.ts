@@ -20,6 +20,8 @@ export type CachedLookupOptions<T extends object> = {
   lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, T>>;
   appendFn?: (results: Set<T>) => Promise<void>;
   ttl?: number;
+  // Seconds a bust holds an id back. Unset, each bust flavour keeps its own default (see
+  // NON_SWR_BUST_WINDOW and SWR_INVALIDATE_WINDOW); set, it applies to both, as it always did.
   debounceTime?: number;
   cacheNotFound?: boolean;
   // Separate TTL for negative-cache markers. When the lookupFn legitimately returns nothing for an id
@@ -181,6 +183,18 @@ const UPDATE_LOCK_TTL = 5;
  * join; change both together.
  */
 const MISS_FILL_JOIN_MAX_MS = 10_000;
+
+/**
+ * Default bust window (seconds) for a non-SWR cache: how long bust()'s marker keeps every read of
+ * the id uncached. Each second costs a lookup per read of a busted id, so it is short, but well above
+ * typical replica lag, which is what it exists to outlast.
+ */
+const NON_SWR_BUST_WINDOW = 2;
+/**
+ * Default for an SWR cache's invalidate(): how long the backdated entry is still served as fresh
+ * before revalidating. Unchanged from the builder's historical 10 s default.
+ */
+const SWR_INVALIDATE_WINDOW = 10;
 type MissFillEntry = { startedAt: number };
 
 export function createCacheBuilders(deps: CacheBuilderDeps) {
@@ -193,7 +207,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     lookupFn,
     appendFn,
     ttl = deps.defaultTtl,
-    debounceTime = 10,
+    debounceTime,
     cacheNotFound = true,
     notFoundTtl,
     dontCacheFn,
@@ -413,7 +427,6 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const cacheArray = cacheResults.filter((x) => x !== null) as T[];
       const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x])) as Record<string, any>;
 
-      const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
       const cacheMisses = new Set<number>();
       const dontCache = new Set<number>();
       const debounced = new Set<number>();
@@ -425,9 +438,13 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const cached = cache[id];
         if (cached) {
           if (cached.notFound) continue;
+          // A readable marker is inside its window by construction: bust() writes it with EX = the
+          // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW), so Redis
+          // ends it and the marker needs no timestamp. Inside it the lookup is served but not
+          // written back.
           if (cached.debounce) {
             debounced.add(id);
-            if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
+            dontCache.add(id);
             cacheMisses.add(id);
             continue;
           }
@@ -511,7 +528,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             const result = dbResults[id];
             if (!result) {
               if (cacheNotFound) {
-                if (writeBack) toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+                // dontCache too: NX against the marker only guards while the marker outlives the
+                // lookup, and an in-window empty result may be replica lag.
+                if (writeBack && !dontCache.has(id))
+                  toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
                 actualMisses++;
               }
               // When cacheNotFound=false, don't count as a miss since we don't cache it.
@@ -608,7 +628,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           redis.packed.set(
             `${key}:${id}` as RedisKeyTemplateCache,
             { [idKey]: id, debounce: true },
-            { EX: options.debounceTime ?? debounceTime },
+            { EX: options.debounceTime ?? debounceTime ?? NON_SWR_BUST_WINDOW },
             packedOptions
           )
         )
@@ -631,7 +651,9 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
 
       const invaliDate = new Date(
-        Date.now() - ttl * 1000 + (options.debounceTime ?? debounceTime) * 1000
+        Date.now() -
+          ttl * 1000 +
+          (options.debounceTime ?? debounceTime ?? SWR_INVALIDATE_WINDOW) * 1000
       );
       const updates = cacheResults.filter(
         (x) => x !== null && 'cachedAt' in x && (x as AnyRecord).cachedAt !== invaliDate

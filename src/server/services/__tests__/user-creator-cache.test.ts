@@ -58,6 +58,7 @@ const { refreshEquippedCosmetics } = await import(
 
 // Literal, not imported: an expectation derived from the constant moves with a mutated constant.
 const TTL_S = 60;
+const BUST_WINDOW_S = 2;
 const ctx = { user: { id: 4101 } };
 const T0 = new Date('2026-10-17T12:00:00.000Z');
 const USER = 4101;
@@ -255,12 +256,24 @@ describe('creator card cache: bust on write', () => {
     expect((purgeCache.mock.calls[1][0] as { tags: string[] }).tags).toEqual(['user-creator-5200']);
   });
 
-  it('the first read after a bust goes to the database and is cached again', async () => {
+  it('reads inside the bust window go to the database uncached; the first read after it is cached', async () => {
     await getUserCreator({ id: USER });
     await bustUserCreator(USER);
+
+    // Inside the window (halfway), every read goes to the database and nothing is written back, so
+    // a read landing inside replication lag cannot re-cache the pre-write card.
+    vi.setSystemTime(T0.getTime() + (BUST_WINDOW_S * 1000) / 2);
     await getUserCreator({ id: USER });
     await getUserCreator({ id: USER });
-    expect(userReads()).toBe(2);
+    expect(userReads()).toBe(3);
+    expect(store.peek(entryKey(USER))).toMatchObject({ debounce: true });
+
+    // Past the window the marker is gone: the next read refills and the one after it is a hit.
+    vi.setSystemTime(T0.getTime() + (BUST_WINDOW_S + 1) * 1000);
+    await getUserCreator({ id: USER });
+    await getUserCreator({ id: USER });
+    expect(userReads()).toBe(4);
+    expect(store.peek(entryKey(USER))).toMatchObject({ id: USER, username: 'first-name' });
   });
 
   it('a Redis failure during the bust does not fail the write', async () => {
