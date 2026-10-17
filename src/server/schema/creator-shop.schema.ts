@@ -210,8 +210,11 @@ export const isConsumableCosmeticType = (type: CosmeticType): boolean =>
  * so an unmigrated read path fails loudly instead of silently rendering (and
  * granting) one cosmetic.
  */
-export const isPackShopItem = (item: { cosmeticId: number | null }): boolean =>
-  item.cosmeticId == null;
+export const isPackShopItem = (item: {
+  cosmeticId: number | null;
+  /** A mystery box listing has no cosmetic either. */
+  itemDefinitionId?: number | null;
+}): boolean => item.cosmeticId == null && item.itemDefinitionId == null;
 
 export type PackMemberPricing = {
   cosmeticId: number;

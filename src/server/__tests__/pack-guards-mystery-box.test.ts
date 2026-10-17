@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { isPackShopItem } from '~/server/schema/creator-shop.schema';
 
 // A mystery box listing has no cosmetic, which every pack guard used to read as "a pack". The pack
 // editor would then write member rows onto it and send it back to review, and the public pack page
@@ -25,6 +26,14 @@ const listing = (itemDefinitionId: number | null) => ({
   meta: {},
   members: [],
   _count: { purchases: 0 },
+});
+
+describe('isPackShopItem', () => {
+  it('is false for a mystery box listing and true for a pack', () => {
+    expect(isPackShopItem({ cosmeticId: null, itemDefinitionId: 9 })).toBe(false);
+    expect(isPackShopItem({ cosmeticId: null, itemDefinitionId: null })).toBe(true);
+    expect(isPackShopItem({ cosmeticId: 4, itemDefinitionId: null })).toBe(false);
+  });
 });
 
 describe('pack guards on a mystery box listing', () => {

@@ -282,7 +282,9 @@ export async function resumeShopPurchase(
   // `amount`: the claim read earlier, not one released and recreated since at another amount.
   const { count } = await db.cosmeticShopPurchaseClaim.updateMany({
     where: { transactionId, status: CLAIM.pending, amount: existing.amount },
-    data: { attempts: { increment: 1 } },
+    // `updatedAt` is the claim's last activity, which bounds how long it reserves stock
+    // (countPendingShopPurchaseClaims).
+    data: { attempts: { increment: 1 }, updatedAt: new Date() },
   });
   // Settled or released since the read: nothing is charged from here, and
   // the next retry reads the settled status.
@@ -332,13 +334,7 @@ export async function claimShopPurchaseUnderLock(
   expectedAmount?: number
 ): Promise<ShopPurchaseClaim> {
   const { transactionId, userId, shopItemId, amount } = context;
-  if (existing)
-    return resumeShopPurchase(
-      { ...context, amount: existing.amount },
-      existing,
-      expectedAmount,
-      tx
-    );
+  if (existing) return resumeShopPurchase(context, existing, expectedAmount, tx);
   await tx.cosmeticShopPurchaseClaim.create({
     data: { transactionId, userId, shopItemId, amount, status: CLAIM.pending },
   });
@@ -346,9 +342,10 @@ export async function claimShopPurchaseUnderLock(
 }
 
 /**
- * A user's unsettled claims on any of these listings made since `since`, other than
- * `exceptTransactionId`. Nothing expires a claim whose charge outcome was never known, so a caller
- * reserving stock against pending claims bounds them by age, or one stuck claim reserves forever.
+ * A user's unsettled claims on any of these listings active since `since` (created or resumed),
+ * other than `exceptTransactionId`. Nothing expires a claim whose charge outcome was never known, so
+ * a caller reserving stock against pending claims bounds them by last activity, or one stuck claim
+ * reserves forever. Not by creation: a claim resumed just now is being charged now.
  */
 export function countPendingShopPurchaseClaims(
   db: Prisma.TransactionClient,
@@ -365,7 +362,7 @@ export function countPendingShopPurchaseClaims(
       status: CLAIM.pending,
       shopItemId: { in: shopItemIds },
       transactionId: { not: exceptTransactionId },
-      createdAt: { gte: since },
+      updatedAt: { gte: since },
     },
   });
 }

@@ -146,8 +146,10 @@ async function assertBoxSellable(client: Prisma.TransactionClient, boxDefinition
 
 type BoxParams = { event?: unknown };
 
-// How long a purchase still settling counts against what is left for its buyer. A purchase settles
-// in seconds; one older than this is stuck, and is reconciled by hand rather than held against them.
+// How long a purchase still settling counts against what is left for its buyer, from its last
+// attempt. A purchase settles in seconds; one idle longer is stuck and stops reserving. If its key is
+// pressed again it resumes, and a charged one is granted without this check, so a box can then be
+// sold past what is left (kept, as an empty box, until contents arrive or a moderator refunds it).
 const PENDING_CLAIM_RESERVES_MS = 15 * 60 * 1000;
 
 export type MysteryBoxShopItem = {

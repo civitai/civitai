@@ -69,6 +69,8 @@ import {
 
 const BUYER_ID = 1;
 const SHOP_ITEM_ID = 42;
+// Another listing selling the same box (a re-priced or event-page copy).
+const SECOND_LISTING_ID = 43;
 const BOX_ID = 9;
 const PRICE = 500;
 const VERSION = 3;
@@ -230,17 +232,26 @@ const makeTx = (onLock: () => Promise<void>) => ({
   },
   cosmeticShopItem: {
     findMany: async ({ where }: { where: { itemDefinitionId?: number } }) =>
-      where.itemDefinitionId === BOX_ID ? [{ id: SHOP_ITEM_ID }] : [],
+      where.itemDefinitionId === BOX_ID ? [{ id: SHOP_ITEM_ID }, { id: SECOND_LISTING_ID }] : [],
   },
   cosmeticShopPurchaseClaim: {
     ...claims.txDelegate,
+    findUnique: async (args: Parameters<typeof claims.txDelegate.findUnique>[0]) => {
+      world.log.push('claim:read');
+      return claims.txDelegate.findUnique(args);
+    },
     create: async (args: Parameters<typeof claims.txDelegate.create>[0]) => {
       world.log.push('claim:create');
       return claims.txDelegate.create(args);
     },
     updateMany: async (args: Parameters<typeof claims.txDelegate.updateMany>[0]) => {
       world.log.push(`claim:${args.data.status ?? 'update'}`);
-      return claims.txDelegate.updateMany(args);
+      const result = await claims.txDelegate.updateMany(args);
+      // The shared fake applies status and attempts only; carry the activity stamp too.
+      const stamp = (args.data as { updatedAt?: Date }).updatedAt;
+      const row = claims.rows.get(args.where.transactionId);
+      if (result.count && stamp && row) Object.assign(row, { updatedAt: stamp });
+      return result;
     },
     count: async ({
       where,
@@ -250,7 +261,7 @@ const makeTx = (onLock: () => Promise<void>) => ({
         status: string;
         shopItemId: { in: number[] };
         transactionId: { not: string };
-        createdAt: { gte: Date };
+        updatedAt: { gte: Date };
       };
     }) => {
       world.log.push('read:pending');
@@ -260,8 +271,8 @@ const makeTx = (onLock: () => Promise<void>) => ({
           c.status === where.status &&
           where.shopItemId.in.includes(c.shopItemId) &&
           c.transactionId !== where.transactionId.not &&
-          // The fake stamps no createdAt; an unstamped claim was made just now.
-          ((c as { createdAt?: Date }).createdAt ?? new Date()) >= where.createdAt.gte
+          // The fake stamps no updatedAt on create; an unstamped claim was made just now.
+          ((c as { updatedAt?: Date }).updatedAt ?? new Date()) >= where.updatedAt.gte
       ).length;
     },
   },
@@ -286,10 +297,13 @@ const buy = ({
   payWith,
   mysteryBoxEnabled = true,
   countryCode = 'US',
+  isModerator,
 }: {
   idempotencyKey?: string;
   expectedVersion?: number;
-  expectedUnitAmount?: number;
+  /** null: no confirmed price sent. */
+  expectedUnitAmount?: number | null;
+  isModerator?: boolean;
   payWith?: 'default' | 'blue-first';
   mysteryBoxEnabled?: boolean;
   countryCode?: string | null;
@@ -297,8 +311,9 @@ const buy = ({
   purchaseCosmeticShopItem({
     userId: BUYER_ID,
     shopItemId: SHOP_ITEM_ID,
+    isModerator,
     idempotencyKey,
-    expectedUnitAmount,
+    expectedUnitAmount: expectedUnitAmount ?? undefined,
     expectedVersion,
     payWith,
     buzzType: 'yellow',
@@ -409,6 +424,8 @@ describe('buying a mystery box', () => {
     const lock = `lock:${ITEM_HOLDER_LOCK_CLASS},${BUYER_ID}`;
     expect(world.log).toEqual([
       lock,
+      // The same-key claim is read under the lock, where nothing else can create one.
+      'claim:read',
       'read:contents',
       'read:held',
       'read:pending',
@@ -555,9 +572,30 @@ describe('buying a mystery box', () => {
       amount: PRICE,
       attempts: 1,
       status: 'pending',
-      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
     } as never);
     await buy();
+    expect(world.items).toHaveLength(1);
+  });
+
+  // Idle for 20 minutes, then pressed again in one tab while another tab buys: the resumed claim is
+  // being charged now, so it must still count against the last thing left.
+  it('counts an old claim that is being resumed right now', async () => {
+    world.contents = [hat(1)];
+    claims.rows.set(txId(KEY_A), {
+      transactionId: txId(KEY_A),
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      amount: PRICE,
+      attempts: 1,
+      status: 'pending',
+      updatedAt: new Date(Date.now() - 20 * 60 * 1000),
+    } as never);
+    const results = await Promise.allSettled([
+      buy({ idempotencyKey: KEY_A }),
+      buy({ idempotencyKey: KEY_B }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(world.items).toHaveLength(1);
   });
 
@@ -737,6 +775,8 @@ describe('buying a mystery box', () => {
       await buy();
       expect(world.items).toHaveLength(1);
       expect(mocks.createMultiTx.mock.calls[0][0].amount).toBe(PRICE);
+      // Recorded at what was charged, which payouts and refunds read.
+      expect(world.purchases[0].unitAmount).toBe(PRICE);
     });
   });
 
@@ -774,6 +814,172 @@ describe('buying a mystery box', () => {
     await expect(buy()).rejects.toThrow('Failed to purchase box');
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
     expect(claims.rows.get(txId(KEY_A))?.status).toBe('refunded');
+  });
+
+  describe('pending purchases across every listing of the box', () => {
+    const seedPending = (shopItemId: number) =>
+      claims.rows.set(txId(KEY_B), {
+        transactionId: txId(KEY_B),
+        userId: BUYER_ID,
+        shopItemId,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+
+    it('counts one made through a second listing of the same box', async () => {
+      world.contents = [hat(1)];
+      seedPending(SECOND_LISTING_ID);
+      await expect(buy()).rejects.toThrow('unopened boxes already cover');
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+    });
+
+    it('does not count one on a listing of another box (control)', async () => {
+      world.contents = [hat(1)];
+      seedPending(99);
+      await buy();
+      expect(world.items).toHaveLength(1);
+    });
+  });
+
+  describe('the event gate for an event box', () => {
+    beforeEach(() => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+        ...boxRow,
+        params: { event: 'birthday2026' },
+      });
+    });
+
+    it('is asked as a new purchase, with the buyer moderator status', async () => {
+      await buy({ isModerator: true });
+      expect(mocks.assertEventPurchasable).toHaveBeenCalledWith(
+        expect.objectContaining({ isModerator: true, resumingClaim: false })
+      );
+    });
+
+    // The event may have ended since the claim was charged; its window was checked then.
+    it('is asked as a resumed claim when the claim was charged', async () => {
+      mocks.assertEventPurchasable.mockImplementation(
+        async ({ resumingClaim }: { resumingClaim?: boolean }) => {
+          if (!resumingClaim) throw new Error('This item is not available');
+        }
+      );
+      claims.rows.set(txId(KEY_A), {
+        transactionId: txId(KEY_A),
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+      mocks.listMultiTx.mockResolvedValue([{ amount: PRICE }]);
+      mocks.createMultiTx.mockResolvedValue({
+        ...legs(),
+        transactionIds: legs().transactionIds.map((l) => ({ ...l, duplicate: true })),
+      });
+      await buy();
+      expect(world.items).toHaveLength(1);
+    });
+  });
+
+  describe('the price a claim was made at', () => {
+    const seedOwnClaim = (amount: number) =>
+      claims.rows.set(txId(KEY_A), {
+        transactionId: txId(KEY_A),
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount,
+        attempts: 1,
+        status: 'pending',
+      });
+
+    it('refuses an uncharged claim at an old price, with no price confirmed, as state unknown', async () => {
+      seedOwnClaim(PRICE - 100);
+      await expect(buy({ expectedUnitAmount: null })).rejects.toMatchObject({
+        message: PURCHASE_STATE_UNKNOWN_MESSAGE,
+      });
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+    });
+
+    it('refuses a charged claim whose amount differs from the confirmed one as state unknown', async () => {
+      seedOwnClaim(PRICE - 100);
+      mocks.listMultiTx.mockResolvedValue([{ amount: PRICE - 100 }]);
+      await expect(buy({ expectedUnitAmount: PRICE })).rejects.toMatchObject({
+        message: PURCHASE_STATE_UNKNOWN_MESSAGE,
+      });
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(world.items).toHaveLength(0);
+    });
+  });
+
+  // A refusal while a claim may be charged must not tell the client to drop its key.
+  describe('a refusal while resuming an uncharged claim is state unknown at every check', () => {
+    const cases: [string, () => void][] = [
+      [
+        'nothing left',
+        () => {
+          world.owned = [
+            { userId: BUYER_ID, cosmeticId: 1001 },
+            { userId: BUYER_ID, cosmeticId: 1002 },
+          ];
+        },
+      ],
+      [
+        'out of stock',
+        () => {
+          dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+            ...listing,
+            availableQuantity: 1,
+            _count: { purchases: 1 },
+          });
+        },
+      ],
+      [
+        'box version changed',
+        () => {
+          dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+            ...boxRow,
+            version: VERSION + 1,
+          });
+        },
+      ],
+      [
+        'team lookup failed',
+        () => {
+          dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+            ...boxRow,
+            params: { event: 'birthday2026' },
+          });
+          mocks.getEventBuyerTeam.mockRejectedValue(new Error('We could not confirm your team.'));
+        },
+      ],
+    ];
+    for (const [name, arrange] of cases)
+      it(name, async () => {
+        claims.rows.set(txId(KEY_A), {
+          transactionId: txId(KEY_A),
+          userId: BUYER_ID,
+          shopItemId: SHOP_ITEM_ID,
+          amount: PRICE,
+          attempts: 1,
+          status: 'pending',
+        });
+        arrange();
+        await expect(buy()).rejects.toMatchObject({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: PURCHASE_STATE_UNKNOWN_MESSAGE,
+        });
+        expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      });
+  });
+
+  it('answers the second of two concurrent same-key presses from the first claim', async () => {
+    const results = await Promise.allSettled([buy(), buy()]);
+    const reasons = results.flatMap((r) => (r.status === 'rejected' ? [String(r.reason)] : []));
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(reasons).toEqual([expect.stringContaining(PURCHASE_ALREADY_COMPLETED_MESSAGE)]);
+    expect(world.items).toHaveLength(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
   });
 
   it('refunds and refuses when the grant fails', async () => {
