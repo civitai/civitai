@@ -11,6 +11,8 @@ import {
   readonlyClickHouse,
   runTagIndexBuild,
   genObservationPages,
+  observationCoverage,
+  TAG_OBSERVATION_FLOOR,
   tagBuildConfig,
   type TagBuildDeps,
   type TagBuildEnv,
@@ -136,7 +138,7 @@ async function world(
   opts: {
     vocabs?: [Buffer, string, string | null][];
     readonly?: number;
-    /** Observations at or after the window's end, and window hours holding one (of 2,160). */
+    /** Observations at or after the window's end, and hours from the floor holding one (of 865). */
     after?: number;
     hours?: number;
     /** Generator rows on the window's first day (the fixture's three prompts by default). */
@@ -176,7 +178,7 @@ async function world(
     else if (q.includes('uniqExactIf'))
       yield {
         after: String(opts.after ?? 5000),
-        hours: String(opts.hours ?? 2160),
+        hours: String(opts.hours ?? 865),
         newest: String(now - 3 * 3600),
         now: String(now),
       } as T;
@@ -440,6 +442,11 @@ describe("gate 2: the ClickHouse account's own profile is readonly=2", () => {
 });
 
 describe("gate 3: the training window's generator coverage", () => {
+  // The test window, 2026-07-21 to 2026-10-19, starts before the observation table's floor
+  // (2026-09-12T23:00Z), so coverage is counted over the 865 hours from the floor; 2% allows 17.
+  const FLOOR = '2026-09-12T23:00:00.000Z';
+  const SPAN = 865;
+
   it('refuses when no observation lies at or after the window end, before any training read', async () => {
     const w = await world({ after: 0 });
     await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
@@ -449,46 +456,88 @@ describe("gate 3: the training window's generator coverage", () => {
     expectNoTrainingReads(w);
   });
 
-  it('asks about the window the build trains on', async () => {
-    const w = await world();
-    await runTagIndexBuild({ dryRun: false }, w.deps);
+  it("pins the floor at the observation table's first hour", () => {
+    expect(TAG_OBSERVATION_FLOOR.toISOString()).toBe(FLOOR);
+  });
+
+  it('a window starting before the floor, fully covered after it, builds and records the short span', async () => {
+    const w = await world({ hours: SPAN });
+    const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
     const q = w.chQueries[1];
     expect(q).toContain(`countIf(time >= toDateTime('2026-10-19 00:00:00', 'UTC')) AS after`);
     expect(q).toContain(
       `uniqExactIf(toStartOfHour(time), time < toDateTime('2026-10-19 00:00:00', 'UTC'))`
     );
-    expect(q).toContain(`WHERE time >= toDateTime('2026-07-21 00:00:00', 'UTC')`);
-  });
-
-  it('refuses 44 missing hours of 2,160 (over 2%), before any training read', async () => {
-    const w = await world({ hours: 2160 - 44 });
-    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
-      "44 of the window's 2160 hours have no generator observation (allowed 43)"
-    );
-    expect(w.deps.query).not.toHaveBeenCalled();
-    expectNoTrainingReads(w);
-  });
-
-  it('builds with 43 missing hours, and records them on the summary and the manifest row', async () => {
-    const w = await world({ hours: 2160 - 43 });
-    const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
-    expect(summary.observationHours).toEqual({ window: 2160, missing: 43 });
-    expect(summary.stats.observationHours).toEqual({ window: 2160, missing: 43 });
+    expect(q).toContain(`WHERE time >= toDateTime('2026-09-12 23:00:00', 'UTC')`);
+    const recorded = { start: FLOOR, hours: SPAN, missing: 0 };
+    expect(summary.observationHours).toEqual(recorded);
+    expect(summary.stats.observationHours).toEqual(recorded);
     const [row] = (
       await w.db.query<{ h: unknown }>(
         `SELECT "buildStats"->'observationHours' AS h FROM "ResourceIntentTagIndexSnapshot"`
       )
     ).rows;
-    expect(row.h).toEqual({ window: 2160, missing: 43 });
+    expect(row.h).toEqual(recorded);
+  });
+
+  it('the same window with 18 missing hours after the floor (over 2%) refuses, before any training read', async () => {
+    const w = await world({ hours: SPAN - 18 });
+    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+      `18 of the 865 hours from ${FLOOR} have no generator observation (allowed 17)`
+    );
+    expect(w.deps.query).not.toHaveBeenCalled();
+    expectNoTrainingReads(w);
+  });
+
+  it('builds with 17 missing hours after the floor', async () => {
+    const w = await world({ hours: SPAN - 17 });
+    const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
+    expect(summary.observationHours).toEqual({ start: FLOOR, hours: SPAN, missing: 17 });
   });
 
   it('a dry run reports missing hours over the limit instead of refusing', async () => {
     const w = await world({
-      hours: 793,
+      hours: SPAN - 100,
       env: { ...ENV, RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined },
     });
     const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
-    expect(summary.observationHours).toEqual({ window: 2160, missing: 1367 });
+    expect(summary.observationHours).toEqual({ start: FLOOR, hours: SPAN, missing: 100 });
+  });
+
+  describe('a window starting after the floor ignores it', () => {
+    const window = {
+      start: new Date('2026-12-20T00:00:00Z'),
+      end: new Date('2027-03-20T00:00:00Z'),
+    };
+    const fake = (hours: number) => {
+      const asked: string[] = [];
+      const ch: TagClickHouse = {
+        async *rows<T>(q: string) {
+          asked.push(q);
+          yield { after: '10', hours: String(hours), newest: '0', now: '0' } as T;
+        },
+        close: async () => undefined,
+      };
+      return { ch, asked };
+    };
+
+    it('counts the whole window, from its own start', async () => {
+      const { ch, asked } = fake(2160);
+      const c = await observationCoverage(ch, window, true);
+      expect(c.start.toISOString()).toBe('2026-12-20T00:00:00.000Z');
+      expect({ hours: c.hours, missingHours: c.missingHours }).toEqual({
+        hours: 2160,
+        missingHours: 0,
+      });
+      expect(asked[0]).toContain(`WHERE time >= toDateTime('2026-12-20 00:00:00', 'UTC')`);
+    });
+
+    it('so a gap anywhere in it counts: 44 missing of 2,160 refuses', async () => {
+      const { ch } = fake(2160 - 44);
+      await expect(observationCoverage(ch, window, true)).rejects.toThrow(
+        '44 of the 2160 hours from 2026-12-20T00:00:00.000Z have no generator observation (allowed 43)'
+      );
+    });
   });
 });
 

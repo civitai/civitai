@@ -36,6 +36,16 @@ import { putSnapshot, type TagIndexObjectStore } from './store';
 export const TAG_BUILD_MAX_MISSING_HOUR_SHARE = 0.02;
 
 /**
+ * The observation table's first hour. The extractor went live with a 31-day backfill, the most its
+ * source keeps, so no observation is older than this (verified read-only, October 2026: the first row
+ * is at 23:20 of this hour, and every hour from it on holds observations).
+ * Coverage is counted from here when the training window starts earlier; a window wholly after it
+ * ignores it, from about 2026-12-13 on. Pinned rather than read as `min(time)`: a later truncation
+ * or re-backfill would move `min(time)` and silently shrink the span the coverage check guards.
+ */
+export const TAG_OBSERVATION_FLOOR = new Date('2026-09-12T23:00:00Z');
+
+/**
  * The longest the build holds the event loop between yields while tagging. It shares the process
  * with every other job; a time slice, not a row count, because the audit's cost varies per prompt.
  */
@@ -178,40 +188,46 @@ const chTime = (d: Date) =>
 export type ObservationCoverage = {
   /** Seconds since the newest generator observation, by ClickHouse's clock. */
   newestAgeSec: number;
-  windowHours: number;
+  /** Where coverage was counted from: the later of the window's start and the table's floor. */
+  start: Date;
+  /** Hours in [start, window end), and those with no generator observation. */
+  hours: number;
   missingHours: number;
 };
 
 /**
  * The training window's generator coverage. Refuses unless some observation lies at or after the
- * window's end (the extractor has written past it). Hours in the window with no observation are
- * counted; more than `TAG_BUILD_MAX_MISSING_HOUR_SHARE` of them is refused unless `refuseGaps` is
- * false (a dry run reports them instead).
+ * window's end (the extractor has written past it). Hours with no observation are counted from the
+ * later of the window's start and `floor` to the window's end; more than
+ * `TAG_BUILD_MAX_MISSING_HOUR_SHARE` of that span is refused unless `refuseGaps` is false (a dry run
+ * reports them instead).
  */
 export async function observationCoverage(
   ch: TagClickHouse,
   window: { start: Date; end: Date },
-  refuseGaps: boolean
+  refuseGaps: boolean,
+  floor: Date = TAG_OBSERVATION_FLOOR
 ): Promise<ObservationCoverage> {
+  const start = new Date(Math.max(window.start.getTime(), floor.getTime()));
   const r = await firstRow<Record<'after' | 'hours' | 'newest' | 'now', number | string>>(
     ch,
     `SELECT countIf(time >= ${chTime(window.end)}) AS after,
        uniqExactIf(toStartOfHour(time), time < ${chTime(window.end)}) AS hours,
        toUnixTimestamp(max(time)) AS newest, toUnixTimestamp(now()) AS now
-     FROM default.resourceIntentGenObservation WHERE time >= ${chTime(window.start)}`
+     FROM default.resourceIntentGenObservation WHERE time >= ${chTime(start)}`
   );
   if (!(Number(r?.after) > 0))
     throw new Error(
       `tag index build: no generator observation at or after the window end ${window.end.toISOString()}; the extractor has not covered the window, refusing`
     );
-  const windowHours = Math.round((window.end.getTime() - window.start.getTime()) / HOUR_MS);
-  const missingHours = windowHours - Number(r?.hours);
-  const allowed = Math.floor(windowHours * TAG_BUILD_MAX_MISSING_HOUR_SHARE);
+  const hours = Math.max(0, Math.round((window.end.getTime() - start.getTime()) / HOUR_MS));
+  const missingHours = hours - Number(r?.hours);
+  const allowed = Math.floor(hours * TAG_BUILD_MAX_MISSING_HOUR_SHARE);
   if (refuseGaps && missingHours > allowed)
     throw new Error(
-      `tag index build: ${missingHours} of the window's ${windowHours} hours have no generator observation (allowed ${allowed}); refusing`
+      `tag index build: ${missingHours} of the ${hours} hours from ${start.toISOString()} have no generator observation (allowed ${allowed}); refusing`
     );
-  return { newestAgeSec: Number(r?.now) - Number(r?.newest), windowHours, missingHours };
+  return { newestAgeSec: Number(r?.now) - Number(r?.newest), start, hours, missingHours };
 }
 
 /**
@@ -290,8 +306,12 @@ export type TagBuildSummary = {
   specHash: string;
   window: { start: string; end: string };
   observationAgeSec: number;
-  /** The window's hours, and those with no generator observation. */
-  observationHours: { window: number; missing: number };
+  /**
+   * Generator coverage: counted from `start` (the later of the window's start and the observation
+   * table's floor, so a snapshot trained on a shorter span says so) over `hours` hours to the window's
+   * end, `missing` of them with no observation.
+   */
+  observationHours: ObservationHours;
   observations: number;
   genUsers: number;
   postUsers: number;
@@ -311,9 +331,9 @@ export type TagBuildSummary = {
 };
 
 /** The build's stats as stored on the manifest row: the index's, and the window's coverage. */
-export type TagBuildStatsWithCoverage = TagBuildStats & {
-  observationHours: { window: number; missing: number };
-};
+export type ObservationHours = { start: string; hours: number; missing: number };
+
+export type TagBuildStatsWithCoverage = TagBuildStats & { observationHours: ObservationHours };
 
 export type TagBuildDeps = {
   env: TagBuildEnv;
@@ -440,7 +460,11 @@ export async function runTagIndexBuild(
     const built = await readAndBuild({ opts, deps, config, ch, query, vocab, window, clock });
     const stats: TagBuildStatsWithCoverage = {
       ...built.stats,
-      observationHours: { window: coverage.windowHours, missing: coverage.missingHours },
+      observationHours: {
+        start: coverage.start.toISOString(),
+        hours: coverage.hours,
+        missing: coverage.missingHours,
+      },
     };
     const summary: TagBuildSummary = {
       vocabVersion: vocab.vocabVersion,
