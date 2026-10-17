@@ -52,9 +52,13 @@
     confirm = '';
   };
 
+  // One request at a time: Enter in the readonly confirmation still submits the form mid-run.
+  let inFlight = false;
   const remove = new FormState({
     reset: false,
-    onSubmit: () => {
+    onSubmit: ({ cancel }) => {
+      if (inFlight) return cancel();
+      inFlight = true;
       running = true;
     },
     onSuccess: (data) => {
@@ -63,6 +67,7 @@
     },
     // A failure, a stop, or nothing left ends the loop; otherwise the same confirmed form runs again.
     onSettled: (result) => {
+      inFlight = false;
       if (result.type === 'success' && remaining && !stopRequested)
         setTimeout(() => (stopRequested ? finish() : removeForm?.requestSubmit()), NEXT_RUN_DELAY_MS);
       else finish();

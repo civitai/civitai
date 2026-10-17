@@ -20,6 +20,7 @@ export default defineModeratorEndpoint('user.removeReactions', {
     '`username` is REQUIRED for any account that has one, so a mistyped id cannot land on another account.',
     `Image reactions go at most ${IMAGE_ROWS_PER_RUN.toLocaleString()} per call. \`remaining\` > 0 means call again; every other table is cleared in one call.`,
     'Reaction counts follow the delete: Image, Post and owner counts through the event engine, Article, BountyEntry, Post, Question and Answer metrics are queued for recompute, and comment counts update by trigger.',
+    "NOT corrected: content owners' all-time reactions-received score (ClickHouse `reactions_owner_scores`). That needs a separate correction computed from the reactor's ClickHouse rows.",
     'Irreversible: no copy of the removed rows is kept.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },

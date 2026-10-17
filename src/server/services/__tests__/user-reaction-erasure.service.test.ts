@@ -42,7 +42,7 @@ const OTHER = 4002;
 const DELETE_BUDGET = 20;
 
 type Row = { id: number; userId: number; [fk: string]: number };
-type World = { tables: Record<string, Row[]>; owners: Record<string, Record<number, number>> };
+type World = { tables: Record<string, Row[]> };
 
 /**
  * An in-memory Postgres for the statement shapes the service sends. A statement of any other shape
@@ -51,7 +51,7 @@ type World = { tables: Record<string, Row[]>; owners: Record<string, Record<numb
  * other account's rows; a RETURNING column the rows do not have throws, as Postgres would.
  */
 function installDb(world: World) {
-  const { tables, owners } = world;
+  const { tables } = world;
   const statements: string[] = [];
   const deletes: Record<string, number> = {};
   dbMock.dbWrite.$queryRaw.mockImplementation(async (first: unknown, ...rest: unknown[]) => {
@@ -93,17 +93,6 @@ function installDb(world: World) {
       );
     }
     m = text.match(
-      /^SELECT id, "userId" AS "ownerId" FROM "(\w+)" WHERE id = ANY\(\$(\d+)::int\[\]\)$/
-    );
-    if (m) {
-      const [, table, ids] = m;
-      const known = owners[table];
-      if (!known) throw new Error(`no owner table ${table}`);
-      return (v(ids) as number[])
-        .filter((id) => id in known)
-        .map((id) => ({ id, ownerId: known[id] }));
-    }
-    m = text.match(
       /^SELECT count\(\*\)::int AS remaining FROM "ImageReaction" WHERE "userId" = \$(\d+)$/
     );
     if (m) return [{ remaining: tables.ImageReaction.filter((r) => r.userId === v(m![1])).length }];
@@ -129,7 +118,7 @@ const rows = (userId: number, fk: string, entityIds: number[], idFrom = 1): Row[
 function world(): World {
   return {
     tables: {
-      // Image 12 has no row any more: an orphaned reaction, whose owner cannot be read.
+      // Image 12 has no row any more: an orphaned reaction.
       ImageReaction: [
         ...rows(USER, 'imageId', [10, 11, 11, 12]),
         ...rows(OTHER, 'imageId', [10], 100),
@@ -147,28 +136,8 @@ function world(): World {
       QuestionReaction: rows(USER, 'questionId', [80]),
       AnswerReaction: rows(USER, 'answerId', [90]),
     },
-    owners: {
-      // Article 21 is the reactor's own: the score never counted it.
-      Image: { 10: 500, 11: 501 },
-      Article: { 20: 600, 21: USER },
-      Post: { 30: 700 },
-      BountyEntry: { 40: 800, 41: 800 },
-      CommentV2: { 50: 900 },
-      Comment: { 60: 901 },
-      Question: { 80: 902 },
-      Answer: { 90: 903 },
-    },
   };
 }
-
-const ownerScoreRows = () =>
-  chInsert.mock.calls
-    .map(([input]) => {
-      expect(input.table).toBe('reactions_owner_scores');
-      return input.values as { ownerId: number; score: number }[];
-    })
-    .flat()
-    .sort((a, b) => a.ownerId - b.ownerId);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -230,27 +199,11 @@ describe('removeUserReactions', () => {
     expect(queues.post).toHaveBeenCalledWith([30]);
   });
 
-  it("lowers each content owner's reactions-received score by the reactions removed from them", async () => {
+  // Deliberately: see the service's note on `reactions_owner_scores`.
+  it('writes nothing to ClickHouse', async () => {
     installDb(world());
     await removeUserReactions(USER);
-
-    expect(ownerScoreRows()).toEqual([
-      { ownerId: 500, score: -1 },
-      { ownerId: 501, score: -2 },
-      { ownerId: 600, score: -2 },
-      { ownerId: 700, score: -1 },
-      { ownerId: 800, score: -2 },
-      { ownerId: 900, score: -1 },
-      { ownerId: 901, score: -1 },
-      { ownerId: 902, score: -1 },
-      { ownerId: 903, score: -1 },
-    ]);
-  });
-
-  it('writes no reactor id to ClickHouse', async () => {
-    installDb(world());
-    await removeUserReactions(USER);
-    expect(JSON.stringify(chInsert.mock.calls)).not.toContain(String(USER));
+    expect(chInsert).not.toHaveBeenCalled();
   });
 
   it('withdraws event points once per distinct image and article', async () => {
@@ -275,11 +228,17 @@ describe('removeUserReactions', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'user-reaction-erasure-follow-up',
-        details: { table: 'ArticleReaction', step: 'queue', entityIds: [20, 21] },
+        details: { table: 'ArticleReaction', step: 'queue', entities: 2 },
       })
     );
+    // The log carries a count, never the ids of what the person reacted to.
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('[20,21]');
     // The same table's other follow-ups and every later table still ran.
-    expect(ownerScoreRows()).toContainEqual({ ownerId: 600, score: -2 });
+    expect(onReactionRemoved).toHaveBeenCalledWith({
+      entityType: 'article',
+      entityId: 20,
+      userId: USER,
+    });
     expect(queues.answer).toHaveBeenCalledWith([90]);
     expect(result.removed.AnswerReaction).toBe(1);
     expect(tables.AnswerReaction).toHaveLength(0);
