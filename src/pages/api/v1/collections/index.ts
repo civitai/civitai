@@ -8,17 +8,14 @@ import { getAllCollections, getCollectionItemCount } from '~/server/services/col
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
+import { isPublicCoverImage } from '~/server/utils/public-cover-image';
 import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import {
-  CollectionItemStatus,
-  CollectionReadConfiguration,
-  MediaType,
-} from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
@@ -101,23 +98,6 @@ export default MixedAuthEndpoint(async function handler(
   let browsingLevel = !nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
 
-  const coverUrl = (
-    image:
-      | {
-          url: string;
-          type: MediaType | null;
-          nsfwLevel: number | null;
-          poi: boolean;
-          minor: boolean;
-        }
-      | null
-      | undefined
-  ): string | null =>
-    // poi/minor: the same exclusion the public image endpoints apply.
-    image?.url && !image.poi && !image.minor && withinCeiling(image.nsfwLevel, browsingLevel)
-      ? getEdgeUrl(image.url, { width: 450, type: image.type ?? undefined })
-      : null;
-
   try {
     // Public discovery. The keyset cursor is id-based, which only tracks the
     // default `createdAt DESC` ordering. Under `sort=MostContributors`
@@ -161,7 +141,20 @@ export default MixedAuthEndpoint(async function handler(
         nsfwLevel: true,
         userId: true,
         user: { select: { id: true, username: true } },
-        image: { select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true } },
+        image: {
+          select: {
+            url: true,
+            type: true,
+            nsfwLevel: true,
+            ingestion: true,
+            scannedAt: true,
+            tosViolation: true,
+            needsReview: true,
+            blockedFor: true,
+            poi: true,
+            minor: true,
+          },
+        },
       },
     });
 
@@ -195,7 +188,9 @@ export default MixedAuthEndpoint(async function handler(
       read: c.read,
       isPublic: c.read === CollectionReadConfiguration.Public,
       itemCount: countMap.get(c.id) ?? 0,
-      coverImageUrl: coverUrl(c.image),
+      coverImageUrl: isPublicCoverImage(c.image, browsingLevel)
+        ? getEdgeUrl(c.image.url, { width: 450, type: c.image.type })
+        : null,
       user: { id: c.user?.id ?? c.userId ?? null, username: c.user?.username ?? null },
     }));
 
