@@ -2,8 +2,8 @@
 -- through these functions; see docs/features/label-store.md.
 --
 -- Its own schema, outside Prisma: the drift guard reads `public` only. Apply as the owner of the site
--- tables, so the site's own writes need no grants. Two scoped roles, created by infra, get the rest: a
--- reader that sees the views at the bottom, and a writer that can only submit predictions.
+-- tables, so the site's own writes need no grants. One scoped role, created by infra, reads the views at
+-- the bottom. Pipelines submit predictions through an authenticated site endpoint, never a DB login.
 --
 -- Site-write paths catch their own errors into record_failure (the count to watch), so a bad label never
 -- fails the vote, flag or appeal that produced it; a statement timeout still cancels both.
@@ -477,7 +477,8 @@ BEGIN
   END IF;
   RETURN label_store.put_prediction(
     label_store.upsert_subject(p_subject_type, p_subject_id, p_content_hash, NULL, NULL, NULL),
-    'pipeline', p_question, p_question_version, p_value, p_model_ref, p_source_ref, p_predicted_at,
+    -- Prefixed, so a pipeline cannot take a ref a site producer will write later.
+    'pipeline', p_question, p_question_version, p_value, p_model_ref, 'pipeline:' || p_source_ref, p_predicted_at,
     p_confidence, p_scores, p_versions, p_input_hash, p_detail
   );
 END;
@@ -816,22 +817,16 @@ WHERE c."trainable" AND s."excludedAt" IS NULL;
 CREATE OR REPLACE VIEW label_store.pipeline_failures AS
 SELECT * FROM label_store.training_examples WHERE "modelAgrees" = false;
 
--- Owner-only, except submit_prediction, granted to the writer below.
+-- Owner-only.
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA label_store FROM PUBLIC;
 
--- The reader and writer roles are created by infra; grant when they exist. Re-run this block after.
+-- The reader role is created by infra; grant when it exists. Re-run this block after.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'label_reader') THEN
     GRANT USAGE ON SCHEMA label_store TO label_reader;
     GRANT SELECT ON label_store.labels_feed, label_store.predictions_feed, label_store.changes_feed,
       label_store.training_examples, label_store.pipeline_failures TO label_reader;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'label_writer') THEN
-    GRANT USAGE ON SCHEMA label_store TO label_writer;
-    GRANT EXECUTE ON FUNCTION label_store.submit_prediction(
-      TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INTEGER, REAL, JSONB, JSONB, TEXT, JSONB
-    ) TO label_writer;
   END IF;
 END;
 $$;

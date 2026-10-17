@@ -32,7 +32,7 @@ change.
 |---|---|---|
 | `record_label(...)` | site code recording a human judgement | logs to `record_failure` and returns NULL; does not raise on bad input |
 | `record_prediction(...)` | site code recording a model output | same |
-| `submit_prediction(...)` | pipelines, through the writer role | raises |
+| `submit_prediction(...)` | the authenticated prediction endpoint, on behalf of pipelines | raises |
 | `exclude(p_subject_type, p_subject_id, p_reason)` | taking an item out of training | `erasure` deletes it; `safety`, `removed` and `retention` keep the judgements and drop the content |
 | `erase_owner(p_user_id)` | a user's erasure request | deletes every subject the user owns; not called on account deletion |
 
@@ -67,5 +67,5 @@ Readers get a role that can select five views and nothing else: `labels_feed`, `
 re-reading a short window behind the cursor (ids are assigned before commit, so a row can appear after a
 higher id), and apply each row to keep a copy of the labels, predictions and trainable examples.
 
-The reader and writer roles are created outside this repo; the migration's grant block is re-run once
-they exist.
+The reader role is created outside this repo; the migration's grant block is re-run once it exists.
+There is no writer role: predictions come in through an authenticated site endpoint.

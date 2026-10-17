@@ -88,7 +88,7 @@ beforeAll(async () => {
   `);
   await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
   // The scoped roles infra creates, then the migration's grant block re-run as the header says.
-  await db.pg.exec(`CREATE ROLE label_reader; CREATE ROLE label_writer; CREATE ROLE site_app;`);
+  await db.pg.exec(`CREATE ROLE label_reader; CREATE ROLE site_app;`);
   const grant = readFileSync(MIGRATION, 'utf8').match(
     /DO \$\$\r?\nBEGIN\r?\n {2}IF EXISTS[\s\S]*?\r?\n\$\$;/
   );
@@ -305,59 +305,52 @@ describe('predictions', () => {
   });
 });
 
-describe('the writer role (pipelines)', () => {
+describe('submit_prediction (the pipeline endpoint)', () => {
   const submit = (value: string | null) =>
     db.pg.query<{ id: number }>(
       `SELECT label_store.submit_prediction(
          p_subject_type => 'image', p_subject_id => '${IMAGE}', p_content_hash => 'h-501',
          p_question => 'image.rating', p_value => $1, p_model_ref => 'rater@3', p_source_ref => 'run-1:${IMAGE}',
-         p_confidence => 0.8, p_scores => '{"pg": 0.1, "r": 0.8}', p_versions => '{"policy": 2, "threshold": "t4"}',
+         p_confidence => 0.8, p_scores => '{"a": 0.1, "b": 0.8}', p_versions => '{"v": 2}',
          p_input_hash => 'in-1') AS id`,
       [value]
     );
 
-  it('submits a prediction with its scores and versions, owned by the image owner', async () => {
-    await asRole('label_writer', async () => {
-      expect((await submit('r')).rows[0].id).toBeGreaterThan(0);
-    });
+  it('records a prediction with its scores and versions, owned by the image owner', async () => {
+    expect((await submit('b')).rows[0].id).toBeGreaterThan(0);
 
     const [p] = await rows<{
       family: string;
+      sourceRef: string;
       scores: unknown;
       versions: unknown;
       inputHash: string;
     }>(`SELECT * FROM label_store.predictions_feed`);
     expect(p).toMatchObject({
       family: 'pipeline',
-      scores: { pg: 0.1, r: 0.8 },
-      versions: { policy: 2, threshold: 't4' },
+      sourceRef: `pipeline:run-1:${IMAGE}`,
+      scores: { a: 0.1, b: 0.8 },
+      versions: { v: 2 },
       inputHash: 'in-1',
     });
     const [{ n }] = await rows<{ n: number }>(`SELECT label_store.erase_owner(${OWNER}) AS n`);
     expect(n).toBe(1);
   });
 
-  it('is refused an incomplete prediction, loudly', async () => {
-    await asRole('label_writer', async () => {
-      await expect(submit(null)).rejects.toThrow(/required/);
-    });
+  it('refuses an incomplete prediction, loudly', async () => {
+    await expect(submit(null)).rejects.toThrow(/required/);
     expect(await rows(`SELECT * FROM label_store.prediction`)).toHaveLength(0);
   });
 
-  it('cannot record a human label, hash a user id or read the tables', async () => {
-    await asRole('label_writer', async () => {
-      await expect(
-        db.pg.query(
-          `SELECT label_store.record_label('image', '1', 'h', 'x', 'image.block', 'clear', 'moderator', 's', now(), 21)`
-        )
-      ).rejects.toThrow(/permission denied/);
-      await expect(db.pg.query(`SELECT label_store.person_hash('labeller', 21)`)).rejects.toThrow(
-        /permission denied/
-      );
-      await expect(db.pg.query(`SELECT * FROM label_store.label`)).rejects.toThrow(
-        /permission denied/
-      );
-    });
+  it('cannot take a sourceRef the site writes', async () => {
+    await db.pg.query(
+      `SELECT label_store.submit_prediction('image', '${IMAGE}', 'h', 'image.block', 'block', 'm@1', 'ScanLabelFlag:wf-1')`
+    );
+    await flag('wf-1');
+
+    expect(
+      await rows(`SELECT "sourceRef" FROM label_store.prediction ORDER BY "sourceRef"`)
+    ).toEqual([{ sourceRef: 'ScanLabelFlag:wf-1' }, { sourceRef: 'pipeline:ScanLabelFlag:wf-1' }]);
   });
 });
 
