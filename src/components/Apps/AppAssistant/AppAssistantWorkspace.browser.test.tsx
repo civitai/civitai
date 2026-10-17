@@ -718,17 +718,16 @@ describe('AppAssistantWorkspace Build it', () => {
     card.remove();
   });
 
-  test('Build it pressed while the chat still holds stays, and goes when pressed again', async () => {
+  test('Build it pressed while the chat still holds goes away rather than being pressed twice', async () => {
     const card = (await checklistCard())();
     document.body.append(card);
     m.sendsHeld = 1;
     const build = page.getByRole('button', { name: 'Build it' });
     await build.click();
-    expect(m.delivered).toEqual([]);
-    await build.click();
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
+    // The chat put it in the message box for the user to send.
     await expect.element(build).not.toBeInTheDocument();
-    expect(m.compose).not.toHaveBeenCalled();
+    expect(m.delivered).toEqual([]);
+    expect(m.send).toHaveBeenCalledTimes(1);
     card.remove();
   });
 

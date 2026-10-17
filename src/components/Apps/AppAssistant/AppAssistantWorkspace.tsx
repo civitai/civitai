@@ -241,7 +241,7 @@ export function AppAssistantWorkspace({
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
-        onBuild: () => void chatRef.current?.send(BUILD_IT_MESSAGE),
+        onBuild: () => void buildRef.current(),
       }),
     [appTools]
   );
@@ -325,6 +325,14 @@ export function AppAssistantWorkspace({
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
+  // Build it: a send the chat holds back lands in an empty message box instead, so the button goes
+  // and the user sends it from there; pressing again would send it twice.
+  const buildWent = useRef(false);
+  const buildRef = useRef(async () => {
+    buildWent.current = false;
+    await chatRef.current?.send(BUILD_IT_MESSAGE);
+    if (!buildWent.current) gate.answered();
+  });
   const giveBack = useCallback(() => {
     const message = heldRef.current;
     heldRef.current = null;
@@ -334,6 +342,7 @@ export function AppAssistantWorkspace({
   const onBeforeSend = useCallback(
     (text: string) => {
       gate.answered();
+      if (text === BUILD_IT_MESSAGE) buildWent.current = true;
       const release = replaying.current;
       if (release?.text === text) release.went = true;
       // The user sent something else: stop sending the page's message.
