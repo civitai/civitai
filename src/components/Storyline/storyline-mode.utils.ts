@@ -55,7 +55,6 @@ export function storylineReadHref({
 }) {
   const query = new URLSearchParams({ [STORYLINE_CHAPTER_PARAM]: String(chapterId) });
   if (via.length) query.set(STORYLINE_VIA_PARAM, via.join(','));
-  // A comma list reads as one: `storylineVia=4,7` rather than `4%2C7`.
   return `/images/${imageId}?${query.toString().replace(/%2C/g, ',')}`;
 }
 

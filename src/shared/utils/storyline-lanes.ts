@@ -30,8 +30,8 @@ const linkKey = (parentId: number, childId: number) => `${parentId}:${childId}`;
  * - Lane: chapter 1 and its canon chain hold lane 0, and each chapter's canon child (else its
  *   oldest) carries its lane on. Any other child opens the lowest free lane. A rejoin takes the
  *   lowest lane its branches arrive in, and a lane is free again once its branch rejoins or ends.
- * - A link more than a row long runs down its own lane: the parent's when the child carries it
- *   on, else a lane opened for the run.
+ * - A link more than a row long runs down its own lane: the parent's when the child is the
+ *   parent's heir, else a lane opened for the run.
  */
 export function layoutStorylineLanes(
   rootId: number,
@@ -48,7 +48,7 @@ export function layoutStorylineLanes(
   }
   if (!known.has(rootId)) return { nodes: [], links: [], rows: 0, lanes: 0 };
 
-  // Reached from the root, then rows by longest route (Kahn over the reached part only).
+  // Kahn over the reached part only, so a parent outside the map cannot stall a rejoin.
   const reached = new Set([rootId]);
   const stack = [rootId];
   while (stack.length)
@@ -97,13 +97,12 @@ export function layoutStorylineLanes(
     const out = children(id);
     return (out.find((e) => e.canon) ?? out[0])?.chapterId;
   };
-  // The lane each link arrives in at its child: its run's lane, else its parent's.
   const arrivesIn = (parentId: number, childId: number) =>
     runLane.get(linkKey(parentId, childId)) ?? (lane.get(parentId) as number);
 
   byRow.forEach((ids, r) => {
-    // Rejoins first, each in the lowest free lane one of its branches arrives in; then the other
-    // children, each opening a lane. Carried-on children were placed by their parent already.
+    // Rejoins first: they claim a lane their branches arrive in before other children take the
+    // lowest free one. A heir with one parent was placed by its parent already.
     const rejoins = ids
       .filter((id) => !lane.has(id) && parents(id).length > 1)
       .map((id) => ({ id, arriving: parents(id).map((p) => arrivesIn(p, id)) }))
@@ -122,8 +121,8 @@ export function layoutStorylineLanes(
       take(lane.get(id) as number, r);
     }
 
-    // Reserve what leaves this row: each chapter's carried-on child, or the run down its own lane
-    // to a carried-on rejoin further down; then a lane for each other run.
+    // Reserve what leaves this row: the heir's lane, or its run when the heir is a rejoin further
+    // down; then a lane for each other run.
     const others: { parentId: number; childId: number }[] = [];
     for (const id of ids) {
       const own = lane.get(id) as number;
@@ -174,26 +173,31 @@ export function layoutStorylineLanes(
 }
 
 /**
- * The route from chapter 1 to `chapterId` as the map draws it: up the line that arrives in the
- * chapter's own lane, else its oldest link, at each step.
+ * Routes from chapter 1 as the map draws them: up the line that arrives in the chapter's own lane,
+ * else its oldest link, at each step. Build once per layout, then ask for each chapter.
  */
-export function storylineLaneRoute(layout: StorylineLanes, chapterId: number) {
+export function createStorylineLaneRouter(layout: StorylineLanes) {
   const laneOf = new Map(layout.nodes.map((n) => [n.chapterId, n.lane]));
   const incoming = new Map<number, StorylineLaneLink[]>();
-  for (const link of layout.links)
-    incoming.set(link.chapterId, [...(incoming.get(link.chapterId) ?? []), link]);
-  if (!laneOf.has(chapterId)) return [];
-
-  const route = [chapterId];
-  const seen = new Set(route);
-  for (let id = chapterId; ; ) {
-    const links = incoming.get(id) ?? [];
-    const next = (links.find((l) => l.lane === laneOf.get(id)) ?? links[0])?.parentChapterId;
-    if (next === undefined || seen.has(next)) return route.reverse();
-    route.push(next);
-    seen.add(next);
-    id = next;
+  for (const link of layout.links) {
+    const into = incoming.get(link.chapterId);
+    if (into) into.push(link);
+    else incoming.set(link.chapterId, [link]);
   }
+
+  return (chapterId: number) => {
+    if (!laneOf.has(chapterId)) return [];
+    const route = [chapterId];
+    const seen = new Set(route);
+    for (let id = chapterId; ; ) {
+      const links = incoming.get(id) ?? [];
+      const next = (links.find((l) => l.lane === laneOf.get(id)) ?? links[0])?.parentChapterId;
+      if (next === undefined || seen.has(next)) return route.reverse();
+      route.push(next);
+      seen.add(next);
+      id = next;
+    }
+  };
 }
 
 /**

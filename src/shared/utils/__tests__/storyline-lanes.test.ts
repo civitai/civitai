@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { StorylineLaneEdge, StorylineLanes } from '~/shared/utils/storyline-lanes';
 import {
+  createStorylineLaneRouter,
   layoutStorylineLanes,
   storylineLanePath,
-  storylineLaneRoute,
 } from '~/shared/utils/storyline-lanes';
 
 /** `[chapter, parent]` pairs, oldest first; `*` after a pair's chapter marks the edge canon. */
@@ -200,7 +200,10 @@ describe('layoutStorylineLanes', () => {
   });
 });
 
-describe('storylineLaneRoute', () => {
+const storylineLaneRoute = (lanes: StorylineLanes, chapterId: number) =>
+  createStorylineLaneRouter(lanes)(chapterId);
+
+describe('createStorylineLaneRouter', () => {
   const lanes = layout(demo);
 
   it('follows the line that arrives in the chapter’s own lane', () => {
@@ -283,5 +286,134 @@ describe('storylineLanePath', () => {
     expect(
       storylineLanePath({ from: { row: 2, lane: 0 }, to: { row: 5, lane: 1 }, runLane: 2 }, at)
     ).toBe('M 0 200 C 0 250 20 250 20 300 L 20 400 C 20 450 10 450 10 500');
+  });
+});
+
+describe('layoutStorylineLanes soundness', () => {
+  /** Every node and every cell a run passes through holds one thing; rows follow the parents. */
+  const soundness = (edges: StorylineLaneEdge[], lanes: StorylineLanes) => {
+    const problems: string[] = [];
+    const cells = new Map<string, string>();
+    const claim = (lane: number, row: number, what: string) => {
+      const key = `lane ${lane} row ${row}`;
+      const other = cells.get(key);
+      if (other) problems.push(`${what} on ${other} (${key})`);
+      else cells.set(key, what);
+    };
+    const at = new Map(lanes.nodes.map((n) => [n.chapterId, n]));
+    for (const n of lanes.nodes) claim(n.lane, n.row, `chapter ${n.chapterId}`);
+    for (const l of lanes.links) {
+      const name = `link ${l.parentChapterId}->${l.chapterId}`;
+      if (l.to.row - l.from.row > 1 && l.runLane === null) problems.push(`${name} has no run`);
+      if (l.runLane !== null)
+        for (let row = l.from.row + 1; row < l.to.row; row++) claim(l.runLane, row, name);
+    }
+    for (const n of lanes.nodes) {
+      const parents = edges.filter((e) => e.chapterId === n.chapterId);
+      const want = parents.length
+        ? Math.max(...parents.map((e) => at.get(e.parentChapterId)?.row ?? -1)) + 1
+        : 0;
+      if (n.row !== want) problems.push(`chapter ${n.chapterId} on row ${n.row}, not ${want}`);
+    }
+    return problems;
+  };
+
+  // Shapes the demo does not have: rejoins and side links several rows long, forks inside them.
+  const shapes: Record<string, [number | `${number}*`, number][]> = {
+    demo,
+    'a long rejoin with a fork landing beside its run': [
+      ['2*', 1],
+      ['3*', 2],
+      [4, 2],
+      ['5*', 3],
+      ['6*', 5],
+      ['7*', 6],
+      ['8*', 7],
+      ['9*', 8],
+      ['9*', 4],
+      [10, 5],
+      ['11*', 10],
+      [12, 6],
+    ],
+    'a side link several rows long beside a carried-on lane': [
+      ['2*', 1],
+      ['3*', 2],
+      [5, 2],
+      ['4*', 3],
+      ['6*', 5],
+      ['7*', 6],
+      ['8*', 7],
+      ['9*', 8],
+      ['9*', 4],
+      [10, 3],
+      ['11*', 10],
+      [9, 2],
+    ],
+    'two long runs side by side': [
+      ['2*', 1],
+      ['3*', 2],
+      [4, 2],
+      [5, 2],
+      ['6*', 3],
+      ['7*', 6],
+      ['8*', 7],
+      ['9*', 8],
+      ['9*', 4],
+      ['9*', 5],
+      [10, 6],
+      [11, 7],
+    ],
+  };
+
+  it.each(Object.entries(shapes))('%s', (_name, pairs) => {
+    const edges = graph(pairs);
+    expect(soundness(edges, layout(pairs))).toEqual([]);
+  });
+
+  it('holds on 500 generated stories', () => {
+    // A seeded generator, so a failure names a story that can be rebuilt.
+    let seed = 1;
+    const random = () => ((seed = (seed * 48271) % 2147483647) - 1) / 2147483646;
+    const pick = (n: number) => Math.floor(random() * n);
+    const failures: string[] = [];
+    for (let story = 0; story < 500; story++) {
+      const count = 2 + pick(40);
+      const edges: StorylineLaneEdge[] = [];
+      const links: StorylineLaneEdge[] = [];
+      const hasCanon = new Set<number>();
+      const add = (list: StorylineLaneEdge[], chapterId: number, parentChapterId: number) => {
+        const canon = !hasCanon.has(parentChapterId) && random() < 0.7;
+        if (canon) hasCanon.add(parentChapterId);
+        list.push({ chapterId, parentChapterId, canon });
+      };
+      for (let id = 2; id <= count; id++) {
+        add(edges, id, 1 + pick(id - 1));
+        // Later links into it from other earlier chapters, written after the story grew.
+        if (random() < 0.25)
+          for (const parent of new Set([1 + pick(id - 1), 1 + pick(id - 1)]))
+            if (!edges.some((e) => e.chapterId === id && e.parentChapterId === parent))
+              add(links, id, parent);
+      }
+      const all = [...edges, ...links];
+      const ids = Array.from({ length: count }, (_, i) => i + 1);
+      const problems = soundness(all, layoutStorylineLanes(1, ids, all));
+      if (problems.length) failures.push(`story ${story}: ${problems[0]}`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('can see a broken layout', () => {
+    // Control: the checker reports a chapter dropped onto another one and a row that skips.
+    const lanes = layout(demo);
+    const moved = {
+      ...lanes,
+      nodes: lanes.nodes.map((n) => (n.chapterId === 21 ? { ...n, lane: 0 } : n)),
+    };
+    expect(soundness(graph(demo), moved)).toContain('chapter 21 on chapter 11 (lane 0 row 3)');
+    const skipped = {
+      ...lanes,
+      nodes: lanes.nodes.map((n) => (n.chapterId === 12 ? { ...n, row: 5 } : n)),
+    };
+    expect(soundness(graph(demo), skipped)).toContain('chapter 12 on row 5, not 4');
   });
 });

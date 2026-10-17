@@ -308,12 +308,13 @@ function StorylineChapters({ storyline }: { storyline: Storyline }) {
 }
 
 /**
- * Every branch, where it forks off and where it rejoins. Read only once the canon path forks:
- * every branch leaves from it, so a story whose path never forks has nothing more to draw.
+ * Every branch, where it forks off and where it rejoins. Read only when some chapter is off the
+ * canon path, which any fork leaves; the canon path alone can stop short of a fork, at the first
+ * chapter the owner did not write or at its length cap.
  */
 function StorylineMapSection({ storyline }: { storyline: Storyline }) {
-  const forks = storyline.mainPath.some((chapter) => chapter.childCount > 1);
-  const { map } = useStorylineLaneMap(storyline.id, { enabled: forks });
+  const branched = storyline.chapterCount > storyline.mainPath.length;
+  const { map } = useStorylineLaneMap(storyline.id, { enabled: branched });
   if (!map) return null;
   return (
     <Section

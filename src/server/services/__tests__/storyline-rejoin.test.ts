@@ -9,10 +9,11 @@ import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
  * with two parents.
  */
 
+const blockedPairIds = vi.hoisted(() => ({ ids: [] as number[] }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
   getAllHiddenForUser: async () => ({ hiddenImages: [], hiddenTags: [] }),
-  getBlockedPairIds: async () => [],
+  getBlockedPairIds: async () => blockedPairIds.ids,
   HiddenUsers: { getCached: async () => [] },
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
@@ -68,6 +69,7 @@ const edgesInto = (chapterId: number) =>
     .map((e) => [e.parentChapterId, e.canon]);
 
 beforeEach(() => {
+  blockedPairIds.ids = [];
   db = createFakeDb();
   db.install();
   for (const [id, username] of [
@@ -246,10 +248,17 @@ describe('setCanonChapter on a chapter with two parents', () => {
 });
 
 describe('getStorylineGraph', () => {
-  const graph = () => getStorylineGraph({ id: STORYLINE, viewer: undefined, browsingLevel: PG });
+  const graph = (viewer?: { id: number; isModerator?: boolean }, browsingLevel = PG) =>
+    getStorylineGraph({ id: STORYLINE, viewer, browsingLevel });
 
   it('returns every chapter and link, both ways into a rejoin, tombstoned as the path is', async () => {
     await link(24, R);
+    // The link from 13 is newer, so it comes second though its parent id is lower.
+    db.update(
+      'storylineChapterEdge',
+      { chapterId: R, parentChapterId: 13 },
+      { createdAt: new Date(Date.now() + 60_000) }
+    );
     db.update('storylineChapter', { id: 22 }, { removedAt: new Date() });
     db.update('post', { id: 120 }, { nsfwLevel: 4 });
 
@@ -258,17 +267,60 @@ describe('getStorylineGraph', () => {
     expect(truncated).toBe(false);
     expect(chapters.map((c) => c.chapterId)).toEqual([1, 2, 3, 11, 21, 12, 22, 13, 23, 24, R]);
     expect(edges.filter((e) => e.chapterId === R)).toEqual([
-      { chapterId: R, parentChapterId: 13, canon: true },
       { chapterId: R, parentChapterId: 24, canon: true },
+      { chapterId: R, parentChapterId: 13, canon: true },
     ]);
     expect(edges).toHaveLength(11);
 
     const byId = new Map(chapters.map((c) => [c.chapterId, c]));
-    expect(byId.get(22)).toMatchObject({ tombstone: 'removed', post: null, firstImage: null });
+    expect(byId.get(22)).toMatchObject({ tombstone: 'removed', post: null });
     expect(byId.get(12)).toMatchObject({ tombstone: 'aboveStoryRating', post: null });
     // Control: the chapters after them are whole, so the branch stays followable.
     expect(byId.get(23)).toMatchObject({ tombstone: null, post: { id: 230, title: 'chapter 23' } });
     expect(byId.get(13)).toMatchObject({ tombstone: null, post: { id: 130 } });
+  });
+
+  it("tombstones by the reader: a moderator's view, the browsing level, a blocked author", async () => {
+    db.update('storylineChapter', { id: 22 }, { removedAt: new Date() });
+    db.update('storyline', { id: STORYLINE }, { maxNsfwLevel: ALL_LEVELS });
+    db.update('post', { id: 120 }, { nsfwLevel: 2 });
+    db.update('post', { id: 230 }, { userId: STRANGER });
+    blockedPairIds.ids = [STRANGER];
+    const tombstones = async (viewer?: { id: number; isModerator?: boolean }, level = PG) =>
+      Object.fromEntries(
+        (await graph(viewer, level)).chapters
+          .filter((c) => [12, 22, 23].includes(c.chapterId))
+          .map((c) => [c.chapterId, c.tombstone])
+      );
+
+    expect(await tombstones({ id: 77 })).toEqual({
+      12: 'browsingLevel',
+      22: 'removed',
+      23: 'unavailable',
+    });
+    expect(await tombstones({ id: MODERATOR, isModerator: true }, ALL_LEVELS)).toEqual({
+      12: null,
+      22: null,
+      23: 'unavailable',
+    });
+    // Control: nobody blocked, so only the level and the removal remain.
+    blockedPairIds.ids = [];
+    expect(await tombstones({ id: 77 })).toEqual({ 12: 'browsingLevel', 22: 'removed', 23: null });
+  });
+
+  it('says it is truncated only past the cap, not at it', async () => {
+    // Storyline 1 has 11 chapters; a side branch brings it to exactly the cap.
+    const extra = Array.from({ length: STORYLINE_GRAPH_LIMIT - 11 }, (_, i) => 1000 + i);
+    extra.forEach((id, i) => {
+      chapter(id, 3 + i);
+      edge(id, i ? extra[i - 1] : 3, false);
+    });
+    expect(await graph()).toMatchObject({ truncated: false });
+    expect((await graph()).chapters).toHaveLength(STORYLINE_GRAPH_LIMIT);
+
+    chapter(5000, 3 + extra.length);
+    edge(5000, extra[extra.length - 1], false);
+    expect(await graph()).toMatchObject({ truncated: true });
   });
 
   it('reads at most the chapters nearest chapter 1, and only links between them', async () => {

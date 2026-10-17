@@ -409,7 +409,6 @@ describe('canonAheadForkStops', () => {
 });
 
 describe('storylineReadHref', () => {
-  // As image detail reads it back.
   const read = (href: string) => {
     const url = new URL(href, 'https://civitai.com');
     return {
@@ -420,9 +419,9 @@ describe('storylineReadHref', () => {
   };
 
   it('opens the chapter on the route its via names', () => {
-    const href = storylineReadHref({ imageId: 900, chapterId: 60, via: [42, 13] });
-    expect(read(href)).toEqual({ path: '/images/900', chapterId: 60, via: [42, 13] });
-    expect(href).toContain(`${STORYLINE_VIA_PARAM}=42,13`);
+    const href = storylineReadHref({ imageId: 900, chapterId: 60, via: [42, 13, 7] });
+    expect(read(href)).toEqual({ path: '/images/900', chapterId: 60, via: [42, 13, 7] });
+    expect(href).toContain(`${STORYLINE_VIA_PARAM}=42,13,7`);
   });
 
   it('carries no via on a route with no rejoin, so the link is the one used everywhere else', () => {

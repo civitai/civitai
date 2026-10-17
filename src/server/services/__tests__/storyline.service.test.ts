@@ -73,6 +73,7 @@ import {
   getStorylineChildren,
   getStorylinePath,
   getStorylineForkShares,
+  getStorylineGraph,
   getStorylinesForPosts,
   getStorylineEarlyAccessStats,
   getStorylineEarlyAccessStatus,
@@ -854,12 +855,16 @@ describe('reading', () => {
             }) as never
           ),
       ],
-    ])('when %s, has no path and no children for them', async (_name, arrange) => {
+    ])('when %s, has no path, children or map for them', async (_name, arrange) => {
       arrange();
       const read = { chapterId: 1, viewer: { id: STRANGER }, browsingLevel: NsfwLevel.PG };
       await expect(getStorylinePath(read)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       await expect(getStorylineChildren(read)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(
+        getStorylineGraph({ id: 10, viewer: read.viewer, browsingLevel: read.browsingLevel })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
       expect(r.$queryRaw).not.toHaveBeenCalled();
+      expect(r.storylineChapter.findMany).not.toHaveBeenCalled();
       expect(r.storylineChapterEdge.findMany).not.toHaveBeenCalled();
     });
   });
