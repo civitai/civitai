@@ -11,8 +11,9 @@ import { measureJsonLength } from '~/server/schema/blocks/json-length';
 /*
  * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
  * serializes the value, without building the string; an unserializable value is left to the code
- * that serializes it, as before. Each cap leaves headroom over the largest payloads seen for its
- * input.
+ * that serializes it, as before. The filters cap and the action cap leave headroom over the largest
+ * payloads seen for those inputs; view `details` could not be measured, so it shares the action
+ * cap.
  */
 
 /** The longest `trackSearch` `filters` payload. */

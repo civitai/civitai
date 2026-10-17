@@ -11,9 +11,11 @@ export const SOURCE_METADATA_MAX_CHARS = 17 * 1024 * 1024;
 
 /**
  * Values the measure may visit: 1,048,576, far above what an image's generation metadata holds and
- * four times the default walk budget, so a request carrying several images with large workflows
- * still fits. Not half the character cap, which would let one request spend several hundred
- * milliseconds in the walk.
+ * four times the inline-media walk budget, so a request carrying several images with large
+ * workflows still fits. Walk cost depends on shape: an array of this many numbers takes about a
+ * tenth of a second, while a single flat object with this many keys takes roughly half a second,
+ * varying with the host. Half the character cap, `measureJsonLength`'s own default, would allow
+ * roughly eight times as many values.
  */
 const SOURCE_METADATA_MAX_VALUES = 1024 * 1024;
 

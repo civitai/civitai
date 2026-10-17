@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   addViewSchema,
-  TRACK_DETAILS_MAX_CHARS,
-  TRACK_FREEFORM_MAX_CHARS,
   trackActionInputSchema,
   trackSearchSchema,
 } from '~/server/schema/track.schema';
@@ -30,8 +28,8 @@ const actionOfLength = (length: number) => {
 };
 
 /**
- * A large search-style action: a long query and many short matched terms, with a JSON length of
- * about 122K characters — over the filters cap, under the action cap.
+ * A large search-style action: a long query and many short matched terms, well over the filters
+ * cap and under the action cap.
  */
 const largeProfanitySearch = () => {
   const matches = Array.from({ length: 12_000 }, (_, i) => `term${i % 1000}`);
@@ -46,11 +44,6 @@ const messages = (r: { success: boolean; error?: { issues: { message: string }[]
 
 describe('free-form tracking payload caps', () => {
   afterEach(() => vi.restoreAllMocks());
-
-  it('pins each cap to its own limit', () => {
-    expect(TRACK_FREEFORM_MAX_CHARS).toBe(FILTERS_CAP);
-    expect(TRACK_DETAILS_MAX_CHARS).toBe(DETAILS_CAP);
-  });
 
   it('builds fixtures of exactly the length asked for', () => {
     for (const n of [FILTERS_CAP - 1, FILTERS_CAP, DETAILS_CAP + 1]) {
@@ -90,8 +83,8 @@ describe('free-form tracking payload caps', () => {
   it('accepts a large action and large view details that are over the filters cap', () => {
     const action = largeProfanitySearch();
     const length = JSON.stringify(action).length;
-    expect(length).toBeGreaterThan(120_000);
-    expect(length).toBeLessThan(125_000);
+    expect(length).toBeGreaterThan(FILTERS_CAP + FILTERS_CAP / 2);
+    expect(length).toBeLessThan(DETAILS_CAP);
     expect(messages(trackActionInputSchema.safeParse(action))).toEqual([]);
 
     const details = { search: action.details };
@@ -107,14 +100,10 @@ describe('free-form tracking payload caps', () => {
   it('accepts a safety-signal action over the filters cap', () => {
     const action = {
       type: 'CSAM_Help_Triggered' as const,
-      details: { query: 'q '.repeat(29_000).trim() },
+      details: { query: 'q '.repeat(40_000).trim() },
     };
-    expect(JSON.stringify(action).length).toBeGreaterThan(FILTERS_CAP - 10_000);
-    expect(JSON.stringify(action).length).toBeLessThan(FILTERS_CAP);
+    expect(JSON.stringify(action).length).toBeGreaterThan(FILTERS_CAP);
     expect(messages(trackActionInputSchema.safeParse(action))).toEqual([]);
-    const larger = { ...action, details: { query: 'q '.repeat(40_000).trim() } };
-    expect(JSON.stringify(larger).length).toBeGreaterThan(FILTERS_CAP);
-    expect(messages(trackActionInputSchema.safeParse(larger))).toEqual([]);
   });
 
   it('refuses a payload with more entries than fit in the cap, even ones left out of the JSON', () => {

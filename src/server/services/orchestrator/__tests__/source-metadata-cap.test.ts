@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertSourceMetadataWithinCap,
@@ -5,6 +7,9 @@ import {
 } from '~/server/services/orchestrator/source-metadata-cap';
 
 const TOO_LARGE = { code: 'PAYLOAD_TOO_LARGE', message: 'sourceMetadata is too large' };
+// The cap as a literal (17 MiB), so the boundary cases cannot follow a constant that drifts.
+const CAP = 17 * 1024 * 1024;
+const repoRoot = path.resolve(__dirname, '../../../../..');
 
 /** `{ params: { prompt } }` whose JSON is exactly `length` characters. */
 const ofLength = (length: number) => ({
@@ -14,25 +19,30 @@ const ofLength = (length: number) => ({
 describe('assertSourceMetadataWithinCap', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('keeps the cap equal to the tRPC route body limit', () => {
+    expect(SOURCE_METADATA_MAX_CHARS).toBe(CAP);
+    const route = readFileSync(path.join(repoRoot, 'src/pages/api/trpc/[trpc].ts'), 'utf8');
+    const limits = [...route.matchAll(/sizeLimit:\s*'(\d+)mb'/g)].map((m) => Number(m[1]));
+    expect(limits).toEqual([CAP / (1024 * 1024)]);
+  });
+
   it('accepts metadata at the cap and refuses one character over, counting both fields', () => {
-    expect(JSON.stringify(ofLength(SOURCE_METADATA_MAX_CHARS)).length).toBe(
-      SOURCE_METADATA_MAX_CHARS
+    expect(JSON.stringify(ofLength(CAP)).length).toBe(CAP);
+    expect(() => assertSourceMetadataWithinCap(ofLength(CAP - 1), undefined)).not.toThrow();
+    expect(() => assertSourceMetadataWithinCap(ofLength(CAP), undefined)).not.toThrow();
+    expect(() => assertSourceMetadataWithinCap(ofLength(CAP + 1), undefined)).toThrow(
+      expect.objectContaining(TOO_LARGE)
     );
-    expect(() =>
-      assertSourceMetadataWithinCap(ofLength(SOURCE_METADATA_MAX_CHARS), undefined)
-    ).not.toThrow();
-    expect(() =>
-      assertSourceMetadataWithinCap(ofLength(SOURCE_METADATA_MAX_CHARS + 1), undefined)
-    ).toThrow(expect.objectContaining(TOO_LARGE));
     // Split across the two fields, the total is what is capped.
-    const half = ofLength(SOURCE_METADATA_MAX_CHARS / 2);
+    const half = ofLength(CAP / 2);
     expect(() => assertSourceMetadataWithinCap(half, { 'https://a/1.png': half })).toThrow(
       expect.objectContaining(TOO_LARGE)
     );
   });
 
-  it('accepts metadata with more values than the default walk budget when its JSON fits', () => {
-    // 300,000 values in ~600 KB: more than the default walk budget, within this one.
+  it('accepts more values than the inline-media walk budget (262,144) when the JSON fits', () => {
+    // 300,000 values in ~600 KB. Refused only if the value budget is set below 300,000; the
+    // budget's upper bound is pinned by the 1,048,576-value case below.
     const sourceMetadataMap = {
       'https://a/1.png': { params: { seeds: new Array(300_000).fill(0) } },
     };
