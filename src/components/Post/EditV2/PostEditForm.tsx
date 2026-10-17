@@ -80,12 +80,18 @@ export function PostEditForm() {
     };
   }, []); // eslint-disable-line
 
-  // A title set outside this form (Apply preset) fills an empty field. Not marked dirty, so the
-  // autosave above does not send it back.
-  const storedTitle = post?.title;
+  // Apply preset hands its title here rather than saving it, so the field's current value decides
+  // (a prefilled or still-unsaved title wins) and the autosave above is the only writer.
+  const [presetTitle, setPresetTitle] = usePostEditStore((state) => [
+    state.presetTitle,
+    state.setPresetTitle,
+  ]);
   useEffect(() => {
-    if (storedTitle && !form.getValues('title')?.trim()) form.setValue('title', storedTitle);
-  }, [storedTitle]); // eslint-disable-line
+    if (!presetTitle) return;
+    if (!form.getValues('title')?.trim())
+      form.setValue('title', presetTitle, { shouldDirty: true });
+    setPresetTitle(null);
+  }, [presetTitle]); // eslint-disable-line
 
   usePendingSave('post-detail', debounce);
 

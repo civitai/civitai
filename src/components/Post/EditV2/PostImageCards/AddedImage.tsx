@@ -46,7 +46,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
@@ -95,6 +94,7 @@ import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
 import {
+  canAddManualResources,
   getManualResourceLimitError,
   getManualResourceUsage,
   manualResourceLimitMessages,
@@ -190,9 +190,14 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
   return [];
 };
 
-const canAddFunc = (type: MediaType, meta: ImageMetaProps | null) => {
-  return type === MediaType.video || !isMadeOnSite(meta);
-};
+/** Moves models just added by hand to the top of the resource picker's "recently added" list. */
+export function rememberManuallyAddedModels(resources: Pick<ResourceHelper, 'modelId'>[]) {
+  const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
+  queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
+    if (!old) return;
+    return uniq([...resources.map((r) => r.modelId).filter(isDefined), ...old]);
+  });
+}
 
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
@@ -217,7 +222,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const otherImages = images
     .map((img) => (img.type === 'added' ? img.data : null))
     .filter(isDefined)
-    .filter((data) => data.id !== id && canAddFunc(data.type, data.meta));
+    .filter((data) => data.id !== id && canAddManualResources(data));
 
   const { generation } = useCurrentUserSettings();
   const advancedMode = generation?.advancedMode ?? false;
@@ -238,7 +243,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
-  const canAdd = canAddFunc(type, meta);
+  const canAdd = canAddManualResources({ type, meta });
   // #endregion
 
   // #region [delete image]
@@ -326,12 +331,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         updateImage(id, (image) => {
           image.resourceHelper = image.resourceHelper.concat(resp);
         });
-
-        const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
-        queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
-          if (!old) return;
-          return uniq([...resp.map((r) => r.modelId).filter(isDefined), ...old]);
-        });
+        rememberManuallyAddedModels(resp);
       }
     },
     onError(error) {

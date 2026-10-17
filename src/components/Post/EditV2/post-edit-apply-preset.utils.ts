@@ -1,10 +1,8 @@
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { expandTitleTemplate } from '~/components/Post/Batch/batch-composer.utils';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import type { PostPresetData } from '~/server/schema/post-preset.schema';
 import type { PostEditImageDetail } from '~/server/services/post.service';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { pickAddableResources } from '~/utils/manual-image-resources';
+import { canAddManualResources, pickAddableResources } from '~/utils/manual-image-resources';
 
 type PlanImage = Pick<
   PostEditImageDetail,
@@ -23,14 +21,10 @@ export type PresetApplyPlan = {
   techniques: { imageId: number; techniqueId: number }[];
   /** One `post.addResourceToImage` call per resource, with every image that takes it. */
   resources: { modelVersionId: number; imageIds: number[] }[];
-  /** Images that could not take every preset resource because of the manual resource limits. */
-  limitedImageCount: number;
+  /** The first manual resource limit that kept a resource off an image, if any did. */
+  limitError: string | null;
   title: string | null;
 };
-
-/** Same rule as the manual "add resource" control: on-site generations carry their own. */
-const takesManualResources = (image: PlanImage) =>
-  image.type === MediaType.video || !isMadeOnSite(image.meta);
 
 /**
  * What applying `data` to an open post would add. Resources go to every image that takes manual
@@ -58,13 +52,13 @@ export function planPresetApply(
   );
 
   const imageIdsByVersion = new Map<number, number[]>();
-  let limitedImageCount = 0;
-  for (const image of images.filter(takesManualResources)) {
+  let limitError: string | null = null;
+  for (const image of images.filter(canAddManualResources)) {
     const missing = data.resources
       .filter((resource) => !image.resourceHelper.some((r) => r.modelVersionId === resource.id))
       .map((resource) => ({ modelVersionId: resource.id, modelType: resource.model.type }));
     const { accepted, error } = pickAddableResources(image.resourceHelper, missing);
-    if (error) limitedImageCount++;
+    limitError ??= error;
     for (const { modelVersionId } of accepted)
       imageIdsByVersion.set(modelVersionId, [
         ...(imageIdsByVersion.get(modelVersionId) ?? []),
@@ -89,7 +83,7 @@ export function planPresetApply(
       }) || null;
   }
 
-  return { tags, tools, techniques, resources, limitedImageCount, title };
+  return { tags, tools, techniques, resources, limitError, title };
 }
 
 export function isEmptyPlan(plan: PresetApplyPlan) {

@@ -1,13 +1,13 @@
 import { Button, Menu } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';
+import { rememberManuallyAddedModels } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import {
   isEmptyPlan,
   planPresetApply,
 } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import { usePostPresets } from '~/components/Post/post-presets.utils';
-import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
 import type { PostPreset } from '~/server/services/post-preset.service';
 import type { PostDetailEditable, PostEditImageDetail } from '~/server/services/post.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -17,18 +17,14 @@ import { trpc } from '~/utils/trpc';
  *  techniques on each image. */
 export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
   const { data: presets, isError, isLoading } = usePostPresets();
-  const [storedPost, controlledImages, updatePost, updateImage] = usePostEditStore((state) => [
-    state.post,
-    state.images,
-    state.updatePost,
-    state.updateImage,
-  ]);
+  const [storedPost, controlledImages, updatePost, updateImage, setPresetTitle] = usePostEditStore(
+    (state) => [state.post, state.images, state.updatePost, state.updateImage, state.setPresetTitle]
+  );
   const images = controlledImages.flatMap((image) => (image.type === 'added' ? [image.data] : []));
   const addTag = trpc.post.addTag.useMutation();
   const addTools = trpc.image.addTools.useMutation();
   const addTechniques = trpc.image.addTechniques.useMutation();
   const addResource = trpc.post.addResourceToImage.useMutation();
-  const updatePostMutation = trpc.post.update.useMutation();
   const [applying, setApplying] = useState(false);
 
   const apply = async (preset: PostPreset) => {
@@ -44,44 +40,37 @@ export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
       data
     );
     if (isEmptyPlan(plan)) {
-      if (plan.limitedImageCount)
-        showErrorNotification({
-          title: 'Preset not applied',
-          error: new Error(manualResourceLimitMessages.total),
-        });
+      if (plan.limitError)
+        showErrorNotification({ title: 'Preset not applied', error: new Error(plan.limitError) });
       else showSuccessNotification({ message: `"${preset.name}" is already applied` });
       return;
     }
 
     setApplying(true);
-    const settled = <T,>(promise: Promise<T>) =>
-      promise.then(
-        (value) => value,
-        () => null
-      );
-    const [tagResults, toolResult, techniqueResult, resourceResults, titleResult] =
-      await Promise.all([
-        Promise.allSettled(plan.tags.map((name) => addTag.mutateAsync({ id: post.id, name }))),
-        plan.tools.length
-          ? settled(addTools.mutateAsync({ data: plan.tools })).then((x) => x !== null)
-          : true,
-        plan.techniques.length
-          ? settled(addTechniques.mutateAsync({ data: plan.techniques })).then((x) => x !== null)
-          : true,
-        Promise.all(
-          plan.resources.map(({ modelVersionId, imageIds }) =>
-            addResource.mutateAsync({ id: imageIds, modelVersionId }).then(
-              (rows) => ({ rows, error: null }),
-              (error: Error) => ({ rows: [], error: error.message })
-            )
+    if (plan.title) setPresetTitle(plan.title);
+    const [tagResults, toolResult, techniqueResult, resourceResults] = await Promise.all([
+      Promise.allSettled(plan.tags.map((name) => addTag.mutateAsync({ id: post.id, name }))),
+      plan.tools.length
+        ? addTools.mutateAsync({ data: plan.tools }).then(
+            () => true,
+            () => false
           )
-        ),
-        plan.title
-          ? settled(updatePostMutation.mutateAsync({ id: post.id, title: plan.title })).then(
-              (x) => x !== null
-            )
-          : true,
-      ]);
+        : true,
+      plan.techniques.length
+        ? addTechniques.mutateAsync({ data: plan.techniques }).then(
+            () => true,
+            () => false
+          )
+        : true,
+      Promise.all(
+        plan.resources.map(({ modelVersionId, imageIds }) =>
+          addResource.mutateAsync({ id: imageIds, modelVersionId }).then(
+            (rows) => ({ rows, error: null }),
+            (error: Error) => ({ rows: [], error: error.message })
+          )
+        )
+      ),
+    ]);
     setApplying(false);
 
     const addedTags = tagResults.flatMap((result) =>
@@ -90,10 +79,6 @@ export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
     if (addedTags.length)
       updatePost((draft) => {
         draft.tags = [...draft.tags, ...addedTags];
-      });
-    if (plan.title && titleResult)
-      updatePost((draft) => {
-        if (!draft.title?.trim()) draft.title = plan.title;
       });
     if (toolResult)
       for (const image of images)
@@ -119,6 +104,7 @@ export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
           draft.resourceHelper = draft.resourceHelper.concat(rows);
         });
     }
+    if (addedResources.length) rememberManuallyAddedModels(addedResources);
 
     const resourceErrors = resourceResults.flatMap((result) =>
       result.error ? [result.error] : []
@@ -132,11 +118,7 @@ export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
         `${resourceErrors.length} resource${
           resourceErrors.length > 1 ? 's' : ''
         } could not be added: ${resourceErrors[0]}`,
-      plan.limitedImageCount &&
-        `${plan.limitedImageCount} image${
-          plan.limitedImageCount > 1 ? 's' : ''
-        } skipped some resources: ${manualResourceLimitMessages.total}`,
-      !titleResult && 'The title could not be saved.',
+      plan.limitError && `Some images skipped resources: ${plan.limitError}`,
     ].filter(Boolean);
     if (problems.length)
       showErrorNotification({

@@ -4,6 +4,7 @@ import {
   MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
   MAX_MANUAL_RESOURCES_PER_IMAGE,
 } from '~/server/common/constants';
+import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import type * as CommonService from '~/server/services/common.service';
 import { Availability, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
@@ -264,6 +265,20 @@ describe('addResourceToPostImage manual resource limits', () => {
  * image, and creating a post on a version. A version the caller may not view must be refused with
  * exactly the error a nonexistent id gets.
  */
+describe('addResourceToPostImage post cache busting', () => {
+  it('busts each post once, however many of its images were credited', async () => {
+    arrange({ adding: ModelType.LORA, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    mockImageFindMany.mockResolvedValue([
+      { postId: 7, meta: null, type: 'image' },
+      { postId: 7, meta: null, type: 'image' },
+    ]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await add([IMAGE_ID, OTHER_IMAGE_ID]);
+    expect(vi.mocked(preventReplicationLag).mock.calls).toEqual([['postImages', 7]]);
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('model version visibility on caller-supplied version ids', () => {
   const FUTURE = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const moderator = { id: 3, isModerator: true } as typeof user;

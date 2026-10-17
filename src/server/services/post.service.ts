@@ -1685,11 +1685,11 @@ export const addResourceToPostImage = async ({
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
 
-  for (const image of images) {
-    if (!!image.postId) {
-      await preventReplicationLag('postImages', image.postId);
-      await bustCachesForPosts(image.postId);
-    }
+  // Once per post, not per image: every image of a post shares its caches.
+  const postIds = uniq(images.map((image) => image.postId).filter(isDefined));
+  if (postIds.length) {
+    await Promise.all(postIds.map((postId) => preventReplicationLag('postImages', postId)));
+    await bustCachesForPosts(postIds);
   }
 
   return dbWrite.imageResourceHelper.findMany({
