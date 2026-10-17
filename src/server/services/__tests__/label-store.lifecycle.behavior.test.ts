@@ -408,6 +408,26 @@ describe('exclusion', () => {
     expect(await failures()).toEqual([]);
   });
 
+  it.each([
+    [
+      'a clean image',
+      `INSERT INTO "Image" ("id", "userId", "url") VALUES (502, 12, 'u-501')`,
+      null,
+    ],
+    [
+      'a flagged image with a lower id',
+      `INSERT INTO "Image" ("id", "userId", "url", "needsReview") VALUES (400, 12, 'u-501', 'csam')`,
+      'safety',
+    ],
+  ])('an image sharing its file with %s, when votes land: %s', async (_, setup, reason) => {
+    await db.pg.exec(setup);
+    for (const m of MODS.slice(0, 3)) await vote(m, false);
+
+    expect(await rows(`SELECT "excludedReason" FROM label_store.subject`)).toEqual([
+      { excludedReason: reason },
+    ]);
+  });
+
   it('a copy after exclusion is ignored', async () => {
     await vote(MODS[0], false);
     await excludeImage('safety');

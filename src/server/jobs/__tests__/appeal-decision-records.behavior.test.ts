@@ -602,6 +602,42 @@ describe('sweepLabelStore', () => {
     expect(await excludedIds()).toEqual([110]);
   });
 
+  it.each([
+    ['is clean', `UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 90`, false],
+    [
+      'is flagged, with a lower id',
+      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 90`,
+      true,
+    ],
+    ['is blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 90`, true],
+    ['has a reported owner', `INSERT INTO "CsamReport" ("userId") VALUES (9)`, true],
+    ['is named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 90}]')`, true],
+    [
+      'is named by a report as a string id',
+      `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": "90"}]')`,
+      true,
+    ],
+  ])(
+    'a subject whose file is shared by an image that %s: excluded %s',
+    async (_, setup, excluded) => {
+      await image(116);
+      await holder.db.query(`INSERT INTO "Image" ("id", "userId", "url") VALUES (90, 9, 'u-116')`);
+      await holder.db.exec(setup);
+      await judged(116);
+
+      expect(await excludedIds()).toEqual([]);
+      expect(await sweepLabelStore()).toBe(excluded ? 1 : 0);
+      expect(await excludedIds()).toEqual(excluded ? [116] : []);
+    }
+  );
+
+  it('excludes the subject of a gone image a report names by a string id', async () => {
+    await judged(117);
+    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": "117"}]')`);
+
+    expect(await sweepLabelStore()).toBe(1);
+  });
+
   it('excludes a subject whose image is gone when another image with its file is excluded', async () => {
     await judged(113);
     await judged(114);
