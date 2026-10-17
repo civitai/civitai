@@ -182,7 +182,7 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
           modelType: file.modelVersion.model.type as ModelType,
           baseModel: file.modelVersion.baseModel,
           url: file.url,
-          priority: 'low',
+          priority: 'normal',
         });
         submitted++;
       } catch (err) {

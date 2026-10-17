@@ -116,7 +116,7 @@ describe('scanFilesFallbackJob', () => {
     });
   });
 
-  it('calls createModelFileScanRequest per file with low priority and counts submitted', async () => {
+  it('calls createModelFileScanRequest per file at normal priority and counts submitted', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 1,
@@ -133,7 +133,7 @@ describe('scanFilesFallbackJob', () => {
       modelId: 100,
       modelType: 'Checkpoint',
       baseModel: 'SD 1.5',
-      priority: 'low',
+      priority: 'normal',
     });
     expect(result).toEqual({ submitted: 1, failed: 0, skipped: 0 });
   });

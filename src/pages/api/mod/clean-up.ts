@@ -72,7 +72,7 @@ export default ModEndpoint(
           modelType: file.modelVersion.model.type as ModelType,
           baseModel: file.modelVersion.baseModel,
           url: file.url,
-          priority: 'low',
+          priority: 'normal',
         });
       } catch (err) {
         failed.push(file.id);

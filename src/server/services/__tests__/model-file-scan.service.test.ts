@@ -1200,7 +1200,7 @@ describe('model-file-scan.service', () => {
         modelType: 'Checkpoint',
         baseModel: 'SD 1.5',
         url: 's3://k1',
-        priority: 'low',
+        priority: 'normal',
       });
       expect(result).toEqual({ sent: 2, failed: 0 });
     });
