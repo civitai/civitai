@@ -70,6 +70,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import {
+  assertConfirmedPrice,
   beginShopPurchase,
   chargeForShopPurchase,
   chargeRetryOptions,
@@ -82,6 +83,7 @@ import {
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
+import { purchaseMysteryBox } from '~/server/services/mystery-box.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -131,7 +133,8 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
 
-  const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
+  // Mystery box listings have their own builder; here a NULL cosmetic would read as a pack.
+  const where: Prisma.CosmeticShopItemFindManyArgs['where'] = { itemDefinitionId: null };
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
   if (input.name) {
@@ -937,12 +940,18 @@ export const purchaseCosmeticShopItem = async ({
   expectedUnitAmount,
   stickersEnabled,
   packsEnabled,
+  expectedVersion,
+  mysteryBoxEnabled,
+  countryCode,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
   isModerator?: boolean;
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
   packsEnabled?: boolean;
+  mysteryBoxEnabled?: boolean;
+  /** The buyer's country (`getRegion`), for the mystery box region block. */
+  countryCode?: string | null;
 }) => {
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
@@ -951,6 +960,7 @@ export const purchaseCosmeticShopItem = async ({
       status: true,
       listed: true,
       cosmeticId: true,
+      itemDefinitionId: true,
       availableQuantity: true,
       availableFrom: true,
       availableTo: true,
@@ -980,6 +990,22 @@ export const purchaseCosmeticShopItem = async ({
   if (!shopItem) {
     throw throwBadRequestError('Cosmetic not found');
   }
+
+  // A box listing has no cosmetic either, so it branches off before anything below reads that as
+  // a pack.
+  if (shopItem.itemDefinitionId != null)
+    return purchaseMysteryBox({
+      userId,
+      isModerator,
+      shopItem: { ...shopItem, itemDefinitionId: shopItem.itemDefinitionId, meta: shopItemMeta },
+      idempotencyKey,
+      expectedUnitAmount,
+      expectedVersion,
+      payWith,
+      buzzType,
+      mysteryBoxEnabled,
+      countryCode,
+    });
 
   const isPack = shopItem.cosmeticId == null || !shopItem.cosmetic;
   // Random, not a timestamp, without a key. This id is both the purchase row's
@@ -1186,12 +1212,11 @@ export const purchaseCosmeticShopItem = async ({
   // instead; an uncharged one must also still be at today's price.
   await runPurchaseChecks(pendingClaim, async () => {
     if (chargedBefore) return;
-    const confirmed = existingClaim ? existingClaim.amount : expectedUnitAmount;
-    if (confirmed !== undefined && confirmed !== shopItem.unitAmount) {
-      throw throwBadRequestError(
-        `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
-      );
-    }
+    assertConfirmedPrice({
+      existingClaim,
+      expectedAmount: expectedUnitAmount,
+      amountDue: shopItem.unitAmount,
+    });
   });
 
   const meta = shopItemMeta;

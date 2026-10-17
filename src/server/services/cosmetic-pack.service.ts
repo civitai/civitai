@@ -27,6 +27,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { isEventShopItemData } from '~/server/events/event-shop-item';
 import {
+  assertConfirmedPrice,
   beginShopPurchase,
   chargeForShopPurchase,
   chargeRetryOptions,
@@ -622,11 +623,7 @@ export const purchaseCosmeticPack = async ({
     // The buyer confirmed a number on a button, and the amount due moves with
     // the pack's price and with what they own. Refused here, before the claim
     // is written, so a stale price leaves nothing behind for a retry to resume.
-    const confirmed = existingClaim ? existingClaim.amount : expectedAmount;
-    if (confirmed !== undefined && confirmed !== amountDue)
-      throw throwBadRequestError(
-        `The price changed to ${amountDue} Buzz. Check the new price and try again.`
-      );
+    assertConfirmedPrice({ existingClaim, expectedAmount, amountDue });
   });
 
   // A resumed claim charges what it claimed; its expected amount is checked
