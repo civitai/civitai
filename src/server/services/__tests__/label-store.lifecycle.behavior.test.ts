@@ -712,3 +712,203 @@ describe('the reader role', () => {
     ).toHaveLength(1);
   });
 });
+
+describe('erasure tombstones', () => {
+  it('an erased subject is not rebuilt from a record that outlived its image and appeal', async () => {
+    await db.pg.query(`INSERT INTO "Appeal" ("id", "userId") VALUES (900, $1)`, [OWNER]);
+    await db.pg.query(
+      `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel", "decision", "decidedAt")
+       VALUES (900, $1, 'u-501', 16, 'Rejected', now())`,
+      [IMAGE]
+    );
+    await db.pg.query(`SELECT label_store.erase_owner(${OWNER})`);
+    // With the image and the appeal gone the replay has no owner, so only the subject tombstone stops it.
+    await db.pg.query(`DELETE FROM "Image" WHERE "id" = $1`, [IMAGE]);
+    await db.pg.query(`DELETE FROM "Appeal"`);
+    await db.pg.query(`SELECT * FROM label_store.backfill()`);
+
+    expect(await rows(`SELECT * FROM label_store.subject`)).toEqual([]);
+  });
+});
+
+describe('batches and triggers', () => {
+  it('backfill_batches commits every p_batch rows', async () => {
+    for (const m of MODS) await vote(m, false);
+    await db.pg.exec(`TRUNCATE label_store.subject, label_store.change RESTART IDENTITY CASCADE`);
+
+    await db.pg.exec(`CALL label_store.backfill_batches(1)`);
+
+    expect(
+      await rows(
+        `SELECT count(DISTINCT "txid")::int AS n FROM label_store.change WHERE "kind" = 'label'`
+      )
+    ).toEqual([{ n: 4 }]);
+  });
+
+  it('every trigger is created in its own transaction with a 5s lock timeout', () => {
+    // PGlite has one connection, so the timeout is pinned by the file's text.
+    const sql = readFileSync(LABEL_STORE_MIGRATION, 'utf8');
+    const triggers = sql.match(/^CREATE OR REPLACE TRIGGER \w+\r?$/gm) ?? [];
+    const wrapped =
+      sql.match(/BEGIN;\r?\nSET LOCAL lock_timeout = '5s';\r?\nCREATE OR REPLACE TRIGGER \w+/g) ??
+      [];
+
+    expect(triggers).toHaveLength(6);
+    expect(wrapped).toHaveLength(triggers.length);
+  });
+
+  it('withdrawing an old copy leaves a newer copy in place', async () => {
+    await vote(MODS[0], false);
+    const copy = (key: string) =>
+      db.pg.query(
+        `UPDATE "ScanLabelItem" SET "copyState" = 'copied', "copyKey" = $1, "copiedAt" = now()`,
+        [key]
+      );
+    await copy('k/1');
+    await db.pg.query(`UPDATE "ScanLabelItem" SET "copyState" = NULL`);
+    await copy('k/2');
+    await db.pg.query(
+      `INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES ('k/1', $1, $2)`,
+      [ITEM, IMAGE]
+    );
+    await db.pg.query(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = 'gone'`
+    );
+
+    expect(await rows(`SELECT "bytesRef" FROM label_store.subject`)).toEqual([
+      { bytesRef: 'scan-label-copy:k/2' },
+    ]);
+  });
+});
+
+describe('source mappings', () => {
+  it('an appeal decision is an appeal-kind label with the record time and the record snapshot', async () => {
+    await db.pg.query(`INSERT INTO "Appeal" ("id", "userId") VALUES (900, $1)`, [OWNER]);
+    await db.pg.query(
+      `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "pHash", "nsfwLevel",
+         "nsfwLevelReason", "aiNsfwLevel", "blockedFor", "decision", "decidedAt")
+       VALUES (900, $1, 'u-501', 77, 16, 'r-1', 8, 'tos', 'Approved', '2026-04-05T06:07:08Z')`,
+      [IMAGE]
+    );
+
+    expect(
+      await rows(
+        `SELECT "labellerKind", "labellerRef", "family", "question", "value", "sourceRef", "labelledAt"
+         FROM label_store.labels_feed`
+      )
+    ).toEqual([
+      {
+        labellerKind: 'appeal',
+        labellerRef: 'appeal-review',
+        family: 'appeal',
+        question: 'image.appeal',
+        value: 'approved',
+        sourceRef: 'AppealDecisionRecord:900',
+        labelledAt: new Date('2026-04-05T06:07:08Z'),
+      },
+    ]);
+    expect(await rows(`SELECT "snapshot", "pHash" FROM label_store.subject`)).toEqual([
+      {
+        snapshot: {
+          url: 'u-501',
+          nsfwLevel: 16,
+          aiNsfwLevel: 8,
+          blockedFor: 'tos',
+          nsfwLevelReason: 'r-1',
+        },
+        pHash: 77,
+      },
+    ]);
+  });
+
+  it('a flag carries its detail, the negative prompt and the pHash', async () => {
+    await db.pg.query(
+      `UPDATE "Image" SET "meta" = '{"prompt": "a cat", "negativePrompt": "a dog"}' WHERE "id" = $1`,
+      [IMAGE]
+    );
+    await db.pg.query(
+      `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "reason", "workflowId", "flaggedAt", "snapshot")
+       VALUES ($1, 'orchestrator-scan', 'scanner@1', 'hit', 'wf-1', now(), '{"score": 0.9}')`,
+      [ITEM]
+    );
+
+    expect(await rows(`SELECT "detail" FROM label_store.prediction`)).toEqual([
+      { detail: { source: 'orchestrator-scan', reason: 'hit', outputs: { score: 0.9 } } },
+    ]);
+    expect(await rows(`SELECT "snapshot", "pHash" FROM label_store.subject`)).toEqual([
+      { snapshot: { url: 'u-501', prompt: 'a cat', negativePrompt: 'a dog' }, pHash: 77 },
+    ]);
+  });
+
+  it('a judgement fills a missing owner on an existing subject', async () => {
+    await db.pg.query(
+      `SELECT label_store.submit_prediction('image', '601', $1, 'image.block', 'block', 'm@1', 'p-1')`,
+      [sha256('u-601')]
+    );
+    await db.pg.exec(`
+      INSERT INTO "Image" ("id", "userId", "url") VALUES (601, 12, 'u-601');
+      INSERT INTO "ScanLabelItem" ("id", "imageId") VALUES (9, 601);
+      INSERT INTO "ScanLabelVote" ("itemId", "userId", "block", "reason") VALUES (9, 21, true, 'r');
+    `);
+
+    expect(await rows(`SELECT label_store.erase_owner(12) AS n`)).toEqual([{ n: 1 }]);
+  });
+});
+
+describe('consensus rules', () => {
+  beforeAll(async () => {
+    await db.pg.exec(
+      `INSERT INTO label_store.rule VALUES ('image.majority', 1, 3, false) ON CONFLICT DO NOTHING`
+    );
+  });
+  const answer = (value: string, ref: string, user: number) =>
+    db.pg.query(
+      `SELECT label_store.record_label('image', '${IMAGE}', $1, 'test', 'image.majority', $2,
+         'moderator', $3, '2026-01-01T00:00:00Z', $4)`,
+      [HASH, value, ref, user]
+    );
+  const majority = async () =>
+    (
+      await rows(
+        `SELECT "outcome", "rule", "trainable", "unanimous" FROM label_store.consensus
+         WHERE "question" = 'image.majority'`
+      )
+    )[0];
+
+  it('a majority rule trains on a split vote and names itself', async () => {
+    await answer('block', 'a', MODS[0]);
+    await answer('block', 'b', MODS[1]);
+    await answer('clear', 'c', MODS[2]);
+
+    expect(await majority()).toEqual({
+      outcome: 'block',
+      rule: 'min3-majority',
+      trainable: true,
+      unanimous: false,
+    });
+  });
+
+  it('two answers from one person at the same moment: the later recorded wins', async () => {
+    await answer('block', 'a-1', MODS[0]);
+    await answer('clear', 'a-2', MODS[0]);
+    await answer('clear', 'b', MODS[1]);
+    await answer('clear', 'c', MODS[2]);
+
+    expect(await majority()).toMatchObject({ outcome: 'clear', unanimous: true });
+  });
+
+  it('two predictions at the same moment: the later recorded counts', async () => {
+    for (const m of MODS.slice(0, 3)) await vote(m, true);
+    for (const [ref, value] of [
+      ['p-1', 'clear'],
+      ['p-2', 'block'],
+    ])
+      await db.pg.query(
+        `SELECT label_store.submit_prediction('image', '${IMAGE}', $1, 'image.block', $2, 'm@1', $3,
+           '2026-01-01T00:00:00Z')`,
+        [HASH, value, ref]
+      );
+
+    expect(await consensus()).toMatchObject({ modelValue: 'block', modelAgrees: true });
+  });
+});

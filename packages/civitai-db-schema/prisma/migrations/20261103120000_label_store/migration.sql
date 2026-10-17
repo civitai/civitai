@@ -226,8 +226,10 @@ BEGIN
     RAISE EXCEPTION 'subject % % was erased', p_subject_type, p_subject_id;
   END IF;
 
-  IF v_owner IS NULL AND p_subject_type = 'image' AND p_subject_id ~ '^[0-9]{1,9}$' THEN
-    SELECT m."userId" INTO v_owner FROM public."Image" m WHERE m."id" = p_subject_id::integer;
+  IF v_owner IS NULL AND p_subject_type = 'image' AND p_subject_id ~ '^[0-9]{1,10}$' THEN
+    IF p_subject_id::bigint <= 2147483647 THEN
+      SELECT m."userId" INTO v_owner FROM public."Image" m WHERE m."id" = p_subject_id::integer;
+    END IF;
   END IF;
   IF v_owner IS NOT NULL THEN
     v_owner_hash := label_store.person_hash('owner', v_owner);

@@ -37,8 +37,11 @@ vi.mock('~/server/services/moderator-grants', () => ({
 }));
 
 type Raw = ReturnType<typeof pgliteRaw>;
-dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
-  pgliteRaw(holder.db).queryRaw(...a)) as never);
+// Prisma returns an int8 column as a BigInt, where PGlite returns a number.
+dbMock.dbWrite.$queryRaw.mockImplementation((async (...a: Parameters<Raw['queryRaw']>) => {
+  const rows = (await pgliteRaw(holder.db).queryRaw(...a)) as Record<string, unknown>[];
+  return rows.map((r) => (typeof r.id === 'number' ? { ...r, id: BigInt(r.id) } : r));
+}) as never);
 
 const { default: handler } = await import('~/pages/api/mod/label-store/predictions');
 
@@ -210,11 +213,92 @@ describe('what it accepts', () => {
     expect(await stored()).toEqual([]);
   });
 
-  it('refuses a field it does not know', async () => {
-    const { status } = await call({ predictions: [prediction({ confidnce: 0.5 })] });
+  it.each([
+    ['an unknown field', { confidnce: 0.5 }],
+    ['a subject type other than image', { subjectType: 'text' }],
+    ['a zero subject id', { subjectId: 0 }],
+    ['a subject id past int4', { subjectId: 2_147_483_648 }],
+    ['a blank value', { value: '   ' }],
+    ['a confidence above 1', { confidence: 5 }],
+    [
+      '65 scores',
+      { scores: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`s${i}`, 0])) },
+    ],
+    ['versions over 1KB', { versions: { v: 'x'.repeat(1100) } }],
+    ['detail over 2KB', { detail: { v: 'x'.repeat(2100) } }],
+  ])('refuses %s', async (_, over) => {
+    const { status } = await call({ predictions: [prediction(over)] });
 
     expect(status).toBe(400);
     expect(await stored()).toEqual([]);
+  });
+
+  it('refuses an empty batch', async () => {
+    expect((await call({ predictions: [] })).status).toBe(400);
+  });
+
+  it('stores every field it is given, and a later question version stays apart', async () => {
+    for (const ref of ['h-1', 'h-2', 'h-3'])
+      await holder.db.query(
+        `SELECT label_store.record_label('image', '${IMAGE}', $1, 'test', 'image.block', 'block',
+           'moderator', $2, now(), p_labeller_ref => $2)`,
+        [HASH, ref]
+      );
+    const { payload } = await call({
+      predictions: [
+        prediction({
+          questionVersion: 2,
+          predictedAt: '2026-02-03T04:05:06Z',
+          confidence: 0.25,
+          scores: { a: 0.25 },
+          versions: { v: 3 },
+          inputHash: 'in-9',
+          detail: { k: 'x' },
+        }),
+      ],
+    });
+
+    expect(payload.results).toEqual([{ sourceRef: 'run-1:501', status: 'recorded', id: 1 }]);
+    expect(
+      (
+        await holder.db.query(
+          `SELECT "question", "questionVersion", "value", "modelRef", "predictedAt", "confidence",
+             "scores", "versions", "inputHash", "detail" FROM label_store.prediction`
+        )
+      ).rows
+    ).toEqual([
+      {
+        question: 'image.block',
+        questionVersion: 2,
+        value: 'block',
+        modelRef: 'scanner@2',
+        predictedAt: new Date('2026-02-03T04:05:06Z'),
+        confidence: 0.25,
+        scores: { a: 0.25 },
+        versions: { v: 3 },
+        inputHash: 'in-9',
+        detail: { k: 'x' },
+      },
+    ]);
+    expect(
+      (
+        await holder.db.query(
+          `SELECT "questionVersion", "modelValue" FROM label_store.consensus ORDER BY "questionVersion"`
+        )
+      ).rows
+    ).toEqual([{ questionVersion: 1, modelValue: null }]);
+  });
+
+  it('a ten-digit image id keeps its owner, so the owner can be erased', async () => {
+    await holder.db.query(
+      `INSERT INTO "Image" ("id", "userId", "url") VALUES (1234567890, $1, 'u-big')`,
+      [OWNER]
+    );
+    await call({ predictions: [prediction({ subjectId: 1_234_567_890 })] });
+
+    expect((await holder.db.query(`SELECT label_store.erase_owner(${OWNER}) AS n`)).rows).toEqual([
+      { n: 1 },
+    ]);
   });
 
   it(`takes 500 predictions in one call and refuses 501`, async () => {
@@ -281,14 +365,16 @@ describe('what it accepts', () => {
   });
 
   it('keeps the batch out of the audit row and counts it instead', async () => {
+    await call({ predictions: [prediction()] });
     await call({ predictions: [prediction(), prediction({ sourceRef: 'run-1:b' })] });
 
-    expect(audit).toHaveBeenCalledWith(
+    expect(audit).toHaveBeenCalledTimes(2);
+    expect(audit).toHaveBeenLastCalledWith(
       expect.objectContaining({
         action: 'labelStore.submitPredictions',
         outcome: 'ok',
         payload: {},
-        affected: { predictions: 2, recorded: 2 },
+        affected: { predictions: 2, recorded: 1 },
       })
     );
   });

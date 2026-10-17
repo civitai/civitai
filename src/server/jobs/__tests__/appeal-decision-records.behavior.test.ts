@@ -631,3 +631,31 @@ describe('the nightly run', () => {
     ).toEqual([{ subjectId: '102', excludedReason: 'safety' }]);
   });
 });
+
+describe('the store sweep, absent or failing', () => {
+  it('is inert before the store migration is applied', async () => {
+    await holder.db.exec(`ALTER SCHEMA label_store RENAME TO label_store_off`);
+    try {
+      expect(await sweepLabelStore()).toBe(0);
+    } finally {
+      await holder.db.exec(`ALTER SCHEMA label_store_off RENAME TO label_store`);
+    }
+  });
+
+  it('a failing store sweep does not stop the record sweep', async () => {
+    await record({ appealId: 2, imageId: 102 });
+    await image(102, { userId: 8, nsfwLevel: 4 });
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
+    await holder.db.exec(
+      `ALTER TABLE label_store.subject ADD CONSTRAINT forced_failure CHECK ("excludedAt" IS NULL) NOT VALID`
+    );
+    try {
+      expect(await runAppealDecisionRecords(vi.fn(async () => new Map()))).toMatchObject({
+        swept: 1,
+        storeExcluded: 0,
+      });
+    } finally {
+      await holder.db.exec(`ALTER TABLE label_store.subject DROP CONSTRAINT forced_failure`);
+    }
+  });
+});

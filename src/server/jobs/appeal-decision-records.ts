@@ -132,7 +132,8 @@ export async function sweepLabelStore() {
         OR s."ownerHash" IN (SELECT label_store.person_hash('owner', "userId") FROM reported_users)
         OR EXISTS (
           SELECT 1 FROM "Image" li
-          WHERE li.id = (CASE WHEN s."subjectId" ~ '^[0-9]{1,9}$' THEN s."subjectId"::int END)
+          WHERE li.id = (CASE WHEN s."subjectId" ~ '^[0-9]{1,10}$' AND s."subjectId"::bigint <= 2147483647
+            THEN s."subjectId"::int END)
             AND (li."needsReview" = 'csam' OR li."blockedFor" = 'CSAM'
               OR li."userId" IN (SELECT "userId" FROM reported_users))
         )
