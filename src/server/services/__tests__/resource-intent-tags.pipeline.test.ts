@@ -19,6 +19,8 @@ import {
   type TagClickHouse,
 } from '~/server/services/resource-intent-tags/pipeline';
 import {
+  genSliceCondition,
+  TAG_SOURCE_PARAMS,
   type genObservationOf,
   observationKeyFingerprint,
   observationUserHash,
@@ -138,7 +140,7 @@ async function world(
   opts: {
     vocabs?: [Buffer, string, string | null][];
     readonly?: number;
-    /** Observations at or after the window's end, and hours from the floor holding one (of 865). */
+    /** Observations at or after the window's end, and hours from the floor holding one (of 864). */
     after?: number;
     hours?: number;
     /** Generator rows on the window's first day (the fixture's three prompts by default). */
@@ -178,7 +180,7 @@ async function world(
     else if (q.includes('uniqExactIf'))
       yield {
         after: String(opts.after ?? 5000),
-        hours: String(opts.hours ?? 865),
+        hours: String(opts.hours ?? 864),
         newest: String(now - 3 * 3600),
         now: String(now),
       } as T;
@@ -443,9 +445,9 @@ describe("gate 2: the ClickHouse account's own profile is readonly=2", () => {
 
 describe("gate 3: the training window's generator coverage", () => {
   // The test window, 2026-07-21 to 2026-10-19, starts before the observation table's floor
-  // (2026-09-12T23:00Z), so coverage is counted over the 865 hours from the floor; 2% allows 17.
-  const FLOOR = '2026-09-12T23:00:00.000Z';
-  const SPAN = 865;
+  // (2026-09-13T00:00Z), so coverage is counted over the 864 hours from the floor; 2% allows 17.
+  const FLOOR = '2026-09-13T00:00:00.000Z';
+  const SPAN = 864;
 
   it('refuses when no observation lies at or after the window end, before any training read', async () => {
     const w = await world({ after: 0 });
@@ -465,10 +467,11 @@ describe("gate 3: the training window's generator coverage", () => {
     const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
     const q = w.chQueries[1];
     expect(q).toContain(`countIf(time >= toDateTime('2026-10-19 00:00:00', 'UTC')) AS after`);
-    expect(q).toContain(
-      `uniqExactIf(toStartOfHour(time), time < toDateTime('2026-10-19 00:00:00', 'UTC'))`
+    // An hour counts only when the slice the build reads holds a row, bucketed by UTC hour.
+    expect(q.replace(/\s+/g, ' ')).toContain(
+      `uniqExactIf(toStartOfHour(time, 'UTC'), time < toDateTime('2026-10-19 00:00:00', 'UTC') AND toMinute(toTimeZone(time, 'UTC')) < 2)`
     );
-    expect(q).toContain(`WHERE time >= toDateTime('2026-09-12 23:00:00', 'UTC')`);
+    expect(q).toContain(`WHERE time >= toDateTime('2026-09-13 00:00:00', 'UTC')`);
     const recorded = { start: FLOOR, hours: SPAN, missing: 0 };
     expect(summary.observationHours).toEqual(recorded);
     expect(summary.stats.observationHours).toEqual(recorded);
@@ -483,7 +486,7 @@ describe("gate 3: the training window's generator coverage", () => {
   it('the same window with 18 missing hours after the floor (over 2%) refuses, before any training read', async () => {
     const w = await world({ hours: SPAN - 18 });
     await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
-      `18 of the 865 hours from ${FLOOR} have no generator observation (allowed 17)`
+      `18 of the 864 hours from ${FLOOR} have no generator observation (allowed 17)`
     );
     expect(w.deps.query).not.toHaveBeenCalled();
     expectNoTrainingReads(w);
@@ -502,6 +505,19 @@ describe("gate 3: the training window's generator coverage", () => {
     });
     const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
     expect(summary.observationHours).toEqual({ start: FLOOR, hours: SPAN, missing: 100 });
+  });
+
+  it('the coverage count and the generator read share one slice predicate', async () => {
+    const w = await world();
+    await runTagIndexBuild({ dryRun: false }, w.deps);
+    const slice = genSliceCondition(TAG_SOURCE_PARAMS.genSliceMinutes);
+    expect(slice).toBe(`toMinute(toTimeZone(time, 'UTC')) < 2`);
+    const coverage = w.chQueries[1];
+    const reads = w.chQueries.filter((q) => q.includes('p2m_restricted.promptText'));
+    expect(reads).toHaveLength(90);
+    expect(coverage).toContain(slice);
+    // The read applies it to the observations it returns and to the prompts it joins.
+    for (const q of reads) expect(q.split(slice)).toHaveLength(3);
   });
 
   describe('a window starting after the floor ignores it', () => {
@@ -538,6 +554,27 @@ describe("gate 3: the training window's generator coverage", () => {
         '44 of the 2160 hours from 2026-12-20T00:00:00.000Z have no generator observation (allowed 43)'
       );
     });
+  });
+});
+
+describe('a generator read that returns nothing', () => {
+  it('refuses a production build, after the gates passed', async () => {
+    const w = await world({ genRows: [] });
+    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+      'tag index build: the generator read returned no observations; refusing'
+    );
+    // Every day of the window was asked for, and nothing was stored.
+    expect(w.chQueries.filter((q) => q.includes('p2m_restricted.promptText'))).toHaveLength(90);
+    expect(w.store.size).toBe(0);
+  });
+
+  it('a dry run reports it instead', async () => {
+    const w = await world({
+      genRows: [],
+      env: { ...ENV, RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined },
+    });
+    const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
+    expect(summary.observations).toBe(0);
   });
 });
 

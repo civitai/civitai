@@ -330,6 +330,17 @@ export type GenObservation = {
 };
 
 /**
+ * The generator sample's slice: rows in each UTC hour's first `sliceMinutes` minutes (the
+ * prototype's sample). The one predicate for every query that reads or counts the sample, so what
+ * the coverage gate counts is what the build reads.
+ */
+export function genSliceCondition(sliceMinutes: number): string {
+  if (!Number.isInteger(sliceMinutes) || sliceMinutes < 1 || sliceMinutes > 60)
+    throw new Error('sliceMinutes must be an integer in [1, 60]');
+  return `toMinute(toTimeZone(time, 'UTC')) < ${sliceMinutes}`;
+}
+
+/**
  * The generator observations of the window that fall in each hour's first `sliceMinutes` minutes
  * (the prototype's sample), with their prompt text, excluding deleted accounts. ClickHouse SQL; the
  * caller runs it read-only and maps each row with `genObservationOf`.
@@ -340,8 +351,7 @@ export function genObservationsSql(
   sliceMinutes: number,
   limit?: number
 ): string {
-  if (!Number.isInteger(sliceMinutes) || sliceMinutes < 1 || sliceMinutes > 60)
-    throw new Error('sliceMinutes must be an integer in [1, 60]');
+  const slice = genSliceCondition(sliceMinutes);
   if (limit !== undefined && !(Number.isSafeInteger(limit) && limit > 0))
     throw new Error('limit must be a positive integer');
   const ts = (d: Date) => `toDateTime('${d.toISOString().slice(0, 19).replace('T', ' ')}', 'UTC')`;
@@ -352,16 +362,14 @@ export function genObservationsSql(
       SELECT userHash, promptHash, resourceVersionIds, liked, favorite, disliked
       FROM default.resourceIntentGenObservation FINAL
       WHERE time >= ${ts(start)} AND time < ${ts(end)}
-        AND toMinute(toTimeZone(time, 'UTC')) < ${sliceMinutes}
+        AND ${slice}
         AND userHash NOT IN (SELECT userHash FROM p2m_restricted.deletedUsers)
     ) AS o
     INNER JOIN (
       SELECT promptHash, any(prompt) AS prompt FROM p2m_restricted.promptText
       WHERE promptHash IN (
         SELECT promptHash FROM default.resourceIntentGenObservation
-        WHERE time >= ${ts(start)} AND time < ${ts(
-    end
-  )} AND toMinute(toTimeZone(time, 'UTC')) < ${sliceMinutes})
+        WHERE time >= ${ts(start)} AND time < ${ts(end)} AND ${slice})
       GROUP BY promptHash
     ) AS t ON t.promptHash = o.promptHash${
       limit === undefined

@@ -11,6 +11,7 @@ import { promptExcludedByAuditor } from './prompt-exclusion';
 import {
   assertObservationKey,
   fetchVersionInfo,
+  genSliceCondition,
   genObservationOf,
   genObservationsSql,
   genTrainingRow,
@@ -36,14 +37,15 @@ import { putSnapshot, type TagIndexObjectStore } from './store';
 export const TAG_BUILD_MAX_MISSING_HOUR_SHARE = 0.02;
 
 /**
- * The observation table's first hour. The extractor went live with a 31-day backfill, the most its
- * source keeps, so no observation is older than this (verified read-only, October 2026: the first row
- * is at 23:20 of this hour, and every hour from it on holds observations).
- * Coverage is counted from here when the training window starts earlier; a window wholly after it
- * ignores it, from about 2026-12-13 on. Pinned rather than read as `min(time)`: a later truncation
- * or re-backfill would move `min(time)` and silently shrink the span the coverage check guards.
+ * The observation table's first hour whose sample slice holds rows. The extractor went live with a
+ * 31-day backfill, the most its source keeps; its first row is at 2026-09-12 23:20 UTC, past that
+ * hour's slice, so the first hour the build can read is the next one (verified read-only, October
+ * 2026). Coverage is counted from here when the training window starts earlier; a window wholly
+ * after it ignores it, from about 2026-12-14 on. Pinned rather than read as `min(time)`: a later
+ * truncation or re-backfill would move `min(time)` and silently shrink the span the coverage check
+ * guards.
  */
-export const TAG_OBSERVATION_FLOOR = new Date('2026-09-12T23:00:00Z');
+export const TAG_OBSERVATION_FLOOR = new Date('2026-09-13T00:00:00Z');
 
 /**
  * The longest the build holds the event loop between yields while tagging. It shares the process
@@ -170,7 +172,8 @@ async function firstRow<T>(ch: TagClickHouse, query: string): Promise<T | undefi
 
 /**
  * Refuse unless the account's own profile makes the session `readonly = 2`: at 0 the account can
- * write (the build must not be able to), and at 1 it cannot accept the settings the build sends.
+ * write (the build must not be able to). An account at 1 never reaches this comparison: it refuses
+ * the settings the build sends, so this very query fails first with ClickHouse Code 164.
  */
 export async function assertClickHouseReadonly(ch: TagClickHouse): Promise<void> {
   const r = await firstRow<{ ro: number | string }>(ch, `SELECT getSetting('readonly') AS ro`);
@@ -197,8 +200,10 @@ export type ObservationCoverage = {
 
 /**
  * The training window's generator coverage. Refuses unless some observation lies at or after the
- * window's end (the extractor has written past it). Hours with no observation are counted from the
- * later of the window's start and `floor` to the window's end; more than
+ * window's end: a progress check that the extractor has written past it, so any row counts there.
+ * An hour counts as covered only when its sample slice (`genSliceCondition`, the predicate the build
+ * reads with) holds an observation, bucketed by UTC hour; hours that do not are counted from the
+ * later of the window's start and `floor` to the window's end, and more than
  * `TAG_BUILD_MAX_MISSING_HOUR_SHARE` of that span is refused unless `refuseGaps` is false (a dry run
  * reports them instead).
  */
@@ -209,10 +214,11 @@ export async function observationCoverage(
   floor: Date = TAG_OBSERVATION_FLOOR
 ): Promise<ObservationCoverage> {
   const start = new Date(Math.max(window.start.getTime(), floor.getTime()));
+  const slice = genSliceCondition(TAG_SOURCE_PARAMS.genSliceMinutes);
   const r = await firstRow<Record<'after' | 'hours' | 'newest' | 'now', number | string>>(
     ch,
     `SELECT countIf(time >= ${chTime(window.end)}) AS after,
-       uniqExactIf(toStartOfHour(time), time < ${chTime(window.end)}) AS hours,
+       uniqExactIf(toStartOfHour(time, 'UTC'), time < ${chTime(window.end)} AND ${slice}) AS hours,
        toUnixTimestamp(max(time)) AS newest, toUnixTimestamp(now()) AS now
      FROM default.resourceIntentGenObservation WHERE time >= ${chTime(start)}`
   );
@@ -351,7 +357,7 @@ export type TagBuildDeps = {
  * caller's put decodes the payload.
  */
 async function readAndBuild(a: {
-  opts: { limits?: { gen?: number; postBatches?: number; models?: number } };
+  opts: { dryRun: boolean; limits?: { gen?: number; postBatches?: number; models?: number } };
   deps: TagBuildDeps;
   config: TagBuildConfig;
   ch: TagClickHouse;
@@ -384,6 +390,8 @@ async function readAndBuild(a: {
       if (row) acc.addRow(row);
     }
   }
+  if (observations === 0 && !opts.dryRun)
+    throw new Error('tag index build: the generator read returned no observations; refusing');
   const genMs = clock();
 
   const postUsers = new Set<string>();
