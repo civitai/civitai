@@ -79,6 +79,7 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
 
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import {
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
@@ -2680,5 +2681,7 @@ export const updateCreatorShopSettings = async ({
   // After commit — the settings cache is Redis, and it was never busted here at all,
   // so `getUserSettings` served a pre-shop blob for up to its 4h TTL.
   await bustUserSettings(userId);
+  // The creator card shows whether the shop is public (`creatorShopEnabled`).
+  await bustUserCreator(userId);
   return (settings.creatorShop ?? {}) as CreatorShopSettings;
 };
