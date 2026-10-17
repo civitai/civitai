@@ -27,6 +27,11 @@ import {
   runWithResponseWriteFormat,
 } from '~/server/trpc/response-write-format';
 import { redactBlockTokens } from '~/server/logging/redact-block-token';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+
+/** The longest input, in JSON characters, an error log line carries. */
+const LOGGED_INPUT_MAX_CHARS = 256 * 1024;
+const LOGGED_INPUT_OVER_LIMIT = `[input over ${LOGGED_INPUT_MAX_CHARS} characters, not logged]`;
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 
 export const config = {
@@ -179,11 +184,19 @@ const trpcHandler = createNextApiHandler({
       let axInput: string | undefined;
       if (!!input) {
         try {
-          // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
-          // Stringify first and redact only when the key appears, so the common case pays one
-          // walk of the input rather than two.
-          const raw = JSON.stringify(input);
-          axInput = raw?.includes('"blockToken"') ? JSON.stringify(redactBlockTokens(input)) : raw;
+          // Measured before it is serialized, without building the string; an input over the
+          // limit is logged as a marker instead.
+          if (!jsonLengthWithin([input], LOGGED_INPUT_MAX_CHARS)) {
+            axInput = LOGGED_INPUT_OVER_LIMIT;
+          } else {
+            // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+            // Stringify first and redact only when the key appears, so the common case pays one
+            // walk of the input rather than two.
+            const raw = JSON.stringify(input);
+            axInput = raw?.includes('"blockToken"')
+              ? JSON.stringify(redactBlockTokens(input))
+              : raw;
+          }
         } catch {
           axInput = undefined;
         }

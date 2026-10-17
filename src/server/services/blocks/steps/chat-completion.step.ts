@@ -1,5 +1,6 @@
 import type { ChatCompletionInput } from '@civitai/client';
 import * as z from 'zod';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
 import type { BlockStep, OrchestratorStepTemplate } from './index';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -768,6 +769,7 @@ const MAX_TOOLS = 8;
 export const MAX_TOOL_NAME_CHARS = 64;
 const MAX_TOOL_DESCRIPTION_CHARS = 1_024;
 const MAX_TOOL_PARAMETERS_CHARS = 4_096;
+const TOOL_PARAMETERS_OVER_CAP_MESSAGE = `tool parameters exceed ${MAX_TOOL_PARAMETERS_CHARS} serialized characters`;
 const MAX_TOOL_PARAMETERS_DEPTH = 8;
 
 /**
@@ -821,6 +823,19 @@ export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
  * app author looking for a cycle that is not there.
  */
 const toolParametersSchema = z.unknown().transform((value, ctx) => {
+  // The cap is checked before the value is serialized, without building the string. A value
+  // the measure cannot read (it throws where JSON.stringify throws) is left to the stringify
+  // below, so it gets that message.
+  let withinCap = true;
+  try {
+    withinCap = jsonLengthWithin([value], MAX_TOOL_PARAMETERS_CHARS);
+  } catch {
+    withinCap = true;
+  }
+  if (!withinCap) {
+    ctx.addIssue({ code: 'custom', message: TOOL_PARAMETERS_OVER_CAP_MESSAGE });
+    return z.NEVER;
+  }
   let serialized: string | undefined;
   try {
     serialized = JSON.stringify(value);
@@ -841,11 +856,9 @@ const toolParametersSchema = z.unknown().transform((value, ctx) => {
     });
     return z.NEVER;
   }
+  // Already applied by the measure above; kept on the exact string that is parsed back.
   if (serialized.length > MAX_TOOL_PARAMETERS_CHARS) {
-    ctx.addIssue({
-      code: 'custom',
-      message: `tool parameters exceed ${MAX_TOOL_PARAMETERS_CHARS} serialized characters`,
-    });
+    ctx.addIssue({ code: 'custom', message: TOOL_PARAMETERS_OVER_CAP_MESSAGE });
     return z.NEVER;
   }
   const normalized: unknown = JSON.parse(serialized);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CHAT_COMPLETION_ASSUMED_CHARS_PER_TOKEN,
   CHAT_COMPLETION_MAX_OUTPUT_TOKENS,
@@ -980,6 +980,64 @@ describe('chat-completion — tools / toolChoice param surface', () => {
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain('serialized characters');
+  });
+
+  describe('parameters size cap', () => {
+    const withParameters = (parameters: unknown) =>
+      parse({
+        ...VALID_PARAMS,
+        tools: [{ ...VALID_TOOL, function: { ...VALID_TOOL.function, parameters } }],
+      });
+    /** A parameters object whose JSON is exactly `length` characters. */
+    const ofLength = (length: number) => ({
+      type: 'object',
+      pad: 'x'.repeat(length - '{"type":"object","pad":""}'.length),
+    });
+
+    it('accepts parameters at 4,096 serialized characters and refuses 4,097', () => {
+      expect(JSON.stringify(ofLength(4_096)).length).toBe(4_096);
+      expect(withParameters(ofLength(4_096)).success).toBe(true);
+      const over = withParameters(ofLength(4_097));
+      expect(over.success).toBe(false);
+      expect(over.error?.issues.map((i) => i.message)).toContain(
+        'tool parameters exceed 4096 serialized characters'
+      );
+    });
+
+    it('refuses parameters that repeat one object past the cap without serializing them', () => {
+      const node = { type: 'string', description: 'x'.repeat(1_000) };
+      const parameters = {
+        type: 'object',
+        properties: Object.fromEntries(Array.from({ length: 5_000 }, (_, i) => [`p${i}`, node])),
+      };
+      const stringify = JSON.stringify;
+      // Every character JSON.stringify writes during the call, whatever it is called on.
+      let stringified = 0;
+      const spy = vi
+        .spyOn(JSON, 'stringify')
+        .mockImplementation((...args: Parameters<typeof stringify>) => {
+          const out = stringify(...args);
+          stringified += out?.length ?? 0;
+          return out;
+        });
+      let result;
+      try {
+        result = withParameters(parameters);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        'tool parameters exceed 4096 serialized characters'
+      );
+      expect(stringified).toBeLessThan(10_000);
+    });
+
+    it('keeps the serialize message for a value JSON.stringify cannot write', () => {
+      const result = withParameters({ type: 'object', n: BigInt(1) });
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain('must be JSON-serializable');
+    });
   });
 
   it('REJECTS a parameters object nested deeper than the cap', () => {

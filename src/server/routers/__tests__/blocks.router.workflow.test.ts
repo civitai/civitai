@@ -7759,6 +7759,33 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         );
       });
 
+      it('a long NON-STRING `mode` is described, not echoed', async () => {
+        const node = { note: 'x'.repeat(1_000) };
+        const issues = await rejectionIssues({
+          kind: 'customComfy',
+          mode: new Array(1_000).fill(node),
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // At the limit it is still echoed.
+        const atLimit = ['x'.repeat(200 - '[""]'.length)];
+        const echoed = await rejectionIssues({
+          kind: 'customComfy',
+          mode: atLimit,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(echoed[0].message).toBe(
+          `Invalid \`customComfy\` mode: ${JSON.stringify(
+            atLimit
+          )} — expected "recipe" or "inline".` + ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
       // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — green before this change and
       // after. A genuinely bad value on a DECLARED inline field is raised by that
       // field's own schema, not by the object, so the arm error map must not
