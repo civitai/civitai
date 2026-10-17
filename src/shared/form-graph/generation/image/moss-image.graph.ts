@@ -35,7 +35,7 @@ export const mossImage = defineGraph<FamilyExt>({ scope: familyScope })
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_FULL_AR)
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 3 }))
-  .field('steps', perModelSlider({ min: 20, max: 60, default: 25 }))
+  .field('steps', perModelSlider({ min: 4, max: 60, default: 25 }))
   .field('seed', SEED)
   .use(makeTextBlock({ negativePromptRegistersTarget: false }));
 
