@@ -211,6 +211,8 @@ describe('the image detail wears the image hat on the picture', () => {
     renderWithProviders(<Viewer image={mocks.image(true)} />);
     await vi.waitFor(() => expect(hat()).not.toBeNull());
     // A dispatched click, like those browsers' mouse click, moves no focus by itself.
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).not.toBe(hat());
     hat()!.click();
     await vi.waitFor(() => expect(popover()).not.toBeNull());
     expect(document.activeElement).toBe(hat());
