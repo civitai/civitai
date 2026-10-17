@@ -33,7 +33,9 @@ beforeAll(async () => {
   await db.pg.exec(grant[0]);
   // A site role that writes the source tables but owns nothing in the store.
   await db.pg.exec(
-    `GRANT INSERT, SELECT ON "ScanLabelVote", "ScanLabelItem", "Image" TO site_app;`
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON "ScanLabelVote", "ScanLabelItem", "Image", "ScanLabelFlag",
+       "AppealDecisionRecord", "ScanLabelCopyObject" TO site_app;
+     GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO site_app;`
   );
 });
 
@@ -433,14 +435,86 @@ describe('a site write never fails because of the store', () => {
     }
   });
 
-  it('records a vote made by a site role that owns nothing in the store', async () => {
-    await asRole('site_app', async () => {
-      await vote(MODS[0], false);
-    });
+  const copy = () =>
+    db.pg.query(
+      `UPDATE "ScanLabelItem" SET "copyState" = 'copied', "copyKey" = 'k/1', "copiedAt" = now()`
+    );
+  const appeal = () =>
+    db.pg.query(
+      `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel", "decision", "decidedAt")
+       VALUES (900, $1, 'u-501', 16, 'Approved', now())`,
+      [IMAGE]
+    );
+  const subject = async () =>
+    (await rows<{ bytesRef: string | null; excludedReason: string | null }>(
+      `SELECT "bytesRef", "excludedReason" FROM label_store.subject`
+    ))[0];
+  // Each write a site role makes, run as a role that owns nothing in the store.
+  const SITE_WRITES: {
+    name: string;
+    before?: () => Promise<unknown>;
+    write: () => Promise<unknown>;
+    check: () => Promise<void>;
+  }[] = [
+    {
+      name: 'a flag',
+      write: () => flag(),
+      check: async () => expect(await rows(`SELECT * FROM label_store.prediction`)).toHaveLength(1),
+    },
+    {
+      name: 'a vote',
+      write: () => vote(MODS[0], false),
+      check: async () => expect(await rows(`SELECT * FROM label_store.label`)).toHaveLength(1),
+    },
+    {
+      name: 'an appeal decision',
+      write: appeal,
+      check: async () => expect(await rows(`SELECT * FROM label_store.label`)).toHaveLength(1),
+    },
+    {
+      name: 'a copy',
+      before: () => vote(MODS[0], false),
+      write: copy,
+      check: async () =>
+        expect(await subject()).toMatchObject({ bytesRef: 'scan-label-copy:k/1' }),
+    },
+    {
+      name: 'a withdrawal',
+      before: async () => {
+        await vote(MODS[0], false);
+        await copy();
+        await db.pg.query(
+          `INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES ('k/1', $1, $2)`,
+          [ITEM, IMAGE]
+        );
+      },
+      write: () =>
+        db.pg.query(
+          `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = 'excluded'`
+        ),
+      check: async () =>
+        expect(await subject()).toMatchObject({ bytesRef: null, excludedReason: 'safety' }),
+    },
+    {
+      name: 'an appeal record deletion',
+      before: appeal,
+      write: () => db.pg.query(`DELETE FROM "AppealDecisionRecord"`),
+      check: async () => expect(await subject()).toMatchObject({ excludedReason: 'removed' }),
+    },
+  ];
 
-    expect(await rows(`SELECT * FROM label_store.label`)).toHaveLength(1);
-    expect(await rows(`SELECT * FROM label_store.record_failure`)).toHaveLength(0);
-  });
+  it.each(SITE_WRITES)(
+    'records $name made by a site role that owns nothing in the store',
+    async ({ before, write, check }) => {
+      await before?.();
+      await asRole('site_app', async () => {
+        await write();
+      });
+
+      await check();
+      expect(await rows(`SELECT * FROM label_store.record_failure`)).toEqual([]);
+    }
+  );
 });
 
 describe('bytes and exclusion', () => {

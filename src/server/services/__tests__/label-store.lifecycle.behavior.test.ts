@@ -533,8 +533,10 @@ describe('backfill', () => {
 
     await db.pg.exec(`CALL label_store.backfill_batches(1)`);
     expect(await state()).toEqual(live);
+    const changes = await kinds();
     await db.pg.exec(`CALL label_store.backfill_batches(1)`);
     expect(await state()).toEqual(live);
+    expect(await kinds()).toEqual(changes);
     expect(await failures()).toEqual([]);
   });
 });
