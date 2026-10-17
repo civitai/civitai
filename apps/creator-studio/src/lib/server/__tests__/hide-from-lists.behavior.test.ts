@@ -48,7 +48,7 @@ vi.mock('@civitai/db/kysely', () => {
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-const { getReactors } = await import('../reactors');
+const { getReactors, imageAudienceListable } = await import('../reactors');
 const { getCollectors } = await import('../collectors');
 
 const OWNER = 42;
@@ -182,45 +182,56 @@ describe('Creator Studio lists leave out a user who opted out', () => {
 });
 
 describe('Creator Studio lists on a blocked image', () => {
-  const BLOCKED = 910;
-  const AI_UNVERIFIED = 911;
-  const LEFTOVER_REASON = 912;
-  const lists = async (imageId: number) => ({
+  // [id, ingestion, blockedFor, listed]
+  const CASES: [number, string, string | null, boolean][] = [
+    [910, 'Blocked', 'moderated', false],
+    [913, 'Blocked', 'tos', false],
+    [914, 'Blocked', 'CSAM', false],
+    [915, 'Blocked', null, false],
+    [911, 'Blocked', 'AiNotVerified', true],
+    [912, 'Scanned', 'moderated', true],
+    [916, 'Pending', 'moderated', true],
+  ];
+  const lists = async (imageId: number, ownerId = OWNER) => ({
     reactors: (
-      await getReactors(holder.db as never, OWNER, 'image', imageId, {
+      await getReactors(holder.db as never, ownerId, 'image', imageId, {
         reaction: 'Like',
         cursor: null,
       } as never)
     )?.reactors.map((r) => r.userId),
     collectors: (
-      await getCollectors(holder.db as never, OWNER, 'image', imageId, null)
+      await getCollectors(holder.db as never, ownerId, 'image', imageId, null)
     )?.collectors.map((c) => c.userId),
   });
 
   beforeAll(async () => {
-    await holder.db.exec(`
-      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES
-        (${BLOCKED}, ${OWNER}, 'Blocked', 'moderated'),
-        (${AI_UNVERIFIED}, ${OWNER}, 'Blocked', 'AiNotVerified'),
-        (${LEFTOVER_REASON}, ${OWNER}, 'Scanned', 'moderated');
-      INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES
-        (${BLOCKED}, ${LISTED}, 'Like'), (${AI_UNVERIFIED}, ${LISTED}, 'Like'), (${LEFTOVER_REASON}, ${LISTED}, 'Like');
-      INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "addedById") VALUES
-        (1, ${BLOCKED}, 'ACCEPTED', ${LISTED}),
-        (1, ${AI_UNVERIFIED}, 'ACCEPTED', ${LISTED}),
-        (1, ${LEFTOVER_REASON}, 'ACCEPTED', ${LISTED});
-    `);
+    for (const [id, ingestion, blockedFor] of CASES) {
+      await holder.db.query(
+        `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES ($1, $2, $3, $4)`,
+        [id, OWNER, ingestion, blockedFor]
+      );
+      await holder.db.query(
+        `INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES ($1, $2, 'Like')`,
+        [id, LISTED]
+      );
+      await holder.db.query(
+        `INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "addedById") VALUES (1, $1, 'ACCEPTED', $2)`,
+        [id, LISTED]
+      );
+    }
   });
 
-  it('answers neither list for an image removed by moderation', async () => {
-    expect(await lists(BLOCKED)).toEqual({ reactors: undefined, collectors: undefined });
+  it.each(CASES)('image %i (%s, %s): listed = %s', async (id, ingestion, blockedFor, listed) => {
+    expect(await lists(id)).toEqual(
+      listed
+        ? { reactors: [LISTED], collectors: [LISTED] }
+        : { reactors: undefined, collectors: undefined }
+    );
+    // The page decides whether to render the lists with the same rule, in TypeScript.
+    expect(imageAudienceListable({ ingestion, blockedFor })).toBe(listed);
   });
 
-  it('keeps both lists for an image blocked only pending AI verification', async () => {
-    expect(await lists(AI_UNVERIFIED)).toEqual({ reactors: [LISTED], collectors: [LISTED] });
-  });
-
-  it('keeps both lists for a scanned image with a leftover block reason', async () => {
-    expect(await lists(LEFTOVER_REASON)).toEqual({ reactors: [LISTED], collectors: [LISTED] });
+  it('still refuses a caller who does not own the image', async () => {
+    expect(await lists(911, 999)).toEqual({ reactors: undefined, collectors: undefined });
   });
 });

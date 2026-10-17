@@ -6,7 +6,7 @@ import {
   contentFk,
   keysetClause,
   listedToViewer,
-  ownsContent,
+  ownsListableContent,
   safeProfilePictureUrl,
   type ReactorEntity,
 } from '$lib/server/reactors';
@@ -26,7 +26,7 @@ import {
  *
  * "Collected" means the owner added it to their own collection: contest collections hold entries the creator
  * submitted, and in a shared collection a contributor's add would be pinned on the owner. Returns null when the
- * entity is not the caller's.
+ * entity is not the caller's or is a removed image.
  *
  * Keyset-paged on the collection owner's `userId`, newest account first, like the reactors list.
  */
@@ -37,7 +37,7 @@ export async function getCollectors(
   entityId: number,
   cursor: ReactorCursor
 ): Promise<CollectorPage | null> {
-  if (!(await ownsContent(db, ownerId, entity, entityId))) return null;
+  if (!(await ownsListableContent(db, ownerId, entity, entityId))) return null;
 
   const source = sql`
     "CollectionItem" ci

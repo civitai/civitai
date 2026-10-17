@@ -35,8 +35,8 @@ export function safeProfilePicture(picture: ProfileImage | null | undefined) {
     : null;
 }
 
-// A removed image keeps its reactors private. An AI-verification block is the owner's to fix by adding metadata,
-// so that image keeps its list.
+// AiNotVerified is blocked but not removed: the owner fixes it by adding metadata, so they keep the list.
+// Creator Studio's `imageAudienceListable` / `ownsListableContent` apply the same rule.
 export function hidesReactors(image: { ingestion: string; blockedFor: string | null }) {
   return image.ingestion === 'Blocked' && image.blockedFor !== BlockedReason.AiNotVerified;
 }

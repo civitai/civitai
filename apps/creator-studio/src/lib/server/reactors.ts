@@ -29,14 +29,17 @@ const TABLES = {
   article: { content: 'Article', reactions: 'ArticleReaction', fk: 'articleId' },
 } as const;
 
-export async function ownsContent(
+// AiNotVerified is blocked but not removed: the owner fixes it by adding metadata, so they keep the lists.
+// `ownsListableContent` applies the same rule in SQL, and the site's `hidesReactors` mirrors it.
+export const imageAudienceListable = (image: { ingestion: string; blockedFor: string | null }) =>
+  image.ingestion !== 'Blocked' || image.blockedFor === 'AiNotVerified';
+
+export async function ownsListableContent(
   db: typeof dbRead,
   ownerId: number,
   entity: ReactorEntity,
   entityId: number
 ): Promise<boolean> {
-  // A removed image keeps its audience private. An AI-verification block is the owner's to fix by adding
-  // metadata, so that image keeps its lists.
   const listable =
     entity === 'image'
       ? sql` AND (ingestion IS DISTINCT FROM 'Blocked' OR "blockedFor" = 'AiNotVerified')`
@@ -92,7 +95,7 @@ export const safeProfilePictureUrl = () => sql`
 
 /**
  * Who reacted to one piece of the caller's content, one reaction type at a time. Returns null when the entity is
- * not the caller's, which the route turns into the same 404 as a missing entity.
+ * not the caller's or is a removed image, which the route turns into the same 404 as a missing entity.
  *
  * Keyset-paged on `userId` (newest account first) because that is what the `(entityId, userId)` indexes serve at
  * constant cost per page. Do not switch to reaction-time order without adding an index: none covers
@@ -107,7 +110,7 @@ export async function getReactors(
 ): Promise<ReactorPage | null> {
   const t = TABLES[entity];
 
-  if (!(await ownsContent(db, ownerId, entity, entityId))) return null;
+  if (!(await ownsListableContent(db, ownerId, entity, entityId))) return null;
 
   const countRows = await sql<{ reaction: string; n: number }>`
     SELECT reaction, count(*)::int AS n FROM ${sql.table(t.reactions)}
