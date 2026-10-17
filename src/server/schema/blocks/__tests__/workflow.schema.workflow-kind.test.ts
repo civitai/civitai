@@ -149,8 +149,8 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
 
 describe("kind:'workflow' — inline media is refused", () => {
   const fix =
-    "pass a hosted url instead — for an image, upload it with useImageUpload({ purpose: 'generationSource' }) " +
-    'or pick it with useImagePicker and pass the returned url';
+    'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+    "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
   const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
   const issuesOf = (b: unknown) => {
     const parsed = blockWorkflowBodySchema.safeParse(b);

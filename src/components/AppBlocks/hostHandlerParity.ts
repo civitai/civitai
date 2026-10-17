@@ -58,9 +58,9 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
  * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
  *
- * As of the installed `@civitai/app-sdk@0.65.1` FOUR keys are ahead: `RUN_CONFIRMED_STEP`,
- * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION` and `GET_ENTITY_REACTIONS`. The published union's
- * 50 types are all inventory keys.
+ * As of the installed `@civitai/app-sdk@0.65.1` FIVE keys are ahead: `RUN_CONFIRMED_STEP`,
+ * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD`. The
+ * published union's 50 types are all inventory keys.
  * The gate reads the INSTALLED
  * dist, so it is only as current as the `@civitai/app-sdk` range in
  * `package.json` — a caret on a 0.x version admits patch releases only, and
@@ -539,6 +539,19 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // An image, video or audio file uploaded as a PRIVATE generation input, picked in host chrome or
+  // sent as `bytes` — see `mediaUploadLogic.ts`. REQUEST-style; ahead of the published SDK dist
+  // union (the SDK pair lands in the SDK repo).
+  OPEN_MEDIA_UPLOAD: {
+    request: true,
+    reply: 'MEDIA_UPLOAD_RESULT',
+    replyKeys: ['selected?'],
+    errorKeys: ['error'],
+    IframeHost:
+      'media upload is a page-only affordance today; the shared dispatcher NACKs it with a MEDIA_UPLOAD_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   SET_USER_CHECKPOINT: {
     request: true,
     reply: 'USER_CHECKPOINT_SET',
@@ -967,7 +980,8 @@ type SdkBlockToParentType = BlockToParentMessageType;
 //
 // ONE-DIRECTIONAL by design: every PUBLISHED SDK type must be an INVENTORY key;
 // INVENTORY MAY carry extra ahead-of-published keys (`RUN_CONFIRMED_STEP`,
-// `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` as of app-sdk 0.65.1).
+// `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD` as of
+// app-sdk 0.65.1).
 // We do NOT assert the reverse — that would delete real forward coverage every
 // time the published dist lags.
 //

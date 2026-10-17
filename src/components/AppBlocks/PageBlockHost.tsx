@@ -105,6 +105,13 @@ import {
   UPLOAD_BYTES_INVALID_ERROR,
   UPLOAD_BYTES_NO_TOKEN_ERROR,
 } from './imageUploadBytes';
+import {
+  MEDIA_UPLOAD_FAILED_ERROR,
+  MEDIA_UPLOAD_NO_TOKEN_ERROR,
+  processMediaUploadBytes,
+  resolveMediaUploadRequest,
+  type BlockMediaUploadInfo,
+} from './mediaUploadLogic';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
@@ -197,6 +204,8 @@ const BlockGenerationSourceUploadModal = dynamic(
 );
 
 const BlockImagePickerModal = dynamic(() => import('./BlockImagePickerModal'), { ssr: false });
+
+const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), { ssr: false });
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -3696,6 +3705,9 @@ export function PageBlockHost({
   // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
   // by requestId, so any reply to it would also settle — and misreport — the original request.
   const uploadBytesInFlightRef = useRef<Set<string>>(new Set());
+  // The same two guards for OPEN_MEDIA_UPLOAD's `bytes` mode, with its own limits (mediaUploadLogic.ts).
+  const mediaUploadWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  const mediaUploadInFlightRef = useRef<Set<string>>(new Set());
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
@@ -4304,6 +4316,92 @@ export function PageBlockHost({
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
   }, [onMessage, send, readGateStatus, reviewMode]);
+
+  // OPEN_MEDIA_UPLOAD → MEDIA_UPLOAD_RESULT: an image, video or audio file uploaded as a PRIVATE
+  // generation input (a consumer blob), picked in host chrome or supplied as `bytes`. Review mode
+  // and a pre-handshake block get the cancelled `{ requestId }`: the upload would run under the
+  // viewer's real session.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_MEDIA_UPLOAD', (raw) => {
+      const decision = resolveMediaUploadRequest(raw);
+      if (decision.kind === 'drop') return;
+      // An id whose `bytes` upload is still running gets no reply: it would settle that upload.
+      const requestId = decision.kind === 'ok' ? decision.request.requestId : decision.requestId;
+      if (mediaUploadInFlightRef.current.has(requestId)) return;
+      if (reviewMode || readGateStatus() !== 'ready') {
+        send('MEDIA_UPLOAD_RESULT', { requestId });
+        return;
+      }
+      if (decision.kind === 'refuse') {
+        send('MEDIA_UPLOAD_RESULT', { requestId, error: decision.error });
+        return;
+      }
+      const { kind, bytes, mimeType } = decision.request;
+
+      if (bytes) {
+        // A block cannot upload unasked into the account of a viewer it holds no token for.
+        if (!token) {
+          reportNoToken('OPEN_MEDIA_UPLOAD');
+          send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_NO_TOKEN_ERROR });
+          return;
+        }
+        const { result, recent } = processMediaUploadBytes(
+          { kind, bytes, mimeType },
+          mediaUploadWindowRef.current,
+          Date.now()
+        );
+        mediaUploadWindowRef.current = recent;
+        if (!result.ok) {
+          send('MEDIA_UPLOAD_RESULT', { requestId, error: result.error });
+          return;
+        }
+        mediaUploadInFlightRef.current.add(requestId);
+        const contentType = result.contentType;
+        // Loaded on use: the image path reaches the workflow schema, too heavy for every page load.
+        void (async () => {
+          try {
+            const run = await import('./mediaUploadRun');
+            try {
+              const blob = new Blob([bytes], { type: contentType });
+              const selected = await run.uploadGenerationMedia(kind, blob, contentType);
+              send(
+                'MEDIA_UPLOAD_RESULT',
+                selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
+              );
+            } catch (err) {
+              send('MEDIA_UPLOAD_RESULT', { requestId, error: run.mediaUploadErrorMessage(err) });
+            }
+          } catch {
+            send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_FAILED_ERROR });
+          } finally {
+            mediaUploadInFlightRef.current.delete(requestId);
+          }
+        })();
+        return;
+      }
+
+      let uploaded: BlockMediaUploadInfo | null = null;
+      dialogStore.trigger({
+        id: `block-media-upload-${requestId}`,
+        component: BlockMediaUploadModal,
+        props: {
+          kind,
+          onResolved: (result: BlockMediaUploadInfo) => {
+            uploaded = result;
+          },
+        },
+        options: {
+          onClose: () =>
+            send(
+              'MEDIA_UPLOAD_RESULT',
+              uploaded ? { requestId, selected: uploaded } : { requestId }
+            ),
+        },
+      });
+    });
+    return off;
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //

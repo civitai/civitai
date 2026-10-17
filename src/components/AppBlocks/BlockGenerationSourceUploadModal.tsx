@@ -16,17 +16,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
 import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { maxOrchestratorImageFileSize } from '~/server/common/constants';
-import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import {
-  IMAGE_PREP_ERROR,
-  ImagePrepError,
-  imageToJpegBlob,
-  resizeImage,
-} from '~/shared/utils/canvas-utils';
-import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
-import { getImageDimensions } from '~/utils/image-utils';
+import { IMAGE_PREP_ERROR, ImagePrepError } from '~/shared/utils/canvas-utils';
 import { reportUnreadablePick, snapshotPick } from '~/utils/unreadable-pick';
+import { uploadGenerationSourceImage } from './generationSourceImageUpload';
 
 /**
  * App Blocks — the host modal behind PageBlockHost's `OPEN_IMAGE_UPLOAD` bridge
@@ -52,9 +45,6 @@ import { reportUnreadablePick, snapshotPick } from '~/utils/unreadable-pick';
 export type BlockSourceImageInfo = { url: string; width: number; height: number };
 
 type UploadStatus = 'idle' | 'uploading' | 'ready' | 'error';
-
-/** Shown when the upload went through but the uploaded image then failed to load back. */
-const UPLOAD_UNCONFIRMED_ERROR = "Couldn't confirm the upload. Please try again.";
 
 export default function BlockGenerationSourceUploadModal({
   onResolved,
@@ -118,34 +108,10 @@ export default function BlockGenerationSourceUploadModal({
     }
 
     try {
-      // Mirror the generator's SourceImageUpload pre-upload step (handleDropCapture):
-      // downscale to fit the block source-image max dimension + re-encode to JPEG
-      // BEFORE upload, reusing the SAME resizeImage + imageToJpegBlob helpers.
-      // Capped at DIM_MAX (the sourceImage schema bound, NOT the generator's larger
-      // maxUpscaleSize) so a large-but-valid photo is downscaled to WITHIN the
-      // blockSourceImageSchema DIM bounds and works — instead of uploading fine
-      // then being rejected at workflow submit (the server clamps width/height to
-      // DIM_MIN..DIM_MAX). A too-small image throws a clear minimum-size error here.
-      const resized = await resizeImage(file, {
-        maxWidth: DIM_MAX,
-        maxHeight: DIM_MAX,
-        minWidth: DIM_MIN,
-        minHeight: DIM_MIN,
-      });
-      const jpegBlob = await imageToJpegBlob(resized);
-      // The SAME util the generator uses: a presigned PUT to the orchestrator
-      // consumer-blob store (it enforces its own 64MB cap on the uploaded blob).
-      // NO createImage, NO scan, NO gate.
-      const { url } = await uploadConsumerBlob(jpegBlob);
-      if (epoch !== epochRef.current) return;
-      if (!url) throw new Error('Upload did not return a URL');
-      // Real dimensions from the uploaded (resized) blob (mirrors SourceImageUpload).
-      const { width, height } = await getImageDimensions(url, { loadRetries: 2 }).catch(
-        (e: unknown) => {
-          throw new Error(UPLOAD_UNCONFIRMED_ERROR, { cause: e });
-        }
-      );
-      if (epoch !== epochRef.current) return;
+      // NO createImage, NO scan, NO gate: the orchestrator scans the generation output.
+      const uploaded = await uploadGenerationSourceImage(file, () => epoch === epochRef.current);
+      if (!uploaded || epoch !== epochRef.current) return;
+      const { url, width, height } = uploaded;
       setStatus('ready');
       setMessage(null);
       onResolved({ url, width, height });

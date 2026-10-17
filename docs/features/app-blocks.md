@@ -468,6 +468,25 @@ read that file. As of this writing the families are:
   answer as a dismissal, and a signed-out viewer is offered sign-in. Logic:
   `src/components/AppBlocks/imagePickerLogic.ts` and
   `src/server/services/blocks/block-image-picker.logic.ts`.
+- **Media upload** (page host only, no scope): `OPEN_MEDIA_UPLOAD`
+  (→ `MEDIA_UPLOAD_RESULT`) uploads an image, video or audio file as a PRIVATE
+  generation input, an orchestrator consumer blob. Nothing is published: no
+  `Image` row and no public scan; the orchestrator scans the generation output.
+  This is how media reaches a step input, since inline data URIs and base64 there
+  are refused (`src/server/schema/blocks/inline-media.ts`). Request
+  `{ requestId, kind, purpose: 'generationSource', bytes?, mimeType? }`. Without
+  `bytes` the host opens its own picker; with `bytes` (an `ArrayBuffer` the app
+  made: canvas, crop, MediaRecorder) it uploads with no modal, only for a block
+  holding a token, at most 8 uploads and 128 MB per 60 s. Content is judged by
+  magic bytes: image PNG / JPEG / WebP (at most 24 MB, resized into 64..2048 and
+  re-encoded as JPEG), video MP4 / WebM and audio MP3 / WAV / WebM (at most
+  64 MB); a declared `mimeType` must match the content.
+  Video and audio must decode in a media element, and video needs a video track.
+  The answer is `{ requestId, selected? }` with
+  `{ url, kind, mimeType, sizeBytes, width?, height?, durationMs? }`, no `selected`
+  on dismiss, or `{ requestId, error }`. Review mode and a block that is not ready
+  answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged. Logic:
+  `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
