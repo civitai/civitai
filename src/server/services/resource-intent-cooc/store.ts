@@ -360,7 +360,8 @@ export function selectCoocSnapshotsToDelete(rows: readonly RetentionRow[], now: 
   return out;
 }
 
-const isUndefinedTable = (e: unknown) => {
+/** A Postgres "relation does not exist" (42P01), as Prisma's raw query reports it. */
+export const isUndefinedTable = (e: unknown) => {
   const x = e as { code?: string; meta?: { code?: string } } | null;
   return x?.code === '42P01' || x?.meta?.code === '42P01';
 };

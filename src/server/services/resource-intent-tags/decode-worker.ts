@@ -6,8 +6,8 @@ import { assembleTagIndexCooperative, type DecodedTagIndex } from './payload';
 import { TagIndexDecodeUnavailableError } from './decode-errors';
 
 /**
- * Decodes a tag-index payload on a worker thread, so the ~0.7 s of synchronous unpacking and
- * validation that `decodeTagIndex` does on the caller's thread happens off the event loop. The
+ * Decodes a tag-index payload on a worker thread, so the synchronous unpacking and validation that
+ * `decodeTagIndex` does on the caller's thread happens off the event loop. The
  * worker gets the payload's bytes (transferred: the caller's copy is detached), decompresses,
  * unpacks and validates them, and hands the arrays back transferred; only the scorer's maps are
  * built here, a slice per event-loop turn (`assembleTagIndexCooperative`). One worker per decode,
@@ -44,6 +44,8 @@ function ownBuffer(bytes: Uint8Array): ArrayBuffer {
 export type DecodeWorkerOptions = {
   /** The worker's source (tests substitute a misbehaving one). */
   source?: string;
+  /** Aborting terminates the worker (or stops the assembly) and rejects as unavailable. */
+  signal?: AbortSignal;
 };
 
 /** Decompress, unpack and validate `payload` on a worker thread; build the scorer's index here. */
@@ -52,6 +54,11 @@ export function decodeTagIndexInWorker(
   opts: DecodeWorkerOptions = {}
 ): Promise<DecodedTagIndex> {
   return new Promise<DecodedTagIndex>((resolve, reject) => {
+    const { signal } = opts;
+    if (signal?.aborted)
+      return reject(
+        new TagIndexDecodeUnavailableError('tag index decode aborted before it started')
+      );
     let worker: Worker;
     try {
       worker = new Worker(opts.source ?? TAG_INDEX_DECODE_WORKER_SOURCE, { eval: true });
@@ -60,17 +67,27 @@ export function decodeTagIndexInWorker(
       return;
     }
     let settled = false;
+    const onAbort = () =>
+      finish(() => reject(new TagIndexDecodeUnavailableError('tag index decode aborted')));
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener('abort', onAbort);
       fn();
       void worker.terminate();
     };
+    signal?.addEventListener('abort', onAbort, { once: true });
     worker.once('message', (reply: DecodeWorkerReply) =>
       finish(() => {
         if (!reply.ok) return reject(rebuild(reply.error));
         const { data, vocabVersion, specHash } = reply.result;
-        assembleTagIndexCooperative(data, nextTurn).then(
+        // An abort while assembling stops it at its next pause.
+        const pause = async () => {
+          await nextTurn();
+          if (signal?.aborted)
+            throw new TagIndexDecodeUnavailableError('tag index decode aborted while assembling');
+        };
+        assembleTagIndexCooperative(data, pause).then(
           (index) => resolve({ index, vocabVersion, specHash }),
           reject
         );

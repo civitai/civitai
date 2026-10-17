@@ -1,6 +1,6 @@
 import { builtinModules } from 'module';
 import { MessageChannel, receiveMessageOnPort } from 'worker_threads';
-import { Unpackr } from 'msgpackr';
+import { Packr, Unpackr } from 'msgpackr';
 import { describe, expect, it, vi } from 'vitest';
 import { isAllocationFailure } from '~/server/services/resource-intent-cooc/store';
 import { TagIndexDecodeUnavailableError } from '~/server/services/resource-intent-tags/decode-errors';
@@ -9,7 +9,9 @@ import { TAG_INDEX_DECODE_WORKER_SOURCE } from '~/server/services/resource-inten
 import {
   assembleTagIndex,
   assembleTagIndexCooperative,
+  compressTagIndex,
   decodeTagIndex,
+  decompressTagIndex,
   decodeTagIndexData,
   encodeTagIndex,
   transferablesOf,
@@ -103,6 +105,11 @@ describe('decodeTagIndexInWorker', () => {
     const workerError = await decodeTagIndexInWorker(Buffer.from(bad)).catch((e: Error) => e);
     expect(workerError).toBeInstanceOf(Error);
     expect((workerError as Error).message).toBe((mainError as Error).message);
+    // The error's code crosses the thread too (brotli's codes are how an allocation failure is told
+    // from bad bytes); this truncation has one, so the comparison is not of two undefineds.
+    const code = (e: unknown) => (e as { code?: string }).code;
+    expect(code(mainError)).toBe('Z_BUF_ERROR');
+    expect(code(workerError)).toBe(code(mainError));
     expect(workerError).not.toBeInstanceOf(TagIndexDecodeUnavailableError);
 
     const sha = createHash('sha256').update(bad).digest('hex');
@@ -145,6 +152,79 @@ describe('decodeTagIndexInWorker', () => {
     }).catch((x) => x);
     expect(throws).toBeInstanceOf(TagIndexDecodeUnavailableError);
     expect((throws as Error).message).toMatch(/boom/);
+  });
+});
+
+describe('decodeTagIndexInWorker failures through the store', () => {
+  const sqlFrozen = { query: async () => [{ status: 'frozen' }], execute: async () => 0 } as never;
+  async function load(
+    bytes: Buffer,
+    decode: (b: Uint8Array, signal?: AbortSignal) => ReturnType<typeof decodeTagIndexInWorker>
+  ) {
+    const sha = createHash('sha256').update(bytes).digest('hex');
+    const manifest = {
+      id: 'x',
+      vocabVersion: VOCAB,
+      specHash: SPEC,
+      payloadSha256: sha,
+      payloadBytes: bytes.length,
+      objectKey: `p/${sha}`,
+    } as TagIndexSnapshotManifest;
+    const objects = {
+      prefix: 'p',
+      put: async () => undefined,
+      get: async () => ({ bytes: Buffer.from(bytes), sha256: sha }),
+    };
+    return loadManifestSnapshot({ sql: sqlFrozen, objects, decode }, manifest).then(
+      () => null,
+      (e: unknown) => e
+    );
+  }
+
+  it('a payload that decompresses and unpacks but fails validation is refused in the worker, as corrupt', async () => {
+    const packr = new Packr({ useRecords: false, mapsAsObjects: true });
+    const doc = packr.unpack(await decompressTagIndex(await encoded())) as Record<string, number>;
+    doc.rowsWithEcosystem += 1;
+    const invalid = await compressTagIndex(packr.pack(doc));
+    const e = await load(invalid, (b) => decodeTagIndexInWorker(b));
+    expect(e).toBeInstanceOf(TagIndexPayloadCorruptError);
+    expect((e as Error).message).toMatch(/ecosystem observations do not sum/);
+  });
+
+  it('a worker that dies is not taken for bad bytes', async () => {
+    const e = await load(await encoded(), (b) =>
+      decodeTagIndexInWorker(b, { source: 'process.exit(1)' })
+    );
+    expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
+    expect(e).not.toBeInstanceOf(TagIndexPayloadCorruptError);
+  });
+
+  it('allocation failures keep their code: a worker out of heap, and brotli failing to allocate', async () => {
+    const oom = await load(await encoded(), async () => {
+      throw Object.assign(new Error('worker heap'), { code: 'ERR_WORKER_OUT_OF_MEMORY' });
+    });
+    expect(oom).not.toBeInstanceOf(TagIndexPayloadCorruptError);
+    expect(isAllocationFailure(oom)).toBe(true);
+    const source = `
+      const { parentPort } = require('worker_threads');
+      parentPort.once('message', () => parentPort.postMessage({
+        ok: false, error: { name: 'Error', message: 'zlib', code: 'ERR_ZLIB_INITIALIZATION_FAILED' } }));`;
+    const zlibFailure = await load(await encoded(), (b) => decodeTagIndexInWorker(b, { source }));
+    expect(zlibFailure).not.toBeInstanceOf(TagIndexPayloadCorruptError);
+    expect(isAllocationFailure(zlibFailure)).toBe(true);
+  });
+
+  it('an abort terminates the worker and rejects as unavailable', async () => {
+    const abort = new AbortController();
+    const hang = `require('worker_threads').parentPort.once('message', () => setInterval(() => {}, 1000));`;
+    const pending = decodeTagIndexInWorker(Buffer.from(await encoded()), {
+      source: hang,
+      signal: abort.signal,
+    }).catch((x: unknown) => x);
+    abort.abort();
+    const e = await pending;
+    expect(e).toBeInstanceOf(TagIndexDecodeUnavailableError);
+    expect((e as Error).message).toMatch(/aborted/);
   });
 });
 

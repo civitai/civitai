@@ -61,9 +61,10 @@ export function s3TagIndexObjects(
         })
       );
     },
-    get: async (key, expectedBytes) => {
+    get: async (key, expectedBytes, signal) => {
+      signal?.throwIfAborted();
       const res = await s3
-        .send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+        .send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: signal })
         .catch((e: unknown) => {
           // NoSuchKey only: a wrong bucket (NoSuchBucket, also a 404) is a deployment error,
           // not this snapshot's.
@@ -87,6 +88,10 @@ export function s3TagIndexObjects(
       const hash = createHash('sha256');
       let n = 0;
       for await (const chunk of body) {
+        if (signal?.aborted) {
+          body.destroy?.();
+          signal.throwIfAborted();
+        }
         if (n + chunk.length > expectedBytes) throw sizeError(`over ${expectedBytes}`);
         bytes.set(chunk, n);
         hash.update(chunk);

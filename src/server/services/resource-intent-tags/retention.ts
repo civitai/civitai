@@ -92,9 +92,11 @@ export type TagIndexRetentionResult = {
 /**
  * Retire what `selectTagIndexSnapshotsToRetire` picks, then delete each object under the store's
  * prefix that no ready row names and that is older than `TAG_INDEX_OBJECT_GRACE_MS`. The ready keys
- * are read after the listing, so a row inserted while the listing ran protects its object.
- * Concurrent puts are not expected: the build job that writes snapshots runs this after its own put,
- * under its lock.
+ * are read after the listing, so a row inserted while the listing ran protects its object. What
+ * keeps a concurrent put safe is the grace period, not the job lock (which a long build can outlast,
+ * and which is not taken outside production): a fresh upload is never old enough to delete. The one
+ * unprotected case is a put of bytes identical to an old unnamed object landing between the ready
+ * read and the delete; the weekly job is the only writer and runs this after its own put.
  */
 export async function applyTagIndexRetention(
   deps: { sql: CoocSql; objects: TagIndexObjectSweeper },

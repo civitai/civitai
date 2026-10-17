@@ -107,6 +107,27 @@ describe('runTagIndexJob', () => {
     expect([...rows.keys()]).toEqual([TAG_INDEX_HEARTBEAT_KEYS.buildSuccess]);
   });
 
+  it('a failure heartbeat that cannot be written still runs retention and rethrows the build error', async () => {
+    const { kv } = durableKv();
+    const upsert = kv.keyValue.upsert;
+    (kv.keyValue as { upsert: unknown }).upsert = vi.fn(async (a: { where: { key: string } }) => {
+      if (a.where.key === TAG_INDEX_HEARTBEAT_KEYS.buildFailure) throw new Error('kv down');
+      return upsert(a as never);
+    });
+    const retention = vi.fn(async () => ({}));
+    await expect(
+      runTagIndexJob({
+        build: async () => {
+          throw new Error('build broke');
+        },
+        retention,
+        kv,
+        now: () => NOW,
+      })
+    ).rejects.toThrow('build broke');
+    expect(retention).toHaveBeenCalledTimes(1);
+  });
+
   it('a build-success heartbeat that cannot be written fails the run, after retention', async () => {
     const { kv } = durableKv();
     const upsert = kv.keyValue.upsert;

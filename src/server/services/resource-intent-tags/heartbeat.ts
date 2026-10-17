@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 
-import type { CoocSql } from '~/server/services/resource-intent-cooc/store';
+import { isUndefinedTable, type CoocSql } from '~/server/services/resource-intent-cooc/store';
 
 /**
  * The weekly tag-index job's heartbeats, persisted in `KeyValue` as epoch milliseconds (the
@@ -62,8 +62,7 @@ export async function readNewestReadyCreatedAt(
       WHERE "status" = 'ready'
       GROUP BY "specHash"`);
   } catch (e) {
-    const x = e as { code?: string; meta?: { code?: string } } | null;
-    if (x?.code === '42P01' || x?.meta?.code === '42P01') return [];
+    if (isUndefinedTable(e)) return [];
     throw e;
   }
 }

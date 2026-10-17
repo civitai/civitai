@@ -16,6 +16,7 @@ import {
   type DecodedTagIndex,
 } from '~/server/services/resource-intent-tags/payload';
 import {
+  TagIndexDecodeUnavailableError,
   TagIndexObjectMissingError,
   type TagIndexObjectStore,
   type TagIndexSnapshotManifest,
@@ -67,8 +68,10 @@ function harness() {
   const calls = { manifest: 0, vocab: 0, get: 0, decode: 0, specHash: 0 };
   let manifestGate: Promise<void> | null = null;
   let failManifest: Error | null = null;
+  const specsQueried: unknown[] = [];
   const sql: CoocSql = {
-    query: async <T>(q: { text: string }) => {
+    // latestReadyManifest's statement, by its bound values: [specHash] or [specHash, exceptId].
+    query: async <T>(q: { text: string; values: unknown[] }) => {
       if (/FROM "ResourceIntentVocabulary"/.test(q.text)) {
         calls.vocab++;
         return [{ status: 'frozen' }] as T[];
@@ -76,8 +79,10 @@ function harness() {
       calls.manifest++;
       if (manifestGate) await manifestGate;
       if (failManifest) throw failManifest;
+      const [spec, except] = q.values;
+      specsQueried.push(spec);
       const ready = rows
-        .filter((r) => r.status === 'ready')
+        .filter((r) => r.status === 'ready' && r.specHash === spec && r.id !== except)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       return ready.slice(0, 1) as T[];
     },
@@ -95,6 +100,8 @@ function harness() {
   };
   let enabled = true;
   let decodeGate: Promise<void> | null = null;
+  let failDecode: Error | null = null;
+  const decodeSignals: (AbortSignal | undefined)[] = [];
   const loads: [string, number | null][] = [];
   const held: (string | null)[] = [];
   const failures: string[] = [];
@@ -102,9 +109,11 @@ function harness() {
     enabled: async () => enabled,
     sql: () => sql,
     objects: () => store,
-    decode: async (p: Uint8Array): Promise<DecodedTagIndex> => {
+    decode: async (p: Uint8Array, signal?: AbortSignal): Promise<DecodedTagIndex> => {
       calls.decode++;
+      decodeSignals.push(signal);
       if (decodeGate) await decodeGate;
+      if (failDecode) throw failDecode;
       return decodeTagIndex(p);
     },
     specHash: async () => {
@@ -127,6 +136,8 @@ function harness() {
     rows,
     objects,
     calls,
+    specsQueried,
+    decodeSignals,
     loads,
     held,
     failures,
@@ -136,6 +147,7 @@ function harness() {
     gateManifest: (p: Promise<void> | null) => (manifestGate = p),
     failManifestWith: (e: Error | null) => (failManifest = e),
     gateDecode: (p: Promise<void> | null) => (decodeGate = p),
+    failDecodeWith: (e: Error | null) => (failDecode = e),
   };
 }
 
@@ -234,16 +246,22 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     h.advance(1);
     let release!: () => void;
     h.gateDecode(new Promise<void>((r) => (release = r)));
-    // The check starts; while s2 decodes, s1 is still served, without waiting.
-    expect((await h.holder.resolve()).snapshot?.id).toBe('s1');
+    // The check starts; while s2 decodes, s1 is still served, without waiting (a resolve that
+    // waited would lose the race to a 50 ms timer; the first-load wait is 10 s).
+    const blocked = () => new Promise((r) => setTimeout(() => r('blocked'), 50));
+    const quick = async () => {
+      const r = await Promise.race([h.holder.resolve(), blocked()]);
+      return r === 'blocked' ? r : (r as { snapshot: { id: string } | null }).snapshot?.id;
+    };
+    expect(await quick()).toBe('s1');
     await vi.waitFor(() => expect(h.calls.decode).toBe(2));
-    expect((await h.holder.resolve()).snapshot?.id).toBe('s1');
+    expect(await quick()).toBe('s1');
     release();
     await vi.waitFor(async () => expect((await h.holder.resolve()).snapshot?.id).toBe('s2'));
     expect(h.held).toEqual(['s1', 's2']);
   });
 
-  it('a failed load keeps the held snapshot, refuses the bad one until another is newest', async () => {
+  it('a refused snapshot is not fetched again while newest, the one before it is served, and a newer one is tried', async () => {
     const h = harness();
     const { payloadA, payloadB } = await payloads();
     h.add(manifestOf('good', payloadA, T0), payloadA);
@@ -258,9 +276,75 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     // The next poll does not download it again.
     h.advance(TAG_INDEX_POLL_MS);
     await h.holder.resolve();
-    await vi.waitFor(() => expect(h.calls.manifest).toBe(3));
+    await vi.waitFor(() => expect(h.calls.manifest).toBe(4));
     expect(h.calls.get).toBe(2);
     expect((await h.holder.resolve()).snapshot?.id).toBe('good');
+    // A newer good row supersedes the refusal and loads.
+    h.add(manifestOf('newer', payloadB, new Date(T0.getTime() + 2000), 'b'.repeat(64)), payloadB);
+    h.advance(TAG_INDEX_POLL_MS);
+    await h.holder.resolve();
+    await vi.waitFor(async () => expect((await h.holder.resolve()).snapshot?.id).toBe('newer'));
+  });
+
+  it('retiring the served row rolls back even while the newest row is refused', async () => {
+    const h = harness();
+    const { payloadA, payloadB } = await payloads();
+    const older = await encodeTagIndex(smallTagIndexData('c'.repeat(64)), SPEC);
+    h.add(manifestOf('older', older, new Date(T0.getTime() - 1000), 'c'.repeat(64)), older);
+    h.add(manifestOf('served', payloadA, T0), payloadA);
+    expect((await h.holder.resolve()).snapshot?.id).toBe('served');
+    h.rows.push(manifestOf('bad', payloadB, new Date(T0.getTime() + 1000), 'b'.repeat(64)));
+    h.advance(TAG_INDEX_POLL_MS);
+    await h.holder.resolve();
+    await vi.waitFor(() => expect(h.failures).toEqual(['snapshot_unservable']));
+    h.rows.find((r) => r.id === 'served')!.status = 'retired';
+    h.advance(TAG_INDEX_POLL_MS);
+    await h.holder.resolve();
+    await vi.waitFor(async () => expect((await h.holder.resolve()).snapshot?.id).toBe('older'));
+    // Nothing ready but the refused row: nothing is held, and the reason says why.
+    h.rows.find((r) => r.id === 'older')!.status = 'retired';
+    h.advance(TAG_INDEX_POLL_MS);
+    await h.holder.resolve();
+    await vi.waitFor(async () =>
+      expect(await h.holder.resolve()).toEqual({
+        snapshot: null,
+        fallbackReason: 'snapshot_unservable',
+      })
+    );
+  });
+
+  it('a decode that fails for a reason that is not the bytes is retried, not refused', async () => {
+    const h = harness();
+    const { payloadA } = await payloads();
+    h.add(manifestOf('s1', payloadA, T0), payloadA);
+    for (const e of [
+      new TagIndexDecodeUnavailableError('tag index decode worker exited (code 1)'),
+      Object.assign(new Error('worker heap'), { code: 'ERR_WORKER_OUT_OF_MEMORY' }),
+    ]) {
+      h.failDecodeWith(e);
+      h.advance(TAG_INDEX_RETRY_MS);
+      await h.holder.resolve();
+      await vi.waitFor(() => expect(h.failures.at(-1)).toBe('load_failed'));
+    }
+    expect(h.failures).toEqual(['load_failed', 'load_failed']);
+    h.failDecodeWith(null);
+    h.advance(TAG_INDEX_RETRY_MS);
+    expect((await h.holder.resolve()).snapshot?.id).toBe('s1');
+  });
+
+  it('asks only for its own spec hash: a newer row under another spec is never served', async () => {
+    const h = harness();
+    const { payloadA, payloadB } = await payloads();
+    h.add(manifestOf('mine', payloadA, T0), payloadA);
+    h.add(
+      {
+        ...manifestOf('theirs', payloadB, new Date(T0.getTime() + 1000)),
+        specHash: 'f'.repeat(64),
+      },
+      payloadB
+    );
+    expect((await h.holder.resolve()).snapshot?.id).toBe('mine');
+    expect(h.specsQueried).toEqual([SPEC]);
   });
 
   it('a database failure is retried a minute later, not at the next poll', async () => {
@@ -278,7 +362,7 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
     expect((await h.holder.resolve()).snapshot?.id).toBe('s1');
   });
 
-  it('a check running past the load timeout is abandoned and its late result discarded', async () => {
+  it('a check running past the load timeout is aborted, its late result discarded, and no check overlaps it', async () => {
     vi.useFakeTimers();
     try {
       const h = harness();
@@ -289,12 +373,46 @@ describe('TagIndexSnapshotHolder with the flag on', () => {
       const first = h.holder.resolve();
       await vi.advanceTimersByTimeAsync(TAG_INDEX_FIRST_LOAD_WAIT_MS);
       expect(await first).toEqual({ snapshot: null, fallbackReason: 'loading' });
+      // The wait is spent: a later request gets the fallback without waiting.
+      let settled = false;
+      void h.holder.resolve().then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
       await vi.advanceTimersByTimeAsync(TAG_INDEX_LOAD_TIMEOUT_MS);
       expect(h.failures).toEqual(['load_failed']);
+      // Past the retry, the abandoned check's work is still running: no second check starts.
+      h.advance(TAG_INDEX_RETRY_MS);
+      await h.holder.resolve();
+      expect(h.calls.manifest).toBe(1);
       h.gateManifest(null);
       release();
       await vi.advanceTimersByTimeAsync(0);
+      // Its late result is discarded before any download: the abort and the generation stop it.
+      expect(h.calls.vocab).toBe(0);
+      expect(h.calls.get).toBe(0);
       expect(h.held).toEqual([]);
+      // Once it has stopped, the next request starts a check that loads.
+      await h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.calls.manifest).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a check abandoned at the timeout aborts the decode it started', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const { payloadA } = await payloads();
+      h.add(manifestOf('s1', payloadA, T0), payloadA);
+      h.gateDecode(new Promise<void>(() => undefined));
+      void h.holder.resolve();
+      await vi.advanceTimersByTimeAsync(TAG_INDEX_LOAD_TIMEOUT_MS);
+      expect(h.decodeSignals).toHaveLength(1);
+      expect(h.decodeSignals[0]?.aborted).toBe(true);
+      // Timed (the harness clock does not move under fake timers, so only its presence is checked).
+      expect(h.loads).toEqual([['load_failed', expect.any(Number)]]);
     } finally {
       vi.useRealTimers();
     }

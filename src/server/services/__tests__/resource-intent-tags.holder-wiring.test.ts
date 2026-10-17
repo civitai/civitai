@@ -11,20 +11,17 @@ import type * as FliptClient from '~/server/flipt/client';
 
 const spies = vi.hoisted(() => ({
   isFlipt: vi.fn(),
-  queryRaw: vi.fn(async () => [] as unknown[]),
-  executeRaw: vi.fn(async () => 0),
   s3Objects: vi.fn(),
   specImported: vi.fn(),
   decodeWorkerImported: vi.fn(),
+  decodeInWorker: vi.fn(async () => {
+    throw new Error('not decoded in this test');
+  }),
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: spies.isFlipt,
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: spies.queryRaw, $executeRaw: spies.executeRaw },
-  dbWrite: { $queryRaw: spies.queryRaw, $executeRaw: spies.executeRaw },
 }));
 vi.mock('~/server/services/resource-intent-tags/objects', () => ({
   s3TagIndexObjects: spies.s3Objects,
@@ -35,15 +32,21 @@ vi.mock('~/server/services/resource-intent-tags/spec', () => {
 });
 vi.mock('~/server/services/resource-intent-tags/decode-worker', () => {
   spies.decodeWorkerImported();
-  return { decodeTagIndexInWorker: vi.fn() };
+  return { decodeTagIndexInWorker: spies.decodeInWorker };
 });
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+
+// The canonical db mock (installed by the test setup): the holder reads through dbRead.
+const queryRaw = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
 
 describe('tagIndexSnapshotHolder() wiring', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    queryRaw.mockReset();
+    queryRaw.mockImplementation(async () => []);
   });
 
   it('with the flag off, reads the flag and nothing else, every time', async () => {
@@ -58,7 +61,7 @@ describe('tagIndexSnapshotHolder() wiring', () => {
     expect(spies.isFlipt).toHaveBeenCalledWith(
       FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_TAG_INDEX_HOLDER
     );
-    expect(spies.queryRaw).not.toHaveBeenCalled();
+    expect(queryRaw).not.toHaveBeenCalled();
     expect(spies.s3Objects).not.toHaveBeenCalled();
     expect(spies.specImported).not.toHaveBeenCalled();
     expect(spies.decodeWorkerImported).not.toHaveBeenCalled();
@@ -74,10 +77,41 @@ describe('tagIndexSnapshotHolder() wiring', () => {
       fallbackReason: 'no_snapshot',
     });
     expect(spies.specImported).toHaveBeenCalled();
-    expect(spies.queryRaw).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('its flag is the default-off key the doc names', () => {
+  it('with the flag on and a ready row, the wiring downloads and decodes on the worker (positive control)', async () => {
+    spies.isFlipt.mockResolvedValue(true);
+    const sha = 'c'.repeat(64);
+    queryRaw.mockImplementation(async (q: unknown) =>
+      /ResourceIntentVocabulary/.test((q as { text: string }).text)
+        ? [{ status: 'frozen' }]
+        : [
+            {
+              id: 'r1',
+              status: 'ready',
+              vocabVersion: 'a'.repeat(64),
+              specHash: 'd'.repeat(64),
+              payloadSha256: sha,
+              payloadBytes: 3,
+              objectKey: `p/${sha}`,
+              createdAt: new Date(),
+            },
+          ]
+    );
+    spies.s3Objects.mockReturnValue({
+      prefix: 'p',
+      get: async () => ({ bytes: Buffer.from('abc'), sha256: sha }),
+    });
+    const { tagIndexSnapshotHolder } = await import(
+      '~/server/services/resource-intent-tags/holder'
+    );
+    await tagIndexSnapshotHolder().resolve();
+    expect(spies.decodeWorkerImported).toHaveBeenCalled();
+    expect(spies.decodeInWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it('its flag key is the one the doc names (default-off is Flipt state)', () => {
     expect(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_TAG_INDEX_HOLDER).toBe(
       'resource-intent-tag-index-holder'
     );

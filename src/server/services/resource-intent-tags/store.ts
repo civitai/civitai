@@ -14,12 +14,16 @@ import type { TagIndex } from './score';
 
 /**
  * Object storage as the store needs it. `get` returns the bytes and their sha256; it may refuse early
- * when the object is not `expectedBytes` long.
+ * when the object is not `expectedBytes` long, and stops (rejecting) once `signal` aborts.
  */
 export type TagIndexObjectStore = {
   prefix: string;
   put: (key: string, bytes: Buffer) => Promise<void>;
-  get: (key: string, expectedBytes: number) => Promise<{ bytes: Buffer; sha256: string }>;
+  get: (
+    key: string,
+    expectedBytes: number,
+    signal?: AbortSignal
+  ) => Promise<{ bytes: Buffer; sha256: string }>;
 };
 
 /** One stored object as a listing reports it. */
@@ -34,13 +38,15 @@ export type TagIndexObjectSweeper = TagIndexObjectStore & {
 };
 
 /**
- * `decode`: how a loaded payload is decoded; `decodeTagIndex` (on the calling thread) unless given.
- * The serving holder passes the worker-thread decoder.
+ * `decode`: how `loadManifestSnapshot` decodes a loaded payload; `decodeTagIndex` (on the calling
+ * thread) unless given. The serving holder passes the worker-thread decoder, which takes the
+ * payload's buffer. `putSnapshot` ignores it and always decodes on the calling thread, since it still
+ * needs the bytes afterwards.
  */
 export type TagIndexStoreDeps = {
   sql: CoocSql;
   objects: TagIndexObjectStore;
-  decode?: (payload: Uint8Array) => Promise<DecodedTagIndex>;
+  decode?: (payload: Uint8Array, signal?: AbortSignal) => Promise<DecodedTagIndex>;
 };
 
 export type TagIndexSnapshotManifest = {
@@ -114,10 +120,11 @@ async function vocabularyStatus(sql: CoocSql, vocabVersion: string): Promise<str
 async function decodeOrCorrupt(
   payload: Uint8Array,
   what: string,
-  decode: (payload: Uint8Array) => Promise<DecodedTagIndex> = decodeTagIndex
+  decode: (payload: Uint8Array, signal?: AbortSignal) => Promise<DecodedTagIndex> = decodeTagIndex,
+  signal?: AbortSignal
 ): Promise<DecodedTagIndex> {
   try {
-    return await decode(payload);
+    return await decode(payload, signal);
   } catch (e) {
     // Out of memory, or no decoder, not bad bytes: a later attempt can pass.
     if (isAllocationFailure(e) || e instanceof TagIndexDecodeUnavailableError) throw e;
@@ -200,14 +207,16 @@ export async function putSnapshot(
   return { manifest: existing, created: false };
 }
 
-/** The newest ready manifest built under `specHash`. */
+/** The newest ready manifest built under `specHash`, other than `exceptId` when given. */
 export async function latestReadyManifest(
   sql: CoocSql,
-  specHash: string
+  specHash: string,
+  exceptId?: string
 ): Promise<TagIndexSnapshotManifest | null> {
+  const except = exceptId === undefined ? Prisma.empty : Prisma.sql`AND "id" <> ${exceptId}`;
   const [row] = await sql.query<TagIndexSnapshotManifest>(Prisma.sql`
     SELECT ${COLUMNS} FROM ${T}
-    WHERE "specHash" = ${specHash} AND "status" = 'ready'
+    WHERE "specHash" = ${specHash} AND "status" = 'ready' ${except}
     ORDER BY "createdAt" DESC, "id" DESC
     LIMIT 1`);
   return row ?? null;
@@ -218,25 +227,32 @@ export async function latestReadyManifest(
  * that is a candidate; an object that is gone; bytes of another length or sha256 than the manifest's
  * (checked before decoding); bytes that do not decode; a header whose specHash or vocabVersion is not
  * the manifest's. Any other download failure, or running out of memory while decoding, is rethrown
- * as it is, and so is a decoder that was unavailable (`TagIndexDecodeUnavailableError`).
+ * as it is, and so is a decoder that was unavailable (`TagIndexDecodeUnavailableError`). `signal`
+ * stops the download and the decode; the rejection then is not a refusal of the snapshot.
  */
 export async function loadManifestSnapshot(
   deps: TagIndexStoreDeps,
-  manifest: TagIndexSnapshotManifest
+  manifest: TagIndexSnapshotManifest,
+  signal?: AbortSignal
 ): Promise<{ manifest: TagIndexSnapshotManifest; index: TagIndex }> {
   const what = `tag index snapshot ${manifest.id}`;
   if ((await vocabularyStatus(deps.sql, manifest.vocabVersion)) === 'candidate')
     throw new TagIndexVocabularyNotFrozenError(
       `${what}: vocabulary ${manifest.vocabVersion} is a candidate`
     );
-  const { bytes, sha256 } = await deps.objects.get(manifest.objectKey, manifest.payloadBytes);
+  const { bytes, sha256 } = await deps.objects.get(
+    manifest.objectKey,
+    manifest.payloadBytes,
+    signal
+  );
   if (bytes.length !== manifest.payloadBytes)
     throw new TagIndexPayloadSizeError(
       `${what}: ${bytes.length} bytes, manifest says ${manifest.payloadBytes}`
     );
   if (sha256 !== manifest.payloadSha256)
     throw new TagIndexPayloadHashError(`${what}: sha256 does not match the manifest`);
-  const decoded = await decodeOrCorrupt(bytes, what, deps.decode);
+  signal?.throwIfAborted();
+  const decoded = await decodeOrCorrupt(bytes, what, deps.decode, signal);
   assertHeader(decoded, manifest, what);
   return { manifest, index: decoded.index };
 }

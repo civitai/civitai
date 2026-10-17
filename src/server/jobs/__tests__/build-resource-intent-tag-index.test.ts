@@ -4,13 +4,16 @@ import type * as Job from '~/server/jobs/job';
 import type * as Pipeline from '~/server/services/resource-intent-tags/pipeline';
 import type * as Retention from '~/server/services/resource-intent-tags/retention';
 
-const { mockIsFlipt, mockBuild, mockRetention, mockObjects, kvWrites } = vi.hoisted(() => ({
-  mockIsFlipt: vi.fn(),
-  mockBuild: vi.fn(),
-  mockRetention: vi.fn(),
-  mockObjects: vi.fn(() => ({ prefix: 'resource-intent/tag-index' })),
-  kvWrites: [] as { key: string; value: unknown }[],
-}));
+const { mockIsFlipt, mockBuild, mockRetention, mockObjects, kvWrites, sqlCalls } = vi.hoisted(
+  () => ({
+    mockIsFlipt: vi.fn(),
+    mockBuild: vi.fn(),
+    mockRetention: vi.fn(),
+    mockObjects: vi.fn(() => ({ prefix: 'resource-intent/tag-index' })),
+    kvWrites: [] as { key: string; value: unknown; db: string }[],
+    sqlCalls: [] as string[],
+  })
+);
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
@@ -27,19 +30,6 @@ vi.mock('~/server/services/resource-intent-tags/retention', async (importOrigina
 vi.mock('~/server/services/resource-intent-tags/objects', () => ({
   s3TagIndexObjects: mockObjects,
 }));
-vi.mock('~/server/db/client', () => {
-  const db = {
-    keyValue: {
-      upsert: async (a: { where: { key: string }; create: { value: unknown } }) => {
-        kvWrites.push({ key: a.where.key, value: a.create.value });
-        return {};
-      },
-    },
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
-  };
-  return { dbWrite: db, dbRead: db };
-});
 vi.mock('~/server/jobs/job', async (importOriginal) => ({
   ...(await importOriginal<typeof Job>()),
   createJob: (
@@ -50,6 +40,7 @@ vi.mock('~/server/jobs/job', async (importOriginal) => ({
   ) => ({ name, cron, options, run: () => fn(undefined) }),
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
@@ -64,6 +55,26 @@ describe('build-resource-intent-tag-index job', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     kvWrites.length = 0;
+    sqlCalls.length = 0;
+    // The canonical db mock (installed by the test setup), its two clients told apart.
+    for (const name of ['dbRead', 'dbWrite'] as const) {
+      const client = dbMock[name] as unknown as Record<
+        string,
+        Record<string, ReturnType<typeof vi.fn>>
+      > & {
+        $queryRaw: ReturnType<typeof vi.fn>;
+      };
+      client.keyValue.upsert.mockImplementation(
+        async (a: { where: { key: string }; create: { value: unknown } }) => {
+          kvWrites.push({ key: a.where.key, value: a.create.value, db: name });
+          return {};
+        }
+      );
+      client.$queryRaw.mockImplementation(async () => {
+        sqlCalls.push(name);
+        return [];
+      });
+    }
     mockRetention.mockResolvedValue({ retired: [] });
     mockBuild.mockResolvedValue({
       summary: { vocabVersion: 'v', created: true },
@@ -95,9 +106,12 @@ describe('build-resource-intent-tag-index job', () => {
     ];
     expect(deps.objects).toBe(mockObjects.mock.results[0].value);
     expect(opts.specHash).toBe(RESOURCE_INTENT_TAGS_SPEC_HASH);
-    expect(kvWrites.map((w) => w.key)).toEqual([
-      TAG_INDEX_HEARTBEAT_KEYS.buildSuccess,
-      TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess,
+    // Retention's statements and the heartbeats go through the primary, not the replica.
+    await (deps as unknown as { sql: { query: (q: unknown) => Promise<unknown> } }).sql.query({});
+    expect(sqlCalls).toEqual(['dbWrite']);
+    expect(kvWrites.map((w) => [w.key, w.db])).toEqual([
+      [TAG_INDEX_HEARTBEAT_KEYS.buildSuccess, 'dbWrite'],
+      [TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess, 'dbWrite'],
     ]);
   });
 

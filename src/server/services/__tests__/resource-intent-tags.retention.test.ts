@@ -150,8 +150,8 @@ async function freshStore(seeds: Seed[], objects: { label: string; ageMs: number
     list: async function* () {
       for (const o of store.values()) yield o;
     },
+    // Records every call, refusing nothing, so retention's own key check is what the tests see.
     delete: async (key) => {
-      if (!isTagIndexObjectKey(PREFIX, key)) throw new Error(`refusing ${key}`);
       deleted.push(key);
       store.delete(key);
     },
@@ -188,6 +188,8 @@ describe('applyTagIndexRetention', () => {
         })),
         { label: 'orphan-old', ageMs: OLD },
         { label: 'orphan-new', ageMs: TAG_INDEX_OBJECT_GRACE_MS - 60_000 },
+        // An upload two hours old, past the build job's 90-minute lock: still inside the grace.
+        { label: 'orphan-2h', ageMs: 2 * 3_600_000 },
         { label: `${PREFIX}/README`, ageMs: OLD },
       ]
     );
@@ -209,7 +211,7 @@ describe('applyTagIndexRetention', () => {
       [keyOf('gone'), keyOf('orphan-old'), keyOf('w3'), keyOf('w4')].sort()
     );
     expect(result.deleted).toEqual({ retired: 3, orphaned: 1, bytes: 40 });
-    expect(result.keptRecent).toBe(1);
+    expect(result.keptRecent).toBe(2);
     expect(result.foreign).toBe(1);
     expect([...s.store.keys()].sort()).toEqual(
       [
@@ -218,6 +220,7 @@ describe('applyTagIndexRetention', () => {
         keyOf('w2'),
         keyOf('old-spec'),
         keyOf('orphan-new'),
+        keyOf('orphan-2h'),
         `${PREFIX}/README`,
       ].sort()
     );

@@ -70,7 +70,7 @@ const loadDuration = registerInstrumentationMetric(
   () =>
     new client.Histogram({
       name: TAG_INDEX_METRICS.loadDuration,
-      help: 'Wall time of a tag-index snapshot load on this pod (download, verify, decode on a worker thread, assemble), by outcome. Checks that load nothing are not observed.',
+      help: 'Wall time of a tag-index snapshot load on this pod (download, verify, decode on a worker thread, assemble), by outcome. A check that loads nothing (the held snapshot is still newest, or the manifest read failed) is not observed; a check abandoned at the 2-minute timeout is observed as load_failed at the time it was abandoned.',
       labelNames: ['outcome'],
       buckets: [0.5, 1, 2, 5, 10, 20, 30, 60, 120],
       registers: [instrumentationRegistry],

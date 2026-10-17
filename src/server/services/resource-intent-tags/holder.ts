@@ -34,9 +34,16 @@ import {
  * A load streams the object (verifying its size and sha256 against the manifest), then decodes and
  * validates it on a worker thread (`decodeTagIndexInWorker`), so the event loop is not held for the
  * decode. The held index is replaced only once the new one has fully loaded and validated; a failed
- * load keeps it. Retiring the served row makes the next check serve the previous ready row, and
- * retiring every row makes it hold nothing (`no_snapshot`). Lazy, like the co-occurrence holder
- * (serving design D10): a pod loads on its first request, not at start.
+ * load keeps it. A snapshot refused as unservable is not downloaded again while it stays newest; the
+ * newest ready row after it is served instead. Retiring the served row makes the next check serve
+ * the previous ready row, and retiring every row makes it hold nothing (`no_snapshot`). A check
+ * still running at `TAG_INDEX_LOAD_TIMEOUT_MS` is aborted (download and decode worker), and no new
+ * check starts until its work has stopped, so loads never overlap. Lazy, like the co-occurrence
+ * holder (serving design D10): a pod loads on its first request, not at start.
+ *
+ * Only pods whose code has this spec hash can serve a snapshot built under it, and the query asks
+ * for no other: after a release that moves `RESOURCE_INTENT_TAGS_SPEC_HASH`, pods answer
+ * `no_snapshot` until a build under the new hash lands (run one by hand rather than wait a week).
  */
 
 export const TAG_INDEX_POLL_MS = 5 * 60_000;
@@ -70,15 +77,20 @@ export type TagIndexHolderDeps = {
   enabled: () => Promise<boolean>;
   sql: () => CoocSql;
   objects: () => TagIndexObjectStore;
-  decode: (payload: Uint8Array) => Promise<DecodedTagIndex>;
+  decode: (payload: Uint8Array, signal?: AbortSignal) => Promise<DecodedTagIndex>;
   /** The spec hash this code builds and serves under (`RESOURCE_INTENT_TAGS_SPEC_HASH`). */
   specHash: () => Promise<string>;
   now?: () => number;
   /** In [0, 1); scales the poll jitter. */
   random?: () => number;
-  onLoad?: (outcome: TagIndexLoadOutcome, seconds: number | null) => void;
+  /** A check's outcome; `seconds` is the load's wall time when a download had started. */
+  onLoad?: (
+    outcome: TagIndexLoadOutcome,
+    seconds: number | null,
+    snapshotId: string | null
+  ) => void;
   onHeld?: (held: HeldTagIndex | null) => void;
-  onLoadFailure?: (reason: TagIndexFallbackReason, error: unknown) => void;
+  onLoadFailure?: (reason: TagIndexFallbackReason, error: unknown, seconds: number | null) => void;
 };
 
 const TIMED_OUT = Symbol('timed-out');
@@ -108,6 +120,11 @@ export class TagIndexSnapshotHolder {
   private rejected: string | null = null;
   private nextCheckAt = -Infinity;
   private flight: Flight | null = null;
+  /**
+   * The last check's work, until it settles. A check abandoned at the timeout is aborted, but no new
+   * check starts until its work has stopped, so two loads never overlap.
+   */
+  private running: Promise<void> | null = null;
   private generation = 0;
 
   constructor(private readonly deps: TagIndexHolderDeps) {}
@@ -126,7 +143,9 @@ export class TagIndexSnapshotHolder {
       this.disable();
       return { snapshot: null, fallbackReason: 'disabled' };
     }
-    if (!this.flight && this.now() >= this.nextCheckAt) this.flight = this.startCheck();
+    // `running` outlives `flight` (a timed-out check's work is still stopping), so it alone keeps
+    // checks single-flight and non-overlapping.
+    if (!this.running && this.now() >= this.nextCheckAt) this.flight = this.startCheck();
     const flight = this.flight;
     if (!this.served && flight) {
       if (!flight.waitSpent) {
@@ -142,7 +161,7 @@ export class TagIndexSnapshotHolder {
       : { snapshot: null, fallbackReason: this.reason };
   }
 
-  /** Forget everything; a check in flight finishes, and its result is discarded. */
+  /** Forget everything; a check in flight is aborted, and any result it reaches is discarded. */
   private disable() {
     if (this.served) this.deps.onHeld?.(null);
     this.served = null;
@@ -150,20 +169,36 @@ export class TagIndexSnapshotHolder {
     this.rejected = null;
     this.nextCheckAt = -Infinity;
     this.generation++;
+    this.abort?.abort();
   }
+
+  private abort: AbortController | null = null;
 
   private startCheck(): Flight {
     const gen = ++this.generation;
     const startedAt = this.now();
+    const abort = new AbortController();
+    this.abort = abort;
+    const work = this.refresh(gen, startedAt, abort.signal);
+    const running = work.finally(() => {
+      if (this.running === running) this.running = null;
+    });
+    this.running = running;
     const done = withTimeoutFallback<void | typeof TIMED_OUT>(
-      this.refresh(gen, startedAt),
+      work,
       TAG_INDEX_LOAD_TIMEOUT_MS,
       TIMED_OUT
     )
       .then((result) => {
         if (result !== TIMED_OUT || gen !== this.generation) return;
         this.generation++;
-        this.fail(new Error('tag index snapshot check timed out'), this.now(), null);
+        abort.abort();
+        this.fail(
+          new Error('tag index snapshot check timed out'),
+          this.now(),
+          null,
+          (this.now() - startedAt) / 1000
+        );
       })
       .finally(() => {
         if (this.flight?.done === done) this.flight = null;
@@ -177,7 +212,7 @@ export class TagIndexSnapshotHolder {
    * the poll kept. Anything else (database, network, a decode worker that did not answer, running out
    * of memory, a timeout) is retried `TAG_INDEX_RETRY_MS` later.
    */
-  private fail(error: unknown, at: number, snapshot: string | null, loadSeconds?: number) {
+  private fail(error: unknown, at: number, snapshot: string | null, loadSeconds: number | null) {
     const unservable = snapshot !== null && error instanceof TagIndexSnapshotUnservableError;
     const reason: 'snapshot_unservable' | 'load_failed' = unservable
       ? 'snapshot_unservable'
@@ -185,8 +220,8 @@ export class TagIndexSnapshotHolder {
     if (unservable) this.rejected = snapshot;
     this.nextCheckAt = unservable ? this.pollAfter(at) : at + TAG_INDEX_RETRY_MS;
     if (!this.served) this.reason = reason;
-    this.deps.onLoad?.(reason, loadSeconds ?? null);
-    this.deps.onLoadFailure?.(reason, error);
+    this.deps.onLoad?.(reason, loadSeconds, snapshot);
+    this.deps.onLoadFailure?.(reason, error, loadSeconds);
   }
 
   private pollAfter(startedAt: number) {
@@ -195,18 +230,32 @@ export class TagIndexSnapshotHolder {
     );
   }
 
-  private async refresh(gen: number, startedAt: number): Promise<void> {
+  /**
+   * The newest ready row, unless it is the one refused as unservable: then the newest ready row
+   * after it, so retiring the served row still rolls back while the newest stays refused.
+   */
+  private async servable(sql: CoocSql, specHash: string) {
+    const newest = await latestReadyManifest(sql, specHash);
+    if (!newest || newest.id !== this.rejected) {
+      // A different newest row (or none) supersedes the refusal.
+      this.rejected = null;
+      return newest;
+    }
+    return latestReadyManifest(sql, specHash, newest.id);
+  }
+
+  private async refresh(gen: number, startedAt: number, signal: AbortSignal): Promise<void> {
     let loading: string | null = null;
     let loadStart = 0;
     try {
       const sql = this.deps.sql();
-      const latest = await latestReadyManifest(sql, await this.deps.specHash());
+      const latest = await this.servable(sql, await this.deps.specHash());
       if (gen !== this.generation) return;
       if (!latest) {
         if (this.served) this.deps.onHeld?.(null);
         this.served = null;
-        this.reason = 'no_snapshot';
-      } else if (latest.id !== this.served?.id && latest.id !== this.rejected) {
+        this.reason = this.rejected ? 'snapshot_unservable' : 'no_snapshot';
+      } else if (latest.id !== this.served?.id) {
         if (this.served && latest.payloadSha256 === this.served.payloadSha256) {
           // Another row naming the same bytes (a re-put after a retire): nothing to download.
           this.served = { ...this.served, id: latest.id, createdAt: latest.createdAt };
@@ -216,7 +265,8 @@ export class TagIndexSnapshotHolder {
           loadStart = this.now();
           const { index } = await loadManifestSnapshot(
             { sql, objects: this.deps.objects(), decode: this.deps.decode },
-            latest
+            latest,
+            signal
           );
           if (gen !== this.generation) return;
           this.served = {
@@ -227,8 +277,7 @@ export class TagIndexSnapshotHolder {
             createdAt: latest.createdAt,
             index,
           };
-          this.rejected = null;
-          this.deps.onLoad?.('success', (this.now() - loadStart) / 1000);
+          this.deps.onLoad?.('success', (this.now() - loadStart) / 1000, latest.id);
           this.deps.onHeld?.(identity(this.served));
         }
       }
@@ -239,7 +288,7 @@ export class TagIndexSnapshotHolder {
           error,
           this.now(),
           loading,
-          loading === null ? undefined : (this.now() - loadStart) / 1000
+          loading === null ? null : (this.now() - loadStart) / 1000
         );
     }
   }
@@ -258,15 +307,26 @@ export function tagIndexSnapshotHolder(): TagIndexSnapshotHolder {
     enabled: () => isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_TAG_INDEX_HOLDER),
     sql: () => coocSqlOf(dbRead),
     objects: () => s3TagIndexObjects(),
-    decode: async (payload) => (await import('./decode-worker')).decodeTagIndexInWorker(payload),
+    decode: async (payload, signal) =>
+      (await import('./decode-worker')).decodeTagIndexInWorker(payload, { signal }),
     specHash: async () => (await import('./spec')).RESOURCE_INTENT_TAGS_SPEC_HASH,
-    onLoad: recordTagIndexLoad,
+    onLoad: (outcome, seconds, snapshotId) => {
+      recordTagIndexLoad(outcome, seconds);
+      // The design asked for the load time on a log line as well as in the histogram: on-pod load
+      // time had never been measured for the co-occurrence snapshot.
+      if (outcome === 'success')
+        logToAxiom(
+          { type: 'resource-intent-tag-index-loaded', snapshotId, seconds },
+          'temp-search'
+        ).catch(() => undefined);
+    },
     onHeld: setHeldTagIndex,
-    onLoadFailure: (reason, error) => {
+    onLoadFailure: (reason, error, seconds) => {
       logToAxiom(
         {
           type: 'resource-intent-tag-index-load-failed',
           reason,
+          seconds,
           error: error instanceof Error ? error.message : String(error),
         },
         'temp-search'
