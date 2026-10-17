@@ -6,16 +6,19 @@
 -- the bottom. Pipelines submit predictions through an authenticated site endpoint, never a DB login.
 --
 -- Site-write paths catch their own errors into record_failure (the count to watch), so a bad label never
--- fails the vote, flag or appeal that produced it; a statement timeout still cancels both.
--- submit_prediction raises.
+-- fails the vote, flag or appeal that produced it; they wait at most 2s for a lock, and a statement
+-- timeout still cancels both. submit_prediction raises.
 --
 -- Apply after 20261023140000 (scan label copy sweep) and 20261020120000 (appeal decision record). Then
--- run SELECT * FROM label_store.backfill() once; it is idempotent.
+-- run CALL label_store.backfill_batches() once, outside a transaction: it commits per batch, so live
+-- writes are never held behind it. It is idempotent; so is backfill(), the one-transaction form for
+-- small tables.
 --
--- 🔴 CREATE OR REPLACE TRIGGER takes SHARE ROW EXCLUSIVE (blocks writes) on each source table. The file
--- sets lock_timeout = 5s; re-run on a timeout.
+-- 🔴 CREATE OR REPLACE TRIGGER takes SHARE ROW EXCLUSIVE (blocks writes) on each source table. Each one
+-- runs in its own transaction with lock_timeout = 5s; re-run the file on a timeout.
 
 CREATE SCHEMA IF NOT EXISTS label_store;
+ALTER DEFAULT PRIVILEGES IN SCHEMA label_store REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 
 -- Key for the person hashes below. Generated per database; never leaves it.
 CREATE TABLE IF NOT EXISTS label_store.secret (
@@ -25,7 +28,6 @@ CREATE TABLE IF NOT EXISTS label_store.secret (
 INSERT INTO label_store.secret ("key")
 VALUES (replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
 ON CONFLICT DO NOTHING;
-REVOKE ALL ON label_store.secret FROM PUBLIC;
 
 CREATE TABLE IF NOT EXISTS label_store.subject (
   "id"             BIGSERIAL PRIMARY KEY,
@@ -118,12 +120,28 @@ CREATE INDEX IF NOT EXISTS consensus_trainable_idx
 -- No FK: a deletion must stay in the feed after its subject is gone.
 CREATE TABLE IF NOT EXISTS label_store.change (
   "id"              BIGSERIAL PRIMARY KEY,
-  "kind"            TEXT NOT NULL CHECK ("kind" IN ('label', 'prediction', 'consensus', 'exclusion', 'deletion')),
+  "kind"            TEXT NOT NULL
+    CHECK ("kind" IN ('label', 'prediction', 'consensus', 'subject', 'exclusion', 'deletion')),
   "subjectId"       BIGINT NOT NULL,
   "question"        TEXT,
   "questionVersion" INTEGER,
   "refId"           BIGINT,   -- the label or prediction id
-  "at"              TIMESTAMPTZ(3) NOT NULL DEFAULT now()
+  "at"              TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
+  -- The writing transaction: ids are assigned before commit, so only (txid, id) orders by commit.
+  "txid"            BIGINT NOT NULL DEFAULT (pg_current_xact_id()::text::bigint)
+);
+CREATE INDEX IF NOT EXISTS change_txid_idx ON label_store.change ("txid", "id");
+
+-- Erased subjects and owners, so a backfill or a late label cannot bring them back.
+CREATE TABLE IF NOT EXISTS label_store.erased_subject (
+  "subjectType" TEXT NOT NULL,
+  "subjectId"   TEXT NOT NULL,
+  "erasedAt"    TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
+  PRIMARY KEY ("subjectType", "subjectId")
+);
+CREATE TABLE IF NOT EXISTS label_store.erased_owner (
+  "ownerHash" TEXT PRIMARY KEY,
+  "erasedAt"  TIMESTAMPTZ(3) NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS label_store.record_failure (
@@ -168,7 +186,8 @@ END;
 $$;
 
 -- An image subject with no owner gets one from public."Image" while the image exists, so
--- pipeline-submitted subjects stay erasable.
+-- pipeline-submitted subjects stay erasable. Raises for an erased subject or owner. Writes the row only
+-- to fill a field it lacks, so a repeat judgement takes no row lock.
 CREATE OR REPLACE FUNCTION label_store.upsert_subject(
   p_subject_type  TEXT,
   p_subject_id    TEXT,
@@ -180,29 +199,58 @@ CREATE OR REPLACE FUNCTION label_store.upsert_subject(
 RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = label_store, public, pg_temp
+SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 DECLARE
-  v_owner   INTEGER := p_owner_user_id;
-  v_subject BIGINT;
+  v_owner      INTEGER := p_owner_user_id;
+  v_owner_hash TEXT;
+  v_subject    BIGINT;
 BEGIN
+  IF EXISTS (
+    SELECT 1 FROM label_store.erased_subject e
+    WHERE e."subjectType" = p_subject_type AND e."subjectId" = p_subject_id
+  ) THEN
+    RAISE EXCEPTION 'subject % % was erased', p_subject_type, p_subject_id;
+  END IF;
+
   IF v_owner IS NULL AND p_subject_type = 'image' AND p_subject_id ~ '^[0-9]{1,9}$' THEN
     SELECT m."userId" INTO v_owner FROM public."Image" m WHERE m."id" = p_subject_id::integer;
   END IF;
+  IF v_owner IS NOT NULL THEN
+    v_owner_hash := label_store.person_hash('owner', v_owner);
+    IF EXISTS (SELECT 1 FROM label_store.erased_owner e WHERE e."ownerHash" = v_owner_hash) THEN
+      RAISE EXCEPTION 'the owner of subject % % was erased', p_subject_type, p_subject_id;
+    END IF;
+  END IF;
 
-  INSERT INTO label_store.subject AS s (
-    "subjectType", "subjectId", "contentHash", "pHash", "snapshot", "ownerHash"
-  )
-  VALUES (
-    p_subject_type, p_subject_id, p_content_hash, p_phash, p_snapshot,
-    CASE WHEN v_owner IS NULL THEN NULL ELSE label_store.person_hash('owner', v_owner) END
-  )
-  ON CONFLICT ("subjectType", "subjectId", "contentHash") DO UPDATE SET
-    "pHash" = COALESCE(s."pHash", EXCLUDED."pHash"),
+  INSERT INTO label_store.subject ("subjectType", "subjectId", "contentHash", "pHash", "snapshot", "ownerHash")
+  VALUES (p_subject_type, p_subject_id, p_content_hash, p_phash, p_snapshot, v_owner_hash)
+  ON CONFLICT ("subjectType", "subjectId", "contentHash") DO NOTHING
+  RETURNING "id" INTO v_subject;
+  IF v_subject IS NOT NULL THEN
+    RETURN v_subject;
+  END IF;
+
+  UPDATE label_store.subject s SET
+    "pHash" = COALESCE(s."pHash", p_phash),
     -- An excluded subject keeps no content, whatever a later judgement brings.
-    "snapshot" = CASE WHEN s."excludedAt" IS NULL THEN COALESCE(s."snapshot", EXCLUDED."snapshot") END,
-    "ownerHash" = COALESCE(s."ownerHash", EXCLUDED."ownerHash")
+    "snapshot" = CASE WHEN s."excludedAt" IS NULL THEN COALESCE(s."snapshot", p_snapshot) END,
+    "ownerHash" = COALESCE(s."ownerHash", v_owner_hash)
+  WHERE s."subjectType" = p_subject_type AND s."subjectId" = p_subject_id
+    AND s."contentHash" = p_content_hash
+    AND ((s."pHash" IS NULL AND p_phash IS NOT NULL)
+      OR (s."snapshot" IS NULL AND s."excludedAt" IS NULL AND p_snapshot IS NOT NULL)
+      OR (s."ownerHash" IS NULL AND v_owner_hash IS NOT NULL))
   RETURNING s."id" INTO v_subject;
+  IF v_subject IS NOT NULL THEN
+    INSERT INTO label_store.change ("kind", "subjectId") VALUES ('subject', v_subject);
+    RETURN v_subject;
+  END IF;
+
+  SELECT s."id" INTO v_subject FROM label_store.subject s
+  WHERE s."subjectType" = p_subject_type AND s."subjectId" = p_subject_id
+    AND s."contentHash" = p_content_hash;
   RETURN v_subject;
 END;
 $$;
@@ -389,6 +437,7 @@ RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 DECLARE
   v_ref TEXT;
@@ -436,6 +485,7 @@ RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 BEGIN
   RETURN label_store.put_prediction(
@@ -484,8 +534,52 @@ BEGIN
 END;
 $$;
 
--- 'erasure' deletes the subjects and everything under them; any other reason keeps the judgements (so
--- counts stay honest) and drops snapshot and bytes.
+-- The endpoint's batch: a JSON array of submit_prediction arguments in camelCase. Each item stands
+-- alone, so one refused item (an erased subject) does not refuse the rest. status: 'recorded',
+-- 'duplicate' (sourceRef already recorded) or 'rejected' with the reason.
+CREATE OR REPLACE FUNCTION label_store.submit_predictions(p_items JSONB)
+RETURNS TABLE ("ord" INTEGER, "id" BIGINT, "status" TEXT, "error" TEXT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+DECLARE
+  e JSONB;
+  n INTEGER;
+BEGIN
+  FOR e, n IN SELECT t.e, t.n::int FROM jsonb_array_elements(p_items) WITH ORDINALITY AS t(e, n) LOOP
+    "ord" := n;
+    "id" := NULL;
+    "error" := NULL;
+    BEGIN
+      "id" := label_store.submit_prediction(
+        p_subject_type => e->>'subjectType',
+        p_subject_id => e->>'subjectId',
+        p_content_hash => e->>'contentHash',
+        p_question => e->>'question',
+        p_value => e->>'value',
+        p_model_ref => e->>'modelRef',
+        p_source_ref => e->>'sourceRef',
+        p_predicted_at => COALESCE((e->>'predictedAt')::timestamptz, now()),
+        p_question_version => COALESCE((e->>'questionVersion')::integer, 1),
+        p_confidence => (e->>'confidence')::real,
+        p_scores => e->'scores',
+        p_versions => e->'versions',
+        p_input_hash => e->>'inputHash',
+        p_detail => e->'detail'
+      );
+      "status" := CASE WHEN "id" IS NULL THEN 'duplicate' ELSE 'recorded' END;
+    EXCEPTION WHEN OTHERS THEN
+      "status" := 'rejected';
+      "error" := SQLERRM;
+    END;
+    RETURN NEXT;
+  END LOOP;
+END;
+$$;
+
+-- 'erasure' deletes the subjects and everything under them, and tombstones them; any other reason
+-- keeps the judgements (so counts stay honest) and drops snapshot and bytes.
 CREATE OR REPLACE FUNCTION label_store.exclude(p_subject_type TEXT, p_subject_id TEXT, p_reason TEXT)
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -496,6 +590,9 @@ DECLARE
   v_n INTEGER;
 BEGIN
   IF p_reason = 'erasure' THEN
+    INSERT INTO label_store.erased_subject ("subjectType", "subjectId")
+    VALUES (p_subject_type, p_subject_id)
+    ON CONFLICT DO NOTHING;
     WITH gone AS (
       DELETE FROM label_store.subject
       WHERE "subjectType" = p_subject_type AND "subjectId" = p_subject_id
@@ -532,11 +629,17 @@ SECURITY DEFINER
 SET search_path = label_store, pg_temp
 AS $$
 DECLARE
-  v_n INTEGER;
+  v_hash TEXT := label_store.person_hash('owner', p_user_id);
+  v_n    INTEGER;
 BEGIN
+  INSERT INTO label_store.erased_owner ("ownerHash") VALUES (v_hash) ON CONFLICT DO NOTHING;
   WITH gone AS (
-    DELETE FROM label_store.subject WHERE "ownerHash" = label_store.person_hash('owner', p_user_id)
-    RETURNING "id"
+    DELETE FROM label_store.subject WHERE "ownerHash" = v_hash
+    RETURNING "id", "subjectType", "subjectId"
+  ), tomb AS (
+    INSERT INTO label_store.erased_subject ("subjectType", "subjectId")
+    SELECT DISTINCT "subjectType", "subjectId" FROM gone
+    ON CONFLICT DO NOTHING
   )
   INSERT INTO label_store.change ("kind", "subjectId") SELECT 'deletion', "id" FROM gone;
   GET DIAGNOSTICS v_n = ROW_COUNT;
@@ -551,7 +654,8 @@ CREATE OR REPLACE FUNCTION label_store.from_scan_label_flag(f public."ScanLabelF
 RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = label_store, public, pg_temp
+SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 DECLARE
   v_src TEXT := 'ScanLabelFlag:' || f."workflowId";
@@ -597,7 +701,8 @@ CREATE OR REPLACE FUNCTION label_store.from_scan_label_vote(v public."ScanLabelV
 RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = label_store, public, pg_temp
+SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 DECLARE
   v_src TEXT := 'ScanLabelVote:' || v."itemId";
@@ -644,7 +749,8 @@ CREATE OR REPLACE FUNCTION label_store.from_appeal_decision(a public."AppealDeci
 RETURNS BIGINT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = label_store, public, pg_temp
+SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 DECLARE
   v_src TEXT := 'AppealDecisionRecord:' || a."appealId";
@@ -678,13 +784,19 @@ CREATE OR REPLACE FUNCTION label_store.from_scan_label_copy(i public."ScanLabelI
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = label_store, public, pg_temp
+SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 BEGIN
-  UPDATE label_store.subject
-  SET "bytesRef" = 'scan-label-copy:' || i."copyKey",
-      "bytesExpireAt" = COALESCE(i."copiedAt", now()) + interval '30 days'
-  WHERE "subjectType" = 'image' AND "subjectId" = i."imageId"::text AND "excludedAt" IS NULL;
+  WITH hit AS (
+    UPDATE label_store.subject
+    SET "bytesRef" = 'scan-label-copy:' || i."copyKey",
+        "bytesExpireAt" = COALESCE(i."copiedAt", now()) + interval '30 days'
+    WHERE "subjectType" = 'image' AND "subjectId" = i."imageId"::text AND "excludedAt" IS NULL
+      AND "bytesRef" IS DISTINCT FROM 'scan-label-copy:' || i."copyKey"
+    RETURNING "id"
+  )
+  INSERT INTO label_store.change ("kind", "subjectId") SELECT 'subject', "id" FROM hit;
 EXCEPTION WHEN OTHERS THEN
   PERFORM label_store.note_failure('ScanLabelItem:' || i."id" || ':copy', SQLSTATE || ': ' || SQLERRM);
 END;
@@ -695,12 +807,18 @@ CREATE OR REPLACE FUNCTION label_store.from_scan_label_withdrawal(o public."Scan
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = label_store, public, pg_temp
+SET search_path = label_store, pg_temp
+SET lock_timeout = '2s'
 AS $$
 BEGIN
-  UPDATE label_store.subject
-  SET "bytesRef" = NULL, "bytesExpireAt" = NULL
-  WHERE "bytesRef" = 'scan-label-copy:' || o."key";
+  WITH hit AS (
+    UPDATE label_store.subject
+    SET "bytesRef" = NULL, "bytesExpireAt" = NULL
+    WHERE "subjectType" = 'image' AND "subjectId" = o."imageId"::text
+      AND "bytesRef" = 'scan-label-copy:' || o."key"
+    RETURNING "id"
+  )
+  INSERT INTO label_store.change ("kind", "subjectId") SELECT 'subject', "id" FROM hit;
   IF o."withdrawReason" = 'excluded' THEN
     PERFORM label_store.exclude('image', o."imageId"::text, 'safety');
   END IF;
@@ -710,7 +828,7 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION label_store.trg_scan_label_flag() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, pg_temp AS $$
 BEGIN
   PERFORM label_store.from_scan_label_flag(NEW);
   RETURN NULL;
@@ -718,7 +836,7 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION label_store.trg_scan_label_vote() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, pg_temp AS $$
 BEGIN
   PERFORM label_store.from_scan_label_vote(NEW);
   RETURN NULL;
@@ -726,15 +844,29 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION label_store.trg_appeal_decision() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, pg_temp AS $$
 BEGIN
   PERFORM label_store.from_appeal_decision(NEW);
   RETURN NULL;
 END;
 $$;
 
+-- The appeal sweep deletes a record when its image stops being eligible or ages out; either way the
+-- image leaves training.
+CREATE OR REPLACE FUNCTION label_store.trg_appeal_decision_deleted() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, pg_temp SET lock_timeout = '2s' AS $$
+BEGIN
+  PERFORM label_store.exclude('image', g."imageId"::text, 'removed')
+  FROM (SELECT DISTINCT o."imageId" FROM gone o) g;
+  RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+  PERFORM label_store.note_failure('AppealDecisionRecord:delete', SQLSTATE || ': ' || SQLERRM);
+  RETURN NULL;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION label_store.trg_scan_label_copy() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, pg_temp AS $$
 BEGIN
   PERFORM label_store.from_scan_label_copy(NEW);
   RETURN NULL;
@@ -742,7 +874,7 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION label_store.trg_scan_label_withdrawal() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, public, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = label_store, pg_temp AS $$
 BEGIN
   PERFORM label_store.from_scan_label_withdrawal(NEW);
   RETURN NULL;
@@ -755,7 +887,7 @@ CREATE OR REPLACE FUNCTION label_store.backfill()
 RETURNS TABLE ("source" TEXT, "rows" BIGINT, "added" BIGINT)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = label_store, public, pg_temp
+SET search_path = label_store, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
@@ -773,6 +905,68 @@ BEGIN
   PERFORM label_store.from_scan_label_withdrawal(o)
   FROM public."ScanLabelCopyObject" o
   WHERE o."withdrawnAt" IS NOT NULL;
+END;
+$$;
+
+-- backfill(), committing every p_batch source rows so live writes never wait behind it. CALL outside a
+-- transaction block. Transaction control rules out SECURITY DEFINER and a SET clause, so this runs as
+-- the caller (the owner) with every name qualified. Progress is RAISE NOTICE.
+CREATE OR REPLACE PROCEDURE label_store.backfill_batches(p_batch INTEGER DEFAULT 2000)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  f     public."ScanLabelFlag";
+  v     public."ScanLabelVote";
+  a     public."AppealDecisionRecord";
+  i     public."ScanLabelItem";
+  o     public."ScanLabelCopyObject";
+  n     BIGINT;
+  added BIGINT;
+BEGIN
+  n := 0; added := 0;
+  FOR f IN SELECT * FROM public."ScanLabelFlag" ORDER BY "id" LOOP
+    IF label_store.from_scan_label_flag(f) IS NOT NULL THEN added := added + 1; END IF;
+    n := n + 1;
+    IF n % p_batch = 0 THEN COMMIT; END IF;
+  END LOOP;
+  COMMIT;
+  RAISE NOTICE 'ScanLabelFlag: % rows, % added', n, added;
+
+  n := 0; added := 0;
+  FOR v IN SELECT * FROM public."ScanLabelVote" ORDER BY "itemId", "userId" LOOP
+    IF label_store.from_scan_label_vote(v) IS NOT NULL THEN added := added + 1; END IF;
+    n := n + 1;
+    IF n % p_batch = 0 THEN COMMIT; END IF;
+  END LOOP;
+  COMMIT;
+  RAISE NOTICE 'ScanLabelVote: % rows, % added', n, added;
+
+  n := 0; added := 0;
+  FOR a IN SELECT * FROM public."AppealDecisionRecord" ORDER BY "id" LOOP
+    IF label_store.from_appeal_decision(a) IS NOT NULL THEN added := added + 1; END IF;
+    n := n + 1;
+    IF n % p_batch = 0 THEN COMMIT; END IF;
+  END LOOP;
+  COMMIT;
+  RAISE NOTICE 'AppealDecisionRecord: % rows, % added', n, added;
+
+  n := 0;
+  FOR i IN SELECT * FROM public."ScanLabelItem" WHERE "copyState" = 'copied' AND "copyKey" IS NOT NULL ORDER BY "id" LOOP
+    PERFORM label_store.from_scan_label_copy(i);
+    n := n + 1;
+    IF n % p_batch = 0 THEN COMMIT; END IF;
+  END LOOP;
+  COMMIT;
+  RAISE NOTICE 'copies: % rows', n;
+
+  n := 0;
+  FOR o IN SELECT * FROM public."ScanLabelCopyObject" WHERE "withdrawnAt" IS NOT NULL ORDER BY "key" LOOP
+    PERFORM label_store.from_scan_label_withdrawal(o);
+    n := n + 1;
+    IF n % p_batch = 0 THEN COMMIT; END IF;
+  END LOOP;
+  COMMIT;
+  RAISE NOTICE 'withdrawals: % rows', n;
 END;
 $$;
 
@@ -797,11 +991,12 @@ SELECT
 FROM label_store.prediction p
 JOIN label_store.subject s ON s."id" = p."subjectId";
 
--- Ids are assigned before commit, so a row can appear after a higher id: readers re-read a window behind
--- their cursor.
+-- Only rows from transactions older than every running one, so nothing can later appear below a
+-- reader's (txid, id) cursor.
 CREATE OR REPLACE VIEW label_store.changes_feed AS
-SELECT "id", "kind", "subjectId", "question", "questionVersion", "refId", "at"
-FROM label_store.change;
+SELECT "txid", "id", "kind", "subjectId", "question", "questionVersion", "refId", "at"
+FROM label_store.change
+WHERE "txid" < pg_snapshot_xmin(pg_current_snapshot())::text::bigint;
 
 CREATE OR REPLACE VIEW label_store.training_examples AS
 SELECT
@@ -818,7 +1013,7 @@ CREATE OR REPLACE VIEW label_store.pipeline_failures AS
 SELECT * FROM label_store.training_examples WHERE "modelAgrees" = false;
 
 -- Owner-only.
-REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA label_store FROM PUBLIC;
+REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA label_store FROM PUBLIC;
 
 -- The reader role is created by infra; grant when it exists. Re-run this block after.
 DO $$
@@ -831,30 +1026,49 @@ BEGIN
 END;
 $$;
 
-SET lock_timeout = '5s';
-
+BEGIN;
+SET LOCAL lock_timeout = '5s';
 CREATE OR REPLACE TRIGGER label_store_flag
 AFTER INSERT ON "ScanLabelFlag"
 FOR EACH ROW EXECUTE FUNCTION label_store.trg_scan_label_flag();
+COMMIT;
 
+BEGIN;
+SET LOCAL lock_timeout = '5s';
 CREATE OR REPLACE TRIGGER label_store_vote
 AFTER INSERT ON "ScanLabelVote"
 FOR EACH ROW EXECUTE FUNCTION label_store.trg_scan_label_vote();
+COMMIT;
 
+BEGIN;
+SET LOCAL lock_timeout = '5s';
 CREATE OR REPLACE TRIGGER label_store_appeal
 AFTER INSERT ON "AppealDecisionRecord"
 FOR EACH ROW EXECUTE FUNCTION label_store.trg_appeal_decision();
+COMMIT;
 
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+CREATE OR REPLACE TRIGGER label_store_appeal_deleted
+AFTER DELETE ON "AppealDecisionRecord"
+REFERENCING OLD TABLE AS gone
+FOR EACH STATEMENT EXECUTE FUNCTION label_store.trg_appeal_decision_deleted();
+COMMIT;
+
+BEGIN;
+SET LOCAL lock_timeout = '5s';
 CREATE OR REPLACE TRIGGER label_store_copy
 AFTER UPDATE OF "copyState" ON "ScanLabelItem"
 FOR EACH ROW
 WHEN (NEW."copyState" = 'copied' AND OLD."copyState" IS DISTINCT FROM 'copied' AND NEW."copyKey" IS NOT NULL)
 EXECUTE FUNCTION label_store.trg_scan_label_copy();
+COMMIT;
 
+BEGIN;
+SET LOCAL lock_timeout = '5s';
 CREATE OR REPLACE TRIGGER label_store_withdrawal
 AFTER UPDATE OF "withdrawnAt" ON "ScanLabelCopyObject"
 FOR EACH ROW
 WHEN (NEW."withdrawnAt" IS NOT NULL AND OLD."withdrawnAt" IS NULL)
 EXECUTE FUNCTION label_store.trg_scan_label_withdrawal();
-
-RESET lock_timeout;
+COMMIT;

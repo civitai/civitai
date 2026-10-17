@@ -106,7 +106,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.pg.exec(`
-    TRUNCATE label_store.subject, label_store.change, label_store.record_failure RESTART IDENTITY CASCADE;
+    TRUNCATE label_store.subject, label_store.change, label_store.record_failure,
+      label_store.erased_subject, label_store.erased_owner RESTART IDENTITY CASCADE;
     TRUNCATE "ScanLabelCopyObject", "AppealDecisionRecord", "Image" RESTART IDENTITY CASCADE;
   `);
   await db.pg.query(

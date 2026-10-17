@@ -610,5 +610,12 @@ describe('the nightly run', () => {
     });
     expect(lookup).toHaveBeenCalledWith([101]);
     expect((await appealLabels()).map((l) => l.url)).toEqual(['u-101']);
+    expect(
+      (
+        await holder.db.query(
+          `SELECT "subjectId", "excludedReason" FROM label_store.subject WHERE "excludedAt" IS NOT NULL`
+        )
+      ).rows
+    ).toEqual([{ subjectId: '102', excludedReason: 'safety' }]);
   });
 });

@@ -531,8 +531,9 @@ export async function recordRestoredLevels() {
 }
 
 export async function runAppealDecisionRecords(lookup?: RemovalLabelLookup) {
-  const { swept, labels, expired, objects } = await sweepExcludedRecords();
+  // The store first: deleting a record also excludes its image from the store, under a vaguer reason.
   const storeExcluded = await sweepLabelStore();
+  const { swept, labels, expired, objects } = await sweepExcludedRecords();
   const labelled = await fillRemovalLabels(lookup);
   const { restored, corrected } = await recordRestoredLevels();
   return { swept, labels, expired, objects, storeExcluded, labelled, restored, corrected };
