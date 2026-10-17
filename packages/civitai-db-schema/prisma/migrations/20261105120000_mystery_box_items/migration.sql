@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS "BoxOpening" (
 );
 -- A user can draw a given cosmetic from a box once. The service's per-user lock is the primary guard;
 -- this turns a bug in it into a failed open instead of a duplicate.
-CREATE UNIQUE INDEX IF NOT EXISTS "BoxOpening_userId_boxDefinitionId_rewardDefinitionId_cosmetic_key"
+CREATE UNIQUE INDEX IF NOT EXISTS "BoxOpening_cosmetic_reward_once_key"
   ON "BoxOpening" ("userId", "boxDefinitionId", "rewardDefinitionId")
   WHERE "rewardType" = 'cosmetic';
 CREATE INDEX IF NOT EXISTS "BoxOpening_userId_createdAt_idx" ON "BoxOpening" ("userId", "createdAt");
