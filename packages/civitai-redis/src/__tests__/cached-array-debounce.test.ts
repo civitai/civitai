@@ -173,6 +173,8 @@ describe('createCachedObject bust() debounce window (non-SWR)', () => {
     t.onLookup(() => vi.setSystemTime(T0 + 15_000));
     await t.cache.fetch([100]);
 
+    // What Redis holds: the marker is gone, so NX would not have stopped a notFound landing.
+    expect(t.read(keyFor(100))).toBeNull();
     expect(t.notFoundWrites()).toEqual([]);
   });
 });
