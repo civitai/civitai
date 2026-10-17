@@ -372,15 +372,20 @@ describe('exclusion', () => {
     ).toEqual([{ owned: true, pHash: null, snapshot: null }]);
   });
 
-  it.each([
-    ['flagged for review', `UPDATE "Image" SET "needsReview" = 'csam'`],
-    ['blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM'`],
-    ['named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 501}]')`],
-    ['owned by a reported user', `INSERT INTO "CsamReport" ("userId") VALUES (11)`],
-  ])('an image already %s is excluded when its judgement lands', async (_, setup) => {
+  it.each(
+    [
+      ['flagged for review', `UPDATE "Image" SET "needsReview" = 'csam'`],
+      ['blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM'`],
+      ['named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 501}]')`],
+      ['owned by a reported user', `INSERT INTO "CsamReport" ("userId") VALUES (11)`],
+    ].flatMap(([state, setup]) => [
+      [state, 'votes', setup],
+      [state, 'a flag', setup],
+    ])
+  )('an image already %s is excluded when %s land', async (_, judgement, setup) => {
     await db.pg.exec(setup);
-    for (const m of MODS.slice(0, 3)) await vote(m, false);
-    await flag();
+    if (judgement === 'votes') for (const m of MODS.slice(0, 3)) await vote(m, false);
+    else await flag();
 
     expect(
       await rows(`SELECT "excludedReason", "snapshot", "pHash" FROM label_store.subject`)
