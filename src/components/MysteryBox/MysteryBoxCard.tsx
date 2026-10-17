@@ -16,12 +16,10 @@ import {
 export function MysteryBoxCard({
   event,
   view,
-  team,
   color,
 }: {
   event: string;
   view: MysteryBoxView;
-  team: string;
   color: string;
 }) {
   const [buzzType] = useAvailableBuzz();
@@ -31,7 +29,7 @@ export function MysteryBoxCard({
   const show = (start?: 'buy' | 'open') =>
     dialogStore.trigger({
       component: MysteryBoxModal,
-      props: { event, boxDefinitionId: view.boxDefinitionId, team, color, start },
+      props: { event, boxDefinitionId: view.boxDefinitionId, color, start },
     });
 
   return (
@@ -59,7 +57,7 @@ export function MysteryBoxCard({
           {view.name}
         </Text>
         <Text size="sm" c="dimmed">
-          {view.description ?? `1 random Team ${team} hat you don't own yet.`}
+          {view.description ?? "1 random hat you don't own yet."}
         </Text>
         <MysteryBoxOddsBar tiers={tierSummaries(view)} />
         <Group gap="sm" wrap="nowrap" mt={4}>

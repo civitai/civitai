@@ -123,16 +123,23 @@ export async function getEventBuyerTeam(eventName: string, userId: number) {
 }
 
 /**
- * The viewer's team in a registered event, for showing what a team-drawn box holds for them. Read
- * only: unlike `getEventBuyerTeam` it places no one, so the purchase and the open still confirm the
- * team they draw from. Undefined when the event has no teams, null when it can't be read.
+ * How a viewer sees an event's mystery boxes: whether they may buy (the event is playable for them)
+ * and which team's contents to show. Null when the event is unregistered, unloadable or closed to
+ * them, or their team can't be read. Read only: unlike `getEventBuyerTeam` it places no one, so the
+ * purchase and the open still confirm the team they draw from.
  */
-export async function getEventViewerTeam(eventName: string, userId: number) {
+export async function getEventBoxViewer(
+  eventName: string,
+  viewer: { id: number; isModerator?: boolean }
+) {
   const events = await loadEvents().catch(() => undefined);
   const event = events?.find((e) => e.name === eventName);
   if (!event) return null;
-  if (!event.teams.length) return undefined;
-  return event.getUserTeam(userId, { strict: true }).catch(() => null);
+  const access = await getEventAccess(event, viewer).catch(() => 'closed' as const);
+  if (!canReadEvent(access)) return null;
+  if (!event.teams.length) return { playable: canPlayEvent(access), team: undefined };
+  const team = await event.getUserTeam(viewer.id, { strict: true }).catch(() => null);
+  return team ? { playable: canPlayEvent(access), team } : null;
 }
 
 /**

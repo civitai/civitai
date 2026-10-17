@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef } from 'react';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -54,13 +54,11 @@ const PHASE_MESSAGE: Partial<Record<OpenPhase, string>> = {
 export default function MysteryBoxModal({
   event,
   boxDefinitionId,
-  team,
   color,
   start,
 }: {
   event: string;
   boxDefinitionId: number;
-  team: string;
   color: string;
   /** Start buying or opening as soon as it shows. */
   start?: 'buy' | 'open';
@@ -85,6 +83,15 @@ export default function MysteryBoxModal({
   }, [view, start, opener]);
 
   const tiers = useMemo(() => (view ? tierSummaries(view) : []), [view]);
+  const actions = view && (
+    <BoxActions
+      view={view}
+      buzzType={buzzType}
+      busy={opener.busy}
+      onBuy={() => opener.buyAndOpen(view)}
+      onOpen={() => opener.openHeld(view)}
+    />
+  );
 
   const placeReward = async () => {
     const result = opener.result;
@@ -122,26 +129,21 @@ export default function MysteryBoxModal({
         <>
           <Grid classNames={{ inner: 'my-0' }}>
             <Grid.Col span={{ base: 12, md: 5 }} p="lg">
-              <BoxSummary
-                view={view}
-                tiers={tiers}
-                team={team}
-                color={color}
-                buzzType={buzzType}
-                busy={opener.busy}
-                onBuy={() => opener.buyAndOpen(view)}
-                onOpen={() => opener.openHeld(view)}
-                onClose={dialog.onClose}
-              />
+              <BoxSummary view={view} tiers={tiers} color={color} onClose={dialog.onClose}>
+                <div className="hidden md:block">{actions}</div>
+              </BoxSummary>
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 7 }} p="lg" className="bg-gray-0 dark:bg-dark-8">
               <BoxContents view={view} tiers={tiers} color={color} />
             </Grid.Col>
           </Grid>
+          {/* On a phone the contents scroll under the button, as a bottom sheet's would. */}
+          <div className="sticky bottom-0 z-[5] border-0 border-t border-solid border-gray-3 bg-white p-3 md:hidden dark:border-dark-4 dark:bg-dark-7">
+            {actions}
+          </div>
           {opener.phase !== 'idle' && (
             <OpenStage
               view={view}
-              team={team}
               color={color}
               phase={opener.phase}
               result={opener.result}
@@ -161,28 +163,17 @@ export default function MysteryBoxModal({
 function BoxSummary({
   view,
   tiers,
-  team,
   color,
-  buzzType,
-  busy,
-  onBuy,
-  onOpen,
   onClose,
+  children,
 }: {
   view: MysteryBoxView;
   tiers: ReturnType<typeof tierSummaries>;
-  team: string;
   color: string;
-  buzzType: ReturnType<typeof useAvailableBuzz>[number];
-  busy: boolean;
-  onBuy: () => void;
-  onOpen: () => void;
   onClose: () => void;
+  /** The buy and open buttons, where the layout puts them. */
+  children: ReactNode;
 }) {
-  const { left, total } = collectedCount(view);
-  const actions = boxActions(view);
-  const held = view.heldBoxItemIds.length;
-
   return (
     <Stack gap="md" className="md:sticky md:top-0">
       <Group justify="space-between" align="flex-start" wrap="nowrap">
@@ -193,9 +184,11 @@ function BoxSummary({
         <Text fw={700} size="lg">
           {view.name}
         </Text>
-        <Text size="sm" c="dimmed">
-          Team {team} only
-        </Text>
+        {view.team && (
+          <Text size="sm" c="dimmed">
+            Team {view.team} only
+          </Text>
+        )}
       </div>
       <Text size="sm">
         You get <b>1 hat you don&apos;t own yet</b>. The rarity is rolled first, then every hat you
@@ -225,43 +218,64 @@ function BoxSummary({
         Your odds change as you collect: once you own every hat in a rarity, it drops out and the
         others share its chance.
       </Text>
+      {children}
+    </Stack>
+  );
+}
 
-      <Stack gap={6}>
-        {actions.complete ? (
-          <Badge size="lg" color="yellow" variant="light" fullWidth>
-            Complete · {total} / {total}
-          </Badge>
-        ) : (
-          <>
-            {actions.canOpen && (
-              <Button radius="xl" onClick={onOpen} loading={busy} data-testid="box-open-held">
-                Open your box{held > 1 ? ` (${held})` : ''}
-              </Button>
-            )}
-            {actions.canBuy && view.listing && (
-              <BuzzTransactionButton
-                radius="xl"
-                buzzAmount={view.listing.unitAmount}
-                accountTypes={[buzzType]}
-                label="Buy and open"
-                loading={busy}
-                onPerformTransaction={onBuy}
-                data-testid="box-buy-open"
-              />
-            )}
-            {actions.covered && (
-              <Text size="xs" c="dimmed" ta="center">
-                Your unopened {held === 1 ? 'box covers' : 'boxes cover'} everything left. Open{' '}
-                {held === 1 ? 'it' : 'them'} first.
-              </Text>
-            )}
-          </>
-        )}
-        <Text size="xs" c="dimmed" ta="center">
-          {left} {left === 1 ? 'hat' : 'hats'} left for you
-          {view.listing ? ' · paid Buzz only' : ''}
-        </Text>
-      </Stack>
+function BoxActions({
+  view,
+  buzzType,
+  busy,
+  onBuy,
+  onOpen,
+}: {
+  view: MysteryBoxView;
+  buzzType: ReturnType<typeof useAvailableBuzz>[number];
+  busy: boolean;
+  onBuy: () => void;
+  onOpen: () => void;
+}) {
+  const { left, total } = collectedCount(view);
+  const actions = boxActions(view);
+  const held = view.heldBoxItemIds.length;
+
+  return (
+    <Stack gap={6}>
+      {actions.complete ? (
+        <Badge size="lg" color="yellow" variant="light" fullWidth>
+          Complete · {total} / {total}
+        </Badge>
+      ) : (
+        <>
+          {actions.canOpen && (
+            <Button radius="xl" onClick={onOpen} loading={busy} data-testid="box-open-held">
+              Open your box{held > 1 ? ` (${held})` : ''}
+            </Button>
+          )}
+          {actions.canBuy && view.listing && (
+            <BuzzTransactionButton
+              radius="xl"
+              buzzAmount={view.listing.unitAmount}
+              accountTypes={[buzzType]}
+              label="Buy and open"
+              loading={busy}
+              onPerformTransaction={onBuy}
+              data-testid="box-buy-open"
+            />
+          )}
+          {actions.covered && (
+            <Text size="xs" c="dimmed" ta="center">
+              Your unopened {held === 1 ? 'box covers' : 'boxes cover'} everything left. Open{' '}
+              {held === 1 ? 'it' : 'them'} first.
+            </Text>
+          )}
+        </>
+      )}
+      <Text size="xs" c="dimmed" ta="center">
+        {left} {left === 1 ? 'hat' : 'hats'} left for you
+        {view.listing ? ' · paid Buzz only' : ''}
+      </Text>
     </Stack>
   );
 }
@@ -328,7 +342,6 @@ function BoxContents({
 
 function OpenStage({
   view,
-  team,
   color,
   phase,
   result,
@@ -339,7 +352,6 @@ function OpenStage({
   onDone,
 }: {
   view: MysteryBoxView;
-  team: string;
   color: string;
   phase: OpenPhase;
   result: ReturnType<typeof useMysteryBoxOpen>['result'];
@@ -429,7 +441,7 @@ function OpenStage({
             </Button>
           </Group>
           <Text size="sm" c="white">
-            <b>{collected}</b> / {total} Team {team} hats collected
+            <b>{collected}</b> / {total} {view.team ? `Team ${view.team} ` : ''}hats collected
           </Text>
         </Stack>
       )}

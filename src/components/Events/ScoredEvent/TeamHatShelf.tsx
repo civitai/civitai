@@ -16,7 +16,7 @@ import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventHatTile } from '~/components/Events/ScoredEvent/EventHatTile';
 import { MysteryBoxCard } from '~/components/MysteryBox/MysteryBoxCard';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useEventMysteryBoxes } from '~/components/MysteryBox/useEventMysteryBoxes';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -30,11 +30,7 @@ import { trpc } from '~/utils/trpc';
 export function TeamHatShelf({ event, team }: { event: string; team: string }) {
   const teamColor = useTeamColor();
   const { data: sections, isLoading } = trpc.cosmeticShop.getShop.useQuery({ event });
-  const features = useFeatureFlags();
-  const { data: boxes = [] } = trpc.mysteryBox.getForEvent.useQuery(
-    { event },
-    { enabled: !!features.mysteryBox }
-  );
+  const boxes = useEventMysteryBoxes(event);
   const [price, setPrice] = useState('all');
   const [buzzType] = useAvailableBuzz();
 
@@ -100,7 +96,6 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
           key={box.boxDefinitionId}
           event={event}
           view={box}
-          team={team}
           color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
         />
       ))}

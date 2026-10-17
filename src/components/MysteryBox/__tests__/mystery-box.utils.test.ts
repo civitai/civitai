@@ -7,6 +7,7 @@ import {
   formatChance,
   revealChance,
   shelfPricesByCosmetic,
+  tierColor,
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
 
@@ -78,6 +79,11 @@ describe('boxActions', () => {
       { complete: false, canOpen: true, canBuy: false, covered: false },
     ],
     [
+      'no longer sold, held boxes cover what is left: open, not "covered"',
+      { listing: null, heldBoxItemIds: ['501', '502', '503'] },
+      { complete: false, canOpen: true, canBuy: false, covered: false },
+    ],
+    [
       'everything collected: complete, a held box cannot open',
       {
         contents: [content(1, COMMON, false), content(3, RARE, false)],
@@ -128,6 +134,11 @@ describe('formatChance', () => {
     [0.75, '75%'],
     [0.0122, '1.22%'],
     [0.00004, '<0.01%'],
+    [0.0001, '0.01%'],
+    [0.1, '10%'],
+    [0.0999, '9.99%'],
+    [0.996, '>99%'],
+    [1, '100%'],
   ])('%s -> %s', (p, text) => {
     expect(formatChance(p)).toBe(text);
   });
@@ -147,5 +158,29 @@ describe('shelfPricesByCosmetic', () => {
       ])
     ).toEqual({ 3085: 500, 3100: 1500 });
     expect(shelfPricesByCosmetic(undefined)).toEqual({});
+  });
+});
+
+describe('tierColor', () => {
+  it("uses the tier's own colour, else the rarity default for its place", () => {
+    expect(tierColor({ color: '#123456', sortOrder: 0 })).toBe('#123456');
+    expect(tierColor({ color: null, sortOrder: 1 })).toBe('#22c55e');
+    // Past the four rarities, the rarest colour.
+    expect(tierColor({ color: null, sortOrder: 9 })).toBe('#f59e0b');
+  });
+});
+
+describe('tierSummaries ties', () => {
+  it('orders tiers with the same place by id, the reverse of the draw walk', () => {
+    const tiers = tierSummaries(
+      view({
+        tiers: [
+          { id: 1, key: 'a', name: 'A', color: null, weight: 1, sortOrder: 0 },
+          { id: 2, key: 'b', name: 'B', color: null, weight: 1, sortOrder: 0 },
+        ],
+        contents: [content(1, 1), content(2, 2)],
+      })
+    );
+    expect(tiers.map((t) => t.tier.id)).toEqual([2, 1]);
   });
 });

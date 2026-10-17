@@ -1,4 +1,4 @@
-import { Group, Text } from '@mantine/core';
+import { Group, Progress, Text } from '@mantine/core';
 import type { TierSummary } from '~/components/MysteryBox/mystery-box.utils';
 import { formatChance, tierColor } from '~/components/MysteryBox/mystery-box.utils';
 
@@ -14,25 +14,19 @@ export function MysteryBoxOddsBar({
   const commonestFirst = [...tiers].reverse();
   return (
     <div>
-      <div
-        className="flex h-2.5 overflow-hidden rounded-full bg-gray-2 dark:bg-dark-4"
-        role="img"
-        aria-label={commonestFirst
-          .map((t) => `${t.tier.name} ${formatChance(t.probability, 0)}`)
-          .join(', ')}
-        data-testid="box-odds-bar"
-      >
+      <Progress.Root size={10} radius="xl" data-testid="box-odds-bar">
         {commonestFirst.map(
           (t) =>
             t.probability > 0 && (
-              <span
+              <Progress.Section
                 key={t.tier.id}
-                className="h-full"
-                style={{ width: `${t.probability * 100}%`, background: tierColor(t.tier) }}
+                value={t.probability * 100}
+                color={tierColor(t.tier)}
+                aria-label={`${t.tier.name} ${formatChance(t.probability, 0)}`}
               />
             )
         )}
-      </div>
+      </Progress.Root>
       {legend && (
         <Group gap="sm" mt={6}>
           {commonestFirst.map((t) => (

@@ -105,5 +105,8 @@ export const boxOpenClaimKey = (boxItemId: string) => `box-open-${boxItemId}`;
 export function formatChance(probability: number, digits = 2) {
   if (probability <= 0) return '0%';
   const pct = probability * 100;
-  return `${pct < 0.01 ? '<0.01' : pct.toFixed(pct >= 10 ? 0 : digits)}%`;
+  if (pct < 0.01) return '<0.01%';
+  const text = pct.toFixed(pct >= 10 ? 0 : digits);
+  // An uncertain chance never reads as certain.
+  return probability < 1 && Number(text) >= 100 ? '>99%' : `${text}%`;
 }

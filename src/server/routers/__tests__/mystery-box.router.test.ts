@@ -7,11 +7,15 @@ import type * as MysteryBoxService from '~/server/services/mystery-box.service';
  * the real procedure builds the arguments.
  */
 
-const { mockOpen } = vi.hoisted(() => ({ mockOpen: vi.fn(async () => ({ replayed: false })) }));
+const { mockOpen, mockRead } = vi.hoisted(() => ({
+  mockOpen: vi.fn(async () => ({ replayed: false })),
+  mockRead: vi.fn(async () => []),
+}));
 
 vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxService>()),
   openMysteryBox: mockOpen,
+  getMysteryBoxesForEvent: mockRead,
 }));
 
 import { mysteryBoxRouter } from '../mystery-box.router';
@@ -27,6 +31,24 @@ const holder = {
   email: 'holder@example.com',
   emailVerified: new Date(),
 };
+
+const caller = (
+  features: Record<string, boolean>,
+  headers: Record<string, string> = {},
+  ctx: { user?: typeof holder | null; apiKeyId?: number | null } = {}
+) =>
+  mysteryBoxRouter.createCaller({
+    acceptableOrigin: true,
+    user: holder,
+    apiKeyId: null,
+    tokenScope: TokenScope.Full,
+    req: { headers } as never,
+    res: { setHeader: () => undefined } as never,
+    cache: { edgeTTL: 0 },
+    features: features as never,
+    track: undefined,
+    ...ctx,
+  } as never);
 
 const open = (
   features: Record<string, boolean>,
@@ -130,5 +152,43 @@ describe('mysteryBox.open hands the service the flag, the country and the holder
     );
     await rejectsWithCode(open({ mysteryBox: true }, {}, undefined, { apiKeyId: 7 }), 'FORBIDDEN');
     expect(mockOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe('mysteryBox.getForEvent hands the service the flag, the country and the viewer', () => {
+  beforeEach(() => mockRead.mockClear());
+
+  it('passes the flag, the country, the viewer and their moderator bit', async () => {
+    await caller({ mysteryBox: true }, { 'cf-ipcountry': 'BE' }).getForEvent({
+      event: 'birthday2026',
+    });
+    await caller({ mysteryBox: false }, {}, { user: { ...holder, isModerator: true } }).getForEvent(
+      { event: 'birthday2026' }
+    );
+    expect(mockRead.mock.calls.map(([arg]) => arg)).toEqual([
+      {
+        event: 'birthday2026',
+        userId: holder.id,
+        isModerator: false,
+        mysteryBoxEnabled: true,
+        countryCode: 'BE',
+      },
+      {
+        event: 'birthday2026',
+        userId: holder.id,
+        isModerator: true,
+        mysteryBoxEnabled: false,
+        // No country header: unknown, which the service hides boxes for whenever any is blocked.
+        countryCode: undefined,
+      },
+    ]);
+  });
+
+  it('refuses a signed-out caller', async () => {
+    await rejectsWithCode(
+      caller({ mysteryBox: true }, {}, { user: null }).getForEvent({ event: 'birthday2026' }),
+      'UNAUTHORIZED'
+    );
+    expect(mockRead).not.toHaveBeenCalled();
   });
 });

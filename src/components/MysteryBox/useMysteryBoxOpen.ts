@@ -22,6 +22,10 @@ export type OpenPhase =
   | 'lidOff'
   | 'revealed';
 
+/** The open and the purchase refuse a box edited since the viewer was shown its odds. */
+const isBoxChangedError = (error: unknown) =>
+  /contents changed/i.test((error as { message?: unknown } | null)?.message?.toString() ?? '');
+
 // How long each beat of the show lasts, in ms.
 const SHOW = { shaking: 1000, glowing: 500, lidOff: 450 } as const;
 
@@ -66,19 +70,27 @@ export function useMysteryBoxOpen(event: string) {
     try {
       const opened = await openMutation.mutateAsync({ boxItemId, expectedVersion: view.version });
       setResult(opened);
+      // Not refetched now: a lagging replica could answer with the box still unopened.
       updateBox(view.boxDefinitionId, (current) => afterOpen(current, opened));
       void utils.event.getMyHats.invalidate({ event });
-      void refresh();
       playShow();
       return opened;
     } catch (error) {
       setPhase('idle');
       void refresh();
-      showErrorNotification({
-        title: 'Your box is safe',
-        error: error as Error,
-        reason: 'It stays with you, unopened. Open it again from the box card.',
-      });
+      showErrorNotification(
+        isBoxChangedError(error)
+          ? {
+              title: 'The contents changed',
+              error: error as Error,
+              reason: 'Here are the new odds. Your box is safe and still unopened.',
+            }
+          : {
+              title: 'Your box is safe',
+              error: error as Error,
+              reason: 'It stays with you, unopened. Open it again from the box card.',
+            }
+      );
     }
   };
 

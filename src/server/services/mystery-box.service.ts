@@ -6,7 +6,7 @@ import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import {
   assertEventShopItemPurchasable,
   getEventBuyerTeam,
-  getEventViewerTeam,
+  getEventBoxViewer,
   isEventShopItemData,
 } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
@@ -24,6 +24,7 @@ import {
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
 } from '~/server/services/item.service';
+import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import {
   assertConfirmedPrice,
@@ -206,6 +207,26 @@ type BoxParams = { event?: unknown; art?: unknown };
 
 type BoxArt = { closed?: string; open?: string };
 
+/**
+ * Why a box listing can't be sold now (stock, then its sale window), or null when it can. `sold` is
+ * read only for a listing with a quantity.
+ */
+function boxSaleRefusal(
+  listing: {
+    availableQuantity: number | null;
+    availableFrom: Date | null;
+    availableTo: Date | null;
+  },
+  sold: number,
+  now: Date
+) {
+  if (listing.availableQuantity !== null && sold >= listing.availableQuantity)
+    return 'This box is out of stock';
+  if (listing.availableFrom && listing.availableFrom > now) return 'This box is not available yet';
+  if (listing.availableTo && listing.availableTo < now) return 'This box is no longer available';
+  return null;
+}
+
 /** The box art for a team, from `params.art[team]` ({ closed, open } image urls). */
 function boxArtFor(params: BoxParams, team: string | undefined): BoxArt | null {
   const art = (params.art as Record<string, unknown> | undefined)?.[team ?? ''];
@@ -223,8 +244,13 @@ export type MysteryBoxView = {
   description: string | null;
   /** The version a purchase or an open must name (`expectedVersion`). */
   version: number;
+  /** The team whose contents are shown; undefined for an event without teams. */
+  team: string | undefined;
   art: BoxArt | null;
-  /** The listing selling it, when one is on sale now. A box no longer sold can still be opened. */
+  /**
+   * The listing selling it, when one is on sale and the event is playable for the viewer. A box no
+   * longer sold can still be opened.
+   */
   listing: {
     shopItemId: number;
     title: string;
@@ -255,20 +281,27 @@ export type MysteryBoxView = {
 
 /**
  * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
- * tiers and what it holds for their team. Nothing when boxes are off or hidden in their country.
+ * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
+ * the event is closed to them; once it ends, only the boxes they hold.
  */
 export async function getMysteryBoxesForEvent({
   userId,
+  isModerator,
   event,
   mysteryBoxEnabled,
   countryCode,
 }: {
   userId: number;
+  isModerator?: boolean;
   event: string;
   mysteryBoxEnabled: boolean | undefined;
   countryCode: string | null | undefined;
 }): Promise<MysteryBoxView[]> {
   if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
+  // The event's own gate first: a box's contents are not shown before the event is open to them.
+  const viewer = await getEventBoxViewer(event, { id: userId, isModerator });
+  if (!viewer) return [];
+  const { team, playable } = viewer;
 
   // Archived boxes too: one still held still opens.
   const boxes = await dbRead.itemDefinition.findMany({
@@ -294,7 +327,6 @@ export async function getMysteryBoxesForEvent({
         availableQuantity: true,
         availableFrom: true,
         availableTo: true,
-        _count: { select: { purchases: true } },
       },
       orderBy: { id: 'asc' },
     }),
@@ -317,21 +349,18 @@ export async function getMysteryBoxesForEvent({
     }),
   ]);
 
+  // Only a listing with a quantity needs its sold count, read for those ids alone.
+  const sold = await getSoldCounts(
+    listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
+  );
   const now = new Date();
-  const onSale = (listing: (typeof listings)[number]) =>
-    (listing.availableQuantity === null || listing._count.purchases < listing.availableQuantity) &&
-    (!listing.availableFrom || listing.availableFrom <= now) &&
-    (!listing.availableTo || listing.availableTo >= now);
-
-  const team = await getEventViewerTeam(event, userId);
-  // A team event whose team can't be read: what the box holds for them is unknown.
-  if (team === null) return [];
-
   const views = await Promise.all(
     boxes.map(async (box): Promise<MysteryBoxView | null> => {
       const listing =
-        box.status === ITEM_DEFINITION_STATUS.published
-          ? listings.find((l) => l.itemDefinitionId === box.id && onSale(l))
+        playable && box.status === ITEM_DEFINITION_STATUS.published
+          ? listings.find(
+              (l) => l.itemDefinitionId === box.id && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
+            )
           : undefined;
       const heldBoxItemIds = held
         .filter((item) => item.itemDefinitionId === box.id)
@@ -348,6 +377,7 @@ export async function getMysteryBoxesForEvent({
         name: box.name,
         description: box.description,
         version: box.version,
+        team,
         art: boxArtFor((box.params ?? {}) as BoxParams, team),
         listing: listing
           ? {
@@ -504,15 +534,8 @@ export async function purchaseMysteryBox({
   // was made; any other request is held to them.
   await runPurchaseChecks(pendingClaim, async () => {
     if (chargedBefore) return;
-    if (
-      shopItem.availableQuantity !== null &&
-      shopItem._count.purchases >= shopItem.availableQuantity
-    )
-      throw throwBadRequestError('This box is out of stock');
-    if (shopItem.availableFrom && shopItem.availableFrom > new Date())
-      throw throwBadRequestError('This box is not available yet');
-    if (shopItem.availableTo && shopItem.availableTo < new Date())
-      throw throwBadRequestError('This box is no longer available');
+    const refusal = boxSaleRefusal(shopItem, shopItem._count.purchases, new Date());
+    if (refusal) throw throwBadRequestError(refusal);
 
     assertConfirmedPrice({
       existingClaim,

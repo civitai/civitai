@@ -12,6 +12,7 @@ export const mysteryBoxRouter = router({
       getMysteryBoxesForEvent({
         ...input,
         userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
         mysteryBoxEnabled: ctx.features.mysteryBox,
         countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
       })
