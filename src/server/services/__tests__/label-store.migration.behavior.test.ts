@@ -1,8 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
-import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bootLabelStore, LABEL_STORE_MIGRATION } from './label-store.fixture';
 
 // Booting PGlite (WASM Postgres) can exceed the default hook timeout on a contended runner.
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -12,11 +12,6 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * hooks into. Each case that expects nothing has a twin that differs in one property and does produce
  * something, so an empty result cannot come from a store that records nothing.
  */
-
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/migration.sql'
-);
 
 const db = { pg: null as unknown as PGlite };
 
@@ -28,68 +23,10 @@ const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex
 
 beforeAll(async () => {
   db.pg = await PGlite.create();
-  await db.pg.exec(`
-    CREATE TABLE "Image" (
-      "id" integer PRIMARY KEY,
-      "userId" integer NOT NULL,
-      "url" text NOT NULL,
-      "pHash" bigint,
-      "meta" jsonb
-    );
-    CREATE TABLE "ScanLabelItem" (
-      "id" serial PRIMARY KEY,
-      "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
-      "copyState" text,
-      "copyKey" text,
-      "copiedAt" timestamptz(3)
-    );
-    CREATE TABLE "ScanLabelFlag" (
-      "id" serial PRIMARY KEY,
-      "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
-      "source" text NOT NULL,
-      "flaggerVersion" text NOT NULL,
-      "reason" text,
-      "workflowId" text NOT NULL UNIQUE,
-      "flaggedAt" timestamptz(3) NOT NULL,
-      "snapshot" jsonb,
-      "createdAt" timestamptz(3) NOT NULL DEFAULT now()
-    );
-    CREATE TABLE "ScanLabelVote" (
-      "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
-      "userId" integer NOT NULL,
-      "block" boolean NOT NULL,
-      "reason" text,
-      "reasonComment" text,
-      "msOnItem" integer,
-      "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
-      PRIMARY KEY ("itemId", "userId")
-    );
-    CREATE TABLE "ScanLabelCopyObject" (
-      "key" text PRIMARY KEY,
-      "itemId" integer NOT NULL,
-      "imageId" integer NOT NULL,
-      "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
-      "withdrawnAt" timestamptz(3),
-      "withdrawReason" text
-    );
-    CREATE TABLE "AppealDecisionRecord" (
-      "id" bigserial PRIMARY KEY,
-      "appealId" integer NOT NULL UNIQUE,
-      "imageId" integer NOT NULL,
-      "imageUrl" text NOT NULL,
-      "pHash" bigint,
-      "nsfwLevel" integer NOT NULL,
-      "nsfwLevelReason" text,
-      "aiNsfwLevel" integer,
-      "blockedFor" text,
-      "decision" text NOT NULL,
-      "decidedAt" timestamptz(3) NOT NULL
-    );
-  `);
-  await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
+  await bootLabelStore(db.pg);
   // The scoped roles infra creates, then the migration's grant block re-run as the header says.
   await db.pg.exec(`CREATE ROLE label_reader; CREATE ROLE site_app;`);
-  const grant = readFileSync(MIGRATION, 'utf8').match(
+  const grant = readFileSync(LABEL_STORE_MIGRATION, 'utf8').match(
     /DO \$\$\r?\nBEGIN\r?\n {2}IF EXISTS[\s\S]*?\r?\n\$\$;/
   );
   if (!grant) throw new Error('grant block not found in the migration');

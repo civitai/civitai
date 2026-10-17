@@ -116,6 +116,9 @@ export const PERMISSIONS = [
     id: 'creatorServices.resolveDispute',
     label: 'Resolve a Creator Services dispute (refund or release Buzz)',
   },
+  // Checked by the main app's `/api/mod/label-store/predictions` by this literal (`ModeratorGrantId`),
+  // and the only thing that opens it: the holder need not be a moderator.
+  { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];
