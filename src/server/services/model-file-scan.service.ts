@@ -789,7 +789,7 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
         modelType: file.modelVersion.model.type as ModelType,
         baseModel: file.modelVersion.baseModel,
         url: file.url,
-        priority: 'low',
+        priority: 'normal',
       });
       sent.push(file.id);
     } catch (err) {
