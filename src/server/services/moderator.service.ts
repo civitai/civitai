@@ -78,6 +78,9 @@ type UserModActivity = {
     // request from someone who cannot sign in to do it themselves. Distinct from `removeContent`,
     // which strips what an account owns and leaves the account itself identifiable.
     | 'deleteAccount'
+    // A moderator removed every reaction the account made, on its owner's request. One row per call;
+    // the per-table counts are on the ClickHouse audit row (`affected`).
+    | 'removeReactions'
     // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
     // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
     | `mintMembershipCode:${string}`

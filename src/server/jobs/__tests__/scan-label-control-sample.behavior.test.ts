@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -252,6 +253,25 @@ describe('feedScanLabelControlSample exclusions', () => {
     });
     expect(result).toMatchObject({ added: 1 });
     expect(await controlImages()).toEqual([4]);
+  });
+
+  it('bounds createdAt only in the insert, never in the candidate walk', async () => {
+    await image(2);
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockClear();
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockClear();
+    await feedScanLabelControlSample({ now: NOW, rng: spread(), inRollout: everyone });
+    const text = (calls: unknown[][]) =>
+      calls.map(
+        ([strings, ...values]) => Prisma.sql(strings as TemplateStringsArray, ...values).text
+      );
+    const walk = text(vi.mocked(dbMock.dbWrite.$queryRaw).mock.calls).filter((t) =>
+      t.includes('CROSS JOIN LATERAL')
+    );
+    const [insert] = text(vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls);
+    expect(walk).toHaveLength(1);
+    expect(walk[0]).not.toContain('"createdAt"');
+    expect(insert).toContain('img."createdAt" >=');
+    expect(await controlImages()).toEqual([2]);
   });
 
   it('adds nothing when no upload is in the window', async () => {

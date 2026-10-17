@@ -4,6 +4,7 @@ import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants'
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
 import { FLAG_APPEALS_PATH, HELD_DETECTIONS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
+import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
 
 export const APP = 'moderator';
 
@@ -240,6 +241,16 @@ export const NAVIGATION: NavLink[] = [
       { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
       { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
     ],
+  },
+  // No path of its own, so each queue is granted on its own: whoever handles account appeals need not
+  // see the others. A group's grant would be the union of its children.
+  {
+    label: 'Appeals',
+    children: SITE_APPEAL_QUEUES.map((q) => ({
+      path: siteAppealQueuePath(q.slug),
+      label: q.label,
+      countKey: siteAppealCountKey(q.category),
+    })),
   },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },

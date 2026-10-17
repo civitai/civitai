@@ -30,6 +30,7 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
@@ -233,6 +234,9 @@
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
       />
+      {#if data.grants['user.removeReactions']}
+        <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />
+      {/if}
     {/if}
   {/key}
 {/if}

@@ -27,6 +27,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { isEventShopItemData } from '~/server/events/event-shop-item';
 import {
+  assertConfirmedPrice,
   beginShopPurchase,
   chargeForShopPurchase,
   chargeRetryOptions,
@@ -40,6 +41,7 @@ import {
   type ShopPurchaseClaim,
   type ShopPurchaseStart,
 } from '~/server/services/shop-purchase-charge';
+import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -621,11 +623,7 @@ export const purchaseCosmeticPack = async ({
     // The buyer confirmed a number on a button, and the amount due moves with
     // the pack's price and with what they own. Refused here, before the claim
     // is written, so a stale price leaves nothing behind for a retry to resume.
-    const confirmed = existingClaim ? existingClaim.amount : expectedAmount;
-    if (confirmed !== undefined && confirmed !== amountDue)
-      throw throwBadRequestError(
-        `The price changed to ${amountDue} Buzz. Check the new price and try again.`
-      );
+    assertConfirmedPrice({ existingClaim, expectedAmount, amountDue });
   });
 
   // A resumed claim charges what it claimed; its expected amount is checked
@@ -670,6 +668,7 @@ export const purchaseCosmeticPack = async ({
   try {
     await dbWrite.$transaction(async (tx) => {
       await markClaimPaid(tx, transactionId);
+      await lockItemHolder(tx, userId);
 
       await tx.userCosmeticShopPurchases.create({
         data: {

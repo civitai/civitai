@@ -26,7 +26,7 @@ import {
   inlineMediaMessage,
 } from '~/server/schema/blocks/inline-media';
 import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
-import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+import { jsonLengthWithin, measureJsonLength } from '~/server/schema/blocks/json-length';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -912,6 +912,19 @@ export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 // `'recipe'` nor `'inline'`), which zod reports as a bare `Invalid input` at
 // `path:['mode']` — the discriminator's own value is the one thing that error
 // does not name. Same treatment as the two `.strict()` maps: enumerate the arms.
+/** The longest non-string `mode` value, in JSON characters, the error echoes. */
+const ECHOED_MODE_MAX_CHARS = 200;
+
+/**
+ * A non-string `mode` as JSON, measured before it is serialized so only a short one is built;
+ * a longer one is described instead. An unserializable value is left to JSON.stringify.
+ */
+function echoedModeValue(raw: unknown): string {
+  return measureJsonLength([raw], ECHOED_MODE_MAX_CHARS) === 'over'
+    ? `a value over ${ECHOED_MODE_MAX_CHARS} characters`
+    : JSON.stringify(raw);
+}
+
 const blockCustomComfyMemberSchema = z.discriminatedUnion(
   'mode',
   [blockCustomComfyBodySchema, blockInlineComfyBodySchema],
@@ -919,7 +932,7 @@ const blockCustomComfyMemberSchema = z.discriminatedUnion(
     error: (iss) => {
       if (iss.code !== 'invalid_union') return undefined;
       const raw = (iss.input as { mode?: unknown } | null | undefined)?.mode;
-      const named = typeof raw === 'string' ? `"${raw}"` : JSON.stringify(raw ?? null);
+      const named = typeof raw === 'string' ? `"${raw}"` : echoedModeValue(raw ?? null);
       return (
         `Invalid \`customComfy\` mode: ${named} — expected "recipe" or "inline".` +
         ` ${customComfyArmHelp('recipe')}. ${customComfyArmHelp('inline')}.`

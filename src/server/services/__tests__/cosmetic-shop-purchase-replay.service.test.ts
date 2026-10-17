@@ -26,6 +26,8 @@ const { mocks } = vi.hoisted(() => ({
     listMultiTx: vi.fn(),
     getBlockedPairIds: vi.fn(),
     purchaseCosmeticPack: vi.fn(),
+    executeRaw: vi.fn(),
+    txUserCosmeticFindFirst: vi.fn(),
   },
 }));
 
@@ -60,6 +62,7 @@ vi.mock('~/server/services/cosmetic-pack.service', async (importOriginal) => ({
 
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE, runPurchaseChecks } from '../shop-purchase-charge';
+import { ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -81,8 +84,9 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
   claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-      userCosmetic: { create: mocks.userCosmeticCreate },
+      userCosmetic: { create: mocks.userCosmeticCreate, findFirst: mocks.txUserCosmeticFindFirst },
       cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: mocks.executeRaw,
     })
   )
 );
@@ -230,6 +234,63 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
     expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toBe(TX);
     expect(claims.rows.get(TX)?.status).toBe('paid');
+  });
+
+  // A mystery box open decides "not owned" from a read under this lock; a grant that skips it
+  // can land between that read and the box's grant (item-holder-lock.ts).
+  // The pre-charge ownership check runs outside the lock; a box open can grant the cosmetic while
+  // the charge is in flight. Re-checked under the lock, it refunds instead of granting a second one.
+  it('refunds a single-ownership purchase whose cosmetic was granted while charging', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, type: 'Badge' },
+    });
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE });
+    mocks.txUserCosmeticFindFirst.mockResolvedValue({ userId: BUYER_ID });
+
+    await expect(purchase()).rejects.toThrow('Failed to purchase cosmetic');
+
+    expect(mocks.txUserCosmeticFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: BUYER_ID, cosmeticId: row.cosmeticId } })
+    );
+    expect(mocks.userCosmeticCreate).not.toHaveBeenCalled();
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+    expect(claims.rows.get(TX)?.status).toBe('refunded');
+  });
+
+  it('grants a single-ownership purchase still unowned under the lock (control)', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, type: 'Badge' },
+    });
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.txUserCosmeticFindFirst.mockResolvedValue(null);
+
+    await purchase();
+
+    expect(mocks.txUserCosmeticFindFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+
+  it("takes the buyer's grant lock in the grant transaction, before granting", async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+
+    await purchase();
+
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, lockClass, lockedUser] = mocks.executeRaw.mock.calls[0] as [
+      readonly string[],
+      number,
+      number
+    ];
+    expect(sql.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
+    expect(lockClass).toBe(ITEM_HOLDER_LOCK_CLASS);
+    expect(lockedUser).toBe(BUYER_ID);
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.userCosmeticCreate.mock.invocationCallOrder[0]
+    );
   });
 
   it('claims the purchase before any money moves', async () => {

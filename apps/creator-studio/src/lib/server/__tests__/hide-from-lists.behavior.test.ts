@@ -48,7 +48,7 @@ vi.mock('@civitai/db/kysely', () => {
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-const { getReactors } = await import('../reactors');
+const { getReactors, imageAudienceListable } = await import('../reactors');
 const { getCollectors } = await import('../collectors');
 
 const OWNER = 42;
@@ -64,7 +64,9 @@ beforeAll(async () => {
       id int PRIMARY KEY, username text, "deletedAt" timestamp, "bannedAt" timestamp,
       "profilePictureId" int, settings jsonb NOT NULL DEFAULT '{}'
     );
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text, "blockedFor" text
+    );
     CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text, "createdAt" timestamp DEFAULT now());
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
     CREATE TABLE "Collection" (
@@ -130,7 +132,9 @@ describe('Creator Studio "Who reacted" and reactions from before the lists launc
     `);
   });
 
-  afterEach(() => holder.db.exec(`UPDATE "User" SET settings = '{}' WHERE id IN (${QUIET}, ${AFTER})`));
+  afterEach(() =>
+    holder.db.exec(`UPDATE "User" SET settings = '{}' WHERE id IN (${QUIET}, ${AFTER})`)
+  );
 
   it('leaves out an older image reaction by default, still in the count', async () => {
     const page = await getReactors(holder.db as never, OWNER, 'image', PRE_IMAGE, {
@@ -174,5 +178,60 @@ describe('Creator Studio lists leave out a user who opted out', () => {
     const page = await getCollectors(holder.db as never, OWNER, 'image', IMAGE, null);
     expect(page?.collectors.map((c) => c.userId)).toEqual([LISTED, OPTED_BACK_IN]);
     expect(page?.total).toBe(3);
+  });
+});
+
+describe('Creator Studio lists on a blocked image', () => {
+  // [id, ingestion, blockedFor, listed]
+  const CASES: [number, string, string | null, boolean][] = [
+    [910, 'Blocked', 'moderated', false],
+    [913, 'Blocked', 'tos', false],
+    [914, 'Blocked', 'CSAM', false],
+    [915, 'Blocked', null, false],
+    [911, 'Blocked', 'AiNotVerified', true],
+    [912, 'Scanned', 'moderated', true],
+    [916, 'Pending', 'moderated', true],
+  ];
+  const lists = async (imageId: number, ownerId = OWNER) => ({
+    reactors: (
+      await getReactors(holder.db as never, ownerId, 'image', imageId, {
+        reaction: 'Like',
+        cursor: null,
+      } as never)
+    )?.reactors.map((r) => r.userId),
+    collectors: (
+      await getCollectors(holder.db as never, ownerId, 'image', imageId, null)
+    )?.collectors.map((c) => c.userId),
+  });
+
+  beforeAll(async () => {
+    for (const [id, ingestion, blockedFor] of CASES) {
+      await holder.db.query(
+        `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES ($1, $2, $3, $4)`,
+        [id, OWNER, ingestion, blockedFor]
+      );
+      await holder.db.query(
+        `INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES ($1, $2, 'Like')`,
+        [id, LISTED]
+      );
+      await holder.db.query(
+        `INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "addedById") VALUES (1, $1, 'ACCEPTED', $2)`,
+        [id, LISTED]
+      );
+    }
+  });
+
+  it.each(CASES)('image %i (%s, %s): listed = %s', async (id, ingestion, blockedFor, listed) => {
+    expect(await lists(id)).toEqual(
+      listed
+        ? { reactors: [LISTED], collectors: [LISTED] }
+        : { reactors: undefined, collectors: undefined }
+    );
+    // The page decides whether to render the lists with the same rule, in TypeScript.
+    expect(imageAudienceListable({ ingestion, blockedFor })).toBe(listed);
+  });
+
+  it('still refuses a caller who does not own the image', async () => {
+    expect(await lists(911, 999)).toEqual({ reactors: undefined, collectors: undefined });
   });
 });

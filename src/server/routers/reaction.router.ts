@@ -39,8 +39,9 @@ export const reactionRouter = router({
       getUserReactionsForImages({ imageIds: input.imageIds, userId: ctx.user.id })
     ),
   /**
-   * Owner-only: anyone else gets NOT_FOUND, the same as a missing image. No `requiredScope`, so only a full-access
-   * key reaches it: no narrower scope's consent text covers "who reacted to your content".
+   * Owner-only, and not for a removed image: anything else gets NOT_FOUND, the same as a missing image. No
+   * `requiredScope`, so only a full-access key reaches it: no narrower scope's consent text covers "who reacted to
+   * your content".
    */
   getImageReactors: protectedProcedure
     .input(getByIdSchema)

@@ -1954,6 +1954,32 @@ model ResourceIntentVocabulary {
   createdAt    DateTime  @default(now())
   frozenAt     DateTime?
   frozenBy     String?
+
+  tagIndexSnapshots ResourceIntentTagIndexSnapshot[]
+}
+
+// The manifest of one stored resource-intent v1 tag-index snapshot; the payload is in object
+// storage under `objectKey` (content-addressed: it ends in /<payloadSha256>). Inserted 'ready'
+// after the upload; 'retired' is one-way. A DB trigger sets `createdAt` and `retiredAt`, refuses a
+// row whose vocabulary is not frozen, and refuses every other change; a trigger on
+// ResourceIntentVocabulary refuses moving a vocabulary a ready row names back to 'candidate'.
+// Formats are DB CHECKs. Written and read only through
+// src/server/services/resource-intent-tags/store.ts. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentTagIndexSnapshot {
+  id            String                   @id @default(uuid())
+  status        String                   @default("ready")
+  vocabVersion  String
+  vocabulary    ResourceIntentVocabulary @relation(fields: [vocabVersion], references: [vocabVersion], onDelete: Restrict, onUpdate: Restrict)
+  specHash      String
+  payloadSha256 String
+  payloadBytes  Int
+  objectKey     String
+  buildStats    Json
+  createdAt     DateTime                 @default(now())
+  retiredAt     DateTime?
+
+  @@index([specHash, status, createdAt(sort: Desc)], map: "ResourceIntentTagIndexSnapshot_latest_ready_idx")
 }
 
 enum ReviewReactions {
@@ -5235,6 +5261,7 @@ model Cosmetic {
   packMemberships     CosmeticShopItemCosmetic[]
   creatorMilestones   CreatorMilestone[]
   milestoneExtras     CreatorMilestoneCosmetic[]
+  itemDefinition      ItemDefinition?
 
   @@index([createdById])
 }
@@ -5404,12 +5431,19 @@ model CosmeticShopItem {
   reviewedAt        DateTime?
   rejectionReason   String?
   listed            Boolean   @default(true)
+  // Set on a listing that sells an item (a mystery box). Such a listing also has
+  // no `cosmeticId`, so it must be routed before anything that reads a NULL
+  // `cosmeticId` as a pack.
+  itemDefinitionId  Int?
+  itemDefinition    ItemDefinition? @relation(fields: [itemDefinitionId], references: [id], onDelete: Restrict)
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
   wishlists UserCosmeticShopItemWishlist[]
   resales   UserCosmeticShopItemResale[]
   members   CosmeticShopItemCosmetic[]
+
+  @@index([itemDefinitionId])
 }
 
 // Cross-creator resale: another creator listing this item in their own shop.
@@ -5528,6 +5562,134 @@ model UserCosmeticShopPurchaseCosmetic {
 
   @@id([buzzTransactionId, cosmeticId])
   @@index([cosmeticId])
+}
+
+/// Anything that can be held or rewarded: a cosmetic, a mystery box, later Buzz, perks and tokens.
+/// `type` is text + CHECK, not an enum, so a new type needs no deploy-first enum migration.
+model ItemDefinition {
+  id                Int       @id @default(autoincrement())
+  /// cosmetic | box
+  type              String
+  name              String
+  description       String?
+  imageUrl          String?
+  /// Type settings. box: { event?: string, emptyRule: 'keep' }.
+  params            Json      @default("{}")
+  /// A cosmetic definition's cosmetic. A column rather than params so the FK keeps a box's contents grantable.
+  cosmeticId        Int?      @unique
+  cosmetic          Cosmetic? @relation(fields: [cosmeticId], references: [id], onDelete: Restrict)
+  rarity            String?
+  /// Buzz value, for balancing and the average-value line. Never a price.
+  value             Int?
+  /// Bitwise `ItemFlag`. TRADABLE is read by no code path; turning it on needs Legal and counsel.
+  flags             Int       @default(0)
+  /// NULL = unlimited.
+  quantityAvailable Int?
+  /// Bumped on any change to a box's tiers, weights or contents. A purchase and an open must name the version they were shown.
+  version           Int       @default(1)
+  /// draft | published | archived
+  status            String    @default("draft")
+  createdById       Int?
+  updatedById       Int?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
+
+  items           Item[]
+  boxTiers        BoxTier[]
+  boxContents     BoxContent[]        @relation("BoxContentBox")
+  rewardOf        BoxContent[]        @relation("BoxContentReward")
+  oddsSnapshots   BoxOddsSnapshot[]
+  shopItems       CosmeticShopItem[]
+
+  @@index([type, status])
+}
+
+/// A held item. v1 holds only unopened boxes; cosmetic rewards are granted as UserCosmetic rows.
+model Item {
+  id               BigInt         @id @default(autoincrement())
+  itemDefinitionId Int
+  itemDefinition   ItemDefinition @relation(fields: [itemDefinitionId], references: [id], onDelete: Restrict)
+  /// user (text + CHECK; factions add their own holder types)
+  holderType       String
+  holderId         Int
+  quantity         Int            @default(1)
+  expiresAt        DateTime?
+  data             Json           @default("{}")
+  /// What granted it (a purchase claim's transactionId, a prize key). Unique, so a retried grant cannot make a second row.
+  sourceKey        String         @unique
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @default(now()) @updatedAt
+
+  @@index([holderType, holderId, itemDefinitionId])
+  @@index([itemDefinitionId])
+}
+
+model BoxTier {
+  id              Int            @id @default(autoincrement())
+  boxDefinitionId Int
+  box             ItemDefinition @relation(fields: [boxDefinitionId], references: [id], onDelete: Cascade)
+  key             String
+  name            String
+  /// The tier's odds: weight / sum of the weights of tiers with anything left for the buyer.
+  weight          Int
+  color           String?
+  sortOrder       Int            @default(0)
+  contents        BoxContent[]
+
+  @@unique([boxDefinitionId, key])
+}
+
+/// A box's full contents: one reward in one tier.
+model BoxContent {
+  id                 Int            @id @default(autoincrement())
+  boxDefinitionId    Int
+  box                ItemDefinition @relation("BoxContentBox", fields: [boxDefinitionId], references: [id], onDelete: Cascade)
+  tierId             Int
+  tier               BoxTier        @relation(fields: [tierId], references: [id], onDelete: Restrict)
+  rewardDefinitionId Int
+  reward             ItemDefinition @relation("BoxContentReward", fields: [rewardDefinitionId], references: [id], onDelete: Restrict)
+  enabled            Boolean        @default(true)
+
+  @@unique([boxDefinitionId, rewardDefinitionId])
+  @@index([tierId])
+  @@index([rewardDefinitionId])
+}
+
+/// One opened box. Keyed by the opened Item's id, which is deleted on open, so no FKs: this row is the record.
+/// The partial unique index on (userId, boxDefinitionId, rewardDefinitionId) for cosmetic rewards lives in the migration (Prisma cannot express it).
+model BoxOpening {
+  boxItemId          BigInt   @id
+  boxDefinitionId    Int
+  boxVersion         Int
+  userId             Int
+  boxSourceKey       String
+  tierId             Int
+  contentId          Int
+  rewardDefinitionId Int
+  rewardType         String
+  tierWeight         Int
+  eligibleWeight     Int
+  tierRoll           Int
+  tierPoolSize       Int
+  itemRoll           Int
+  /// granted (text + CHECK)
+  rewardStatus       String
+  createdAt          DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([boxDefinitionId, createdAt])
+}
+
+/// A box's tiers, weights and contents at each version: the public odds page and its history.
+model BoxOddsSnapshot {
+  boxDefinitionId Int
+  box             ItemDefinition @relation(fields: [boxDefinitionId], references: [id], onDelete: Cascade)
+  version         Int
+  snapshot        Json
+  createdById     Int?
+  createdAt       DateTime       @default(now())
+
+  @@id([boxDefinitionId, version])
 }
 
 enum BuzzAccountType {

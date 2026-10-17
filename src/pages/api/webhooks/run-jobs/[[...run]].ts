@@ -19,6 +19,7 @@ import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -99,6 +100,7 @@ import {
   buildResourceIntentCoocJob,
   resourceIntentCoocRetentionJob,
 } from '~/server/jobs/build-resource-intent-cooc';
+import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
@@ -227,6 +229,7 @@ export const jobs: Job[] = [
   syncGeneratorLoadedResources,
   buildResourceIntentCoocJob,
   resourceIntentCoocRetentionJob,
+  buildResourceIntentTagIndexJob,
   updateUserScore,
   grantCreatorMilestones,
   userScoreHealthCheckJob,
@@ -238,6 +241,7 @@ export const jobs: Job[] = [
   botAccountDetection,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  creatorProgramCounterpartyReview,
   giftMembershipArming,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,

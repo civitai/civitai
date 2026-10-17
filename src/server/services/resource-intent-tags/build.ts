@@ -323,29 +323,63 @@ export type TagBuildStats = {
  * The entry order that groups entries by key (0..keyCount-1) and, within a key, by resource ascending;
  * equal (key, resource) entries keep their input order.
  */
-function csrOrder(keyCount: number, keys: Uint32Array, resource: Uint32Array): Uint32Array {
+function* csrOrder(
+  keyCount: number,
+  keys: Uint32Array,
+  resource: Uint32Array,
+  step: Step
+): Generator<void, Uint32Array> {
   const start = new Uint32Array(keyCount + 1);
-  for (let k = 0; k < keys.length; k++) start[keys[k] + 1]++;
+  for (let k = 0; k < keys.length; k++) {
+    start[keys[k] + 1]++;
+    if (step()) yield;
+  }
   for (let i = 0; i < keyCount; i++) start[i + 1] += start[i];
   const fill = start.slice(0, keyCount);
   const order = new Uint32Array(keys.length);
-  for (let k = 0; k < keys.length; k++) order[fill[keys[k]]++] = k;
+  for (let k = 0; k < keys.length; k++) {
+    order[fill[keys[k]]++] = k;
+    if (step()) yield;
+  }
   for (let i = 0; i < keyCount; i++) {
     const seg = order.subarray(start[i], start[i + 1]);
     if (seg.length > 1) seg.set(Array.from(seg).sort((a, b) => resource[a] - resource[b] || a - b));
+    if (step(seg.length)) yield;
   }
   return order;
 }
 
+/**
+ * Called once per unit of work (or `n` units) inside `finalize`'s loops; true when the computation
+ * should pause. Pausing changes nothing about the result.
+ */
+type Step = (n?: number) => boolean;
+
+/** Units of work between pauses of `finalizeCooperative`: a few milliseconds at the real size. */
+export const FINALIZE_STEP_WORK = 1 << 16;
+
+function stepEvery(every: number): Step {
+  let work = 0;
+  return (n = 1) => {
+    work += n;
+    if (work < every) return false;
+    work = 0;
+    return true;
+  };
+}
+
+export type TagBuildResult = { data: TagIndexData; stats: TagBuildStats };
+
 /** Entries grouped by key; with `normalise`, each key's values divided by their sum. */
-function sparseByKey(
+function* sparseByKey(
   keyCount: number,
   keys: Uint32Array,
   resource: Uint32Array,
   value: Float64Array,
-  normalise: boolean
-): SparseByKey {
-  const order = csrOrder(keyCount, keys, resource);
+  normalise: boolean,
+  step: Step
+): Generator<void, SparseByKey> {
+  const order = yield* csrOrder(keyCount, keys, resource, step);
   const keyList: number[] = [];
   const ptr: number[] = [0];
   const res = new Uint32Array(order.length);
@@ -356,6 +390,7 @@ function sparseByKey(
     if (!j || keys[order[j - 1]] !== keys[k]) keyList.push(keys[k]);
     res[j] = resource[k];
     val[j] = value[k];
+    if (step()) yield;
   }
   if (order.length) ptr.push(order.length);
   if (normalise) {
@@ -363,6 +398,7 @@ function sparseByKey(
       let tot = 0;
       for (let k = ptr[i]; k < ptr[i + 1]; k++) tot += val[k];
       for (let k = ptr[i]; k < ptr[i + 1]; k++) val[k] /= tot;
+      if (step(ptr[i + 1] - ptr[i] + 1)) yield;
     }
   }
   return { keys: Uint32Array.from(keyList), ptr: Uint32Array.from(ptr), resource: res, value: val };
@@ -534,7 +570,32 @@ export class TagIndexAccumulator {
     this.rowResEnd.push(this.rowResModel.length);
   }
 
-  finalize(): { data: TagIndexData; stats: TagBuildStats } {
+  /** Computes the index in one synchronous call. */
+  finalize(): TagBuildResult {
+    const steps = this.finalizeSteps(stepEvery(Infinity));
+    for (;;) {
+      const r = steps.next();
+      if (r.done) return r.value;
+    }
+  }
+
+  /**
+   * The same computation as `finalize` (the same output, byte for byte), pausing every `every` units
+   * of work to await `pause`: give it a `loopYielder` so a large index does not hold the event loop.
+   */
+  async finalizeCooperative(
+    pause: () => Promise<void>,
+    every = FINALIZE_STEP_WORK
+  ): Promise<TagBuildResult> {
+    const steps = this.finalizeSteps(stepEvery(every));
+    for (;;) {
+      const r = steps.next();
+      if (r.done) return r.value;
+      await pause();
+    }
+  }
+
+  private *finalizeSteps(step: Step): Generator<void, TagBuildResult> {
     if (this.finalized) throw new Error('TagIndexAccumulator already finalized');
     this.finalized = true;
     const P = this.params;
@@ -567,6 +628,7 @@ export class TagIndexAccumulator {
         cnt[s][rowUser[r]]++;
         tot[s] += rowValue[r];
         n[s]++;
+        if (step()) yield;
       }
       const g = [tot[0] / Math.max(n[0], 1), tot[1] / Math.max(n[1], 1)];
       const k = [P.outcome.genUserPrior, P.outcome.postUserPrior];
@@ -576,6 +638,7 @@ export class TagIndexAccumulator {
         if (rowSource[r] !== 1) continue;
         const d = rowValue[r] - base(1, rowUser[r]);
         ss += d * d;
+        if (step()) yield;
       }
       const sd = Math.sqrt(ss / Math.max(n[1], 1)) || 1;
       for (let r = 0; r < N; r++) {
@@ -584,6 +647,7 @@ export class TagIndexAccumulator {
           rowSource[r] === 0
             ? rowValue[r] - b
             : Math.tanh((rowValue[r] - b) / sd) + (rowTipped[r] ? P.outcome.tipBonus : 0);
+        if (step()) yield;
       }
     }
 
@@ -594,7 +658,10 @@ export class TagIndexAccumulator {
       for (let r = 0; r < N; r++) start[rowUser[r] + 1]++;
       for (let u = 0; u < nUsers; u++) start[u + 1] += start[u];
       const fill = start.slice(0, nUsers);
-      for (let r = 0; r < N; r++) byUser[fill[rowUser[r]]++] = r;
+      for (let r = 0; r < N; r++) {
+        byUser[fill[rowUser[r]]++] = r;
+        if (step()) yield;
+      }
     }
 
     const E = this.ecoNames.length;
@@ -619,6 +686,7 @@ export class TagIndexAccumulator {
           }
           if (e >= 0) tagEco[t * E + e]++;
         }
+        if (step(rowTagEnd[r] - tagStart(r) + 1)) yield;
         if (e >= 0) {
           rowsWithEco++;
           ecoObs[e]++;
@@ -645,6 +713,7 @@ export class TagIndexAccumulator {
           incRow[at] = r;
           incMult[at] = rowResMult[k];
         }
+        if (step()) yield;
       }
     }
 
@@ -695,6 +764,7 @@ export class TagIndexAccumulator {
               tSum[t] += xv;
               tW[t] += mult;
             }
+            if (step(rowTagEnd[r] - tagStart(r) + 1)) yield;
           }
           rX += sum / w;
           rN++;
@@ -736,6 +806,7 @@ export class TagIndexAccumulator {
           tX[t] = 0;
           tN[t] = 0;
         }
+        if (step(touchedTAll.length + 1)) yield;
         touchedTAll.length = 0;
         for (const e of touchedEAll) {
           const fit = (eX[e] + F.ecosystemPrior * fr) / (eN[e] + F.ecosystemPrior);
@@ -768,6 +839,7 @@ export class TagIndexAccumulator {
         tagEcoCount.push(c);
       }
       tagEcoPtr[t + 1] = tagEcoEco.length;
+      if (step(E)) yield;
     }
 
     const stats: TagBuildStats = {
@@ -828,8 +900,9 @@ export class TagIndexAccumulator {
       const cr = u32();
       const cc = f64();
       const cf = f64();
-      content.forEach((ct, i) => {
-        if (!ct) return;
+      for (let i = 0; i < content.length; i++) {
+        const ct = content[i];
+        if (!ct) continue;
         for (let k = 0; k < ct.tags.length; k++) {
           ck.push(ct.tags[k]);
           cr.push(i);
@@ -837,8 +910,10 @@ export class TagIndexAccumulator {
           cf.push(NaN);
         }
         stats.contentPairs += ct.tags.length;
-      });
+        if (step(ct.tags.length + 1)) yield;
+      }
       for (let k = 0; k < tagModel.length; k++) {
+        if (step()) yield;
         const i = local[tagModel[k]];
         if (i < 0) continue;
         ck.push(tagTag[k]);
@@ -846,7 +921,7 @@ export class TagIndexAccumulator {
         cc.push(0);
         cf.push(tagFit[k]);
       }
-      const order = csrOrder(V, ck.view(), cr.view());
+      const order = yield* csrOrder(V, ck.view(), cr.view(), step);
       const ptr = new Uint32Array(V + 1);
       const pr = u32();
       const pc = f64();
@@ -857,6 +932,7 @@ export class TagIndexAccumulator {
         const cv = cc.view();
         const fv = cf.view();
         for (let j = 0; j < order.length; j++) {
+          if (step()) yield;
           const k = order[j];
           // A pair in both lists: its content entry comes first (pushed first, stable order).
           if (j && keys[order[j - 1]] === keys[k] && res[order[j - 1]] === res[k]) {
@@ -873,18 +949,46 @@ export class TagIndexAccumulator {
       stats.postings += pr.length;
 
       /** The entries whose model is of this kind, with model indices made kind-local. */
-      const ofKind = (model: Uint32Array, key: Uint32Array, value: Float64Array) => {
+      function* ofKind(model: Uint32Array, key: Uint32Array, value: Float64Array) {
         const sel: number[] = [];
-        for (let k = 0; k < model.length; k++) if (local[model[k]] >= 0) sel.push(k);
-        return {
-          key: Uint32Array.from(sel, (k) => key[k]),
-          resource: Uint32Array.from(sel, (k) => local[model[k]]),
-          value: Float64Array.from(sel, (k) => value[k]),
+        for (let k = 0; k < model.length; k++) {
+          if (local[model[k]] >= 0) sel.push(k);
+          if (step()) yield;
+        }
+        const out = {
+          key: new Uint32Array(sel.length),
+          resource: new Uint32Array(sel.length),
+          value: new Float64Array(sel.length),
         };
-      };
-      const tu = ofKind(tagModel, tagTag, tagS);
-      const eUsers = ofKind(em, ee, eu);
-      const eShare = ofKind(em, ee, es);
+        for (let i = 0; i < sel.length; i++) {
+          const k = sel[i];
+          out.key[i] = key[k];
+          out.resource[i] = local[model[k]];
+          out.value[i] = value[k];
+          if (step()) yield;
+        }
+        return out;
+      }
+      const tu = yield* ofKind(tagModel, tagTag, tagS);
+      const eUsers = yield* ofKind(em, ee, eu);
+      const eShare = yield* ofKind(em, ee, es);
+      const ecosystemUsers = yield* sparseByKey(
+        E,
+        eUsers.key,
+        eUsers.resource,
+        eUsers.value,
+        false,
+        step
+      );
+      const userByTag = yield* sparseByKey(V, tu.key, tu.resource, tu.value, true, step);
+      const userByEcosystem = yield* sparseByKey(
+        E,
+        eShare.key,
+        eShare.resource,
+        eShare.value,
+        true,
+        step
+      );
 
       kinds[kind] = {
         modelIds: Uint32Array.from(ids, (x) => x.id),
@@ -897,9 +1001,9 @@ export class TagIndexAccumulator {
           c: pc.view().slice(),
           fit: pf.view().slice(),
         },
-        ecosystemUsers: sparseByKey(E, eUsers.key, eUsers.resource, eUsers.value, false),
-        userByTag: sparseByKey(V, tu.key, tu.resource, tu.value, true),
-        userByEcosystem: sparseByKey(E, eShare.key, eShare.resource, eShare.value, true),
+        ecosystemUsers,
+        userByTag,
+        userByEcosystem,
       };
     }
 

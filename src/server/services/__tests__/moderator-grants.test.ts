@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -63,5 +65,22 @@ describe('hasModeratorGrant', () => {
   it('refuses a user with no roles', async () => {
     row.value = { roles: ['moderator:gdpr'] };
     expect(await hasModeratorGrant({}, 'user.deleteAccount')).toBe(false);
+  });
+});
+
+describe('ModeratorGrantId', () => {
+  // /admin can only grant ids the moderator app declares; an undeclared one opens to admins only.
+  it('every id is declared in the moderator app', () => {
+    const root = path.resolve(__dirname, '../../../..');
+    const grants = readFileSync(path.join(root, 'src/server/services/moderator-grants.ts'), 'utf8');
+    const union = grants.match(/export type ModeratorGrantId =([^;]+);/)?.[1] ?? '';
+    const ids = [...union.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    const declared = readFileSync(path.join(root, 'apps/moderator/src/lib/permissions.ts'), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+
+    expect(ids.length).toBeGreaterThan(4);
+    expect(ids.filter((id) => !declared.includes(`id: '${id}'`))).toEqual([]);
   });
 });

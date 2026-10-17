@@ -4,6 +4,7 @@ import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
+  banReasonsAlwaysRemovingMedia,
   CacheTTL,
   constants,
   USERS_SEARCH_INDEX,
@@ -25,7 +26,6 @@ import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
-import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
@@ -144,6 +144,11 @@ import {
   closeGenerationRestrictionsOfDeletedAccount,
   reopenGenerationRestrictionsOfRestoredAccount,
 } from '~/server/services/user-restriction.service';
+import {
+  bustUserCreatorCache,
+  fetchUserCreator,
+  getCachedUserCreator,
+} from '~/server/services/user-creator.service';
 
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
@@ -179,90 +184,12 @@ export const getUserCreator = async ({
   leaderboardId?: string;
   isModerator?: boolean;
 }) => {
-  const user = await withSpan('user:getCreator:findUser', () =>
-    dbRead.user.findFirst({
-      where: {
-        ...where,
-        deletedAt: null,
-        AND: [
-          { id: { not: constants.system.user.id } },
-          { username: { not: constants.system.user.username } },
-        ],
-      },
-      select: {
-        id: true,
-        image: true,
-        username: true,
-        muted: true,
-        bannedAt: true,
-        deletedAt: true,
-        createdAt: true,
-        publicSettings: true,
-        settings: true,
-        excludeFromLeaderboards: true,
-        links: {
-          select: {
-            url: true,
-            type: true,
-          },
-        },
-        stats: {
-          select: {
-            downloadCountAllTime: true,
-            thumbsUpCountAllTime: true,
-            followerCountAllTime: true,
-            reactionCountAllTime: true,
-            uploadCountAllTime: true,
-            generationCountAllTime: true,
-          },
-        },
-        rank: {
-          select: {
-            leaderboardRank: true,
-            leaderboardId: true,
-            leaderboardTitle: true,
-            leaderboardCosmetic: true,
-          },
-        },
-        cosmetics: {
-          where: { equippedAt: { not: null }, equippedToId: null },
-          select: {
-            data: true,
-            cosmetic: {
-              select: simpleCosmeticSelect,
-            },
-          },
-        },
-        profilePicture: {
-          select: profileImageSelect,
-        },
-      },
-    })
-  );
-  if (!user) return null;
-
-  /**
-   * TODO: seems to be deprecated, we are getting model count from the stats
-   * though it might be bugged since we are not updating stats if user deletes/unpublishes models
-   */
-  const modelCount = await withSpan('user:getCreator:countModels', () =>
-    dbRead.model.count({
-      where: {
-        userId: user?.id,
-        status: 'Published',
-      },
-    })
-  );
-
-  // Expose only whether the shop is public — never leak the raw settings blob.
-  const { settings, ...rest } = user;
-  const creatorShopEnabled =
-    (settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled === true;
-  return {
-    ...rest,
-    creatorShopEnabled,
-    _count: { models: modelCount },
-  };
+  // An id on its own is the hot shape (creator card, header) and is served from a short-TTL
+  // per-user cache; what invalidates it is documented on `userCreatorCache`. A username lookup
+  // reads the database as before.
+  if (where.id !== undefined && where.username === undefined)
+    return await getCachedUserCreator(where.id);
+  return await fetchUserCreator(where);
 };
 
 type UserSearchResult = {
@@ -1390,8 +1317,9 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     force: true,
     // Skip toggleBan's Moderated media block; softDeleteUser applies its own
     // CSAM block below. Avoids a redundant double-write and a Moderated->CSAM
-    // flip. Models still unpublish (removeModels defaults on).
-    removeMedia: false,
+    // flip. Not `removeMedia: false`, which a minor-safety ban ignores.
+    // Models still unpublish (removeModels defaults on).
+    mediaBlockedByCaller: true,
   });
 
   await dbWrite.image.updateMany({
@@ -1765,6 +1693,8 @@ export async function getCosmeticsForUsers(userIds: number[]) {
 
 export async function deleteUserCosmeticCache(userId: number) {
   await userCosmeticCache.refresh(userId);
+  // The creator card carries the worn cosmetics too.
+  await bustUserCreatorCache(userId);
 }
 
 export async function getProfilePicturesForUsers(userIds: number[]) {
@@ -2160,7 +2090,14 @@ export const toggleBan = async ({
   removeMedia,
   removeModels,
   removeComments,
-}: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
+  mediaBlockedByCaller,
+}: ToggleBanUser & {
+  userId: number;
+  isModerator?: boolean;
+  force?: boolean;
+  /** Server-only, never in the input schema: the caller blocks the media itself, more strictly. */
+  mediaBlockedByCaller?: boolean;
+}) => {
   // Get user with username for search index deletion
   const user = await getUserById({
     id,
@@ -2282,11 +2219,14 @@ export const toggleBan = async ({
     ]);
 
     // Opt-in "remove all images & videos": block (not delete) the banned user's
-    // media, defaulting ON for SexualMinor bans. Blocking (Moderated) preserves
-    // the 7-day appeal window — the remove-blocked-images job hard-deletes them
-    // after that. CSAM semantics stay reserved for the softDeleteUser path.
+    // media. Minor-safety bans always remove it, whatever `removeMedia` says.
+    // Blocking (Moderated) preserves the 7-day appeal window — the
+    // remove-blocked-images job hard-deletes them after that. CSAM semantics
+    // stay reserved for the softDeleteUser path.
     const shouldRemoveMedia =
-      removeMedia === true || (reasonCode === BanReasonCode.SexualMinor && removeMedia !== false);
+      !mediaBlockedByCaller &&
+      (removeMedia === true ||
+        (reasonCode !== undefined && banReasonsAlwaysRemovingMedia.includes(reasonCode)));
     if (shouldRemoveMedia) {
       try {
         // The rows this ban is about to block that still carry account-deletion grace
@@ -3230,6 +3170,9 @@ function createUserSettingsCache() {
     idKey: 'userId',
     ttl: CacheTTL.hour * 4,
     staleWhileRevalidate: false,
+    // The bust window keeps a replica read from being re-cached; this lookup reads the primary, so
+    // a longer window would only add uncached primary reads. 1 is the minimum (it is the marker's EX).
+    debounceTime: 1,
     lookupFn: async (ids) => {
       const rows = await dbWrite.$queryRaw<
         {

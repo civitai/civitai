@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
 import * as z from 'zod';
 import {
   boostWorkflow,
@@ -389,6 +390,8 @@ export const orchestratorRouter = router({
         sourceProvenance,
         downloadPriority,
       } = input;
+      // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
+      assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(

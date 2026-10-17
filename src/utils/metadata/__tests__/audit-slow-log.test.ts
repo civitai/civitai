@@ -176,6 +176,57 @@ describe('AUDIT_SLOW_LOG_RAW gate + truncation', () => {
   });
 });
 
+describe('privateInput: the text never reaches the line, whatever the env says', () => {
+  function fire(options?: { privateInput?: boolean }) {
+    process.env.AUDIT_SLOW_LOG_MS = '100';
+    process.env.AUDIT_SLOW_LOG_RAW = 'true';
+    const seq = [0, 0, 200, 250];
+    let i = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => seq[Math.min(i++, seq.length - 1)]);
+    const timer = new AuditTimer(options);
+    timer.time('c', () => null);
+    timer.finish('a private prompt', 'a private negative');
+  }
+
+  it('keeps timings, lengths and shape; drops raw text and both hashes', async () => {
+    fire({ privateInput: true });
+    await flush();
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    const payload = (logToAxiom.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      name: 'audit-prompt-slow',
+      slowestCheck: 'c',
+      promptLength: 16,
+      negativePromptLength: 18,
+    });
+    expect(payload.longestNonAlnumRun).toBeDefined();
+    for (const k of ['rawPrompt', 'rawNegativePrompt', 'promptHash', 'negativePromptHash'])
+      expect(payload).not.toHaveProperty(k);
+    expect(JSON.stringify(payload)).not.toContain('private');
+  });
+
+  it('control: the same call without it carries the raw text and the hashes', async () => {
+    fire();
+    await flush();
+    const payload = (logToAxiom.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+    expect(payload.rawPrompt).toBe('a private prompt');
+    expect(payload.rawNegativePrompt).toBe('a private negative');
+    expect(payload.promptHash).toMatch(/^[0-9a-f]{40}$/);
+    expect(payload.negativePromptHash).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('auditPrompt passes it through, and the result is unchanged', async () => {
+    process.env.AUDIT_SLOW_LOG_MS = '0';
+    process.env.AUDIT_SLOW_LOG_RAW = 'true';
+    const r = auditPrompt('a private castle prompt', undefined, undefined, { privateInput: true });
+    await flush();
+    expect(r).toEqual(auditPrompt('a private castle prompt'));
+    const first = (logToAxiom.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+    expect(first.promptLength).toBe(23);
+    expect(JSON.stringify(first)).not.toContain('private castle');
+  });
+});
+
 describe('best-effort: instrumentation never throws into the caller', () => {
   it('a logToAxiom rejection does not throw', async () => {
     process.env.AUDIT_SLOW_LOG_MS = '100';

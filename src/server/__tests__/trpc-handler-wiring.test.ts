@@ -360,6 +360,61 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
     });
   });
 
+  describe('onError: an input over the logged length', () => {
+    const LIMIT = 256 * 1024;
+    const MARKER = `[input over ${LIMIT} characters or 16384 values, not logged]`;
+    const logged = async (input: unknown) => {
+      vi.mocked(logToAxiom).mockClear();
+      await h.options?.onError?.({
+        error: new TRPCError({ code: 'BAD_REQUEST', message: 'too large' }),
+        type: 'mutation',
+        path: 'apps.shared.append',
+        input,
+        ctx: {},
+        req: request(2),
+      });
+      return loggedInput();
+    };
+    /** An input whose JSON is exactly `length` characters. */
+    const ofLength = (length: number) => ({ note: 'x'.repeat(length - '{"note":""}'.length) });
+
+    it('is logged as a marker; one at the limit is logged verbatim', async () => {
+      expect(JSON.stringify(ofLength(LIMIT)).length).toBe(LIMIT);
+      expect(await logged(ofLength(LIMIT))).toBe(JSON.stringify(ofLength(LIMIT)));
+      expect(await logged(ofLength(LIMIT + 1))).toBe(MARKER);
+    });
+
+    it('is logged as a marker when it holds more values than the limit', async () => {
+      // The input object, its key and its items: 16,385 values here, 16,384 one item fewer.
+      const values = new Array(16_383).fill(0);
+      expect(JSON.stringify({ values }).length).toBeLessThan(LIMIT);
+      expect(await logged({ values })).toBe(MARKER);
+      const fewer = { values: values.slice(1) };
+      expect(await logged(fewer)).toBe(JSON.stringify(fewer));
+    });
+
+    it('is not serialized when its JSON is far over the limit', async () => {
+      const chunk = { s: 'x'.repeat(4_096), blockToken: TOKEN };
+      const input = { items: new Array(20_000).fill(chunk) };
+      const stringify = JSON.stringify;
+      // Every character JSON.stringify writes during the call, whatever it is called on.
+      let stringified = 0;
+      const spy = vi
+        .spyOn(JSON, 'stringify')
+        .mockImplementation((...args: Parameters<typeof stringify>) => {
+          const out = stringify(...args);
+          stringified += out?.length ?? 0;
+          return out;
+        });
+      try {
+        expect(await logged(input)).toBe(MARKER);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(stringified).toBeLessThan(10_000);
+    });
+  });
+
   it('POSITIVE CONTROL: onError logs an input without a token verbatim', async () => {
     await h.options?.onError?.({
       error: new TRPCError({ code: 'NOT_FOUND', message: 'none' }),

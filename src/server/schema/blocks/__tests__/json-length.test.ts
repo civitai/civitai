@@ -99,6 +99,44 @@ describe('jsonLengthWithin', () => {
     });
   });
 
+  describe('flags a NUL or an unpaired surrogate', () => {
+    // The pattern the shared-storage write path matched against `JSON.stringify` output before
+    // the flag replaced it: a `\u0000` or `\udXXX` escape not itself escaped by a backslash.
+    const STRINGIFIED_ESCAPE = /(?<!\\)(?:\\\\)*\\u(?:0000|d[89a-f][0-9a-f]{2})/;
+    const flagged = (value: unknown) => {
+      const m = meter();
+      expect(jsonLengthWithin([value], Number.MAX_SAFE_INTEGER, { unit: 'utf8', meter: m })).toBe(
+        true
+      );
+      return m.nulOrLoneSurrogate === true;
+    };
+    const cases: [string, unknown, boolean][] = [
+      ['a NUL in a string', { s: 'a\u0000b' }, true],
+      ['a NUL in a key', { ['k\u0000']: 1 }, true],
+      ['a NUL after a literal backslash', { s: 'a\\\u0000' }, true],
+      ['a lone high surrogate', ['a\ud800b'], true],
+      ['a lone low surrogate', ['a\udc00'], true],
+      ['a reversed pair', ['\udc00\ud800'], true],
+      ['a lone surrogate in a key', { ['\udbff']: 1 }, true],
+      ['a lone surrogate after a literal backslash', ['\\\ud800'], true],
+      ['a NUL from toJSON', { d: { toJSON: () => 'x\u0000' } }, true],
+      ['a NUL deep in a shared object', [shared, { deep: [[{ s: '\u0000' }]] }], true],
+      ['a paired surrogate', { s: '😀', k: '😀👍🏽' }, false],
+      ['normal unicode', { latin: 'héllo', cjk: '日本語', mixed: 'aé日😀' }, false],
+      ['other control characters', { s: '\u0001\u001f\n\t\u007f' }, false],
+      ['the six characters \\u0000', { s: '\\u0000', t: '\\\\u0000' }, false],
+      ['a NUL in a property JSON.stringify leaves out', { f: undefined, g: () => '\u0000' }, false],
+    ];
+    it.each(cases)('%s', (_, value, expected) => {
+      expect(flagged(value)).toBe(expected);
+      expect(STRINGIFIED_ESCAPE.test(JSON.stringify(value))).toBe(expected);
+    });
+
+    it.each(corpus)('%s, as the stringified pattern reads it', (_, value) => {
+      expect(flagged(value)).toBe(STRINGIFIED_ESCAPE.test(JSON.stringify(value) ?? ''));
+    });
+  });
+
   describe('stops once the total passes the limit', () => {
     const LIMIT = PASS_THROUGH_INPUT_BYTES_MAX;
 

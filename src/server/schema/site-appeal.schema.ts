@@ -44,10 +44,4 @@ export const submitSiteAppealSchema = z.discriminatedUnion('category', [
   }),
 ]);
 
-/** Stored on `Appeal.context`. */
-export type SiteAppealContext = {
-  subject?: string;
-  link?: string;
-  /** The account's state when the appeal was filed, so the queue still shows it after a lift. */
-  restriction?: { banned: boolean; muted: boolean };
-};
+export type { SiteAppealContext } from '@civitai/shared/site-appeal';

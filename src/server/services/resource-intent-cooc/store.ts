@@ -219,7 +219,7 @@ const META_COLUMNS = Prisma.raw(
  * class: a corrupt payload also throws RangeError (msgpackr reading past the end of its data).
  * An allocation failure of any other shape is treated as a corrupt payload.
  */
-function isAllocationFailure(e: unknown): boolean {
+export function isAllocationFailure(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   const code = (e as { code?: unknown }).code;
   return (

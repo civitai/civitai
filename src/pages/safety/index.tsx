@@ -8,6 +8,8 @@ import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import classes from './index.module.scss';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -61,6 +63,7 @@ const headings = [
 export default function Safety({
   content,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const appealHref = siteAppealHref(useFeatureFlags().siteAppealForm);
   return (
     <>
       <Meta
@@ -262,7 +265,7 @@ export default function Safety({
                 </p>
                 <p>
                   Users can request an explanation or appeal a moderation decision using our{' '}
-                  <a href="/content/content-appeal" target="_blank">
+                  <a href={appealHref} target="_blank">
                     Appeal Form
                   </a>
                   .
@@ -339,7 +342,7 @@ export default function Safety({
                 <p>
                   If you believe your content has been removed unfairly, you can submit an appeal
                   for further review through our{' '}
-                  <a href="/content/content-appeal" target="_blank">
+                  <a href={appealHref} target="_blank">
                     Appeal Form
                   </a>
                   .
