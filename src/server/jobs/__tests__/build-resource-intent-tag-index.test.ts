@@ -123,7 +123,7 @@ describe('build-resource-intent-tag-index job', () => {
     expect(kvWrites.map((w) => w.key)).toEqual([TAG_INDEX_HEARTBEAT_KEYS.retentionSuccess]);
   });
 
-  it('runs Tuesdays 06:00 UTC, an hour after the cooc build, with a 90-minute lock', () => {
+  it('runs Tuesdays 06:00 UTC, an hour after the cooc build, with a 120-minute lock', () => {
     const job = buildResourceIntentTagIndexJob as unknown as {
       name: string;
       cron: string;
@@ -131,7 +131,8 @@ describe('build-resource-intent-tag-index job', () => {
     };
     expect(job.name).toBe('build-resource-intent-tag-index');
     expect(job.cron).toBe('0 6 * * 2');
-    expect(job.options).toEqual({ lockExpiration: 90 * 60, keepLockOnDisconnect: true });
+    // Literal, not LOCK_MINUTES: about three times the 38–39 minute full-coverage dry run.
+    expect(job.options).toEqual({ lockExpiration: 7200, keepLockOnDisconnect: true });
   });
 
   it('its flag is the default-off Flipt key the design names', () => {

@@ -21,17 +21,21 @@ import type {
  */
 
 export const TAG_INDEX_PAYLOAD_FORMAT = 'resource-intent-tags/1';
-/** Sized for object storage (design P6c): the real index measured 80.5 MiB compressed. */
-export const TAG_INDEX_MAX_PAYLOAD_BYTES = 128 * 1024 * 1024;
 /**
- * Caps brotli's output; keep it well above a real build's msgpack size
- * (docs/resource-intent-primitive.md, Snapshot).
+ * Holds the full-coverage index with room for its growth (docs/resource-intent-primitive.md,
+ * Snapshot). The snapshot table's payloadBytes CHECK holds the same bound: change both together.
  */
-export const TAG_INDEX_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
+export const TAG_INDEX_MAX_PAYLOAD_BYTES = 256 * 1024 * 1024;
+/**
+ * Caps brotli's output; must admit a payload at `TAG_INDEX_MAX_PAYLOAD_BYTES` at the measured
+ * inflation ratio (docs/resource-intent-primitive.md, Snapshot).
+ */
+export const TAG_INDEX_MAX_INFLATED_BYTES = 1024 * 1024 * 1024;
 /** Content scores travel as exact integers c·10⁴: part of the wire format, like the format id. */
 export const C_SCALE = 10_000;
 
 const unpackr = new Unpackr({ useRecords: false, mapsAsObjects: true });
+const NIL = Uint8Array.of(0xc0);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
 export function fail(what: string): never {
@@ -71,18 +75,18 @@ function ptrOf(len: Uint32Array, what: string): Uint32Array {
   return ptr;
 }
 
+/** The ids of `deltas`, written over `d`: every caller passes a freshly decoded array it owns. */
 function undeltas(ptr: Uint32Array, d: Uint32Array, what: string): Uint32Array {
   if (ptr[ptr.length - 1] !== d.length) fail(`${what} pointer bounds`);
-  const out = new Uint32Array(d.length);
   for (let i = 0; i + 1 < ptr.length; i++) {
     let v = 0;
     for (let k = ptr[i]; k < ptr[i + 1]; k++) {
       v = k > ptr[i] ? v + d[k] : d[k];
       if (v > 0xffffffff) fail(`${what} id overflow`);
-      out[k] = v;
+      d[k] = v;
     }
   }
-  return out;
+  return d;
 }
 
 export const single = (n: number) => Uint32Array.of(0, n);
@@ -177,6 +181,9 @@ export function unpackTagIndexData(raw: Uint8Array): {
   specHash: string;
 } {
   const doc = unpackr.unpack(raw) as Record<string, unknown>;
+  // msgpackr keeps a DataView of the last buffer it unpacked, module-wide, until the next unpack:
+  // left alone it would hold the whole inflated snapshot after the decode. One tiny unpack moves it.
+  unpackr.unpack(NIL);
   if (!doc || doc.format !== TAG_INDEX_PAYLOAD_FORMAT) fail('unknown format');
   const specHash = doc.specHash as string;
   if (typeof specHash !== 'string' || !HEX64.test(specHash)) fail('specHash');
@@ -467,6 +474,9 @@ export async function decodeTagIndexData(
   const { data, specHash } = unpackTagIndexData(
     await decompressTagIndex(payload, caps.maxInflatedBytes)
   );
+  // A whole event-loop turn between unpacking and validating, for a caller decoding on its main
+  // thread (the build's put).
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
   validateTagIndexData(data, fitBound);
   return { data, vocabVersion: data.vocabVersion, specHash };
 }

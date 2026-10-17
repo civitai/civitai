@@ -2,13 +2,17 @@ import { Packr } from 'msgpackr';
 import { describe, expect, it } from 'vitest';
 import { tagFitBound } from '~/server/services/resource-intent-tags/build';
 import type { TagIndexData } from '~/server/services/resource-intent-tags/build';
+import { brotliCompressSync } from 'zlib';
 import {
   decodeTagIndex,
+  decompressTagIndex,
   encodeTagIndex,
   packTagIndex,
+  TAG_INDEX_MAX_INFLATED_BYTES,
   TAG_INDEX_MAX_PAYLOAD_BYTES,
   tagIndexFromData,
   unpackTagIndex,
+  unpackTagIndexData,
 } from '~/server/services/resource-intent-tags/payload';
 import { smallTagIndexData } from './resource-intent-tags.fixture';
 
@@ -121,9 +125,10 @@ describe('resource-intent-tags snapshot codec', () => {
 
   // Literal sizes, not the constant: the cap must admit a payload the size of the real index.
   it.each([
-    ['128 MiB + 1', 128 * 1024 * 1024 + 1, true],
-    ['128 MiB', 128 * 1024 * 1024, false],
-    ['the real index (84,426,646 B, 2026-10 dry run)', 84_426_646, false],
+    ['256 MiB + 1', 256 * 1024 * 1024 + 1, true],
+    ['256 MiB', 256 * 1024 * 1024, false],
+    ['the full-coverage index (153,063,918 B, 2026-10-17 dry run)', 153_063_918, false],
+    ['the old 128 MiB cap + 1', 128 * 1024 * 1024 + 1, false],
   ])(
     'size cap at %s (%i bytes): refused before decompression = %s',
     async (_name, size, refused) => {
@@ -136,6 +141,55 @@ describe('resource-intent-tags snapshot codec', () => {
       expect((err as Error).message.includes('exceeds')).toBe(refused);
     }
   );
+
+  it('pins the caps: 256 MiB compressed, 1 GiB inflated', () => {
+    expect(TAG_INDEX_MAX_PAYLOAD_BYTES).toBe(268_435_456);
+    expect(TAG_INDEX_MAX_INFLATED_BYTES).toBe(1_073_741_824);
+    // The inflated cap admits a payload at the compressed cap at the measured full-coverage ratio
+    // (392,594,256 B of msgpack in 153,063,918 B of payload, 2026-10-17 dry run), with room to spare.
+    const ratio = 392_594_256 / 153_063_918;
+    expect(TAG_INDEX_MAX_PAYLOAD_BYTES * ratio * 1.25).toBeLessThan(TAG_INDEX_MAX_INFLATED_BYTES);
+  });
+
+  it('the unpacked index holds nothing of the packed bytes once unpacked', async () => {
+    const v8 = await import('v8');
+    const vm = await import('vm');
+    v8.setFlagsFromString('--expose_gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    // Its own ArrayBuffer (not a pooled slab), so the weak reference sees exactly these bytes.
+    let raw: Uint8Array | null = new Uint8Array(packTagIndex(data, 'd'.repeat(64)));
+    const bytes = new WeakRef(raw.buffer);
+    const { data: unpacked } = unpackTagIndexData(raw);
+    raw = null;
+    await new Promise((r) => setTimeout(r, 0));
+    gc();
+    gc();
+    expect(bytes.deref()).toBeUndefined();
+    expect(unpacked.vocabulary.length).toBe(data.vocabulary.length);
+  });
+
+  it('accepts float32 content scores that are the float32 of k/10^4, and refuses any other', async () => {
+    const f32 = structuredClone(data);
+    for (const kind of ['addon', 'checkpoint'] as const) {
+      const p = f32.kinds[kind].postings;
+      p.c = Float32Array.from(p.c);
+      p.fit = Float32Array.from(p.fit);
+    }
+    // The same bytes as the float64 build: the snapshot stores these at float32 anyway.
+    expect(packTagIndex(f32, 'd'.repeat(64)).equals(packTagIndex(data, 'd'.repeat(64)))).toBe(true);
+    const off = structuredClone(f32);
+    const k = off.kinds.addon.postings.c.findIndex((v) => v > 0);
+    off.kinds.addon.postings.c[k] = Math.fround(off.kinds.addon.postings.c[k] + 0.00004);
+    expect(() => packTagIndex(off, 'd'.repeat(64))).toThrow('is not a multiple of 1/10000');
+  });
+
+  it('refuses to inflate past the inflated cap, and admits exactly up to it', async () => {
+    const bytes = brotliCompressSync(Buffer.alloc(1001, 7));
+    await expect(decompressTagIndex(bytes, 1000)).rejects.toMatchObject({
+      code: 'ERR_BUFFER_TOO_LARGE',
+    });
+    await expect(decompressTagIndex(bytes, 1001)).resolves.toHaveLength(1001);
+  });
 
   it.each<[string, (d: Doc) => void, string]>([
     ['an unknown format', (d) => (d.format = 'resource-intent-tags/0'), 'unknown format'],

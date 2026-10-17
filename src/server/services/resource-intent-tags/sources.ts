@@ -38,6 +38,9 @@ export type TagRawQuery = CoocRawQuery;
 /**
  * Each statement in its own READ ONLY transaction under `statement_timeout`, refused unless the server
  * is a standby: a misrouted connection fails instead of reading the primary.
+ *
+ * JIT is off: these statements' per-row lateral and anti-join subplans run several times slower
+ * JIT-compiled (measured: docs/resource-intent-primitive.md, Inputs).
  */
 export function standbyQuery(run: CoocTxRunner, timeoutMs: number): TagRawQuery {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
@@ -46,6 +49,7 @@ export function standbyQuery(run: CoocTxRunner, timeoutMs: number): TagRawQuery 
     run(async (tx) => {
       await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${timeoutMs}`);
+      await tx.$executeRawUnsafe('SET LOCAL jit = off');
       const [{ standby }] = await tx.$queryRaw<{ standby: boolean }[]>(
         Prisma.sql`SELECT pg_is_in_recovery() AS standby`
       );
@@ -59,17 +63,29 @@ export function retryingQuery(query: TagRawQuery, delayMs?: number): TagRawQuery
   return (sql) => coocRetry(() => query(sql), delayMs);
 }
 
+/**
+ * The model (alias `m`) is listed: not Private, and not Archived or TakenDown (`mode` holds only
+ * those two). The one predicate every read that admits a model to the index applies: eligibility,
+ * the resources of generator and posted rows, and model content, so a used model that is no longer
+ * listed is kept out exactly as an unused one is.
+ */
+export const MODEL_LISTED_SQL = `m.availability <> 'Private'::"Availability" AND m.mode IS NULL`;
+const MODEL_LISTED = Prisma.raw(MODEL_LISTED_SQL);
+
 export type VersionInfo = {
   modelId: number;
   type: string;
   baseModel: string;
   /** The model is flagged POI or minor. */
   flagged: boolean;
+  /** The model is not listed (`MODEL_LISTED_SQL`). */
+  unlisted: boolean;
 };
 
 /**
- * A generator observation's resources, versions the map does not know skipped; null when any resource
- * is a flagged model, as a posted image attaching one is not eligible either.
+ * A generator observation's resources, versions the map does not know and unlisted models skipped
+ * (the row still counts for its other resources, as a posted row's does); null when any resource is a
+ * flagged model, as a posted image attaching one is not eligible either.
  */
 export function resourcesOfVersions(
   versionIds: readonly number[],
@@ -80,6 +96,7 @@ export function resourcesOfVersions(
     const v = versions.get(id);
     if (!v) continue;
     if (v.flagged) return null;
+    if (v.unlisted) continue;
     out.push({ modelId: v.modelId, type: v.type, baseModel: v.baseModel });
   }
   return out;
@@ -129,7 +146,8 @@ export async function fetchVersionInfo(
   for (let i = 0; i < versionIds.length; i += VERSION_CHUNK) {
     const chunk = versionIds.slice(i, i + VERSION_CHUNK);
     const rows = (await query(Prisma.sql`
-      SELECT mv.id, mv."modelId", m.type::text AS type, mv."baseModel", (m.poi OR m.minor) AS flagged
+      SELECT mv.id, mv."modelId", m.type::text AS type, mv."baseModel", (m.poi OR m.minor) AS flagged,
+        NOT (${MODEL_LISTED}) AS unlisted
       FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
       WHERE mv.id = ANY(${chunk}::int[])`)) as (VersionInfo & { id: number })[];
     for (const { id, ...v } of rows) out.set(id, v);
@@ -209,13 +227,13 @@ export async function readPostedSample(
            FROM "ImageResourceNew" irn
            JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
            JOIN "Model" m ON m.id = mv."modelId"
-           WHERE irn."imageId" = s.id) AS resources,
+           WHERE irn."imageId" = s.id AND ${MODEL_LISTED}) AS resources,
         (SELECT count(*) FROM "ImageReaction" WHERE "imageId" = s.id)::int AS reactions,
         (SELECT count(*) FROM "BuzzTip" WHERE "entityType" = 'Image' AND "entityId" = s.id)::int AS tips
       FROM s`)) as {
       userId: number;
       prompt: string;
-      /** NULL when no attachment resolves to a version: the row is then dropped. */
+      /** NULL when no attachment resolves to a listed model's version: the row is then dropped. */
       resources: TrainingResource[] | null;
       reactions: number;
       tips: number;
@@ -236,7 +254,54 @@ export async function readPostedSample(
   return { idLo, idHi, batches, rows };
 }
 
+/** Model ids per eligibility statement: a keyset page on the primary key. */
+export const ELIGIBLE_MODEL_PAGE = 50_000;
+
+/**
+ * Every model the index covers, used in a training row or not: published, listed
+ * (`MODEL_LISTED_SQL`), not flagged POI or minor, of one of `types`, with at least one published
+ * version. Ascending, read in keyset pages so no
+ * statement scans the whole table at once.
+ */
+export async function readEligibleModelIds(
+  query: TagRawQuery,
+  types: readonly string[],
+  page = ELIGIBLE_MODEL_PAGE
+): Promise<number[]> {
+  if (!Number.isSafeInteger(page) || page < 1) throw new Error('page must be a positive integer');
+  const out: number[] = [];
+  for (let after = 0; ; ) {
+    const rows = (await query(Prisma.sql`
+      SELECT m.id FROM "Model" m
+      WHERE m.id > ${after}::int AND m.status = 'Published' AND NOT m.poi AND NOT m.minor
+        AND ${MODEL_LISTED}
+        AND m.type::text = ANY(${[...types]}::text[])
+        AND EXISTS (SELECT 1 FROM "ModelVersion" mv
+                    WHERE mv."modelId" = m.id AND mv.status = 'Published')
+      ORDER BY m.id LIMIT ${page}::int`)) as { id: number }[];
+    for (const r of rows) {
+      if (!(r.id > after)) throw new Error('eligible model ids are not ascending');
+      out.push((after = r.id));
+    }
+    if (rows.length < page) return out;
+  }
+}
+
+/** The ascending, duplicate-free union of two ascending id lists. */
+export function unionAscending(a: readonly number[], b: readonly number[]): number[] {
+  const out: number[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    const v = j >= b.length || (i < a.length && a[i] <= b[j]) ? a[i++] : b[j++];
+    if (!out.length || out[out.length - 1] !== v) out.push(v);
+  }
+  return out;
+}
+
 const MODEL_BATCH = 1000;
+/** Content batches read at once, ahead of the one being handed on (`readModelContent`). */
+export const CONTENT_READ_CONCURRENCY = 3;
 
 /**
  * The co-occurrence index's image and attachment conditions; the post's conditions differ per
@@ -245,7 +310,7 @@ const MODEL_BATCH = 1000;
 export const CONTENT_IMAGE_ELIGIBLE = Prisma.raw(COOC_ELIGIBLE_IMAGE + COOC_ELIGIBLE_ATTACHMENTS);
 
 /**
- * Each unflagged model's content sources: name, description, Civitai tags, every version's base model
+ * Each listed, unflagged model's content sources: name, description, Civitai tags, every version's base model
  * and trigger words, and the prompts of rated images on its newest versions created before `end` — the
  * creator's own showcase posts, and one image from each of other users' newest gallery posts. Images
  * pass `CONTENT_IMAGE_ELIGIBLE`; posts must be neither Private nor Unsearchable.
@@ -254,69 +319,107 @@ export async function readModelContent(
   query: TagRawQuery,
   modelIds: readonly number[],
   end: Date,
-  onBatch: (models: TagModelContent[]) => Promise<void> | void
+  onBatch: (models: TagModelContent[]) => Promise<void> | void,
+  concurrency = CONTENT_READ_CONCURRENCY
 ): Promise<void> {
-  const C = TAG_SOURCE_PARAMS.content;
-  for (let i = 0; i < modelIds.length; i += MODEL_BATCH) {
-    const ids = modelIds.slice(i, i + MODEL_BATCH);
-    const meta = (await query(Prisma.sql`
-      SELECT m.id, m.name, m.type::text AS type,
-        left(coalesce(m.description, ''), ${C.descriptionChars}::int) AS description,
-        coalesce((SELECT json_agg(t.name) FROM "TagsOnModels" tom JOIN "Tag" t ON t.id = tom."tagId"
-                  WHERE tom."modelId" = m.id), '[]'::json) AS tags,
-        coalesce((SELECT json_agg(json_build_object('baseModel', mv."baseModel", 'trainedWords', mv."trainedWords"))
-                  FROM "ModelVersion" mv WHERE mv."modelId" = m.id), '[]'::json) AS versions
-      FROM "Model" m WHERE m.id = ANY(${ids}::int[]) AND NOT m.poi AND NOT m.minor`)) as {
-      id: number;
-      name: string;
-      type: string;
-      description: string;
-      tags: string[];
-      versions: { baseModel: string | null; trainedWords: string[] | null }[];
-    }[];
-    const images = (await query(Prisma.sql`
-      WITH ms AS (SELECT unnest(${ids}::int[]) AS id),
-      vs AS (SELECT m.id AS m, m."userId" AS cu, v.id AS v FROM "Model" m JOIN ms ON ms.id = m.id
-             CROSS JOIN LATERAL (SELECT mv.id FROM "ModelVersion" mv WHERE mv."modelId" = m.id
-                                 ORDER BY mv.id DESC LIMIT ${C.versions}::int) v)
-      SELECT vs.m AS "modelId", x.c AS showcase, x.p AS prompt
-      FROM vs CROSS JOIN LATERAL (
-        (SELECT true AS c, i.meta->>'prompt' AS p
-         FROM "Post" p JOIN "Image" i ON i."postId" = p.id
-         WHERE p."modelVersionId" = vs.v AND p."userId" = vs.cu AND p."publishedAt" IS NOT NULL
-           AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
-           AND p."publishedAt" < ${end} AND i."createdAt" < ${end}
-           ${CONTENT_IMAGE_ELIGIBLE}
-         ORDER BY i.id DESC LIMIT ${C.showcasePerVersion}::int)
-        UNION ALL
-        (SELECT false, i.meta->>'prompt'
-         FROM (SELECT p.id FROM "Post" p WHERE p."modelVersionId" = vs.v AND p."userId" <> vs.cu
-                 AND p."publishedAt" IS NOT NULL AND p."publishedAt" < ${end}
-                 AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
-               ORDER BY p.id DESC LIMIT ${C.galleryPostsPerVersion}::int) pp
-         CROSS JOIN LATERAL (SELECT i.* FROM "Image" i WHERE i."postId" = pp.id AND i."createdAt" < ${end}
-                 ${CONTENT_IMAGE_ELIGIBLE} ORDER BY i.id LIMIT 1) i)
-      ) x`)) as { modelId: number; showcase: boolean; prompt: string }[];
-    const prompts = new Map<number, { showcase: string[]; gallery: string[] }>();
-    for (const im of images) {
-      let p = prompts.get(im.modelId);
-      if (!p) prompts.set(im.modelId, (p = { showcase: [], gallery: [] }));
-      (im.showcase ? p.showcase : p.gallery).push(im.prompt);
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1)
+    throw new Error('concurrency must be a positive integer');
+  const batches: number[][] = [];
+  for (let i = 0; i < modelIds.length; i += MODEL_BATCH)
+    batches.push(modelIds.slice(i, i + MODEL_BATCH));
+  // Up to `concurrency` batches read while the previous one is handed on, each handed on in id order:
+  // at most `concurrency + 1` batches' content is held at once.
+  const inFlight: Promise<TagModelContent[]>[] = [];
+  // Set once any batch or hand-on fails: a read-ahead still running issues no further statement.
+  const stop = { failed: false };
+  let next = 0;
+  const fill = () => {
+    while (next < batches.length && inFlight.length < concurrency) {
+      const p = readContentBatch(query, batches[next++], end, stop);
+      // Rethrown where it is awaited; this also keeps a read-ahead that fails after an earlier
+      // failure from being reported as unhandled.
+      p.catch(() => (stop.failed = true));
+      inFlight.push(p);
     }
-    await onBatch(
-      meta.map((m) => ({
-        modelId: m.id,
-        type: m.type,
-        name: m.name,
-        description: m.description,
-        tags: m.tags,
-        trigger: m.versions.flatMap((v) => v.trainedWords ?? []),
-        baseModels: m.versions.flatMap((v) => (v.baseModel ? [v.baseModel] : [])),
-        showcase: prompts.get(m.id)?.showcase ?? [],
-        gallery: prompts.get(m.id)?.gallery ?? [],
-      }))
-    );
+  };
+  try {
+    fill();
+    while (inFlight.length) {
+      const models = await (inFlight.shift() as Promise<TagModelContent[]>);
+      fill();
+      await onBatch(models);
+    }
+  } catch (e) {
+    stop.failed = true;
+    throw e;
   }
+}
+
+async function readContentBatch(
+  query: TagRawQuery,
+  ids: number[],
+  end: Date,
+  stop: { failed: boolean }
+): Promise<TagModelContent[]> {
+  const C = TAG_SOURCE_PARAMS.content;
+  const meta = (await query(Prisma.sql`
+    SELECT m.id, m.name, m.type::text AS type,
+      left(coalesce(m.description, ''), ${C.descriptionChars}::int) AS description,
+      coalesce((SELECT json_agg(t.name) FROM "TagsOnModels" tom JOIN "Tag" t ON t.id = tom."tagId"
+                WHERE tom."modelId" = m.id), '[]'::json) AS tags,
+      coalesce((SELECT json_agg(json_build_object('baseModel', mv."baseModel", 'trainedWords', mv."trainedWords"))
+                FROM "ModelVersion" mv WHERE mv."modelId" = m.id), '[]'::json) AS versions
+    FROM "Model" m WHERE m.id = ANY(${ids}::int[]) AND NOT m.poi AND NOT m.minor
+      AND ${MODEL_LISTED}`)) as {
+    id: number;
+    name: string;
+    type: string;
+    description: string;
+    tags: string[];
+    versions: { baseModel: string | null; trainedWords: string[] | null }[];
+  }[];
+  // The read already failed elsewhere: nothing will use this batch.
+  if (stop.failed) return [];
+  const images = (await query(Prisma.sql`
+    WITH ms AS (SELECT unnest(${ids}::int[]) AS id),
+    vs AS (SELECT m.id AS m, m."userId" AS cu, v.id AS v FROM "Model" m JOIN ms ON ms.id = m.id
+           CROSS JOIN LATERAL (SELECT mv.id FROM "ModelVersion" mv WHERE mv."modelId" = m.id
+                               ORDER BY mv.id DESC LIMIT ${C.versions}::int) v)
+    SELECT vs.m AS "modelId", x.c AS showcase, x.p AS prompt
+    FROM vs CROSS JOIN LATERAL (
+      (SELECT true AS c, i.meta->>'prompt' AS p
+       FROM "Post" p JOIN "Image" i ON i."postId" = p.id
+       WHERE p."modelVersionId" = vs.v AND p."userId" = vs.cu AND p."publishedAt" IS NOT NULL
+         AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
+         AND p."publishedAt" < ${end} AND i."createdAt" < ${end}
+         ${CONTENT_IMAGE_ELIGIBLE}
+       ORDER BY i.id DESC LIMIT ${C.showcasePerVersion}::int)
+      UNION ALL
+      (SELECT false, i.meta->>'prompt'
+       FROM (SELECT p.id FROM "Post" p WHERE p."modelVersionId" = vs.v AND p."userId" <> vs.cu
+               AND p."publishedAt" IS NOT NULL AND p."publishedAt" < ${end}
+               AND p.availability NOT IN ('Private'::"Availability", 'Unsearchable'::"Availability")
+             ORDER BY p.id DESC LIMIT ${C.galleryPostsPerVersion}::int) pp
+       CROSS JOIN LATERAL (SELECT i.* FROM "Image" i WHERE i."postId" = pp.id AND i."createdAt" < ${end}
+               ${CONTENT_IMAGE_ELIGIBLE} ORDER BY i.id LIMIT 1) i)
+    ) x`)) as { modelId: number; showcase: boolean; prompt: string }[];
+  const prompts = new Map<number, { showcase: string[]; gallery: string[] }>();
+  for (const im of images) {
+    let p = prompts.get(im.modelId);
+    if (!p) prompts.set(im.modelId, (p = { showcase: [], gallery: [] }));
+    (im.showcase ? p.showcase : p.gallery).push(im.prompt);
+  }
+  return meta.map((m) => ({
+    modelId: m.id,
+    type: m.type,
+    name: m.name,
+    description: m.description,
+    tags: m.tags,
+    trigger: m.versions.flatMap((v) => v.trainedWords ?? []),
+    baseModels: m.versions.flatMap((v) => (v.baseModel ? [v.baseModel] : [])),
+    showcase: prompts.get(m.id)?.showcase ?? [],
+    gallery: prompts.get(m.id)?.gallery ?? [],
+  }));
 }
 
 /** One generator observation as ClickHouse returns it; `user` is already the keyed hash. */

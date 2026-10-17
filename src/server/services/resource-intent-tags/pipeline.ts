@@ -4,9 +4,14 @@ import { dbWrite } from '~/server/db/client';
 import { COOC_STATEMENT_TIMEOUT_MS } from '~/server/services/resource-intent-cooc/build';
 import { coocReplicaRunner } from '~/server/services/resource-intent-cooc/pipeline';
 import { coocSqlOf, type CoocSql } from '~/server/services/resource-intent-cooc/store';
-import { parseTagVocabulary, TagIndexAccumulator, type TagBuildStats } from './build';
+import {
+  indexedModelTypes,
+  parseTagVocabulary,
+  TagIndexAccumulator,
+  type TagBuildStats,
+} from './build';
 import { s3TagIndexObjects } from './objects';
-import { encodeTagIndex } from './payload';
+import { encodeTagIndexCooperative, TAG_INDEX_MAX_PAYLOAD_BYTES } from './payload';
 import { promptExcludedByAuditor } from './prompt-exclusion';
 import {
   assertObservationKey,
@@ -16,18 +21,20 @@ import {
   genObservationsSql,
   genTrainingRow,
   observationUserHash,
+  readEligibleModelIds,
   readModelContent,
   readPostedSample,
   retryingQuery,
   standbyQuery,
   TAG_SOURCE_PARAMS,
   tagTrainingWindow,
+  unionAscending,
   type GenObservation,
   type TagRawQuery,
   type VersionInfo,
 } from './sources';
 import { RESOURCE_INTENT_TAGS_SPEC, RESOURCE_INTENT_TAGS_SPEC_HASH } from './spec';
-import { putSnapshot, type TagIndexObjectStore } from './store';
+import { assertSnapshotTableAdmits, putSnapshot, type TagIndexObjectStore } from './store';
 
 /**
  * Refuse to build when more than this share of the training window's hours hold no generator
@@ -301,9 +308,19 @@ function phaseClock() {
   };
 }
 
-async function finalizeAndEncode(acc: TagIndexAccumulator, tick: () => Promise<void>) {
-  const { data, stats } = await acc.finalizeCooperative(tick);
-  return { payload: await encodeTagIndex(data, RESOURCE_INTENT_TAGS_SPEC_HASH), stats };
+/**
+ * Finalizes and encodes, yielding throughout. The encode consumes `data` (`consume: true` empties its
+ * postings as it streams them into brotli), so nothing may read it afterwards.
+ */
+export async function finalizeAndEncodeTagIndex(
+  acc: TagIndexAccumulator,
+  tick: () => Promise<void>
+) {
+  const { data, stats } = await acc.finalizeCooperative(tick, undefined, { float32Postings: true });
+  const payload = await encodeTagIndexCooperative(data, RESOURCE_INTENT_TAGS_SPEC_HASH, tick, {
+    consume: true,
+  });
+  return { payload, stats };
 }
 
 /** Aggregates only: never a prompt, a tag or a model name. */
@@ -323,12 +340,24 @@ export type TagBuildSummary = {
   postUsers: number;
   genAndPostUsers: number;
   postedRows: number;
-  /** Models seen in training rows whose content was requested (after any `limits.models` cut). */
+  /** Models eligible for the index (`readEligibleModelIds`), whether or not a training row used them. */
+  eligibleModels: number;
+  /**
+   * Models whose content was requested: the eligible ones and those seen in training rows (after any
+   * `limits.models` cut).
+   */
   contentModelsRequested: number;
   contentModels: number;
   stats: TagBuildStatsWithCoverage;
   /** Wall time per phase. */
-  ms: { gen: number; posted: number; content: number; finalizeEncode: number; put: number | null };
+  ms: {
+    gen: number;
+    posted: number;
+    eligible: number;
+    content: number;
+    finalizeEncode: number;
+    put: number | null;
+  };
   payloadBytes: number;
   dryRun: boolean;
   /** Set when stored: the manifest row and whether this build created it. */
@@ -414,8 +443,16 @@ async function readAndBuild(a: {
   for (const u of postUsers) if (genUsers.has(u)) genAndPostUsers++;
   const postedMs = clock();
 
+  // Used models need not still be eligible, so content is read for both; a never-used model ranks on
+  // its content alone, its fit the shrinkage prior's 0.
+  const eligible = await readEligibleModelIds(
+    query,
+    indexedModelTypes(RESOURCE_INTENT_TAGS_SPEC.build.addonTypes)
+  );
+  const eligibleMs = clock();
+
   let contentModels = 0;
-  const modelIds = acc.usedModelIds().slice(0, opts.limits?.models);
+  const modelIds = unionAscending(acc.usedModelIds(), eligible).slice(0, opts.limits?.models);
   await readModelContent(query, modelIds, window.end, async (models) => {
     for (const m of models) {
       await tick();
@@ -425,7 +462,7 @@ async function readAndBuild(a: {
   });
   const contentMs = clock();
 
-  const { payload, stats } = await finalizeAndEncode(acc, tick);
+  const { payload, stats } = await finalizeAndEncodeTagIndex(acc, tick);
   return {
     payload,
     stats,
@@ -435,10 +472,17 @@ async function readAndBuild(a: {
       postUsers: postUsers.size,
       genAndPostUsers,
       postedRows: posted.rows,
+      eligibleModels: eligible.length,
       contentModelsRequested: modelIds.length,
       contentModels,
     },
-    ms: { gen: genMs, posted: postedMs, content: contentMs, finalizeEncode: clock() },
+    ms: {
+      gen: genMs,
+      posted: postedMs,
+      eligible: eligibleMs,
+      content: contentMs,
+      finalizeEncode: clock(),
+    },
   };
 }
 
@@ -457,6 +501,9 @@ export async function runTagIndexBuild(
   if (opts.limits && !opts.dryRun) throw new Error('tag index build: limits are for dry runs only');
   const config = tagBuildConfig(deps.env, { requireBucket: !opts.dryRun });
   const objects = opts.dryRun ? null : (deps.objects ?? (() => s3TagIndexObjects()))();
+  const sql = deps.sql ?? coocSqlOf(dbWrite);
+  // Before a 40-minute build: a production build whose payload the table could refuse stops here.
+  if (!opts.dryRun) await assertSnapshotTableAdmits(sql, TAG_INDEX_MAX_PAYLOAD_BYTES);
   const ch = await (deps.clickhouse ?? readonlyClickHouse)(config.clickhouse);
   try {
     await assertClickHouseReadonly(ch);
@@ -490,15 +537,11 @@ export async function runTagIndexBuild(
     };
     if (!objects) return { summary, payload: built.payload };
 
-    const { manifest, created } = await putSnapshot(
-      { sql: deps.sql ?? coocSqlOf(dbWrite), objects },
-      built.payload,
-      {
-        vocabVersion: vocab.vocabVersion,
-        specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
-        buildStats: stats,
-      }
-    );
+    const { manifest, created } = await putSnapshot({ sql, objects }, built.payload, {
+      vocabVersion: vocab.vocabVersion,
+      specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
+      buildStats: stats,
+    });
     return {
       summary: {
         ...summary,

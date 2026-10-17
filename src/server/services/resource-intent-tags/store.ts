@@ -4,7 +4,12 @@ import { Prisma } from '@prisma/client';
 import { isAllocationFailure, type CoocSql } from '~/server/services/resource-intent-cooc/store';
 import type { TagBuildStats } from './build';
 import { TagIndexDecodeUnavailableError } from './decode-errors';
-import { decodeTagIndex, TAG_INDEX_MAX_PAYLOAD_BYTES, type DecodedTagIndex } from './payload';
+import {
+  decodeTagIndex,
+  decodeTagIndexData,
+  TAG_INDEX_MAX_PAYLOAD_BYTES,
+  type DecodedTagIndex,
+} from './payload';
 import type { TagIndex } from './score';
 
 /**
@@ -127,12 +132,14 @@ async function vocabularyStatus(sql: CoocSql, vocabVersion: string): Promise<str
   return row?.status ?? null;
 }
 
-async function decodeOrCorrupt(
+type PayloadHeader = { specHash: string; vocabVersion: string };
+
+async function decodeOrCorrupt<T extends PayloadHeader>(
   payload: Uint8Array,
   what: string,
-  decode: (payload: Uint8Array, signal?: AbortSignal) => Promise<DecodedTagIndex> = decodeTagIndex,
+  decode: (payload: Uint8Array, signal?: AbortSignal) => Promise<T>,
   signal?: AbortSignal
-): Promise<DecodedTagIndex> {
+): Promise<T> {
   try {
     return await decode(payload, signal);
   } catch (e) {
@@ -143,7 +150,7 @@ async function decodeOrCorrupt(
 }
 
 function assertHeader(
-  decoded: DecodedTagIndex,
+  decoded: PayloadHeader,
   expect: { specHash: string; vocabVersion: string },
   what: string
 ) {
@@ -157,6 +164,38 @@ function assertHeader(
     );
 }
 
+/** The migration that raises the snapshot table's payload bound to `TAG_INDEX_MAX_PAYLOAD_BYTES`. */
+export const PAYLOAD_CAP_MIGRATION =
+  '20261106120000_resource_intent_tag_index_snapshot_payload_cap';
+
+/** The snapshot table holds payloads only up to a lower bound than the one asked for. */
+export class TagIndexSnapshotTableBoundError extends Error {}
+
+/**
+ * The snapshot table's `payloadBytes` bound as its CHECK reads now (`null` when the CHECK names
+ * none): a database the cap migration has not reached still holds the old, lower bound.
+ */
+export async function snapshotTablePayloadBound(sql: CoocSql): Promise<number | null> {
+  const [row] = await sql.query<{ def: string }>(Prisma.sql`
+    SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+    WHERE conrelid = '"ResourceIntentTagIndexSnapshot"'::regclass
+      AND conname = 'ResourceIntentTagIndexSnapshot_payload_check'`);
+  const m = row && /"payloadBytes" <= (\d+)/.exec(row.def);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Refuse `bytes` the snapshot table would refuse on insert, naming the migration: otherwise the
+ * object is uploaded and the insert then fails, leaving an object no row names.
+ */
+export async function assertSnapshotTableAdmits(sql: CoocSql, bytes: number): Promise<void> {
+  const bound = await snapshotTablePayloadBound(sql);
+  if (bound !== null && bytes > bound)
+    throw new TagIndexSnapshotTableBoundError(
+      `the snapshot table admits payloads up to ${bound} bytes, not ${bytes}: apply migration ${PAYLOAD_CAP_MIGRATION}; refusing`
+    );
+}
+
 export type PutTagIndexSnapshotMeta = {
   vocabVersion: string;
   specHash: string;
@@ -164,8 +203,8 @@ export type PutTagIndexSnapshotMeta = {
 };
 
 /**
- * Store a snapshot: refuse a vocabulary that is missing or not frozen, and any payload that does not
- * decode or whose header disagrees with `meta`; upload it; then insert the manifest. A ready row with
+ * Store a snapshot: refuse a payload the table's CHECK would refuse, a vocabulary that is missing or
+ * not frozen, and any payload that does not decode or whose header disagrees with `meta`; upload it; then insert the manifest. A ready row with
  * the same bytes already standing is returned with `created: false`.
  */
 export async function putSnapshot(
@@ -178,6 +217,7 @@ export async function putSnapshot(
     throw new TagIndexPayloadSizeError(
       `tag index payload is ${payload.length} bytes; allowed 1..${TAG_INDEX_MAX_PAYLOAD_BYTES}`
     );
+  await assertSnapshotTableAdmits(sql, payload.length);
   const vocabStatus = await vocabularyStatus(sql, meta.vocabVersion);
   if (vocabStatus === null)
     throw new TagIndexVocabularyMissingError(`vocabulary ${meta.vocabVersion} not found`);
@@ -185,7 +225,13 @@ export async function putSnapshot(
     throw new TagIndexVocabularyNotFrozenError(
       `a snapshot needs a frozen vocabulary; ${meta.vocabVersion} is '${vocabStatus}'`
     );
-  assertHeader(await decodeOrCorrupt(payload, 'tag index payload'), meta, 'tag index payload');
+  // Validated, not assembled: the put needs only a valid index under this header, and assembling
+  // would add to the build's memory peak.
+  assertHeader(
+    await decodeOrCorrupt(payload, 'tag index payload', (b) => decodeTagIndexData(b)),
+    meta,
+    'tag index payload'
+  );
 
   const payloadSha256 = sha256Hex(payload);
   const objectKey = tagIndexObjectKey(objects.prefix, payloadSha256);
@@ -273,7 +319,7 @@ export async function loadManifestSnapshot(
   if (sha256 !== manifest.payloadSha256)
     throw new TagIndexPayloadHashError(`${what}: sha256 does not match the manifest`);
   signal?.throwIfAborted();
-  const decoded = await decodeOrCorrupt(bytes, what, deps.decode, signal);
+  const decoded = await decodeOrCorrupt(bytes, what, deps.decode ?? decodeTagIndex, signal);
   assertHeader(decoded, manifest, what);
   return { manifest, index: decoded.index };
 }

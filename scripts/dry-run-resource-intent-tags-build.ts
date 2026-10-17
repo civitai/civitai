@@ -22,10 +22,13 @@ import { runScriptAndExit } from './lib/run-as-script';
  *       under; a key with another fingerprint is refused. Posted users are hashed with it so both
  *       sources share one user namespace
  * The `--limit-*` flags (positive integers) cut the inputs for a quick trial; `--limit-gen` is a
- * LIMIT on the ClickHouse read. The printed counts say what was read. It prints each standby
- * statement kind's attempt times (retries counted separately), the build's peak RSS, its longest
- * event-loop stall, and the wall time. Unlike the job, it reports missing window hours over the limit
- * instead of refusing.
+ * LIMIT on the ClickHouse read (`--limit-models` cuts the union of used and eligible models by
+ * ascending id). The printed counts say what was read. It prints each standby statement kind's
+ * attempt times (retries counted separately); the RSS before the build reads anything, the build's
+ * peak RSS and its longest event-loop stall counted from there; the same for the put's decode
+ * (`decodeTagIndexData`, as `putSnapshot` runs it), whose peak is the job's; the decoded index's
+ * resident cost, with decompress, unpack and validate-and-assemble timed apart; and the wall time.
+ * Unlike the job, it reports missing window hours over the limit instead of refusing.
  */
 
 const ms = (t0: number) => Math.round(performance.now() - t0);
@@ -37,14 +40,19 @@ function quantiles(xs: number[]) {
   return { p50: q(0.5), p90: q(0.9), p99: q(0.99), max: s[s.length - 1] ?? 0 };
 }
 
-/** A full collection, so the heap figures around the decode measure what it retains. */
+/**
+ * Full collections with event-loop turns between them, so the heap and array-buffer figures around
+ * the decode measure what it retains: freed array buffers are released after a collection, not by it.
+ */
 async function gc() {
   const v8 = await import('v8');
   const vm = await import('vm');
   v8.setFlagsFromString('--expose_gc');
   const collect = vm.runInNewContext('gc') as () => void;
-  collect();
-  collect();
+  for (let i = 0; i < 3; i++) {
+    collect();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -82,9 +90,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   };
 
   const { dbRead } = await import('~/server/db/client');
-  const { decompressTagIndex, TAG_INDEX_MAX_PAYLOAD_BYTES, unpackTagIndex } = await import(
-    '~/server/services/resource-intent-tags/payload'
-  );
+  const {
+    decodeTagIndexData,
+    decompressTagIndex,
+    TAG_INDEX_MAX_PAYLOAD_BYTES,
+    tagIndexFromData,
+    unpackTagIndexData,
+  } = await import('~/server/services/resource-intent-tags/payload');
   const { runTagIndexBuild, tagStandbyQuery } = await import(
     '~/server/services/resource-intent-tags/pipeline'
   );
@@ -98,7 +110,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const failedAttempts: Record<string, number> = {};
   const statementMs: Record<string, number[]> = {};
   const kindOf = (text: string) =>
-    text.includes('jsonb_agg(DISTINCT')
+    text.includes("m.status = 'Published'")
+      ? 'eligibleIds'
+      : text.includes('jsonb_agg(DISTINCT')
       ? 'postedBatch'
       : text.includes('WITH ms AS')
       ? 'contentImages'
@@ -121,6 +135,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }
   });
 
+  // The process with the app loaded, before the build reads anything. The event-loop gap is counted
+  // from here too: loading the app's modules above blocks for seconds and is not the build's.
+  const startRss = process.memoryUsage().rss;
+  lastTick = performance.now();
+  maxLoopGap = 0;
   try {
     const { summary, payload } = await runTagIndexBuild(
       { dryRun: true, limits },
@@ -143,28 +162,64 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     });
     clearInterval(loopTimer);
     log('memory', {
+      // The peak less this is what the build adds to a process.
+      startRssMiB: mib(startRss),
       peakRssMiB: mib(process.resourceUsage().maxRSS * 1024),
       buildMs: ms(tStart),
       maxEventLoopGapMs: Math.round(maxLoopGap),
     });
 
+    // What the job's put does next, as it does it: decode the payload it is about to store, with the
+    // build's garbage not yet collected. The process's peak RSS after it is the job's peak.
+    {
+      let gap = 0;
+      let last = performance.now();
+      const timer = setInterval(() => {
+        const t = performance.now();
+        gap = Math.max(gap, t - last);
+        last = t;
+      }, 10);
+      const t = performance.now();
+      await decodeTagIndexData(payload);
+      clearInterval(timer);
+      log('putDecode', {
+        ms: ms(t),
+        maxEventLoopGapMs: Math.round(gap),
+        peakRssMiB: mib(process.resourceUsage().maxRSS * 1024),
+      });
+    }
+
     await gc();
     const before = process.memoryUsage();
     let t0 = performance.now();
-    const inflated = await decompressTagIndex(payload);
+    let inflated: Buffer | null = await decompressTagIndex(payload);
     const decompressMs = ms(t0);
+    const rawBytes = inflated.length;
+    // Unpack, then validate and assemble together (`decodeTagIndex` turns the event loop between
+    // each of the three).
     t0 = performance.now();
-    const decoded = unpackTagIndex(inflated);
-    const unpackMs = ms(t0);
+    const unpacked = unpackTagIndexData(inflated);
+    const unpackDataMs = ms(t0);
+    t0 = performance.now();
+    const decoded = { index: tagIndexFromData(unpacked.data) };
+    const fromDataMs = ms(t0);
+    // What a holder keeps: the decoded index alone, the inflated bytes released.
+    inflated = null;
     await gc();
     const after = process.memoryUsage();
+    const delta = (m: NodeJS.MemoryUsage) => ({
+      heapUsedMiB: mib(m.heapUsed - before.heapUsed),
+      arrayBuffersMiB: mib(m.arrayBuffers - before.arrayBuffers),
+      externalMiB: mib(m.external - before.external),
+      rssMiB: mib(m.rss - before.rss),
+    });
     log('decode', {
+      rawBytes,
+      rawMiB: mib(rawBytes),
       decompressMs,
-      unpackMs,
-      heapUsedMiB: mib(after.heapUsed - before.heapUsed),
-      arrayBuffersMiB: mib(after.arrayBuffers - before.arrayBuffers),
-      externalMiB: mib(after.external - before.external),
-      rssMiB: mib(after.rss - before.rss),
+      unpackDataMs,
+      fromDataMs,
+      ...delta(after),
     });
 
     for (const kind of ['addon', 'checkpoint'] as const) {

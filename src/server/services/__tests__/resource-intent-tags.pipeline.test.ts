@@ -5,6 +5,7 @@ import type { Prisma } from '@prisma/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { serverSchema } from '~/env/server-schema';
+import { decodeTagIndex } from '~/server/services/resource-intent-tags/payload';
 import type * as Build from '~/server/services/resource-intent-tags/build';
 import {
   loopYielder,
@@ -42,7 +43,11 @@ const logToAxiom = loggingMock.logToAxiom;
 const clickhouseClient = vi.hoisted(() => ({ createClient: vi.fn() }));
 // Every accumulator the pipeline makes, held weakly, so a test can see whether one is still reachable.
 const accumulators = vi.hoisted(() => [] as WeakRef<object>[]);
-const cooperativeFinalizes = vi.hoisted(() => ({ count: 0 }));
+const cooperativeFinalizes = vi.hoisted(() => ({
+  count: 0,
+  opts: [] as unknown[],
+  built: [] as Build.TagIndexData[],
+}));
 vi.mock('~/server/services/resource-intent-tags/build', async (importOriginal) => {
   const real = await importOriginal<typeof Build>();
   class TrackedAccumulator extends real.TagIndexAccumulator {
@@ -54,7 +59,11 @@ vi.mock('~/server/services/resource-intent-tags/build', async (importOriginal) =
       ...args: Parameters<InstanceType<typeof real.TagIndexAccumulator>['finalizeCooperative']>
     ) {
       cooperativeFinalizes.count++;
-      return super.finalizeCooperative(...args);
+      cooperativeFinalizes.opts.push(args[2]);
+      return super.finalizeCooperative(...args).then((r) => {
+        cooperativeFinalizes.built.push(r.data);
+        return r;
+      });
     }
   }
   return { ...real, TagIndexAccumulator: TrackedAccumulator };
@@ -68,6 +77,7 @@ const migration = (name: string) =>
   );
 const VOCAB_SQL = migration('20261029120000_resource_intent_tags');
 const SNAPSHOT_SQL = migration('20261103120000_resource_intent_tag_index_snapshot');
+const PAYLOAD_CAP_SQL = migration('20261106120000_resource_intent_tag_index_snapshot_payload_cap');
 
 const KEY = Buffer.alloc(32, 0x11);
 const ENV: Required<TagBuildEnv> = {
@@ -126,6 +136,38 @@ type World = {
   closed: ReturnType<typeof vi.fn>;
 };
 
+/**
+ * Model content rows. Model 1 is the add-on the training rows use; model 3 is an add-on no training
+ * row uses, whose content carries 'castle'.
+ */
+const CONTENT = [
+  {
+    id: 1,
+    name: 'watercolor lighthouse',
+    type: 'LORA',
+    description: '<p>castle</p>',
+    tags: ['watercolor'],
+    versions: [{ baseModel: 'SDXL 1.0', trainedWords: ['lighthouse'] }],
+  },
+  {
+    id: 3,
+    name: 'castle',
+    type: 'LORA',
+    description: '',
+    tags: [],
+    versions: [{ baseModel: 'SDXL 1.0', trainedWords: [] }],
+  },
+  // A checkpoint no training row uses.
+  {
+    id: 4,
+    name: 'lighthouse',
+    type: 'Checkpoint',
+    description: '',
+    tags: [],
+    versions: [{ baseModel: 'SDXL 1.0', trainedWords: [] }],
+  },
+];
+
 // Users 42 and 7, hashed as the extractor writes them; 42 also posts below.
 const defaultGenRows = GEN_PROMPTS.map((p, i) => ({
   u: observationUserHash(KEY, i % 2 ? 7 : 42),
@@ -146,9 +188,17 @@ async function world(
     /** Generator rows on the window's first day (the fixture's three prompts by default). */
     genRows?: Parameters<typeof genObservationOf>[0][];
     env?: TagBuildEnv;
+    /** The snapshot table without the payload-cap migration (its P6c bound). */
+    withoutCapMigration?: boolean;
+    /** Eligible model ids, ascending (model 1 by default: the used add-on with content). */
+    eligible?: number[];
   } = {}
 ): Promise<World> {
-  const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL);
+  const db = await utcPglite(
+    ...(opts.withoutCapMigration
+      ? [VOCAB_SQL, SNAPSHOT_SQL]
+      : [VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL])
+  );
   for (const [p, s, f] of opts.vocabs ?? [[NEW_FROZEN, 'frozen', '2026-10-10T00:00:00Z']])
     await insertVocab(db, p, s, f);
   const chQueries: string[] = [];
@@ -221,19 +271,21 @@ async function world(
         { userId: 43, prompt: 'lighthouse', resources, reactions: 0, tips: 0 },
       ];
     }
+    if (t.includes("m.status = 'Published'")) {
+      const [after, types, page] = sql.values as [number, string[], number];
+      // Only models of the types the statement asks for (model 1 and 3 are LORAs, 4 a Checkpoint).
+      const typeOf = (id: number) => CONTENT.find((m) => m.id === id)?.type ?? 'LORA';
+      return (opts.eligible ?? [1])
+        .filter((id) => id > after && types.includes(typeOf(id)))
+        .slice(0, page)
+        .map((id) => ({ id }));
+    }
     if (t.includes('WITH ms AS')) return [];
-    if (t.includes('FROM "Model" m WHERE m.id = ANY'))
-      return [
-        {
-          id: 1,
-          name: 'watercolor lighthouse',
-          type: 'LORA',
-          description: '<p>castle</p>',
-          tags: ['watercolor'],
-          versions: [{ baseModel: 'SDXL 1.0', trainedWords: ['lighthouse'] }],
-        },
-        // Model 2 is requested but returns no row (as a model flagged since its use would).
-      ];
+    if (t.includes('FROM "Model" m WHERE m.id = ANY')) {
+      const ids = sql.values.find(Array.isArray) as number[];
+      // Model 2 is requested but returns no row (as a model flagged since its use would).
+      return CONTENT.filter((m) => ids.includes(m.id));
+    }
     throw new Error(`unexpected Postgres read: ${t}`);
   });
   const store = new Map<string, Buffer>();
@@ -300,6 +352,11 @@ describe('the happy path (the control every refusal below departs from)', () => 
     const { summary, payload } = await runTagIndexBuild({ dryRun: false }, w.deps);
     // The index is computed in slices that yield the event loop.
     expect(cooperativeFinalizes.count).toBe(cooperativeBefore + 1);
+    // With float32 postings: half the memory of the largest arrays, the same encoded bytes.
+    expect(cooperativeFinalizes.opts.at(-1)).toEqual({ float32Postings: true });
+    // And the encode consumed the built postings as it packed them.
+    for (const kind of ['addon', 'checkpoint'] as const)
+      expect(cooperativeFinalizes.built.at(-1)?.kinds[kind].postings.resource).toHaveLength(0);
     const newest = await versionOf(w.db, NEW_FROZEN);
     expect(newest).not.toBe(await versionOf(w.db, OLD_FROZEN));
     expect(summary.vocabVersion).toBe(newest);
@@ -347,6 +404,54 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect(w.workWhileOpen).toEqual([]);
   });
 
+  it('indexes an eligible model no training row used, on its content alone with the prior fit 0', async () => {
+    const w = await world({ eligible: [1, 3, 4] });
+    const { summary, payload } = await runTagIndexBuild({ dryRun: true }, w.deps);
+    expect(summary).toMatchObject({
+      eligibleModels: 3,
+      // The union of the used models (1, 2) and the eligible ones (1, 3, 4).
+      contentModelsRequested: 4,
+      contentModels: 3,
+    });
+    expect(summary.stats.models).toEqual({ content: 3, used: 2, addon: 2, checkpoint: 2 });
+    const { index } = await decodeTagIndex(payload);
+    // The never-used checkpoint too, at the prior fit.
+    expect(index.kinds.checkpoint.modelIds).toEqual([2, 4]);
+    expect(index.kinds.checkpoint.fit[1]).toBe(0);
+    const addon = index.kinds.addon;
+    expect(addon.modelIds).toEqual([1, 3]);
+    const r = addon.modelIds.indexOf(3);
+    // No use, so no fit of its own: the resource fit is the shrinkage prior's 0.
+    expect(addon.fit[r]).toBe(0);
+    // Its one content tag, 'castle' (vocabulary id 0) from its name: c = the name weight, no pair fit.
+    const { ptr, resource, c, fit } = addon.postings;
+    const entries = [];
+    for (let t = 0; t + 1 < ptr.length; t++)
+      for (let k = ptr[t]; k < ptr[t + 1]; k++)
+        if (resource[k] === r) entries.push({ t, c: c[k], fit: fit[k] });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].t).toBe(0);
+    expect(entries[0].c).toBeCloseTo(0.8, 6);
+    expect(entries[0].fit).toBeNaN();
+    // The eligibility read happened once, before the content read.
+    const eligibleAt = w.pgReads.flatMap((q, i) =>
+      q.includes("m.status = 'Published'") ? [i] : []
+    );
+    expect(eligibleAt).toHaveLength(1);
+    expect(eligibleAt[0]).toBeLessThan(
+      w.pgReads.findIndex((q) => q.includes('FROM "Model" m WHERE m.id = ANY'))
+    );
+  });
+
+  it('the same inputs build the same bytes', async () => {
+    const a = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1, 3] })).deps);
+    const b = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1, 3] })).deps);
+    expect(Buffer.compare(a.payload, b.payload)).toBe(0);
+    // And an eligible model changes them: the control that the comparison can fail.
+    const c = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1] })).deps);
+    expect(Buffer.compare(a.payload, c.payload)).not.toBe(0);
+  });
+
   it('a dry run needs no bucket, makes no object store and stores nothing', async () => {
     const w = await world({ env: { ...ENV, RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined } });
     const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
@@ -361,6 +466,18 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect((await w.db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(
       0
     );
+  });
+
+  it('refuses a production build before reading anything while the table holds the old bound', async () => {
+    const w = await world({ withoutCapMigration: true });
+    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+      /apply migration 20261106120000_resource_intent_tag_index_snapshot_payload_cap/
+    );
+    expectNoTrainingReads(w);
+    expect(w.chQueries).toEqual([]);
+    // A dry run stores nothing, so it is not refused.
+    const d = await world({ withoutCapMigration: true });
+    await expect(runTagIndexBuild({ dryRun: true }, d.deps)).resolves.toBeDefined();
   });
 
   it('refuses trial limits on a production build', async () => {

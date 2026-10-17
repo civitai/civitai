@@ -1117,10 +1117,11 @@ function compareCodePoints(a, b) {
 
 // src/server/services/resource-intent-tags/payload-decode.ts
 var TAG_INDEX_PAYLOAD_FORMAT = "resource-intent-tags/1";
-var TAG_INDEX_MAX_PAYLOAD_BYTES = 128 * 1024 * 1024;
-var TAG_INDEX_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
+var TAG_INDEX_MAX_PAYLOAD_BYTES = 256 * 1024 * 1024;
+var TAG_INDEX_MAX_INFLATED_BYTES = 1024 * 1024 * 1024;
 var C_SCALE = 1e4;
 var unpackr = new Unpackr({ useRecords: false, mapsAsObjects: true });
+var NIL = Uint8Array.of(192);
 var brotliDecompress = (0, import_util.promisify)(import_zlib.default.brotliDecompress);
 function fail(what) {
   throw new Error(\`tag index payload invalid: \${what}\`);
@@ -1151,16 +1152,15 @@ function ptrOf(len, what) {
 }
 function undeltas(ptr, d, what) {
   if (ptr[ptr.length - 1] !== d.length) fail(\`\${what} pointer bounds\`);
-  const out = new Uint32Array(d.length);
   for (let i = 0; i + 1 < ptr.length; i++) {
     let v = 0;
     for (let k = ptr[i]; k < ptr[i + 1]; k++) {
       v = k > ptr[i] ? v + d[k] : d[k];
       if (v > 4294967295) fail(\`\${what} id overflow\`);
-      out[k] = v;
+      d[k] = v;
     }
   }
-  return out;
+  return d;
 }
 var single = (n) => Uint32Array.of(0, n);
 function decodeSparse(raw, what, integer) {
@@ -1230,6 +1230,7 @@ async function decompressTagIndex(payload, maxInflatedBytes = TAG_INDEX_MAX_INFL
 var HEX64 = /^[0-9a-f]{64}$/;
 function unpackTagIndexData(raw) {
   const doc = unpackr.unpack(raw);
+  unpackr.unpack(NIL);
   if (!doc || doc.format !== TAG_INDEX_PAYLOAD_FORMAT) fail("unknown format");
   const specHash = doc.specHash;
   if (typeof specHash !== "string" || !HEX64.test(specHash)) fail("specHash");
@@ -1374,6 +1375,7 @@ async function decodeTagIndexData(payload, caps, fitBound) {
   const { data, specHash } = unpackTagIndexData(
     await decompressTagIndex(payload, caps.maxInflatedBytes)
   );
+  await new Promise((resolve) => setTimeout(resolve, 0));
   validateTagIndexData(data, fitBound);
   return { data, vocabVersion: data.vocabVersion, specHash };
 }
