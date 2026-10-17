@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 
 import { isAllocationFailure, type CoocSql } from '~/server/services/resource-intent-cooc/store';
 import type { TagBuildStats } from './build';
+import { TagIndexDecodeUnavailableError } from './decode-errors';
 import { decodeTagIndex, TAG_INDEX_MAX_PAYLOAD_BYTES, type DecodedTagIndex } from './payload';
 import type { TagIndex } from './score';
 
@@ -21,7 +22,26 @@ export type TagIndexObjectStore = {
   get: (key: string, expectedBytes: number) => Promise<{ bytes: Buffer; sha256: string }>;
 };
 
-export type TagIndexStoreDeps = { sql: CoocSql; objects: TagIndexObjectStore };
+/** One stored object as a listing reports it. */
+export type TagIndexObjectInfo = { key: string; lastModified: Date; bytes: number };
+
+/** Object storage as retention needs it: the store's operations, plus listing and deleting. */
+export type TagIndexObjectSweeper = TagIndexObjectStore & {
+  /** Every object under `${prefix}/`. */
+  list: () => AsyncIterable<TagIndexObjectInfo>;
+  /** Deletes one snapshot object; refuses a key that is not `${prefix}/<64 hex>`. */
+  delete: (key: string) => Promise<void>;
+};
+
+/**
+ * `decode`: how a loaded payload is decoded; `decodeTagIndex` (on the calling thread) unless given.
+ * The serving holder passes the worker-thread decoder.
+ */
+export type TagIndexStoreDeps = {
+  sql: CoocSql;
+  objects: TagIndexObjectStore;
+  decode?: (payload: Uint8Array) => Promise<DecodedTagIndex>;
+};
 
 export type TagIndexSnapshotManifest = {
   id: string;
@@ -51,6 +71,8 @@ export class TagIndexPayloadCorruptError extends TagIndexSnapshotUnservableError
 export class TagIndexSpecHashMismatchError extends TagIndexSnapshotUnservableError {}
 export class TagIndexVocabVersionMismatchError extends TagIndexSnapshotUnservableError {}
 
+export { TagIndexDecodeUnavailableError };
+
 /**
  * The upload succeeded and the manifest insert did not. The object is left where it is: no row names
  * it, so nothing loads it, and putting the same payload again re-uploads the same key and inserts.
@@ -71,6 +93,12 @@ export const sha256Hex = (b: Uint8Array) => createHash('sha256').update(b).diges
 
 export const tagIndexObjectKey = (prefix: string, sha256: string) => `${prefix}/${sha256}`;
 
+/** Whether `key` is a snapshot object key under `prefix`: `${prefix}/` and a lowercase sha256. */
+export const isTagIndexObjectKey = (prefix: string, key: string) =>
+  key.length === prefix.length + 65 &&
+  key.startsWith(`${prefix}/`) &&
+  /^[0-9a-f]{64}$/.test(key.slice(prefix.length + 1));
+
 const T = Prisma.raw('"ResourceIntentTagIndexSnapshot"');
 const COLUMNS = Prisma.raw(
   `"id", "status", "vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey",
@@ -83,12 +111,16 @@ async function vocabularyStatus(sql: CoocSql, vocabVersion: string): Promise<str
   return row?.status ?? null;
 }
 
-async function decodeOrCorrupt(payload: Uint8Array, what: string): Promise<DecodedTagIndex> {
+async function decodeOrCorrupt(
+  payload: Uint8Array,
+  what: string,
+  decode: (payload: Uint8Array) => Promise<DecodedTagIndex> = decodeTagIndex
+): Promise<DecodedTagIndex> {
   try {
-    return await decodeTagIndex(payload);
+    return await decode(payload);
   } catch (e) {
-    // Out of memory, not bad bytes: a later attempt can pass.
-    if (isAllocationFailure(e)) throw e;
+    // Out of memory, or no decoder, not bad bytes: a later attempt can pass.
+    if (isAllocationFailure(e) || e instanceof TagIndexDecodeUnavailableError) throw e;
     throw new TagIndexPayloadCorruptError(`${what}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
@@ -186,9 +218,9 @@ export async function latestReadyManifest(
  * that is a candidate; an object that is gone; bytes of another length or sha256 than the manifest's
  * (checked before decoding); bytes that do not decode; a header whose specHash or vocabVersion is not
  * the manifest's. Any other download failure, or running out of memory while decoding, is rethrown
- * as it is.
+ * as it is, and so is a decoder that was unavailable (`TagIndexDecodeUnavailableError`).
  */
-async function loadSnapshot(
+export async function loadManifestSnapshot(
   deps: TagIndexStoreDeps,
   manifest: TagIndexSnapshotManifest
 ): Promise<{ manifest: TagIndexSnapshotManifest; index: TagIndex }> {
@@ -204,7 +236,7 @@ async function loadSnapshot(
     );
   if (sha256 !== manifest.payloadSha256)
     throw new TagIndexPayloadHashError(`${what}: sha256 does not match the manifest`);
-  const decoded = await decodeOrCorrupt(bytes, what);
+  const decoded = await decodeOrCorrupt(bytes, what, deps.decode);
   assertHeader(decoded, manifest, what);
   return { manifest, index: decoded.index };
 }
@@ -215,5 +247,5 @@ export async function loadLatestSnapshot(
   specHash: string
 ): Promise<{ manifest: TagIndexSnapshotManifest; index: TagIndex } | null> {
   const manifest = await latestReadyManifest(deps.sql, specHash);
-  return manifest ? loadSnapshot(deps, manifest) : null;
+  return manifest ? loadManifestSnapshot(deps, manifest) : null;
 }

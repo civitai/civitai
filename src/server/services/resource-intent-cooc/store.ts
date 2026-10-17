@@ -215,9 +215,10 @@ const META_COLUMNS = Prisma.raw(
 
 /**
  * Whether a decode failed for lack of memory: Node's Buffer allocation, V8's ArrayBuffer
- * allocation, or brotli/zlib failing to allocate its state. Matched by code or message, not by
- * class: a corrupt payload also throws RangeError (msgpackr reading past the end of its data).
- * An allocation failure of any other shape is treated as a corrupt payload.
+ * allocation, brotli/zlib failing to allocate its state, or a decode worker running out of heap.
+ * Matched by code or message, not by class: a corrupt payload also throws RangeError (msgpackr
+ * reading past the end of its data). An allocation failure of any other shape is treated as a
+ * corrupt payload.
  */
 export function isAllocationFailure(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
@@ -225,6 +226,7 @@ export function isAllocationFailure(e: unknown): boolean {
   return (
     code === 'ERR_MEMORY_ALLOCATION_FAILED' ||
     code === 'ERR_ZLIB_INITIALIZATION_FAILED' ||
+    code === 'ERR_WORKER_OUT_OF_MEMORY' ||
     (typeof code === 'string' && code.startsWith('ERR__ERROR_ALLOC_')) ||
     (e instanceof RangeError && e.message === 'Array buffer allocation failed')
   );

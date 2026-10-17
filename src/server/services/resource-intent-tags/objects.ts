@@ -1,12 +1,19 @@
 import { createHash } from 'crypto';
-import { GetObjectCommand, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  type S3Client,
+} from '@aws-sdk/client-s3';
 
 import { env } from '~/env/server';
 import { getS3Client } from '~/utils/s3-utils';
 import {
+  isTagIndexObjectKey,
   TagIndexObjectMissingError,
   TagIndexPayloadSizeError,
-  type TagIndexObjectStore,
+  type TagIndexObjectSweeper,
 } from './store';
 
 export const TAG_INDEX_OBJECT_PREFIX = 'resource-intent/tag-index';
@@ -30,10 +37,12 @@ const OTHER_BUCKETS = [
 /**
  * Tag-index snapshot objects in `RESOURCE_INTENT_TAG_INDEX_BUCKET` under `TAG_INDEX_OBJECT_PREFIX`,
  * through the S3_UPLOAD_* client. The prefix is fixed, so the bucket alone separates environments.
+ * `list` and `delete` are retention's: `list` sees only keys under `${prefix}/`, and `delete` refuses
+ * any key that is not a snapshot key there.
  */
 export function s3TagIndexObjects(
   opts: { s3?: S3Client; bucket?: string; prefix?: string } = {}
-): TagIndexObjectStore {
+): TagIndexObjectSweeper {
   const bucket = opts.bucket ?? env.RESOURCE_INTENT_TAG_INDEX_BUCKET;
   if (!bucket) throw new Error('RESOURCE_INTENT_TAG_INDEX_BUCKET is not set');
   const shared = OTHER_BUCKETS.find((name) => env[name] === bucket);
@@ -85,6 +94,25 @@ export function s3TagIndexObjects(
       }
       if (n !== expectedBytes) throw sizeError(String(n));
       return { bytes, sha256: hash.digest('hex') };
+    },
+    list: async function* () {
+      let ContinuationToken: string | undefined;
+      do {
+        const page = await s3.send(
+          new ListObjectsV2Command({ Bucket: bucket, Prefix: `${prefix}/`, ContinuationToken })
+        );
+        for (const o of page.Contents ?? []) {
+          if (!o.Key) continue;
+          // No timestamp reads as written now: such an object is never old enough to delete.
+          yield { key: o.Key, lastModified: o.LastModified ?? new Date(), bytes: o.Size ?? 0 };
+        }
+        ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (ContinuationToken);
+    },
+    delete: async (key) => {
+      if (!isTagIndexObjectKey(prefix, key))
+        throw new Error(`refusing to delete ${key}: not a tag index snapshot key under ${prefix}/`);
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
     },
   };
 }

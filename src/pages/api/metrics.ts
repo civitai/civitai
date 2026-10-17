@@ -9,6 +9,10 @@ import '~/server/prom/challenge.metrics';
 // Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
 // cached for a minute).
 import '~/server/prom/resource-intent-cooc.metrics';
+// Side-effect import: registers the v1 tag index's metrics: the holder's load counters (seeded at 0)
+// and held-snapshot gauges, the weekly job's persisted heartbeats (KeyValue, cached for a minute),
+// and the newest ready snapshot's createdAt (read only while the build flag is on).
+import '~/server/prom/resource-intent-tags.metrics';
 // Side-effect import: registers the session-resolution metrics, including the UNLABELLED
 // session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,

@@ -379,28 +379,39 @@ function checkIds(ptr: Uint32Array, ids: Uint32Array, limit: number, what: strin
 const finite = (v: number) => Number.isFinite(v);
 const positive = (v: number) => Number.isFinite(v) && v > 0;
 
-function sparseIndex(
+function checkSparse(
   s: SparseByKey,
   keyLimit: number,
   n: number,
   what: string,
   valueOk: (v: number) => boolean
-): Map<number, ResourceValues> {
+) {
   if (s.value.length !== s.resource.length) fail(`${what} arrays`);
   checkIds(single(s.keys.length), s.keys, keyLimit, `${what} key`);
   checkPtr(s.ptr, s.keys.length, s.resource.length, what);
   checkIds(s.ptr, s.resource, n, `${what} resource`);
   for (const v of s.value) if (!valueOk(v)) fail(`${what} value`);
+}
+
+/**
+ * Called once per unit of work in `assembleSteps`' loops; true when assembly should pause. Pausing
+ * changes nothing about the result.
+ */
+type Step = () => boolean;
+
+function* sparseIndex(s: SparseByKey, step: Step): Generator<void, Map<number, ResourceValues>> {
   const out = new Map<number, ResourceValues>();
-  for (let i = 0; i < s.keys.length; i++)
+  for (let i = 0; i < s.keys.length; i++) {
     out.set(s.keys[i], {
       resource: s.resource.subarray(s.ptr[i], s.ptr[i + 1]),
       value: s.value.subarray(s.ptr[i], s.ptr[i + 1]) as FloatArray,
     });
+    if (step()) yield;
+  }
   return out;
 }
 
-function kindIndex(k: TagIndexKindData, V: number, E: number, kind: string): TagIndexKind {
+function checkKind(k: TagIndexKindData, V: number, E: number, kind: string) {
   const what = (x: string) => `${kind} ${x}`;
   const ids = k.modelIds;
   const n = ids.length;
@@ -425,43 +436,45 @@ function kindIndex(k: TagIndexKindData, V: number, E: number, kind: string): Tag
     } else if (!finite(fit[i])) fail(what('postings fit not finite'));
     else if (Math.abs(fit[i]) > bound) fail(what('postings fit out of range'));
   }
+  checkSparse(k.ecosystemUsers, E, n, what('ecosystemUsers'), (v) => Number.isInteger(v) && v > 0);
+  checkSparse(k.userByTag, V, n, what('userByTag'), positive);
+  checkSparse(k.userByEcosystem, E, n, what('userByEcosystem'), positive);
+}
+
+function* kindIndex(k: TagIndexKindData, step: Step): Generator<void, TagIndexKind> {
+  const ecosystems: number[][] = [];
+  for (let i = 0; i < k.modelIds.length; i++) {
+    ecosystems.push(Array.from(k.ecosystemIds.subarray(k.ecosystemPtr[i], k.ecosystemPtr[i + 1])));
+    if (step()) yield;
+  }
   return {
-    modelIds: Array.from(ids),
+    modelIds: Array.from(k.modelIds),
     fit: k.fit,
-    ecosystems: Array.from({ length: n }, (_, i) =>
-      Array.from(k.ecosystemIds.subarray(k.ecosystemPtr[i], k.ecosystemPtr[i + 1]))
-    ),
-    postings: { ptr, resource, c, fit },
-    ecosystemUsers: sparseIndex(
-      k.ecosystemUsers,
-      E,
-      n,
-      what('ecosystemUsers'),
-      (v) => Number.isInteger(v) && v > 0
-    ),
-    userByTag: sparseIndex(k.userByTag, V, n, what('userByTag'), positive),
-    userByEcosystem: sparseIndex(k.userByEcosystem, E, n, what('userByEcosystem'), positive),
+    ecosystems,
+    postings: k.postings,
+    ecosystemUsers: yield* sparseIndex(k.ecosystemUsers, step),
+    userByTag: yield* sparseIndex(k.userByTag, step),
+    userByEcosystem: yield* sparseIndex(k.userByEcosystem, step),
   };
 }
 
 /**
- * The scorer's index over built or decoded arrays, refused unless every precondition holds: keys and
+ * Refuses built or decoded arrays unless every precondition the scorer relies on holds: keys and
  * names in code-point order, model ids strictly ascending, CSR pointers of the right length and
  * monotone, ids in range and ascending within a row, values finite, fits within `tagFitBound`,
- * content scores in [0, 1], and the
- * ecosystems' observations summing to the build's count of rows with an ecosystem, so none (including
- * those below the resolver's user floor) was left out.
+ * content scores in [0, 1], and the ecosystems' observations summing to the build's count of rows
+ * with an ecosystem, so none (including those below the resolver's user floor) was left out.
  */
-export function tagIndexFromData(data: TagIndexData): TagIndex {
+export function validateTagIndexData(data: TagIndexData): void {
   if (typeof data.vocabVersion !== 'string' || !HEX64.test(data.vocabVersion)) fail('vocabVersion');
-  const keys = data.vocabulary.map((t) => t.key);
-  const V = keys.length;
+  const V = data.vocabulary.length;
   if (!V) fail('vocabulary keys');
   for (let i = 0; i < V; i++) {
-    if (typeof keys[i] !== 'string' || !keys[i]) fail('vocabulary key');
-    if (i && compareCodePoints(keys[i - 1], keys[i]) >= 0) fail('vocabulary key order');
+    const key = data.vocabulary[i].key;
+    if (typeof key !== 'string' || !key) fail('vocabulary key');
+    if (i && compareCodePoints(data.vocabulary[i - 1].key, key) >= 0) fail('vocabulary key order');
   }
-  const vocabulary: TagVocabularyEntry[] = data.vocabulary.map((t, i) => {
+  data.vocabulary.forEach((t, i) => {
     if (!finite(t.idf)) fail('idf not finite');
     for (let k = 0; k < t.near.length; k++) {
       const j = t.near[k];
@@ -469,7 +482,6 @@ export function tagIndexFromData(data: TagIndexData): TagIndex {
       if (j === i) fail('near holds its own tag');
       if (k && j <= t.near[k - 1]) fail('near id order');
     }
-    return { key: t.key, idf: t.idf, explicit: t.explicit, near: t.near };
   });
 
   const E = data.ecosystems.length;
@@ -485,28 +497,80 @@ export function tagIndexFromData(data: TagIndexData): TagIndex {
   if (tc.count.length !== tc.ecosystem.length) fail('tagEcosystemCounts arrays');
   checkPtr(tc.ptr, V, tc.ecosystem.length, 'tagEcosystemCounts');
   checkIds(tc.ptr, tc.ecosystem, E, 'tagEcosystemCounts ecosystem');
+  for (let k = 0; k < tc.count.length; k++)
+    if (tc.count[k] < 1 || tc.count[k] > data.ecosystems[tc.ecosystem[k]].observations)
+      fail('tagEcosystemCounts count');
+
+  checkKind(data.kinds.addon, V, E, 'addon');
+  checkKind(data.kinds.checkpoint, V, E, 'checkpoint');
+}
+
+function* assembleSteps(data: TagIndexData, step: Step): Generator<void, TagIndex> {
+  const vocabulary: TagVocabularyEntry[] = [];
+  const idByKey = new Map<string, number>();
+  for (let i = 0; i < data.vocabulary.length; i++) {
+    const t = data.vocabulary[i];
+    vocabulary.push({ key: t.key, idf: t.idf, explicit: t.explicit, near: t.near });
+    idByKey.set(t.key, i);
+    if (step()) yield;
+  }
+  const tc = data.tagEcosystemCounts;
   const tagEcosystemCounts = new Map<number, Map<number, number>>();
-  for (let t = 0; t < V; t++) {
+  for (let t = 0; t < data.vocabulary.length; t++) {
     if (tc.ptr[t + 1] === tc.ptr[t]) continue;
     const m = new Map<number, number>();
-    for (let k = tc.ptr[t]; k < tc.ptr[t + 1]; k++) {
-      if (tc.count[k] < 1 || tc.count[k] > data.ecosystems[tc.ecosystem[k]].observations)
-        fail('tagEcosystemCounts count');
-      m.set(tc.ecosystem[k], tc.count[k]);
-    }
+    for (let k = tc.ptr[t]; k < tc.ptr[t + 1]; k++) m.set(tc.ecosystem[k], tc.count[k]);
     tagEcosystemCounts.set(t, m);
+    if (step()) yield;
   }
-
+  const addon = yield* kindIndex(data.kinds.addon, step);
+  const checkpoint = yield* kindIndex(data.kinds.checkpoint, step);
   return {
     vocabulary,
-    idByKey: new Map(keys.map((k, i) => [k, i])),
+    idByKey,
     ecosystems: data.ecosystems.map((e) => ({ ...e })),
     tagEcosystemCounts,
-    kinds: {
-      addon: kindIndex(data.kinds.addon, V, E, 'addon'),
-      checkpoint: kindIndex(data.kinds.checkpoint, V, E, 'checkpoint'),
-    },
+    kinds: { addon, checkpoint },
   };
+}
+
+/** Units of work between pauses of `assembleTagIndexCooperative`. */
+export const ASSEMBLE_STEP_WORK = 1 << 13;
+
+/**
+ * The scorer's index over arrays `validateTagIndexData` accepted. It checks nothing itself, so call
+ * it only on validated data (`tagIndexFromData`, or the arrays the decode worker validated).
+ */
+export function assembleTagIndex(data: TagIndexData): TagIndex {
+  const steps = assembleSteps(data, () => false);
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+  }
+}
+
+/**
+ * `assembleTagIndex`, the same index, pausing every `every` units of work to await `pause`, so a
+ * real-size index is not assembled in one event-loop turn.
+ */
+export async function assembleTagIndexCooperative(
+  data: TagIndexData,
+  pause: () => Promise<void>,
+  every = ASSEMBLE_STEP_WORK
+): Promise<TagIndex> {
+  let work = 0;
+  const steps = assembleSteps(data, () => ++work % every === 0);
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+    await pause();
+  }
+}
+
+/** The scorer's index over built or decoded arrays: `validateTagIndexData`, then `assembleTagIndex`. */
+export function tagIndexFromData(data: TagIndexData): TagIndex {
+  validateTagIndexData(data);
+  return assembleTagIndex(data);
 }
 
 export type DecodedTagIndex = {
@@ -516,15 +580,48 @@ export type DecodedTagIndex = {
 };
 
 /**
- * Decompress, unpack and validate. Does NOT compare the spec hash with the running code's, or the
- * vocabulary version with the frozen one: the caller must.
+ * Decompress, unpack and validate, without building the scorer's maps: the part the decode worker
+ * runs. Does NOT compare the spec hash with the running code's, or the vocabulary version with the
+ * frozen one: the caller must.
  */
-export async function decodeTagIndex(payload: Uint8Array): Promise<DecodedTagIndex> {
+export async function decodeTagIndexData(
+  payload: Uint8Array
+): Promise<{ data: TagIndexData; vocabVersion: string; specHash: string }> {
   if (payload.length > TAG_INDEX_MAX_PAYLOAD_BYTES)
     throw new Error(
       `tag index payload ${payload.length} bytes exceeds ${TAG_INDEX_MAX_PAYLOAD_BYTES}`
     );
-  return unpackTagIndex(await decompressTagIndex(payload));
+  const { data, specHash } = unpackTagIndexData(await decompressTagIndex(payload));
+  validateTagIndexData(data);
+  return { data, vocabVersion: data.vocabVersion, specHash };
+}
+
+/**
+ * Every ArrayBuffer under `data`'s typed arrays, once each: the transfer list that hands decoded
+ * arrays to another thread without copying them.
+ */
+export function transferablesOf(data: TagIndexData): ArrayBuffer[] {
+  const out = new Set<ArrayBuffer>();
+  const walk = (v: unknown) => {
+    if (ArrayBuffer.isView(v)) {
+      if (v.buffer instanceof ArrayBuffer) out.add(v.buffer);
+    } else if (Array.isArray(v)) {
+      for (const x of v) if (x !== null && typeof x === 'object') walk(x);
+    } else if (v !== null && typeof v === 'object') {
+      for (const x of Object.values(v)) walk(x);
+    }
+  };
+  walk(data);
+  return [...out];
+}
+
+/**
+ * Decompress, unpack and validate. Does NOT compare the spec hash with the running code's, or the
+ * vocabulary version with the frozen one: the caller must.
+ */
+export async function decodeTagIndex(payload: Uint8Array): Promise<DecodedTagIndex> {
+  const { data, vocabVersion, specHash } = await decodeTagIndexData(payload);
+  return { index: assembleTagIndex(data), vocabVersion, specHash };
 }
 
 /** `decodeTagIndex` after decompression: the part that runs on the event loop. */

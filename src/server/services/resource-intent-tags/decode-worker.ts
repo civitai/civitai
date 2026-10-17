@@ -1,0 +1,108 @@
+import { Worker } from 'worker_threads';
+
+import { TAG_INDEX_DECODE_WORKER_SOURCE } from './decode-worker.source.generated';
+import type { DecodeWorkerReply } from './decode-worker.entry';
+import { assembleTagIndexCooperative, type DecodedTagIndex } from './payload';
+import { TagIndexDecodeUnavailableError } from './decode-errors';
+
+/**
+ * Decodes a tag-index payload on a worker thread, so the ~0.7 s of synchronous unpacking and
+ * validation that `decodeTagIndex` does on the caller's thread happens off the event loop. The
+ * worker gets the payload's bytes (transferred: the caller's copy is detached), decompresses,
+ * unpacks and validates them, and hands the arrays back transferred; only the scorer's maps are
+ * built here, a slice per event-loop turn (`assembleTagIndexCooperative`). One worker per decode,
+ * terminated when it has answered, so nothing of it outlives the call.
+ *
+ * Errors keep `decodeTagIndex`'s meaning for `store.ts`: a payload that fails to decode or validate
+ * throws an error of the same name, message and code as the worker's; an allocation failure
+ * (including the worker running out of heap, `ERR_WORKER_OUT_OF_MEMORY`) keeps its code, so it is
+ * retried rather than taken for bad bytes; and a worker that could not start, or ended without
+ * answering, throws `TagIndexDecodeUnavailableError`, which says nothing about the payload.
+ */
+
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/** An error the worker reported, rebuilt with its name, message and code. */
+function rebuild(e: { name: string; message: string; code?: string }): Error {
+  const err = e.name === 'RangeError' ? new RangeError(e.message) : new Error(e.message);
+  if (e.name !== 'RangeError' && e.name !== 'Error') err.name = e.name;
+  if (e.code !== undefined) (err as Error & { code?: string }).code = e.code;
+  return err;
+}
+
+/** A transferable buffer holding exactly `bytes` (a copy only when `bytes` is a view of a larger one). */
+function ownBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (
+    bytes.buffer instanceof ArrayBuffer &&
+    bytes.byteOffset === 0 &&
+    bytes.byteLength === bytes.buffer.byteLength
+  )
+    return bytes.buffer;
+  return Uint8Array.prototype.slice.call(bytes).buffer as ArrayBuffer;
+}
+
+export type DecodeWorkerOptions = {
+  /** The worker's source (tests substitute a misbehaving one). */
+  source?: string;
+};
+
+/** Decompress, unpack and validate `payload` on a worker thread; build the scorer's index here. */
+export function decodeTagIndexInWorker(
+  payload: Uint8Array,
+  opts: DecodeWorkerOptions = {}
+): Promise<DecodedTagIndex> {
+  return new Promise<DecodedTagIndex>((resolve, reject) => {
+    let worker: Worker;
+    try {
+      worker = new Worker(opts.source ?? TAG_INDEX_DECODE_WORKER_SOURCE, { eval: true });
+    } catch (e) {
+      reject(new TagIndexDecodeUnavailableError('tag index decode worker did not start', e));
+      return;
+    }
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+      void worker.terminate();
+    };
+    worker.once('message', (reply: DecodeWorkerReply) =>
+      finish(() => {
+        if (!reply.ok) return reject(rebuild(reply.error));
+        const { data, vocabVersion, specHash } = reply.result;
+        assembleTagIndexCooperative(data, nextTurn).then(
+          (index) => resolve({ index, vocabVersion, specHash }),
+          reject
+        );
+      })
+    );
+    worker.once('error', (e: Error & { code?: string }) =>
+      finish(() =>
+        reject(
+          e.code === 'ERR_WORKER_OUT_OF_MEMORY'
+            ? e
+            : new TagIndexDecodeUnavailableError('tag index decode worker failed', e)
+        )
+      )
+    );
+    worker.once('exit', (code) =>
+      finish(() =>
+        reject(
+          new TagIndexDecodeUnavailableError(
+            `tag index decode worker exited (code ${code}) without answering`
+          )
+        )
+      )
+    );
+    try {
+      const buffer = ownBuffer(payload);
+      worker.postMessage({ payload: new Uint8Array(buffer) }, [buffer]);
+    } catch (e) {
+      finish(() =>
+        reject(
+          new TagIndexDecodeUnavailableError('tag index decode worker was not sent the payload', e)
+        )
+      );
+    }
+  });
+}

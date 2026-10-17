@@ -1,5 +1,11 @@
 import { createHash } from 'crypto';
-import { GetObjectCommand, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  type ListObjectsV2Command,
+  PutObjectCommand,
+  type S3Client,
+} from '@aws-sdk/client-s3';
 import { describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { serverSchema } from '~/env/server-schema';
@@ -154,6 +160,64 @@ describe('s3TagIndexObjects', () => {
     setEnv({ [name]: 'shared-bucket' });
     expect(() => s3TagIndexObjects({ s3 })).toThrow(new RegExp(`must not be the ${name} bucket`));
     setEnv({ [name]: undefined });
+  });
+});
+
+describe('s3TagIndexObjects listing and deleting (retention)', () => {
+  const HEX = 'c'.repeat(64);
+
+  it("lists every page under <prefix>/, carrying each object's time and size", async () => {
+    const t1 = new Date('2026-11-01T00:00:00Z');
+    const pages = [
+      {
+        Contents: [{ Key: `p/${HEX}`, LastModified: t1, Size: 7 }, { Size: 1 }],
+        IsTruncated: true,
+        NextContinuationToken: 'next',
+      },
+      { Contents: [{ Key: 'p/other' }], IsTruncated: false },
+    ];
+    const sent: ListObjectsV2Command[] = [];
+    const s3 = {
+      send: vi.fn(async (cmd: ListObjectsV2Command) => {
+        sent.push(cmd);
+        return pages[sent.length - 1];
+      }),
+    } as unknown as S3Client;
+    const before = Date.now();
+    const listed = [];
+    for await (const o of objectsOver(s3).list()) listed.push(o);
+    expect(sent.map((c) => c.input)).toEqual([
+      { Bucket: 'snapshots', Prefix: 'p/', ContinuationToken: undefined },
+      { Bucket: 'snapshots', Prefix: 'p/', ContinuationToken: 'next' },
+    ]);
+    expect(listed.map((o) => [o.key, o.bytes])).toEqual([
+      [`p/${HEX}`, 7],
+      ['p/other', 0],
+    ]);
+    expect(listed[0].lastModified).toEqual(t1);
+    // No timestamp reads as just written: never old enough to delete.
+    expect(listed[1].lastModified.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it('deletes a snapshot key, and refuses any other key without sending anything', async () => {
+    const { s3, sent } = fakeS3({});
+    const objects = objectsOver(s3);
+    await objects.delete(`p/${HEX}`);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBeInstanceOf(DeleteObjectCommand);
+    expect((sent[0] as DeleteObjectCommand).input).toEqual({
+      Bucket: 'snapshots',
+      Key: `p/${HEX}`,
+    });
+    for (const key of [
+      `q/${HEX}`,
+      'p/README',
+      `p/${HEX.toUpperCase()}`,
+      `p/x/${HEX.slice(2)}`,
+      `${HEX}`,
+    ])
+      await expect(objects.delete(key)).rejects.toThrow(/not a tag index snapshot key/);
+    expect(sent).toHaveLength(1);
   });
 });
 
