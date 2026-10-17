@@ -1,17 +1,21 @@
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
-import type { CoocSql } from '~/server/services/resource-intent-cooc/store';
 import type { TagBuildStats } from '~/server/services/resource-intent-tags/build';
-import { decodeTagIndex, encodeTagIndex } from '~/server/services/resource-intent-tags/payload';
+import {
+  decodeTagIndex,
+  encodeTagIndex,
+  TAG_INDEX_MAX_PAYLOAD_BYTES,
+} from '~/server/services/resource-intent-tags/payload';
 import {
   latestReadyManifest,
   loadLatestSnapshot,
   putSnapshot,
   TagIndexManifestInsertError,
+  TagIndexObjectMissingError,
   TagIndexPayloadCorruptError,
   TagIndexPayloadHashError,
   TagIndexPayloadSizeError,
@@ -25,6 +29,7 @@ import {
   type TagIndexObjectStore,
   type TagIndexStoreDeps,
 } from '~/server/services/resource-intent-tags/store';
+import { asFixtureWriter, pgliteSql, utcPglite } from './resource-intent-cooc.harness';
 import { smallTagIndexData } from './resource-intent-tags.fixture';
 
 /** The tag-index snapshot store against both real migrations in PGlite and an in-memory object store. */
@@ -65,23 +70,20 @@ const payloadOf = (vocabVersion: string, specHash = SPEC) => {
 type Status = 'candidate' | 'frozen' | 'retired';
 
 async function freshDb(vocabs: [typeof V1, Status][] = [[V1, 'frozen']]) {
-  const db = new PGlite({
-    parsers: { 1114: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) },
-  });
-  await db.exec(`SET TIME ZONE 'UTC'`);
-  await db.exec(VOCAB_SQL);
-  await db.exec(SNAPSHOT_SQL);
+  const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL);
   for (const [v, status] of vocabs) await insertVocab(db, v, status);
+  const statements: string[] = [];
   const log: string[] = [];
-  const sql: CoocSql = {
-    query: async <T>(s: Prisma.Sql) => {
-      log.push(s.text.trim().split(/\s+/)[0]);
-      return (await db.query<T>(s.text, s.values as unknown[])).rows;
+  const base = pgliteSql(db, statements);
+  const sql: typeof base = {
+    query: <T>(q: Prisma.Sql) => {
+      log.push(q.text.trim().split(/\s+/)[0]);
+      return base.query<T>(q);
     },
-    execute: async (s: Prisma.Sql) =>
-      (await db.query(s.text, s.values as unknown[])).affectedRows ?? 0,
+    execute: base.execute,
   };
   const store = new Map<string, Buffer>();
+  const gets: { key: string; expectedBytes: number }[] = [];
   const objects: TagIndexObjectStore & { failPut?: Error; failGet?: Error } = {
     prefix: PREFIX,
     put: async (key, bytes) => {
@@ -89,10 +91,11 @@ async function freshDb(vocabs: [typeof V1, Status][] = [[V1, 'frozen']]) {
       if (objects.failPut) throw objects.failPut;
       store.set(key, Buffer.from(bytes));
     },
-    get: async (key) => {
+    get: async (key, expectedBytes) => {
+      gets.push({ key, expectedBytes });
       if (objects.failGet) throw objects.failGet;
       const b = store.get(key);
-      if (!b) throw new Error(`no object ${key}`);
+      if (!b) throw new TagIndexObjectMissingError(`no object ${key}`);
       return Buffer.from(b);
     },
   };
@@ -103,7 +106,7 @@ async function freshDb(vocabs: [typeof V1, Status][] = [[V1, 'frozen']]) {
         `SELECT "id", "kind", "status" FROM "ResourceIntentTagIndexSnapshot" ORDER BY "createdAt", "id"`
       )
     ).rows;
-  return { db, sql, deps, objects, store, log, rows };
+  return { db, sql, deps, objects, store, gets, log, rows };
 }
 
 function insertVocab(db: PGlite, v: typeof V1, status: Status) {
@@ -113,16 +116,6 @@ function insertVocab(db: PGlite, v: typeof V1, status: Status) {
      VALUES ($1, $2, '{}', $3, $4, $5)`,
     [v.vocabVersion, v.payload, status, frozen, frozen && 'operator']
   );
-}
-
-/** Run `fn` with triggers (the guard and the foreign key's) off, as a fixture writer only. */
-async function asFixtureWriter<T>(db: PGlite, fn: () => Promise<T>): Promise<T> {
-  await db.exec('SET session_replication_role = replica');
-  try {
-    return await fn();
-  } finally {
-    await db.exec('SET session_replication_role = DEFAULT');
-  }
 }
 
 const NOW = new Date();
@@ -138,22 +131,70 @@ const meta = (over: Partial<PutTagIndexSnapshotMeta> = {}): PutTagIndexSnapshotM
 const studyMeta = (over: Partial<PutTagIndexSnapshotMeta> = {}) =>
   meta({ kind: 'study', pinnedUntil: new Date(Date.now() + 30 * DAY), ...over });
 
-/** A manifest row written by hand, for payloads `putSnapshot` itself would refuse. */
+type Row = {
+  kind: string;
+  status: string;
+  retiredAt: string | null;
+  vocabVersion: string;
+  specHash: string;
+  payloadSha256: string;
+  payloadBytes: number;
+  objectKey: string;
+  pinnedUntil: string | null;
+  buildStats: string;
+  createdAt: string | null;
+};
+const ROW_SHA = sha(Buffer.from('x'));
+/** A valid production row; each column overridable. */
+function insertRow(db: PGlite, over: Partial<Row> = {}) {
+  const r: Row = {
+    kind: 'production',
+    status: 'ready',
+    retiredAt: null,
+    vocabVersion: V1.vocabVersion,
+    specHash: SPEC,
+    payloadSha256: ROW_SHA,
+    payloadBytes: 1,
+    objectKey: `p/${over.kind ?? 'production'}/${over.payloadSha256 ?? ROW_SHA}`,
+    pinnedUntil: null,
+    buildStats: '{}',
+    createdAt: null,
+    ...over,
+  };
+  return db.query(
+    `INSERT INTO "ResourceIntentTagIndexSnapshot"
+       ("kind", "status", "retiredAt", "vocabVersion", "specHash", "payloadSha256", "payloadBytes",
+        "objectKey", "pinnedUntil", "buildStats", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, COALESCE($11::timestamp, now()))`,
+    [
+      r.kind,
+      r.status,
+      r.retiredAt,
+      r.vocabVersion,
+      r.specHash,
+      r.payloadSha256,
+      r.payloadBytes,
+      r.objectKey,
+      r.pinnedUntil,
+      r.buildStats,
+      r.createdAt,
+    ]
+  );
+}
+
+/** A manifest row for `bytes` written by hand, for payloads `putSnapshot` itself would refuse. */
 async function insertManifest(
   db: PGlite,
   bytes: Buffer,
   over: { specHash?: string; vocabVersion?: string } = {}
 ) {
   const s = sha(bytes);
-  const key = `${PREFIX}/production/${s}`;
-  await db.query(
-    `INSERT INTO "ResourceIntentTagIndexSnapshot"
-       ("kind", "vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey", "buildStats")
-     VALUES ('production', $1, $2, $3, $4, $5, '{}')`,
-    [over.vocabVersion ?? V1.vocabVersion, over.specHash ?? SPEC, s, bytes.length, key]
-  );
-  return key;
+  const objectKey = `${PREFIX}/production/${s}`;
+  await insertRow(db, { ...over, payloadSha256: s, payloadBytes: bytes.length, objectKey });
+  return objectKey;
 }
+
+const ahead = (days: number) => new Date(Date.now() + days * DAY).toISOString();
 
 describe('ResourceIntentTagIndexSnapshot migration', () => {
   it('is re-runnable and creates its constraints, indexes and guard trigger', async () => {
@@ -179,52 +220,65 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
     ]);
   });
 
-  it('a manifest names an existing vocabulary, which cannot then be deleted', async () => {
+  it('a row names an existing vocabulary, which cannot then be deleted', async () => {
     const { db } = await freshDb();
-    const bytes = await payloadOf(V1.vocabVersion);
-    await expect(insertManifest(db, bytes, { vocabVersion: V2.vocabVersion })).rejects.toThrow(
+    const study = { kind: 'study', pinnedUntil: ahead(30) };
+    await expect(insertRow(db, { ...study, vocabVersion: V2.vocabVersion })).rejects.toThrow(
       /vocabVersion_fkey/
     );
-    await insertManifest(db, bytes);
+    await insertRow(db, study);
     await expect(db.query(`DELETE FROM "ResourceIntentVocabulary"`)).rejects.toThrow(
       /vocabVersion_fkey/
     );
   });
 
-  it('the key ends in /<kind>/<payloadSha256> under a non-empty prefix', async () => {
+  it('a production row needs a frozen vocabulary when inserted; a study row does not', async () => {
+    const { db } = await freshDb([
+      [V1, 'frozen'],
+      [V2, 'candidate'],
+    ]);
+    await expect(insertRow(db, { vocabVersion: V2.vocabVersion })).rejects.toThrow(
+      /needs a frozen vocabulary/
+    );
+    await expect(
+      insertRow(db, { vocabVersion: V2.vocabVersion, kind: 'study', pinnedUntil: ahead(30) })
+    ).resolves.toBeDefined();
+    await expect(insertRow(db)).resolves.toBeDefined();
+  });
+
+  it.each<[string, Partial<Row>, RegExp]>([
+    ['a key under another kind', { objectKey: `p/study/${ROW_SHA}` }, /payload_check/],
+    ['a key with an empty prefix', { objectKey: `/production/${ROW_SHA}` }, /payload_check/],
+    ['a key naming other bytes', { objectKey: `p/production/${'0'.repeat(64)}` }, /payload_check/],
+    ['an uppercase sha256', { payloadSha256: ROW_SHA.toUpperCase() }, /payload_check/],
+    ['a short spec hash', { specHash: 'd'.repeat(63) }, /payload_check/],
+    ['zero bytes', { payloadBytes: 0 }, /payload_check/],
+    ['bytes over the cap', { payloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES + 1 }, /payload_check/],
+    ['stats that are not an object', { buildStats: '[]' }, /payload_check/],
+    ['a pinned production row', { pinnedUntil: ahead(1) }, /kind_pin_check/],
+    ['an unpinned study', { kind: 'study' }, /kind_pin_check/],
+    ['a study pinned 59 days', { kind: 'study', pinnedUntil: ahead(59) }, /kind_pin_check/],
+    ['a study pin already past', { kind: 'study', pinnedUntil: ahead(-1) }, /kind_pin_check/],
+    ['a ready row with retiredAt', { retiredAt: ahead(0) }, /status_check/],
+  ])('refuses %s', async (_, over, error) => {
     const { db } = await freshDb();
-    const s = sha(Buffer.from('x'));
-    const insert = (key: string) =>
-      db.query(
-        `INSERT INTO "ResourceIntentTagIndexSnapshot"
-           ("kind", "vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey", "buildStats")
-         VALUES ('production', $1, $2, $3, 1, $4, '{}')`,
-        [V1.vocabVersion, SPEC, s, key]
-      );
-    await expect(insert(`p/study/${s}`)).rejects.toThrow(/payload_check/);
-    await expect(insert(`/production/${s}`)).rejects.toThrow(/payload_check/);
-    await expect(insert(`p/production/${'0'.repeat(64)}`)).rejects.toThrow(/payload_check/);
-    await expect(insert(`p/production/${s}`)).resolves.toBeDefined();
+    await expect(insertRow(db, over)).rejects.toThrow(error);
+  });
+
+  it('accepts the boundary values those CHECKs allow', async () => {
+    const { db } = await freshDb();
+    await insertRow(db, { payloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES });
+    await insertRow(db, { kind: 'study', pinnedUntil: ahead(57.9) });
+    expect((await db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(2);
   });
 
   it('the guard sets createdAt, inserts only ready rows, and allows only ready -> retired', async () => {
     const { db } = await freshDb();
-    const bytes = await payloadOf(V1.vocabVersion);
-    await expect(
-      db.query(
-        `INSERT INTO "ResourceIntentTagIndexSnapshot"
-           ("kind", "status", "retiredAt", "vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey", "buildStats")
-         VALUES ('production', 'retired', now(), $1, $2, $3, $4, $5, '{}')`,
-        [V1.vocabVersion, SPEC, sha(bytes), bytes.length, `p/production/${sha(bytes)}`]
-      )
-    ).rejects.toThrow(/inserted ready/);
-    // A writer-supplied createdAt is overwritten: the study pin CHECK measures from it.
-    await db.query(
-      `INSERT INTO "ResourceIntentTagIndexSnapshot"
-         ("kind", "vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey", "buildStats", "createdAt")
-       VALUES ('production', $1, $2, $3, $4, $5, '{}', '2000-01-01')`,
-      [V1.vocabVersion, SPEC, sha(bytes), bytes.length, `p/production/${sha(bytes)}`]
+    await expect(insertRow(db, { status: 'retired', retiredAt: ahead(0) })).rejects.toThrow(
+      /inserted ready/
     );
+    // A writer-supplied createdAt is overwritten: the study pin CHECK measures from it.
+    await insertRow(db, { createdAt: '2000-01-01' });
     const [{ createdAt }] = (
       await db.query<{ createdAt: Date }>(
         `SELECT "createdAt" FROM "ResourceIntentTagIndexSnapshot"`
@@ -317,8 +371,13 @@ describe('putSnapshot', () => {
     });
 
     it('a payload over the size cap', async () => {
-      const big = Buffer.alloc(128 * 1024 * 1024 + 1);
+      const big = Buffer.alloc(TAG_INDEX_MAX_PAYLOAD_BYTES + 1);
       await refused(await freshDb(), big, meta(), TagIndexPayloadSizeError, /134217729 bytes/);
+    });
+
+    it('a payload at the size cap reaches the decode', async () => {
+      const atCap = Buffer.alloc(TAG_INDEX_MAX_PAYLOAD_BYTES);
+      await refused(await freshDb(), atCap, meta(), TagIndexPayloadCorruptError, /payload/);
     });
 
     it('a vocabulary that does not exist', async () => {
@@ -412,6 +471,37 @@ describe('putSnapshot', () => {
     expect(await rows()).toHaveLength(1);
   });
 
+  it('the same payload again after its row was retired inserts a new ready row', async () => {
+    const { deps, db, rows } = await freshDb();
+    const payload = await payloadOf(V1.vocabVersion);
+    const first = await putSnapshot(deps, payload, meta());
+    await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+    const again = await putSnapshot(deps, payload, meta());
+    expect(again.created).toBe(true);
+    expect(again.manifest.id).not.toBe(first.manifest.id);
+    expect((await rows()).map((r) => r.status).sort()).toEqual(['ready', 'retired']);
+  });
+
+  it('a conflicting ready row retired before it is read back is an insert failure', async () => {
+    const { deps, db, sql } = await freshDb();
+    const payload = await payloadOf(V1.vocabVersion);
+    await putSnapshot(deps, payload, meta());
+    const racing: typeof sql = {
+      query: async <T>(q: Prisma.Sql) => {
+        const r = await sql.query<T>(q);
+        if (q.text.includes('ON CONFLICT') && r.length === 0)
+          await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+        return r;
+      },
+      execute: sql.execute,
+    };
+    const err = await putSnapshot({ ...deps, sql: racing }, payload, meta()).catch(
+      (e: unknown) => e
+    );
+    expect(err).toBeInstanceOf(TagIndexManifestInsertError);
+    expect((err as Error).message).toMatch(/conflicted and is gone/);
+  });
+
   it('the same study payload again is refused; production and study rows of one payload coexist', async () => {
     const { deps, rows } = await freshDb();
     const payload = await payloadOf(V1.vocabVersion);
@@ -426,12 +516,13 @@ describe('putSnapshot', () => {
 
 describe('loadLatestSnapshot', () => {
   it('round-trips through the codec', async () => {
-    const { deps } = await freshDb();
+    const { deps, gets } = await freshDb();
     const payload = await payloadOf(V1.vocabVersion);
     expect(await loadLatestSnapshot(deps, SPEC)).toBeNull();
     const { manifest } = await putSnapshot(deps, payload, meta());
     const loaded = await loadLatestSnapshot(deps, SPEC);
     expect(loaded?.manifest).toEqual(manifest);
+    expect(gets).toEqual([{ key: manifest.objectKey, expectedBytes: payload.length }]);
     expect(loaded?.index).toEqual((await decodeTagIndex(payload)).index);
     expect(loaded?.index.vocabulary.map((t) => t.key)).toEqual(
       smallTagIndexData(V1.vocabVersion).vocabulary.map((t) => t.key)

@@ -1,18 +1,23 @@
 import { GetObjectCommand, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 import { describe, expect, it, vi } from 'vitest';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { serverSchema } from '~/env/server-schema';
 import { s3TagIndexObjects } from '~/server/services/resource-intent-tags/objects';
-import { TagIndexPayloadSizeError } from '~/server/services/resource-intent-tags/store';
+import {
+  TagIndexObjectMissingError,
+  TagIndexPayloadSizeError,
+} from '~/server/services/resource-intent-tags/store';
 
 /** The S3 adapter of the tag-index snapshot store, over a fake client. */
 
-function fakeS3(get: { ContentLength?: number; bytes: Uint8Array }) {
+function fakeS3(get: { ContentLength?: number; bytes: Uint8Array; error?: unknown }) {
   const read = vi.fn(async () => get.bytes);
   const destroy = vi.fn();
   const sent: unknown[] = [];
   const s3 = {
     send: vi.fn(async (cmd: unknown) => {
       sent.push(cmd);
+      if (get.error) throw get.error;
       if (cmd instanceof GetObjectCommand)
         return { ContentLength: get.ContentLength, Body: { transformToByteArray: read, destroy } };
       return {};
@@ -52,10 +57,35 @@ describe('s3TagIndexObjects', () => {
     expect(destroy).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses to start without a bucket', () => {
-    expect(() => s3TagIndexObjects({ s3: fakeS3({ bytes: new Uint8Array() }).s3 })).toThrow(
-      /RESOURCE_INTENT_TAG_INDEX_BUCKET is not set/
-    );
+  it('reports a missing object as unservable, and rethrows any other failure as it is', async () => {
+    const notFound = Object.assign(new Error('gone'), {
+      name: 'NoSuchKey',
+      $metadata: { httpStatusCode: 404 },
+    });
+    const missing = s3TagIndexObjects({
+      s3: fakeS3({ bytes: new Uint8Array(), error: notFound }).s3,
+      bucket: 'b',
+      prefix: 'p',
+    });
+    await expect(missing.get('k', 3)).rejects.toBeInstanceOf(TagIndexObjectMissingError);
+    const reset = new Error('connection reset');
+    const failing = s3TagIndexObjects({
+      s3: fakeS3({ bytes: new Uint8Array(), error: reset }).s3,
+      bucket: 'b',
+      prefix: 'p',
+    });
+    await expect(failing.get('k', 3)).rejects.toBe(reset);
+  });
+
+  it('takes the bucket and prefix from the environment, and refuses to start without a bucket', () => {
+    const s3 = fakeS3({ bytes: new Uint8Array() }).s3;
+    setEnv({ RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined });
+    expect(() => s3TagIndexObjects({ s3 })).toThrow(/RESOURCE_INTENT_TAG_INDEX_BUCKET is not set/);
+    setEnv({
+      RESOURCE_INTENT_TAG_INDEX_BUCKET: 'snapshots',
+      RESOURCE_INTENT_TAG_INDEX_PREFIX: 'x/y',
+    });
+    expect(s3TagIndexObjects({ s3 }).prefix).toBe('x/y');
   });
 });
 
@@ -65,8 +95,8 @@ describe('tag-index env', () => {
 
   it('bucket: optional, and an S3 bucket name when set', () => {
     expect(bucket.parse(undefined)).toBeUndefined();
-    expect(bucket.parse('ri-snapshots.v1')).toBe('ri-snapshots.v1');
-    for (const bad of ['', 'Upper', 'a', '-lead', 'trail-', 'has/slash'])
+    for (const ok of ['ri-snapshots.v1', 'abc', 'a'.repeat(63)]) expect(bucket.parse(ok)).toBe(ok);
+    for (const bad of ['', 'Upper', 'a', 'ab', 'a'.repeat(64), '-lead', 'trail-', 'has/slash'])
       expect(bucket.safeParse(bad).success, bad).toBe(false);
   });
 

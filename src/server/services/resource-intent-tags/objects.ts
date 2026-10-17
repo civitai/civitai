@@ -1,8 +1,12 @@
 import { GetObjectCommand, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 
 import { env } from '~/env/server';
-import { getS3Client } from '~/utils/s3-utils';
-import { TagIndexPayloadSizeError, type TagIndexObjectStore } from './store';
+import { getS3Client, isNotFoundError } from '~/utils/s3-utils';
+import {
+  TagIndexObjectMissingError,
+  TagIndexPayloadSizeError,
+  type TagIndexObjectStore,
+} from './store';
 
 /**
  * Tag-index snapshot objects in `RESOURCE_INTENT_TAG_INDEX_BUCKET` under
@@ -28,7 +32,13 @@ export function s3TagIndexObjects(
       );
     },
     get: async (key, expectedBytes) => {
-      const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      const res = await s3
+        .send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+        .catch((e: unknown) => {
+          if (isNotFoundError(e))
+            throw new TagIndexObjectMissingError(`tag index object ${key} not found`);
+          throw e;
+        });
       if (!res.Body) throw new Error(`tag index object ${key} has no body`);
       // Refuse before reading: the body of a wrong object can be far larger than any snapshot.
       if (typeof res.ContentLength === 'number' && res.ContentLength !== expectedBytes) {
@@ -37,7 +47,8 @@ export function s3TagIndexObjects(
           `tag index object ${key} is ${res.ContentLength} bytes, manifest says ${expectedBytes}`
         );
       }
-      return Buffer.from(await res.Body.transformToByteArray());
+      const bytes = await res.Body.transformToByteArray();
+      return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     },
   };
 }

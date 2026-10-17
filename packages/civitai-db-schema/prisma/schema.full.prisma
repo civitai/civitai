@@ -1960,8 +1960,8 @@ model ResourceIntentVocabulary {
 
 // The manifest of one stored resource-intent v1 tag-index snapshot; the payload is in object
 // storage under `objectKey` (content-addressed: it ends in /<kind>/<payloadSha256>). Inserted
-// 'ready' after the upload; 'retired' is one-way. A DB trigger sets `createdAt` and `retiredAt`
-// and refuses every other change. Pin rules and formats are DB CHECKs. Written and read only through
+// 'ready' after the upload; 'retired' is one-way. A DB trigger sets `createdAt` and `retiredAt`,
+// refuses a production row whose vocabulary is not frozen, and refuses every other change. Pin rules and formats are DB CHECKs. Written and read only through
 // src/server/services/resource-intent-tags/store.ts. The migration is applied manually per
 // environment (no prisma migrate deploy).
 model ResourceIntentTagIndexSnapshot {

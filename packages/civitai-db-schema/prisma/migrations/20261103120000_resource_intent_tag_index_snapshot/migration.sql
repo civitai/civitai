@@ -11,7 +11,8 @@
 -- state: a build that dies before the insert leaves an unreferenced object and no row. 'retired'
 -- withdraws a row from serving and is one-way, so a retention job may delete a retired row's object
 -- once no ready row names the same key. `createdAt` is the database's clock (the trigger overwrites
--- any value a writer supplies), because the study pin CHECK measures from it.
+-- any value a writer supplies), because the study pin CHECK measures from it. The trigger also
+-- refuses a production row whose vocabulary is not frozen at insert time.
 
 SET lock_timeout = '3s';
 
@@ -82,6 +83,13 @@ BEGIN
     IF TG_OP = 'INSERT' THEN
         IF NEW."status" <> 'ready' THEN
             RAISE EXCEPTION 'ResourceIntentTagIndexSnapshot rows are inserted ready';
+        END IF;
+        IF NEW."kind" = 'production' AND NOT EXISTS (
+            SELECT 1 FROM "ResourceIntentVocabulary"
+            WHERE "vocabVersion" = NEW."vocabVersion" AND "status" = 'frozen'
+        ) THEN
+            RAISE EXCEPTION 'a production ResourceIntentTagIndexSnapshot needs a frozen vocabulary; % is not',
+                NEW."vocabVersion";
         END IF;
         NEW."createdAt" := CURRENT_TIMESTAMP;
         RETURN NEW;

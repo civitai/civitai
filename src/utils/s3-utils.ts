@@ -1279,7 +1279,7 @@ export async function getGetUrlByKey(
 }
 
 /** A HeadObject rejection that definitively means "this key is not in the bucket". */
-function isNotFoundError(e: unknown) {
+export function isNotFoundError(e: unknown) {
   const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
   return (
     err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404

@@ -43,8 +43,9 @@ export type TagIndexSnapshotManifest = {
   retiredAt: Date | null;
 };
 
-/** This snapshot cannot be served: reading it again fails the same way, so only another row can fix it. */
+/** Refused as stored: retrying fails the same way until the row, its object or its vocabulary changes. */
 export class TagIndexSnapshotUnservableError extends Error {}
+export class TagIndexObjectMissingError extends TagIndexSnapshotUnservableError {}
 export class TagIndexVocabularyMissingError extends TagIndexSnapshotUnservableError {}
 export class TagIndexVocabularyNotFrozenError extends TagIndexSnapshotUnservableError {}
 export class TagIndexPayloadSizeError extends TagIndexSnapshotUnservableError {}
@@ -198,13 +199,13 @@ export async function latestReadyManifest(
 }
 
 /**
- * Download and decode the snapshot a manifest names. Refuses, each with its own error: a vocabulary
- * row that is gone or, for production, still a candidate; bytes of another length or sha256 than the
+ * Download and decode the snapshot a production manifest names. Refuses, each with its own error: a
+ * vocabulary row that is gone or still a candidate; an object that is gone; bytes of another length or sha256 than the
  * manifest's (checked before decoding); bytes that do not decode; a header whose specHash or
  * vocabVersion is not the manifest's. A download failure, or running out of memory while decoding,
  * is rethrown as it is.
  */
-export async function loadSnapshot(
+async function loadSnapshot(
   deps: TagIndexStoreDeps,
   manifest: TagIndexSnapshotManifest
 ): Promise<{ manifest: TagIndexSnapshotManifest; index: TagIndex }> {
@@ -214,7 +215,7 @@ export async function loadSnapshot(
     throw new TagIndexVocabularyMissingError(
       `${what}: vocabulary ${manifest.vocabVersion} not found`
     );
-  if (manifest.kind === 'production' && vocabStatus === 'candidate')
+  if (vocabStatus === 'candidate')
     throw new TagIndexVocabularyNotFrozenError(
       `${what}: vocabulary ${manifest.vocabVersion} is a candidate`
     );
