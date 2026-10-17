@@ -169,6 +169,25 @@ describe('feedScanLabelControlSample exclusions', () => {
     expect(await controlImages()).toEqual(draws.slice(0, 10).sort((a, b) => a - b));
   });
 
+  it('does not spend a slot on an image already queued', async () => {
+    for (let id = 2; id <= 5; id++) await image(id);
+    await queued(2);
+    // One slot left: 29 open control items on settling images, oldest first, so the window is [2, 201).
+    for (let id = 201; id <= 229; id++) {
+      await image(id, { createdAt: hoursAgo(0.9 - (id - 201) * 0.01) });
+      await queued(id, { lane: 'control', createdAt: hoursAgo(30) });
+    }
+    expect(
+      await feedScanLabelControlSample({
+        now: NOW,
+        rng: startingAt([2, 4], 2, 201),
+        inRollout: everyone,
+      })
+    ).toMatchObject({ added: 1 });
+    // The draw at 2 walks on to 3 rather than taking the queued image.
+    expect((await controlImages()).filter((id) => id < 200)).toEqual([3]);
+  });
+
   it('records each sample with a control flag', async () => {
     await image(2, { nsfwLevel: 4 });
     await feedScanLabelControlSample({ now: NOW, rng: spread(), inRollout: everyone });
