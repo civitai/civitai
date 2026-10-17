@@ -132,7 +132,8 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
 
-  const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
+  // Mystery box listings have their own builder; here a NULL cosmetic would read as a pack.
+  const where: Prisma.CosmeticShopItemFindManyArgs['where'] = { itemDefinitionId: null };
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
   if (input.name) {
@@ -1004,7 +1005,6 @@ export const purchaseCosmeticShopItem = async ({
       mysteryBoxEnabled,
       countryCode,
     });
-
 
   const isPack = shopItem.cosmeticId == null || !shopItem.cosmetic;
   // Random, not a timestamp, without a key. This id is both the purchase row's

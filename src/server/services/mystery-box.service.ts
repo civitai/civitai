@@ -234,7 +234,8 @@ export async function purchaseMysteryBox({
       throw throwBadRequestError('Mystery boxes are not available in your region');
 
     // Paid Buzz only, event box or not.
-    if (payWith !== 'default') throw throwBadRequestError("This box can't be bought with Blue Buzz");
+    if (payWith !== 'default')
+      throw throwBadRequestError("This box can't be bought with Blue Buzz");
 
     const params = (box.params ?? {}) as BoxParams;
     if (!isEventShopItemData(params)) return undefined;

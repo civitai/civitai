@@ -19,7 +19,11 @@ const USER_HOLDER = 'user';
  */
 export function grantItem(
   tx: Prisma.TransactionClient,
-  { itemDefinitionId, userId, sourceKey }: { itemDefinitionId: number; userId: number; sourceKey: string }
+  {
+    itemDefinitionId,
+    userId,
+    sourceKey,
+  }: { itemDefinitionId: number; userId: number; sourceKey: string }
 ) {
   return tx.item.create({
     data: { itemDefinitionId, holderType: USER_HOLDER, holderId: userId, sourceKey },

@@ -1210,7 +1210,8 @@ export const deleteCreatorShopItem = async ({
 // only lets a moderator pass someone else's userId.
 export const getCreatorShopManageItems = async ({ userId }: { userId: number }) => {
   const items = await dbRead.cosmeticShopItem.findMany({
-    where: { addedById: userId },
+    // Mystery box listings are managed with their box, not as a shop item.
+    where: { addedById: userId, itemDefinitionId: null },
     // The reseller count tells the creator what's at stake before they touch the
     // item's resale terms — existing resellers keep the ones they listed under.
     // Deleted accounts are filtered out to match `getShopItemResellers`, or the
@@ -1885,6 +1886,8 @@ export const getCreatorShopReviewQueue = async ({
         ? [
             {
               cosmeticId: null,
+              // A mystery box listing has no cosmetic either, and is not a creator pack.
+              itemDefinitionId: null,
               addedById: userId ?? { not: null },
               ...(username
                 ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }
@@ -2149,10 +2152,15 @@ export const takedownCosmeticShopItem = async ({
       title: true,
       meta: true,
       addedById: true,
+      itemDefinitionId: true,
       cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
+  // Everything below reads a NULL cosmetic as a pack: refunds with no payouts to reverse and no
+  // members to revoke. A box's held boxes and opened rewards are neither.
+  if (item.itemDefinitionId != null)
+    throw throwBadRequestError('Mystery box listings cannot be taken down here');
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();

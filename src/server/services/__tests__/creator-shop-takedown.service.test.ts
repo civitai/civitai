@@ -136,6 +136,29 @@ const yellowRefund = (amount: number) => ({
   externalTransactionIdPrefix: 'p',
 });
 
+describe('takedownCosmeticShopItem on a mystery box listing', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+  });
+
+  // The pack path would refund every box buyer and revoke nothing: a box has no members.
+  it('refuses before stopping sales or refunding anyone', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...shopItemRow,
+      cosmeticId: null,
+      cosmetic: null,
+      itemDefinitionId: 9,
+    });
+
+    await expect(
+      takedownCosmeticShopItem({ id: 42, reason: 'r', moderatorId: 999 })
+    ).rejects.toThrow('Mystery box listings cannot be taken down here');
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+    expect(mocks.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('takedownCosmeticShopItem', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
