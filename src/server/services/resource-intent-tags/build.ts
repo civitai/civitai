@@ -370,6 +370,14 @@ function stepEvery(every: number): Step {
 
 export type TagBuildResult = { data: TagIndexData; stats: TagBuildStats };
 
+export type FinalizeOptions = {
+  /**
+   * Postings' content scores and pair fits as float32, the precision the snapshot stores them at
+   * (and a decoded index holds): half the memory of the largest arrays, the same encoded bytes.
+   */
+  float32Postings?: boolean;
+};
+
 /** Entries grouped by key; with `normalise`, each key's values divided by their sum. */
 function* sparseByKey(
   keyCount: number,
@@ -404,7 +412,7 @@ function* sparseByKey(
   return { keys: Uint32Array.from(keyList), ptr: Uint32Array.from(ptr), resource: res, value: val };
 }
 
-class Grow<T extends Uint32Array | Float64Array | Uint8Array> {
+class Grow<T extends Uint32Array | Float64Array | Uint16Array | Uint8Array> {
   length = 0;
   constructor(public buf: T) {}
   push(v: number) {
@@ -418,23 +426,52 @@ class Grow<T extends Uint32Array | Float64Array | Uint8Array> {
   view(): T {
     return this.buf.subarray(0, this.length) as T;
   }
+  /** Drops the storage. */
+  clear() {
+    this.buf = new (this.buf.constructor as new (n: number) => T)(0);
+    this.length = 0;
+  }
 }
 const u32 = () => new Grow(new Uint32Array(1024));
 const f64 = () => new Grow(new Float64Array(1024));
 
-type ModelEntry = {
-  kind: TagResourceKind;
-  content: { tags: Uint32Array; c: Float64Array } | null;
-  baseModels: readonly string[];
+const KIND_CODE: Record<TagResourceKind, number> = { addon: 0, checkpoint: 1 };
+
+/** What the training rows aggregate to: everything `finalize` needs once the rows are dropped. */
+type RowAggregates = {
+  nUsers: number;
+  rows: { gen: number; post: number };
+  tagUsers: Uint32Array;
+  ecoUsers: Uint32Array;
+  ecoObs: Uint32Array;
+  tagEco: Uint32Array;
+  rowsWithEco: number;
+  rowsWithTag: number;
+  fitR: Float64Array;
+  usedR: Uint8Array;
+  tagOut: {
+    tag: Grow<Uint32Array>;
+    model: Grow<Uint32Array>;
+    fit: Grow<Float64Array>;
+    s: Grow<Float64Array>;
+  };
+  ecoOut: {
+    eco: Grow<Uint32Array>;
+    model: Grow<Uint32Array>;
+    users: Grow<Uint32Array>;
+    s: Grow<Float64Array>;
+  };
 };
 
 /**
  * Accumulates models and training rows, then computes the index once. Rows are kept as interned ids
  * (no prompt text), and every aggregate is computed per user then per model, so memory follows the
  * number of (row, tag) and (row, resource) incidences rather than of (user, resource, tag) triples.
+ * Models are kept in flat arrays by their index of first appearance (no object per model), their
+ * content tags in one ascending run per model, and their content scores as exact integers c·10^d.
+ * Finalizing drops the rows and the content as soon as the index no longer needs them.
  */
 export class TagIndexAccumulator {
-  private readonly models = new Map<number, ModelEntry>();
   private readonly users = new Map<string, number>();
   private readonly ecoIds = new Map<string, number>();
   private readonly ecoNames: string[] = [];
@@ -453,6 +490,21 @@ export class TagIndexAccumulator {
   private readonly rowResMult = u32();
   private readonly modelIdx = new Map<number, number>();
   private readonly modelList: number[] = [];
+  /** Per model index: its kind (`KIND_CODE`), the first one it was seen as. */
+  private readonly modelKind = new Grow(new Uint8Array(1024));
+  /** Per model index: 1 once its content was given. */
+  private readonly modelHasContent = new Grow(new Uint8Array(1024));
+  /** Per model index: its content tags' range in `contentTags` / `contentScaled`. */
+  private readonly contentStart = u32();
+  private readonly contentEnd = u32();
+  private readonly contentTags = u32();
+  /** Content scores × `contentScale`, exact integers (the build rounds them to that many decimals). */
+  private readonly contentScaled = new Grow(new Uint16Array(1024));
+  private readonly contentScale: number;
+  /** Per model index: its distinct ecosystem ids' range in `modelEcos`. */
+  private readonly ecoStart = u32();
+  private readonly ecoEnd = u32();
+  private readonly modelEcos = u32();
   private excluded = 0;
   private dropped = 0;
   private typeConflicts = 0;
@@ -470,6 +522,9 @@ export class TagIndexAccumulator {
     this.addon = new Set(opts.addonTypes);
     this.excludeGenPrompt = opts.excludeGenPrompt;
     this.params = opts.params ?? TAG_BUILD_PARAMS;
+    this.contentScale = 10 ** this.params.content.scoreDecimals;
+    if (!Number.isInteger(this.contentScale) || this.contentScale > 0xffff)
+      throw new Error('content scores must round to at most 4 decimals');
   }
   private readonly excludeGenPrompt: (prompt: string) => boolean;
   private readonly params: TagBuildParams;
@@ -489,15 +544,18 @@ export class TagIndexAccumulator {
   }
 
   private model(modelId: number, kind: TagResourceKind): number {
-    const m = this.models.get(modelId);
-    if (!m) this.models.set(modelId, { kind, content: null, baseModels: [] });
-    else if (m.kind !== kind) this.typeConflicts++;
     let idx = this.modelIdx.get(modelId);
     if (idx === undefined) {
       idx = this.modelList.length;
       this.modelIdx.set(modelId, idx);
       this.modelList.push(modelId);
-    }
+      this.modelKind.push(KIND_CODE[kind]);
+      this.modelHasContent.push(0);
+      this.contentStart.push(0);
+      this.contentEnd.push(0);
+      this.ecoStart.push(0);
+      this.ecoEnd.push(0);
+    } else if (this.modelKind.buf[idx] !== KIND_CODE[kind]) this.typeConflicts++;
     return idx;
   }
 
@@ -512,17 +570,22 @@ export class TagIndexAccumulator {
     if (this.finalized) throw new Error('TagIndexAccumulator already finalized');
     const kind = this.kindOf(m.type);
     if (!kind) return;
-    this.model(m.modelId, kind);
-    const entry = this.models.get(m.modelId) as ModelEntry;
-    if (entry.content) return;
+    const idx = this.model(m.modelId, kind);
+    if (this.modelHasContent.buf[idx]) return;
     const scores = contentTagScores(m, this.vocab.idByKey, this.params.content);
     const tags = [...scores.keys()].sort((a, b) => a - b);
-    entry.content = {
-      tags: Uint32Array.from(tags),
-      c: Float64Array.from(tags, (t) => scores.get(t) as number),
-    };
-    entry.baseModels = [...new Set(m.baseModels.filter(Boolean))];
-    for (const b of entry.baseModels) this.eco(b);
+    this.modelHasContent.buf[idx] = 1;
+    this.contentStart.buf[idx] = this.contentTags.length;
+    for (const t of tags) {
+      const c = scores.get(t) as number;
+      // Exact: `contentTagScores` rounds c to these decimals, so scaled / contentScale is c again.
+      this.contentTags.push(t);
+      this.contentScaled.push(Math.round(c * this.contentScale));
+    }
+    this.contentEnd.buf[idx] = this.contentTags.length;
+    this.ecoStart.buf[idx] = this.modelEcos.length;
+    for (const b of new Set(m.baseModels.filter(Boolean))) this.modelEcos.push(this.eco(b));
+    this.ecoEnd.buf[idx] = this.modelEcos.length;
   }
 
   addRow(row: TagTrainingRow) {
@@ -571,8 +634,8 @@ export class TagIndexAccumulator {
   }
 
   /** Computes the index in one synchronous call. */
-  finalize(): TagBuildResult {
-    const steps = this.finalizeSteps(stepEvery(Infinity));
+  finalize(opts: FinalizeOptions = {}): TagBuildResult {
+    const steps = this.finalizeSteps(stepEvery(Infinity), opts);
     for (;;) {
       const r = steps.next();
       if (r.done) return r.value;
@@ -585,9 +648,10 @@ export class TagIndexAccumulator {
    */
   async finalizeCooperative(
     pause: () => Promise<void>,
-    every = FINALIZE_STEP_WORK
+    every = FINALIZE_STEP_WORK,
+    opts: FinalizeOptions = {}
   ): Promise<TagBuildResult> {
-    const steps = this.finalizeSteps(stepEvery(every));
+    const steps = this.finalizeSteps(stepEvery(every), opts);
     for (;;) {
       const r = steps.next();
       if (r.done) return r.value;
@@ -595,9 +659,47 @@ export class TagIndexAccumulator {
     }
   }
 
-  private *finalizeSteps(step: Step): Generator<void, TagBuildResult> {
-    if (this.finalized) throw new Error('TagIndexAccumulator already finalized');
-    this.finalized = true;
+  /** Drops the training rows' storage; `finalize` calls it once it has aggregated them. */
+  private releaseRows() {
+    for (const g of [
+      this.rowUser,
+      this.rowSource,
+      this.rowValue,
+      this.rowTipped,
+      this.rowEco,
+      this.rowTagEnd,
+      this.rowTags,
+      this.rowResEnd,
+      this.rowResModel,
+      this.rowResMult,
+    ])
+      g.clear();
+    this.users.clear();
+  }
+
+  /** Drops the models' storage; `finalize` calls it once the index is built. */
+  private releaseModels() {
+    for (const g of [
+      this.modelKind,
+      this.modelHasContent,
+      this.contentStart,
+      this.contentEnd,
+      this.contentTags,
+      this.contentScaled,
+      this.ecoStart,
+      this.ecoEnd,
+      this.modelEcos,
+    ])
+      g.clear();
+    this.modelIdx.clear();
+    this.modelList.length = 0;
+  }
+
+  /**
+   * The training rows' aggregates: outcomes, the per-user counts, and the per-model fits and
+   * user-side scores. The rows' views live only in this call.
+   */
+  private *rowAggregates(step: Step): Generator<void, RowAggregates> {
     const P = this.params;
     const V = this.vocab.tags.length;
     const N = this.rowUser.length;
@@ -821,7 +923,35 @@ export class TagIndexAccumulator {
       }
     }
 
+    return {
+      nUsers,
+      rows: {
+        gen: rowSource.reduce((n, s) => n + (s === 0 ? 1 : 0), 0),
+        post: rowSource.reduce((n, s) => n + (s === 1 ? 1 : 0), 0),
+      },
+      tagUsers,
+      ecoUsers,
+      ecoObs,
+      tagEco,
+      rowsWithEco,
+      rowsWithTag,
+      fitR,
+      usedR,
+      tagOut,
+      ecoOut,
+    };
+  }
+
+  private *finalizeSteps(step: Step, opts: FinalizeOptions): Generator<void, TagBuildResult> {
+    if (this.finalized) throw new Error('TagIndexAccumulator already finalized');
+    this.finalized = true;
+    const V = this.vocab.tags.length;
+    const agg = yield* this.rowAggregates(step);
+    this.releaseRows();
+    const { fitR, usedR, tagOut, ecoOut, tagEco, ecoUsers, ecoObs, rowsWithEco } = agg;
+
     // Ecosystems in code-point order of name; ids are positions.
+    const E = this.ecoNames.length;
     const ecoOrder = this.ecoNames
       .map((name, prov) => ({ name, prov }))
       .sort((a, b) => compareCodePoints(a.name, b.name));
@@ -842,23 +972,39 @@ export class TagIndexAccumulator {
       if (step(E)) yield;
     }
 
+    const M = this.modelList.length;
+    const modelKind = this.modelKind.view();
+    const hasContent = this.modelHasContent.view();
+    const contentStart = this.contentStart.view();
+    const contentEnd = this.contentEnd.view();
+    const contentTags = this.contentTags.view();
+    const contentScaled = this.contentScaled.view();
+    const ecoStart = this.ecoStart.view();
+    const ecoEnd = this.ecoEnd.view();
+    const modelEcos = this.modelEcos.view();
+    const scale = this.contentScale;
+
+    let withContent = 0;
+    let withContentTag = 0;
+    for (let m = 0; m < M; m++)
+      if (hasContent[m]) {
+        withContent++;
+        if (contentEnd[m] > contentStart[m]) withContentTag++;
+      }
     const stats: TagBuildStats = {
-      rows: {
-        gen: rowSource.reduce((n, s) => n + (s === 0 ? 1 : 0), 0),
-        post: rowSource.reduce((n, s) => n + (s === 1 ? 1 : 0), 0),
-      },
+      rows: agg.rows,
       excludedByAuditor: this.excluded,
       droppedNoResources: this.dropped,
-      users: nUsers,
+      users: agg.nUsers,
       rowsWithEcosystem: rowsWithEco,
-      rowsWithTag,
+      rowsWithTag: agg.rowsWithTag,
       models: {
-        content: [...this.models.values()].filter((m) => m.content).length,
+        content: withContent,
         used: usedR.reduce((n, v) => n + v, 0),
         addon: 0,
         checkpoint: 0,
       },
-      modelsWithContentTag: [...this.models.values()].filter((m) => m.content?.tags.length).length,
+      modelsWithContentTag: withContentTag,
       typeConflicts: this.typeConflicts,
       contentPairs: 0,
       fitPairs: tagOut.tag.length,
@@ -876,77 +1022,92 @@ export class TagIndexAccumulator {
     const eu = Float64Array.from(ecoOut.users.view());
     const es = ecoOut.s.view();
     for (const kind of ['addon', 'checkpoint'] as const) {
-      const ids = this.modelList
-        .map((id, idx) => ({ id, idx }))
-        .filter((x) => (this.models.get(x.id) as ModelEntry).kind === kind)
-        .sort((a, b) => a.id - b.id);
-      const n = ids.length;
+      // This kind's models by id: `idx[i]` is resource i's model index.
+      const idx = Uint32Array.from(
+        Array.from({ length: M }, (_, m) => m)
+          .filter((m) => modelKind[m] === KIND_CODE[kind])
+          .sort((a, b) => this.modelList[a] - this.modelList[b])
+      );
+      const n = idx.length;
       stats.models[kind] = n;
       const local = new Int32Array(M).fill(-1);
-      ids.forEach((x, i) => (local[x.idx] = i));
-      const content = ids.map((x) => (this.models.get(x.id) as ModelEntry).content);
+      idx.forEach((m, i) => (local[m] = i));
 
       const ecoPtr = new Uint32Array(n + 1);
       const ecoList: number[] = [];
-      ids.forEach((x, i) => {
-        const bms = (this.models.get(x.id) as ModelEntry).baseModels;
-        const ids_ = bms.map((b) => ecoRemap[this.ecoIds.get(b) as number]).sort((a, b) => a - b);
-        ecoList.push(...ids_);
+      for (let i = 0; i < n; i++) {
+        const m = idx[i];
+        const ids_: number[] = [];
+        for (let k = ecoStart[m]; k < ecoEnd[m]; k++) ids_.push(ecoRemap[modelEcos[k]]);
+        ecoList.push(...ids_.sort((a, b) => a - b));
         ecoPtr[i + 1] = ecoList.length;
-      });
+      }
 
-      // Postings: content pairs ∪ pairs with their own fit, per tag in resource order.
-      const ck = u32();
-      const cr = u32();
-      const cc = f64();
-      const cf = f64();
-      for (let i = 0; i < content.length; i++) {
-        const ct = content[i];
-        if (!ct) continue;
-        for (let k = 0; k < ct.tags.length; k++) {
-          ck.push(ct.tags[k]);
-          cr.push(i);
-          cc.push(ct.c[k]);
-          cf.push(NaN);
-        }
-        stats.contentPairs += ct.tags.length;
-        if (step(ct.tags.length + 1)) yield;
-      }
+      // Postings: per tag, in resource order, one entry per (tag, resource) of the content pairs ∪
+      // the pairs with their own fit; a pair in both keeps its content score and takes its fit. Each
+      // resource's fit pairs, ordered by tag, merge with its content tags (already ascending), and
+      // resources are written in ascending order, so every tag's list comes out in resource order.
+      const fitResPtr = new Uint32Array(n + 1);
       for (let k = 0; k < tagModel.length; k++) {
-        if (step()) yield;
         const i = local[tagModel[k]];
-        if (i < 0) continue;
-        ck.push(tagTag[k]);
-        cr.push(i);
-        cc.push(0);
-        cf.push(tagFit[k]);
+        if (i >= 0) fitResPtr[i + 1]++;
+        if (step()) yield;
       }
-      const order = yield* csrOrder(V, ck.view(), cr.view(), step);
-      const ptr = new Uint32Array(V + 1);
-      const pr = u32();
-      const pc = f64();
-      const pf = f64();
+      for (let i = 0; i < n; i++) fitResPtr[i + 1] += fitResPtr[i];
+      const fitByRes = new Uint32Array(fitResPtr[n]);
       {
-        const keys = ck.view();
-        const res = cr.view();
-        const cv = cc.view();
-        const fv = cf.view();
-        for (let j = 0; j < order.length; j++) {
+        const fill = fitResPtr.slice(0, n);
+        for (let k = 0; k < tagModel.length; k++) {
+          const i = local[tagModel[k]];
+          if (i >= 0) fitByRes[fill[i]++] = k;
           if (step()) yield;
-          const k = order[j];
-          // A pair in both lists: its content entry comes first (pushed first, stable order).
-          if (j && keys[order[j - 1]] === keys[k] && res[order[j - 1]] === res[k]) {
-            pf.buf[pf.length - 1] = fv[k];
-            continue;
-          }
-          ptr[keys[k] + 1]++;
-          pr.push(res[k]);
-          pc.push(cv[k]);
-          pf.push(fv[k]);
         }
+        for (let i = 0; i < n; i++) {
+          const seg = fitByRes.subarray(fitResPtr[i], fitResPtr[i + 1]);
+          if (seg.length > 1) seg.set(Array.from(seg).sort((a, b) => tagTag[a] - tagTag[b]));
+          if (step(seg.length + 1)) yield;
+        }
+      }
+      /** Calls `out(tag, contentAt, fitAt)` for resource i's pairs in tag order; -1 where absent. */
+      const pairs = (i: number, out: (t: number, ci: number, fk: number) => void) => {
+        const m = idx[i];
+        let ci = hasContent[m] ? contentStart[m] : 0;
+        const ce = hasContent[m] ? contentEnd[m] : 0;
+        let f = fitResPtr[i];
+        const fe = fitResPtr[i + 1];
+        while (ci < ce || f < fe) {
+          const ct = ci < ce ? contentTags[ci] : Infinity;
+          const ft = f < fe ? tagTag[fitByRes[f]] : Infinity;
+          if (ct < ft) out(ct, ci++, -1);
+          else if (ft < ct) out(ft, -1, fitByRes[f++]);
+          else out(ct, ci++, fitByRes[f++]);
+        }
+        return ce - (hasContent[m] ? contentStart[m] : 0);
+      };
+      const ptr = new Uint32Array(V + 1);
+      for (let i = 0; i < n; i++) {
+        stats.contentPairs += pairs(i, (t) => ptr[t + 1]++);
+        if (step(fitResPtr[i + 1] - fitResPtr[i] + 1)) yield;
       }
       for (let t = 0; t < V; t++) ptr[t + 1] += ptr[t];
-      stats.postings += pr.length;
+      const total = ptr[V];
+      const pr = new Uint32Array(total);
+      const Float = opts.float32Postings ? Float32Array : Float64Array;
+      const pc = new Float(total);
+      const pf = new Float(total);
+      {
+        const fill = ptr.slice(0, V);
+        for (let i = 0; i < n; i++) {
+          pairs(i, (t, ci, fk) => {
+            const at = fill[t]++;
+            pr[at] = i;
+            pc[at] = ci >= 0 ? contentScaled[ci] / scale : 0;
+            pf[at] = fk >= 0 ? tagFit[fk] : NaN;
+          });
+          if (step(fitResPtr[i + 1] - fitResPtr[i] + 1)) yield;
+        }
+      }
+      stats.postings += total;
 
       /** The entries whose model is of this kind, with model indices made kind-local. */
       function* ofKind(model: Uint32Array, key: Uint32Array, value: Float64Array) {
@@ -991,21 +1152,17 @@ export class TagIndexAccumulator {
       );
 
       kinds[kind] = {
-        modelIds: Uint32Array.from(ids, (x) => x.id),
-        fit: Float64Array.from(ids, (x) => fitR[x.idx]),
+        modelIds: Uint32Array.from(idx, (m) => this.modelList[m]),
+        fit: Float64Array.from(idx, (m) => fitR[m]),
         ecosystemPtr: ecoPtr,
         ecosystemIds: Uint32Array.from(ecoList),
-        postings: {
-          ptr,
-          resource: pr.view().slice(),
-          c: pc.view().slice(),
-          fit: pf.view().slice(),
-        },
+        postings: { ptr, resource: pr, c: pc, fit: pf },
         ecosystemUsers,
         userByTag,
         userByEcosystem,
       };
     }
+    this.releaseModels();
 
     return {
       data: {

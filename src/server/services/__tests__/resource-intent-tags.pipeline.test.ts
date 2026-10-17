@@ -5,6 +5,7 @@ import type { Prisma } from '@prisma/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { serverSchema } from '~/env/server-schema';
+import { decodeTagIndex } from '~/server/services/resource-intent-tags/payload';
 import type * as Build from '~/server/services/resource-intent-tags/build';
 import {
   loopYielder,
@@ -42,7 +43,7 @@ const logToAxiom = loggingMock.logToAxiom;
 const clickhouseClient = vi.hoisted(() => ({ createClient: vi.fn() }));
 // Every accumulator the pipeline makes, held weakly, so a test can see whether one is still reachable.
 const accumulators = vi.hoisted(() => [] as WeakRef<object>[]);
-const cooperativeFinalizes = vi.hoisted(() => ({ count: 0 }));
+const cooperativeFinalizes = vi.hoisted(() => ({ count: 0, opts: [] as unknown[] }));
 vi.mock('~/server/services/resource-intent-tags/build', async (importOriginal) => {
   const real = await importOriginal<typeof Build>();
   class TrackedAccumulator extends real.TagIndexAccumulator {
@@ -54,6 +55,7 @@ vi.mock('~/server/services/resource-intent-tags/build', async (importOriginal) =
       ...args: Parameters<InstanceType<typeof real.TagIndexAccumulator>['finalizeCooperative']>
     ) {
       cooperativeFinalizes.count++;
+      cooperativeFinalizes.opts.push(args[2]);
       return super.finalizeCooperative(...args);
     }
   }
@@ -68,6 +70,7 @@ const migration = (name: string) =>
   );
 const VOCAB_SQL = migration('20261029120000_resource_intent_tags');
 const SNAPSHOT_SQL = migration('20261103120000_resource_intent_tag_index_snapshot');
+const PAYLOAD_CAP_SQL = migration('20261106120000_resource_intent_tag_index_snapshot_payload_cap');
 
 const KEY = Buffer.alloc(32, 0x11);
 const ENV: Required<TagBuildEnv> = {
@@ -126,6 +129,29 @@ type World = {
   closed: ReturnType<typeof vi.fn>;
 };
 
+/**
+ * Model content rows. Model 1 is the add-on the training rows use; model 3 is an add-on no training
+ * row uses, whose content carries 'castle'.
+ */
+const CONTENT = [
+  {
+    id: 1,
+    name: 'watercolor lighthouse',
+    type: 'LORA',
+    description: '<p>castle</p>',
+    tags: ['watercolor'],
+    versions: [{ baseModel: 'SDXL 1.0', trainedWords: ['lighthouse'] }],
+  },
+  {
+    id: 3,
+    name: 'castle',
+    type: 'LORA',
+    description: '',
+    tags: [],
+    versions: [{ baseModel: 'SDXL 1.0', trainedWords: [] }],
+  },
+];
+
 // Users 42 and 7, hashed as the extractor writes them; 42 also posts below.
 const defaultGenRows = GEN_PROMPTS.map((p, i) => ({
   u: observationUserHash(KEY, i % 2 ? 7 : 42),
@@ -146,9 +172,11 @@ async function world(
     /** Generator rows on the window's first day (the fixture's three prompts by default). */
     genRows?: Parameters<typeof genObservationOf>[0][];
     env?: TagBuildEnv;
+    /** Eligible model ids, ascending (model 1 by default: the used add-on with content). */
+    eligible?: number[];
   } = {}
 ): Promise<World> {
-  const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL);
+  const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL);
   for (const [p, s, f] of opts.vocabs ?? [[NEW_FROZEN, 'frozen', '2026-10-10T00:00:00Z']])
     await insertVocab(db, p, s, f);
   const chQueries: string[] = [];
@@ -221,19 +249,19 @@ async function world(
         { userId: 43, prompt: 'lighthouse', resources, reactions: 0, tips: 0 },
       ];
     }
+    if (t.includes("m.status = 'Published'")) {
+      const [after, , page] = sql.values as [number, string[], number];
+      return (opts.eligible ?? [1])
+        .filter((id) => id > after)
+        .slice(0, page)
+        .map((id) => ({ id }));
+    }
     if (t.includes('WITH ms AS')) return [];
-    if (t.includes('FROM "Model" m WHERE m.id = ANY'))
-      return [
-        {
-          id: 1,
-          name: 'watercolor lighthouse',
-          type: 'LORA',
-          description: '<p>castle</p>',
-          tags: ['watercolor'],
-          versions: [{ baseModel: 'SDXL 1.0', trainedWords: ['lighthouse'] }],
-        },
-        // Model 2 is requested but returns no row (as a model flagged since its use would).
-      ];
+    if (t.includes('FROM "Model" m WHERE m.id = ANY')) {
+      const ids = sql.values.find(Array.isArray) as number[];
+      // Model 2 is requested but returns no row (as a model flagged since its use would).
+      return CONTENT.filter((m) => ids.includes(m.id));
+    }
     throw new Error(`unexpected Postgres read: ${t}`);
   });
   const store = new Map<string, Buffer>();
@@ -300,6 +328,8 @@ describe('the happy path (the control every refusal below departs from)', () => 
     const { summary, payload } = await runTagIndexBuild({ dryRun: false }, w.deps);
     // The index is computed in slices that yield the event loop.
     expect(cooperativeFinalizes.count).toBe(cooperativeBefore + 1);
+    // With float32 postings: half the memory of the largest arrays, the same encoded bytes.
+    expect(cooperativeFinalizes.opts.at(-1)).toEqual({ float32Postings: true });
     const newest = await versionOf(w.db, NEW_FROZEN);
     expect(newest).not.toBe(await versionOf(w.db, OLD_FROZEN));
     expect(summary.vocabVersion).toBe(newest);
@@ -345,6 +375,45 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect(w.chQueries).toHaveLength(2 + 90);
     expect(w.chDrained).toEqual(w.chQueries);
     expect(w.workWhileOpen).toEqual([]);
+  });
+
+  it('indexes an eligible model no training row used, on its content alone with the prior fit 0', async () => {
+    const w = await world({ eligible: [1, 3] });
+    const { summary, payload } = await runTagIndexBuild({ dryRun: true }, w.deps);
+    expect(summary).toMatchObject({
+      eligibleModels: 2,
+      // The union of the used models (1, 2) and the eligible ones (1, 3).
+      contentModelsRequested: 3,
+      contentModels: 2,
+    });
+    expect(summary.stats.models).toEqual({ content: 2, used: 2, addon: 2, checkpoint: 1 });
+    const addon = (await decodeTagIndex(payload)).index.kinds.addon;
+    expect(addon.modelIds).toEqual([1, 3]);
+    const r = addon.modelIds.indexOf(3);
+    // No use, so no fit of its own: the resource fit is the shrinkage prior's 0.
+    expect(addon.fit[r]).toBe(0);
+    // Its one content tag, 'castle' (vocabulary id 0) from its name: c = the name weight, no pair fit.
+    const { ptr, resource, c, fit } = addon.postings;
+    const entries = [];
+    for (let t = 0; t + 1 < ptr.length; t++)
+      for (let k = ptr[t]; k < ptr[t + 1]; k++)
+        if (resource[k] === r) entries.push({ t, c: c[k], fit: fit[k] });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].t).toBe(0);
+    expect(entries[0].c).toBeCloseTo(0.8, 6);
+    expect(entries[0].fit).toBeNaN();
+    // The eligibility read happened once, before the content read.
+    const eligibleReads = w.pgReads.filter((q) => q.includes("m.status = 'Published'"));
+    expect(eligibleReads).toHaveLength(1);
+  });
+
+  it('the same inputs build the same bytes', async () => {
+    const a = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1, 3] })).deps);
+    const b = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1, 3] })).deps);
+    expect(Buffer.compare(a.payload, b.payload)).toBe(0);
+    // And an eligible model changes them: the control that the comparison can fail.
+    const c = await runTagIndexBuild({ dryRun: true }, (await world({ eligible: [1] })).deps);
+    expect(Buffer.compare(a.payload, c.payload)).not.toBe(0);
   });
 
   it('a dry run needs no bucket, makes no object store and stores nothing', async () => {

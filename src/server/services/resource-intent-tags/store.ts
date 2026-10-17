@@ -4,7 +4,12 @@ import { Prisma } from '@prisma/client';
 import { isAllocationFailure, type CoocSql } from '~/server/services/resource-intent-cooc/store';
 import type { TagBuildStats } from './build';
 import { TagIndexDecodeUnavailableError } from './decode-errors';
-import { decodeTagIndex, TAG_INDEX_MAX_PAYLOAD_BYTES, type DecodedTagIndex } from './payload';
+import {
+  decodeTagIndex,
+  decodeTagIndexData,
+  TAG_INDEX_MAX_PAYLOAD_BYTES,
+  type DecodedTagIndex,
+} from './payload';
 import type { TagIndex } from './score';
 
 /**
@@ -127,12 +132,14 @@ async function vocabularyStatus(sql: CoocSql, vocabVersion: string): Promise<str
   return row?.status ?? null;
 }
 
-async function decodeOrCorrupt(
+type PayloadHeader = { specHash: string; vocabVersion: string };
+
+async function decodeOrCorrupt<T extends PayloadHeader>(
   payload: Uint8Array,
   what: string,
-  decode: (payload: Uint8Array, signal?: AbortSignal) => Promise<DecodedTagIndex> = decodeTagIndex,
+  decode: (payload: Uint8Array, signal?: AbortSignal) => Promise<T>,
   signal?: AbortSignal
-): Promise<DecodedTagIndex> {
+): Promise<T> {
   try {
     return await decode(payload, signal);
   } catch (e) {
@@ -143,7 +150,7 @@ async function decodeOrCorrupt(
 }
 
 function assertHeader(
-  decoded: DecodedTagIndex,
+  decoded: PayloadHeader,
   expect: { specHash: string; vocabVersion: string },
   what: string
 ) {
@@ -185,7 +192,13 @@ export async function putSnapshot(
     throw new TagIndexVocabularyNotFrozenError(
       `a snapshot needs a frozen vocabulary; ${meta.vocabVersion} is '${vocabStatus}'`
     );
-  assertHeader(await decodeOrCorrupt(payload, 'tag index payload'), meta, 'tag index payload');
+  // Decoded and validated, but not assembled into the scorer's maps: the put only needs to know the
+  // bytes decode to a valid index under this header, and the build's process is at its peak here.
+  assertHeader(
+    await decodeOrCorrupt(payload, 'tag index payload', (b) => decodeTagIndexData(b)),
+    meta,
+    'tag index payload'
+  );
 
   const payloadSha256 = sha256Hex(payload);
   const objectKey = tagIndexObjectKey(objects.prefix, payloadSha256);
@@ -273,7 +286,7 @@ export async function loadManifestSnapshot(
   if (sha256 !== manifest.payloadSha256)
     throw new TagIndexPayloadHashError(`${what}: sha256 does not match the manifest`);
   signal?.throwIfAborted();
-  const decoded = await decodeOrCorrupt(bytes, what, deps.decode, signal);
+  const decoded = await decodeOrCorrupt(bytes, what, deps.decode ?? decodeTagIndex, signal);
   assertHeader(decoded, manifest, what);
   return { manifest, index: decoded.index };
 }

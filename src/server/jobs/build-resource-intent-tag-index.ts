@@ -10,6 +10,14 @@ import { applyTagIndexRetention } from '~/server/services/resource-intent-tags/r
 import { RESOURCE_INTENT_TAGS_SPEC_HASH } from '~/server/services/resource-intent-tags/spec';
 import { createJob } from './job';
 
+/**
+ * The build's lock. A full-coverage dry run (every eligible model, October 2026) took 40 minutes on
+ * the deployed read route; 120 is three times that, room for statement retries, a slower standby and
+ * the eligible set's growth (about 4,300 models a week, which lengthens the content read by roughly
+ * 6 minutes a year) without a second build starting under a live one.
+ */
+export const LOCK_MINUTES = 120;
+
 export const buildResourceIntentTagIndexJob = createJob(
   'build-resource-intent-tag-index',
   // Weekly, an hour after build-resource-intent-cooc ('0 5 * * 2').
@@ -40,9 +48,8 @@ export const buildResourceIntentTagIndexJob = createJob(
       now: () => new Date(),
     });
   },
-  // A concurrent second build would repeat every read. 90 min outlives a full build with retried
-  // statements (docs/resource-intent-primitive.md, "Build job"); at a weekly cadence a long hold
-  // blocks nothing. The build does not poll `checkIfCanceled`, so it finishes if the scheduler hangs
-  // up.
-  { lockExpiration: 90 * 60, keepLockOnDisconnect: true }
+  // A concurrent second build would repeat every read. See `LOCK_MINUTES`; at a weekly cadence a
+  // long hold blocks nothing. The build does not poll `checkIfCanceled`, so it finishes if the
+  // scheduler hangs up.
+  { lockExpiration: LOCK_MINUTES * 60, keepLockOnDisconnect: true }
 );

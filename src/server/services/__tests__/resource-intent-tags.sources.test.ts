@@ -15,11 +15,15 @@ import {
   genTrainingRow,
   observationKeyFingerprint,
   observationUserHash,
+  CONTENT_READ_CONCURRENCY,
+  ELIGIBLE_MODEL_PAGE,
+  readEligibleModelIds,
   readModelContent,
   readPostedSample,
   retryingQuery,
   standbyQuery,
   tagTrainingWindow,
+  unionAscending,
 } from '~/server/services/resource-intent-tags/sources';
 
 describe('resource-intent-tags sources', () => {
@@ -204,6 +208,7 @@ describe('resource-intent-tags sources', () => {
     expect(log).toEqual([
       'SET TRANSACTION READ ONLY',
       'SET LOCAL statement_timeout = 1000',
+      'SET LOCAL jit = off',
       'SELECT pg_is_in_recovery() AS standby',
       'SELECT 1',
     ]);
@@ -259,5 +264,178 @@ describe('resource-intent-tags sources', () => {
     calls = -10;
     await expect(retryingQuery(flaky, 0)({} as Prisma.Sql)).rejects.toThrow('connection closed');
     expect(calls).toBe(-7);
+  });
+});
+
+describe('the eligible models (full coverage)', () => {
+  /** A table of models; the fake applies the statement's own keyset bound and LIMIT. */
+  const keysetQuery = (ids: number[], seen: Prisma.Sql[]) => async (q: Prisma.Sql) => {
+    seen.push(q);
+    const [after, , page] = q.values as [number, string[], number];
+    return ids
+      .filter((id) => id > after)
+      .slice(0, page)
+      .map((id) => ({ id }));
+  };
+
+  it('reads every eligible id in keyset pages, ascending, under the eligibility predicate', async () => {
+    const seen: Prisma.Sql[] = [];
+    const ids = [3, 5, 8, 13, 21];
+    expect(await readEligibleModelIds(keysetQuery(ids, seen), ['LORA', 'Checkpoint'], 2)).toEqual(
+      ids
+    );
+    // Pages after 0, 5 and 13; the third is short, so it is the last.
+    expect(seen.map((q) => q.values[0])).toEqual([0, 5, 13]);
+    expect(seen[0].values[1]).toEqual(['LORA', 'Checkpoint']);
+    // The whole statement: each clause is an eligibility rule a reword could drop.
+    expect(seen[0].sql.replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT m.id FROM "Model" m WHERE m.id > ?::int AND ' +
+        "m.status = 'Published' AND NOT m.poi AND NOT m.minor AND m.type::text = ANY(?::text[]) " +
+        'AND EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND ' +
+        "mv.status = 'Published') ORDER BY m.id LIMIT ?::int"
+    );
+  });
+
+  it('a last page exactly full reads one more, empty, page', async () => {
+    const seen: Prisma.Sql[] = [];
+    expect(await readEligibleModelIds(keysetQuery([1, 2, 3, 4], seen), ['LORA'], 2)).toEqual([
+      1, 2, 3, 4,
+    ]);
+    expect(seen.map((q) => q.values[0])).toEqual([0, 2, 4]);
+  });
+
+  it('pages 50,000 ids at a time by default', async () => {
+    expect(ELIGIBLE_MODEL_PAGE).toBe(50_000);
+    const seen: Prisma.Sql[] = [];
+    await readEligibleModelIds(keysetQuery([1], seen), ['LORA']);
+    expect(seen[0].values[2]).toBe(50_000);
+  });
+
+  it('refuses ids that are not ascending: the keyset bound would skip or repeat models', async () => {
+    const query = async () => [{ id: 4 }, { id: 4 }];
+    await expect(readEligibleModelIds(query, ['LORA'], 5)).rejects.toThrow('not ascending');
+    for (const bad of [0, 1.5, -1])
+      await expect(readEligibleModelIds(query, ['LORA'], bad)).rejects.toThrow('positive integer');
+  });
+
+  it('unions two ascending id lists, without duplicates', () => {
+    expect(unionAscending([1, 4, 9], [2, 4, 10, 11])).toEqual([1, 2, 4, 9, 10, 11]);
+    expect(unionAscending([], [3, 5])).toEqual([3, 5]);
+    expect(unionAscending([3, 5], [])).toEqual([3, 5]);
+    expect(unionAscending([7], [7])).toEqual([7]);
+  });
+});
+
+describe('content batches are read ahead, and handed on in id order', () => {
+  /** Content reads that resolve when the test says, so the order of hand-on is under its control. */
+  function gatedQuery() {
+    const pending: {
+      ids: number[];
+      kind: 'meta' | 'images';
+      done: boolean;
+      resolve: () => void;
+    }[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const query = (q: Prisma.Sql) => {
+      const ids = q.values.find(Array.isArray) as number[];
+      const kind = q.sql.includes('"TagsOnModels"') ? 'meta' : 'images';
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      return new Promise<unknown[]>((res) => {
+        const item = {
+          ids,
+          kind,
+          done: false,
+          resolve: () => {
+            item.done = true;
+            inFlight--;
+            res(
+              kind === 'meta'
+                ? ids.map((id) => ({
+                    id,
+                    name: `m${id}`,
+                    type: 'LORA',
+                    description: '',
+                    tags: [],
+                    versions: [],
+                  }))
+                : []
+            );
+          },
+        } as (typeof pending)[number];
+        pending.push(item);
+      });
+    };
+    return { query, pending, maxInFlight: () => maxInFlight };
+  }
+  const settle = () => new Promise((r) => setImmediate(r));
+  const ids = Array.from({ length: 5000 }, (_, i) => i + 1);
+
+  it('reads three batches at once by default', () => {
+    expect(CONTENT_READ_CONCURRENCY).toBe(3);
+  });
+
+  it('keeps at most `concurrency` batches reading, and hands them on in id order however they finish', async () => {
+    const g = gatedQuery();
+    const handed: number[] = [];
+    const done = readModelContent(
+      g.query,
+      ids,
+      new Date(),
+      (m) => void handed.push(m[0].modelId),
+      2
+    );
+    await settle();
+    // Batches 1 and 2 are reading (their meta statements); batch 3 waits for a slot.
+    expect(g.pending.map((p) => p.ids[0])).toEqual([1, 1001]);
+    // Batch 2 finishes first; nothing is handed on before batch 1.
+    for (const kind of ['meta', 'images'] as const) {
+      g.pending.find((p) => p.ids[0] === 1001 && p.kind === kind)?.resolve();
+      await settle();
+    }
+    expect(handed).toEqual([]);
+    for (;;) {
+      const p = g.pending.find((x) => !x.done);
+      if (!p) break;
+      p.resolve();
+      await settle();
+    }
+    await done;
+    expect(handed).toEqual([1, 1001, 2001, 3001, 4001]);
+    expect(g.maxInFlight()).toBe(2);
+  });
+
+  it('with concurrency 1, reads one batch at a time', async () => {
+    const g = gatedQuery();
+    const done = readModelContent(g.query, ids, new Date(), () => undefined, 1);
+    for (;;) {
+      await settle();
+      const p = g.pending.find((x) => !x.done);
+      if (!p) break;
+      p.resolve();
+    }
+    await done;
+    expect(g.maxInFlight()).toBe(1);
+    expect(g.pending).toHaveLength(10);
+  });
+
+  it('a failed batch fails the read, and hands on nothing after it', async () => {
+    const handed: number[] = [];
+    const query = async (q: Prisma.Sql) => {
+      const ids = q.values.find(Array.isArray) as number[];
+      if (ids[0] === 1001) throw new Error('batch two failed');
+      return q.sql.includes('"TagsOnModels"')
+        ? ids.map((id) => ({ id, name: '', type: 'LORA', description: '', tags: [], versions: [] }))
+        : [];
+    };
+    await expect(
+      readModelContent(query, ids, new Date(), (m) => void handed.push(m[0].modelId))
+    ).rejects.toThrow('batch two failed');
+    expect(handed).toEqual([1]);
+    for (const bad of [0, 1.5])
+      await expect(readModelContent(query, ids, new Date(), () => undefined, bad)).rejects.toThrow(
+        'positive integer'
+      );
   });
 });

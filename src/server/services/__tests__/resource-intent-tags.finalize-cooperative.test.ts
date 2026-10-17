@@ -4,14 +4,26 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   parseTagVocabulary,
+  roundHalfEven,
+  TAG_BUILD_PARAMS,
   TagIndexAccumulator,
   type TagModelContent,
   type TagTrainingRow,
   type TrainingResource,
 } from '~/server/services/resource-intent-tags/build';
-import { encodeTagIndex } from '~/server/services/resource-intent-tags/payload';
+import {
+  compressTagIndex,
+  encodeTagIndex,
+  encodeTagIndexCooperative,
+  packTagIndex,
+  packTagIndexCooperative,
+} from '~/server/services/resource-intent-tags/payload';
+import { finalizeAndEncodeTagIndex } from '~/server/services/resource-intent-tags/pipeline';
 import { genTrainingRow, type VersionInfo } from '~/server/services/resource-intent-tags/sources';
-import { RESOURCE_INTENT_TAGS_SPEC } from '~/server/services/resource-intent-tags/spec';
+import {
+  RESOURCE_INTENT_TAGS_SPEC,
+  RESOURCE_INTENT_TAGS_SPEC_HASH,
+} from '~/server/services/resource-intent-tags/spec';
 
 /**
  * `finalizeCooperative` pauses inside the index computation so a real-size build does not hold the
@@ -52,12 +64,19 @@ const versions = new Map<number, VersionInfo>(
   ])
 );
 
-function filled() {
+/** The fixture's accumulator; `rowsFirst` adds the rows before the models, as the pipeline does. */
+function filled(rowsFirst = false) {
   const acc = new TagIndexAccumulator(vocab, {
     addonTypes: RESOURCE_INTENT_TAGS_SPEC.build.addonTypes,
     excludeGenPrompt: () => false,
   });
-  for (const m of golden.models) acc.addModel(m);
+  if (!rowsFirst) for (const m of golden.models) acc.addModel(m);
+  addRows(acc);
+  if (rowsFirst) for (const m of golden.models) acc.addModel(m);
+  return acc;
+}
+
+function addRows(acc: TagIndexAccumulator) {
   for (const r of golden.genRows)
     acc.addRow(
       genTrainingRow(
@@ -81,7 +100,6 @@ function filled() {
       reactions: r.reactions,
       tips: r.tips,
     });
-  return acc;
 }
 
 const SPEC = 'd'.repeat(64);
@@ -112,5 +130,144 @@ describe('finalizeCooperative', () => {
         throw new Error('stop');
       }, 64)
     ).rejects.toThrow('stop');
+  });
+});
+
+describe('the build at full coverage: memory and order', () => {
+  it('adding the rows before the models (the pipeline order) builds the same bytes', async () => {
+    expect(sha(await encodeTagIndex(filled(true).finalize().data, SPEC))).toBe(PINNED_SHA256);
+  });
+
+  it('the cooperative pack pauses and gives the synchronous bytes, consuming the index only when asked', async () => {
+    const kept = filled().finalize().data;
+    let pauses = 0;
+    const raw = await packTagIndexCooperative(kept, SPEC, async () => void pauses++, { every: 64 });
+    expect(sha(await compressTagIndex(raw))).toBe(PINNED_SHA256);
+    expect(raw.equals(packTagIndex(filled().finalize().data, SPEC))).toBe(true);
+    expect(pauses).toBeGreaterThan(50);
+    // Not asked to consume: the index is intact.
+    expect(kept.kinds.addon.postings.resource.length).toBeGreaterThan(0);
+
+    const consumed = filled().finalize().data;
+    const raw2 = await packTagIndexCooperative(consumed, SPEC, async () => undefined, {
+      consume: true,
+    });
+    expect(raw2.equals(raw)).toBe(true);
+    for (const kind of ['addon', 'checkpoint'] as const) {
+      const p = consumed.kinds[kind].postings;
+      expect([p.resource.length, p.c.length, p.fit.length]).toEqual([0, 0, 0]);
+    }
+  });
+
+  it('the streaming encode pauses as it packs, and gives encodeTagIndex’s bytes', async () => {
+    let pauses = 0;
+    const payload = await encodeTagIndexCooperative(
+      filled().finalize().data,
+      SPEC,
+      async () => void pauses++,
+      { every: 64 }
+    );
+    expect(sha(payload)).toBe(PINNED_SHA256);
+    expect(pauses).toBeGreaterThan(50);
+  });
+
+  it('pauses while checking the content scores, before a byte is written', async () => {
+    // The last score is not a multiple of 1/10^4, so the check refuses at the very end of its pass:
+    // every pause counted before the refusal is one taken inside the check.
+    const d = filled().finalize().data;
+    const c = d.kinds.addon.postings.c;
+    c[c.length - 1] = 0.12345;
+    let pauses = 0;
+    await expect(
+      packTagIndexCooperative(d, SPEC, async () => void pauses++, { every: 1 })
+    ).rejects.toThrow('is not a multiple');
+    expect(pauses).toBeGreaterThan(0);
+  });
+
+  it("the pipeline's finalize-and-encode gives the synchronous path's bytes", async () => {
+    const { payload, stats } = await finalizeAndEncodeTagIndex(filled(true), async () => undefined);
+    const sync = filled(true).finalize();
+    expect(payload.equals(await encodeTagIndex(sync.data, RESOURCE_INTENT_TAGS_SPEC_HASH))).toBe(
+      true
+    );
+    expect(stats).toEqual(sync.stats);
+  });
+
+  it('finalize drops the rows and the models it no longer needs', () => {
+    const acc = filled();
+    const store = acc as unknown as Record<string, { length: number; buf: { length: number } }>;
+    const grows = [
+      'rowTags',
+      'rowUser',
+      'rowResModel',
+      'contentTags',
+      'contentScaled',
+      'modelEcos',
+    ];
+    for (const g of grows) expect(store[g].buf.length).toBeGreaterThan(0);
+    acc.finalize();
+    for (const g of grows) expect([g, store[g].length, store[g].buf.length]).toEqual([g, 0, 0]);
+    expect(acc.usedModelIds()).toEqual([]);
+  });
+
+  it('with float32Postings, the postings scores and fits are float32 and encode to the same bytes', async () => {
+    const { data } = filled().finalize({ float32Postings: true });
+    for (const kind of ['addon', 'checkpoint'] as const) {
+      expect(data.kinds[kind].postings.c).toBeInstanceOf(Float32Array);
+      expect(data.kinds[kind].postings.fit).toBeInstanceOf(Float32Array);
+    }
+    expect(filled().finalize().data.kinds.addon.postings.c).toBeInstanceOf(Float64Array);
+    expect(sha(await encodeTagIndex(data, SPEC))).toBe(PINNED_SHA256);
+  });
+
+  it('a model given twice keeps its first content', async () => {
+    const acc = filled();
+    const first = golden.models[0];
+    const tags = (d: ReturnType<typeof acc.finalize>['data']) => {
+      const k = d.kinds[first.type === 'Checkpoint' ? 'checkpoint' : 'addon'];
+      const r = k.modelIds.indexOf(first.modelId);
+      const out: number[] = [];
+      for (let t = 0; t + 1 < k.postings.ptr.length; t++)
+        for (let j = k.postings.ptr[t]; j < k.postings.ptr[t + 1]; j++)
+          if (k.postings.resource[j] === r && k.postings.c[j] > 0) out.push(t);
+      return out;
+    };
+    acc.addModel({
+      ...first,
+      name: '',
+      description: '',
+      tags: [],
+      trigger: [],
+      showcase: [],
+      gallery: [],
+    });
+    const once = tags(filled().finalize().data);
+    expect(once.length).toBeGreaterThan(0);
+    expect(tags(acc.finalize().data)).toEqual(once);
+  });
+
+  it('a content score is stored exactly as an integer of its decimals', () => {
+    // The accumulator keeps c as round(c·10^4) and reads it back divided: every value the build can
+    // produce (c ≥ minScore, 4 decimals) must survive that unchanged.
+    expect(TAG_BUILD_PARAMS.content.scoreDecimals).toBe(4);
+    for (let k = 1000; k <= 10_000; k++) {
+      const c = roundHalfEven(k / 10_000 + 1e-7 * ((k % 3) - 1), 4);
+      expect(Math.round(c * 10_000) / 10_000).toBe(c);
+    }
+  });
+
+  it('refuses content scores rounded to more decimals than it can store', () => {
+    const params = {
+      ...TAG_BUILD_PARAMS,
+      content: { ...TAG_BUILD_PARAMS.content, scoreDecimals: 5 },
+    } as unknown as typeof TAG_BUILD_PARAMS;
+    expect(
+      () =>
+        new TagIndexAccumulator(vocab, {
+          addonTypes: RESOURCE_INTENT_TAGS_SPEC.build.addonTypes,
+          excludeGenPrompt: () => false,
+          params,
+        })
+    ).toThrow('at most 4 decimals');
   });
 });
