@@ -2,6 +2,11 @@ import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { EntityType } from '~/shared/utils/prisma/enums';
 import type { OrphanedAppealOutcome } from '~/shared/utils/appeal';
+import {
+  isSiteAppealCategory,
+  siteAppealDecisionText,
+  type SiteAppealCategory,
+} from '@civitai/shared/site-appeal';
 
 const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
   [EntityType.Image]: '/images',
@@ -9,6 +14,26 @@ const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
   [EntityType.Bounty]: '/bounties',
   [EntityType.Storyline]: '/storylines',
 } as const;
+
+function siteAppealResolvedMessage(details: {
+  category: SiteAppealCategory;
+  status: string;
+  entityId: number;
+  restored?: boolean;
+  resolvedMessage?: string;
+}) {
+  const approved = details.status === 'Approved';
+  const restored = approved && details.restored === true;
+  const text = siteAppealDecisionText({ category: details.category, approved, restored });
+  const note = details.resolvedMessage ? ` Moderator's note: ${details.resolvedMessage}` : '';
+  const url =
+    restored && details.category === 'Article'
+      ? `/articles/${details.entityId}`
+      : restored && details.category === 'Model'
+      ? `/models/${details.entityId}`
+      : '/appeal';
+  return { message: `${text}${note}`, url };
+}
 
 export const reportNotifications = createNotificationProcessor({
   // Moveable
@@ -62,14 +87,25 @@ export const reportNotifications = createNotificationProcessor({
     displayName: 'Entity appeal resolved',
     category: NotificationCategory.Other,
     toggleable: false,
-    prepareMessage: ({ details }) => ({
-      message: `Your appeal regarding your ${
-        details.entityType
-      } has been ${details.status.toLowerCase()}${
-        details.resolvedMessage ? `: ${details.resolvedMessage}.` : '.'
-      }`,
-      url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      // Sent by the moderator app's site-appeal queues; every other sender omits `category`.
+      if (isSiteAppealCategory(details.category))
+        return siteAppealResolvedMessage({
+          category: details.category,
+          status: details.status,
+          entityId: details.entityId,
+          restored: details.restored,
+          resolvedMessage: details.resolvedMessage,
+        });
+      return {
+        message: `Your appeal regarding your ${
+          details.entityType
+        } has been ${details.status.toLowerCase()}${
+          details.resolvedMessage ? `: ${details.resolvedMessage}.` : '.'
+        }`,
+        url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
+      };
+    },
   },
   'entity-appeal-content-removed': {
     displayName: 'Appealed content removed',
