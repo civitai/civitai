@@ -468,6 +468,27 @@ describe('content batches are read ahead, and handed on in id order', () => {
     }
   });
 
+  it('once a batch fails, a read-ahead still running issues no further statement', async () => {
+    const statements: string[] = [];
+    const query = async (q: Prisma.Sql) => {
+      const ids = q.values.find(Array.isArray) as number[];
+      const kind = q.sql.includes('"TagsOnModels"') ? 'meta' : 'images';
+      statements.push(`${kind} ${ids[0]}`);
+      if (ids[0] === 1001) throw new Error('batch two failed');
+      // Batch three's meta answers only after batch two has failed.
+      if (ids[0] === 2001 && kind === 'meta') await new Promise((r) => setTimeout(r, 10));
+      return kind === 'meta'
+        ? ids.map((id) => ({ id, name: '', type: 'LORA', description: '', tags: [], versions: [] }))
+        : [];
+    };
+    await expect(readModelContent(query, ids, new Date(), () => undefined)).rejects.toThrow(
+      'batch two failed'
+    );
+    await new Promise((r) => setTimeout(r, 30));
+    expect(statements).toContain('meta 2001');
+    expect(statements).not.toContain('images 2001');
+  });
+
   it('a failed batch fails the read, and hands on nothing after it', async () => {
     const handed: number[] = [];
     const query = async (q: Prisma.Sql) => {

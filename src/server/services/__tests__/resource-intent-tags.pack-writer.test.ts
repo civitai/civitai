@@ -1,3 +1,4 @@
+import { brotliDecompressSync } from 'zlib';
 import { Packr } from 'msgpackr';
 import { describe, expect, it } from 'vitest';
 import type {
@@ -7,7 +8,7 @@ import type {
 } from '~/server/services/resource-intent-tags/build';
 import {
   packTagIndex,
-  packTagIndexCooperative,
+  encodeTagIndexCooperative,
   TAG_INDEX_PAYLOAD_FORMAT,
 } from '~/server/services/resource-intent-tags/payload';
 import { smallTagIndexData } from './resource-intent-tags.fixture';
@@ -169,12 +170,14 @@ describe('packTagIndex writes what msgpackr wrote', () => {
   it('cooperatively too, and consuming', async () => {
     const d = shaped(300, 40, 20, 1234);
     const ref = referencePack(d, SPEC);
-    expect((await packTagIndexCooperative(d, SPEC, async () => undefined)).equals(ref)).toBe(true);
+    const unpacked = async (p: Promise<Buffer>) => brotliDecompressSync(await p);
+    expect(
+      (await unpacked(encodeTagIndexCooperative(d, SPEC, async () => undefined))).equals(ref)
+    ).toBe(true);
     const consumed = shaped(300, 40, 20, 1234);
-    const raw = await packTagIndexCooperative(consumed, SPEC, async () => undefined, {
-      every: 7,
-      consume: true,
-    });
+    const raw = await unpacked(
+      encodeTagIndexCooperative(consumed, SPEC, async () => undefined, { every: 7, consume: true })
+    );
     expect(raw.equals(ref)).toBe(true);
   });
 

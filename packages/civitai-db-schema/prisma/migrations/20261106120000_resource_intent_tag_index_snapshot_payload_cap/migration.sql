@@ -1,8 +1,8 @@
 -- ResourceIntentTagIndexSnapshot: raise the payload size bound from 128 MiB to 256 MiB.
 --
 -- Apply this MANUALLY, per environment, AFTER 20261103120000_resource_intent_tag_index_snapshot and
--- BEFORE turning on resource-intent-tag-index-build with this code: until then every full-coverage
--- put uploads its object and then fails its insert on the old bound. We do not use
+-- BEFORE turning on resource-intent-tag-index-build with this code: until then every production
+-- build refuses before reading anything (it checks this CHECK's bound). We do not use
 -- `prisma migrate deploy` anywhere; this file exists for review/history.
 --
 -- The tag-index build now indexes every eligible model, whose payload exceeds the old bound

@@ -11,7 +11,7 @@ import {
   type TagBuildStats,
 } from './build';
 import { s3TagIndexObjects } from './objects';
-import { encodeTagIndexCooperative } from './payload';
+import { encodeTagIndexCooperative, TAG_INDEX_MAX_PAYLOAD_BYTES } from './payload';
 import { promptExcludedByAuditor } from './prompt-exclusion';
 import {
   assertObservationKey,
@@ -34,7 +34,7 @@ import {
   type VersionInfo,
 } from './sources';
 import { RESOURCE_INTENT_TAGS_SPEC, RESOURCE_INTENT_TAGS_SPEC_HASH } from './spec';
-import { putSnapshot, type TagIndexObjectStore } from './store';
+import { assertSnapshotTableAdmits, putSnapshot, type TagIndexObjectStore } from './store';
 
 /**
  * Refuse to build when more than this share of the training window's hours hold no generator
@@ -501,6 +501,9 @@ export async function runTagIndexBuild(
   if (opts.limits && !opts.dryRun) throw new Error('tag index build: limits are for dry runs only');
   const config = tagBuildConfig(deps.env, { requireBucket: !opts.dryRun });
   const objects = opts.dryRun ? null : (deps.objects ?? (() => s3TagIndexObjects()))();
+  const sql = deps.sql ?? coocSqlOf(dbWrite);
+  // Before a 40-minute build: a production build whose payload the table could refuse stops here.
+  if (!opts.dryRun) await assertSnapshotTableAdmits(sql, TAG_INDEX_MAX_PAYLOAD_BYTES);
   const ch = await (deps.clickhouse ?? readonlyClickHouse)(config.clickhouse);
   try {
     await assertClickHouseReadonly(ch);
@@ -534,15 +537,11 @@ export async function runTagIndexBuild(
     };
     if (!objects) return { summary, payload: built.payload };
 
-    const { manifest, created } = await putSnapshot(
-      { sql: deps.sql ?? coocSqlOf(dbWrite), objects },
-      built.payload,
-      {
-        vocabVersion: vocab.vocabVersion,
-        specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
-        buildStats: stats,
-      }
-    );
+    const { manifest, created } = await putSnapshot({ sql, objects }, built.payload, {
+      vocabVersion: vocab.vocabVersion,
+      specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
+      buildStats: stats,
+    });
     return {
       summary: {
         ...summary,

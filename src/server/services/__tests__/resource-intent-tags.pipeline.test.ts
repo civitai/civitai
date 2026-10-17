@@ -188,11 +188,17 @@ async function world(
     /** Generator rows on the window's first day (the fixture's three prompts by default). */
     genRows?: Parameters<typeof genObservationOf>[0][];
     env?: TagBuildEnv;
+    /** The snapshot table without the payload-cap migration (its P6c bound). */
+    withoutCapMigration?: boolean;
     /** Eligible model ids, ascending (model 1 by default: the used add-on with content). */
     eligible?: number[];
   } = {}
 ): Promise<World> {
-  const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL);
+  const db = await utcPglite(
+    ...(opts.withoutCapMigration
+      ? [VOCAB_SQL, SNAPSHOT_SQL]
+      : [VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL])
+  );
   for (const [p, s, f] of opts.vocabs ?? [[NEW_FROZEN, 'frozen', '2026-10-10T00:00:00Z']])
     await insertVocab(db, p, s, f);
   const chQueries: string[] = [];
@@ -460,6 +466,18 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect((await w.db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(
       0
     );
+  });
+
+  it('refuses a production build before reading anything while the table holds the old bound', async () => {
+    const w = await world({ withoutCapMigration: true });
+    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
+      /apply migration 20261106120000_resource_intent_tag_index_snapshot_payload_cap/
+    );
+    expectNoTrainingReads(w);
+    expect(w.chQueries).toEqual([]);
+    // A dry run stores nothing, so it is not refused.
+    const d = await world({ withoutCapMigration: true });
+    await expect(runTagIndexBuild({ dryRun: true }, d.deps)).resolves.toBeDefined();
   });
 
   it('refuses trial limits on a production build', async () => {

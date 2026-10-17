@@ -12,11 +12,9 @@ import {
   type TrainingResource,
 } from '~/server/services/resource-intent-tags/build';
 import {
-  compressTagIndex,
   encodeTagIndex,
   encodeTagIndexCooperative,
   packTagIndex,
-  packTagIndexCooperative,
 } from '~/server/services/resource-intent-tags/payload';
 import { finalizeAndEncodeTagIndex } from '~/server/services/resource-intent-tags/pipeline';
 import { genTrainingRow, type VersionInfo } from '~/server/services/resource-intent-tags/sources';
@@ -138,21 +136,21 @@ describe('the build at full coverage: memory and order', () => {
     expect(sha(await encodeTagIndex(filled(true).finalize().data, SPEC))).toBe(PINNED_SHA256);
   });
 
-  it('the cooperative pack pauses and gives the synchronous bytes, consuming the index only when asked', async () => {
+  it('the cooperative encode consumes the index only when asked, with the same bytes', async () => {
     const kept = filled().finalize().data;
-    let pauses = 0;
-    const raw = await packTagIndexCooperative(kept, SPEC, async () => void pauses++, { every: 64 });
-    expect(sha(await compressTagIndex(raw))).toBe(PINNED_SHA256);
-    expect(raw.equals(packTagIndex(filled().finalize().data, SPEC))).toBe(true);
-    expect(pauses).toBeGreaterThan(50);
+    const payload = await encodeTagIndexCooperative(kept, SPEC, async () => undefined);
+    expect(sha(payload)).toBe(PINNED_SHA256);
+    expect(
+      zlib.brotliDecompressSync(payload).equals(packTagIndex(filled().finalize().data, SPEC))
+    ).toBe(true);
     // Not asked to consume: the index is intact.
     expect(kept.kinds.addon.postings.resource.length).toBeGreaterThan(0);
 
     const consumed = filled().finalize().data;
-    const raw2 = await packTagIndexCooperative(consumed, SPEC, async () => undefined, {
+    const payload2 = await encodeTagIndexCooperative(consumed, SPEC, async () => undefined, {
       consume: true,
     });
-    expect(raw2.equals(raw)).toBe(true);
+    expect(payload2.equals(payload)).toBe(true);
     for (const kind of ['addon', 'checkpoint'] as const) {
       const p = consumed.kinds[kind].postings;
       expect([p.resource.length, p.c.length, p.fit.length]).toEqual([0, 0, 0]);
@@ -229,6 +227,34 @@ describe('the build at full coverage: memory and order', () => {
     }
   }, 5_000);
 
+  it('waits for drain when brotli reports a full buffer, before the next write', async () => {
+    const events: string[] = [];
+    const real = zlib.createBrotliCompress;
+    const spy = vi.spyOn(zlib, 'createBrotliCompress').mockImplementation((opts) => {
+      const z = real(opts);
+      const write = z.write.bind(z) as (...a: unknown[]) => boolean;
+      let writes = 0;
+      (z as unknown as { write: typeof write }).write = (...a: unknown[]) => {
+        write(...a);
+        events.push('write');
+        // The first write reports a full buffer; 'drain' follows 20 ms later.
+        if (++writes > 1) return true;
+        setTimeout(() => {
+          events.push('drain');
+          z.emit('drain');
+        }, 20);
+        return false;
+      };
+      return z;
+    });
+    try {
+      await encodeTagIndexCooperative(filled().finalize().data, SPEC, async () => undefined);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(events.slice(0, 3)).toEqual(['write', 'drain', 'write']);
+  });
+
   it('a brotli failure mid-stream fails the encode, and leaves no rejection unhandled', async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (e: unknown) => unhandled.push(e);
@@ -270,7 +296,7 @@ describe('the build at full coverage: memory and order', () => {
     p.c[66_000] = 0.12345;
     let pauses = 0;
     await expect(
-      packTagIndexCooperative(d, SPEC, async () => void pauses++, { every: 1 })
+      encodeTagIndexCooperative(d, SPEC, async () => void pauses++, { every: 1 })
     ).rejects.toThrow('is not a multiple');
     expect(pauses).toBe(3);
   });

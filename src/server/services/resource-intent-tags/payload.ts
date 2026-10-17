@@ -59,7 +59,7 @@ function deltas(ptr: Uint32Array, ids: Uint32Array): Uint32Array {
   return out;
 }
 
-/** Units of work (bytes or elements) between pauses of `packTagIndexCooperative`. */
+/** Units of work (bytes or elements) between pauses of `encodeTagIndexCooperative`. */
 const PACK_STEP_WORK = 1 << 20;
 /** Elements per inner run of the pack's loops, between step checks. */
 const PACK_CHUNK = 1 << 16;
@@ -384,32 +384,6 @@ export function packTagIndex(data: TagIndexData, specHash: string): Buffer {
   return out;
 }
 
-/**
- * `packTagIndex`'s bytes, pausing every `every` units of work to await `pause`: give it a
- * `loopYielder` so packing a large index does not hold the event loop. With `consume`, `data`'s
- * postings arrays are emptied as they are packed: pass it only an index nothing else will read.
- */
-export async function packTagIndexCooperative(
-  data: TagIndexData,
-  specHash: string,
-  pause: () => Promise<void>,
-  opts: { every?: number; consume?: boolean } = {}
-): Promise<Buffer> {
-  const L = await layoutOf(
-    layoutSteps(data, specHash, stepEvery(opts.every ?? PACK_STEP_WORK), opts.consume ?? false),
-    pause
-  );
-  const out = Buffer.allocUnsafe(L.size);
-  let at = 0;
-  for (const x of L.stream()) {
-    if (x) {
-      out.set(x, at);
-      at += x.length;
-    } else await pause();
-  }
-  return out;
-}
-
 const BROTLI_PARAMS = (sizeHint: number) => ({
   [zlib.constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
   [zlib.constants.BROTLI_PARAM_LGWIN]: zlib.constants.BROTLI_DEFAULT_WINDOW,
@@ -469,7 +443,9 @@ export async function encodeTagIndex(data: TagIndexData, specHash: string): Prom
 
 /**
  * `encodeTagIndex`'s bytes, packed straight into brotli as they are produced, so the packed bytes are
- * never held whole, and pausing as `packTagIndexCooperative` does (with its `consume`).
+ * never held whole, pausing every `every` units of work to await `pause` (give it a `loopYielder`).
+ * With `consume`, `data`'s postings arrays are emptied as they are packed: pass it only an index
+ * nothing else will read.
  */
 export async function encodeTagIndexCooperative(
   data: TagIndexData,

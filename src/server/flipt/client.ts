@@ -209,8 +209,8 @@ export enum FLIPT_FEATURE_FLAGS {
 
   // Runs build-resource-intent-tag-index (the weekly v1 content-tag index build). DEFAULT-OFF. Turn
   // it on only after the ResourceIntentVocabulary and ResourceIntentTagIndexSnapshot migrations, and
-  // 20261106120000_resource_intent_tag_index_snapshot_payload_cap (without it every full-coverage put
-  // uploads, then fails its insert), are applied in that environment, a vocabulary is frozen, and the
+  // 20261106120000_resource_intent_tag_index_snapshot_payload_cap (without it every production build
+  // refuses before reading anything), are applied in that environment, a vocabulary is frozen, and the
   // build's env and grants are in place (docs/resource-intent-primitive.md, "v1 content tags").
   // Boolean only.
   RESOURCE_INTENT_TAG_INDEX_BUILD = 'resource-intent-tag-index-build',

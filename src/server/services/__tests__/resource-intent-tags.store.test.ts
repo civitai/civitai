@@ -20,6 +20,7 @@ import {
   TagIndexPayloadCorruptError,
   TagIndexPayloadHashError,
   TagIndexPayloadSizeError,
+  TagIndexSnapshotTableBoundError,
   TagIndexSnapshotUnservableError,
   TagIndexSpecHashMismatchError,
   TagIndexVocabularyMissingError,
@@ -95,8 +96,11 @@ const payloadOf = (vocabVersion: string, specHash = SPEC) => {
 
 type Status = 'candidate' | 'frozen' | 'retired';
 
-async function freshDb(vocabs: [typeof V1, Status][] = [[V1, 'frozen']]) {
-  const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL);
+async function freshDb(
+  vocabs: [typeof V1, Status][] = [[V1, 'frozen']],
+  migrations = [VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL]
+) {
+  const db = await utcPglite(...migrations);
   for (const [v, status] of vocabs) await insertVocab(db, v, status);
   const statements: string[] = [];
   const log: string[] = [];
@@ -488,6 +492,22 @@ describe('putSnapshot', () => {
     it('a payload over the size cap', async () => {
       const big = Buffer.alloc(TAG_INDEX_MAX_PAYLOAD_BYTES + 1);
       await refused(await freshDb(), big, meta(), TagIndexPayloadSizeError, /268435457 bytes/);
+    });
+
+    it('a payload over the bound the table still holds, before the cap migration', async () => {
+      // The table at its P6c bound (128 MiB), and a payload one byte over it, under the code's cap.
+      const setup = await freshDb([[V1, 'frozen']], [VOCAB_SQL, SNAPSHOT_SQL]);
+      const over = Buffer.alloc(134_217_728 + 1);
+      await refused(
+        setup,
+        over,
+        meta(),
+        TagIndexSnapshotTableBoundError,
+        /admits payloads up to 134217728 bytes.*apply migration 20261106120000_resource_intent_tag_index_snapshot_payload_cap/
+      );
+      expect(setup.log.filter((l) => l.startsWith('put '))).toEqual([]);
+      // Control: the same bytes after the migration get past the bound (to the decode).
+      await refused(await freshDb(), over, meta(), TagIndexPayloadCorruptError, /payload/);
     });
 
     it('a payload at the size cap reaches the decode', async () => {

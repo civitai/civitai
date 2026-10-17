@@ -330,28 +330,36 @@ export async function readModelContent(
   // Up to `concurrency` batches read while the previous one is handed on, each handed on in id order:
   // at most `concurrency + 1` batches' content is held at once.
   const inFlight: Promise<TagModelContent[]>[] = [];
+  // Set once any batch or hand-on fails: a read-ahead still running issues no further statement.
+  const stop = { failed: false };
   let next = 0;
   const fill = () => {
     while (next < batches.length && inFlight.length < concurrency) {
-      const p = readContentBatch(query, batches[next++], end);
-      // Handled where it is awaited; this only keeps a read-ahead that fails after an earlier
+      const p = readContentBatch(query, batches[next++], end, stop);
+      // Rethrown where it is awaited; this also keeps a read-ahead that fails after an earlier
       // failure from being reported as unhandled.
-      p.catch(() => undefined);
+      p.catch(() => (stop.failed = true));
       inFlight.push(p);
     }
   };
-  fill();
-  while (inFlight.length) {
-    const models = await (inFlight.shift() as Promise<TagModelContent[]>);
+  try {
     fill();
-    await onBatch(models);
+    while (inFlight.length) {
+      const models = await (inFlight.shift() as Promise<TagModelContent[]>);
+      fill();
+      await onBatch(models);
+    }
+  } catch (e) {
+    stop.failed = true;
+    throw e;
   }
 }
 
 async function readContentBatch(
   query: TagRawQuery,
   ids: number[],
-  end: Date
+  end: Date,
+  stop: { failed: boolean }
 ): Promise<TagModelContent[]> {
   const C = TAG_SOURCE_PARAMS.content;
   const meta = (await query(Prisma.sql`
@@ -370,6 +378,8 @@ async function readContentBatch(
     tags: string[];
     versions: { baseModel: string | null; trainedWords: string[] | null }[];
   }[];
+  // The read already failed elsewhere: nothing will use this batch.
+  if (stop.failed) return [];
   const images = (await query(Prisma.sql`
     WITH ms AS (SELECT unnest(${ids}::int[]) AS id),
     vs AS (SELECT m.id AS m, m."userId" AS cu, v.id AS v FROM "Model" m JOIN ms ON ms.id = m.id
