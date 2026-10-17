@@ -14,6 +14,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
  */
 
 type ShopEvent = GatedEvent & {
+  title: string;
   teams: readonly string[];
   getUserTeam: (userId: number, opts?: { strict?: boolean }) => Promise<string>;
   settleBalancedTeam: (userId: number) => Promise<string | undefined>;
@@ -140,6 +141,20 @@ export async function getEventBoxViewer(
   if (!event.teams.length) return { playable: canPlayEvent(access), team: undefined };
   const team = await event.getUserTeam(viewer.id, { strict: true }).catch(() => null);
   return team ? { playable: canPlayEvent(access), team } : null;
+}
+
+/**
+ * Whether this viewer, signed in or not, may read the event's box catalog (every team's contents,
+ * as the public odds page shows them), with the event's title and teams. Null while the event is
+ * closed to them, or when it isn't registered or can't be loaded.
+ */
+export async function getEventBoxCatalogAccess(eventName: string, viewer: EventViewer) {
+  const events = await loadEvents().catch(() => undefined);
+  const event = events?.find((e) => e.name === eventName);
+  if (!event) return null;
+  const access = await getEventAccess(event, viewer).catch(() => 'closed' as const);
+  if (!canReadEvent(access)) return null;
+  return { title: event.title, teams: event.teams };
 }
 
 /**

@@ -96,7 +96,7 @@ const blockedRegionsForDisplay = createTtlMemo(getMysteryBoxBlockedRegions, 60_0
 );
 
 /** Whether to show mystery boxes in this country. A list that can't be read hides them. */
-async function mysteryBoxesHiddenIn(countryCode: string | null | undefined) {
+export async function mysteryBoxesHiddenIn(countryCode: string | null | undefined) {
   const blocked = await blockedRegionsForDisplay().catch(() => null);
   return !blocked || isMysteryBoxBlockedIn(countryCode, blocked);
 }
@@ -116,19 +116,20 @@ export type BoxContentForUser = BoxPoolEntry & {
   left: boolean;
 };
 
+export type BoxCatalogEntry = BoxPoolEntry & {
+  /** The team the cosmetic was made for (`data.team`); it goes only to that team's members. */
+  team: string | undefined;
+};
+
 /**
- * Everything this box holds for this user: its enabled contents, less any cosmetic made for another
- * team than `team`, each marked whether it is still `left` for them. Owned from any source, or
- * already drawn from this box (a reward removed from them since stays drawn: `BoxOpening` allows each
- * once), is not left.
- *
- * v1 boxes hold cosmetics only; any other reward kind is left out here and refused at purchase
+ * A box's enabled contents for every team, with the team each cosmetic is for. v1 boxes hold
+ * cosmetics only; any other reward kind is left out here and refused at purchase
  * (`assertBoxSellable`).
  */
-export async function getBoxContentsForUser(
+export async function getBoxCatalog(
   client: Prisma.TransactionClient,
-  { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
-): Promise<BoxContentForUser[]> {
+  boxDefinitionId: number
+): Promise<BoxCatalogEntry[]> {
   const contents = await client.boxContent.findMany({
     where: { boxDefinitionId, enabled: true },
     orderBy: { id: 'asc' },
@@ -146,12 +147,10 @@ export async function getBoxContentsForUser(
     },
   });
 
-  const forTeam = contents.flatMap((content) => {
+  return contents.flatMap((content) => {
     const { cosmeticId, cosmetic, type } = content.reward;
     if (type !== ITEM_TYPE.cosmetic || cosmeticId == null) return [];
-    // A cosmetic made for a team goes only to that team's members; a buyer with no team gets none.
     const cosmeticTeam = (cosmetic?.data as { team?: unknown } | null)?.team;
-    if (typeof cosmeticTeam === 'string' && cosmeticTeam !== team) return [];
     return [
       {
         contentId: content.id,
@@ -161,9 +160,27 @@ export async function getBoxContentsForUser(
         cosmeticName: cosmetic?.name ?? null,
         cosmeticData: cosmetic?.data ?? null,
         cosmeticType: cosmetic?.type ?? null,
+        team: typeof cosmeticTeam === 'string' ? cosmeticTeam : undefined,
       },
     ];
   });
+}
+
+/**
+ * Everything this box holds for this user: its enabled contents, less any cosmetic made for another
+ * team than `team`, each marked whether it is still `left` for them. Owned from any source, or
+ * already drawn from this box (a reward removed from them since stays drawn: `BoxOpening` allows each
+ * once), is not left.
+ */
+export async function getBoxContentsForUser(
+  client: Prisma.TransactionClient,
+  { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
+): Promise<BoxContentForUser[]> {
+  // A cosmetic made for a team goes only to that team's members; a buyer with no team gets none.
+  const forTeam = (await getBoxCatalog(client, boxDefinitionId)).flatMap(
+    ({ team: cosmeticTeam, ...entry }) =>
+      cosmeticTeam === undefined || cosmeticTeam === team ? [entry] : []
+  );
   if (!forTeam.length) return [];
 
   const owned = await client.userCosmetic.findMany({
@@ -237,6 +254,23 @@ function boxArtFor(params: BoxParams, team: string | undefined): BoxArt | null {
   return {
     closed: typeof closed === 'string' ? closed : undefined,
     open: typeof open === 'string' ? open : undefined,
+  };
+}
+
+/** What a page needs to draw one content: its name and art. */
+export function boxContentDisplay(entry: BoxPoolEntry) {
+  const data = (entry.cosmeticData ?? {}) as {
+    url?: unknown;
+    fit?: { bounds?: unknown; canvas?: unknown } | null;
+  };
+  return {
+    contentId: entry.contentId,
+    tierId: entry.tierId,
+    cosmeticId: entry.cosmeticId,
+    name: entry.cosmeticName,
+    url: typeof data.url === 'string' ? data.url : null,
+    // A preview sizes the art by these two; the outline and brim are for wearing it.
+    fit: data.fit ? { bounds: data.fit.bounds, canvas: data.fit.canvas } : null,
   };
 }
 
@@ -393,22 +427,7 @@ export async function getMysteryBoxesForEvent({
         tiers: tiers
           .filter((tier) => tier.boxDefinitionId === box.id)
           .map(({ boxDefinitionId: _box, ...tier }) => tier),
-        contents: contents.map((entry) => {
-          const data = (entry.cosmeticData ?? {}) as {
-            url?: unknown;
-            fit?: { bounds?: unknown; canvas?: unknown } | null;
-          };
-          return {
-            contentId: entry.contentId,
-            tierId: entry.tierId,
-            cosmeticId: entry.cosmeticId,
-            name: entry.cosmeticName,
-            url: typeof data.url === 'string' ? data.url : null,
-            // A preview sizes the art by these two; the outline and brim are for wearing it.
-            fit: data.fit ? { bounds: data.fit.bounds, canvas: data.fit.canvas } : null,
-            left: entry.left,
-          };
-        }),
+        contents: contents.map((entry) => ({ ...boxContentDisplay(entry), left: entry.left })),
         heldBoxItemIds,
       };
     })
