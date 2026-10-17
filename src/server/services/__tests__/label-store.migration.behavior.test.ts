@@ -446,9 +446,11 @@ describe('a site write never fails because of the store', () => {
       [IMAGE]
     );
   const subject = async () =>
-    (await rows<{ bytesRef: string | null; excludedReason: string | null }>(
-      `SELECT "bytesRef", "excludedReason" FROM label_store.subject`
-    ))[0];
+    (
+      await rows<{ bytesRef: string | null; excludedReason: string | null }>(
+        `SELECT "bytesRef", "excludedReason" FROM label_store.subject`
+      )
+    )[0];
   // Each write a site role makes, run as a role that owns nothing in the store.
   const SITE_WRITES: {
     name: string;
@@ -475,8 +477,7 @@ describe('a site write never fails because of the store', () => {
       name: 'a copy',
       before: () => vote(MODS[0], false),
       write: copy,
-      check: async () =>
-        expect(await subject()).toMatchObject({ bytesRef: 'scan-label-copy:k/1' }),
+      check: async () => expect(await subject()).toMatchObject({ bytesRef: 'scan-label-copy:k/1' }),
     },
     {
       name: 'a withdrawal',

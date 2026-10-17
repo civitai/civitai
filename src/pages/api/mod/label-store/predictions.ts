@@ -7,11 +7,9 @@ import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 const MAX_PREDICTIONS = 500;
 
 const smallJson = (maxChars: number) =>
-  z
-    .record(z.string(), z.unknown())
-    .refine((value) => JSON.stringify(value).length <= maxChars, {
-      message: `At most ${maxChars} characters of JSON.`,
-    });
+  z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= maxChars, {
+    message: `At most ${maxChars} characters of JSON.`,
+  });
 
 const predictionSchema = z.strictObject({
   subjectType: z.literal('image'),
@@ -33,7 +31,9 @@ const predictionSchema = z.strictObject({
     .trim()
     .min(1)
     .max(200)
-    .describe('Your id for the run or prediction. A repeat for the same image and question is a duplicate.'),
+    .describe(
+      'Your id for the run or prediction. A repeat for the same image and question is a duplicate.'
+    ),
   predictedAt: z.iso.datetime({ offset: true }).optional(),
   confidence: z.number().min(0).max(1).optional(),
   scores: z
@@ -61,7 +61,8 @@ export default defineModeratorEndpoint('labelStore.submitPredictions', {
     if (!(await hasModeratorGrant(ctx.actor, 'labelStore.submitPrediction')))
       throw new TRPCError({
         code: 'FORBIDDEN',
-        message: 'Submitting predictions needs the "labelStore.submitPrediction" moderator permission.',
+        message:
+          'Submitting predictions needs the "labelStore.submitPrediction" moderator permission.',
       });
 
     const results = await submitPredictions(predictions);

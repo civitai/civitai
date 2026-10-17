@@ -103,7 +103,8 @@ const kinds = async () =>
     (c) => c.kind
   );
 
-const failures = () => rows<{ sourceRef: string; error: string }>(`SELECT * FROM label_store.record_failure`);
+const failures = () =>
+  rows<{ sourceRef: string; error: string }>(`SELECT * FROM label_store.record_failure`);
 
 describe('person hashes', () => {
   it('keys the hash and keeps owner and labeller kinds apart', async () => {
@@ -177,7 +178,11 @@ describe('consensus', () => {
       [HASH]
     );
 
-    expect(await consensus()).toMatchObject({ outcome: 'block', modelValue: 'block', modelAgrees: true });
+    expect(await consensus()).toMatchObject({
+      outcome: 'block',
+      modelValue: 'block',
+      modelAgrees: true,
+    });
     expect((await kinds()).slice(before.length)).toEqual([
       'prediction',
       'consensus',
@@ -225,9 +230,10 @@ describe('what the source rows carry', () => {
     await db.pg.query(`UPDATE "Image" SET "url" = 'u-501-b' WHERE "id" = $1`, [IMAGE]);
     await vote(MODS[1], true);
 
-    expect(
-      await rows(`SELECT "contentHash" FROM label_store.subject ORDER BY "id"`)
-    ).toEqual([{ contentHash: HASH }, { contentHash: sha256('u-501-b') }]);
+    expect(await rows(`SELECT "contentHash" FROM label_store.subject ORDER BY "id"`)).toEqual([
+      { contentHash: HASH },
+      { contentHash: sha256('u-501-b') },
+    ]);
   });
 
   it('a repeat judgement on a complete subject writes no subject change', async () => {
@@ -263,7 +269,10 @@ describe('failures are logged, and the source write still lands', () => {
       expect(await rows(`SELECT * FROM "ScanLabelFlag"`)).toHaveLength(1);
       expect(await rows(`SELECT * FROM label_store.prediction`)).toEqual([]);
       expect(await failures()).toEqual([
-        expect.objectContaining({ sourceRef: 'ScanLabelFlag:wf-1', error: expect.stringContaining('forced_failure') }),
+        expect.objectContaining({
+          sourceRef: 'ScanLabelFlag:wf-1',
+          error: expect.stringContaining('forced_failure'),
+        }),
       ]);
     } finally {
       await db.pg.exec(`ALTER TABLE label_store.prediction DROP CONSTRAINT forced_failure`);
@@ -318,7 +327,12 @@ describe('exclusion', () => {
     await excludeImage('removed');
 
     expect(await rows(`SELECT * FROM label_store.subject`)).toEqual([
-      expect.objectContaining({ excludedReason: 'removed', snapshot: null, bytesRef: null, bytesExpireAt: null }),
+      expect.objectContaining({
+        excludedReason: 'removed',
+        snapshot: null,
+        bytesRef: null,
+        bytesExpireAt: null,
+      }),
     ]);
     expect(await consensus()).toMatchObject({ trainable: false, outcome: 'clear' });
     expect(await rows(`SELECT "excluded" FROM label_store.labels_feed`)).toEqual(
@@ -368,7 +382,9 @@ describe('exclusion', () => {
     await db.pg.query(`DELETE FROM "AppealDecisionRecord" WHERE "appealId" = 900`);
 
     expect(
-      await rows(`SELECT "subjectId", "excludedReason" FROM label_store.subject ORDER BY "subjectId"`)
+      await rows(
+        `SELECT "subjectId", "excludedReason" FROM label_store.subject ORDER BY "subjectId"`
+      )
     ).toEqual([
       { subjectId: String(IMAGE), excludedReason: 'removed' },
       { subjectId: '502', excludedReason: null },
@@ -421,7 +437,9 @@ describe('erasure', () => {
     );
 
     // erase_owner cannot reach it; exclude('image', id, 'erasure') can.
-    expect(await rows(`SELECT "ownerHash" FROM label_store.subject`)).toEqual([{ ownerHash: null }]);
+    expect(await rows(`SELECT "ownerHash" FROM label_store.subject`)).toEqual([
+      { ownerHash: null },
+    ]);
     expect(await rows(`SELECT label_store.erase_owner(${OWNER}) AS n`)).toEqual([{ n: 0 }]);
   });
 });
@@ -436,9 +454,9 @@ describe('bytes', () => {
     expect(await rows(`SELECT "bytesRef" FROM label_store.subject`)).toEqual([
       { bytesRef: 'scan-label-copy:k/1' },
     ]);
-    expect(await rows(`SELECT "bytesRef", "bytesExpireAt" FROM label_store.training_examples`)).toEqual([
-      { bytesRef: null, bytesExpireAt: null },
-    ]);
+    expect(
+      await rows(`SELECT "bytesRef", "bytesExpireAt" FROM label_store.training_examples`)
+    ).toEqual([{ bytesRef: null, bytesExpireAt: null }]);
     expect(await kinds()).toContain('subject');
   });
 
@@ -465,13 +483,17 @@ describe('bytes', () => {
       `INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES ('k/1', $1, $2)`,
       [ITEM, IMAGE]
     );
-    await db.pg.query(`UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = 'gone'`);
+    await db.pg.query(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = 'gone'`
+    );
     expect(await rows(`SELECT "bytesRef" FROM label_store.subject`)).toEqual([{ bytesRef: null }]);
     const after = await kinds();
     await db.pg.query(`UPDATE "ScanLabelCopyObject" SET "withdrawReason" = 'excluded'`);
 
     expect(await kinds()).toEqual(after);
-    expect(await rows(`SELECT "excludedAt" FROM label_store.subject`)).toEqual([{ excludedAt: null }]);
+    expect(await rows(`SELECT "excludedAt" FROM label_store.subject`)).toEqual([
+      { excludedAt: null },
+    ]);
   });
 });
 
@@ -528,7 +550,12 @@ describe('backfill', () => {
     await seed();
     const live = await state();
     expect(live.subjects).toEqual([
-      { subjectId: String(IMAGE), bytesRef: 'scan-label-copy:k/1', excludedReason: null, noSnapshot: false },
+      {
+        subjectId: String(IMAGE),
+        bytesRef: 'scan-label-copy:k/1',
+        excludedReason: null,
+        noSnapshot: false,
+      },
       { subjectId: '502', bytesRef: null, excludedReason: 'safety', noSnapshot: true },
     ]);
     await db.pg.exec(`TRUNCATE label_store.subject, label_store.change RESTART IDENTITY CASCADE`);
@@ -556,7 +583,9 @@ describe('backfill', () => {
 
 describe('the reader role', () => {
   beforeAll(async () => {
-    await db.pg.exec(`DO $$ BEGIN CREATE ROLE label_reader; EXCEPTION WHEN duplicate_object THEN END $$;`);
+    await db.pg.exec(
+      `DO $$ BEGIN CREATE ROLE label_reader; EXCEPTION WHEN duplicate_object THEN END $$;`
+    );
     const grant = readFileSync(LABEL_STORE_MIGRATION, 'utf8').match(
       /DO \$\$\r?\nBEGIN\r?\n {2}IF EXISTS[\s\S]*?\r?\n\$\$;/
     );
@@ -584,9 +613,13 @@ describe('the reader role', () => {
        WHERE grantee = 'label_reader' ORDER BY table_name`
     );
     expect(grants).toEqual(
-      ['changes_feed', 'labels_feed', 'pipeline_failures', 'predictions_feed', 'training_examples'].map(
-        (table_name) => ({ table_name, privilege_type: 'SELECT' })
-      )
+      [
+        'changes_feed',
+        'labels_feed',
+        'pipeline_failures',
+        'predictions_feed',
+        'training_examples',
+      ].map((table_name) => ({ table_name, privilege_type: 'SELECT' }))
     );
     expect(
       await rows(
