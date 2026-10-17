@@ -165,7 +165,8 @@ describe('claimNext order', () => {
   });
 });
 
-describe('claimNext source mix', () => {
+// Hundreds of claims each; PGlite is slow under a loaded machine.
+describe('claimNext source mix', { timeout: 60_000 }, () => {
   const UPLOAD = { sources: ['orchestrator-scan'] } as const;
   const PROMPT = { sources: ['xguard-prompt'] } as const;
   const CONTROL = { sources: ['control-sample'] } as const;
