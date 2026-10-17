@@ -83,15 +83,21 @@ export async function assertEventShopItemPurchasable({
   if (typeof data.team !== 'string' || !event.teams.includes(data.team))
     throw throwBadRequestError('This item is not available');
 
-  // Strict: a degraded lookup falls back to a computed team, which is wrong for
-  // anyone assigned by hand, and they would pay for a colour that isn't theirs.
-  // A listed buyer is placed before the check, the same way joining would place them, so a join racing
-  // this purchase cannot move them off the colour they are paying for.
+  const team = await confirmBuyerTeam(event, userId);
+  if (team !== data.team)
+    throw throwBadRequestError("You can only buy this in your own team's color");
+}
+
+// Strict: a degraded lookup falls back to a computed team, which is wrong for
+// anyone assigned by hand, and they would pay for a colour that isn't theirs.
+// A listed buyer is placed before the check, the same way joining would place them, so a join racing
+// this purchase cannot move them off the colour they are paying for.
+async function confirmBuyerTeam(event: ShopEvent, userId: number) {
   const settled = async () => {
     await event.settleBalancedTeam(userId);
     return event.getUserTeam(userId, { strict: true });
   };
-  const team = await settled().catch((error) => {
+  return settled().catch((error) => {
     logToAxiom({
       level: 'error',
       message: 'event-shop-item: team lookup failed',
@@ -99,8 +105,21 @@ export async function assertEventShopItemPurchasable({
     });
     throw throwBadRequestError("We couldn't confirm your team. Please try again.");
   });
-  if (team !== data.team)
-    throw throwBadRequestError("You can only buy this in your own team's color");
+}
+
+/**
+ * The buyer's confirmed team in a registered event, for a purchase whose contents depend on it (a
+ * mystery box draws only from its buyer's team). Undefined when the event has no teams. Call after
+ * `assertEventShopItemPurchasable`, which refuses an event that is unregistered or not running.
+ */
+export async function getEventBuyerTeam(eventName: string, userId: number) {
+  const events = await loadEvents().catch(() => {
+    throw throwBadRequestError('This item is not available right now');
+  });
+  const event = events.find((e) => e.name === eventName);
+  if (!event) throw throwBadRequestError('This item is not available');
+  if (!event.teams.length) return undefined;
+  return confirmBuyerTeam(event, userId);
 }
 
 /**

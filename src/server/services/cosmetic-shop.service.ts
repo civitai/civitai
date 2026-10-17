@@ -82,6 +82,7 @@ import {
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
+import { purchaseMysteryBox } from '~/server/services/mystery-box.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -937,12 +938,18 @@ export const purchaseCosmeticShopItem = async ({
   expectedUnitAmount,
   stickersEnabled,
   packsEnabled,
+  expectedVersion,
+  mysteryBoxEnabled,
+  countryCode,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
   isModerator?: boolean;
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
   packsEnabled?: boolean;
+  mysteryBoxEnabled?: boolean;
+  /** The buyer's country (`getRegion`), for the mystery box region block. */
+  countryCode?: string | null;
 }) => {
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
@@ -951,6 +958,7 @@ export const purchaseCosmeticShopItem = async ({
       status: true,
       listed: true,
       cosmeticId: true,
+      itemDefinitionId: true,
       availableQuantity: true,
       availableFrom: true,
       availableTo: true,
@@ -980,6 +988,23 @@ export const purchaseCosmeticShopItem = async ({
   if (!shopItem) {
     throw throwBadRequestError('Cosmetic not found');
   }
+
+  // A box listing has no cosmetic either, so it branches off before anything below reads that as
+  // a pack.
+  if (shopItem.itemDefinitionId != null)
+    return purchaseMysteryBox({
+      userId,
+      isModerator,
+      shopItem: { ...shopItem, itemDefinitionId: shopItem.itemDefinitionId, meta: shopItemMeta },
+      idempotencyKey,
+      expectedUnitAmount,
+      expectedVersion,
+      payWith,
+      buzzType,
+      mysteryBoxEnabled,
+      countryCode,
+    });
+
 
   const isPack = shopItem.cosmeticId == null || !shopItem.cosmetic;
   // Random, not a timestamp, without a key. This id is both the purchase row's

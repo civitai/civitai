@@ -98,20 +98,27 @@ export type ExistingShopPurchaseClaim = {
   status: string;
 };
 
+// `v2`: claims began with this prefix, so no key used under it has ledger
+// history from before there was a claim to account for it. Box purchases started
+// with claims, hence `v1`.
+const PURCHASE_PREFIX = {
+  item: 'cosmetic-purchase-v2',
+  pack: 'cosmetic-pack-v2',
+  box: 'item-purchase-v1',
+} as const;
+export type ShopPurchaseKind = keyof typeof PURCHASE_PREFIX;
+
 /**
  * The charge prefix for one purchase intent. With the buyer's key it is the
  * same on every retry, which is what lets a retry find its claim.
  */
 export function shopPurchaseTransactionId(
-  kind: 'item' | 'pack',
+  kind: ShopPurchaseKind,
   userId: number,
   shopItemId: number,
   idempotencyKey: string | undefined
 ) {
-  // `v2`: claims began with this prefix, so no key used under it has ledger
-  // history from before there was a claim to account for it.
-  const prefix = kind === 'pack' ? 'cosmetic-pack-v2' : 'cosmetic-purchase-v2';
-  return `${prefix}-${userId}-${shopItemId}-${idempotencyKey ?? randomUUID()}`;
+  return `${PURCHASE_PREFIX[kind]}-${userId}-${shopItemId}-${idempotencyKey ?? randomUUID()}`;
 }
 
 /** The claim an earlier request with this key made, if any. */
@@ -151,7 +158,7 @@ export async function beginShopPurchase({
   idempotencyKey,
   amount,
 }: {
-  kind: 'item' | 'pack';
+  kind: ShopPurchaseKind;
   userId: number;
   shopItemId: number;
   idempotencyKey: string | undefined;

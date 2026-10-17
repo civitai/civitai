@@ -466,6 +466,9 @@ const featureFlags = createFeatureFlags({
   // not strip cosmetics people paid for, only stop new packs being listed,
   // discovered or sold.
   cosmeticPacks: { availability: ['mod'], fliptKey: 'cosmetic-packs' },
+  // Mystery boxes: seeing, buying and opening one. Like `cosmeticPacks` it never takes back what a
+  // buyer already received.
+  mysteryBox: { availability: ['mod'], fliptKey: 'mystery-box' },
   // Perceptual near-match surfacing in creator-shop review. `availability: []` =
   // DARK and FAILS CLOSED, and it gates the LOOKUP as well as the panel: at the
   // current 64-bit hash width the two badges we know were imitations of official
