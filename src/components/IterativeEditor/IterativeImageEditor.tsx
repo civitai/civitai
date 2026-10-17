@@ -917,6 +917,7 @@ export function IterativeImageEditor({
       uploadFn: uploadToCF,
       ImageSelectModal,
       maxSelections: 20,
+      outputUse: 'derive',
       onLoadingChange: (loading) =>
         setUploadingCount((c) => (loading ? c + 1 : Math.max(0, c - 1))),
       onSuccess: async (cfId: string) => {

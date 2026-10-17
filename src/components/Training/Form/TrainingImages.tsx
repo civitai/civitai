@@ -1477,6 +1477,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               openImageSelectModal({
                                 title: 'Select Media',
                                 selectSource: 'generation',
+                                outputUse: 'train',
                                 onSelect: async (media) => {
                                   await handleImport(media, 'generation');
                                 },
