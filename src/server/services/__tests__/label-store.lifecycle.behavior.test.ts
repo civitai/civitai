@@ -336,6 +336,19 @@ describe('exclusion', () => {
     expect(await rows(`SELECT * FROM label_store.training_examples`)).toEqual([]);
   });
 
+  it('a later label that fills another field still leaves the snapshot out', async () => {
+    await db.pg.query(
+      `SELECT label_store.submit_prediction('image', '${IMAGE}', $1, 'image.block', 'block', 'm@1', 'p-1')`,
+      [HASH]
+    );
+    await excludeImage('safety');
+    await vote(MODS[0], false);
+
+    expect(await rows(`SELECT "pHash", "snapshot" FROM label_store.subject`)).toEqual([
+      { pHash: 77, snapshot: null },
+    ]);
+  });
+
   it('a copy after exclusion is ignored', async () => {
     await vote(MODS[0], false);
     await excludeImage('safety');
