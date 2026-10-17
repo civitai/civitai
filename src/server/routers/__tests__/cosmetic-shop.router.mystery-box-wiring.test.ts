@@ -74,6 +74,14 @@ describe('purchaseShopItem hands the service the mystery box flag and the buyer 
     ).toEqual([true, false]);
   });
 
+  it('charges the domain currency: green on the green domain, yellow elsewhere', async () => {
+    await purchase({ mysteryBox: true, isGreen: true });
+    await purchase({ mysteryBox: true, isGreen: false });
+    expect(mockPurchase.mock.calls.map(([arg]) => (arg as { buzzType?: string }).buzzType)).toEqual(
+      ['green', 'yellow']
+    );
+  });
+
   it('passes the country from the request', async () => {
     await purchase({ mysteryBox: true }, { 'cf-ipcountry': 'BE' });
     expect(mockPurchase).toHaveBeenCalledWith(
