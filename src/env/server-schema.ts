@@ -981,6 +981,15 @@ export const serverSchema = z
         .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'not an S3 bucket name')
         .optional()
     ),
+    // The weekly tag-index build's generator-observation reads: a ClickHouse user that can read the
+    // observations and their prompt text, and the key their user ids were hashed with plus the
+    // fingerprint it was written under. Unset or empty: the build refuses before reading anything.
+    // Validated by the build, not here, so a malformed value fails that job and nothing else.
+    P2M_CLICKHOUSE_URL: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_CLICKHOUSE_USER: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_CLICKHOUSE_PASSWORD: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_HASH_KEY: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_HASH_KEY_FINGERPRINT: z.preprocess((v) => v || undefined, z.string().optional()),
 
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),

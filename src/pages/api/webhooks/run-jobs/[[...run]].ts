@@ -99,6 +99,7 @@ import {
   buildResourceIntentCoocJob,
   resourceIntentCoocRetentionJob,
 } from '~/server/jobs/build-resource-intent-cooc';
+import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
@@ -227,6 +228,7 @@ export const jobs: Job[] = [
   syncGeneratorLoadedResources,
   buildResourceIntentCoocJob,
   resourceIntentCoocRetentionJob,
+  buildResourceIntentTagIndexJob,
   updateUserScore,
   grantCreatorMilestones,
   userScoreHealthCheckJob,

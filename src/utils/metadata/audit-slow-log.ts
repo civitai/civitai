@@ -35,6 +35,11 @@
  * active DoS, capturing the raw triggering prompt is worth the tradeoff — but an
  * operator can set `AUDIT_SLOW_LOG_RAW=false` to drop it and rely on the shape
  * fingerprint alone.
+ *
+ * A caller auditing text that must never reach a log (a batch job over users' private generator
+ * prompts) passes `privateInput: true` instead of relying on that env var: the line then carries
+ * the timings, lengths and shape fingerprint only — no raw text and no hash of it, whatever
+ * `AUDIT_SLOW_LOG_RAW` says.
  */
 
 // Env knobs — read lazily per-call from process.env so they're tunable without a
@@ -56,6 +61,11 @@ function envBool(name: string, fallback: boolean): boolean {
   return raw.toLowerCase() === 'true' || raw === '1';
 }
 
+export type AuditTimerOptions = {
+  /** The audited text is private: a slow line never carries it, nor a hash of it. */
+  privateInput?: boolean;
+};
+
 /**
  * Per-audit timing accumulator. One is created per `auditPrompt` call (cheap —
  * a small object + a number array). `time()` wraps a sub-check, records its
@@ -64,6 +74,8 @@ function envBool(name: string, fallback: boolean): boolean {
 export class AuditTimer {
   private readonly perCheckMs: Record<string, number> = {};
   private readonly startedAt = performance.now();
+
+  constructor(private readonly options: AuditTimerOptions = {}) {}
 
   /** Run `fn` (a sub-check), record its wall-clock ms under `name`, return its result verbatim. */
   time<T>(name: string, fn: () => T): T {
@@ -106,6 +118,7 @@ export class AuditTimer {
         prompt,
         negativePrompt,
         slowMs,
+        privateInput: this.options.privateInput === true,
       });
     } catch {
       // Instrumentation must never throw into the audit hot path.
@@ -121,6 +134,7 @@ interface SlowLogInput {
   prompt: string;
   negativePrompt?: string;
   slowMs: number;
+  privateInput: boolean;
 }
 
 /**
@@ -137,7 +151,7 @@ function emitSlowLog(input: SlowLogInput): void {
   const { totalMs, slowestCheck, slowestMs, perCheckMs, prompt, negativePrompt, slowMs } = input;
 
   const fingerprint = shapeFingerprint(prompt);
-  const includeRaw = envBool('AUDIT_SLOW_LOG_RAW', DEFAULT_RAW);
+  const includeRaw = !input.privateInput && envBool('AUDIT_SLOW_LOG_RAW', DEFAULT_RAW);
   const rawMax = envNumber('AUDIT_SLOW_LOG_RAW_MAX', DEFAULT_RAW_MAX);
 
   // Round per-check ms so the payload is small + readable (sub-ms precision is noise here).
@@ -158,12 +172,13 @@ function emitSlowLog(input: SlowLogInput): void {
         thresholdMs: slowMs,
         perCheckMs: roundedPerCheck,
         promptLength: prompt.length,
-        promptHash: await stableHash(prompt),
         ...fingerprint,
       };
+      // An unsalted hash of a short prompt can be reversed by guessing, so private input gets none.
+      if (!input.privateInput) payload.promptHash = await stableHash(prompt);
       if (negativePrompt) {
         payload.negativePromptLength = negativePrompt.length;
-        payload.negativePromptHash = await stableHash(negativePrompt);
+        if (!input.privateInput) payload.negativePromptHash = await stableHash(negativePrompt);
       }
       if (includeRaw) {
         payload.rawPrompt = truncateMiddle(prompt, rawMax);
