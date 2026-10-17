@@ -96,6 +96,23 @@ export function useStorylineCanonAhead(
   );
 }
 
+/** Every chapter and link of a storyline, for the Story page's map. */
+export function useStorylineGraph(id: number, options: { enabled: boolean }) {
+  const enabled = useStorylinesEnabled() && options.enabled;
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const hiddenUserIds = useHiddenUserIds();
+  const query = trpc.storyline.getGraph.useQuery({ id, browsingLevel }, { enabled });
+  const data = useMemo(
+    () =>
+      query.data && {
+        ...query.data,
+        chapters: hideHiddenUsersChapters(query.data.chapters, hiddenUserIds),
+      },
+    [query.data, hiddenUserIds]
+  );
+  return { data, isLoading: enabled && query.isLoading };
+}
+
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */
 export function useStorylinePathChildren(chapterIds: number[], options: { enabled: boolean }) {
   const enabled = useStorylinesEnabled() && options.enabled;

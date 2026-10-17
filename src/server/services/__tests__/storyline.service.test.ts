@@ -11,6 +11,7 @@ import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import type * as NotificationService from '~/server/services/notification.service';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 
 const {
   enforceBlockedBrowsingTags,
@@ -73,6 +74,7 @@ import {
   getStorylineChildren,
   getStorylinePath,
   getStorylineForkShares,
+  getStorylineGraph,
   getStorylinesForPosts,
   getStorylineEarlyAccessStats,
   getStorylineEarlyAccessStatus,
@@ -854,12 +856,16 @@ describe('reading', () => {
             }) as never
           ),
       ],
-    ])('when %s, has no path and no children for them', async (_name, arrange) => {
+    ])('when %s, has no path, children or map for them', async (_name, arrange) => {
       arrange();
       const read = { chapterId: 1, viewer: { id: STRANGER }, browsingLevel: NsfwLevel.PG };
       await expect(getStorylinePath(read)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       await expect(getStorylineChildren(read)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(
+        getStorylineGraph({ id: 10, viewer: read.viewer, browsingLevel: read.browsingLevel })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
       expect(r.$queryRaw).not.toHaveBeenCalled();
+      expect(r.storylineChapter.findMany).not.toHaveBeenCalled();
       expect(r.storylineChapterEdge.findMany).not.toHaveBeenCalled();
     });
   });
@@ -2736,6 +2742,39 @@ describe('covers and cast', () => {
       );
       expect(read.values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
       expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: 99 });
+    });
+  });
+
+  it("applies the reader's image gate to the map's chapters too", async () => {
+    getAllHiddenForUser.mockResolvedValue({
+      hiddenImages: [{ id: 77, hidden: true }],
+      hiddenTags: [{ id: 5, hidden: true }],
+    });
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, post: chapterPost(101, OWNER) },
+      {
+        id: 2,
+        depth: 1,
+        removedAt: null,
+        post: chapterPost(102, STRANGER, { tosViolation: true }),
+      },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      { chapterId: 2, parentChapterId: 1, canon: true },
+    ] as never);
+    answerRaw([]);
+    const { chapters } = await getStorylineGraph({ id: 10, viewer: { id: 99 }, browsingLevel: PG });
+    expect(chapters.map((c) => [c.chapterId, c.tombstone, c.firstImage?.id ?? null])).toEqual([
+      [1, null, 1101],
+      [2, 'removed', null],
+    ]);
+    const reads = rawCalls().filter((call) => isFirstImageRead(call.text));
+    expect(reads).toHaveLength(1);
+    // The same bound values as the path's read: posts, the reader, their level, hidden lists.
+    expect(reads[0].values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+    // One row past the cap, so the read can tell a full map from a cut one without reading more.
+    expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
+      take: STORYLINE_GRAPH_LIMIT + 1,
     });
   });
 

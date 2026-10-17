@@ -26,7 +26,11 @@ section).
   else's, ordered by how many readers took them. Writing a continuation sits below.
 - **Where branches meet.** Two branches can rejoin at one chapter. The reader's path and chapter
   numbers follow the way they came (the URL carries it, so a shared link reproduces the route), and
-  the map marks a chapter where another branch joins.
+  the chip's map marks a chapter where another branch joins (the Story map below draws it too).
+- **Story map.** Once a story forks, its page draws every branch as a lane beside the main path,
+  with its forks and rejoins. A chapter on it opens in storyline mode along the route the map draws
+  to it. It shows the first 300 chapters, nearest the start; a chapter the reader cannot see is a
+  placeholder that does not open.
 - **Continuing it.** At the end of a chapter a reader can submit a post they already made as the next
   chapter ("Use a post you made"), for the storyline's price in Buzz or free. It goes to the creator's
   review unless the reader is an endorsed collaborator. A storyline that is closed or open only to
