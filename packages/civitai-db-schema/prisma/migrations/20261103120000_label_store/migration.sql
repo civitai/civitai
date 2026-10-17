@@ -659,10 +659,10 @@ DECLARE
   v_hash TEXT := label_store.person_hash('owner', p_user_id);
   v_n    INTEGER;
 BEGIN
-  PERFORM pg_advisory_xact_lock(label_store.erasure_lock_key('owner', v_hash));
-  -- And each subject, for a writer that cannot see the owner.
+  -- Each subject (for a writer that cannot see the owner), then the owner: the order writers take them.
   PERFORM pg_advisory_xact_lock(label_store.erasure_lock_key('subject', s."subjectType" || ':' || s."subjectId"))
   FROM label_store.subject s WHERE s."ownerHash" = v_hash;
+  PERFORM pg_advisory_xact_lock(label_store.erasure_lock_key('owner', v_hash));
   INSERT INTO label_store.erased_owner ("ownerHash") VALUES (v_hash) ON CONFLICT DO NOTHING;
   WITH gone AS (
     DELETE FROM label_store.subject WHERE "ownerHash" = v_hash
