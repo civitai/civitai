@@ -32,7 +32,7 @@ describe('assertSourceMetadataWithinCap', () => {
   });
 
   it('accepts metadata with more values than the default walk budget when its JSON fits', () => {
-    // 300,000 values in ~600 KB: the cap is on characters, and the value budget follows it.
+    // 300,000 values in ~600 KB: more than the default walk budget, within this one.
     const sourceMetadataMap = {
       'https://a/1.png': { params: { seeds: new Array(300_000).fill(0) } },
     };

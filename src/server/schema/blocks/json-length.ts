@@ -8,8 +8,9 @@ import type { InlineMediaBudget, JsonWalkFrame } from '~/server/schema/blocks/in
 export type JsonLengthUnit = 'utf16' | 'utf8';
 
 /**
- * Running state of one `jsonLengthWithin` check. `visits` is the inline-media value budget,
- * so the measure gives up at the same value count the inline-media search does. `chars` is
+ * Running state of one `jsonLengthWithin` check. `visits` counts values against the walk's value
+ * budget: `maxVisits` when set, otherwise the inline-media one (`measureJsonLength` sets half its
+ * limit), so a bare `jsonLengthWithin` gives up where the inline-media search does. `chars` is
  * the length counted so far, in the chosen unit. `scanned` counts the string code units read
  * to find escapes: the measure's work, which tests read. `nulOrLoneSurrogate` is set once a string
  * the measure read holds a NUL or an unpaired surrogate, the characters `JSON.stringify` writes as
