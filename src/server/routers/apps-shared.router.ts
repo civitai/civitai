@@ -124,6 +124,7 @@ const APP_ROW_LIMIT = 1_000_000;
 // `set` for the full measurements.
 const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 const SHARED_VALUE_OVER_CAP_MESSAGE = 'value exceeds size cap';
+const SHARED_VALUE_UNSERIALIZABLE_MESSAGE = 'value is not serializable';
 // Per-USER row cap on shared_kv (design M2): one hostile-but-trusted account can't
 // exhaust the app row budget on its own.
 const SHARED_KV_PER_USER_ROW_CAP = 50;
@@ -458,32 +459,42 @@ const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 const JSONB_UNSTORABLE_MESSAGE = 'value contains a NUL character or an unpaired surrogate';
 
 /**
+ * Values one shared value's measure may visit. Every value JSON.stringify writes costs at least
+ * two bytes of the cap (a one-character value and its separator), so no value within the cap needs
+ * more; one with more is refused as over the cap rather than walked further.
+ */
+const SHARED_VALUE_MAX_VISITS = SHARED_VALUE_BYTE_CAP / 2;
+
+/**
  * One measure of a shared value, in a single bounded pass (`jsonLengthWithin`) over the value as
- * JSON.stringify would write it, without building that string:
+ * JSON.stringify would write it, without building that string. Its work is bounded by the cap and
+ * by SHARED_VALUE_MAX_VISITS values.
  *
  * - `'over-cap'` — its JSON is longer than SHARED_VALUE_BYTE_CAP in UTF-8 bytes, the unit the cap
- *   is enforced in. The pass stops there, so its work is bounded by the cap however large the
- *   value is once deserialised. Checked FIRST: an over-cap value is refused for its size whatever
- *   else it holds.
+ *   is enforced in, or it holds more than SHARED_VALUE_MAX_VISITS values. Checked FIRST: an
+ *   over-cap value is refused for its size whatever else it holds. (The flag below only covers the
+ *   whole value when the measure finished, so it must never be read before this.)
+ * - `'unserializable'` — JSON.stringify would throw on it (a BigInt, a cycle, a throwing `toJSON`
+ *   or getter) before passing the cap.
  * - `'unstorable'` — within the cap, but it holds text Postgres' jsonb input refuses: a NUL (error
  *   22P05) or an unpaired UTF-16 surrogate (error 22P02), at any depth, in a value or an object
  *   key. Both were measured against Postgres 18 through node-postgres with the stored-size probe's
  *   `::jsonb::text` cast, in a string value, an object key and the title; a paired surrogate (an
  *   emoji), `\u0001` and the literal six characters `\u0000` all store.
- * - `'ok'` otherwise. That includes a value JSON.stringify cannot serialize (BigInt, a cycle):
- *   the serialize guard in `assertSharedValueSafeAndSerialize` refuses it.
+ * - `'ok'` otherwise.
  *
  * Exported for its tests; `meter` exposes the pass's work to them.
  */
 export function measureSharedValue(
   value: unknown,
   meter: JsonLengthMeter = { visits: 0, chars: 0, scanned: 0 }
-): 'ok' | 'over-cap' | 'unstorable' {
+): 'ok' | 'over-cap' | 'unserializable' | 'unstorable' {
+  meter.maxVisits = SHARED_VALUE_MAX_VISITS;
   let within: boolean;
   try {
     within = jsonLengthWithin([value], SHARED_VALUE_BYTE_CAP, { unit: 'utf8', meter });
   } catch {
-    return 'ok';
+    return 'unserializable';
   }
   if (!within) return 'over-cap';
   return meter.nulOrLoneSurrogate ? 'unstorable' : 'ok';
@@ -1894,7 +1905,7 @@ async function assertSharedValueSafeAndSerialize(params: {
 
   // BEFORE the belt, and before anything serializes the value: the size cap, then text Postgres
   // will refuse (the schema refuses that already; repeated so a caller that skips the schema still
-  // cannot spend a moderation run on it). Measured on the shape that is stored below — the belt
+  // cannot spend a moderation run on it), then a value JSON.stringify would throw on. Measured on the shape that is stored below — the belt
   // returns title and body unchanged — so the verdict is the one the serialized value gets.
   const verdict = measureSharedValue(storedShape(value.title, value.body, value.data));
   if (verdict === 'over-cap') {
@@ -1902,6 +1913,9 @@ async function assertSharedValueSafeAndSerialize(params: {
   }
   if (verdict === 'unstorable') {
     throw new TRPCError({ code: 'BAD_REQUEST', message: JSONB_UNSTORABLE_MESSAGE });
+  }
+  if (verdict === 'unserializable') {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: SHARED_VALUE_UNSERIALIZABLE_MESSAGE });
   }
 
   let safe: { title: string; body?: string };
@@ -1936,7 +1950,7 @@ async function assertSharedValueSafeAndSerialize(params: {
   try {
     serialized = JSON.stringify(storedShape(safe.title, safe.body, value.data));
   } catch {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'value is not serializable' });
+    throw new TRPCError({ code: 'BAD_REQUEST', message: SHARED_VALUE_UNSERIALIZABLE_MESSAGE });
   }
   // The cap in its defining unit, on the exact string that is stored. `measureSharedValue` has
   // already applied it to the same shape.

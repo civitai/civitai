@@ -23,9 +23,15 @@ export type InlineMediaPath = (string | number)[];
 /**
  * Shared by every field of one body, so many fields cannot each spend a full budget.
  * `stringChars` is a lower bound on the body's JSON length, counted from the strings the
- * search has passed; `inspected` counts the characters handed to the patterns.
+ * search has passed; `inspected` counts the characters handed to the patterns. `maxVisits`
+ * lowers the value budget below `INLINE_MEDIA_MAX_VISITS` for a caller with a smaller cap.
  */
-export type InlineMediaBudget = { visits: number; stringChars?: number; inspected?: number };
+export type InlineMediaBudget = {
+  visits: number;
+  stringChars?: number;
+  inspected?: number;
+  maxVisits?: number;
+};
 
 /** Returned when the body holds more than `INLINE_MEDIA_MAX_VISITS` values. */
 export const INLINE_MEDIA_TOO_MANY_VALUES = 'too-many-values';
@@ -76,8 +82,9 @@ export function walkJsonValues(
   budget: InlineMediaBudget,
   visit: JsonWalkVisitor
 ): JsonWalkFrame | null | typeof INLINE_MEDIA_TOO_MANY_VALUES {
+  const maxVisits = Math.min(budget.maxVisits ?? INLINE_MEDIA_MAX_VISITS, INLINE_MEDIA_MAX_VISITS);
   const stack: JsonWalkFrame[] = [{ value, key: null, parent: null }];
-  if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
+  if (++budget.visits > maxVisits) return INLINE_MEDIA_TOO_MANY_VALUES;
   while (stack.length > 0) {
     const frame = stack.pop() as JsonWalkFrame;
     const verdict = visit(frame);
@@ -87,13 +94,13 @@ export function walkJsonValues(
     const children: JsonWalkFrame[] = [];
     if (Array.isArray(node)) {
       for (let i = 0; i < node.length; i++) {
-        if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
+        if (++budget.visits > maxVisits) return INLINE_MEDIA_TOO_MANY_VALUES;
         children.push({ value: node[i], key: i, parent: frame });
       }
     } else {
       for (const key in node) {
         if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
-        if (++budget.visits > INLINE_MEDIA_MAX_VISITS) return INLINE_MEDIA_TOO_MANY_VALUES;
+        if (++budget.visits > maxVisits) return INLINE_MEDIA_TOO_MANY_VALUES;
         children.push({ value: (node as Record<string, unknown>)[key], key, parent: frame });
       }
     }

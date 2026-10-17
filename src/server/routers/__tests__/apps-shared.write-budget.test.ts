@@ -640,7 +640,7 @@ describe('shared value size cap: checked before the value is scanned or serializ
   };
 
   /**
-   * A value whose JSON is exactly `bytes` UTF-8 bytes. Its multi-byte text makes that ~11 KB more
+   * A value whose JSON is exactly `bytes` UTF-8 bytes. Its multi-byte text makes that 10,000 more
    * than its length in UTF-16 units, so a measure in the wrong unit lands on the wrong side.
    */
   function valueOfBytes(bytes: number) {
@@ -713,48 +713,81 @@ describe('shared value size cap: checked before the value is scanned or serializ
 
   describe('a value that repeats one object far past the cap', () => {
     const ITEMS = 20_000;
-    const chunk = { s: 'x'.repeat(4_096) };
-    // ~82 MB once serialized; the object is written once on the wire.
+    // 5,000 rather than a divisor of the cap, so no chunk ends exactly on it.
+    const chunk = { s: 'x'.repeat(5_000) };
     const repeated = () => ({ title: CLEAN.title, data: new Array(ITEMS).fill(chunk) });
-    const isRepeated = (v: unknown) =>
-      v !== null &&
-      typeof v === 'object' &&
-      Array.isArray((v as { data?: unknown }).data) &&
-      (v as { data: unknown[] }).data.length === ITEMS;
 
     it('stops scanning once the measure passes the cap', () => {
       const meter = { visits: 0, chars: 0, scanned: 0 };
       expect(measureSharedValue(repeated(), meter)).toBe('over-cap');
       expect(meter.scanned).toBeLessThanOrEqual(CAP);
-      // The array's items are charged when it opens; only the ~16 chunks inside the cap are opened.
+      // The array's items are charged when it opens; only the ~13 chunks inside the cap are opened.
       expect(meter.visits).toBeLessThan(ITEMS + 100);
     });
 
     it('is refused over tRPC with the size error, without serializing it or running moderation', async () => {
+      // Every character JSON.stringify writes during the call, whatever it is called on.
       const stringify = JSON.stringify;
-      let serializedWhole = 0;
-      vi.spyOn(JSON, 'stringify').mockImplementation((...args: Parameters<typeof stringify>) => {
-        if (isRepeated(args[0])) {
-          serializedWhole++;
-          throw new Error('serialized the whole value');
-        }
-        return stringify(...args);
-      });
-
+      let stringified = 0;
+      const spy = vi
+        .spyOn(JSON, 'stringify')
+        .mockImplementation((...args: Parameters<typeof stringify>) => {
+          const out = stringify(...args);
+          stringified += out?.length ?? 0;
+          return out;
+        });
       let err;
       try {
         err = await trpcErrorOf(
           devalueClient.append.mutate({ blockToken: 'tok', value: repeated() })
         );
       } finally {
-        vi.mocked(JSON.stringify).mockRestore();
+        spy.mockRestore();
       }
 
-      // The request is ~44 KB: one chunk plus a reference per item.
+      // The fixture reaches the server as a small request.
       expect(lastRequestBodyLength).toBeLessThan(100_000);
       expect(err).toEqual(OVER_CAP);
-      expect(serializedWhole).toBe(0);
+      // The request body and the error response; the value itself is never written out.
+      expect(stringified).toBeLessThan(4 * 100_000);
       expect(mockAudit).not.toHaveBeenCalled();
     });
+  });
+
+  it('refuses a value with more entries than fit in the cap, with the size error', async () => {
+    // Every value JSON.stringify writes costs at least two bytes, so ~32,000 written values fit
+    // and more entries than that are refused even when they are left out of the JSON.
+    const numbers = { title: CLEAN.title, data: new Array(32_000).fill(0) };
+    expect(Buffer.byteLength(JSON.stringify(numbers), 'utf8')).toBeLessThanOrEqual(CAP);
+    expect(measureSharedValue(numbers)).toBe('ok');
+    const omitted = {
+      title: CLEAN.title,
+      data: Object.fromEntries(Array.from({ length: 40_000 }, (_, i) => [`k${i}`, undefined])),
+    };
+    expect(JSON.stringify(omitted).length).toBeLessThan(100);
+    expect(measureSharedValue(omitted)).toBe('over-cap');
+    await expect(appendSharedRow('tok', omitted)).rejects.toMatchObject(OVER_CAP);
+  });
+
+  it('refuses a value JSON.stringify cannot write before moderation runs', async () => {
+    const value = { title: CLEAN.title, data: { n: BigInt(1) } };
+    expect(measureSharedValue(value)).toBe('unserializable');
+    await expect(appendSharedRow('tok', value)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'value is not serializable',
+    });
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  it('refuses a value with more entries than the measure reads, with the size error', async () => {
+    // Its JSON is tiny (undefined entries are left out), but past the value budget the measure
+    // stops reading and the value is refused rather than walked further.
+    const value = {
+      title: CLEAN.title,
+      data: Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined])),
+    };
+    expect(JSON.stringify(value).length).toBeLessThan(100);
+    expect(measureSharedValue(value)).toBe('over-cap');
+    await expect(appendSharedRow('tok', value)).rejects.toMatchObject(OVER_CAP);
   });
 });
