@@ -19,6 +19,7 @@ import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -240,6 +241,7 @@ export const jobs: Job[] = [
   botAccountDetection,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  creatorProgramCounterpartyReview,
   giftMembershipArming,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,
