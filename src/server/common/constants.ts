@@ -1874,6 +1874,13 @@ export const milestoneNotificationFix = '2025-05-28';
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
 
+/** Minor-safety bans always remove media: `toggleBan` ignores `removeMedia: false` for these. */
+export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] = [
+  BanReasonCode.SexualMinor,
+  BanReasonCode.SexualMinorGenerator,
+  BanReasonCode.SexualMinorTraining,
+];
+
 export const banReasonDetails: Record<
   BanReasonCode,
   {

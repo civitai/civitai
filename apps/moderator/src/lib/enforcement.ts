@@ -32,11 +32,23 @@ export type BanReasonCode = (typeof BAN_REASONS)[number];
  * The moderator can still untick, and each ban form warns what will go before it is confirmed.
  *
  * Shared by the single- and bulk-ban forms. The main app's `UserBanModal` has its own list because it
- * cannot import across the app boundary, and it is deliberately NOT identical: it also pre-ticks media
- * for `SexualMinor`, which this list leaves out because `toggleBan` already defaults that server-side.
- * A new code that should take content down belongs in both.
+ * cannot import across the app boundary. A new code that should take content down belongs in both.
  */
 export const BAN_REASONS_REMOVING_CONTENT: BanReasonCode[] = ['SpamBot'];
+
+/**
+ * Minor-safety bans always remove media, with no opt-out: the forms lock the box and `setBanned` sends
+ * `removeMedia` regardless. Mirrors the main app's `banReasonsAlwaysRemovingMedia`, which
+ * `toggleBan` enforces whatever this app sends.
+ */
+export const BAN_REASONS_ALWAYS_REMOVING_MEDIA: readonly BanReasonCode[] = [
+  'SexualMinor',
+  'SexualMinorGenerator',
+  'SexualMinorTraining',
+];
+
+export const alwaysRemovesMedia = (reasonCode: string | undefined) =>
+  BAN_REASONS_ALWAYS_REMOVING_MEDIA.includes(reasonCode as BanReasonCode);
 
 /** Free-text profile fields a moderator can clear, as `[column, label]`. */
 export const PROFILE_FIELDS = [

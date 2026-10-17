@@ -4,6 +4,7 @@ import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
+  banReasonsAlwaysRemovingMedia,
   CacheTTL,
   constants,
   USERS_SEARCH_INDEX,
@@ -1390,8 +1391,9 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     force: true,
     // Skip toggleBan's Moderated media block; softDeleteUser applies its own
     // CSAM block below. Avoids a redundant double-write and a Moderated->CSAM
-    // flip. Models still unpublish (removeModels defaults on).
-    removeMedia: false,
+    // flip. Not `removeMedia: false`, which a minor-safety ban ignores.
+    // Models still unpublish (removeModels defaults on).
+    mediaBlockedByCaller: true,
   });
 
   await dbWrite.image.updateMany({
@@ -2160,7 +2162,14 @@ export const toggleBan = async ({
   removeMedia,
   removeModels,
   removeComments,
-}: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
+  mediaBlockedByCaller,
+}: ToggleBanUser & {
+  userId: number;
+  isModerator?: boolean;
+  force?: boolean;
+  /** Server-only, never in the input schema: the caller blocks the media itself, more strictly. */
+  mediaBlockedByCaller?: boolean;
+}) => {
   // Get user with username for search index deletion
   const user = await getUserById({
     id,
@@ -2282,11 +2291,14 @@ export const toggleBan = async ({
     ]);
 
     // Opt-in "remove all images & videos": block (not delete) the banned user's
-    // media, defaulting ON for SexualMinor bans. Blocking (Moderated) preserves
-    // the 7-day appeal window — the remove-blocked-images job hard-deletes them
-    // after that. CSAM semantics stay reserved for the softDeleteUser path.
+    // media. Minor-safety bans always remove it, whatever `removeMedia` says.
+    // Blocking (Moderated) preserves the 7-day appeal window — the
+    // remove-blocked-images job hard-deletes them after that. CSAM semantics
+    // stay reserved for the softDeleteUser path.
     const shouldRemoveMedia =
-      removeMedia === true || (reasonCode === BanReasonCode.SexualMinor && removeMedia !== false);
+      !mediaBlockedByCaller &&
+      (removeMedia === true ||
+        (reasonCode !== undefined && banReasonsAlwaysRemovingMedia.includes(reasonCode)));
     if (shouldRemoveMedia) {
       try {
         // The rows this ban is about to block that still carry account-deletion grace
