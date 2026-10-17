@@ -27,6 +27,7 @@ const { mocks } = vi.hoisted(() => ({
     getBlockedPairIds: vi.fn(),
     purchaseCosmeticPack: vi.fn(),
     executeRaw: vi.fn(),
+    txUserCosmeticFindFirst: vi.fn(),
   },
 }));
 
@@ -83,7 +84,7 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
   claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-      userCosmetic: { create: mocks.userCosmeticCreate },
+      userCosmetic: { create: mocks.userCosmeticCreate, findFirst: mocks.txUserCosmeticFindFirst },
       cosmeticShopPurchaseClaim: claims.txDelegate,
       $executeRaw: mocks.executeRaw,
     })
@@ -237,6 +238,42 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
   // A mystery box open decides "not owned" from a read under this lock; a grant that skips it
   // can land between that read and the box's grant (item-holder-lock.ts).
+  // The pre-charge ownership check runs outside the lock; a box open can grant the cosmetic while
+  // the charge is in flight. Re-checked under the lock, it refunds instead of granting a second one.
+  it('refunds a single-ownership purchase whose cosmetic was granted while charging', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, type: 'Badge' },
+    });
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE });
+    mocks.txUserCosmeticFindFirst.mockResolvedValue({ userId: BUYER_ID });
+
+    await expect(purchase()).rejects.toThrow('Failed to purchase cosmetic');
+
+    expect(mocks.txUserCosmeticFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: BUYER_ID, cosmeticId: row.cosmeticId } })
+    );
+    expect(mocks.userCosmeticCreate).not.toHaveBeenCalled();
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+    expect(claims.rows.get(TX)?.status).toBe('refunded');
+  });
+
+  it('grants a single-ownership purchase still unowned under the lock (control)', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, type: 'Badge' },
+    });
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.txUserCosmeticFindFirst.mockResolvedValue(null);
+
+    await purchase();
+
+    expect(mocks.txUserCosmeticFindFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+
   it("takes the buyer's grant lock in the grant transaction, before granting", async () => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
 
