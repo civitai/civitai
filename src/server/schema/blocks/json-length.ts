@@ -8,12 +8,20 @@ import type { InlineMediaBudget, JsonWalkFrame } from '~/server/schema/blocks/in
 export type JsonLengthUnit = 'utf16' | 'utf8';
 
 /**
- * Running state of one `jsonLengthWithin` check. `visits` is the inline-media value budget,
- * so the measure gives up at the same value count the inline-media search does. `chars` is
+ * Running state of one `jsonLengthWithin` check. `visits` counts values against the walk's value
+ * budget: `maxVisits` when set, otherwise the inline-media one (`measureJsonLength` sets half its
+ * limit), so a bare `jsonLengthWithin` gives up where the inline-media search does. `chars` is
  * the length counted so far, in the chosen unit. `scanned` counts the string code units read
- * to find escapes: the measure's work, which tests read.
+ * to find escapes: the measure's work, which tests read. `nulOrLoneSurrogate` is set once a string
+ * the measure read holds a NUL or an unpaired surrogate, the characters `JSON.stringify` writes as
+ * a `\u0000` or `\udXXX` escape. A measure that returns `false` leaves later strings unread, so the
+ * flag only covers the whole value when the measure returns `true`.
  */
-export type JsonLengthMeter = InlineMediaBudget & { chars: number; scanned: number };
+export type JsonLengthMeter = InlineMediaBudget & {
+  chars: number;
+  scanned: number;
+  nulOrLoneSurrogate?: boolean;
+};
 
 /** The length `JSON.stringify(s)` has in `unit`. */
 function quotedLength(s: string, unit: JsonLengthUnit, meter: JsonLengthMeter): number {
@@ -27,6 +35,7 @@ function quotedLength(s: string, unit: JsonLengthUnit, meter: JsonLengthMeter): 
       else if (c < 0x20) {
         // \b \t \n \f \r get a two-character escape; every other control character is \u00XX.
         length += c === 0x08 || c === 0x09 || c === 0x0a || c === 0x0c || c === 0x0d ? 1 : 5;
+        if (c === 0) meter.nulOrLoneSurrogate = true;
       }
     } else if (c >= 0xd800 && c <= 0xdfff) {
       const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
@@ -35,6 +44,7 @@ function quotedLength(s: string, unit: JsonLengthUnit, meter: JsonLengthMeter): 
         if (utf8) length += 2; // two code units, four UTF-8 bytes
       } else {
         length += 5; // a lone surrogate is written as the ASCII escape \uXXXX
+        meter.nulOrLoneSurrogate = true;
       }
     } else if (utf8) {
       length += c < 0x800 ? 1 : 2;
@@ -145,8 +155,9 @@ function addJsonLength(
  * `JSON.stringify` would give, without building the strings. A deserialised input can hold
  * one object or string many times over; every occurrence counts, as it does in the string,
  * and the measure stops once the total passes `limit` instead of serialising the rest. Its
- * work is bounded by `limit` code units plus `INLINE_MEDIA_MAX_VISITS` values; a value past
- * that budget is refused, as the inline-media search refuses it.
+ * work is bounded by `limit` code units plus the value budget (`meter.maxVisits`, by default
+ * `INLINE_MEDIA_MAX_VISITS`); a value past that budget is refused, as the inline-media search
+ * refuses it.
  */
 // A `const`, not a `function`, so the block-token schema scan (no-unguarded-block-bridge-token)
 // can read it from the schemas that call it.
@@ -162,4 +173,34 @@ export const jsonLengthWithin = (
     if (!addJsonLength(value, limit, unit, meter)) return false;
   }
   return true;
+};
+
+/**
+ * `jsonLengthWithin` as a verdict, for a caller that serializes the value itself once it is known
+ * to be within `limit`: `'within'`, `'over'` (the length passed `limit`, or the value budget ran
+ * out), or `'unserializable'` where the measure throws because `JSON.stringify` would (a bigint, a
+ * cycle, a throwing `toJSON` or getter) before reaching `limit`. A caller that wants
+ * JSON.stringify's own error for that value can treat `'unserializable'` like `'within'` and let
+ * its stringify throw.
+ *
+ * The value budget defaults to half of `limit`: every value JSON.stringify writes costs at least
+ * two units (a one-character value and its separator), in either unit, so a value within `limit`
+ * that writes out every entry needs no more. One with more (only possible with entries
+ * JSON.stringify leaves out, such as `undefined` properties) is `'over'`. A caller can set
+ * `meter.maxVisits` to choose another budget.
+ */
+export const measureJsonLength = (
+  values: unknown[],
+  limit: number,
+  {
+    unit,
+    meter = { visits: 0, chars: 0, scanned: 0 },
+  }: { unit?: JsonLengthUnit; meter?: JsonLengthMeter } = {}
+): 'within' | 'over' | 'unserializable' => {
+  meter.maxVisits ??= Math.floor(limit / 2);
+  try {
+    return jsonLengthWithin(values, limit, { unit, meter }) ? 'within' : 'over';
+  } catch {
+    return 'unserializable';
+  }
 };
