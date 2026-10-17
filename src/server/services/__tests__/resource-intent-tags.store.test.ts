@@ -5,6 +5,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import type { TagBuildStats } from '~/server/services/resource-intent-tags/build';
+import type * as Payload from '~/server/services/resource-intent-tags/payload';
 import {
   decodeTagIndex,
   encodeTagIndex,
@@ -34,6 +35,22 @@ import { smallTagIndexData } from './resource-intent-tags.fixture';
 
 /** The tag-index snapshot store against both real migrations in PGlite and an in-memory object store. */
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
+
+const decodeSpy = vi.hoisted(() => ({ fail: null as Error | null }));
+vi.mock('~/server/services/resource-intent-tags/payload', async (importOriginal) => {
+  const real = await importOriginal<typeof Payload>();
+  return {
+    ...real,
+    decodeTagIndex: async (payload: Uint8Array) => {
+      const e = decodeSpy.fail;
+      decodeSpy.fail = null;
+      if (e) throw e;
+      return real.decodeTagIndex(payload);
+    },
+  };
+});
+const allocationFailure = () =>
+  Object.assign(new Error('memory'), { code: 'ERR_MEMORY_ALLOCATION_FAILED' });
 
 const migration = (name: string) =>
   readFileSync(
@@ -270,6 +287,37 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
     await insertRow(db, { payloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES });
     await insertRow(db, { kind: 'study', pinnedUntil: ahead(57.9) });
     expect((await db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(2);
+  });
+
+  it.each<[string, unknown]>([
+    ['id', 'another-id'],
+    ['kind', 'study'],
+    ['vocabVersion', V2.vocabVersion],
+    ['specHash', OTHER_SPEC],
+    ['payloadSha256', 'f'.repeat(64)],
+    ['payloadBytes', 2],
+    ['objectKey', `q/production/${ROW_SHA}`],
+    ['pinnedUntil', ahead(1)],
+    ['buildStats', '{"a":1}'],
+    ['createdAt', '2000-01-01'],
+  ])('the guard refuses a change to %s', async (column, value) => {
+    const { db } = await freshDb([
+      [V1, 'frozen'],
+      [V2, 'frozen'],
+    ]);
+    await insertRow(db);
+    await expect(
+      db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "${column}" = $1`, [value])
+    ).rejects.toThrow(/only its status can change/);
+  });
+
+  it('the guard refuses a change to retiredAt', async () => {
+    const { db } = await freshDb();
+    await insertRow(db);
+    await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+    await expect(
+      db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "retiredAt" = $1`, [ahead(1)])
+    ).rejects.toThrow(/retiredAt cannot change/);
   });
 
   it('the guard sets createdAt, inserts only ready rows, and allows only ready -> retired', async () => {
@@ -659,6 +707,20 @@ describe('loadLatestSnapshot', () => {
         new RegExp(`vocabVersion ${V2.vocabVersion}, expected ${V1.vocabVersion}`)
       );
     });
+  });
+
+  it('running out of memory while decoding is rethrown as it is, on put and on load', async () => {
+    const { deps } = await freshDb();
+    const payload = await payloadOf(V1.vocabVersion);
+    decodeSpy.fail = allocationFailure();
+    const onPut = await putSnapshot(deps, payload, meta()).catch((e: unknown) => e);
+    expect((onPut as { code?: string }).code).toBe('ERR_MEMORY_ALLOCATION_FAILED');
+    expect(onPut).not.toBeInstanceOf(TagIndexSnapshotUnservableError);
+    await putSnapshot(deps, payload, meta());
+    decodeSpy.fail = allocationFailure();
+    const onLoad = await loadLatestSnapshot(deps, SPEC).catch((e: unknown) => e);
+    expect((onLoad as { code?: string }).code).toBe('ERR_MEMORY_ALLOCATION_FAILED');
+    expect(onLoad).not.toBeInstanceOf(TagIndexSnapshotUnservableError);
   });
 
   it('a download failure is rethrown as it is, not as unservable', async () => {

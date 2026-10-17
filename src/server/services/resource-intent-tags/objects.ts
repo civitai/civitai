@@ -1,7 +1,7 @@
 import { GetObjectCommand, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 
 import { env } from '~/env/server';
-import { getS3Client, isNotFoundError } from '~/utils/s3-utils';
+import { getS3Client } from '~/utils/s3-utils';
 import {
   TagIndexObjectMissingError,
   TagIndexPayloadSizeError,
@@ -35,7 +35,8 @@ export function s3TagIndexObjects(
       const res = await s3
         .send(new GetObjectCommand({ Bucket: bucket, Key: key }))
         .catch((e: unknown) => {
-          if (isNotFoundError(e))
+          // NoSuchKey only: a wrong bucket (NoSuchBucket, also a 404) is a deployment error, not this snapshot's.
+          if ((e as { name?: string } | null)?.name === 'NoSuchKey')
             throw new TagIndexObjectMissingError(`tag index object ${key} not found`);
           throw e;
         });

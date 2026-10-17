@@ -13,8 +13,7 @@ import type { TagIndex } from './score';
 
 /**
  * `ResourceIntentTagIndexSnapshot` storage: the payload in object storage under a content-addressed
- * key, and a manifest row inserted only after the upload succeeded. Raw SQL, so the tests run the
- * migration's real CHECKs, foreign key, trigger and partial unique index.
+ * key, and a manifest row inserted only after the upload succeeded.
  */
 
 export type TagIndexSnapshotKind = CoocSnapshotKind;
@@ -43,14 +42,17 @@ export type TagIndexSnapshotManifest = {
   retiredAt: Date | null;
 };
 
-/** Refused as stored: retrying fails the same way until the row, its object or its vocabulary changes. */
+/**
+ * A payload or stored snapshot refused as given: retrying fails the same way until the payload, the
+ * row, its object or its vocabulary changes.
+ */
 export class TagIndexSnapshotUnservableError extends Error {}
 export class TagIndexObjectMissingError extends TagIndexSnapshotUnservableError {}
 export class TagIndexVocabularyMissingError extends TagIndexSnapshotUnservableError {}
 export class TagIndexVocabularyNotFrozenError extends TagIndexSnapshotUnservableError {}
 export class TagIndexPayloadSizeError extends TagIndexSnapshotUnservableError {}
 export class TagIndexPayloadHashError extends TagIndexSnapshotUnservableError {}
-/** The bytes are the ones the manifest names but do not decode to a valid index. */
+/** The bytes do not decode to a valid index. */
 export class TagIndexPayloadCorruptError extends TagIndexSnapshotUnservableError {}
 export class TagIndexSpecHashMismatchError extends TagIndexSnapshotUnservableError {}
 export class TagIndexVocabVersionMismatchError extends TagIndexSnapshotUnservableError {}
@@ -200,10 +202,10 @@ export async function latestReadyManifest(
 
 /**
  * Download and decode the snapshot a production manifest names. Refuses, each with its own error: a
- * vocabulary row that is gone or still a candidate; an object that is gone; bytes of another length or sha256 than the
- * manifest's (checked before decoding); bytes that do not decode; a header whose specHash or
- * vocabVersion is not the manifest's. A download failure, or running out of memory while decoding,
- * is rethrown as it is.
+ * vocabulary row that is gone or still a candidate; an object that is gone; bytes of another length
+ * or sha256 than the manifest's (checked before decoding); bytes that do not decode; a header whose
+ * specHash or vocabVersion is not the manifest's. Any other download failure, or running out of
+ * memory while decoding, is rethrown as it is.
  */
 async function loadSnapshot(
   deps: TagIndexStoreDeps,

@@ -57,7 +57,7 @@ describe('s3TagIndexObjects', () => {
     expect(destroy).toHaveBeenCalledTimes(1);
   });
 
-  it('reports a missing object as unservable, and rethrows any other failure as it is', async () => {
+  it('reports a missing key as unservable, and rethrows any other failure (a missing bucket included) as it is', async () => {
     const notFound = Object.assign(new Error('gone'), {
       name: 'NoSuchKey',
       $metadata: { httpStatusCode: 404 },
@@ -68,6 +68,16 @@ describe('s3TagIndexObjects', () => {
       prefix: 'p',
     });
     await expect(missing.get('k', 3)).rejects.toBeInstanceOf(TagIndexObjectMissingError);
+    const noBucket = Object.assign(new Error('no bucket'), {
+      name: 'NoSuchBucket',
+      $metadata: { httpStatusCode: 404 },
+    });
+    const wrongBucket = s3TagIndexObjects({
+      s3: fakeS3({ bytes: new Uint8Array(), error: noBucket }).s3,
+      bucket: 'b',
+      prefix: 'p',
+    });
+    await expect(wrongBucket.get('k', 3)).rejects.toBe(noBucket);
     const reset = new Error('connection reset');
     const failing = s3TagIndexObjects({
       s3: fakeS3({ bytes: new Uint8Array(), error: reset }).s3,
