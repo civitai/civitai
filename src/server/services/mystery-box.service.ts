@@ -45,6 +45,7 @@ import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/er
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
@@ -130,6 +131,7 @@ export async function getBoxContentsForUser(
 ): Promise<BoxContentForUser[]> {
   const contents = await client.boxContent.findMany({
     where: { boxDefinitionId, enabled: true },
+    orderBy: { id: 'asc' },
     select: {
       id: true,
       tierId: true,
@@ -337,6 +339,7 @@ export async function getMysteryBoxesForEvent({
     }),
     dbRead.boxTier.findMany({
       where: { boxDefinitionId: { in: boxIds } },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       select: {
         id: true,
         boxDefinitionId: true,
@@ -800,7 +803,7 @@ export async function openMysteryBox({
         data: {
           userId,
           cosmeticId: reward.cosmeticId,
-          claimKey: `box-open-${item.id}`,
+          claimKey: boxOpenClaimKey(item.id),
           remaining: stickerUsesFromCosmeticData(reward.cosmeticData),
         },
       });

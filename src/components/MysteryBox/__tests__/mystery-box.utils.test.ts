@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
 import type { MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   afterOpen,
@@ -182,5 +183,12 @@ describe('tierSummaries ties', () => {
       })
     );
     expect(tiers.map((t) => t.tier.id)).toEqual([2, 1]);
+  });
+});
+
+describe('boxOpenClaimKey', () => {
+  it('is the same key from the server bigint and the client string', () => {
+    expect(boxOpenClaimKey(501n)).toBe('box-open-501');
+    expect(boxOpenClaimKey('501')).toBe('box-open-501');
   });
 });

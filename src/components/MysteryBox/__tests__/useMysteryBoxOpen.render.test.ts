@@ -41,10 +41,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }
   ),
 }));
-vi.mock('~/components/CosmeticShop/cosmetic-shop.util', () => ({
+vi.mock('~/components/CosmeticShop/cosmetic-shop.util', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useMutateCosmeticShop: () => ({ purchaseShopItem: spies.purchase }),
 }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: spies.notify }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  showErrorNotification: spies.notify,
+}));
 vi.mock('@mantine/hooks', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useReducedMotion: () => spies.reducedMotion.value,
@@ -132,6 +136,7 @@ describe('useMysteryBoxOpen', () => {
     expect(after.contents.map((c) => c.left)).toEqual([true, false]);
     expect(after.heldBoxItemIds).toEqual([]);
     expect(spies.invalidateBoxes).not.toHaveBeenCalled();
+    for (const [key] of spies.setData.mock.calls) expect(key).toEqual({ event: 'birthday2026' });
     expect(spies.invalidateHats).toHaveBeenCalledWith({ event: 'birthday2026' });
 
     expect(hook.phase).toBe('shaking');
@@ -249,5 +254,25 @@ describe('useMysteryBoxOpen', () => {
 
     expect(spies.purchase).not.toHaveBeenCalled();
     expect(spies.open).not.toHaveBeenCalled();
+    expect(hook.phase).toBe('idle');
+    expect(spies.invalidateBoxes).not.toHaveBeenCalled();
+  });
+
+  it('ignores a second open while the first is on its way', async () => {
+    let finish!: (value: unknown) => void;
+    spies.open.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const held = view({ heldBoxItemIds: ['501', '502'] });
+
+    await act(async () => {
+      void hook.openHeld(held);
+    });
+    await act(async () => {
+      await hook.openHeld(held);
+    });
+    await act(async () => {
+      finish(opened('501'));
+    });
+
+    expect(spies.open).toHaveBeenCalledTimes(1);
   });
 });

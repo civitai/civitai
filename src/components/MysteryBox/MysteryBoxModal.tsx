@@ -26,7 +26,6 @@ import { MysteryBoxOddsBar } from '~/components/MysteryBox/MysteryBoxOddsBar';
 import type { MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   boxActions,
-  boxOpenClaimKey,
   shelfPricesByCosmetic,
   collectedCount,
   formatChance,
@@ -37,6 +36,7 @@ import {
 import type { OpenPhase } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useMysteryBoxOpen } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';

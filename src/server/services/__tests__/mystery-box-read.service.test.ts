@@ -326,6 +326,11 @@ describe('getMysteryBoxesForEvent', () => {
     });
   });
 
+  it("asks the event's gate as a moderator when the viewer is one", async () => {
+    await read({ isModerator: true });
+    expect(mocks.boxViewer).toHaveBeenCalledWith(EVENT, { id: VIEWER, isModerator: true });
+  });
+
   it("passes the listing's end through, for the shelf's countdown", async () => {
     const ends = new Date(base + 30 * 86_400_000);
     world.listings[0] = listing({ availableTo: ends });

@@ -99,9 +99,6 @@ export function shelfPricesByCosmetic(
   return prices;
 }
 
-/** The open grants the hat under this claim key. */
-export const boxOpenClaimKey = (boxItemId: string) => `box-open-${boxItemId}`;
-
 export function formatChance(probability: number, digits = 2) {
   if (probability <= 0) return '0%';
   const pct = probability * 100;
