@@ -972,6 +972,17 @@ export const serverSchema = z
     SCAN_LABEL_P3_B2_DELETE_ACCESS_KEY: z.string().optional(),
     SCAN_LABEL_P3_B2_DELETE_SECRET_KEY: z.string().optional(),
 
+    // Resource-intent v1 tag-index snapshots, read and written with the S3_UPLOAD_* credentials.
+    // Bucket unset: the snapshot store refuses to put or load.
+    RESOURCE_INTENT_TAG_INDEX_BUCKET: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'not an S3 bucket name')
+      .optional(),
+    RESOURCE_INTENT_TAG_INDEX_PREFIX: z
+      .string()
+      .regex(/^[a-z0-9_-]+(\/[a-z0-9_-]+)*$/, 'lowercase path segments, no leading or trailing /')
+      .default('resource-intent/tag-index'),
+
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
     STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),

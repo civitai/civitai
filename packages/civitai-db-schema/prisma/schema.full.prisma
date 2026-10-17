@@ -1954,6 +1954,32 @@ model ResourceIntentVocabulary {
   createdAt    DateTime  @default(now())
   frozenAt     DateTime?
   frozenBy     String?
+
+  tagIndexSnapshots ResourceIntentTagIndexSnapshot[]
+}
+
+// The manifest of one stored resource-intent v1 tag-index snapshot; the payload is in object
+// storage under `objectKey` (content-addressed: it ends in /<kind>/<payloadSha256>). Inserted
+// 'ready' after the upload; 'retired' is one-way. A DB trigger sets `createdAt` and `retiredAt`
+// and refuses every other change. Pin rules and formats are DB CHECKs. Written and read only through
+// src/server/services/resource-intent-tags/store.ts. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentTagIndexSnapshot {
+  id            String                   @id @default(uuid())
+  kind          String
+  status        String                   @default("ready")
+  vocabVersion  String
+  vocabulary    ResourceIntentVocabulary @relation(fields: [vocabVersion], references: [vocabVersion], onDelete: Restrict, onUpdate: Restrict)
+  specHash      String
+  payloadSha256 String
+  payloadBytes  Int
+  objectKey     String
+  pinnedUntil   DateTime?
+  buildStats    Json
+  createdAt     DateTime                 @default(now())
+  retiredAt     DateTime?
+
+  @@index([kind, specHash, status, createdAt(sort: Desc)], map: "ResourceIntentTagIndexSnapshot_latest_ready_idx")
 }
 
 enum ReviewReactions {

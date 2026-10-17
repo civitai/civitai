@@ -1553,6 +1553,23 @@ export interface ResourceIntentVocabulary {
   createdAt: Date;
   frozenAt: Date | null;
   frozenBy: string | null;
+  tagIndexSnapshots?: ResourceIntentTagIndexSnapshot[];
+}
+
+export interface ResourceIntentTagIndexSnapshot {
+  id: string;
+  kind: string;
+  status: string;
+  vocabVersion: string;
+  vocabulary?: ResourceIntentVocabulary;
+  specHash: string;
+  payloadSha256: string;
+  payloadBytes: number;
+  objectKey: string;
+  pinnedUntil: Date | null;
+  buildStats: JsonValue;
+  createdAt: Date;
+  retiredAt: Date | null;
 }
 
 export interface Post {
