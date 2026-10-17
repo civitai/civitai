@@ -75,3 +75,35 @@ describe('countReactions action — bound to user.removeReactions', () => {
     expect(countReactions).toHaveBeenCalledWith(TARGET);
   });
 });
+
+describe('the actions surface a failure as a failure', () => {
+  it('removeReactions: a refused or unconfirmed removal is a 400, never success', async () => {
+    removeReactions.mockResolvedValueOnce({ ok: false, error: 'Could not confirm.' } as never);
+    const result = await actions.removeReactions(
+      formEvent({ 'user.removeReactions': true }, { userId: String(TARGET), username: 'someone' })
+    );
+    expect(result).toMatchObject({
+      status: 400,
+      data: { scope: 'reactions', error: 'Could not confirm.' },
+    });
+  });
+
+  it('countReactions: a failed count is a 400', async () => {
+    countReactions.mockResolvedValueOnce({ ok: false, error: 'Count failed.' } as never);
+    const result = await actions.countReactions(
+      formEvent({ 'user.removeReactions': true }, { userId: String(TARGET) })
+    );
+    expect(result).toMatchObject({
+      status: 400,
+      data: { scope: 'reactions', error: 'Count failed.' },
+    });
+  });
+
+  it('an invalid id never reaches the service', async () => {
+    const result = await actions.removeReactions(
+      formEvent({ 'user.removeReactions': true }, { userId: 'abc' })
+    );
+    expect(result).toMatchObject({ status: 400, data: { scope: 'reactions' } });
+    expect(removeReactions).not.toHaveBeenCalled();
+  });
+});

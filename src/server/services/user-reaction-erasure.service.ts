@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { onReactionRemoved } from '~/server/events/points/hooks';
+import { logToAxiom } from '~/server/logging/client';
 import {
   answerMetrics,
   articleMetrics,
@@ -19,19 +21,37 @@ import {
  *   are REPLICA IDENTITY FULL and the event engine's reaction handlers emit the -1 from CDC.
  * - CommentV2Reaction's count is a trigger on the table. CommentReaction, ResourceReviewReaction and
  *   ClubPostReaction have no counter.
+ * - `owner`: the content table whose author's all-time reactions-received score
+ *   (`reactions_owner_scores`, which `UserMetric.reactionCount` reads) the un-react path lowers through
+ *   a `*_Delete` tracker row. Nothing follows a SQL delete into that score, so it is lowered directly,
+ *   per owner, without writing the reactor's id anywhere.
  */
 const TABLES = [
-  { table: 'ImageReaction', fk: 'imageId', points: 'image' },
-  { table: 'ArticleReaction', fk: 'articleId', queue: articleMetrics, points: 'article' },
-  { table: 'PostReaction', fk: 'postId', queue: postMetrics },
-  { table: 'BountyEntryReaction', fk: 'bountyEntryId', queue: bountyEntryMetrics },
-  { table: 'CommentV2Reaction', fk: 'commentId' },
-  { table: 'CommentReaction', fk: 'commentId' },
+  { table: 'ImageReaction', fk: 'imageId', points: 'image', owner: 'Image' },
+  {
+    table: 'ArticleReaction',
+    fk: 'articleId',
+    queue: articleMetrics,
+    points: 'article',
+    owner: 'Article',
+  },
+  { table: 'PostReaction', fk: 'postId', queue: postMetrics, owner: 'Post' },
+  {
+    table: 'BountyEntryReaction',
+    fk: 'bountyEntryId',
+    queue: bountyEntryMetrics,
+    owner: 'BountyEntry',
+  },
+  { table: 'CommentV2Reaction', fk: 'commentId', owner: 'CommentV2' },
+  { table: 'CommentReaction', fk: 'commentId', owner: 'Comment' },
   { table: 'ResourceReviewReaction', fk: 'reviewId' },
   { table: 'ClubPostReaction', fk: 'clubPostId' },
-  { table: 'QuestionReaction', fk: 'questionId', queue: questionMetrics },
-  { table: 'AnswerReaction', fk: 'answerId', queue: answerMetrics },
+  { table: 'QuestionReaction', fk: 'questionId', queue: questionMetrics, owner: 'Question' },
+  { table: 'AnswerReaction', fk: 'answerId', queue: answerMetrics, owner: 'Answer' },
 ] as const;
+
+/** Every table name, for a guard that a new reaction table in the schema is listed here. */
+export const REACTION_TABLES: readonly string[] = TABLES.map((t) => t.table);
 
 export type ReactionTable = (typeof TABLES)[number]['table'];
 export type ReactionCounts = Record<ReactionTable, number>;
@@ -104,16 +124,70 @@ export async function removeUserReactions(userId: number): Promise<{
     removed[def.table] = entityIds.length;
     if (!entityIds.length) continue;
 
+    // The rows are gone once the DELETE commits, so a follow-up that fails cannot be retried by running
+    // this again: it is logged with the ids it needed, and the rest of the erasure carries on.
     const distinct = [...new Set(entityIds)];
-    if ('queue' in def) await def.queue.queueUpdate(distinct);
-    // Never throws; returns early for anything outside a scored event.
-    if ('points' in def)
-      for (const entityId of distinct)
-        await onReactionRemoved({ entityType: def.points, entityId, userId });
+    await followUp(def.table, 'queue', distinct, async () => {
+      if ('queue' in def) await def.queue.queueUpdate(distinct);
+    });
+    await followUp(def.table, 'ownerScore', distinct, async () => {
+      if ('owner' in def) await lowerOwnerScores(def.owner, entityIds, userId);
+    });
+    await followUp(def.table, 'points', distinct, async () => {
+      // Never throws; returns early for anything outside a scored event.
+      if ('points' in def)
+        for (const entityId of distinct)
+          await onReactionRemoved({ entityType: def.points, entityId, userId });
+    });
   }
 
   const [{ remaining }] = await dbWrite.$queryRaw<{ remaining: number }[]>`
     SELECT count(*)::int AS remaining FROM "ImageReaction" WHERE "userId" = ${userId}
   `;
   return { removed, remaining: Number(remaining) };
+}
+
+async function followUp(
+  table: string,
+  step: string,
+  entityIds: number[],
+  run: () => Promise<void>
+) {
+  try {
+    await run();
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'user-reaction-erasure-follow-up',
+      message: (error as Error).message,
+      details: { table, step, entityIds },
+    }).catch(() => undefined);
+  }
+}
+
+/**
+ * One -1 per removed reaction on each owner's score: each surviving row is a +1 there, whatever the
+ * reactor toggled before. A self-reaction is skipped because the score never counted it, and a reaction
+ * on content that no longer exists is skipped because its owner can no longer be read.
+ */
+async function lowerOwnerScores(ownerTable: string, entityIds: number[], userId: number) {
+  if (!clickhouse) return;
+  const owners = await dbWrite.$queryRaw<{ id: number; ownerId: number }[]>(
+    Prisma.sql`SELECT id, "userId" AS "ownerId" FROM ${Prisma.raw(
+      `"${ownerTable}"`
+    )} WHERE id = ANY(${[...new Set(entityIds)]}::int[])`
+  );
+  const ownerOf = new Map(owners.map((o) => [o.id, o.ownerId]));
+  const removedPerOwner = new Map<number, number>();
+  for (const entityId of entityIds) {
+    const ownerId = ownerOf.get(entityId);
+    if (!ownerId || ownerId === userId) continue;
+    removedPerOwner.set(ownerId, (removedPerOwner.get(ownerId) ?? 0) + 1);
+  }
+  if (!removedPerOwner.size) return;
+  await clickhouse.insert({
+    table: 'reactions_owner_scores',
+    values: [...removedPerOwner].map(([ownerId, n]) => ({ ownerId, score: -n })),
+    format: 'JSONEachRow',
+  });
 }

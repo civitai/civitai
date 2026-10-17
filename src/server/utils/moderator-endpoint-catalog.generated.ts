@@ -65,6 +65,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/user/membership-code-revoke': () =>
     import('~/pages/api/mod/user/membership-code-revoke'),
   '/api/mod/user/mute': () => import('~/pages/api/mod/user/mute'),
+  '/api/mod/user/reactions': () => import('~/pages/api/mod/user/reactions'),
+  '/api/mod/user/remove-reactions': () => import('~/pages/api/mod/user/remove-reactions'),
   '/api/mod/user/toggle-moderator': () => import('~/pages/api/mod/user/toggle-moderator'),
   '/api/mod/user/unmute': () => import('~/pages/api/mod/user/unmute'),
   '/api/mod/user/update-identity': () => import('~/pages/api/mod/user/update-identity'),

@@ -122,18 +122,22 @@ describe('user.removeReactions — who may call it', () => {
   it('removes for a moderator holding user.removeReactions', async () => {
     const { status, body } = await remove({ userId: TARGET, username: NAME });
     expect(status).toBe(200);
+    expect(removeUserReactions).toHaveBeenCalledTimes(1);
     expect(removeUserReactions).toHaveBeenCalledWith(TARGET);
     expect(body).toEqual({ userId: TARGET, removed: REMOVED, remaining: 0, auditRecorded: true });
   });
 
   it('refuses a moderator without the permission, before touching anything', async () => {
     hasModeratorGrant.mockResolvedValueOnce(false);
-    const { status } = await remove({ userId: TARGET, username: NAME });
+    // An unknown id and a wrong name: a later check answering first would tell them the account exists.
+    dbMock.dbWrite.user.findFirst.mockResolvedValue(null);
+    const { status } = await remove({ userId: TARGET, username: 'someone_else' });
     expect(status).toBe(403);
     expect(hasModeratorGrant).toHaveBeenCalledWith(
       expect.objectContaining({ id: 990000007 }),
       'user.removeReactions'
     );
+    expect(dbMock.dbWrite.user.findFirst).not.toHaveBeenCalled();
     expect(removeUserReactions).not.toHaveBeenCalled();
   });
 
@@ -220,14 +224,23 @@ describe('user.reactions — the count before removing', () => {
     expect(removeUserReactions).not.toHaveBeenCalled();
   });
 
-  it('refuses without the permission', async () => {
+  it('refuses without the permission, before looking the account up', async () => {
     hasModeratorGrant.mockResolvedValueOnce(false);
+    dbMock.dbWrite.user.findFirst.mockResolvedValue(null);
     const { status } = await count({ userId: String(TARGET) });
     expect(status).toBe(403);
+    expect(dbMock.dbWrite.user.findFirst).not.toHaveBeenCalled();
     expect(hasModeratorGrant).toHaveBeenCalledWith(
       expect.objectContaining({ id: 990000007 }),
       'user.removeReactions'
     );
+    expect(countUserReactions).not.toHaveBeenCalled();
+  });
+
+  it('answers NOT_FOUND for an unknown id rather than a row of zeros', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue(null);
+    const { status } = await count({ userId: String(TARGET) });
+    expect(status).toBe(404);
     expect(countUserReactions).not.toHaveBeenCalled();
   });
 
