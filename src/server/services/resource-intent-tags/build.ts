@@ -245,9 +245,12 @@ export function contentTagScores(
 
 export type TagResourceKind = 'addon' | 'checkpoint';
 
+/** The one model type indexed as a checkpoint; every other indexed type is an add-on. */
+const CHECKPOINT_TYPE = 'Checkpoint';
+
 /** The model types the index holds: the add-on types, and Checkpoint (`TagIndexAccumulator`). */
 export function indexedModelTypes(addonTypes: readonly string[]): string[] {
-  return [...addonTypes, 'Checkpoint'];
+  return [...addonTypes, CHECKPOINT_TYPE];
 }
 
 export type TrainingResource = { modelId: number; type: string; baseModel: string | null };
@@ -533,7 +536,7 @@ export class TagIndexAccumulator {
   private readonly params: TagBuildParams;
 
   private kindOf(type: string): TagResourceKind | null {
-    return type === 'Checkpoint' ? 'checkpoint' : this.addon.has(type) ? 'addon' : null;
+    return type === CHECKPOINT_TYPE ? 'checkpoint' : this.addon.has(type) ? 'addon' : null;
   }
 
   private eco(name: string): number {
