@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as Audit from '~/utils/metadata/audit';
 import {
   auditPrompt,
@@ -7,8 +8,10 @@ import {
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
 import { promptExcludedByAuditor } from '~/server/services/resource-intent-tags/prompt-exclusion';
+import { __flushPendingEmitsForTest } from '~/utils/metadata/audit-slow-log';
 
 const THROWS = 'sentinel prompt the auditor throws on';
+const logToAxiom = loggingMock.logToAxiom;
 vi.mock('~/utils/metadata/audit', async (importOriginal) => {
   const real = await importOriginal<typeof Audit>();
   return {
@@ -48,5 +51,41 @@ describe('promptExcludedByAuditor', () => {
 
   it('fails closed when the auditor throws', () => {
     expect(promptExcludedByAuditor(THROWS)).toBe(true);
+  });
+});
+
+describe('the slow-audit log never carries the prompt', () => {
+  const saved = { ms: process.env.AUDIT_SLOW_LOG_MS, raw: process.env.AUDIT_SLOW_LOG_RAW };
+  afterEach(() => {
+    for (const [k, v] of [
+      ['AUDIT_SLOW_LOG_MS', saved.ms],
+      ['AUDIT_SLOW_LOG_RAW', saved.raw],
+    ] as const)
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+  });
+  const PROMPT = 'a private lighthouse prompt nobody may read';
+
+  // Every audit is "slow" at a 0 ms threshold, and raw capture is on: only the call decides.
+  const loggedFor = async (run: () => unknown) => {
+    process.env.AUDIT_SLOW_LOG_MS = '0';
+    process.env.AUDIT_SLOW_LOG_RAW = 'true';
+    logToAxiom.mockClear();
+    run();
+    await __flushPendingEmitsForTest();
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    return logToAxiom.mock.calls[0] as unknown[];
+  };
+
+  it('promptExcludedByAuditor logs timings and shape only', async () => {
+    const [payload] = await loggedFor(() => promptExcludedByAuditor(PROMPT));
+    expect(payload).toMatchObject({ name: 'audit-prompt-slow', promptLength: PROMPT.length });
+    expect(JSON.stringify(payload)).not.toContain('lighthouse');
+    expect(payload).not.toHaveProperty('promptHash');
+  });
+
+  it('control: a plain auditPrompt of the same text, in the same env, logs it', async () => {
+    const [payload] = await loggedFor(() => auditPrompt(PROMPT));
+    expect(payload).toMatchObject({ rawPrompt: PROMPT });
   });
 });

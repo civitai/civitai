@@ -1,10 +1,11 @@
 import { parseArgs } from 'util';
 
-import type { GenObservation } from '~/server/services/resource-intent-tags/sources';
+import type { TagBuildEnv } from '~/server/services/resource-intent-tags/pipeline';
 import { runScriptAndExit } from './lib/run-as-script';
 
 /**
- * Build the v1 content-tag index from real data WITHOUT storing it, and print what it costs.
+ * Build the v1 content-tag index from real data WITHOUT storing it, and print what it costs. It runs
+ * the weekly job's own pipeline (`runTagIndexBuild`, gates included) as a dry run.
  *
  *   pnpm run tsscript scripts/dry-run-resource-intent-tags-build.ts [--limit-gen N]
  *     [--limit-post-batches N] [--limit-models N]
@@ -13,7 +14,7 @@ import { runScriptAndExit } from './lib/run-as-script';
  * any server that is not a standby, and ClickHouse with `readonly` set. Writes nothing anywhere.
  * Prints aggregates only — counts, bytes, milliseconds, tag ids — never a prompt, tag or model name.
  *
- * Environment:
+ * Environment: the job's (`tagBuildConfig`), without the snapshot bucket:
  *   P2M_CLICKHOUSE_URL, P2M_CLICKHOUSE_USER, P2M_CLICKHOUSE_PASSWORD
  *       a ClickHouse user that can read the generator observations and their prompt text
  *   P2M_HASH_KEY, P2M_HASH_KEY_FINGERPRINT
@@ -21,7 +22,10 @@ import { runScriptAndExit } from './lib/run-as-script';
  *       under; a key with another fingerprint is refused. Posted users are hashed with it so both
  *       sources share one user namespace
  * The `--limit-*` flags (positive integers) cut the inputs for a quick trial; `--limit-gen` is a
- * LIMIT on the ClickHouse read. The printed counts say what was read.
+ * LIMIT on the ClickHouse read. The printed counts say what was read. It prints each standby
+ * statement kind's attempt times (retries counted separately), the build's peak RSS, its longest
+ * event-loop stall, and the wall time. Unlike the job, it reports missing window hours over the limit
+ * instead of refusing.
  */
 
 const ms = (t0: number) => Math.round(performance.now() - t0);
@@ -44,6 +48,17 @@ async function gc() {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  const tStart = performance.now();
+  // The longest the event loop went without running a 10 ms timer during the build: what every
+  // other job in a shared process would wait.
+  let lastTick = performance.now();
+  let maxLoopGap = 0;
+  const loopTimer = setInterval(() => {
+    const t = performance.now();
+    maxLoopGap = Math.max(maxLoopGap, t - lastTick);
+    lastTick = t;
+  }, 10);
+  loopTimer.unref();
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -60,167 +75,82 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       throw new Error(`--${flag}: not a positive integer: ${v}`);
     return Number(v);
   };
-  const limitGen = limit('limit-gen', values['limit-gen']);
-  const limitPostBatches = limit('limit-post-batches', values['limit-post-batches']);
-  const limitModels = limit('limit-models', values['limit-models']);
-  const env = (k: string) => {
-    const v = process.env[k];
-    if (!v) throw new Error(`${k} is not set`);
-    return v;
+  const limits = {
+    gen: limit('limit-gen', values['limit-gen']),
+    postBatches: limit('limit-post-batches', values['limit-post-batches']),
+    models: limit('limit-models', values['limit-models']),
   };
-  const chUrl = env('P2M_CLICKHOUSE_URL');
-  const hashKey = Buffer.from(env('P2M_HASH_KEY'), 'hex');
 
-  const { Prisma } = await import('@prisma/client');
-  const { createClient } = await import('@clickhouse/client');
   const { dbRead } = await import('~/server/db/client');
-  const B = await import('~/server/services/resource-intent-tags/build');
-  const S = await import('~/server/services/resource-intent-tags/sources');
-  S.assertObservationKey(hashKey, env('P2M_HASH_KEY_FINGERPRINT'));
-  const {
-    compressTagIndex,
-    decompressTagIndex,
-    packTagIndex,
-    TAG_INDEX_MAX_PAYLOAD_BYTES,
-    unpackTagIndex,
-  } = await import('~/server/services/resource-intent-tags/payload');
-  const { promptExcludedByAuditor } = await import(
-    '~/server/services/resource-intent-tags/prompt-exclusion'
+  const { decompressTagIndex, TAG_INDEX_MAX_PAYLOAD_BYTES, unpackTagIndex } = await import(
+    '~/server/services/resource-intent-tags/payload'
   );
-  const { RESOURCE_INTENT_TAGS_SPEC, RESOURCE_INTENT_TAGS_SPEC_HASH } = await import(
-    '~/server/services/resource-intent-tags/spec'
+  const { runTagIndexBuild, tagStandbyQuery } = await import(
+    '~/server/services/resource-intent-tags/pipeline'
   );
   const { scoreTagRequest } = await import('~/server/services/resource-intent-tags/score');
   const log = (k: string, v: unknown) =>
     console.log(`[dry-run-resource-intent-tags] ${k} ${JSON.stringify(v)}`);
 
-  const query = S.retryingQuery(
-    S.standbyQuery((fn) => dbRead.$transaction(fn, { maxWait: 30_000, timeout: 310_000 }), 280_000)
-  );
-  const ch = createClient({
-    url: chUrl,
-    username: env('P2M_CLICKHOUSE_USER'),
-    password: env('P2M_CLICKHOUSE_PASSWORD'),
-    request_timeout: 1_900_000,
-    clickhouse_settings: { readonly: '2', max_execution_time: 1800 },
+  // The job's standby reads (`tagStandbyQuery`), each ATTEMPT timed by kind inside the retry: the
+  // replica route a deployed job reads through may cap statements tighter than the build's own
+  // timeout, so the slowest attempt, and any that failed, matter.
+  const failedAttempts: Record<string, number> = {};
+  const statementMs: Record<string, number[]> = {};
+  const kindOf = (text: string) =>
+    text.includes('jsonb_agg(DISTINCT')
+      ? 'postedBatch'
+      : text.includes('WITH ms AS')
+      ? 'contentImages'
+      : text.includes('FROM "Model" m WHERE')
+      ? 'contentModels'
+      : text.includes('"ModelVersion" mv JOIN')
+      ? 'versions'
+      : text.includes('"Image"')
+      ? 'imageIdSearch'
+      : 'other';
+  const query = tagStandbyQuery((attempt) => async (sql) => {
+    const t = performance.now();
+    try {
+      return await attempt(sql);
+    } catch (e) {
+      failedAttempts[kindOf(sql.text)] = (failedAttempts[kindOf(sql.text)] ?? 0) + 1;
+      throw e;
+    } finally {
+      (statementMs[kindOf(sql.text)] ??= []).push(performance.now() - t);
+    }
   });
-  const ro = await (
-    await ch.query({ query: `SELECT getSetting('readonly') AS ro`, format: 'JSONEachRow' })
-  ).json<{ ro: number | string }>();
-  if (!(Number(ro[0]?.ro) >= 1)) throw new Error('ClickHouse session is not readonly; refusing');
 
   try {
-    const [v] = (await query(Prisma.sql`
-      SELECT "vocabVersion", payload FROM "ResourceIntentVocabulary"
-      WHERE status = 'frozen' ORDER BY "frozenAt" DESC NULLS LAST LIMIT 1`)) as {
-      vocabVersion: string;
-      payload: Buffer;
-    }[];
-    if (!v) throw new Error('no frozen vocabulary');
-    const vocab = B.parseTagVocabulary(v.payload);
-    if (vocab.vocabVersion !== v.vocabVersion) throw new Error('vocabulary payload hash mismatch');
-    const window = S.tagTrainingWindow(new Date());
-    log('input', {
-      vocabVersion: vocab.vocabVersion,
-      vocabularyTags: vocab.tags.length,
-      vocabularyBytes: v.payload.length,
-      specHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
-      window: { start: window.start.toISOString(), end: window.end.toISOString() },
-    });
-
-    let t0 = performance.now();
-    const gen: GenObservation[] = [];
-    const rs = await ch.query({
-      query: S.genObservationsSql(
-        window.start,
-        window.end,
-        S.TAG_SOURCE_PARAMS.genSliceMinutes,
-        limitGen
-      ),
-      format: 'JSONEachRow',
-    });
-    for await (const batch of rs.stream()) {
-      for (const row of batch as { json: <T>() => T }[]) gen.push(S.genObservationOf(row.json()));
-    }
-    const genUsers = new Set(gen.map((o) => o.user));
-    const genReadMs = ms(t0);
-    t0 = performance.now();
-    const versionIds = [...new Set(gen.flatMap((o) => o.versionIds))];
-    const versions = await S.fetchVersionInfo(query, versionIds);
-    log('gen', {
-      observations: gen.length,
-      users: genUsers.size,
-      versions: versionIds.length,
-      versionsResolved: versions.size,
-      readMs: genReadMs,
-      versionMs: ms(t0),
-    });
-
-    const acc = new B.TagIndexAccumulator(vocab, {
-      addonTypes: RESOURCE_INTENT_TAGS_SPEC.build.addonTypes,
-      excludeGenPrompt: promptExcludedByAuditor,
-    });
-    t0 = performance.now();
-    let flaggedModelRows = 0;
-    for (const o of gen.splice(0)) {
-      const row = S.genTrainingRow(o, versions);
-      if (row) acc.addRow(row);
-      else flaggedModelRows++;
-    }
-    log('genRows', { flaggedModelRows, tagMs: ms(t0) });
-
-    t0 = performance.now();
-    const postUsers = new Set<string>();
-    const posted = await S.readPostedSample(query, {
-      start: window.start,
-      end: window.end,
-      mod: S.TAG_SOURCE_PARAMS.postedMod,
-      idBatch: 250_000,
-      maxBatches: limitPostBatches,
-      userKey: (id) => S.observationUserHash(hashKey, id),
-      onBatch: (rows) => {
-        for (const r of rows) {
-          postUsers.add(r.user);
-          acc.addRow(r);
-        }
-      },
-    });
-    let shared = 0;
-    for (const u of postUsers) if (genUsers.has(u)) shared++;
-    log('post', { ...posted, ms: ms(t0) });
-    // A wrong hash key leaves the two sources sharing no user at all.
-    log('users', { genUsers: genUsers.size, postUsers: postUsers.size, genAndPostUsers: shared });
-
-    t0 = performance.now();
-    const modelIds = acc.usedModelIds().slice(0, limitModels);
-    let contentModels = 0;
-    await S.readModelContent(query, modelIds, window.end, (models) => {
-      contentModels += models.length;
-      for (const m of models) acc.addModel(m);
-    });
-    log('content', { modelsRequested: modelIds.length, modelsRead: contentModels, ms: ms(t0) });
-
-    t0 = performance.now();
-    const { data, stats } = acc.finalize();
-    log('build', { ...stats, ms: ms(t0) });
-    t0 = performance.now();
-    const raw = packTagIndex(data, RESOURCE_INTENT_TAGS_SPEC_HASH);
-    const packMs = ms(t0);
-    t0 = performance.now();
-    const payload = await compressTagIndex(raw);
+    const { summary, payload } = await runTagIndexBuild(
+      { dryRun: true, limits },
+      // The job reads the parsed app env; here the raw environment carries the same names.
+      { env: process.env as TagBuildEnv, query }
+    );
+    for (const [kind, xs] of Object.entries(statementMs))
+      log(`statements.${kind}`, {
+        attempts: xs.length,
+        failed: failedAttempts[kind] ?? 0,
+        ms: quantiles(xs.map((x) => Math.round(x))),
+      });
+    const { stats, ...rest } = summary;
+    log('input', rest);
+    log('build', stats);
     log('payload', {
-      rawBytes: raw.length,
-      rawMiB: mib(raw.length),
       compressedBytes: payload.length,
       compressedMiB: mib(payload.length),
       underCap: payload.length <= TAG_INDEX_MAX_PAYLOAD_BYTES,
-      packMs,
-      compressMs: ms(t0),
+    });
+    clearInterval(loopTimer);
+    log('memory', {
+      peakRssMiB: mib(process.resourceUsage().maxRSS * 1024),
+      buildMs: ms(tStart),
+      maxEventLoopGapMs: Math.round(maxLoopGap),
     });
 
     await gc();
     const before = process.memoryUsage();
-    t0 = performance.now();
+    let t0 = performance.now();
     const inflated = await decompressTagIndex(payload);
     const decompressMs = ms(t0);
     t0 = performance.now();
@@ -240,7 +170,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     for (const kind of ['addon', 'checkpoint'] as const) {
       const k = decoded.index.kinds[kind];
       const lens = Array.from(
-        { length: vocab.tags.length },
+        { length: decoded.index.vocabulary.length },
         (_, t) => k.postings.ptr[t + 1] - k.postings.ptr[t]
       );
       const top = lens
@@ -307,8 +237,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           statuses,
         });
       }
+    log('wall', { totalMs: ms(tStart), peakRssMiB: mib(process.resourceUsage().maxRSS * 1024) });
   } finally {
-    await ch.close();
     await dbRead.$disconnect();
   }
 }

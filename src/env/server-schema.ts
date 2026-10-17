@@ -981,6 +981,13 @@ export const serverSchema = z
         .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'not an S3 bucket name')
         .optional()
     ),
+    // The tag-index build's ClickHouse identity and observation hash key. Validated by the build,
+    // not here, so an empty or malformed value fails that job, not every pod's start.
+    P2M_CLICKHOUSE_URL: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_CLICKHOUSE_USER: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_CLICKHOUSE_PASSWORD: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_HASH_KEY: z.preprocess((v) => v || undefined, z.string().optional()),
+    P2M_HASH_KEY_FINGERPRINT: z.preprocess((v) => v || undefined, z.string().optional()),
 
     // Storage resolver internal API (for registering B2 uploads)
     STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
