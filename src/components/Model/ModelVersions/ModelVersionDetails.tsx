@@ -1080,13 +1080,18 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             <ModelUnpublishedAlert
               reason={version.meta?.unpublishedReason}
               customMessage={version.meta?.customMessage}
-              // The form's Model appeal is for a removed model; a version removed on its own is Other.
-              appealHref={siteAppealHref(
-                features.siteAppealForm,
-                model.status === ModelStatus.UnpublishedViolation
-                  ? { category: AppealCategory.Model, id: model.id }
-                  : { category: AppealCategory.Other }
-              )}
+              // Moderators see this alert too, and only the owner can appeal. The form's Model appeal
+              // is for a removed model; a version removed on its own is Other.
+              appealHref={
+                isOwner
+                  ? siteAppealHref(
+                      features.siteAppealForm,
+                      model.status === ModelStatus.UnpublishedViolation
+                        ? { category: AppealCategory.Model, id: model.id }
+                        : { category: AppealCategory.Other }
+                    )
+                  : undefined
+              }
             />
           )}
           {isPrivateModel && isOwnerOrMod && (
