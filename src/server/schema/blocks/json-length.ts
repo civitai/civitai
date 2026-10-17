@@ -154,8 +154,9 @@ function addJsonLength(
  * `JSON.stringify` would give, without building the strings. A deserialised input can hold
  * one object or string many times over; every occurrence counts, as it does in the string,
  * and the measure stops once the total passes `limit` instead of serialising the rest. Its
- * work is bounded by `limit` code units plus `INLINE_MEDIA_MAX_VISITS` values; a value past
- * that budget is refused, as the inline-media search refuses it.
+ * work is bounded by `limit` code units plus the value budget (`meter.maxVisits`, by default
+ * `INLINE_MEDIA_MAX_VISITS`); a value past that budget is refused, as the inline-media search
+ * refuses it.
  */
 // A `const`, not a `function`, so the block-token schema scan (no-unguarded-block-bridge-token)
 // can read it from the schemas that call it.
@@ -180,14 +181,24 @@ export const jsonLengthWithin = (
  * cycle, a throwing `toJSON` or getter) before reaching `limit`. A caller that wants
  * JSON.stringify's own error for that value can treat `'unserializable'` like `'within'` and let
  * its stringify throw.
+ *
+ * The value budget defaults to half of `limit`: every value JSON.stringify writes costs at least
+ * two units (a one-character value and its separator), in either unit, so a value within `limit`
+ * that writes out every entry needs no more. One with more (only possible with entries
+ * JSON.stringify leaves out, such as `undefined` properties) is `'over'`. A caller can set
+ * `meter.maxVisits` to choose another budget.
  */
 export const measureJsonLength = (
   values: unknown[],
   limit: number,
-  options: { unit?: JsonLengthUnit; meter?: JsonLengthMeter } = {}
+  {
+    unit,
+    meter = { visits: 0, chars: 0, scanned: 0 },
+  }: { unit?: JsonLengthUnit; meter?: JsonLengthMeter } = {}
 ): 'within' | 'over' | 'unserializable' => {
+  meter.maxVisits ??= Math.floor(limit / 2);
   try {
-    return jsonLengthWithin(values, limit, options) ? 'within' : 'over';
+    return jsonLengthWithin(values, limit, { unit, meter }) ? 'within' : 'over';
   } catch {
     return 'unserializable';
   }

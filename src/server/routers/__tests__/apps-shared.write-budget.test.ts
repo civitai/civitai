@@ -711,11 +711,11 @@ describe('shared value size cap: checked before the value is scanned or serializ
     const ITEMS = 20_000;
     // 5,000 rather than a divisor of the cap, so no chunk ends exactly on it.
     const chunk = { s: 'x'.repeat(5_000) };
-    const repeated = () => ({ title: CLEAN.title, data: new Array(ITEMS).fill(chunk) });
+    const farOver = () => ({ title: CLEAN.title, data: new Array(ITEMS).fill(chunk) });
 
     it('stops scanning once the measure passes the cap', () => {
       const meter = { visits: 0, chars: 0, scanned: 0 };
-      expect(measureSharedValue(repeated(), meter)).toBe('over-cap');
+      expect(measureSharedValue(farOver(), meter)).toBe('over-cap');
       expect(meter.scanned).toBeLessThanOrEqual(CAP);
       // The array's items are charged when it opens; only the ~13 chunks inside the cap are opened.
       expect(meter.visits).toBeLessThan(ITEMS + 100);
@@ -735,7 +735,7 @@ describe('shared value size cap: checked before the value is scanned or serializ
       let err;
       try {
         err = await trpcErrorOf(
-          devalueClient.append.mutate({ blockToken: 'tok', value: repeated() })
+          devalueClient.append.mutate({ blockToken: 'tok', value: farOver() })
         );
       } finally {
         spy.mockRestore();

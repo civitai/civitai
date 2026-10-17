@@ -7763,12 +7763,14 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         const node = { note: 'x'.repeat(1_000) };
         const mode = new Array(1_000).fill(node);
         const stringify = JSON.stringify;
-        let serializedMode = 0;
+        // Every character JSON.stringify writes during the call, whatever it is called on.
+        let stringified = 0;
         const spy = vi
           .spyOn(JSON, 'stringify')
           .mockImplementation((...args: Parameters<typeof stringify>) => {
-            if (args[0] === mode) serializedMode++;
-            return stringify(...args);
+            const out = stringify(...args);
+            stringified += out?.length ?? 0;
+            return out;
           });
         let issues;
         try {
@@ -7781,8 +7783,23 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         } finally {
           spy.mockRestore();
         }
-        expect(serializedMode).toBe(0);
+        // The mode's JSON is ~1 MB; nothing near that is written.
+        expect(stringified).toBeLessThan(100_000);
         expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // More entries than fit in 200 characters is described too, even ones left out of the JSON.
+        const padded = Object.fromEntries(
+          Array.from({ length: 150 }, (_, i) => [`k${i}`, undefined])
+        );
+        const described = await rejectionIssues({
+          kind: 'customComfy',
+          mode: padded,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(described[0].message).toBe(
           'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
             ` ${RECIPE_ARM}. ${INLINE_ARM}.`
         );

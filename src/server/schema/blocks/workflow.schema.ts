@@ -920,10 +920,7 @@ const ECHOED_MODE_MAX_CHARS = 200;
  * a longer one is described instead. An unserializable value is left to JSON.stringify.
  */
 function echoedModeValue(raw: unknown): string {
-  const measured = measureJsonLength([raw], ECHOED_MODE_MAX_CHARS, {
-    meter: { visits: 0, chars: 0, scanned: 0, maxVisits: ECHOED_MODE_MAX_CHARS / 2 },
-  });
-  return measured === 'over'
+  return measureJsonLength([raw], ECHOED_MODE_MAX_CHARS) === 'over'
     ? `a value over ${ECHOED_MODE_MAX_CHARS} characters`
     : JSON.stringify(raw);
 }

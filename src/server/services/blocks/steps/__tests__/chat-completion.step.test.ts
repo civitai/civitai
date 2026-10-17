@@ -1039,7 +1039,9 @@ describe('chat-completion — tools / toolChoice param surface', () => {
         ...Object.fromEntries(Array.from({ length: 3_000 }, (_, i) => [`k${i}`, undefined])),
       };
       expect(JSON.stringify(parameters).length).toBeLessThan(100);
-      expect(withParameters(parameters).error?.issues.map((i) => i.message)).toContain(
+      const result = withParameters(parameters);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
         'tool parameters exceed 4096 serialized characters'
       );
     });

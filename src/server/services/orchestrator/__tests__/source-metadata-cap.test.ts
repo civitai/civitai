@@ -39,6 +39,15 @@ describe('assertSourceMetadataWithinCap', () => {
     expect(() => assertSourceMetadataWithinCap(undefined, sourceMetadataMap)).not.toThrow();
   });
 
+  it('refuses metadata with more than 1,048,576 values', () => {
+    const at = { 'https://a/1.png': { s: new Array(1024 * 1024 - 4).fill(0) } };
+    expect(() => assertSourceMetadataWithinCap(undefined, at)).not.toThrow();
+    const over = { 'https://a/1.png': { s: new Array(1024 * 1024).fill(0) } };
+    expect(() => assertSourceMetadataWithinCap(undefined, over)).toThrow(
+      expect.objectContaining(TOO_LARGE)
+    );
+  });
+
   it('accepts ordinary metadata and no metadata', () => {
     expect(() => assertSourceMetadataWithinCap(undefined, undefined)).not.toThrow();
     expect(() =>

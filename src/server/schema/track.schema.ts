@@ -11,14 +11,12 @@ import { measureJsonLength } from '~/server/schema/blocks/json-length';
 /**
  * The longest free-form tracking payload (`details`, `filters`), in JSON characters. Measured
  * before anything serializes it, without building the string; an unserializable value is left to
- * the code that serializes it, as before. Every value JSON.stringify writes costs at least two
- * characters, so the value budget is half the cap.
+ * the code that serializes it, as before.
  */
 export const TRACK_FREEFORM_MAX_CHARS = 64 * 1024;
 const TRACK_FREEFORM_TOO_LARGE = `exceeds ${TRACK_FREEFORM_MAX_CHARS} serialized characters`;
 function freeformWithinCap(value: unknown) {
-  const meter = { visits: 0, chars: 0, scanned: 0, maxVisits: TRACK_FREEFORM_MAX_CHARS / 2 };
-  return measureJsonLength([value], TRACK_FREEFORM_MAX_CHARS, { meter }) !== 'over';
+  return measureJsonLength([value], TRACK_FREEFORM_MAX_CHARS) !== 'over';
 }
 const boundedFreeform = z
   .object({})

@@ -824,12 +824,8 @@ export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
  */
 const toolParametersSchema = z.unknown().transform((value, ctx) => {
   // The cap is checked before the value is serialized, without building the string. An
-  // unserializable value is left to the stringify below, so it gets that message. Every value
-  // JSON.stringify writes costs at least two characters, so the value budget is half the cap.
-  const measured = measureJsonLength([value], MAX_TOOL_PARAMETERS_CHARS, {
-    meter: { visits: 0, chars: 0, scanned: 0, maxVisits: MAX_TOOL_PARAMETERS_CHARS / 2 },
-  });
-  if (measured === 'over') {
+  // unserializable value is left to the stringify below, so it gets that message.
+  if (measureJsonLength([value], MAX_TOOL_PARAMETERS_CHARS) === 'over') {
     ctx.addIssue({ code: 'custom', message: TOOL_PARAMETERS_OVER_CAP_MESSAGE });
     return z.NEVER;
   }

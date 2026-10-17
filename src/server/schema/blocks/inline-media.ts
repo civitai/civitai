@@ -34,7 +34,7 @@ export type InlineMediaBudget = {
   maxVisits?: number;
 };
 
-/** Returned when the body holds more than `INLINE_MEDIA_MAX_VISITS` values. */
+/** Returned when the body holds more values than the budget allows (`INLINE_MEDIA_MAX_VISITS`). */
 export const INLINE_MEDIA_TOO_MANY_VALUES = 'too-many-values';
 
 /**

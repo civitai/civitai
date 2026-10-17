@@ -459,20 +459,12 @@ const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 const JSONB_UNSTORABLE_MESSAGE = 'value contains a NUL character or an unpaired surrogate';
 
 /**
- * Values one shared value's measure may visit. Every value JSON.stringify writes costs at least
- * two bytes of the cap (a one-character value and its separator), so a value within the cap that
- * writes out every entry needs no more. One with more (only possible with entries JSON.stringify
- * leaves out, such as `undefined` properties) is refused as over the cap rather than walked further.
- */
-const SHARED_VALUE_MAX_VISITS = SHARED_VALUE_BYTE_CAP / 2;
-
-/**
  * One measure of a shared value, in a single bounded pass (`jsonLengthWithin`) over the value as
  * JSON.stringify would write it, without building that string. Its work is bounded by the cap and
- * by SHARED_VALUE_MAX_VISITS values.
+ * by `measureJsonLength`'s value budget (half the cap).
  *
  * - `'over-cap'` — its JSON is longer than SHARED_VALUE_BYTE_CAP in UTF-8 bytes, the unit the cap
- *   is enforced in, or it holds more than SHARED_VALUE_MAX_VISITS values. Checked FIRST: an
+ *   is enforced in, or it holds more values than that budget. Checked FIRST: an
  *   over-cap value is refused for its size whatever else it holds. (The flag below only covers the
  *   whole value when the measure finished, so it must never be read before this.)
  * - `'unserializable'` — JSON.stringify would throw on it (a BigInt, a cycle, a throwing `toJSON`
@@ -490,7 +482,6 @@ export function measureSharedValue(
   value: unknown,
   meter: JsonLengthMeter = { visits: 0, chars: 0, scanned: 0 }
 ): 'ok' | 'over-cap' | 'unserializable' | 'unstorable' {
-  meter.maxVisits = SHARED_VALUE_MAX_VISITS;
   const measured = measureJsonLength([value], SHARED_VALUE_BYTE_CAP, { unit: 'utf8', meter });
   if (measured === 'over') return 'over-cap';
   if (measured === 'unserializable') return 'unserializable';

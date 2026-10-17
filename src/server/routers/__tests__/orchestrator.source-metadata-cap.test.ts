@@ -54,10 +54,15 @@ describe('generateFromGraph source metadata cap', () => {
     const sourceMetadataMap = Object.fromEntries(
       Array.from({ length: 5_000 }, (_, i) => [`https://a/${i}.png`, { params: node }])
     );
-    expect(await errorOf(caller().generateFromGraph({ input: {}, sourceMetadataMap }))).toEqual({
-      code: 'PAYLOAD_TOO_LARGE',
-      message: 'sourceMetadata is too large',
-    });
+    const TOO_LARGE = { code: 'PAYLOAD_TOO_LARGE', message: 'sourceMetadata is too large' };
+    expect(await errorOf(caller().generateFromGraph({ input: {}, sourceMetadataMap }))).toEqual(
+      TOO_LARGE
+    );
+    // The single-image field is capped too.
+    const sourceMetadata = { resources: new Array(5_000).fill(node) };
+    expect(await errorOf(caller().generateFromGraph({ input: {}, sourceMetadata }))).toEqual(
+      TOO_LARGE
+    );
     expect(h.buildGenerationContext).not.toHaveBeenCalled();
   });
 
