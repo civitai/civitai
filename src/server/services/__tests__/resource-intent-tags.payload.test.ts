@@ -240,6 +240,16 @@ describe('resource-intent-tags snapshot codec', () => {
       'addon postings fit presence',
     ],
     [
+      'near lengths that sum short of the near ids',
+      (d) => (d.vocabulary.nearLen = Buffer.from([2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
+      'near pointer bounds',
+    ],
+    [
+      'near lengths that sum past the near ids',
+      (d) => (d.vocabulary.nearLen = Buffer.from([2, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
+      'near pointer bounds',
+    ],
+    [
       'a near pointer of the wrong length',
       (d) => (d.vocabulary.nearLen = Buffer.from([2, 2, 0, 0, 0, 0, 0, 0])),
       'near pointer length',

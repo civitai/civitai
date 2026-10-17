@@ -113,7 +113,7 @@ describe('resource-intent-tags sources', () => {
   });
 
   it('pins the content-image moderation predicate whole, flagged attachments included', () => {
-    // The whole predicate, pinned: each clause is a moderation rule a reword could drop.
+    // Each clause is a moderation rule a reword could drop.
     expect(CONTENT_IMAGE_ELIGIBLE.sql.replace(/\s+/g, ' ')).toBe(
       `AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0 AND i.ingestion = 'Scanned' ` +
         `AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL ` +
