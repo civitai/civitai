@@ -1,7 +1,7 @@
 ---
 paths:
   - "**/*scan*"
-  - "**/*label*"
+  - "**/*label-store*"
   - "**/*appeal*"
   - "**/*moderat*"
 ---

@@ -1,29 +1,19 @@
--- The label store: the one record of every moderation judgement, from people and from models, that the
--- moderation pipelines train from and write into. Every feature that labels content writes through these
--- functions; queue tables (claims, quotas, leases) stay with each feature.
---
---   subject     the thing judged, one row per distinct input. No FK to site tables, so judgements
---               outlive the image or model they describe.
---   label       one row per human judgement. Never updated; a relabel adds a row.
---   prediction  one row per model output, kept apart from human labels.
---   consensus   human agreement per (subject, question), with the latest prediction beside it.
---   change      every change a reader must apply: new labels and predictions, consensus updates,
---               exclusions and deletions, in one ordered feed.
+-- The label store: one record of every moderation judgement, from people and models. Features write
+-- through these functions; see docs/features/label-store.md.
 --
 -- Its own schema, outside Prisma: the drift guard reads `public` only. Apply as the owner of the site
 -- tables, so the site's own writes need no grants. Two scoped roles, created by infra, get the rest: a
 -- reader that sees the views at the bottom, and a writer that can only submit predictions.
 --
--- A judgement recorded from a site write (a vote, a flag, an appeal decision) must never fail that write.
--- Those paths catch their own errors into `record_failure`, which is the count to watch.
--- `submit_prediction` is for pipelines and raises, so a caller learns its input was refused.
+-- Site-write paths catch their own errors into record_failure (the count to watch), so a bad label never
+-- fails the vote, flag or appeal that produced it; a statement timeout still cancels both.
+-- submit_prediction raises.
 --
--- Apply order: after the scan label migrations (20261022130000 onwards) and the appeal decision record
--- (20261020120000, 20261021120000), whose tables it hooks into. Then run
--- `SELECT * FROM label_store.backfill()` once for the rows that predate the triggers; it is idempotent.
+-- Apply after 20261023140000 (scan label copy sweep) and 20261020120000 (appeal decision record). Then
+-- run SELECT * FROM label_store.backfill() once; it is idempotent.
 --
--- 🔴 CREATE OR REPLACE TRIGGER takes a SHARE ROW EXCLUSIVE lock on its table (blocks writes, not reads).
--- Apply one statement at a time and re-run on lock timeout.
+-- 🔴 CREATE OR REPLACE TRIGGER takes SHARE ROW EXCLUSIVE (blocks writes) on each source table. The file
+-- sets lock_timeout = 5s; re-run on a timeout.
 
 CREATE SCHEMA IF NOT EXISTS label_store;
 
@@ -41,7 +31,7 @@ CREATE TABLE IF NOT EXISTS label_store.subject (
   "id"             BIGSERIAL PRIMARY KEY,
   "subjectType"    TEXT NOT NULL,
   "subjectId"      TEXT NOT NULL,
-  -- sha256 of the normalised text, or of the storage key for media (a new upload is a new key).
+  -- sha256 of the text as given, or of the image's storage key (a new upload is a new key).
   "contentHash"    TEXT NOT NULL,
   "pHash"          BIGINT,
   "bytesRef"       TEXT,
@@ -84,10 +74,10 @@ CREATE TABLE IF NOT EXISTS label_store.prediction (
   "questionVersion" INTEGER NOT NULL DEFAULT 1,
   "value"           TEXT NOT NULL,
   "confidence"      REAL,
-  "scores"          JSONB,           -- per-class scores
+  "scores"          JSONB,
   "modelRef"        TEXT NOT NULL,   -- model@version
-  "versions"        JSONB,           -- policy, threshold, preprocessing ... versions
-  "inputHash"       TEXT,            -- sha256 of exactly what the model was given
+  "versions"        JSONB,
+  "inputHash"       TEXT,
   "detail"          JSONB,
   "sourceRef"       TEXT NOT NULL UNIQUE,
   "predictedAt"     TIMESTAMPTZ(3) NOT NULL,
@@ -143,8 +133,7 @@ CREATE TABLE IF NOT EXISTS label_store.record_failure (
   "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT now()
 );
 
--- A stable, keyed hash of a user id. The kinds hash differently, so an owner cannot be linked to a
--- labeller by comparing hashes.
+-- Kinds hash differently, so an owner hash cannot be matched to a labeller hash.
 CREATE OR REPLACE FUNCTION label_store.person_hash(p_kind TEXT, p_user_id INTEGER)
 RETURNS TEXT
 LANGUAGE sql
@@ -178,8 +167,8 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- An image subject's owner is looked up while the image exists, so callers outside the site (pipelines)
--- still produce subjects that an erasure can find.
+-- An image subject with no owner gets one from public."Image" while the image exists, so
+-- pipeline-submitted subjects stay erasable.
 CREATE OR REPLACE FUNCTION label_store.upsert_subject(
   p_subject_type  TEXT,
   p_subject_id    TEXT,
@@ -236,7 +225,6 @@ DECLARE
   v_excl    BOOLEAN;
   v_changed BOOLEAN;
 BEGIN
-  -- Each person counts once, with their latest answer.
   WITH latest AS (
     SELECT DISTINCT ON (l."labellerRef") l."value"
     FROM label_store.label l
@@ -252,7 +240,7 @@ BEGIN
   ORDER BY t.n DESC, t."value"
   LIMIT 1;
 
-  -- Consensus is about people; a subject only a model has judged has none.
+  -- No human labels, no consensus row.
   IF v_total IS NULL THEN
     RETURN;
   END IF;
@@ -308,8 +296,7 @@ BEGIN
 END;
 $$;
 
--- The two writers. Both raise on bad input; the wrappers below decide whether a caller sees it.
--- They return the new row's id, or NULL when the sourceRef was already recorded.
+-- Raise on bad input. Return the new id, or NULL when sourceRef was already recorded.
 CREATE OR REPLACE FUNCTION label_store.put_label(
   p_subject BIGINT, p_family TEXT, p_question TEXT, p_question_version INTEGER, p_value TEXT,
   p_labeller_kind TEXT, p_labeller_ref TEXT, p_source_ref TEXT, p_labelled_at TIMESTAMPTZ,
@@ -376,8 +363,8 @@ BEGIN
 END;
 $$;
 
--- For site code: records a human label and never raises; a failure goes to `record_failure`.
--- Pass the person as a user id: it is hashed here, so no caller stores a raw id in the store.
+-- Site code: hashes the user id here, so no caller stores a raw id. Failures go to record_failure and
+-- return NULL.
 CREATE OR REPLACE FUNCTION label_store.record_label(
   p_subject_type     TEXT,
   p_subject_id       TEXT,
@@ -424,7 +411,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- For site code: records a model output and never raises.
+-- As record_label, for a model output.
 CREATE OR REPLACE FUNCTION label_store.record_prediction(
   p_subject_type     TEXT,
   p_subject_id       TEXT,
@@ -462,7 +449,6 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- For pipelines, through the writer role: submits a model output and raises if it is refused.
 CREATE OR REPLACE FUNCTION label_store.submit_prediction(
   p_subject_type     TEXT,
   p_subject_id       TEXT,
@@ -497,8 +483,8 @@ BEGIN
 END;
 $$;
 
--- Takes a site item out of training. 'erasure' deletes its subjects with everything about them; any
--- other reason keeps the judgements (so counts stay honest) and drops the content.
+-- 'erasure' deletes the subjects and everything under them; any other reason keeps the judgements (so
+-- counts stay honest) and drops snapshot and bytes.
 CREATE OR REPLACE FUNCTION label_store.exclude(p_subject_type TEXT, p_subject_id TEXT, p_reason TEXT)
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -538,7 +524,6 @@ BEGIN
 END;
 $$;
 
--- User erasure: every subject the user owns.
 CREATE OR REPLACE FUNCTION label_store.erase_owner(p_user_id INTEGER)
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -558,12 +543,9 @@ BEGIN
 END;
 $$;
 
--- ---------------------------------------------------------------------------------------------------
--- Site producers. Each takes a source row, so the trigger and the backfill run the same code.
--- ---------------------------------------------------------------------------------------------------
+-- Site producers take a source row, so the trigger and the backfill run the same code.
 
--- A scanner flag is a model answering "block" to image.block. Its input is the image, or for the prompt
--- scanner the prompt. Control-sample rows are a sampling marker, not a verdict, and record nothing.
+-- 'control-sample' flags are a sampling marker, not a verdict, and record nothing.
 CREATE OR REPLACE FUNCTION label_store.from_scan_label_flag(f public."ScanLabelFlag")
 RETURNS BIGINT
 LANGUAGE plpgsql
@@ -617,9 +599,10 @@ SECURITY DEFINER
 SET search_path = label_store, public, pg_temp
 AS $$
 DECLARE
-  v_src TEXT := 'ScanLabelVote:' || v."itemId" || ':' || label_store.person_hash('labeller', v."userId");
+  v_src TEXT := 'ScanLabelVote:' || v."itemId";
   im    RECORD;
 BEGIN
+  v_src := v_src || ':' || label_store.person_hash('labeller', v."userId");
   SELECT i."imageId" AS id, m."url", m."pHash", m."userId", m."meta"
   INTO im
   FROM public."ScanLabelItem" i JOIN public."Image" m ON m."id" = i."imageId"
@@ -688,7 +671,8 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- Bytes: a copy in the scan label store becomes the subject's bytes for the bucket's 30-day life.
+-- 30 days must not exceed the copy bucket's expiry (set outside this repo); training_examples hides the
+-- pointer after bytesExpireAt.
 CREATE OR REPLACE FUNCTION label_store.from_scan_label_copy(i public."ScanLabelItem")
 RETURNS VOID
 LANGUAGE plpgsql
@@ -764,8 +748,8 @@ BEGIN
 END;
 $$;
 
--- Rows that predate the triggers. Idempotent (sourceRef), so a re-run adds only what is missing. Order
--- does not matter: every judgement recomputes its subject's consensus from all of them so far.
+-- Idempotent via sourceRef. Copies and withdrawals only update existing subjects, so they run after the
+-- judgements, and withdrawals after copies.
 CREATE OR REPLACE FUNCTION label_store.backfill()
 RETURNS TABLE ("source" TEXT, "rows" BIGINT, "added" BIGINT)
 LANGUAGE plpgsql
@@ -791,10 +775,8 @@ BEGIN
 END;
 $$;
 
--- ---------------------------------------------------------------------------------------------------
--- What readers see. Views run with their owner's rights, so the reader role needs no grant on the
--- tables, and the owner hash and the key never reach it.
--- ---------------------------------------------------------------------------------------------------
+-- Readers see only these views, which run with their owner's rights. Never select "ownerHash" or the
+-- secret here.
 
 CREATE OR REPLACE VIEW label_store.labels_feed AS
 SELECT
@@ -814,7 +796,8 @@ SELECT
 FROM label_store.prediction p
 JOIN label_store.subject s ON s."id" = p."subjectId";
 
--- Pull by id. A reader that applies every row in order holds the same state as the store.
+-- Ids are assigned before commit, so a row can appear after a higher id: readers re-read a window behind
+-- their cursor.
 CREATE OR REPLACE VIEW label_store.changes_feed AS
 SELECT "id", "kind", "subjectId", "question", "questionVersion", "refId", "at"
 FROM label_store.change;
@@ -833,8 +816,7 @@ WHERE c."trainable" AND s."excludedAt" IS NULL;
 CREATE OR REPLACE VIEW label_store.pipeline_failures AS
 SELECT * FROM label_store.training_examples WHERE "modelAgrees" = false;
 
--- Only the owner calls the functions; the writer role is granted submit_prediction alone, so it cannot
--- record a human label or hash a user id.
+-- Owner-only, except submit_prediction, granted to the writer below.
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA label_store FROM PUBLIC;
 
 -- The reader and writer roles are created by infra; grant when they exist. Re-run this block after.
@@ -853,10 +835,6 @@ BEGIN
   END IF;
 END;
 $$;
-
--- ---------------------------------------------------------------------------------------------------
--- Triggers. AFTER, so the source row is already written; the functions never raise.
--- ---------------------------------------------------------------------------------------------------
 
 SET lock_timeout = '5s';
 
