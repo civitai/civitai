@@ -5,6 +5,7 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { ITEM_HOLDER_LOCK_CLASS } from '~/server/services/item-holder-lock';
 import {
   installShopPurchaseClaimFake,
   shopPurchaseClaimFake,
@@ -15,7 +16,7 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
   claims.rollbackOnThrow(() =>
     fn({
       cosmeticShopPurchaseClaim: claims.txDelegate,
-      $executeRaw: (...a: unknown[]) => executeRaw(...a),
+      $executeRaw: (...a: unknown[]) => (isHolderLock(a) ? holderLock(...a) : executeRaw(...a)),
       userCosmetic: {
         findMany: (...a: unknown[]) => ownedFindMany(...a),
         createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
@@ -45,6 +46,10 @@ const spend = vi.fn();
 const pay = vi.fn();
 const refund = vi.fn();
 const executeRaw = vi.fn();
+// The per-user grant lock (item-holder-lock.ts), kept apart from the consumable grants counted below.
+const holderLock = vi.fn();
+const isHolderLock = (a: unknown[]) =>
+  (a[0] as readonly string[]).join('').includes('pg_advisory_xact_lock');
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 const createManyComponents = vi.fn();
 const createManyUserCosmetic = vi.fn();
@@ -466,6 +471,23 @@ describe.each(SHAPES)(
       expect(charged).toBeGreaterThan(0);
     });
 
+    it("takes the buyer's grant lock inside the grant transaction", async () => {
+      await setup();
+      expect(holderLock).toHaveBeenCalledTimes(1);
+      const [sql, lockClass, lockedUser] = holderLock.mock.calls[0] as [
+        readonly string[],
+        number,
+        number
+      ];
+      expect(lockClass).toBe(ITEM_HOLDER_LOCK_CLASS);
+      expect(lockedUser).toBe(buyerId);
+      // Before the grant reads what the buyer owns and writes, or it excludes nothing.
+      expect(holderLock.mock.invocationCallOrder[0]).toBeLessThan(
+        purchaseCreate.mock.invocationCallOrder[0]
+      );
+      expect(sql.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
+    });
+
     it('charges exactly what the pricing rules say, independently computed', async () => {
       const { charged } = await setup();
       expect(charged).toBe(expectedCharge());
@@ -841,6 +863,7 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
     ).rejects.toThrow();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
+    expect(holderLock).not.toHaveBeenCalled();
     expect(pay).not.toHaveBeenCalled();
   });
 });
@@ -897,6 +920,7 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     );
     expect(spend).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
+    expect(holderLock).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
   });
 
@@ -963,6 +987,7 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     ).rejects.toThrow(/nothing here for you to buy/i);
     expect(spend).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
+    expect(holderLock).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
   });
 
@@ -983,6 +1008,7 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     expect(spend).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
+    expect(holderLock).not.toHaveBeenCalled();
   });
 
   it('refuses when the discount covers the whole price', async () => {
@@ -1013,6 +1039,7 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
       // error type here, so an unmatched one pins none of them.
     ).rejects.toThrow(/your own pack/i);
     expect(executeRaw).not.toHaveBeenCalled();
+    expect(holderLock).not.toHaveBeenCalled();
   });
 });
 
@@ -1097,6 +1124,7 @@ describe('purchaseCosmeticPack — generated member combinations', () => {
       expect(spend).not.toHaveBeenCalled();
       expect(createManyUserCosmetic).not.toHaveBeenCalled();
       expect(executeRaw).not.toHaveBeenCalled();
+      expect(holderLock).not.toHaveBeenCalled();
       return;
     }
     const charged: number = spend.mock.calls[0]?.[0]?.amount ?? 0;

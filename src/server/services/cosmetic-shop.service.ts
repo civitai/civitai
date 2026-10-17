@@ -81,6 +81,7 @@ import {
   resumeShopPurchase,
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
+import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -1141,15 +1142,15 @@ export const purchaseCosmeticShopItem = async ({
   // as state unknown: if a different purchase granted it meanwhile, resuming
   // could charge again for something they already hold, so that claim is
   // settled by hand instead.
-  await runPurchaseChecks(pendingClaim, async () => {
-    // Stickers are deliberately absent: they are spent rather than worn, so a
-    // repeat purchase is another batch of uses rather than a mistake.
-    const onlySupportsSinglePurchase =
-      singleCosmetic.type == CosmeticType.Badge ||
-      singleCosmetic.type == CosmeticType.NamePlate ||
-      singleCosmetic.type == CosmeticType.ProfileBackground ||
-      singleCosmetic.type == CosmeticType.ProfileDecoration;
+  // Stickers are deliberately absent: they are spent rather than worn, so a
+  // repeat purchase is another batch of uses rather than a mistake.
+  const onlySupportsSinglePurchase =
+    singleCosmetic.type == CosmeticType.Badge ||
+    singleCosmetic.type == CosmeticType.NamePlate ||
+    singleCosmetic.type == CosmeticType.ProfileBackground ||
+    singleCosmetic.type == CosmeticType.ProfileDecoration;
 
+  await runPurchaseChecks(pendingClaim, async () => {
     if (onlySupportsSinglePurchase) {
       // Confirm the user doesn't own it already:
       const userCosmetic = await dbWrite.userCosmetic.findFirst({
@@ -1260,6 +1261,17 @@ export const purchaseCosmeticShopItem = async ({
   try {
     const data = await dbWrite.$transaction(async (tx) => {
       await markClaimPaid(tx, transactionId);
+      await lockItemHolder(tx, userId);
+
+      // The ownership check above ran before the charge and outside this lock, so a mystery box
+      // open may have granted the cosmetic since. Throwing here refunds the charge.
+      if (onlySupportsSinglePurchase) {
+        const owned = await tx.userCosmetic.findFirst({
+          where: { userId, cosmeticId: singleCosmeticId },
+          select: { userId: true },
+        });
+        if (owned) throw new Error('cosmetic granted to the buyer while the purchase was charging');
+      }
 
       // Create purchase:
       await tx.userCosmeticShopPurchases.create({

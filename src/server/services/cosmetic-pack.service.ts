@@ -40,6 +40,7 @@ import {
   type ShopPurchaseClaim,
   type ShopPurchaseStart,
 } from '~/server/services/shop-purchase-charge';
+import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -670,6 +671,7 @@ export const purchaseCosmeticPack = async ({
   try {
     await dbWrite.$transaction(async (tx) => {
       await markClaimPaid(tx, transactionId);
+      await lockItemHolder(tx, userId);
 
       await tx.userCosmeticShopPurchases.create({
         data: {
