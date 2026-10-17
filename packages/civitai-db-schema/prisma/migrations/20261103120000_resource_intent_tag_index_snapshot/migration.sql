@@ -18,6 +18,15 @@
 -- row FOR SHARE, so an un-freeze running concurrently waits for the insert to finish (or the insert
 -- waits for it, then sees the new status); and the vocabulary trigger refuses moving a vocabulary
 -- back to 'candidate' while a ready snapshot names it.
+--
+-- Privileges: FOR SHARE needs UPDATE on at least one column of the locked table, so a snapshot
+-- writer that does not own "ResourceIntentVocabulary" also needs
+--   GRANT UPDATE ("vocabVersion") ON "ResourceIntentVocabulary" TO <writer>;
+-- besides SELECT on it and SELECT, INSERT on this table (and UPDATE here to retire rows). Without it
+-- every insert fails with "permission denied for table ResourceIntentVocabulary", after the upload.
+-- That column grant can change nothing: a new "vocabVersion" fails the table's sha256 CHECK (and the
+-- foreign key while a snapshot names it), so only a no-op update is possible. The table owner
+-- needs no grant.
 
 SET lock_timeout = '3s';
 

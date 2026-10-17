@@ -230,6 +230,21 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
     ]);
   });
 
+  // STRUCTURAL PIN, not behaviour: PGlite has one connection, so no test here can show the guard's
+  // row lock blocking a concurrent un-freeze. The behavioural evidence is the two-connection race
+  // matrix run on PostgreSQL 16 (PR #6168): without FOR SHARE an un-freeze and an insert both commit.
+  it('the guard reads the vocabulary row FOR SHARE (structural pin)', async () => {
+    const { db } = await freshDb();
+    const [{ def }] = (
+      await db.query<{ def: string }>(
+        `SELECT pg_get_functiondef('"ResourceIntentTagIndexSnapshot_guard"'::regproc) AS def`
+      )
+    ).rows;
+    expect(def).toMatch(
+      /FROM "ResourceIntentVocabulary"\s+WHERE "vocabVersion" = NEW\."vocabVersion" AND "status" = 'frozen'\s+FOR SHARE;/
+    );
+  });
+
   it('a row names an existing vocabulary, which cannot then be deleted', async () => {
     const { db } = await freshDb();
     // The guard's frozen check would refuse first; with only it off, the foreign key refuses.
