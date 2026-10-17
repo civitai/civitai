@@ -1,6 +1,11 @@
 import { createHash } from 'crypto';
-import { GetObjectCommand, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
-import { describe, expect, it, vi } from 'vitest';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  type S3Client,
+} from '@aws-sdk/client-s3';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { serverSchema } from '~/env/server-schema';
 import {
@@ -108,6 +113,142 @@ describe('s3TagIndexObjects', () => {
     expect((err as Error).message).toMatch(/is 3 bytes/);
   });
 
+  it('an abort stops the download mid-stream and destroys the body', async () => {
+    const abort = new AbortController();
+    const destroy = vi.fn();
+    const body = {
+      destroy,
+      async *[Symbol.asyncIterator]() {
+        yield Uint8Array.of(1, 2);
+        abort.abort();
+        yield Uint8Array.of(3);
+        yield Uint8Array.of(4);
+      },
+    };
+    const sent: { abortSignal?: AbortSignal }[] = [];
+    const s3 = {
+      send: vi.fn(async (_cmd: unknown, opts: { abortSignal?: AbortSignal }) => {
+        sent.push(opts);
+        return { ContentLength: 4, Body: body };
+      }),
+    } as unknown as S3Client;
+    const e = await objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    expect((e as Error).name).toBe('AbortError');
+    expect(destroy).toHaveBeenCalled();
+    expect(sent[0].abortSignal).toBe(abort.signal);
+    // Already aborted: nothing is sent.
+    await expect(objectsOver(s3).get('k', 4, abort.signal)).rejects.toThrow();
+    expect(sent).toHaveLength(1);
+  });
+
+  it.each([
+    ['fails with a premature close', true],
+    ['simply ends', false],
+  ])(
+    'a body the abort destroys, which then %s, is reported as the abort, not a short object',
+    async (_what, throws) => {
+      const abort = new AbortController();
+      let destroyed = false;
+      const body = {
+        destroy: () => {
+          destroyed = true;
+        },
+        async *[Symbol.asyncIterator]() {
+          yield Uint8Array.of(1, 2);
+          abort.abort();
+          await new Promise((r) => setTimeout(r, 0));
+          if (destroyed && throws)
+            throw Object.assign(new Error('premature close'), {
+              code: 'ERR_STREAM_PREMATURE_CLOSE',
+            });
+          if (destroyed) return;
+          yield Uint8Array.of(3, 4);
+        },
+      };
+      const s3 = {
+        send: vi.fn(async () => ({ ContentLength: 4, Body: body })),
+      } as unknown as S3Client;
+      const e = await objectsOver(s3)
+        .get('k', 4, abort.signal)
+        .catch((x: unknown) => x);
+      expect((e as Error).name).toBe('AbortError');
+      expect(e).not.toBeInstanceOf(TagIndexPayloadSizeError);
+    }
+  );
+
+  it('an abort that lands while the request is in flight allocates nothing for the body', async () => {
+    const abort = new AbortController();
+    const alloc = vi.spyOn(Buffer, 'allocUnsafe');
+    onTestFinished(() => alloc.mockRestore());
+    const s3 = {
+      send: vi.fn(async () => {
+        abort.abort();
+        return {
+          ContentLength: 4,
+          Body: {
+            destroy: vi.fn(),
+            async *[Symbol.asyncIterator]() {
+              yield* [];
+            },
+          },
+        };
+      }),
+    } as unknown as S3Client;
+    const e = await objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    expect((e as Error).name).toBe('AbortError');
+    expect(alloc.mock.calls.filter(([n]) => n === 4)).toEqual([]);
+  });
+
+  it('an abort stops reading a body that cannot be destroyed, at its next chunk', async () => {
+    const abort = new AbortController();
+    let yielded = 0;
+    const body = {
+      async *[Symbol.asyncIterator]() {
+        for (const c of [Uint8Array.of(1), Uint8Array.of(2), Uint8Array.of(3), Uint8Array.of(4)]) {
+          yielded++;
+          if (yielded === 2) abort.abort();
+          yield c;
+        }
+      },
+    };
+    const s3 = {
+      send: vi.fn(async () => ({ ContentLength: 4, Body: body })),
+    } as unknown as S3Client;
+    const e = await objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    expect((e as Error).name).toBe('AbortError');
+    expect(yielded).toBe(2);
+  });
+
+  it('an abort while the body stalls destroys it at once, and is reported as the abort', async () => {
+    const abort = new AbortController();
+    let stalled!: () => void;
+    const body = Object.assign(
+      (async function* () {
+        yield Uint8Array.of(1, 2);
+        await new Promise<void>((r) => (stalled = r));
+        yield Uint8Array.of(3, 4);
+      })(),
+      { destroy: vi.fn(() => stalled?.()) }
+    );
+    const s3 = {
+      send: vi.fn(async () => ({ ContentLength: 4, Body: body })),
+    } as unknown as S3Client;
+    const pending = objectsOver(s3)
+      .get('k', 4, abort.signal)
+      .catch((x: unknown) => x);
+    await new Promise((r) => setTimeout(r, 5));
+    abort.abort();
+    const e = await pending;
+    expect(body.destroy).toHaveBeenCalled();
+    expect((e as Error).name).toBe('AbortError');
+  });
+
   it('reports a missing key as unservable, and rethrows any other failure (a missing bucket included) as it is', async () => {
     const notFound = Object.assign(new Error('gone'), {
       name: 'NoSuchKey',
@@ -154,6 +295,40 @@ describe('s3TagIndexObjects', () => {
     setEnv({ [name]: 'shared-bucket' });
     expect(() => s3TagIndexObjects({ s3 })).toThrow(new RegExp(`must not be the ${name} bucket`));
     setEnv({ [name]: undefined });
+  });
+});
+
+describe('s3TagIndexObjects deleting (retention)', () => {
+  it('has no way to list the bucket: retention needs no ListBucket', () => {
+    expect(Object.keys(objectsOver(fakeS3({}).s3)).sort()).toEqual([
+      'delete',
+      'get',
+      'prefix',
+      'put',
+    ]);
+  });
+
+  const HEX = 'c'.repeat(64);
+
+  it('deletes a snapshot key, and refuses any other key without sending anything', async () => {
+    const { s3, sent } = fakeS3({});
+    const objects = objectsOver(s3);
+    await objects.delete(`p/${HEX}`);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBeInstanceOf(DeleteObjectCommand);
+    expect((sent[0] as DeleteObjectCommand).input).toEqual({
+      Bucket: 'snapshots',
+      Key: `p/${HEX}`,
+    });
+    for (const key of [
+      `q/${HEX}`,
+      'p/README',
+      `p/${HEX.toUpperCase()}`,
+      `p/x/${HEX.slice(2)}`,
+      `${HEX}`,
+    ])
+      await expect(objects.delete(key)).rejects.toThrow(/not a tag index snapshot key/);
+    expect(sent).toHaveLength(1);
   });
 });
 

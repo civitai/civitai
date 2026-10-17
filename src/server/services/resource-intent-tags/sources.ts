@@ -331,8 +331,11 @@ export type GenObservation = {
 
 /**
  * The generator sample's slice: rows in each UTC hour's first `sliceMinutes` minutes (the
- * prototype's sample). The one predicate for every query that reads or counts the sample, so what
- * the coverage gate counts is what the build reads.
+ * prototype's sample). The one slice predicate for every query that reads or counts the sample, so
+ * the coverage gate counts hours over the same slice the build reads. It does not count what the
+ * build keeps: the read also drops observations by deleted accounts and those whose prompt has no
+ * stored text, which the gate counts, so an hour can pass the gate while the build reads nothing
+ * from it.
  */
 export function genSliceCondition(sliceMinutes: number): string {
   if (!Number.isInteger(sliceMinutes) || sliceMinutes < 1 || sliceMinutes > 60)

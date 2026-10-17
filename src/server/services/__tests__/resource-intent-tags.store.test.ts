@@ -583,6 +583,16 @@ describe('loadLatestSnapshot', () => {
     await setCreated(newer.manifest.id, 2);
     expect((await latestReadyManifest(setup.sql, SPEC))?.id).toBe(newer.manifest.id);
     expect((await latestReadyManifest(setup.sql, OTHER_SPEC))?.specHash).toBe(OTHER_SPEC);
+    // exceptIds: the newest ready row under the spec that none of them names.
+    expect((await latestReadyManifest(setup.sql, SPEC, [newer.manifest.id]))?.id).toBe(
+      older.manifest.id
+    );
+    expect(
+      await latestReadyManifest(setup.sql, SPEC, [newer.manifest.id, older.manifest.id])
+    ).toBeNull();
+    expect((await latestReadyManifest(setup.sql, SPEC, [older.manifest.id]))?.id).toBe(
+      newer.manifest.id
+    );
 
     await db.query(
       `UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired' WHERE "id" = $1`,
