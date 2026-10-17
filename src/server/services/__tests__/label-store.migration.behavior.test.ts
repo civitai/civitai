@@ -15,7 +15,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261101120000_label_store/migration.sql'
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/migration.sql'
 );
 
 const db = { pg: null as unknown as PGlite };
@@ -89,11 +89,15 @@ beforeAll(async () => {
   await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
   // The scoped roles infra creates, then the migration's grant block re-run as the header says.
   await db.pg.exec(`CREATE ROLE label_reader; CREATE ROLE label_writer; CREATE ROLE site_app;`);
-  const grant = readFileSync(MIGRATION, 'utf8').match(/DO \$\$\r?\nBEGIN\r?\n {2}IF EXISTS[\s\S]*?\r?\n\$\$;/);
+  const grant = readFileSync(MIGRATION, 'utf8').match(
+    /DO \$\$\r?\nBEGIN\r?\n {2}IF EXISTS[\s\S]*?\r?\n\$\$;/
+  );
   if (!grant) throw new Error('grant block not found in the migration');
   await db.pg.exec(grant[0]);
   // A site role that writes the source tables but owns nothing in the store.
-  await db.pg.exec(`GRANT INSERT, SELECT ON "ScanLabelVote", "ScanLabelItem", "Image" TO site_app;`);
+  await db.pg.exec(
+    `GRANT INSERT, SELECT ON "ScanLabelVote", "ScanLabelItem", "Image" TO site_app;`
+  );
 });
 
 afterAll(async () => {
@@ -244,12 +248,25 @@ describe('predictions', () => {
     await flag('wf-prompt', 'xguard-prompt');
 
     expect(await rows(`SELECT * FROM label_store.labels_feed`)).toHaveLength(0);
-    const preds = await rows<{ sourceRef: string; value: string; modelRef: string; inputHash: string }>(
-      `SELECT * FROM label_store.predictions_feed ORDER BY "sourceRef"`
-    );
+    const preds = await rows<{
+      sourceRef: string;
+      value: string;
+      modelRef: string;
+      inputHash: string;
+    }>(`SELECT * FROM label_store.predictions_feed ORDER BY "sourceRef"`);
     expect(preds).toEqual([
-      expect.objectContaining({ sourceRef: 'ScanLabelFlag:wf-prompt', value: 'block', modelRef: 'scanner@1', inputHash: sha256('a cat') }),
-      expect.objectContaining({ sourceRef: 'ScanLabelFlag:wf-upload', value: 'block', modelRef: 'scanner@1', inputHash: sha256('u-501') }),
+      expect.objectContaining({
+        sourceRef: 'ScanLabelFlag:wf-prompt',
+        value: 'block',
+        modelRef: 'scanner@1',
+        inputHash: sha256('a cat'),
+      }),
+      expect.objectContaining({
+        sourceRef: 'ScanLabelFlag:wf-upload',
+        value: 'block',
+        modelRef: 'scanner@1',
+        inputHash: sha256('u-501'),
+      }),
     ]);
   });
 
@@ -271,7 +288,11 @@ describe('predictions', () => {
     await flag();
     for (const m of MODS) await vote(m, true);
 
-    expect(await consensus()).toMatchObject({ outcome: 'block', modelAgrees: true, trainable: true });
+    expect(await consensus()).toMatchObject({
+      outcome: 'block',
+      modelAgrees: true,
+      trainable: true,
+    });
     expect(await rows(`SELECT * FROM label_store.pipeline_failures`)).toHaveLength(0);
   });
 
@@ -300,9 +321,12 @@ describe('the writer role (pipelines)', () => {
       expect((await submit('r')).rows[0].id).toBeGreaterThan(0);
     });
 
-    const [p] = await rows<{ family: string; scores: unknown; versions: unknown; inputHash: string }>(
-      `SELECT * FROM label_store.predictions_feed`
-    );
+    const [p] = await rows<{
+      family: string;
+      scores: unknown;
+      versions: unknown;
+      inputHash: string;
+    }>(`SELECT * FROM label_store.predictions_feed`);
     expect(p).toMatchObject({
       family: 'pipeline',
       scores: { pg: 0.1, r: 0.8 },
@@ -330,7 +354,9 @@ describe('the writer role (pipelines)', () => {
       await expect(db.pg.query(`SELECT label_store.person_hash('labeller', 21)`)).rejects.toThrow(
         /permission denied/
       );
-      await expect(db.pg.query(`SELECT * FROM label_store.label`)).rejects.toThrow(/permission denied/);
+      await expect(db.pg.query(`SELECT * FROM label_store.label`)).rejects.toThrow(
+        /permission denied/
+      );
     });
   });
 });
@@ -342,8 +368,12 @@ describe('the reader role', () => {
     await asRole('label_reader', async () => {
       expect(await rows(`SELECT * FROM label_store.labels_feed`)).toHaveLength(1);
       expect(await rows(`SELECT * FROM label_store.changes_feed`)).not.toHaveLength(0);
-      await expect(db.pg.query(`SELECT * FROM label_store.label`)).rejects.toThrow(/permission denied/);
-      await expect(db.pg.query(`SELECT * FROM label_store.secret`)).rejects.toThrow(/permission denied/);
+      await expect(db.pg.query(`SELECT * FROM label_store.label`)).rejects.toThrow(
+        /permission denied/
+      );
+      await expect(db.pg.query(`SELECT * FROM label_store.secret`)).rejects.toThrow(
+        /permission denied/
+      );
       await expect(db.pg.query(`SELECT label_store.person_hash('labeller', 21)`)).rejects.toThrow(
         /permission denied/
       );
@@ -367,7 +397,14 @@ describe('the change feed', () => {
       `SELECT "kind", "subjectId" FROM label_store.changes_feed ORDER BY "id"`
     );
     expect(feed.map((c) => c.kind)).toEqual([
-      'label', 'consensus', 'label', 'consensus', 'label', 'consensus', 'exclusion', 'deletion',
+      'label',
+      'consensus',
+      'label',
+      'consensus',
+      'label',
+      'consensus',
+      'exclusion',
+      'deletion',
     ]);
     expect(new Set(feed.map((c) => Number(c.subjectId)))).toEqual(new Set([Number(subjectId)]));
     expect(await rows(`SELECT * FROM label_store.subject`)).toHaveLength(0);
@@ -378,12 +415,16 @@ describe('the change feed', () => {
     const before = await rows(`SELECT * FROM label_store.change WHERE "kind" = 'consensus'`);
     // The same person giving the same answer again: a new label, the same consensus.
     await db.pg.query(
-      `SELECT label_store.record_label('image', '${IMAGE}', '${sha256('u-501')}', 'relabel', 'image.block',
+      `SELECT label_store.record_label('image', '${IMAGE}', '${sha256(
+        'u-501'
+      )}', 'relabel', 'image.block',
          'clear', 'moderator', 'again-1', now(), ${MODS[0]})`
     );
 
     expect(await rows(`SELECT * FROM label_store.change WHERE "kind" = 'label'`)).toHaveLength(4);
-    expect(await rows(`SELECT * FROM label_store.change WHERE "kind" = 'consensus'`)).toEqual(before);
+    expect(await rows(`SELECT * FROM label_store.change WHERE "kind" = 'consensus'`)).toEqual(
+      before
+    );
   });
 
   it('excluding twice is one exclusion', async () => {
@@ -391,7 +432,9 @@ describe('the change feed', () => {
     await db.pg.query(`SELECT label_store.exclude('image', '${IMAGE}', 'removed')`);
     await db.pg.query(`SELECT label_store.exclude('image', '${IMAGE}', 'removed')`);
 
-    expect(await rows(`SELECT * FROM label_store.change WHERE "kind" = 'exclusion'`)).toHaveLength(1);
+    expect(await rows(`SELECT * FROM label_store.change WHERE "kind" = 'exclusion'`)).toHaveLength(
+      1
+    );
   });
 });
 
@@ -480,7 +523,10 @@ describe('bytes and exclusion', () => {
       `INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES ('k/u-501', $1, $2)`,
       [ITEM, IMAGE]
     );
-    await db.pg.query(`UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = $1`, [reason]);
+    await db.pg.query(
+      `UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = $1`,
+      [reason]
+    );
   };
 
   it('a copy becomes the subject bytes, and an excluded withdrawal takes the subject out of training', async () => {
@@ -504,7 +550,9 @@ describe('bytes and exclusion', () => {
     await copy();
     await withdraw('gone');
 
-    expect(await rows(`SELECT "bytesRef" FROM label_store.training_examples`)).toEqual([{ bytesRef: null }]);
+    expect(await rows(`SELECT "bytesRef" FROM label_store.training_examples`)).toEqual([
+      { bytesRef: null },
+    ]);
   });
 
   it('erasing an owner deletes their subjects and labels, and leaves other owners alone', async () => {
@@ -513,9 +561,10 @@ describe('bytes and exclusion', () => {
       `INSERT INTO "Image" ("id", "userId", "url") VALUES (502, 12, 'u-502');
        INSERT INTO "ScanLabelItem" ("id", "imageId") VALUES (8, 502);`
     );
-    await db.pg.query(`INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES (8, $1, false)`, [
-      MODS[0],
-    ]);
+    await db.pg.query(
+      `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES (8, $1, false)`,
+      [MODS[0]]
+    );
 
     const [{ n }] = await rows<{ n: number }>(`SELECT label_store.erase_owner(${OWNER}) AS n`);
     expect(n).toBe(1);
@@ -543,7 +592,11 @@ describe('backfill', () => {
       ])
     );
     expect([await rows(labels), await rows(preds)]).toEqual(before);
-    expect(await consensus()).toMatchObject({ outcome: 'clear', modelAgrees: false, trainable: true });
+    expect(await consensus()).toMatchObject({
+      outcome: 'clear',
+      modelAgrees: false,
+      trainable: true,
+    });
 
     const second = await rows<{ added: number }>(`SELECT * FROM label_store.backfill()`);
     expect(second.map((r) => r.added)).toEqual([0, 0, 0]);

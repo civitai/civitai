@@ -7,7 +7,7 @@ One record of every moderation judgement, from people and from models, in the Po
 functions. Do not add a per-feature label table. Queue tables (claims, quotas, leases) stay with the
 feature.
 
-Migration: `packages/civitai-db-schema/prisma/migrations/20261101120000_label_store/`. The schema sits
+Migration: `packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/`. The schema sits
 outside Prisma (the drift guard reads `public` only), so there is no Prisma model; call it with raw SQL.
 
 ## Tables
@@ -46,9 +46,9 @@ idempotent.
 ```sql
 SELECT label_store.record_label(
   p_subject_type => 'model_text', p_subject_id => '123', p_content_hash => label_store.text_hash($text),
-  p_family => 'text_scan', p_question => 'model_text.minor', p_value => 'keep',
+  p_family => 'my_feature', p_question => 'my_feature.question', p_value => $answer,
   p_labeller_kind => 'moderator', p_labeller_user_id => $modId,
-  p_source_ref => 'TextScanDecision:' || $decisionId, p_labelled_at => now(),
+  p_source_ref => 'MyFeatureDecision:' || $decisionId, p_labelled_at => now(),
   p_snapshot => jsonb_build_object('text', $text), p_owner_user_id => $ownerId
 );
 ```
