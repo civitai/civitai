@@ -30,6 +30,7 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>)
 
 const {
   sweepExcludedRecords,
+  sweepLabelStore,
   fillRemovalLabels,
   recordRestoredLevels,
   removalLabelsFromClickhouse,
@@ -39,6 +40,7 @@ const {
 const MIGRATIONS = [
   '20261020120000_appeal_decision_record',
   '20261021120000_appeal_decision_record_training_copy',
+  '20261103120000_label_store',
 ].map((dir) =>
   path.resolve(
     __dirname,
@@ -79,6 +81,22 @@ beforeAll(async () => {
     CREATE TABLE training_labels (
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
     );
+    -- The scan label tables the label store migration hooks into.
+    CREATE TABLE "ScanLabelItem" (
+      "id" serial PRIMARY KEY, "imageId" integer NOT NULL, "copyState" text, "copyKey" text, "copiedAt" timestamptz(3)
+    );
+    CREATE TABLE "ScanLabelFlag" (
+      "id" serial PRIMARY KEY, "itemId" integer NOT NULL, "source" text NOT NULL, "flaggerVersion" text NOT NULL,
+      "reason" text, "workflowId" text NOT NULL, "flaggedAt" timestamptz(3) NOT NULL, "snapshot" jsonb
+    );
+    CREATE TABLE "ScanLabelVote" (
+      "itemId" integer NOT NULL, "userId" integer NOT NULL, "block" boolean NOT NULL, "reason" text,
+      "reasonComment" text, "msOnItem" integer, "createdAt" timestamptz(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "ScanLabelCopyObject" (
+      "key" text PRIMARY KEY, "itemId" integer NOT NULL, "imageId" integer NOT NULL,
+      "withdrawnAt" timestamptz(3), "withdrawReason" text
+    );
   `);
   for (const file of MIGRATIONS) await holder.db.exec(readFileSync(file, 'utf8'));
 });
@@ -86,7 +104,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   holder.ch = null;
   await holder.db.exec(
-    `TRUNCATE "AppealDecisionRecord", "Image", "CsamReport", training_labels RESTART IDENTITY`
+    `TRUNCATE "AppealDecisionRecord", "Image", "CsamReport", training_labels, label_store.subject,
+       label_store.change RESTART IDENTITY CASCADE`
   );
 });
 
@@ -506,6 +525,66 @@ describe('recordRestoredLevels', () => {
   });
 });
 
+describe('sweepLabelStore', () => {
+  const judged = (imageId: number, ownerId?: number) =>
+    holder.db.query(
+      `SELECT label_store.record_label(
+         p_subject_type => 'image', p_subject_id => $1, p_content_hash => $2, p_family => 'test',
+         p_question => 'image.block', p_value => 'clear', p_labeller_kind => 'moderator',
+         p_source_ref => $3, p_labelled_at => now(), p_labeller_user_id => 900,
+         p_snapshot => '{"url": "x"}', p_owner_user_id => $4)`,
+      [String(imageId), `h-${imageId}`, `t-${imageId}`, ownerId ?? null]
+    );
+  const excludedIds = async () =>
+    (
+      await holder.db.query<{ subjectId: string }>(
+        `SELECT "subjectId" FROM label_store.subject WHERE "excludedAt" IS NOT NULL ORDER BY "subjectId"`
+      )
+    ).rows.map((r) => Number(r.subjectId));
+
+  it('excludes the subject of an image later flagged, and only that one', async () => {
+    await image(101, { needsReview: 'csam' });
+    await image(102);
+    await judged(101);
+    await judged(102);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([101]);
+    const [s] = (
+      await holder.db.query<{ snapshot: unknown; excludedReason: string }>(
+        `SELECT * FROM label_store.subject WHERE "subjectId" = '101'`
+      )
+    ).rows;
+    expect(s).toMatchObject({ snapshot: null, excludedReason: 'safety' });
+  });
+
+  it('excludes the subject of an image a report names, after the image is gone', async () => {
+    await judged(103);
+    await judged(104);
+    await holder.db.query(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 103}]')`);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([103]);
+  });
+
+  it('excludes every subject of an owner a report names, by the owner hash alone', async () => {
+    await judged(105, 8);
+    await judged(106, 9);
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES (8)`);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([105]);
+  });
+
+  it('counts a subject once, and nothing on the next run', async () => {
+    await image(107, { blockedFor: 'CSAM' });
+    await judged(107);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await sweepLabelStore()).toBe(0);
+  });
+});
+
 describe('the nightly run', () => {
   it('sweeps before it labels or corrects anything', async () => {
     await record({ appealId: 1, imageId: 101 });
@@ -524,6 +603,7 @@ describe('the nightly run', () => {
       labels: 0,
       expired: 0,
       objects: 0,
+      storeExcluded: 1,
       labelled: 1,
       restored: 1,
       corrected: 1,

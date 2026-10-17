@@ -105,6 +105,32 @@ export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
   return { swept, labels, expired: expiredRows.length, objects };
 }
 
+/**
+ * Takes the label store's subjects of excluded images out of training, by the rule the records use.
+ * Inert until the label store migration is applied.
+ */
+export async function sweepLabelStore() {
+  const [{ present }] = await dbWrite.$queryRaw<{ present: boolean }[]>`
+    SELECT to_regclass('label_store.subject') IS NOT NULL AS present
+  `;
+  if (!present) return 0;
+  const imageId = Prisma.sql`(CASE WHEN s."subjectId" ~ '^[0-9]{1,9}$' THEN s."subjectId"::int END)`;
+  const [{ excluded }] = await dbWrite.$queryRaw<{ excluded: number }[]>`
+    SELECT count(label_store.exclude('image', s."subjectId", 'safety'))::int AS excluded
+    FROM label_store.subject s
+    WHERE s."subjectType" = 'image' AND s."excludedAt" IS NULL AND (
+      ${reportNamesImage(imageId)}
+      OR EXISTS (
+        SELECT 1 FROM "Image" li WHERE li.id = ${imageId} AND ${excludedImageRow(Prisma.raw('li'))}
+      )
+      OR s."ownerHash" IN (
+        SELECT label_store.person_hash('owner', c."userId") FROM "CsamReport" c WHERE c."userId" IS NOT NULL
+      )
+    )
+  `;
+  return excluded;
+}
+
 const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
   DELETE FROM "AppealTrainingObjectDeletion" WHERE key = ${key}
 `;
@@ -506,9 +532,10 @@ export async function recordRestoredLevels() {
 
 export async function runAppealDecisionRecords(lookup?: RemovalLabelLookup) {
   const { swept, labels, expired, objects } = await sweepExcludedRecords();
+  const storeExcluded = await sweepLabelStore();
   const labelled = await fillRemovalLabels(lookup);
   const { restored, corrected } = await recordRestoredLevels();
-  return { swept, labels, expired, objects, labelled, restored, corrected };
+  return { swept, labels, expired, objects, storeExcluded, labelled, restored, corrected };
 }
 
 export const appealDecisionRecordsJob = createJob('appeal-decision-records', '40 4 * * *', () =>
