@@ -24,6 +24,9 @@ section).
   its first image and its share of readers. The main path is shown first and largest, with Read as
   the main action, then continuations by the storyline's endorsed collaborators, then everyone
   else's, ordered by how many readers took them. Writing a continuation sits below.
+- **Where branches meet.** Two branches can rejoin at one chapter. The reader's path and chapter
+  numbers follow the way they came (the URL carries it, so a shared link reproduces the route), and
+  the map marks a chapter where another branch joins.
 - **Continuing it.** At the end of a chapter a reader can submit a post they already made as the next
   chapter ("Use a post you made"), for the storyline's price in Buzz or free. It goes to the creator's
   review unless the reader is an endorsed collaborator. A storyline that is closed or open only to
@@ -62,12 +65,17 @@ section).
   taking it down again; denying leaves it down, and the creator can ask again. A grant is refused if
   the title was edited after the moderator saw it. A storyline a moderator took down cannot be
   appealed this way.
+- **Rejoining branches.** The creator can bring two branches back together at the end of a
+  chapter: "Add the next chapter", then "Join an existing chapter", offers a chapter already in the
+  story as a way on. Nothing is copied. A link that would loop, skip chapters on a
+  route, or lead into the first chapter is refused, and a chapter can be joined from at most 8
+  chapters.
 - **Credit.** A continuation can fork from the end of any chapter. Earlier chapters are referenced and
   credited to their authors, never copied.
 
 ## Not in the first version
 
-Branches rejoining, an in-app tool for making the next section, and deleting a storyline: its creator
+An in-app tool for making the next section, and deleting a storyline: its creator
 marks it complete instead, and moderators take down one that breaks the rules.
 
 ## Trying it locally

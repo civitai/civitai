@@ -5078,8 +5078,9 @@ export type StorylineChapter = {
    */
   userId: number;
   /**
-   * Distance from the first chapter, which is 0. A storyline has exactly one chapter
-   * at depth 0 (enforced by a partial unique index in the migration).
+   * Distance from the first chapter, which is 0, through the chapter's first parent. A
+   * rejoined chapter's number on a reader's route can differ. A storyline has exactly one
+   * chapter at depth 0 (enforced by a partial unique index in the migration).
    */
   depth: number;
   /**

@@ -9782,8 +9782,8 @@ model Storyline {
 }
 
 /// A chapter of a storyline: one post. The tree lives in `StorylineChapterEdge`, not
-/// here, so a chapter can gain a second parent (stories coming back together) without a
-/// change to this table.
+/// here, so a chapter can have several parents (branches rejoining) without a change to
+/// this table.
 ///
 /// The row outlives its post. Deleting the post nulls `postId` and the chapter becomes a
 /// tombstone: its children keep their edge to it and stay reachable.
@@ -9797,8 +9797,9 @@ model StorylineChapter {
   /// The chapter's author when it was added. Not a relation on purpose: a deleted
   /// account must not cascade away a chapter other people's chapters hang from.
   userId      Int
-  /// Distance from the first chapter, which is 0. A storyline has exactly one chapter
-  /// at depth 0 (enforced by a partial unique index in the migration).
+  /// Distance from the first chapter, which is 0, through the chapter's first parent. A
+  /// rejoined chapter's number on a reader's route can differ. A storyline has exactly one
+  /// chapter at depth 0 (enforced by a partial unique index in the migration).
   depth       Int
   /// The placement that added this chapter, when one did. Unique so replaying an
   /// approval cannot add the chapter twice.
@@ -9825,8 +9826,8 @@ model StorylineChapter {
 /// Parent to child link between chapters. Forks happen only at the end of a chapter, so
 /// the edge carries no position within the parent.
 ///
-/// v1 allows one parent per chapter: a unique index on `chapterId` in the migration.
-/// Dropping that index is the whole change needed for a chapter with several parents.
+/// A chapter where branches rejoin has several parents. Links never loop or skip a chapter
+/// on a route; the service, not the database, refuses those.
 model StorylineChapterEdge {
   storylineId     Int
   chapterId       Int

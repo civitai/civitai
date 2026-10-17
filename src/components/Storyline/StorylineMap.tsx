@@ -14,6 +14,7 @@ import {
   IconBook2,
   IconCrown,
   IconGitFork,
+  IconGitMerge,
   IconRosetteDiscountCheck,
   IconRoute,
 } from '@tabler/icons-react';
@@ -160,15 +161,17 @@ function StorylineMap({
     [path.chapters, canonAhead, pathChildren]
   );
 
+  const line = useMemo(() => stops.map((stop) => stop.chapter), [stops]);
   const currentIndex = stops.findIndex((s) => s.chapter.chapterId === currentChapterId);
   const current = stops[currentIndex];
   const next = currentIndex >= 0 ? stops[currentIndex + 1] : undefined;
   // The canon line's length once it is known: the path then the chapters ahead of its end.
   const length = canonAhead.isLoading ? undefined : stops.length;
-  const open = (stop: SubwayStop<StorylineChild>) =>
-    stop.kind === 'path'
-      ? jumpToChapter(stop.chapter.chapterId)
-      : continueTo(stop.chapter, { track: false });
+  const open = (stop: SubwayStop<StorylineChild>) => {
+    if (stop.kind === 'path') return jumpToChapter(stop.chapter.chapterId);
+    const before = line[line.indexOf(stop.chapter) - 1];
+    continueTo(stop.chapter, { track: false, from: before?.chapterId, line });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -228,7 +231,7 @@ function StorylineMap({
             className="absolute inset-y-6 left-[15px] w-0.5 bg-blue-5/50 dark:bg-blue-4/50"
           />
           {stops.map((stop) => {
-            const { chapter, kind, branches } = stop;
+            const { chapter, kind, branches, joins } = stop;
             const isEnd = chapter.chapterId === endChapterId;
             const isCurrent = chapter.chapterId === currentChapterId;
             return (
@@ -286,6 +289,22 @@ function StorylineMap({
                     )}
                   </div>
                 </UnstyledButton>
+                {joins.map((join) => (
+                  <UnstyledButton
+                    key={join.chapterId}
+                    // A fresh route to the other branch's chapter: the reader is leaving this line.
+                    onClick={() => continueTo(join, { track: false, line: [] })}
+                    disabled={!join.post}
+                    className="ml-[34px] mt-1 flex items-center gap-1 rounded text-left text-xs font-semibold text-[var(--mantine-color-violet-7)] dark:text-[var(--mantine-color-violet-3)]"
+                    data-testid="storyline-join"
+                    data-chapter-id={join.chapterId}
+                  >
+                    <IconGitMerge size={13} className="shrink-0" />
+                    {join.post
+                      ? `Another branch joins here, after ${getStorylineChapterName(join)}`
+                      : 'Another branch joins here'}
+                  </UnstyledButton>
+                ))}
                 {branches.length > 0 && (
                   <div className="pl-[34px]">
                     <Text
@@ -306,7 +325,7 @@ function StorylineMap({
                           share={
                             isEnd ? getForkShare(endShares, child.chapterId)?.percent : undefined
                           }
-                          onClick={() => continueTo(child, { from: chapter.chapterId })}
+                          onClick={() => continueTo(child, { from: chapter.chapterId, line })}
                         />
                       ))}
                     </ul>

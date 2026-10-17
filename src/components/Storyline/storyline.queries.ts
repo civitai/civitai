@@ -38,11 +38,11 @@ export function useHiddenUserIds() {
 /** The drawer reads forks for the stops nearest the end only, so a long path is not N reads. */
 export const STORYLINE_DRAWER_FORK_STOPS = 10;
 
-export function useStorylinePath(chapterId: number | undefined) {
+export function useStorylinePath(chapterId: number | undefined, via: number[] = []) {
   const enabled = useStorylinesEnabled();
   const browsingLevel = useViewerBrowsingLevelDebounced();
   return trpc.storyline.getPath.useQuery(
-    { chapterId: chapterId as number, browsingLevel },
+    { chapterId: chapterId as number, browsingLevel, ...(via.length ? { via } : {}) },
     { enabled: enabled && !!chapterId, placeholderData: keepPreviousData }
   );
 }
