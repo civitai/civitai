@@ -6,10 +6,8 @@ import { SCAN_LABEL_MAX_ITEMS_PER_POST } from '~/server/services/scan-label-flag
 import { excludedImageRow } from './appeal-decision-records';
 import { createJob } from './job';
 
-/** Open control-lane items the feeder keeps on hand. */
 export const CONTROL_STOCK = 30;
 export const CONTROL_PER_RUN = 10;
-/** Most control items added in any 24 hours. */
 export const CONTROL_PER_DAY = 60;
 export const CONTROL_SAMPLE_VERSION = 'control-sample@2026-10-17';
 
@@ -22,7 +20,7 @@ const CANDIDATES_PER_SLOT = 4;
 type Deps = {
   now?: Date;
   rng?: () => number;
-  /** Whether the queue writer covers this image; an image it never looked at was not passed. */
+  /** Whether the queue writer is enabled for this image; others are not sampled. */
   inRollout?: (imageId: number) => Promise<boolean>;
 };
 
@@ -35,8 +33,8 @@ async function idCreatedSince(cutoff: Date, fallback: number) {
 }
 
 /**
- * Checked when choosing and again in the insert, so an image that changes in between is not added.
- * A post at the queue writer's cap is skipped: its unqueued images may have been flagged and dropped.
+ * Applied when choosing and again in the insert: an image can change in between.
+ * A post at the queue writer's cap is skipped; its unqueued images are not known to be unflagged.
  */
 const sampleable = (img: Prisma.Sql, from: Date, until: Date) => Prisma.sql`(
   ${img}."createdAt" >= ${from}
@@ -86,7 +84,8 @@ export async function feedScanLabelControlSample({
   const from = new Date(now.getTime() - WINDOW_MS);
   const until = new Date(now.getTime() - SETTLE_MS);
   const lo = await idCreatedSince(from, maxId + 1);
-  const hi = await idCreatedSince(until, maxId + 1);
+  // Bounds the walk only; each row's own createdAt decides.
+  const hi = maxId + 1;
   if (hi <= lo) return { added: 0, ...lane };
 
   const starts = Array.from(
@@ -94,7 +93,6 @@ export async function feedScanLabelControlSample({
     () => lo + Math.floor(rng() * (hi - lo))
   );
   const img = Prisma.raw('img');
-  // DISTINCT ON keeps one image per post: the first start (by draw order) that reached it.
   const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT id FROM (
       SELECT DISTINCT ON (c."postId") c.id, s.n
@@ -118,7 +116,7 @@ export async function feedScanLabelControlSample({
   }
   if (!chosen.length) return { added: 0, ...lane };
 
-  // An image the writer queued meanwhile keeps its flagged item; the control flag is not added.
+  // An image queued meanwhile keeps its flagged item.
   const added = await dbWrite.$executeRaw`
     WITH item AS (
       INSERT INTO "ScanLabelItem" ("imageId", lane, "firstFlaggedAt", status, "createdAt")

@@ -271,7 +271,7 @@ describe('claimNext source mix', () => {
       sources: ['control-sample', 'orchestrator-scan'],
       flaggedAt: '2026-10-13T09:00:00Z',
     });
-    // Each draw lands in one source's band of QUEUE_MIX; each source's pick is not the newest item.
+    // 0.1, 0.5 and 0.95 fall in the upload, prompt and control bands of QUEUE_MIX.
     expect((await claimNext(1, {}, NOW, () => 0.1))!.itemId).toBe(both);
     expect((await claimNext(2, {}, NOW, () => 0.5))!.itemId).toBe(prompt);
     expect((await claimNext(3, {}, NOW, () => 0.95))!.itemId).toBe(control);

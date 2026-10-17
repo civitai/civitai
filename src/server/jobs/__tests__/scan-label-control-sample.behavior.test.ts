@@ -93,14 +93,12 @@ const controlImages = async () =>
     )
   ).rows.map((r) => r.imageId);
 
-/** Evenly spaced draws, so every id in the window is some draw's start. */
 const spread = () => {
   let k = 0;
   return () => (((k++ * 0.618034) % 1) + 1) % 1;
 };
 const everyone = async () => true;
 
-/** Draws that start at each of `ids`, in order, for a window of ids [lo, hi). */
 const startingAt = (ids: number[], lo: number, hi: number) => {
   let k = 0;
   return () => (ids[k++ % ids.length] - lo + 0.5) / (hi - lo);
@@ -125,7 +123,7 @@ describe('feedScanLabelControlSample exclusions', () => {
     await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 14}]')`);
     await image(15);
     await queued(15);
-    // Post 100 is at the writer's cap, so its unqueued image may have been flagged and skipped.
+    // Post 100 is at the writer's cap.
     for (const id of [17, 18, 19, 20]) await image(id, { postId: 100 });
     for (const id of [18, 19, 20]) await queued(id);
     await image(21, { postId: null });
@@ -142,11 +140,11 @@ describe('feedScanLabelControlSample exclusions', () => {
     await image(39, { createdAt: hoursAgo(1.2) }); // settled
     await image(40, { createdAt: hoursAgo(0.5) }); // still settling
 
-    // The window is ids [2, 40); one draw starts at each.
-    const everyId = Array.from({ length: 38 }, (_, k) => 2 + k);
+    // Draws span ids [2, 41), from the window's first image to the newest; one starts at each.
+    const everyId = Array.from({ length: 39 }, (_, k) => 2 + k);
     const result = await feedScanLabelControlSample({
       now: NOW,
-      rng: startingAt(everyId, 2, 40),
+      rng: startingAt(everyId, 2, 41),
       inRollout: async (id) => id !== 23,
     });
 
@@ -163,7 +161,7 @@ describe('feedScanLabelControlSample exclusions', () => {
     const draws = [20, 3, 17, 5, 11, 8, 14, 2, 19, 6, 13, 9];
     await feedScanLabelControlSample({
       now: NOW,
-      rng: startingAt(draws, 1, 21),
+      rng: startingAt(draws, 1, 22),
       inRollout: everyone,
     });
     expect(await controlImages()).toEqual(draws.slice(0, 10).sort((a, b) => a - b));
@@ -172,15 +170,15 @@ describe('feedScanLabelControlSample exclusions', () => {
   it('does not spend a slot on an image already queued', async () => {
     for (let id = 2; id <= 5; id++) await image(id);
     await queued(2);
-    // One slot left: 29 open control items on settling images, oldest first, so the window is [2, 201).
+    // One slot left: 29 open control items on settling images. Draws span ids [2, 230).
     for (let id = 201; id <= 229; id++) {
-      await image(id, { createdAt: hoursAgo(0.9 - (id - 201) * 0.01) });
+      await image(id, { createdAt: hoursAgo(0.5) });
       await queued(id, { lane: 'control', createdAt: hoursAgo(30) });
     }
     expect(
       await feedScanLabelControlSample({
         now: NOW,
-        rng: startingAt([2, 4], 2, 201),
+        rng: startingAt([2, 4], 2, 230),
         inRollout: everyone,
       })
     ).toMatchObject({ added: 1 });
@@ -297,7 +295,6 @@ describe('feedScanLabelControlSample caps', () => {
     await controlItems(20, { status: 'open', createdAt: hoursAgo(23) });
     await controlItems(20, { status: 'void', createdAt: hoursAgo(23) });
     await controlItems(15, { status: 'decided', createdAt: hoursAgo(23) });
-    // 55 added in the last day: room for five.
     expect((await feed()).added).toBe(5);
     await holder.db.exec(`UPDATE "ScanLabelItem" SET status = 'decided'`);
     expect((await feed()).added).toBe(0);

@@ -12,8 +12,8 @@ export const SCAN_LABEL_FLAGGER_VERSIONS: Record<ScanLabelSource, string> = {
 };
 
 /**
- * Most flagged-lane images of one post the queue holds. Dataset-dump posts are many near-identical images, and
- * voting on all of them adds little and skews the labels toward the biggest posts.
+ * Most flagged-lane images of one post the queue holds. Dataset-dump posts are many near-identical
+ * images, and voting on all of them adds little and skews the labels toward the biggest posts.
  */
 export const SCAN_LABEL_MAX_ITEMS_PER_POST = 3;
 const POST_CAP_LOCK_CLASS = 0x5c1a0001;

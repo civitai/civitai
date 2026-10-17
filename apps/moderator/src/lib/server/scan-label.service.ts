@@ -88,7 +88,7 @@ async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<Sca
 
 const MAX_CLAIM_ATTEMPTS = 20;
 
-/** Every open item belongs to exactly one source, so no item is unreachable whatever is drawn. */
+/** The three sources partition the open items; a new source must keep that. */
 function inSource(source: QueueSource) {
   return (eb: ExpressionBuilder<DB & { i: DB['ScanLabelItem'] }, 'i'>) => {
     // A literal, so the planner can use the control lane's partial index.
@@ -119,8 +119,9 @@ export function sourceOrder(rng: () => number): QueueSource[] {
 
 /**
  * A live lease on an open item in the current filter is returned as-is, so a reload cannot pile up
- * leases. A live lease outside the filter is released. An unfiltered claim draws its source by
- * `QUEUE_MIX`; a filtered one serves its slice in queue order.
+ * leases. A live lease outside the filter is released. A new claim draws its source by `QUEUE_MIX`.
+ * A filtered claim skips the mix: a filter can empty a source, and each empty source would walk the
+ * whole queue.
  */
 export async function claimNext(
   userId: number,
