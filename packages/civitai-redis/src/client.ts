@@ -2876,6 +2876,17 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
+    // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
+    // session refresh. See user-creator.service.
+    USER_CREATOR: 'packed:caches:user-creator',
+    // Bearer-credential lookup: `<prefix>:<hash of the key>` -> the ApiKey row the bearer path
+    // reads. Personal and system keys only, positive results only, short TTL, tombstoned on
+    // revocation. See src/server/auth/api-key-principal-cache.ts.
+    API_KEY_PRINCIPAL: 'packed:caches:api-key-principal',
+    // `<prefix>:<apiKeyId>` — set-if-absent marker that lets one request per key per hour write
+    // `ApiKey.lastUsedAt`. Plain string value.
+    API_KEY_LAST_USED: 'caches:api-key-last-used',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

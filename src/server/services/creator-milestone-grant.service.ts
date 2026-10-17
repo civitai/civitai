@@ -1,4 +1,4 @@
-import { purgeCache } from '~/server/cloudflare/client';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import { NotificationCategory } from '~/server/common/enums';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { userCosmeticCache } from '~/server/redis/caches';
@@ -109,11 +109,11 @@ export function insertMilestoneCosmeticsSql(granted: string) {
 const REFRESH_CHUNK = 200;
 
 export async function refreshEquippedCosmetics(userIds: number[]) {
-  // A backfill batch can equip thousands; purgeCache reads one Redis set per tag at once.
+  // A backfill batch can equip thousands; the edge purge reads one Redis set per tag at once.
   for (const ids of chunk([...new Set(userIds)], REFRESH_CHUNK)) {
     try {
       await userCosmeticCache.refresh(ids);
-      await purgeCache({ tags: ids.map((id) => `user-creator-${id}`) });
+      await bustUserCreator(ids);
     } catch (e) {
       log('refreshing cosmetics after a grant failed', e);
     }

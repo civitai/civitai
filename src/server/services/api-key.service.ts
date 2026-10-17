@@ -15,6 +15,7 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
   return dbRead.apiKey.findFirst({
@@ -89,11 +90,13 @@ export async function setApiKeyBuzzLimit({
 }) {
   // Caller already verified the key belongs to the user; this update is the
   // source of truth that the orchestrator will re-fetch via /api/v1/me.
-  const updated = await dbWrite.apiKey.update({
+  const { key, ...updated } = await dbWrite.apiKey.update({
     where: { id, userId },
     data: { buzzLimit: buzzLimit ?? Prisma.DbNull },
-    select: { id: true, userId: true, buzzLimit: true },
+    select: { id: true, userId: true, buzzLimit: true, key: true },
   });
+  // The bearer path caches `buzzLimit` with the rest of the row.
+  await evictCachedApiKeys([key]);
 
   // Best-effort: invalidate the orchestrator's cached limit. Failure is logged
   // but doesn't fail the user-facing mutation — the orchestrator's cache TTL
@@ -132,10 +135,24 @@ export async function getTemporaryUserApiKey(
   return key;
 }
 
-export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
+/**
+ * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
+ * the stored hash — so the hashes are read first. Use this, not `apiKey.deleteMany`, for any delete
+ * that can REVOKE a personal or system key; `api-key-principal-cache.ledger.test.ts` lists every
+ * ApiKey write in the repo and fails when one is added.
+ */
+export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
+  const rows = await dbWrite.apiKey.findMany({ where, select: { id: true, key: true } });
+  if (!rows.length) return { count: 0 };
   const result = await dbWrite.apiKey.deleteMany({
-    where: { userId, id },
+    where: { AND: [where, { id: { in: rows.map((row) => row.id) } }] },
   });
+  await evictCachedApiKeys(rows.map((row) => row.key));
+  return result;
+}
+
+export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
+  const result = await deleteApiKeys({ userId, id });
 
   // Best-effort: tell the orchestrator the subject is gone so its Mongo
   // doesn't accumulate dangling spend records. Skipped silently if the
