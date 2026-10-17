@@ -127,7 +127,15 @@ export interface AssistantGate {
  * The page's own checks on the assistant's tool calls: a per-reply call limit, and a `report_ready`
  * that is refused until the tool results of this conversation show the app checked.
  */
-export function createAssistantGate(): AssistantGate {
+export function createAssistantGate({
+  refuse,
+  onReply,
+}: {
+  /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
+  refuse?: (name: string) => string | null;
+  /** Told when a new reply makes its first tool call, before that call's refusal is asked. */
+  onReply?: () => void;
+} = {}): AssistantGate {
   let conversationId: string | null = null;
   // The chat numbers every reply, Continue and Retry included.
   let reply: number | null = null;
@@ -191,10 +199,13 @@ export function createAssistantGate(): AssistantGate {
       reply = context.reply;
       turnCalls = 0;
       running = 0;
+      onReply?.();
     }
     if (turnCalls >= APP_ASSISTANT_TURN_TOOL_CALL_LIMIT)
       return { refuse: TURN_LIMIT_REFUSAL, stop: true, message: TURN_LIMIT_MESSAGE };
     turnCalls++;
+    const refusedByPage = refuse?.(name);
+    if (refusedByPage) return { refuse: refusedByPage };
     if (name === REPORT_READY) {
       const refusal = notReady();
       if (refusal) return { refuse: refusal };

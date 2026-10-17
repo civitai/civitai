@@ -29,10 +29,17 @@ vi.mock('@civitai/components-chat/civitai-chat/define', () => {
           return this.#app;
         }
         set app(value: unknown) {
-          const self = this as unknown as { mcp?: unknown; systemPrompt?: unknown };
+          const self = this as unknown as {
+            mcp?: unknown;
+            systemPrompt?: unknown;
+            examples?: unknown;
+            placeholder?: unknown;
+          };
           this.atStart = {
             mcp: self.mcp,
             systemPrompt: self.systemPrompt,
+            examples: self.examples,
+            placeholder: self.placeholder,
             configured: m.configureChat.mock.calls.length,
           };
           this.#app = value;
@@ -51,8 +58,16 @@ const tokens = (): AssistantTokenProvider => ({
 
 type ChatEl = HTMLElement & {
   app?: unknown;
-  atStart: { mcp: unknown; systemPrompt: unknown; configured: number } | null;
+  atStart: {
+    mcp: unknown;
+    systemPrompt: unknown;
+    examples: unknown;
+    placeholder: unknown;
+    configured: number;
+  } | null;
   mcp?: unknown;
+  examples?: { title: string; prompt: string }[];
+  placeholder?: string;
   systemPrompt?: (defaults: string) => string;
   holdReason?: string;
   beforeToolCall?: unknown;
@@ -83,7 +98,11 @@ describe('AppAssistantChat', () => {
       <AppAssistantChat tokens={tokens()} tools={{}} instructions={() => ''} mcpServers={[]} />
     );
     await vi.waitFor(() => expect(chatEl().app).toBeDefined());
-    expect(m.configureChat).toHaveBeenCalledWith({ maxSteps: 1000, contextBudgetTokens: 64000 });
+    expect(m.configureChat).toHaveBeenCalledWith({
+      name: 'App Assistant',
+      maxSteps: 1000,
+      contextBudgetTokens: 64000,
+    });
     expect(chatEl().mcp).toEqual({
       orchestration: {
         exclude: ['run_step', 'run_workflow', 'transcribe_audio', 'caption_media', 'web_search'],
@@ -95,8 +114,34 @@ describe('AppAssistantChat', () => {
     expect(chatEl().atStart).toEqual({
       mcp: chatEl().mcp,
       systemPrompt: chatEl().systemPrompt,
+      examples: chatEl().examples,
+      placeholder: chatEl().placeholder,
       configured: 1,
     });
+  });
+
+  test('offers app-building examples and hint in place of the chat’s media ones', async () => {
+    const chatRef = { current: null as unknown };
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        chatRef={chatRef as never}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    // Not the chat's own examples and hint, which are about making media with tools this page excludes.
+    const examples = chatEl().examples!;
+    expect(examples.length).toBeGreaterThan(0);
+    expect(examples.every((e) => e.title.trim() && e.prompt.trim())).toBe(true);
+    const titles = examples.map((e) => e.title);
+    for (const media of ['Make a picture', 'Make a short video', 'Write a song', 'Say it out loud'])
+      expect(titles).not.toContain(media);
+    expect(chatEl().placeholder?.trim()).toBeTruthy();
+    expect(chatEl().placeholder).not.toMatch(/picture|video|song/i);
+    expect(chatRef.current).toBe(chatEl());
   });
 
   test('passes the hold and the tool gate on, and reports each tool result', async () => {
