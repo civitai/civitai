@@ -15,6 +15,7 @@ vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
 }));
 
 import { mysteryBoxRouter } from '../mystery-box.router';
+import { openMysteryBoxInput } from '~/server/schema/mystery-box.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const holder = {
@@ -96,6 +97,14 @@ describe('mysteryBox.open hands the service the flag, the country and the holder
     );
     expect(mockOpen).not.toHaveBeenCalled();
   });
+
+  it.each([['1.5'], ['abc'], ['99999999999999999999']])(
+    'the schema answers box id %s with an issue, not a thrown error',
+    (boxItemId) => {
+      // zod runs the refine even after the regex fails, so a BigInt() there would throw.
+      expect(openMysteryBoxInput.safeParse({ boxItemId, expectedVersion: 3 }).success).toBe(false);
+    }
+  );
 
   it('accepts the largest BIGINT id', async () => {
     await open({ mysteryBox: true }, {}, { boxItemId: '9223372036854775807', expectedVersion: 3 });
