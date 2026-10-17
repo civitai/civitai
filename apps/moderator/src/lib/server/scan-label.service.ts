@@ -6,7 +6,9 @@ import {
   dayBounds,
   effectiveQuota,
   LEASE_MS,
+  QUEUE_MIX,
   utcDayStart,
+  type QueueSource,
   type BlockReason,
   VOTES_PER_ITEM,
   type ScanLabelFilters,
@@ -86,14 +88,46 @@ async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<Sca
 
 const MAX_CLAIM_ATTEMPTS = 20;
 
+/** The three sources partition the open items; a new source must keep that. */
+function inSource(source: QueueSource) {
+  return (eb: ExpressionBuilder<DB & { i: DB['ScanLabelItem'] }, 'i'>) => {
+    // A literal, so the planner can use the control lane's partial index.
+    if (source === 'control') return sql<boolean>`i.lane = 'control'`;
+    const uploadScanned = eb.exists(
+      eb
+        .selectFrom('ScanLabelFlag as f')
+        .select(sql`1`.as('one'))
+        .whereRef('f.itemId', '=', 'i.id')
+        .where('f.source', '=', 'orchestrator-scan')
+    );
+    return eb.and([
+      sql<boolean>`i.lane <> 'control'`,
+      source === 'upload' ? uploadScanned : eb.not(uploadScanned),
+    ]);
+  };
+}
+
+/** One source drawn by weight, then the others by descending weight to fall back on. */
+export function sourceOrder(rng: () => number): QueueSource[] {
+  const sources = Object.keys(QUEUE_MIX) as QueueSource[];
+  const total = sources.reduce((sum, s) => sum + QUEUE_MIX[s], 0);
+  let r = rng() * total;
+  const drawn = sources.find((s) => (r -= QUEUE_MIX[s]) < 0) ?? sources[sources.length - 1];
+  const rest = sources.filter((s) => s !== drawn).sort((a, b) => QUEUE_MIX[b] - QUEUE_MIX[a]);
+  return [drawn, ...rest];
+}
+
 /**
  * A live lease on an open item in the current filter is returned as-is, so a reload cannot pile up
- * leases. A live lease outside the filter is released.
+ * leases. A live lease outside the filter is released. A new claim draws its source by `QUEUE_MIX`.
+ * A filtered claim skips the mix: a filter can empty a source, and each empty source would walk the
+ * whole queue.
  */
 export async function claimNext(
   userId: number,
   filters: ScanLabelFilters,
-  now: Date = new Date()
+  now: Date = new Date(),
+  rng: () => number = Math.random
 ): Promise<ScanLabelCard | null> {
   return dbWrite.transaction().execute(async (trx) => {
     const held = await trx
@@ -122,68 +156,74 @@ export async function claimNext(
         .execute();
 
     const tried: number[] = [];
-    for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
-      let q = openItems(trx, filters)
-        .select(['i.id', 'i.votes'])
-        .where(({ not, exists, selectFrom }) =>
-          not(
-            exists(
-              selectFrom('ScanLabelVote as v')
-                .select(sql`1`.as('one'))
-                .whereRef('v.itemId', '=', 'i.id')
-                .where('v.userId', '=', userId)
+    let attempts = 0;
+    const filtered = !!(filters.day || filters.flaggerVersion);
+    for (const source of filtered ? [null] : sourceOrder(rng)) {
+      while (attempts < MAX_CLAIM_ATTEMPTS) {
+        attempts++;
+        let q = openItems(trx, filters)
+          .select(['i.id', 'i.votes'])
+          .where(({ not, exists, selectFrom }) =>
+            not(
+              exists(
+                selectFrom('ScanLabelVote as v')
+                  .select(sql`1`.as('one'))
+                  .whereRef('v.itemId', '=', 'i.id')
+                  .where('v.userId', '=', userId)
+              )
             )
           )
-        )
-        .where(
-          (eb) =>
-            eb(
-              'i.votes',
-              '+',
-              eb
-                .selectFrom('ScanLabelClaim as c')
-                .select((e) => e.fn.countAll<number>().as('n'))
-                .whereRef('c.itemId', '=', 'i.id')
-                .where('c.userId', '!=', userId)
-                .where('c.expiresAt', '>', now)
-            ),
-          '<',
-          VOTES_PER_ITEM
-        );
-      if (tried.length) q = q.where('i.id', 'not in', tried);
-      const candidate = await q
-        .orderBy('i.votes', 'desc')
-        .orderBy('i.firstFlaggedAt', 'desc')
-        .orderBy('i.id', 'asc')
-        .limit(1)
-        .forUpdate('i')
-        .skipLocked()
-        .executeTakeFirst();
-      if (!candidate) return null;
+          .where(
+            (eb) =>
+              eb(
+                'i.votes',
+                '+',
+                eb
+                  .selectFrom('ScanLabelClaim as c')
+                  .select((e) => e.fn.countAll<number>().as('n'))
+                  .whereRef('c.itemId', '=', 'i.id')
+                  .where('c.userId', '!=', userId)
+                  .where('c.expiresAt', '>', now)
+              ),
+            '<',
+            VOTES_PER_ITEM
+          );
+        if (source) q = q.where(inSource(source));
+        if (tried.length) q = q.where('i.id', 'not in', tried);
+        const candidate = await q
+          .orderBy('i.votes', 'desc')
+          .orderBy('i.firstFlaggedAt', 'desc')
+          .orderBy('i.id', 'asc')
+          .limit(1)
+          .forUpdate('i')
+          .skipLocked()
+          .executeTakeFirst();
+        if (!candidate) break;
 
-      // 🔴 Re-count AFTER taking the row lock, in a new statement. The candidate query's lease count
-      // came from a snapshot that can predate a rival claimer's commit; every claimer and voter takes
-      // this lock first, so only a count read under it is current.
-      const fresh = await trx
-        .selectFrom('ScanLabelItem')
-        .select(['votes', 'status'])
-        .where('id', '=', candidate.id)
-        .executeTakeFirstOrThrow();
-      const leases = await otherLiveLeases(trx, candidate.id, userId, now);
-      if (fresh.status !== 'open' || fresh.votes + leases >= VOTES_PER_ITEM) {
+        // 🔴 Re-count AFTER taking the row lock, in a new statement. The candidate query's lease count
+        // came from a snapshot that can predate a rival claimer's commit; every claimer and voter takes
+        // this lock first, so only a count read under it is current.
+        const fresh = await trx
+          .selectFrom('ScanLabelItem')
+          .select(['votes', 'status'])
+          .where('id', '=', candidate.id)
+          .executeTakeFirstOrThrow();
+        const leases = await otherLiveLeases(trx, candidate.id, userId, now);
+        if (fresh.status !== 'open' || fresh.votes + leases >= VOTES_PER_ITEM) {
+          tried.push(candidate.id);
+          continue;
+        }
+
+        const expiresAt = new Date(now.getTime() + LEASE_MS);
+        await trx
+          .insertInto('ScanLabelClaim')
+          .values({ itemId: candidate.id, userId, expiresAt })
+          .onConflict((oc) => oc.columns(['itemId', 'userId']).doUpdateSet({ expiresAt }))
+          .execute();
+        const card = await toCard(trx, candidate.id, expiresAt);
+        if (card) return card;
         tried.push(candidate.id);
-        continue;
       }
-
-      const expiresAt = new Date(now.getTime() + LEASE_MS);
-      await trx
-        .insertInto('ScanLabelClaim')
-        .values({ itemId: candidate.id, userId, expiresAt })
-        .onConflict((oc) => oc.columns(['itemId', 'userId']).doUpdateSet({ expiresAt }))
-        .execute();
-      const card = await toCard(trx, candidate.id, expiresAt);
-      if (card) return card;
-      tried.push(candidate.id);
     }
     return null;
   });
