@@ -12,6 +12,7 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
@@ -98,6 +99,9 @@
 
   let starting = $state(false);
   let startError = $state('');
+
+  // Moderators can switch training off on the main app; the flow's banner carries their message.
+  const trainingDisabled = $derived(serviceStatus.value?.available === false);
 
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
@@ -349,7 +353,7 @@
   function start() {
     // total == null means a quote is in flight or failed — never submit without a shown price
     // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (starting || total == null || (needsAttestation && !attestSfw)) return;
+    if (starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)) return;
     const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
     if (spend) {
       confirmSpend = spend;
@@ -360,7 +364,7 @@
   }
 
   async function reallyStart() {
-    if (starting) return;
+    if (starting || trainingDisabled) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
@@ -790,7 +794,7 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting || total == null || (needsAttestation && !attestSfw)}
+      disabled={starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -799,7 +803,11 @@
         {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
       {/if}
     </Button>
-    {#if startError}
+    {#if trainingDisabled}
+      <p class="mt-2 text-center font-mono text-xs text-dark-2">
+        Training is currently disabled — see the notice above.
+      </p>
+    {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if total == null && !quoting}
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
