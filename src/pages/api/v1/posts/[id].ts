@@ -7,6 +7,7 @@ import { runImageSearch } from '~/server/services/image-search.service';
 import { getPostDetail } from '~/server/services/post.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
+import { isStatementTimeout } from '~/server/utils/statement-timeout';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import {
   acquireBulkheadSlot,
@@ -58,6 +59,11 @@ export default MixedAuthEndpoint(async function handler(
 
   const { id } = parsedParams.data;
   const notFound = () => res.status(404).json({ error: 'Post not found' });
+  const unavailable = () => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Retry-After', '2');
+    return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+  };
 
   let releaseSlot: (() => void) | undefined;
   try {
@@ -74,20 +80,17 @@ export default MixedAuthEndpoint(async function handler(
     try {
       releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
     } catch (e) {
-      if (e instanceof BulkheadFullError) {
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Retry-After', '2');
-        return res.status(503).json({ error: 'Server busy, please retry shortly.' });
-      }
+      if (e instanceof BulkheadFullError) return unavailable();
       throw e;
     }
 
-    const { items: images } = await runImageSearch(
+    const { items: images, nextCursor } = await runImageSearch(
       {
         limit: 100,
         withMeta: false,
         withTags: false,
         postOrder: true,
+        throwOnStatementTimeout: true,
         data: {
           postId: post.id,
           period: constants.galleryFilterDefaults.period,
@@ -107,8 +110,10 @@ export default MixedAuthEndpoint(async function handler(
       user: { id: post.user.id, username: post.user.username },
       tags: post.tags.map((tag) => ({ id: tag.id, name: tag.name })),
       images,
+      hasMoreImages: nextCursor !== undefined,
     });
   } catch (e) {
+    if (isStatementTimeout(e)) return unavailable();
     if (e instanceof TRPCError && e.code === 'NOT_FOUND') return notFound();
     return handleEndpointError(res, e);
   } finally {
