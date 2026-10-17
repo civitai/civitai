@@ -385,7 +385,7 @@ describe('moss-image.handler', () => {
     expect(firstInput(steps)).toMatchObject({
       ecosystem: 'mossImage',
       model: 'base',
-      steps: 50,
+      steps: 25,
       cfgScale: 3,
     });
   });
