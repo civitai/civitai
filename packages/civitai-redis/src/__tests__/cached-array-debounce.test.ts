@@ -226,3 +226,33 @@ describe('builder default bust window', () => {
     expect(t.lookupFn).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('refresh() failure falls back to bust (non-SWR)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a throwing lookup leaves the bust marker, not the old value, and does not throw', async () => {
+    const t = build(); // builder default window
+    await t.cache.fetch([1]); // warm with v0
+    t.bumpOrigin();
+    t.onLookup(() => {
+      throw new Error('primary down');
+    });
+
+    await expect(t.cache.refresh(1)).resolves.toBeUndefined();
+
+    expect(t.redis.packed.set.mock.calls.at(-1)?.[2]).toEqual({ EX: 2 });
+    expect(t.read(keyFor(1))).toEqual({ id: 1, debounce: true }); // the old value is gone
+
+    // A read inside the window goes to origin and is not re-cached.
+    t.onLookup(() => undefined);
+    vi.setSystemTime(T0 + 1_000);
+    expect(await t.cache.fetch([1])).toEqual({ 1: { id: 1, v: 'db-1-v1' } });
+    expect(t.valueWrites()).toEqual([keyFor(1)]); // only the warm-up
+  });
+});
