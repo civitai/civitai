@@ -38,6 +38,7 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
   storylineChapter: {
     storyline: { kind: 'one', model: 'storyline', from: 'storylineId', to: 'id' },
     post: { kind: 'one', model: 'post', from: 'postId', to: 'id' },
+    parents: { kind: 'many', model: 'storylineChapterEdge', from: 'id', to: 'chapterId' },
   },
   storylineChapterEdge: {
     chapter: { kind: 'one', model: 'storylineChapter', from: 'chapterId', to: 'id' },
@@ -60,8 +61,6 @@ const UNIQUES: Record<string, Unique[]> = {
   ],
   storylineChapterEdge: [
     { columns: ['chapterId', 'parentChapterId'] },
-    // StorylineChapterEdge_single_parent_key: v1, one parent per chapter.
-    { columns: ['chapterId'] },
     // StorylineChapterEdge_one_canon_key: at most one canon child per parent.
     { columns: ['parentChapterId'], where: (row) => row.canon === true },
   ],
@@ -226,7 +225,16 @@ export function createFakeDb() {
     const out: Row = {};
     for (const [key, spec] of Object.entries(select)) {
       if (!spec) continue;
-      if (RELATIONS[model]?.[key]) {
+      if (key === '_count') {
+        const counts: Row = {};
+        for (const [relationKey, on] of Object.entries((spec as { select: Row }).select)) {
+          if (!on) continue;
+          if (RELATIONS[model]?.[relationKey]?.kind !== 'many')
+            throw new Error(`fake db: ${model} has no list relation ${relationKey} to count`);
+          counts[relationKey] = related(model, row, relationKey).matches.length;
+        }
+        out[key] = counts;
+      } else if (RELATIONS[model]?.[key]) {
         const { relation, matches: others } = related(model, row, key);
         const nested = (spec === true ? {} : spec) as {
           select?: Record<string, unknown>;

@@ -1,10 +1,11 @@
-import { Alert, Group, Loader, Modal } from '@mantine/core';
+import { Alert, Group, Loader, Modal, SegmentedControl } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   StorylineContinueForm,
   type StorylineSubmitOutcome,
 } from '~/components/Storyline/continue/StorylineContinueForm';
+import { StorylineJoinChapterForm } from '~/components/Storyline/continue/StorylineJoinChapterForm';
 import {
   STORYLINE_CONTINUE_POST_LIMIT,
   storylineContinuePostOptions,
@@ -48,6 +49,7 @@ export default function StorylineContinueModal({
   const enabled = !!currentUser && !!features.storylines;
   const [postId, setPostId] = useState<number | null>(initialPostId ?? null);
   const [outcome, setOutcome] = useState<StorylineSubmitOutcome | null>(null);
+  const [mode, setMode] = useState<'post' | 'join'>('post');
 
   const { data: membership, isLoading: membershipLoading } = trpc.storyline.getForPosts.useQuery(
     { postIds: [parentPostId] },
@@ -139,38 +141,61 @@ export default function StorylineContinueModal({
       ) : !ownerAdd && !terms.data ? (
         <Alert color="red">Couldn&apos;t load what continuing this storyline costs.</Alert>
       ) : (
-        <StorylineContinueForm
-          viewerId={currentUser.id}
-          storyline={storyline}
-          cover={storyline.coverImage}
-          parentName={parentName}
-          closedReason={terms.data?.closedReason ?? null}
-          price={terms.data?.price ?? 0}
-          ownerAdd={ownerAdd}
-          isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
-          posts={posts}
-          postsLoading={postsLoading || (ownPostIds.length > 0 && ownChaptersLoading)}
-          alreadyChapters={alreadyChapters}
-          // A failed refetch keeps the posts already shown.
-          postsError={postsError && !firstPage}
-          morePosts={!!firstPage?.nextCursor}
-          postId={postId}
-          onPostChange={setPostId}
-          submitting={ownerAdd ? addOwn.isPending : submit.isPending}
-          error={ownerAdd ? addOwn.error : submit.error}
-          outcome={outcome}
-          onSubmit={() => {
-            const post = posts.find((candidate) => candidate.id === postId);
-            if (ownerAdd && parentChapterId) {
-              if (post) addOwn.mutate({ parentChapterId, postId: post.id });
-              return;
-            }
-            if (!post || !terms.data) return;
-            submit.mutate(
-              storylineSubmitInput({ parentPostId, post, shownPrice: terms.data.price })
-            );
-          }}
-        />
+        <>
+          {ownerAdd && parentChapterId && (
+            <SegmentedControl
+              fullWidth
+              mb="md"
+              value={mode}
+              onChange={(value) => setMode(value as typeof mode)}
+              data={[
+                { value: 'post', label: 'Use a post you made' },
+                { value: 'join', label: 'Join an existing chapter' },
+              ]}
+              data-testid="storyline-add-mode"
+            />
+          )}
+          {ownerAdd && parentChapterId && mode === 'join' ? (
+            <StorylineJoinChapterForm
+              parentChapterId={parentChapterId}
+              parentName={parentName}
+              onClose={dialog.onClose}
+            />
+          ) : (
+            <StorylineContinueForm
+              viewerId={currentUser.id}
+              storyline={storyline}
+              cover={storyline.coverImage}
+              parentName={parentName}
+              closedReason={terms.data?.closedReason ?? null}
+              price={terms.data?.price ?? 0}
+              ownerAdd={ownerAdd}
+              isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
+              posts={posts}
+              postsLoading={postsLoading || (ownPostIds.length > 0 && ownChaptersLoading)}
+              alreadyChapters={alreadyChapters}
+              // A failed refetch keeps the posts already shown.
+              postsError={postsError && !firstPage}
+              morePosts={!!firstPage?.nextCursor}
+              postId={postId}
+              onPostChange={setPostId}
+              submitting={ownerAdd ? addOwn.isPending : submit.isPending}
+              error={ownerAdd ? addOwn.error : submit.error}
+              outcome={outcome}
+              onSubmit={() => {
+                const post = posts.find((candidate) => candidate.id === postId);
+                if (ownerAdd && parentChapterId) {
+                  if (post) addOwn.mutate({ parentChapterId, postId: post.id });
+                  return;
+                }
+                if (!post || !terms.data) return;
+                submit.mutate(
+                  storylineSubmitInput({ parentPostId, post, shownPrice: terms.data.price })
+                );
+              }}
+            />
+          )}
+        </>
       )}
     </Modal>
   );

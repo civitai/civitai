@@ -71,7 +71,7 @@ export function StorylineEndOfChapter({
 }: {
   chapterId: number;
   storylineId: number;
-  /** Depth of the chapter that ends here (chapter 1 is depth 0). */
+  /** Depth of the chapter that ends here on the reader's route (chapter 1 is depth 0). */
   chapterDepth: number;
   chapterTombstone?: Parameters<typeof getStorylineTombstoneLabel>[0] | null;
   onContinue: (child: StorylineChild) => void;
@@ -90,7 +90,11 @@ export function StorylineEndOfChapter({
     openStorylineEarlyAccess({ chapterId, storylineId });
   };
 
-  const [main, ...others] = (children ?? []) as ForkChild[];
+  // Numbered from this chapter, not by their own depth, which a rejoined chapter takes from another branch.
+  const [main, ...others] = (children ?? []).map((child) => ({
+    ...child,
+    depth: chapterDepth + 1,
+  })) as ForkChild[];
   const ended = !children?.length && !isLoading;
 
   return (
@@ -176,7 +180,7 @@ export function StorylineEndOfChapter({
               }
               data-testid="storyline-add-own-chapter"
             >
-              Use a post you made
+              Add the next chapter
             </Button>
           )}
         </div>

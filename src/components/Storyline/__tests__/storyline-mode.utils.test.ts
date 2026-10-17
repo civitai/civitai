@@ -10,8 +10,10 @@ import {
   getStorylineWalk,
   hideHiddenUsersChapters,
   orderPathImages,
+  parseIdListParam,
   parseIdParam,
   resolvePendingContinue,
+  routeVia,
   uniquePostIds,
   withStorylineNavigation,
 } from '~/components/Storyline/storyline-mode.utils';
@@ -273,6 +275,69 @@ describe('buildSubwayStops', () => {
       // The end of the line: every continuation is a branch.
       [4, 'ahead', [5, 6]],
     ]);
+  });
+});
+
+describe('buildSubwayStops through a rejoin', () => {
+  // 31 and 40 carry depth 2, as if reached by a shorter route; the line numbers them by position (3).
+  const path = [
+    visible(1, 0, 100),
+    visible(21, 1, 210),
+    { ...visible(30, 2, 300), parentCount: 2, joins: [visible(11, 1, 110)] },
+  ];
+  const ahead = [visible(31, 2, 310)];
+  const children = new Map([[30, [visible(31, 2, 310), visible(40, 2, 400)]]]);
+
+  it('numbers stops and the ways off them along the line, not by their own depth', () => {
+    const stops = buildSubwayStops(path, ahead, children);
+    expect(stops.map((s) => [s.chapter.chapterId, s.chapter.depth])).toEqual([
+      [1, 0],
+      [21, 1],
+      [30, 2],
+      [31, 3],
+    ]);
+    expect(stops[2].branches.map((b) => [b.chapterId, b.depth])).toEqual([[40, 3]]);
+  });
+
+  it('marks the stop where the other branch joins, and only that one', () => {
+    const stops = buildSubwayStops(path, ahead, children);
+    expect(stops.map((s) => s.joins.map((j) => j.chapterId))).toEqual([[], [], [11], []]);
+  });
+});
+
+describe('routeVia', () => {
+  it('names the chapter before each rejoined chapter on the route', () => {
+    expect(
+      routeVia([
+        { chapterId: 1 },
+        { chapterId: 21, parentCount: 1 },
+        { chapterId: 30, parentCount: 2 },
+        { chapterId: 31, parentCount: 1 },
+        { chapterId: 50, parentCount: 3 },
+      ])
+    ).toEqual([21, 31]);
+  });
+
+  it('is empty on a route with no rejoin, so every link stays as it was', () => {
+    expect(routeVia([{ chapterId: 1 }, { chapterId: 2, parentCount: 1 }])).toEqual([]);
+    // The first stop has no chapter before it on the route to name.
+    expect(routeVia([{ chapterId: 30, parentCount: 2 }])).toEqual([]);
+  });
+});
+
+describe('parseIdListParam', () => {
+  it.each([
+    ['12,34', [12, 34]],
+    ['12,x,0,5', [12, 5]],
+    [15, [15]],
+    [
+      ['7,8', '9'],
+      [7, 8],
+    ],
+    ['', []],
+    [undefined, []],
+  ])('%j -> %j', (value, expected) => {
+    expect(parseIdListParam(value)).toEqual(expected);
   });
 });
 

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import type { StorylineChild, StorylinePath } from '~/components/Storyline/storyline.queries';
+import type { StorylinePath } from '~/components/Storyline/storyline.queries';
 import {
   useStorylinePath,
   useStorylinePathImages,
@@ -11,15 +11,19 @@ import {
 import {
   getStorylineWalk,
   hideHiddenUsersChapters,
+  parseIdListParam,
   parseIdParam,
   resolvePendingContinue,
+  routeVia,
   STORYLINE_CHAPTER_PARAM,
+  STORYLINE_VIA_PARAM,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useHiddenUserIds } from '~/components/Storyline/storyline.queries';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { QS } from '~/utils/qs';
 
 type InactiveState = { active: false; enter: (chapterId: number) => void };
+type RouteStop = { chapterId: number; parentCount?: number };
 export type ActiveStorylineMode = {
   active: true;
   enter: (chapterId: number) => void;
@@ -32,12 +36,13 @@ export type ActiveStorylineMode = {
   jumpToChapter: (chapterId: number) => void;
   /**
    * Read on into another chapter. `from` is the chapter it continues, when that is not the end
-   * of the path (a branch off an earlier stop); `track: false` for a jump along the line, which
-   * is not a choice at a fork.
+   * of the path (a branch off an earlier stop), and `line` the reader's line it is on, the path by
+   * default (the drawer passes the canon line ahead too; `[]` starts a fresh route). `track: false`
+   * for a jump along the line, which is not a choice at a fork.
    */
   continueTo: (
-    child: Pick<StorylineChild, 'chapterId'>,
-    options?: { from?: number; track?: boolean }
+    child: RouteStop,
+    options?: { from?: number; track?: boolean; line?: RouteStop[] }
   ) => void;
   endOpen: boolean;
   setEndOpen: (open: boolean) => void;
@@ -60,9 +65,19 @@ function useStorylineRoute() {
   const browserRouter = useBrowserRouter();
   const chapterId = parseIdParam(browserRouter.query[STORYLINE_CHAPTER_PARAM]);
   const imageId = parseIdParam(browserRouter.query.imageId);
+  const viaParam = String(browserRouter.query[STORYLINE_VIA_PARAM] ?? '');
+  const via = useMemo(() => parseIdListParam(viaParam), [viaParam]);
 
   const go = useCallback(
-    ({ imageId, chapterId }: { imageId?: number; chapterId: number | undefined }) => {
+    ({
+      imageId,
+      chapterId,
+      via = [],
+    }: {
+      imageId?: number;
+      chapterId: number | undefined;
+      via?: number[];
+    }) => {
       const [pathname, queryString] = browserRouter.asPath.split('?');
       const asQuery = QS.parse(queryString) as Record<string, string | number>;
       const query: Record<string, string | number> = { ...browserRouter.query };
@@ -73,6 +88,13 @@ function useStorylineRoute() {
         delete query[STORYLINE_CHAPTER_PARAM];
         delete asQuery[STORYLINE_CHAPTER_PARAM];
       }
+      if (chapterId && via.length) {
+        query[STORYLINE_VIA_PARAM] = via.join(',');
+        asQuery[STORYLINE_VIA_PARAM] = via.join(',');
+      } else {
+        delete query[STORYLINE_VIA_PARAM];
+        delete asQuery[STORYLINE_VIA_PARAM];
+      }
       if (imageId) query.imageId = imageId;
       browserRouter.replace(
         { query },
@@ -82,7 +104,7 @@ function useStorylineRoute() {
     [browserRouter]
   );
 
-  return { chapterId, imageId, go };
+  return { chapterId, imageId, via, go };
 }
 
 /**
@@ -102,11 +124,11 @@ export function StorylineModeProvider({
   ) => React.ReactNode;
 }) {
   const enabled = useStorylinesEnabled();
-  const { chapterId: routeChapterId, imageId: routeImageId, go } = useStorylineRoute();
+  const { chapterId: routeChapterId, imageId: routeImageId, via, go } = useStorylineRoute();
   const chapterId = enabled ? routeChapterId : undefined;
   const tracking = useStorylineTracking();
 
-  const pathQuery = useStorylinePath(chapterId);
+  const pathQuery = useStorylinePath(chapterId, via);
   const hiddenUserIds = useHiddenUserIds();
   const path = useMemo(
     () =>
@@ -153,24 +175,29 @@ export function StorylineModeProvider({
       if (!imageId) return;
       setEndOpenFor(undefined);
       setDrawerOpen(false);
-      go({ imageId, chapterId });
+      go({ imageId, chapterId, via });
     },
-    [walk, go, chapterId]
+    [walk, go, chapterId, via]
   );
 
   const continueTo = useCallback(
     (
-      child: Pick<StorylineChild, 'chapterId'>,
-      { from = chapterId, track = true }: { from?: number; track?: boolean } = {}
+      child: RouteStop,
+      {
+        from = chapterId,
+        track = true,
+        line = path?.chapters ?? [],
+      }: { from?: number; track?: boolean; line?: RouteStop[] } = {}
     ) => {
       if (from && track)
         tracking.trackBranchChoice({ fromChapterId: from, toChapterId: child.chapterId });
+      const before = line.slice(0, line.findIndex((stop) => stop.chapterId === from) + 1);
       setDrawerOpen(false);
       setTrusted({ chapterId: child.chapterId, imageId: routeImageId });
       setPendingChapterId(child.chapterId);
-      go({ chapterId: child.chapterId });
+      go({ chapterId: child.chapterId, via: routeVia([...before, child]) });
     },
-    [chapterId, routeImageId, go, tracking]
+    [chapterId, path?.chapters, routeImageId, go, tracking]
   );
 
   // Once the chosen chapter's path and images arrive, open its first image. A chapter with no
@@ -192,8 +219,9 @@ export function StorylineModeProvider({
     setEndOpenFor(undefined);
     // The router updates synchronously and re-runs this before the cleared state lands; only
     // navigate once, or the two chase each other.
-    if (routeImageId !== next.imageId) go({ imageId: next.imageId, chapterId: pendingChapterId });
-  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId]);
+    if (routeImageId !== next.imageId)
+      go({ imageId: next.imageId, chapterId: pendingChapterId, via });
+  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId, via]);
 
   // The URL's chapter is trusted only for an image on its own path (not the previous chapter's,
   // still shown while this one loads), or for the image a reader was on when they took the
