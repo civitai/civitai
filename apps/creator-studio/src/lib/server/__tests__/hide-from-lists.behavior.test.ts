@@ -64,7 +64,9 @@ beforeAll(async () => {
       id int PRIMARY KEY, username text, "deletedAt" timestamp, "bannedAt" timestamp,
       "profilePictureId" int, settings jsonb NOT NULL DEFAULT '{}'
     );
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text, "blockedFor" text
+    );
     CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text, "createdAt" timestamp DEFAULT now());
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
     CREATE TABLE "Collection" (
@@ -130,7 +132,9 @@ describe('Creator Studio "Who reacted" and reactions from before the lists launc
     `);
   });
 
-  afterEach(() => holder.db.exec(`UPDATE "User" SET settings = '{}' WHERE id IN (${QUIET}, ${AFTER})`));
+  afterEach(() =>
+    holder.db.exec(`UPDATE "User" SET settings = '{}' WHERE id IN (${QUIET}, ${AFTER})`)
+  );
 
   it('leaves out an older image reaction by default, still in the count', async () => {
     const page = await getReactors(holder.db as never, OWNER, 'image', PRE_IMAGE, {
@@ -174,5 +178,49 @@ describe('Creator Studio lists leave out a user who opted out', () => {
     const page = await getCollectors(holder.db as never, OWNER, 'image', IMAGE, null);
     expect(page?.collectors.map((c) => c.userId)).toEqual([LISTED, OPTED_BACK_IN]);
     expect(page?.total).toBe(3);
+  });
+});
+
+describe('Creator Studio lists on a blocked image', () => {
+  const BLOCKED = 910;
+  const AI_UNVERIFIED = 911;
+  const LEFTOVER_REASON = 912;
+  const lists = async (imageId: number) => ({
+    reactors: (
+      await getReactors(holder.db as never, OWNER, 'image', imageId, {
+        reaction: 'Like',
+        cursor: null,
+      } as never)
+    )?.reactors.map((r) => r.userId),
+    collectors: (
+      await getCollectors(holder.db as never, OWNER, 'image', imageId, null)
+    )?.collectors.map((c) => c.userId),
+  });
+
+  beforeAll(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES
+        (${BLOCKED}, ${OWNER}, 'Blocked', 'moderated'),
+        (${AI_UNVERIFIED}, ${OWNER}, 'Blocked', 'AiNotVerified'),
+        (${LEFTOVER_REASON}, ${OWNER}, 'Scanned', 'moderated');
+      INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES
+        (${BLOCKED}, ${LISTED}, 'Like'), (${AI_UNVERIFIED}, ${LISTED}, 'Like'), (${LEFTOVER_REASON}, ${LISTED}, 'Like');
+      INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "addedById") VALUES
+        (1, ${BLOCKED}, 'ACCEPTED', ${LISTED}),
+        (1, ${AI_UNVERIFIED}, 'ACCEPTED', ${LISTED}),
+        (1, ${LEFTOVER_REASON}, 'ACCEPTED', ${LISTED});
+    `);
+  });
+
+  it('answers neither list for an image removed by moderation', async () => {
+    expect(await lists(BLOCKED)).toEqual({ reactors: undefined, collectors: undefined });
+  });
+
+  it('keeps both lists for an image blocked only pending AI verification', async () => {
+    expect(await lists(AI_UNVERIFIED)).toEqual({ reactors: [LISTED], collectors: [LISTED] });
+  });
+
+  it('keeps both lists for a scanned image with a leftover block reason', async () => {
+    expect(await lists(LEFTOVER_REASON)).toEqual({ reactors: [LISTED], collectors: [LISTED] });
   });
 });

@@ -2,8 +2,8 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { getBasicDataForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { BlockedReason } from '~/server/common/enums';
 import { imageReactionListedToViewer } from '~/server/services/reaction-privacy.service';
-import { isImageOwner } from '~/server/services/util.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -35,13 +35,23 @@ export function safeProfilePicture(picture: ProfileImage | null | undefined) {
     : null;
 }
 
+// A removed image keeps its reactors private. An AI-verification block is the owner's to fix by adding metadata,
+// so that image keeps its list.
+export function hidesReactors(image: { ingestion: string; blockedFor: string | null }) {
+  return image.ingestion === 'Blocked' && image.blockedFor !== BlockedReason.AiNotVerified;
+}
+
 /**
  * The newest accounts that reacted to one of the caller's images. Not reaction-time order: only the
  * `(imageId, userId) INCLUDE (reaction)` index serves this at constant cost; no index covers `createdAt` with
  * `userId`, so ordering by it reads every reaction on the image.
  */
 export async function getImageReactors({ imageId, userId }: { imageId: number; userId: number }) {
-  if (!(await isImageOwner({ userId, imageId, allowMods: false })))
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { userId: true, ingestion: true, blockedFor: true },
+  });
+  if (!image || image.userId !== userId || hidesReactors(image))
     throw throwNotFoundError(`No image with id ${imageId}`);
 
   const rows = await dbRead.$queryRaw<ReactorRow[]>`

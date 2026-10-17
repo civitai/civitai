@@ -35,8 +35,14 @@ export async function ownsContent(
   entity: ReactorEntity,
   entityId: number
 ): Promise<boolean> {
+  // A removed image keeps its audience private. An AI-verification block is the owner's to fix by adding
+  // metadata, so that image keeps its lists.
+  const listable =
+    entity === 'image'
+      ? sql` AND (ingestion IS DISTINCT FROM 'Blocked' OR "blockedFor" = 'AiNotVerified')`
+      : sql``;
   const owned = await sql<{ id: number }>`
-    SELECT id FROM ${sql.table(TABLES[entity].content)} WHERE id = ${entityId} AND "userId" = ${ownerId}
+    SELECT id FROM ${sql.table(TABLES[entity].content)} WHERE id = ${entityId} AND "userId" = ${ownerId}${listable}
   `.execute(db);
   return owned.rows.length > 0;
 }
