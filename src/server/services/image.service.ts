@@ -2040,6 +2040,12 @@ const getAllImagesUncaptured = async (
     AND.push(
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
     );
+    // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
+    AND.push(
+      userId
+        ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
+        : Prisma.sql`(i."blockedFor" IS NULL)`
+    );
   }
 
   if (disablePoi) {
