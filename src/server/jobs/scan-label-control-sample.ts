@@ -36,10 +36,8 @@ async function idCreatedSince(cutoff: Date, fallback: number) {
  * Applied when choosing and again in the insert: an image can change in between.
  * A post at the queue writer's cap is skipped; its unqueued images are not known to be unflagged.
  */
-const sampleable = (img: Prisma.Sql, from: Date, until: Date) => Prisma.sql`(
-  ${img}."createdAt" >= ${from}
-  AND ${img}."createdAt" < ${until}
-  AND ${img}."postId" IS NOT NULL
+const sampleable = (img: Prisma.Sql) => Prisma.sql`(
+  ${img}."postId" IS NOT NULL
   AND ${img}.ingestion = 'Scanned'
   AND ${img}."needsReview" IS NULL
   AND ${img}."blockedFor" IS NULL
@@ -57,6 +55,13 @@ const sampleable = (img: Prisma.Sql, from: Date, until: Date) => Prisma.sql`(
     WHERE sibling."postId" = ${img}."postId" AND q.lane = 'flagged'
   ) < ${SCAN_LABEL_MAX_ITEMS_PER_POST}
 )`;
+
+/**
+ * 🔴 Insert-only. In the candidate walk a createdAt bound makes the planner scan the createdAt index
+ * for every draw instead of walking a few primary-key rows, and the job hits the statement timeout.
+ */
+const createdBetween = (img: Prisma.Sql, from: Date, until: Date) =>
+  Prisma.sql`(${img}."createdAt" >= ${from} AND ${img}."createdAt" < ${until})`;
 
 /**
  * Adds a random sample of recent uploads that nothing flagged to the control lane, topping it up to
@@ -100,7 +105,7 @@ export async function feedScanLabelControlSample({
       CROSS JOIN LATERAL (
         SELECT img.id, img."postId"
         FROM "Image" img
-        WHERE img.id >= s.start AND img.id < ${hi} AND ${sampleable(img, from, until)}
+        WHERE img.id >= s.start AND img.id < ${hi} AND ${sampleable(img)}
         ORDER BY img.id
         LIMIT 1
       ) c
@@ -122,7 +127,9 @@ export async function feedScanLabelControlSample({
       INSERT INTO "ScanLabelItem" ("imageId", lane, "firstFlaggedAt", status, "createdAt")
       SELECT img.id, 'control', ${now}, 'open', ${now}
       FROM "Image" img
-      WHERE img.id = ANY(${chosen}::int[]) AND ${sampleable(img, from, until)}
+      WHERE img.id = ANY(${chosen}::int[])
+        AND ${sampleable(img)}
+        AND ${createdBetween(img, from, until)}
       ON CONFLICT ("imageId") DO NOTHING
       RETURNING id, "imageId"
     )
