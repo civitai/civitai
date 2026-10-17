@@ -1,7 +1,12 @@
 import { createHmac } from 'crypto';
 import { Prisma } from '@prisma/client';
 import type { CoocRawQuery, CoocTxRunner } from '~/server/services/resource-intent-cooc/build';
-import { COOC_ELIGIBLE_REST, coocRetry } from '~/server/services/resource-intent-cooc/build';
+import {
+  COOC_ELIGIBLE_ATTACHMENTS,
+  COOC_ELIGIBLE_IMAGE,
+  COOC_ELIGIBLE_REST,
+  coocRetry,
+} from '~/server/services/resource-intent-cooc/build';
 import type { TagModelContent, TagTrainingRow, TrainingResource } from './build';
 
 /**
@@ -80,14 +85,38 @@ export function resourcesOfVersions(
   return out;
 }
 
+/** HMAC-SHA256(key, `<domain>\0<value>`) as hex, as the observations' writer keys its hashes. */
+const keyedHex = (key: Buffer, domain: string, value: string | number) =>
+  createHmac('sha256', key).update(`${domain}\u0000${value}`).digest('hex');
+
 /**
- * A user id in the generator observations' namespace: the first 64 bits of the keyed HMAC-SHA256 of
- * `user\0<id>`, as a decimal string. Posted rows hashed with the observations' own key count each
- * person once across both sources.
+ * A user id in the generator observations' namespace: the first 64 bits of the keyed hash of the
+ * id, as a decimal string. Posted rows hashed with the observations' own key count each person once
+ * across both sources.
  */
 export function observationUserHash(key: Buffer, userId: number): string {
-  const hex = createHmac('sha256', key).update(`user\u0000${userId}`).digest('hex');
-  return BigInt(`0x${hex.slice(0, 16)}`).toString();
+  if (!Number.isSafeInteger(userId)) throw new Error(`user id ${userId} is not an integer`);
+  return BigInt(`0x${keyedHex(key, 'user', userId).slice(0, 16)}`).toString();
+}
+
+/** A key's fingerprint as the observations' writer computes it: identifies the key, reveals nothing. */
+export function observationKeyFingerprint(key: Buffer): string {
+  return keyedHex(key, 'fingerprint', 'p2m-extractor').slice(0, 16);
+}
+
+/**
+ * Refuse a hash key whose fingerprint is not the one the observations were written under: posted
+ * users hashed with any other key land in a second namespace, and every person counts twice.
+ */
+export function assertObservationKey(key: Buffer, expectedFingerprint: string): void {
+  if (!key.length) throw new Error('observation hash key is empty');
+  if (!/^[0-9a-f]{16}$/.test(expectedFingerprint))
+    throw new Error('expected key fingerprint must be 16 lowercase hex characters');
+  const actual = observationKeyFingerprint(key);
+  if (actual !== expectedFingerprint)
+    throw new Error(
+      `observation hash key has fingerprint ${actual}, expected ${expectedFingerprint}: refusing to hash posted users into another namespace`
+    );
 }
 
 const VERSION_CHUNK = 10_000;
@@ -209,13 +238,11 @@ export async function readPostedSample(
 
 const MODEL_BATCH = 1000;
 
-/** The prototype's content-image predicate, plus no attached model flagged POI or minor. */
-export const CONTENT_IMAGE_ELIGIBLE =
-  Prisma.raw(`AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0
-  AND i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
-  AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false
-  AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" fr JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId"
-                  JOIN "Model" fm ON fm.id = fmv."modelId" WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor))`);
+/**
+ * The co-occurrence index's image and attachment conditions; the post's conditions differ per
+ * branch (`readModelContent`).
+ */
+export const CONTENT_IMAGE_ELIGIBLE = Prisma.raw(COOC_ELIGIBLE_IMAGE + COOC_ELIGIBLE_ATTACHMENTS);
 
 /**
  * Each unflagged model's content sources: name, description, Civitai tags, every version's base model
@@ -307,9 +334,16 @@ export type GenObservation = {
  * (the prototype's sample), with their prompt text, excluding deleted accounts. ClickHouse SQL; the
  * caller runs it read-only and maps each row with `genObservationOf`.
  */
-export function genObservationsSql(start: Date, end: Date, sliceMinutes: number): string {
+export function genObservationsSql(
+  start: Date,
+  end: Date,
+  sliceMinutes: number,
+  limit?: number
+): string {
   if (!Number.isInteger(sliceMinutes) || sliceMinutes < 1 || sliceMinutes > 60)
     throw new Error('sliceMinutes must be an integer in [1, 60]');
+  if (limit !== undefined && !(Number.isSafeInteger(limit) && limit > 0))
+    throw new Error('limit must be a positive integer');
   const ts = (d: Date) => `toDateTime('${d.toISOString().slice(0, 19).replace('T', ' ')}', 'UTC')`;
   return `
     SELECT toString(o.userHash) AS u, t.prompt AS p, o.resourceVersionIds AS v,
@@ -329,7 +363,12 @@ export function genObservationsSql(start: Date, end: Date, sliceMinutes: number)
     end
   )} AND toMinute(toTimeZone(time, 'UTC')) < ${sliceMinutes})
       GROUP BY promptHash
-    ) AS t ON t.promptHash = o.promptHash`;
+    ) AS t ON t.promptHash = o.promptHash${
+      limit === undefined
+        ? ''
+        : `
+    LIMIT ${limit}`
+    }`;
 }
 
 export function genObservationOf(r: {

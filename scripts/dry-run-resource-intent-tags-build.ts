@@ -16,10 +16,12 @@ import { runScriptAndExit } from './lib/run-as-script';
  * Environment:
  *   P2M_CLICKHOUSE_URL, P2M_CLICKHOUSE_USER, P2M_CLICKHOUSE_PASSWORD
  *       a ClickHouse user that can read the generator observations and their prompt text
- *   P2M_HASH_KEY
- *       hex key the observations' user ids were hashed with; posted users are hashed with it so
- *       both sources share one user namespace
- * The `--limit-*` flags cut the inputs for a quick trial; the printed counts say what was read.
+ *   P2M_HASH_KEY, P2M_HASH_KEY_FINGERPRINT
+ *       hex key the observations' user ids were hashed with, and the fingerprint they were written
+ *       under; a key with another fingerprint is refused. Posted users are hashed with it so both
+ *       sources share one user namespace
+ * The `--limit-*` flags (positive integers) cut the inputs for a quick trial; `--limit-gen` is a
+ * LIMIT on the ClickHouse read. The printed counts say what was read.
  */
 
 const ms = (t0: number) => Math.round(performance.now() - t0);
@@ -51,7 +53,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     },
     strict: true,
   });
-  const limit = (v?: string) => (v === undefined ? Infinity : Number(v));
+  /** A `--limit-*` value: absent, or a positive integer; anything else is refused. */
+  const limit = (flag: string, v?: string): number | undefined => {
+    if (v === undefined) return undefined;
+    if (!/^[1-9][0-9]*$/.test(v) || !Number.isSafeInteger(Number(v)))
+      throw new Error(`--${flag}: not a positive integer: ${v}`);
+    return Number(v);
+  };
+  const limitGen = limit('limit-gen', values['limit-gen']);
+  const limitPostBatches = limit('limit-post-batches', values['limit-post-batches']);
+  const limitModels = limit('limit-models', values['limit-models']);
   const env = (k: string) => {
     const v = process.env[k];
     if (!v) throw new Error(`${k} is not set`);
@@ -59,13 +70,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   };
   const chUrl = env('P2M_CLICKHOUSE_URL');
   const hashKey = Buffer.from(env('P2M_HASH_KEY'), 'hex');
-  if (!hashKey.length) throw new Error('P2M_HASH_KEY is not hex');
 
   const { Prisma } = await import('@prisma/client');
   const { createClient } = await import('@clickhouse/client');
   const { dbRead } = await import('~/server/db/client');
   const B = await import('~/server/services/resource-intent-tags/build');
   const S = await import('~/server/services/resource-intent-tags/sources');
+  S.assertObservationKey(hashKey, env('P2M_HASH_KEY_FINGERPRINT'));
   const {
     compressTagIndex,
     decompressTagIndex,
@@ -120,22 +131,25 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     let t0 = performance.now();
     const gen: GenObservation[] = [];
     const rs = await ch.query({
-      query: S.genObservationsSql(window.start, window.end, S.TAG_SOURCE_PARAMS.genSliceMinutes),
+      query: S.genObservationsSql(
+        window.start,
+        window.end,
+        S.TAG_SOURCE_PARAMS.genSliceMinutes,
+        limitGen
+      ),
       format: 'JSONEachRow',
     });
-    const maxGen = limit(values['limit-gen']);
     for await (const batch of rs.stream()) {
-      for (const row of batch as { json: <T>() => T }[]) {
-        if (gen.length < maxGen) gen.push(S.genObservationOf(row.json()));
-      }
+      for (const row of batch as { json: <T>() => T }[]) gen.push(S.genObservationOf(row.json()));
     }
+    const genUsers = new Set(gen.map((o) => o.user));
     const genReadMs = ms(t0);
     t0 = performance.now();
     const versionIds = [...new Set(gen.flatMap((o) => o.versionIds))];
     const versions = await S.fetchVersionInfo(query, versionIds);
     log('gen', {
       observations: gen.length,
-      users: new Set(gen.map((o) => o.user)).size,
+      users: genUsers.size,
       versions: versionIds.length,
       versionsResolved: versions.size,
       readMs: genReadMs,
@@ -156,21 +170,29 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     log('genRows', { flaggedModelRows, tagMs: ms(t0) });
 
     t0 = performance.now();
+    const postUsers = new Set<string>();
     const posted = await S.readPostedSample(query, {
       start: window.start,
       end: window.end,
       mod: S.TAG_SOURCE_PARAMS.postedMod,
       idBatch: 250_000,
-      maxBatches: limit(values['limit-post-batches']),
+      maxBatches: limitPostBatches,
       userKey: (id) => S.observationUserHash(hashKey, id),
       onBatch: (rows) => {
-        for (const r of rows) acc.addRow(r);
+        for (const r of rows) {
+          postUsers.add(r.user);
+          acc.addRow(r);
+        }
       },
     });
+    let shared = 0;
+    for (const u of postUsers) if (genUsers.has(u)) shared++;
     log('post', { ...posted, ms: ms(t0) });
+    // A wrong hash key leaves the two sources sharing no user at all.
+    log('users', { genUsers: genUsers.size, postUsers: postUsers.size, genAndPostUsers: shared });
 
     t0 = performance.now();
-    const modelIds = acc.usedModelIds().slice(0, limit(values['limit-models']));
+    const modelIds = acc.usedModelIds().slice(0, limitModels);
     let contentModels = 0;
     await S.readModelContent(query, modelIds, window.end, (models) => {
       contentModels += models.length;

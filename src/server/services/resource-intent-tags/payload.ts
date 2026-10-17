@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import zlib from 'zlib';
 import { Packr } from 'msgpackr';
 import type { SparseByKey, TagIndexData, TagIndexKindData, TagResourceKind } from './build';
+import { tagFitBound } from './build';
 import { compareCodePoints } from './extract';
 import type {
   FloatArray,
@@ -405,7 +406,12 @@ function kindIndex(k: TagIndexKindData, V: number, E: number, kind: string): Tag
   const n = ids.length;
   for (let i = 1; i < n; i++) if (ids[i] <= ids[i - 1]) fail(what('model ids not ascending'));
   if (k.fit.length !== n) fail(what('fit length'));
-  for (const v of k.fit) if (!finite(v)) fail(what('fit not finite'));
+  // A fit feeds exp() in the scorer: a finite but corrupt value would still score Infinity.
+  const bound = tagFitBound();
+  for (const v of k.fit) {
+    if (!finite(v)) fail(what('fit not finite'));
+    if (Math.abs(v) > bound) fail(what('fit out of range'));
+  }
   checkPtr(k.ecosystemPtr, n, k.ecosystemIds.length, what('ecosystems'));
   checkIds(k.ecosystemPtr, k.ecosystemIds, E, what('ecosystem'));
   const { ptr, resource, c, fit } = k.postings;
@@ -417,6 +423,7 @@ function kindIndex(k: TagIndexKindData, V: number, E: number, kind: string): Tag
     if (Number.isNaN(fit[i])) {
       if (!(c[i] > 0)) fail(what('postings entry with neither c nor fit'));
     } else if (!finite(fit[i])) fail(what('postings fit not finite'));
+    else if (Math.abs(fit[i]) > bound) fail(what('postings fit out of range'));
   }
   return {
     modelIds: Array.from(ids),
@@ -440,7 +447,8 @@ function kindIndex(k: TagIndexKindData, V: number, E: number, kind: string): Tag
 /**
  * The scorer's index over built or decoded arrays, refused unless every precondition holds: keys and
  * names in code-point order, model ids strictly ascending, CSR pointers of the right length and
- * monotone, ids in range and ascending within a row, values finite, content scores in [0, 1], and the
+ * monotone, ids in range and ascending within a row, values finite, fits within `tagFitBound`,
+ * content scores in [0, 1], and the
  * ecosystems' observations summing to the build's count of rows with an ecosystem, so none (including
  * those below the resolver's user floor) was left out.
  */

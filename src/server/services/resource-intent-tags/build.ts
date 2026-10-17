@@ -40,6 +40,16 @@ export const TAG_BUILD_PARAMS = {
 } as const;
 export type TagBuildParams = typeof TAG_BUILD_PARAMS;
 
+/**
+ * The largest |fit| a build can produce, from its outcome scale. A generator outcome is y − b with y
+ * and the user's shrunk mean b both in [disliked, 1]; a posted outcome is tanh(·) + tipBonus. Each
+ * fit is a shrunk average of per-user means of those outcomes (the resource's toward 0, a pair's
+ * toward the resource's), so it stays inside the same range, and so does the scorer's weighted F.
+ */
+export function tagFitBound(params: TagBuildParams['outcome'] = TAG_BUILD_PARAMS.outcome): number {
+  return Math.max(1 - params.disliked, 1 + params.tipBonus);
+}
+
 export const TAG_VOCABULARY_SCHEMA = 'p2m-vocab/2';
 
 export type TagVocabulary = {

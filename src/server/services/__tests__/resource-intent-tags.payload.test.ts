@@ -1,7 +1,7 @@
 import { Packr } from 'msgpackr';
 import { describe, expect, it } from 'vitest';
 import type { TagTrainingRow } from '~/server/services/resource-intent-tags/build';
-import { TagIndexAccumulator } from '~/server/services/resource-intent-tags/build';
+import { tagFitBound, TagIndexAccumulator } from '~/server/services/resource-intent-tags/build';
 import type { TagIndexData } from '~/server/services/resource-intent-tags/build';
 import {
   decodeTagIndex,
@@ -345,6 +345,20 @@ describe('resource-intent-tags snapshot codec', () => {
       'addon fit length',
     ],
     ['a non-finite resource fit', (d) => (d.kinds.addon.fit[0] = Infinity), 'addon fit not finite'],
+    // Finite, so it passes every earlier check, and exp() of it scores Infinity.
+    [
+      'a resource fit beyond the fit bound',
+      (d) => (d.kinds.addon.fit[0] = 268670.6),
+      'addon fit out of range',
+    ],
+    [
+      'a pair fit beyond the fit bound',
+      (d) => {
+        const { fit } = d.kinds.addon.postings;
+        fit[fit.findIndex((v) => !Number.isNaN(v))] = -2.5;
+      },
+      'addon postings fit out of range',
+    ],
     [
       'a published ecosystem id out of range',
       (d) => {
@@ -480,6 +494,14 @@ describe('resource-intent-tags snapshot codec', () => {
     ],
   ])('refuses %s', (_name, edit, message) => {
     expect(validateEdited(edit)).toThrow(message);
+  });
+
+  it('accepts fits exactly at the fit bound', () => {
+    const d = structuredClone(data);
+    d.kinds.addon.fit[0] = tagFitBound();
+    const { fit } = d.kinds.addon.postings;
+    fit[fit.findIndex((v) => !Number.isNaN(v))] = -tagFitBound();
+    expect(() => tagIndexFromData(d)).not.toThrow();
   });
 
   it('accepts the valid build as built (float64) and as decoded (float32)', async () => {

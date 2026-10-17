@@ -1,13 +1,19 @@
 import type { Prisma } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import { COOC_ELIGIBLE_REST } from '~/server/services/resource-intent-cooc/build';
+import {
+  COOC_ELIGIBLE_ATTACHMENTS,
+  COOC_ELIGIBLE_IMAGE,
+  COOC_ELIGIBLE_REST,
+} from '~/server/services/resource-intent-cooc/build';
 import type { TagModelContent, TagTrainingRow } from '~/server/services/resource-intent-tags/build';
 import {
+  assertObservationKey,
   CONTENT_IMAGE_ELIGIBLE,
   fetchVersionInfo,
   genObservationOf,
   genObservationsSql,
   genTrainingRow,
+  observationKeyFingerprint,
   observationUserHash,
   readModelContent,
   readPostedSample,
@@ -17,11 +23,33 @@ import {
 } from '~/server/services/resource-intent-tags/sources';
 
 describe('resource-intent-tags sources', () => {
-  it("hashes a posted user id exactly as the observations' keyed hash does", () => {
-    // Expected values computed independently: int(HMAC-SHA256(key, b'user\0' + str(id)).hexdigest()[:16], 16).
-    const key = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
-    expect(observationUserHash(key, 42)).toBe('9339344538256439646');
-    expect(observationUserHash(key, 1234567)).toBe('3778669012177265338');
+  // Vectors produced by RUNNING the observations' writer (its own `user_hash` and `key_fingerprint`)
+  // on this test key, not by re-deriving its formula.
+  const testKey = Buffer.from(
+    '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+    'hex'
+  );
+
+  it.each([
+    [1, '12767728711029640056'],
+    [4823917, '17611710126099704230'],
+    [2 ** 31, '11339119219866617676'],
+    [Number.MAX_SAFE_INTEGER, '11768557503457933977'],
+  ])("hashes posted user %i exactly as the observations' writer does", (id, expected) => {
+    expect(observationUserHash(testKey, id)).toBe(expected);
+  });
+
+  it("fingerprints a key exactly as the observations' writer does", () => {
+    expect(observationKeyFingerprint(testKey)).toBe('cef65755129e1225');
+  });
+
+  it('refuses a hash key whose fingerprint is not the expected one', () => {
+    expect(() => assertObservationKey(testKey, 'cef65755129e1225')).not.toThrow();
+    const other = Buffer.from(testKey);
+    other[0] ^= 1;
+    expect(() => assertObservationKey(other, 'cef65755129e1225')).toThrow('refusing to hash');
+    expect(() => assertObservationKey(testKey, '')).toThrow('16 lowercase hex');
+    expect(() => assertObservationKey(Buffer.alloc(0), 'cef65755129e1225')).toThrow('empty');
   });
 
   it('maps an observation, skipping versions the map does not know', () => {
@@ -113,13 +141,15 @@ describe('resource-intent-tags sources', () => {
   });
 
   it('pins the content-image moderation predicate whole, flagged attachments included', () => {
-    // Each clause is a moderation rule a reword could drop.
-    expect(CONTENT_IMAGE_ELIGIBLE.sql.replace(/\s+/g, ' ')).toBe(
+    // Each clause is a moderation rule a reword could drop; the co-occurrence index's image and
+    // attachment conditions, so the two indexes' inputs move together.
+    expect(CONTENT_IMAGE_ELIGIBLE.sql).toBe(COOC_ELIGIBLE_IMAGE + COOC_ELIGIBLE_ATTACHMENTS);
+    expect(CONTENT_IMAGE_ELIGIBLE.sql.replace(/\s+/g, ' ').trim()).toBe(
       `AND i."hideMeta" = false AND length(i.meta->>'prompt') > 0 AND i.ingestion = 'Scanned' ` +
         `AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL ` +
-        `AND i.minor = false AND i.poi = false AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" fr ` +
+        `AND i.minor = false AND i.poi = false AND NOT EXISTS ( SELECT 1 FROM "ImageResourceNew" fr ` +
         `JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId" JOIN "Model" fm ON fm.id = fmv."modelId" ` +
-        `WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor))`
+        `WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor) )`
     );
   });
 
@@ -133,6 +163,11 @@ describe('resource-intent-tags sources', () => {
     expect(sql).toContain("time < toDateTime('2026-10-01 00:00:00', 'UTC')");
     expect(sql.match(/toMinute\(toTimeZone\(time, 'UTC'\)\) < 2/g)?.length).toBe(2);
     expect(() => genObservationsSql(new Date(), new Date(), 0)).toThrow('sliceMinutes');
+    expect(sql).not.toContain('LIMIT');
+    const limited = genObservationsSql(new Date('2026-09-01'), new Date('2026-10-01'), 2, 500);
+    expect(limited.trimEnd().endsWith('LIMIT 500')).toBe(true);
+    for (const bad of [0, -1, 1.5, NaN])
+      expect(() => genObservationsSql(new Date(), new Date(), 2, bad)).toThrow('positive integer');
   });
 
   it('ends the window a whole UTC day before the build day', () => {
