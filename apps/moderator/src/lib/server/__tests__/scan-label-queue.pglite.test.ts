@@ -242,6 +242,11 @@ describe('claimNext source mix', () => {
     expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ upload: 55, prompt: 45 });
   });
 
+  it('never passes an empty scan source’s draws to the control lane while the other has items', async () => {
+    const sourceOf = await seedMany({ prompt: 30, control: 5 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ prompt: 90, control: 10 });
+  });
+
   it('serves whatever is left when only one source has items', async () => {
     const sourceOf = await seedMany({ prompt: 10 });
     expect(await pull(sourceOf, 30, everyHundredth())).toEqual({ prompt: 30 });
