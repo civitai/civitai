@@ -1,8 +1,12 @@
 // The decision a site-form appellant is told, read by the main app's in-app notification and the
 // moderator app's email. One copy, so the two cannot tell them different things.
+import { AppealCategory } from '@civitai/db-schema/enums';
 
-export const SITE_APPEAL_CATEGORIES = ['Account', 'Article', 'Model', 'Other'] as const;
-export type SiteAppealCategory = (typeof SITE_APPEAL_CATEGORIES)[number];
+export type SiteAppealCategory = AppealCategory;
+
+/** Where the appellant reads their appeals and every decision, including the moderator's message. */
+export const SITE_APPEAL_PATH = '/appeal';
+export const SITE_APPEAL_CATEGORIES = Object.values(AppealCategory);
 
 /** Stored on `Appeal.context` by the main app's submit path. */
 export type SiteAppealContext = {
@@ -16,8 +20,9 @@ export const isSiteAppealCategory = (value: unknown): value is SiteAppealCategor
   (SITE_APPEAL_CATEGORIES as readonly unknown[]).includes(value);
 
 /**
- * `restored`: the appealed thing is back as it was. An approval that restored nothing (the article
- * was deleted meanwhile) must not say it was restored.
+ * `restored`: the approval put back what was appealed. An approval that lifted nothing (the article
+ * was deleted meanwhile, the ban was already lifted) must not say it did. A rejection names the
+ * decision, never the current state, which may have moved since.
  */
 export function siteAppealDecisionText({
   category,
@@ -29,7 +34,7 @@ export function siteAppealDecisionText({
   restored: boolean;
 }): string {
   if (approved) {
-    if (category === 'Account')
+    if (restored && category === 'Account')
       return 'We reviewed your appeal and lifted the restriction on your account.';
     if (restored && category === 'Article')
       return 'We reviewed your appeal and restored your article.';
@@ -39,11 +44,11 @@ export function siteAppealDecisionText({
   }
   switch (category) {
     case 'Account':
-      return 'We reviewed your appeal. The restriction on your account stays in place.';
+      return 'We reviewed your appeal. The decision on your account stands.';
     case 'Article':
-      return 'We reviewed your appeal. Your article stays unpublished.';
+      return 'We reviewed your appeal. The decision to unpublish your article stands.';
     case 'Model':
-      return 'We reviewed your appeal. Your model stays unpublished.';
+      return 'We reviewed your appeal. The decision to unpublish your model stands.';
     case 'Other':
       return 'We reviewed your appeal. The original decision stands.';
   }

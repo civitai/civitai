@@ -645,6 +645,23 @@ export async function banConfirmed(userId: number, attempts = 20): Promise<boole
   return false;
 }
 
+/**
+ * Has the unban landed? Same 200-before-work endpoint as `banConfirmed`. The unban branch writes no
+ * completion stamp, and `bannedAt` cleared is what lets the account sign in again, so that is the signal.
+ */
+export async function unbanConfirmed(userId: number, attempts = 10): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const row = await dbWrite
+      .selectFrom('User')
+      .select('bannedAt')
+      .where('id', '=', userId)
+      .executeTakeFirst();
+    if (row && row.bannedAt === null) return true;
+  }
+  return false;
+}
+
 export async function setBanned(input: {
   userId: number;
   ban: boolean;

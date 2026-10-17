@@ -5,6 +5,7 @@ import type { OrphanedAppealOutcome } from '~/shared/utils/appeal';
 import {
   isSiteAppealCategory,
   siteAppealDecisionText,
+  SITE_APPEAL_PATH,
   type SiteAppealCategory,
 } from '@civitai/shared/site-appeal';
 
@@ -31,7 +32,7 @@ function siteAppealResolvedMessage(details: {
       ? `/articles/${details.entityId}`
       : restored && details.category === 'Model'
       ? `/models/${details.entityId}`
-      : '/appeal';
+      : SITE_APPEAL_PATH;
   return { message: `${text}${note}`, url };
 }
 

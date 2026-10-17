@@ -7,7 +7,7 @@
   import { appealRulingChoices } from '$lib/ruling-choices';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import type { SiteAppealRow } from '$lib/server/site-appeals.service';
-  import { outcomeLabel, rowTitle } from './site-appeal-display';
+  import { approvalEffect, outcomeLabel, rowTitle } from './site-appeal-display';
   import SiteAppealDetail from './SiteAppealDetail.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -16,6 +16,7 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const CHOICES = appealRulingChoices();
+  const canBan = $derived(data.grants['user.ban'] === true);
   let current = $state<number | null>(null);
   const ruling = rulingDraft<Verdict>(() => current);
 </script>
@@ -30,7 +31,7 @@
     selectionParam="appeal"
     queueLabel="Appeal queue"
     itemLabel="Appeal"
-    decisionEnabled={() => [true, true]}
+    decisionEnabled={(row) => [!approvalEffect(row.subject, canBan).blocked, true]}
     ondecision={(_row, index) => {
       const verdict = CHOICES[index]?.verdict;
       if (verdict) ruling.choose(verdict);
@@ -67,7 +68,7 @@
       <SiteAppealDetail
         {row}
         civitaiUrl={data.civitaiUrl}
-        canBan={data.grants['user.ban'] === true}
+        {canBan}
         choices={CHOICES}
         verdict={state.verdict}
         error={state.error}

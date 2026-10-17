@@ -22,6 +22,7 @@ vi.mock('~/server/controllers/model.controller', () => ({ publishModelHandler })
 
 import handler from '~/pages/api/mod/model/republish';
 
+let sent: unknown;
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
   let statusCode = 200;
@@ -30,22 +31,33 @@ function call(body: Record<string, unknown>) {
       statusCode = c;
       return res;
     },
-    json: () => res,
+    json: (payload: unknown) => {
+      sent = payload;
+      return res;
+    },
     setHeader: vi.fn(),
     end: () => res,
   } as unknown as Parameters<typeof handler>[1];
   return handler(req, res).then(() => statusCode);
 }
 
+const TAKEN_DOWN = '2026-10-01T00:00:00.000Z';
+// The query only returns violation-unpublished versions; their stamps say which take-down moved them.
 const model = (over: Record<string, unknown> = {}) => ({
   status: 'UnpublishedViolation',
   deletedAt: null,
-  modelVersions: [{ id: 11 }, { id: 12 }],
+  meta: { unpublishedAt: TAKEN_DOWN },
+  modelVersions: [
+    { id: 11, meta: { unpublishedAt: TAKEN_DOWN } },
+    { id: 12, meta: { unpublishedAt: TAKEN_DOWN } },
+    { id: 13, meta: { unpublishedAt: '2026-09-01T00:00:00.000Z' } },
+  ],
   ...over,
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sent = undefined;
   publishModelHandler.mockResolvedValue({ status: 'Published' });
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
@@ -55,16 +67,47 @@ beforeEach(() => {
   redisMock.sysRedis.ttl.mockResolvedValue(60);
 });
 
-// Approving a model appeal in the moderator app republishes through this, so it must be the
-// model page's own moderator republish: every version, as the acting moderator.
+// Approving a model appeal in the moderator app republishes through this, as the acting moderator.
 describe('model.republish', () => {
-  it('publishes every version of a violation-unpublished model as the moderator', async () => {
+  it('publishes only the versions the same take-down unpublished', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(model() as never);
     expect(await call({ modelId: 42 })).toBe(200);
     expect(publishModelHandler).toHaveBeenCalledWith({
       input: { id: 42, versionIds: [11, 12] },
       ctx: expect.objectContaining({ user: expect.objectContaining({ id: 7, isModerator: true }) }),
     });
+    // The moderator app reads `status` to tell the appellant whether the model is live again.
+    expect(sent).toEqual({ modelId: 42, status: 'Published', versionIds: [11, 12] });
+  });
+
+  it('asks only the database for violation-unpublished versions, so drafts never go live', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model() as never);
+    await call({ modelId: 42 });
+    expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          modelVersions: expect.objectContaining({ where: { status: 'UnpublishedViolation' } }),
+        }),
+      })
+    );
+  });
+
+  it('falls back to every violation-unpublished version when the model carries no stamp', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ meta: null }) as never);
+    expect(await call({ modelId: 42 })).toBe(200);
+    expect(publishModelHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { id: 42, versionIds: [11, 12, 13] } })
+    );
+  });
+
+  it('refuses when no version came down with the model', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        modelVersions: [{ id: 13, meta: { unpublishedAt: '2026-09-01T00:00:00.000Z' } }],
+      }) as never
+    );
+    expect(await call({ modelId: 42 })).toBe(400);
+    expect(publishModelHandler).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -80,7 +80,7 @@ describe('entity-appeal-resolved — site appeal form', () => {
     });
     expect(m).toEqual({
       message:
-        "We reviewed your appeal. The restriction on your account stays in place. Moderator's note: The ban stands.",
+        "We reviewed your appeal. The decision on your account stands. Moderator's note: The ban stands.",
       url: '/appeal',
     });
   });

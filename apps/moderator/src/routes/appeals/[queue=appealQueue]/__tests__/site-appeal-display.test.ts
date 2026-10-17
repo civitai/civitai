@@ -15,7 +15,12 @@ const account = (over: Partial<Extract<SiteAppealSubject, { kind: 'account' }>>)
     ...over,
   } satisfies SiteAppealSubject);
 
-const unpublished = { unpublishedReason: null, customMessage: null, unpublishedAt: null };
+const unpublished = {
+  unpublishedReason: null,
+  customMessage: null,
+  unpublishedAt: null,
+  ownerBanned: false,
+};
 
 describe('approvalEffect', () => {
   it('blocks approving a banned account without the Ban permission, as the server refuses it', () => {

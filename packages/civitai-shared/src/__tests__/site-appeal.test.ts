@@ -15,20 +15,27 @@ describe('siteAppealDecisionText', () => {
       );
   });
 
-  it('an approved account appeal says the restriction is lifted', () => {
+  it('an approved account appeal says the restriction is lifted only when one was', () => {
     expect(siteAppealDecisionText({ category: 'Account', approved: true, restored: true })).toBe(
       'We reviewed your appeal and lifted the restriction on your account.'
     );
+    expect(siteAppealDecisionText({ category: 'Account', approved: true, restored: false })).toBe(
+      'We reviewed your appeal and approved it.'
+    );
   });
 
-  it('a rejection names what stays, per category', () => {
+  it('a rejection names the decision, not the current state, per category', () => {
     const rejected = (category: 'Account' | 'Article' | 'Model' | 'Other') =>
       siteAppealDecisionText({ category, approved: false, restored: false });
     expect(rejected('Account')).toBe(
-      'We reviewed your appeal. The restriction on your account stays in place.'
+      'We reviewed your appeal. The decision on your account stands.'
     );
-    expect(rejected('Article')).toBe('We reviewed your appeal. Your article stays unpublished.');
-    expect(rejected('Model')).toBe('We reviewed your appeal. Your model stays unpublished.');
+    expect(rejected('Article')).toBe(
+      'We reviewed your appeal. The decision to unpublish your article stands.'
+    );
+    expect(rejected('Model')).toBe(
+      'We reviewed your appeal. The decision to unpublish your model stands.'
+    );
     expect(rejected('Other')).toBe('We reviewed your appeal. The original decision stands.');
   });
 });

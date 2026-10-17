@@ -22,7 +22,7 @@
         {#if !subject.bannedAt && !subject.muted}<Badge variant="outline">Not restricted</Badge>{/if}
       </div>
       {#if subject.bannedAt}
-        <p class="m-0 text-sm" title={dateTime(subject.bannedAt)}>
+        <p class="m-0 text-sm">
           Banned {dateTime(subject.bannedAt)}{subject.banReason ? ` · ${subject.banReason}` : ''}
         </p>
         {#if subject.banDetailsExternal}

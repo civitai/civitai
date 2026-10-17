@@ -1,5 +1,11 @@
 import type { ActionResult } from '@sveltejs/kit';
 import type { SiteAppealRow, SiteAppealSubject } from '$lib/server/site-appeals.service';
+import {
+  approvalNeedsBanGrant,
+  BAN_PERMISSION_NEEDED,
+  OWNER_BANNED,
+  type SiteAppealLift,
+} from '$lib/site-appeals';
 
 export const rowTitle = (row: Pick<SiteAppealRow, 'subject' | 'context' | 'entityId'>): string => {
   const s = row.subject;
@@ -25,10 +31,7 @@ export function approvalEffect(
         text: lifts.length
           ? `Approving lifts ${lifts.join(' and ')}.`
           : 'The account is no longer restricted, so approving lifts nothing.',
-        blocked:
-          subject.bannedAt && !canBan
-            ? 'Approving lifts a ban, which needs the Ban permission.'
-            : null,
+        blocked: approvalNeedsBanGrant(subject.bannedAt, canBan) ? BAN_PERMISSION_NEEDED : null,
       };
     }
     case 'article':
@@ -42,7 +45,8 @@ export function approvalEffect(
         : subject.status === 'Published'
         ? `The ${noun} is already published, so approving restores nothing.`
         : `The ${noun} is ${subject.status}, not removed by a moderator, so approving restores nothing.`;
-      return { text, blocked: null };
+      const republishes = !gone && subject.status === 'UnpublishedViolation';
+      return { text, blocked: republishes && subject.ownerBanned ? OWNER_BANNED : null };
     }
     case 'other':
       return {
@@ -52,7 +56,7 @@ export function approvalEffect(
   }
 }
 
-const LIFTED: Record<string, string> = {
+const LIFTED: Record<SiteAppealLift, string> = {
   ban: 'unbanned',
   mute: 'unmuted',
   article: 'article republished',
@@ -64,5 +68,5 @@ export function outcomeLabel(result: ActionResult, outcome: string): string {
   if (result.type !== 'success') return outcome;
   const lifted = result.data?.lifted;
   if (!Array.isArray(lifted) || !lifted.length) return outcome;
-  return `${outcome}: ${lifted.map((l) => LIFTED[String(l)] ?? String(l)).join(', ')}`;
+  return `${outcome}: ${lifted.map((l: SiteAppealLift) => LIFTED[l] ?? l).join(', ')}`;
 }

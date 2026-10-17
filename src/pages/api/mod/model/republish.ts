@@ -5,14 +5,18 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
-// The moderator app's site-appeal queue, approving a model appeal. The same call as the model page's
-// moderator "Republish" button: tRPC's `model.publish` with every version, so the stored unpublish
-// reason is dropped and the model's publish side effects run exactly as they do there.
+type UnpublishStamp = { unpublishedAt?: string } | null;
+
+// The moderator app's site-appeal queue, approving a model appeal. tRPC's `model.publish` as a
+// moderator, so the stored unpublish reason is dropped and the publish side effects run as they do
+// from the model page.
 export default defineModeratorEndpoint('model.republish', {
-  summary: 'Republish a model a moderator unpublished as a violation, with all of its versions.',
-  returns: '{ modelId, status }',
+  summary:
+    'Republish a model unpublished as a violation, with the versions that came down with it.',
+  returns: '{ modelId, status, versionIds }',
   notes: [
-    'Refused unless the model is currently unpublished as a violation: anything else is not a moderator’s to republish.',
+    'Refused unless the model is currently unpublished as a violation.',
+    'Only versions the same take-down unpublished go back up: never drafts, nor a version removed on its own.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({
@@ -21,14 +25,34 @@ export default defineModeratorEndpoint('model.republish', {
   async handler(input, ctx) {
     const model = await dbWrite.model.findUnique({
       where: { id: input.modelId },
-      select: { status: true, deletedAt: true, modelVersions: { select: { id: true } } },
+      select: {
+        status: true,
+        deletedAt: true,
+        meta: true,
+        modelVersions: {
+          where: { status: ModelStatus.UnpublishedViolation },
+          select: { id: true, meta: true },
+        },
+      },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
     if (model.deletedAt || model.status !== ModelStatus.UnpublishedViolation)
       throw throwBadRequestError('Model is not unpublished as a violation');
 
+    // A take-down stamps the model and each version it moved with one `unpublishedAt`, which tells
+    // this take-down's versions from ones removed on their own. An unstamped model falls back to
+    // every violation-unpublished version.
+    const takenDownAt = (model.meta as UnpublishStamp)?.unpublishedAt;
+    const versionIds = model.modelVersions
+      .filter((v) => !takenDownAt || (v.meta as UnpublishStamp)?.unpublishedAt === takenDownAt)
+      .map((v) => v.id);
+    if (!versionIds.length)
+      throw throwBadRequestError(
+        'No version came down with this model; republish it from the model page.'
+      );
+
     const updated = await publishModelHandler({
-      input: { id: input.modelId, versionIds: model.modelVersions.map((v) => v.id) },
+      input: { id: input.modelId, versionIds },
       ctx: { user: ctx.actor, track: ctx.tracker },
     });
     if (!updated) throw throwNotFoundError(`No model with id ${input.modelId}`);
@@ -36,6 +60,7 @@ export default defineModeratorEndpoint('model.republish', {
     return {
       modelId: input.modelId,
       status: updated.status,
+      versionIds,
       affected: { modelIds: [input.modelId] },
     };
   },

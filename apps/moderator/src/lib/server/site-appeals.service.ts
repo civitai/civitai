@@ -1,23 +1,38 @@
 import { sql } from '@civitai/db/kysely';
-import { NotificationCategory } from '@civitai/notifications';
-import type { SiteAppealCategory, SiteAppealContext } from '@civitai/shared/site-appeal';
-import { ArticleStatus } from '$lib/articles';
+import { ModelStatus } from '@civitai/db-schema/enums';
+import {
+  SITE_APPEAL_PATH,
+  type SiteAppealCategory,
+  type SiteAppealContext,
+} from '@civitai/shared/site-appeal';
+import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import {
+  approvalNeedsBanGrant,
+  BAN_PERMISSION_NEEDED,
+  OWNER_BANNED,
+  type SiteAppealLift,
+} from '$lib/site-appeals';
 import { moderateArticle } from './article-moderation';
 import { civitaiAppUrl } from './civitai-url';
 import { dbRead, dbWrite } from './db';
 import { siteAppealResolutionEmail } from './emails/appeal-resolution.email';
+import { notifyAppealResolved } from './image-moderation-effects';
 import { recordModActivity } from './mod-activity';
-import { getNotifications } from './notifications';
-import { callModEndpoint, setBanned, setMuted } from './user-actions.service';
+import { clearStrikeReviewFlag } from './strike-review.service';
+import { responseMayHaveLanded } from './rest-error-reason';
+import { callModEndpoint, setBanned, setMuted, unbanConfirmed } from './user-actions.service';
 
 export type SiteAppealDecision = 'Approved' | 'Rejected';
 
-// The unpublish stamp the main app writes on both `Article.metadata` and `Model.meta`.
-type UnpublishMeta = {
-  unpublishedReason?: string | null;
-  customMessage?: string | null;
-  unpublishedAt?: string | null;
-} | null;
+// The main app writes the same unpublish stamp on `Article.metadata` and `Model.meta`.
+const unpublishStamp = (meta: unknown) => {
+  const m = meta as ArticleMetadata;
+  return {
+    unpublishedReason: m?.unpublishedReason ?? null,
+    customMessage: m?.customMessage ?? null,
+    unpublishedAt: m?.unpublishedAt ?? null,
+  };
+};
 
 type QueueRow = {
   id: number;
@@ -57,6 +72,7 @@ export type SiteAppealSubject =
       kind: 'article';
       title: string | null;
       status: string | null;
+      ownerBanned: boolean;
       unpublishedReason: string | null;
       customMessage: string | null;
       unpublishedAt: string | null;
@@ -66,6 +82,7 @@ export type SiteAppealSubject =
       name: string | null;
       status: string | null;
       deleted: boolean;
+      ownerBanned: boolean;
       unpublishedReason: string | null;
       customMessage: string | null;
       unpublishedAt: string | null;
@@ -160,9 +177,16 @@ function missingSubject(category: SiteAppealCategory): SiteAppealSubject {
         muteReason: null,
       };
     case 'Article':
-      return { kind: 'article', title: null, status: null, ...unpublished };
+      return { kind: 'article', title: null, status: null, ownerBanned: false, ...unpublished };
     case 'Model':
-      return { kind: 'model', name: null, status: null, deleted: true, ...unpublished };
+      return {
+        kind: 'model',
+        name: null,
+        status: null,
+        deleted: true,
+        ownerBanned: false,
+        ...unpublished,
+      };
     case 'Other':
       return { kind: 'other' };
   }
@@ -244,59 +268,76 @@ async function getSubjects(
     for (const { id, ...u } of users) out.set(id, { kind: 'account', ...u });
   } else if (category === 'Article') {
     const articles = await dbRead
-      .selectFrom('Article')
-      .select(['id', 'title', 'status', 'metadata'])
-      .where('id', 'in', ids)
+      .selectFrom('Article as a')
+      .leftJoin('User as u', 'u.id', 'a.userId')
+      .select(['a.id', 'a.title', 'a.status', 'a.metadata', 'u.bannedAt as ownerBannedAt'])
+      .where('a.id', 'in', ids)
       .execute();
-    for (const a of articles) {
-      const meta = a.metadata as UnpublishMeta;
+    for (const a of articles)
       out.set(a.id, {
         kind: 'article',
         title: a.title,
         status: a.status,
-        unpublishedReason: meta?.unpublishedReason ?? null,
-        customMessage: meta?.customMessage ?? null,
-        unpublishedAt: meta?.unpublishedAt ?? null,
+        ownerBanned: a.ownerBannedAt !== null,
+        ...unpublishStamp(a.metadata),
       });
-    }
   } else {
     const models = await dbRead
-      .selectFrom('Model')
-      .select(['id', 'name', 'status', 'deletedAt', 'meta'])
-      .where('id', 'in', ids)
+      .selectFrom('Model as m')
+      .leftJoin('User as u', 'u.id', 'm.userId')
+      .select([
+        'm.id',
+        'm.name',
+        'm.status',
+        'm.deletedAt',
+        'm.meta',
+        'u.bannedAt as ownerBannedAt',
+      ])
+      .where('m.id', 'in', ids)
       .execute();
-    for (const m of models) {
-      const meta = m.meta as UnpublishMeta;
+    for (const m of models)
       out.set(m.id, {
         kind: 'model',
         name: m.name,
         status: m.status,
         deleted: m.deletedAt !== null,
-        unpublishedReason: meta?.unpublishedReason ?? null,
-        customMessage: meta?.customMessage ?? null,
-        unpublishedAt: meta?.unpublishedAt ?? null,
+        ownerBanned: m.ownerBannedAt !== null,
+        ...unpublishStamp(m.meta),
       });
-    }
   }
   return out;
 }
 
-type Lift = { ok: true; restored: boolean; lifted: string[] } | { ok: false; error: string };
+type Lift =
+  | { ok: true; restored: boolean; lifted: SiteAppealLift[] }
+  | { ok: false; error: string };
 
 const NOT_FOUND_USER = 'The account no longer exists.';
+const NOTHING_LIFTED: Lift = { ok: true, restored: false, lifted: [] };
 
-/** `/api/mod/ban-user` answers before it has unbanned, so read the primary until it has. */
-async function unbanLanded(userId: number, attempts = 10): Promise<boolean> {
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const row = await dbWrite
-      .selectFrom('User')
-      .select('bannedAt')
-      .where('id', '=', userId)
-      .executeTakeFirst();
-    if (row && row.bannedAt === null) return true;
-  }
-  return false;
+/** A failed call that may still have acted on the far side says so, so nobody rejects over it. */
+const liftFailed = (result: {
+  error: string;
+  requestNeverSent?: boolean;
+  status?: number;
+}): Lift => ({
+  ok: false,
+  error: responseMayHaveLanded(result)
+    ? `${result.error} It may still have gone through: reload and check before deciding again.`
+    : result.error,
+});
+
+async function ownerBanned(table: 'Article' | 'Model', id: number): Promise<boolean> {
+  const owner =
+    table === 'Article'
+      ? dbWrite.selectFrom('Article').select('userId').where('id', '=', id)
+      : dbWrite.selectFrom('Model').select('userId').where('id', '=', id);
+  const row = await dbWrite
+    .selectFrom('User')
+    .select('bannedAt')
+    .where('id', '=', (eb) => eb.selectFrom(owner.as('o')).select('o.userId'))
+    .executeTakeFirst();
+  return !!row?.bannedAt;
 }
 
 async function liftAccount(userId: number, moderatorId: number, canBan: boolean): Promise<Lift> {
@@ -307,29 +348,30 @@ async function liftAccount(userId: number, moderatorId: number, canBan: boolean)
     .executeTakeFirst();
   if (!user) return { ok: false, error: NOT_FOUND_USER };
   // Checked before anything lifts, so a refused unban cannot leave the mute half-lifted.
-  if (user.bannedAt && !canBan)
-    return { ok: false, error: 'Approving lifts a ban, which needs the Ban permission.' };
+  if (approvalNeedsBanGrant(user.bannedAt, canBan))
+    return { ok: false, error: BAN_PERMISSION_NEEDED };
 
-  const lifted: string[] = [];
+  const lifted: SiteAppealLift[] = [];
   if (user.bannedAt) {
     const unban = await setBanned({ userId, ban: false, moderatorId });
-    if (!unban.ok) return unban;
-    if (!(await unbanLanded(userId)))
+    if (!unban.ok) return liftFailed(unban);
+    if (!(await unbanConfirmed(userId)))
       return { ok: false, error: 'The unban did not land. Check the account, then try again.' };
     lifted.push('ban');
   }
   if (user.muted) {
     const unmute = await setMuted({ userId, muted: false, moderatorId });
-    if (!unmute.ok)
-      return {
-        ok: false,
-        error: lifted.length
-          ? `Unbanned, but the mute was not lifted: ${unmute.error}`
-          : unmute.error,
-      };
+    if (!unmute.ok) {
+      const failed = liftFailed(unmute);
+      return lifted.length && !failed.ok
+        ? { ok: false, error: `Unbanned, but the mute was not lifted: ${failed.error}` }
+        : failed;
+    }
+    // The appeal is the review's outcome; left set, a later unrelated mute re-queues the account.
+    await clearStrikeReviewFlag(userId);
     lifted.push('mute');
   }
-  return { ok: true, restored: true, lifted };
+  return { ok: true, restored: lifted.length > 0, lifted };
 }
 
 async function liftArticle(articleId: number, moderatorId: number): Promise<Lift> {
@@ -340,10 +382,19 @@ async function liftArticle(articleId: number, moderatorId: number): Promise<Lift
     .executeTakeFirst();
   if (article?.status === ArticleStatus.Published) return { ok: true, restored: true, lifted: [] };
   // Anything but a moderator's unpublish (deleted, or unpublished by its owner) is not ours to put back.
-  if (article?.status !== ArticleStatus.UnpublishedViolation)
-    return { ok: true, restored: false, lifted: [] };
+  if (article?.status !== ArticleStatus.UnpublishedViolation) return NOTHING_LIFTED;
+  if (await ownerBanned('Article', articleId)) return { ok: false, error: OWNER_BANNED };
   const result = await moderateArticle({ action: 'restore', articleId, userId: moderatorId });
-  return result.ok ? { ok: true, restored: true, lifted: ['article'] } : result;
+  if (!result.ok) return result;
+  // Restoring re-derives the scan state, which can leave a Published article hidden from everyone
+  // but its owner; only a Scanned one is back for the appellant's audience.
+  const after = await dbWrite
+    .selectFrom('Article')
+    .select(['status', 'ingestion'])
+    .where('id', '=', articleId)
+    .executeTakeFirst();
+  const restored = after?.status === ArticleStatus.Published && after.ingestion === 'Scanned';
+  return { ok: true, restored, lifted: ['article'] };
 }
 
 async function liftModel(modelId: number): Promise<Lift> {
@@ -352,13 +403,15 @@ async function liftModel(modelId: number): Promise<Lift> {
     .select(['status', 'deletedAt'])
     .where('id', '=', modelId)
     .executeTakeFirst();
-  if (model && !model.deletedAt && model.status === 'Published')
+  if (model && !model.deletedAt && model.status === ModelStatus.Published)
     return { ok: true, restored: true, lifted: [] };
-  if (!model || model.deletedAt || model.status !== 'UnpublishedViolation')
-    return { ok: true, restored: false, lifted: [] };
+  if (!model || model.deletedAt || model.status !== ModelStatus.UnpublishedViolation)
+    return NOTHING_LIFTED;
+  if (await ownerBanned('Model', modelId)) return { ok: false, error: OWNER_BANNED };
   const result = await callModEndpoint('model/republish', { modelId }, 'Republish');
-  if (!result.ok) return result;
-  return { ok: true, restored: result.body.status === 'Published', lifted: ['model'] };
+  if (!result.ok) return liftFailed(result);
+  // A 200 for a model still held for review is a republish that did not go live.
+  return { ok: true, restored: result.body.status === ModelStatus.Published, lifted: ['model'] };
 }
 
 function lift(
@@ -375,7 +428,7 @@ function lift(
     case 'Model':
       return liftModel(appeal.entityId);
     case 'Other':
-      return Promise.resolve({ ok: true, restored: false, lifted: [] });
+      return Promise.resolve(NOTHING_LIFTED);
   }
 }
 
@@ -383,7 +436,7 @@ export const SITE_APPEAL_ALREADY_DECIDED =
   'Another moderator already decided this appeal, or it is not in this queue. Reload.';
 
 export type SiteAppealResolution =
-  | { ok: true; lifted: string[]; restored: boolean }
+  | { ok: true; lifted: SiteAppealLift[]; restored: boolean }
   | { ok: false; error: string; conflict?: boolean };
 
 /**
@@ -419,7 +472,7 @@ export async function resolveSiteAppeal(input: {
     const outcome: Lift =
       input.decision === 'Approved'
         ? await lift(input.category, appeal, input.moderatorId, input.canBan)
-        : { ok: true, restored: false, lifted: [] };
+        : NOTHING_LIFTED;
     if (!outcome.ok) return outcome;
 
     const closed = await trx
@@ -466,24 +519,14 @@ async function notifySiteAppealResolved(input: {
   resolvedMessage?: string;
 }): Promise<void> {
   const { appeal } = input;
-  try {
-    await getNotifications().createNotification({
-      userId: appeal.userId,
-      type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${appeal.id}`,
-      details: {
-        category: input.category,
-        entityType: appeal.entityType,
-        entityId: appeal.entityId,
-        status: input.decision,
-        restored: input.restored,
-        resolvedMessage: input.resolvedMessage ?? '',
-      },
-    });
-  } catch {
-    // onFailure already logged; best-effort.
-  }
+  await notifyAppealResolved({
+    appeal,
+    entityType: appeal.entityType,
+    entityId: appeal.entityId,
+    status: input.decision,
+    resolvedMessage: input.resolvedMessage,
+    details: { category: input.category, restored: input.restored },
+  });
 
   // A banned appellant cannot see in-app notifications, so the email is how they learn the outcome.
   try {
@@ -499,7 +542,7 @@ async function notifySiteAppealResolved(input: {
       category: input.category,
       approved: input.decision === 'Approved',
       restored: input.restored,
-      appealUrl: `${civitaiAppUrl()}/appeal`,
+      appealUrl: `${civitaiAppUrl()}${SITE_APPEAL_PATH}`,
     });
   } catch (e) {
     console.error('site appeal email failed', { appealId: appeal.id, error: (e as Error).message });

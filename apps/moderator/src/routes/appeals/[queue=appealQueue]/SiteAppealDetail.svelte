@@ -38,8 +38,9 @@
     draft: RulingDraft<Verdict>;
   } = $props();
 
-  // Shown verbatim to the appellant on the appeal page and in the notification.
-  let message = $state('');
+  // Shown verbatim to the appellant, so each verdict keeps its own: a rejection's wording must not
+  // carry over when the moderator switches to approve.
+  const messages = $state<Partial<Record<Verdict, string>>>({});
   const effect = $derived(approvalEffect(row.subject, canBan));
   const name = $derived(row.username ?? `#${row.userId}`);
   const ago = (value: Date | string) => `${shortAge(value)} ago`;
@@ -57,7 +58,7 @@
       {/if}
     </header>
 
-    <div class="grid gap-4 lg:grid-cols-2">
+    <div class={['grid gap-4', row.subject.kind !== 'other' && 'lg:grid-cols-2']}>
       <TriageCard title="What they say">
         {#if row.context?.subject}
           <p class="m-0 mb-2 font-medium text-white">{row.context.subject}</p>
@@ -118,6 +119,9 @@
   {#snippet actions()}
     <div class="grid w-full gap-2">
       <p class="m-0 text-sm text-dark-2">{effect.text}</p>
+      {#if effect.blocked}
+        <p class="m-0 text-sm text-amber-300">{effect.blocked}</p>
+      {/if}
       <RulingForm
         subject="appeal"
         {choices}
@@ -141,7 +145,10 @@
           <Textarea
             id="site-appeal-{row.id}-message"
             name="resolvedMessage"
-            bind:value={message}
+            bind:value={() => (draft.verdict ? (messages[draft.verdict] ?? '') : ''),
+              (v) => {
+                if (draft.verdict) messages[draft.verdict] = v;
+              }}
             rows={2}
             maxlength={1000}
           />

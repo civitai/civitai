@@ -20,3 +20,17 @@ export const siteAppealCountKey = (category: SiteAppealCategory) => `siteAppeals
 
 export const siteAppealQueueForSlug = (slug: string): SiteAppealQueue | undefined =>
   SITE_APPEAL_QUEUES.find((q) => q.slug === slug);
+
+/** What an approval lifted, as the service reports it and the queue labels it. */
+export type SiteAppealLift = 'ban' | 'mute' | 'article' | 'model';
+
+export const BAN_PERMISSION_NEEDED = 'Approving lifts a ban, which needs the Ban permission.';
+
+// A ban unpublishes everything its account owns; putting one item back while the ban stands would
+// publish a banned account's content.
+export const OWNER_BANNED =
+  'The owner is banned. Decide their account appeal first, or reject this one.';
+
+/** The server refuses this approval; the queue reads the same rule so it does not offer it. */
+export const approvalNeedsBanGrant = (bannedAt: Date | string | null, canBan: boolean) =>
+  bannedAt !== null && !canBan;
