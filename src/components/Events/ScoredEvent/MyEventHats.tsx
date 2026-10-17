@@ -14,7 +14,9 @@ import {
 } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 type MyHat = RouterOutput['event']['getMyHats'][number];
 
@@ -43,6 +45,12 @@ export function MyEventHats({
   ended: boolean;
 }) {
   const total = hats.reduce((sum, h) => sum + h.points, 0);
+  const features = useFeatureFlags();
+  const { data: boxes } = trpc.mysteryBox.getForEvent.useQuery(
+    { event },
+    { enabled: !!features.mysteryBox && !ended }
+  );
+  const boxPrice = boxes?.find((box) => box.listing)?.listing?.unitAmount;
   // Re-reads the clock every half minute, so a hat's Move button unlocks when its cooldown ends.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -161,6 +169,11 @@ export function MyEventHats({
             <Text size="xs" c="dimmed">
               One more post scoring for your team.
             </Text>
+            {boxPrice != null && (
+              <Text size="xs" c="dimmed" data-testid="get-another-hat-box">
+                or try the Mystery Box · {numberWithCommas(boxPrice)}
+              </Text>
+            )}
           </a>
         )}
       </SimpleGrid>

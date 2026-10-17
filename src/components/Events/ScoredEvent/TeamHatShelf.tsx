@@ -15,6 +15,8 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventHatTile } from '~/components/Events/ScoredEvent/EventHatTile';
+import { MysteryBoxCard } from '~/components/MysteryBox/MysteryBoxCard';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -28,6 +30,11 @@ import { trpc } from '~/utils/trpc';
 export function TeamHatShelf({ event, team }: { event: string; team: string }) {
   const teamColor = useTeamColor();
   const { data: sections, isLoading } = trpc.cosmeticShop.getShop.useQuery({ event });
+  const features = useFeatureFlags();
+  const { data: boxes = [] } = trpc.mysteryBox.getForEvent.useQuery(
+    { event },
+    { enabled: !!features.mysteryBox }
+  );
   const [price, setPrice] = useState('all');
   const [buzzType] = useAvailableBuzz();
 
@@ -41,6 +48,13 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
     return [...seen.values()].sort((a, b) => a.unitAmount - b.unitAmount || a.id - b.id);
   }, [sections]);
   const prices = [...new Set(items.map((i) => i.unitAmount))];
+  const shelfPrices = useMemo(
+    () =>
+      Object.fromEntries(
+        items.flatMap((i) => (i.cosmetic ? [[i.cosmetic.id, i.unitAmount] as const] : []))
+      ),
+    [items]
+  );
   // Event items leave the shop together; say when once instead of on every tile.
   const leavesAt = items
     .map((i) => i.availableTo)
@@ -88,6 +102,16 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
           )}
         </Group>
       </EventSectionHeading>
+      {boxes.map((box) => (
+        <MysteryBoxCard
+          key={box.boxDefinitionId}
+          event={event}
+          view={box}
+          team={team}
+          color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
+          shelfPrices={shelfPrices}
+        />
+      ))}
       {isLoading ? (
         <Center py="xl">
           <Loader />

@@ -123,6 +123,19 @@ export async function getEventBuyerTeam(eventName: string, userId: number) {
 }
 
 /**
+ * The viewer's team in a registered event, for showing what a team-drawn box holds for them. Read
+ * only: unlike `getEventBuyerTeam` it places no one, so the purchase and the open still confirm the
+ * team they draw from. Undefined when the event has no teams, null when it can't be read.
+ */
+export async function getEventViewerTeam(eventName: string, userId: number) {
+  const events = await loadEvents().catch(() => undefined);
+  const event = events?.find((e) => e.name === eventName);
+  if (!event) return null;
+  if (!event.teams.length) return undefined;
+  return event.getUserTeam(userId, { strict: true }).catch(() => null);
+}
+
+/**
  * Builds a predicate for whether a viewer sees a cosmetic in the shop. Ordinary
  * cosmetics always show. An event item shows only while its event is playable
  * for the viewer: to anonymous viewers in every team (buying needs sign-in,
