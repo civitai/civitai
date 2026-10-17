@@ -361,14 +361,18 @@ export async function getMysteryBoxesForEvent({
           .filter((tier) => tier.boxDefinitionId === box.id)
           .map(({ boxDefinitionId: _box, ...tier }) => tier),
         contents: contents.map((entry) => {
-          const data = (entry.cosmeticData ?? {}) as { url?: unknown; fit?: unknown };
+          const data = (entry.cosmeticData ?? {}) as {
+            url?: unknown;
+            fit?: { bounds?: unknown; canvas?: unknown } | null;
+          };
           return {
             contentId: entry.contentId,
             tierId: entry.tierId,
             cosmeticId: entry.cosmeticId,
             name: entry.cosmeticName,
             url: typeof data.url === 'string' ? data.url : null,
-            fit: data.fit ?? null,
+            // A preview sizes the art by these two; the outline and brim are for wearing it.
+            fit: data.fit ? { bounds: data.fit.bounds, canvas: data.fit.canvas } : null,
             left: entry.left,
           };
         }),

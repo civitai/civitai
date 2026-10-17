@@ -48,13 +48,6 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
     return [...seen.values()].sort((a, b) => a.unitAmount - b.unitAmount || a.id - b.id);
   }, [sections]);
   const prices = [...new Set(items.map((i) => i.unitAmount))];
-  const shelfPrices = useMemo(
-    () =>
-      Object.fromEntries(
-        items.flatMap((i) => (i.cosmetic ? [[i.cosmetic.id, i.unitAmount] as const] : []))
-      ),
-    [items]
-  );
   // Event items leave the shop together; say when once instead of on every tile.
   const leavesAt = items
     .map((i) => i.availableTo)
@@ -109,7 +102,6 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
           view={box}
           team={team}
           color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
-          shelfPrices={shelfPrices}
         />
       ))}
       {isLoading ? (

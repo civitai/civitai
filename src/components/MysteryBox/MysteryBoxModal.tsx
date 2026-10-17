@@ -27,6 +27,7 @@ import type { MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   boxActions,
   boxOpenClaimKey,
+  shelfPricesByCosmetic,
   collectedCount,
   formatChance,
   revealChance,
@@ -55,15 +56,12 @@ export default function MysteryBoxModal({
   boxDefinitionId,
   team,
   color,
-  shelfPrices,
   start,
 }: {
   event: string;
   boxDefinitionId: number;
   team: string;
   color: string;
-  /** Shelf prices by cosmetic id, to say a reward is also sold on the shelf. */
-  shelfPrices: Record<number, number>;
   /** Start buying or opening as soon as it shows. */
   start?: 'buy' | 'open';
 }) {
@@ -74,6 +72,9 @@ export default function MysteryBoxModal({
   const { data: views, isLoading } = trpc.mysteryBox.getForEvent.useQuery({ event });
   const view = views?.find((v) => v.boxDefinitionId === boxDefinitionId);
   const opener = useMysteryBoxOpen(event);
+  // The shelf's own query, to say when a reward is also sold there.
+  const { data: shelf } = trpc.cosmeticShop.getShop.useQuery({ event });
+  const shelfPrices = useMemo(() => shelfPricesByCosmetic(shelf), [shelf]);
 
   const started = useRef(false);
   useEffect(() => {

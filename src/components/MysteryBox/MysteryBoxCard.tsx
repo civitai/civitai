@@ -18,13 +18,11 @@ export function MysteryBoxCard({
   view,
   team,
   color,
-  shelfPrices,
 }: {
   event: string;
   view: MysteryBoxView;
   team: string;
   color: string;
-  shelfPrices: Record<number, number>;
 }) {
   const [buzzType] = useAvailableBuzz();
   const { collected, total } = collectedCount(view);
@@ -33,7 +31,7 @@ export function MysteryBoxCard({
   const show = (start?: 'buy' | 'open') =>
     dialogStore.trigger({
       component: MysteryBoxModal,
-      props: { event, boxDefinitionId: view.boxDefinitionId, team, color, shelfPrices, start },
+      props: { event, boxDefinitionId: view.boxDefinitionId, team, color, start },
     });
 
   return (

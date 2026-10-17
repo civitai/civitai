@@ -86,6 +86,19 @@ export function afterOpen(view: MysteryBoxView, result: MysteryBoxOpenResult): M
   };
 }
 
+/** Shelf prices by cosmetic id, from the shop's sections. */
+export function shelfPricesByCosmetic(
+  sections: {
+    items: { shopItem: { unitAmount: number; cosmetic?: { id: number } | null } }[];
+  }[] = []
+): Record<number, number> {
+  const prices: Record<number, number> = {};
+  for (const section of sections)
+    for (const { shopItem } of section.items)
+      if (shopItem.cosmetic) prices[shopItem.cosmetic.id] = shopItem.unitAmount;
+  return prices;
+}
+
 /** The open grants the hat under this claim key. */
 export const boxOpenClaimKey = (boxItemId: string) => `box-open-${boxItemId}`;
 

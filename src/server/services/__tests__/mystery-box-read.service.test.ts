@@ -246,6 +246,15 @@ describe('getMysteryBoxesForEvent', () => {
     expect(view.heldBoxItemIds).toEqual([]);
   });
 
+  it("sends only the fit a preview sizes by, not the hat's wearing outline", async () => {
+    const fit = { bounds: [1, 2, 30, 40], canvas: [128, 160], brim: [1, 2, 3], outline: [[0, 0]] };
+    (world.contents[0].reward.cosmetic!.data as Record<string, unknown>).fit = fit;
+
+    const [view] = await read();
+
+    expect(view.contents[0].fit).toEqual({ bounds: [1, 2, 30, 40], canvas: [128, 160] });
+  });
+
   it('marks owned and already-drawn rewards as not left, and the odds follow', async () => {
     world.owned.push({ userId: VIEWER, cosmeticId: 1001 }, { userId: 2, cosmeticId: 1002 });
     world.drawn.push({ userId: VIEWER, boxDefinitionId: BOX, rewardDefinitionId: 104 });

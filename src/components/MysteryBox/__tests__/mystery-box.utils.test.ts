@@ -6,6 +6,7 @@ import {
   collectedCount,
   formatChance,
   revealChance,
+  shelfPricesByCosmetic,
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
 
@@ -129,5 +130,22 @@ describe('formatChance', () => {
     [0.00004, '<0.01%'],
   ])('%s -> %s', (p, text) => {
     expect(formatChance(p)).toBe(text);
+  });
+});
+
+describe('shelfPricesByCosmetic', () => {
+  it('maps each shelf cosmetic to its price, skipping listings with none', () => {
+    expect(
+      shelfPricesByCosmetic([
+        { items: [{ shopItem: { unitAmount: 500, cosmetic: { id: 3085 } } }] },
+        {
+          items: [
+            { shopItem: { unitAmount: 1500, cosmetic: { id: 3100 } } },
+            { shopItem: { unitAmount: 900, cosmetic: null } },
+          ],
+        },
+      ])
+    ).toEqual({ 3085: 500, 3100: 1500 });
+    expect(shelfPricesByCosmetic(undefined)).toEqual({});
   });
 });
