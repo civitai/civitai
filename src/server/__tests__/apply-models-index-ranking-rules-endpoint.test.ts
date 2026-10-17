@@ -3,6 +3,7 @@ import '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/db.mock';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsRankingRules } from '~/server/search-index/ranking-rules';
+import { modelSearchIndexSelect } from '~/server/selectors/model.selector';
 
 const OLD_RULES = [
   'sort',
@@ -73,6 +74,12 @@ describe('modelsRankingRules', () => {
     expect(at('isOfficial:desc')).toBeLessThan(at('metrics.thumbsUpCount:desc'));
   });
 
+  it('ranks on a field the indexed document actually carries', () => {
+    // A document without the field sorts as if it were absent, so dropping it from the select would
+    // turn the official boost into a silent no-op.
+    expect(modelSearchIndexSelect).toHaveProperty('isOfficial', true);
+  });
+
   it('keeps exactness below popularity', () => {
     // Above it, any trigger word equal to the query wins: "pony" ranked a small LoRA tagged "pony"
     // above Pony Diffusion V6 XL.
@@ -130,6 +137,18 @@ describe('apply-models-index-ranking-rules', () => {
     expect(updateRankingRules).not.toHaveBeenCalled();
   });
 
+  it('treats a reorder of the same rules as a change', async () => {
+    // Order is the whole meaning of the list: a set comparison would call this unchanged.
+    const reordered = [...modelsRankingRules];
+    [reordered[0], reordered[1]] = [reordered[1], reordered[0]];
+    getRankingRules.mockResolvedValue(reordered);
+
+    await call({ dryRun: 'false' });
+
+    expect(updateRankingRules).toHaveBeenCalledTimes(1);
+    expect(updateRankingRules.mock.calls[0][0]).toEqual([...modelsRankingRules]);
+  });
+
   it('asks only for PENDING SETTINGS tasks when deciding whether one is in flight', async () => {
     await call({});
 
@@ -158,5 +177,9 @@ describe('apply-models-index-ranking-rules', () => {
 
     expect(statusCode).toBe(409);
     expect(updateRankingRules).not.toHaveBeenCalled();
+
+    const forced = await call({ dryRun: 'false', force: 'true' });
+    expect(forced.statusCode).toBe(200);
+    expect(updateRankingRules).toHaveBeenCalledTimes(1);
   });
 });
