@@ -126,6 +126,8 @@ type ItemRow = {
 let world: {
   contents: Content[];
   owned: { userId: number; cosmeticId: number }[];
+  /** BoxOpening rows: what each user has drawn from a box. */
+  drawn: { userId: number; boxDefinitionId: number; rewardDefinitionId: number }[];
   items: ItemRow[];
   purchases: Record<string, unknown>[];
   log: string[];
@@ -212,6 +214,12 @@ const makeTx = (onLock: () => Promise<void>) => ({
     findMany: async ({ where }: { where: { userId: number; cosmeticId: { in: number[] } } }) =>
       world.owned.filter(
         (o) => o.userId === where.userId && where.cosmeticId.in.includes(o.cosmeticId)
+      ),
+  },
+  boxOpening: {
+    findMany: async ({ where }: { where: { userId: number; boxDefinitionId: number } }) =>
+      world.drawn.filter(
+        (d) => d.userId === where.userId && d.boxDefinitionId === where.boxDefinitionId
       ),
   },
   item: {
@@ -331,7 +339,7 @@ const nothingClaimedOrCharged = () => {
 
 beforeEach(() => {
   Object.values(mocks).forEach((m) => m.mockReset());
-  world = { contents: [hat(1), hat(2)], owned: [], items: [], purchases: [], log: [] };
+  world = { contents: [hat(1), hat(2)], owned: [], drawn: [], items: [], purchases: [], log: [] };
   lockTail = Promise.resolve();
   claims = installShopPurchaseClaimFake();
 
@@ -638,6 +646,15 @@ describe('buying a mystery box', () => {
 
     expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
     expect(world.items).toHaveLength(2);
+  });
+
+  it('counts a reward drawn from this box before as gone, even after it was taken away', async () => {
+    // Hat 1 was drawn and its UserCosmetic removed since; hat 2 is owned.
+    world.drawn = [{ userId: BUYER_ID, boxDefinitionId: BOX_ID, rewardDefinitionId: 101 }];
+    world.owned = [{ userId: BUYER_ID, cosmeticId: 1002 }];
+
+    await expect(buy()).rejects.toThrow("You've collected everything in this box");
+    nothingClaimedOrCharged();
   });
 
   it('draws the availability from the buyer’s team in an event box', async () => {

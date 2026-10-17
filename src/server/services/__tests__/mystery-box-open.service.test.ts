@@ -157,12 +157,6 @@ const makeTx = (onLock: () => Promise<void>) => ({
         .map(({ id, weight, sortOrder }) => ({ id, weight, sortOrder }));
     },
   },
-  cosmetic: {
-    findUnique: async ({ where }: { where: { id: number } }) => {
-      const content = world.contents.find((c) => c.reward.cosmeticId === where.id);
-      return content ? { data: content.reward.cosmetic?.data ?? null } : null;
-    },
-  },
   userCosmetic: {
     findMany: async ({ where }: { where: { userId: number; cosmeticId: { in: number[] } } }) =>
       world.owned.filter(
@@ -178,8 +172,24 @@ const makeTx = (onLock: () => Promise<void>) => ({
   },
   boxOpening: {
     findUnique: openingReader('read:opening'),
+    findMany: async ({
+      where,
+    }: {
+      where: { userId: number; boxDefinitionId: number; rewardType: string };
+    }) =>
+      [...world.openings.values()].filter(
+        (o) =>
+          o.userId === where.userId &&
+          o.boxDefinitionId === where.boxDefinitionId &&
+          o.rewardType === where.rewardType
+      ),
     create: async ({ data }: { data: Opening }) => {
       if (world.openings.has(data.boxItemId)) throw p2002();
+      // The migration's partial unique index: a user draws a given cosmetic from a box once.
+      const once = (o: Opening) =>
+        o.rewardType === 'cosmetic' && `${o.userId}:${o.boxDefinitionId}:${o.rewardDefinitionId}`;
+      if ([...world.openings.values()].some((o) => once(o) && once(o) === once(data)))
+        throw p2002();
       const row = { ...data, createdAt: new Date() };
       world.openings.set(data.boxItemId, row);
       world.log.push('record:opening');
@@ -355,6 +365,24 @@ describe('opening a mystery box', () => {
       opening.tierWeight / (opening.eligibleWeight as number) / (opening.tierPoolSize as number)
     ).toBe(tier.itemProbability);
     expect(opening).toMatchObject({ eligibleWeight: 4, tierPoolSize: 1, contentId: 2 });
+  });
+
+  it('never draws again a hat drawn from this box before and since taken away', async () => {
+    // Hat 1 came out of an earlier box; its UserCosmetic row was removed afterwards.
+    world.openings.set(400n, {
+      boxItemId: 400n,
+      userId: HOLDER,
+      boxDefinitionId: BOX_ID,
+      rewardDefinitionId: 101,
+      rewardType: 'cosmetic',
+    });
+    // Asks for the first Common hat left.
+    mocks.randomInt.mockImplementation(() => 0);
+
+    const result = await open();
+
+    expect(result.cosmeticId).toBe(1002);
+    expect(result.odds).toEqual({ tierWeight: 3, eligibleWeight: 4, tierPoolSize: 1 });
   });
 
   it('never draws a hat the holder owns from any source', async () => {

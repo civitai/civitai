@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import { stripComments } from '../../../../test/strip-comments';
 
 /**
  * 🔴 SOURCE GATE: no code reads an item definition's TRADABLE flag (bit 2 of `ItemDefinition.flags`).
@@ -31,22 +32,24 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const stripComments = (s: string) =>
-  s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+// Svelte markup comments too.
+const stripAllComments = (s: string) => stripComments(s).replace(/<!--[\s\S]*?-->/g, ' ');
 
 const NAMES_IT = /tradable/i;
 const MENTIONS_ITEM_DEFINITION = /item_?definition/i;
 const FLAGS_MASK = /\bflags\b["'`\]]?\s*&\s*(0x[0-9a-f]+|0b[01]+|\d+)/gi;
+// The shared bit helpers (`Flags.hasFlag`, `Flags.intersects`) with a literal mask.
+const FLAGS_HELPER =
+  /\b(?:hasFlag|intersects)\(\s*[^,()]*\bflags\b[^,()]*,\s*(0x[0-9a-f]+|0b[01]+|\d+)/gi;
 
 const readsTradableBit = (source: string) =>
   MENTIONS_ITEM_DEFINITION.test(source) &&
-  [...source.matchAll(FLAGS_MASK)].some((match) => (Number(match[1]) & 2) !== 0);
+  [...source.matchAll(FLAGS_MASK), ...source.matchAll(FLAGS_HELPER)].some(
+    (match) => (Number(match[1]) & 2) !== 0
+  );
 
 const offends = (source: string) => {
-  const code = stripComments(source);
+  const code = stripAllComments(source);
   return NAMES_IT.test(code) || readsTradableBit(code);
 };
 
@@ -71,6 +74,8 @@ describe('🔴 no code reads the TRADABLE item flag', () => {
       ['a raw bit test', 'const itemDefinition = row; if (itemDefinition.flags & 2) trade();'],
       ['a mask with bit 2 among others', 'itemDefinition; const ok = (flags & 0x6) !== 0;'],
       ['SQL', 'SELECT 1 FROM "ItemDefinition" WHERE "flags" & 2 = 2'],
+      ['the shared bit helper', 'itemDefinition; if (Flags.hasFlag(def.flags, 2)) trade();'],
+      ['the shared intersects helper', 'itemDefinition; Flags.intersects(row.flags, 6);'],
     ])('%s', (_, source) => {
       expect(offends(source)).toBe(true);
     });
@@ -78,6 +83,8 @@ describe('🔴 no code reads the TRADABLE item flag', () => {
     it.each([
       ['ROLLABLE only', 'itemDefinition; if (def.flags & 1) roll();'],
       ['DISCARDABLE only', 'itemDefinition; if (def.flags & 4) discard();'],
+      ['the bit helper on ROLLABLE', 'itemDefinition; Flags.hasFlag(def.flags, 1);'],
+      ['a markup comment naming it', '<!-- tradable --><div></div>'],
       ['a flags bit test outside item code', 'if (version.flags & 2) hide();'],
       ['a comment naming it', '// tradable is not read in v1\nconst a = 1;'],
       ['a block comment naming it', '/* TRADABLE */ const a = 1;'],

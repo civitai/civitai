@@ -90,12 +90,15 @@ export type BoxPoolEntry = {
   tierId: number;
   rewardDefinitionId: number;
   cosmeticId: number;
+  cosmeticData: unknown;
 };
 
 /**
  * What this box can still give this user: its enabled contents, less any cosmetic made for another
- * team than `team`, less any cosmetic the user owns from any source. Read inside a transaction
- * holding `lockItemHolder` for the user when the answer decides a grant or a claim.
+ * team than `team`, less any cosmetic the user owns from any source, less anything they already
+ * drew from this box (a reward removed from them since stays drawn: `BoxOpening` allows each once).
+ * Read inside a transaction holding `lockItemHolder` for the user when the answer decides a grant or
+ * a claim.
  *
  * v1 boxes hold cosmetics only; any other reward kind is left out here and refused at purchase
  * (`assertBoxSellable`).
@@ -126,6 +129,7 @@ export async function getBoxPoolForUser(
         tierId: content.tierId,
         rewardDefinitionId: content.rewardDefinitionId,
         cosmeticId,
+        cosmeticData: cosmetic?.data ?? null,
       },
     ];
   });
@@ -135,8 +139,15 @@ export async function getBoxPoolForUser(
     where: { userId, cosmeticId: { in: forTeam.map((entry) => entry.cosmeticId) } },
     select: { cosmeticId: true },
   });
+  const drawn = await client.boxOpening.findMany({
+    where: { userId, boxDefinitionId, rewardType: ITEM_TYPE.cosmetic },
+    select: { rewardDefinitionId: true },
+  });
   const ownedIds = new Set(owned.map((row) => row.cosmeticId));
-  return forTeam.filter((entry) => !ownedIds.has(entry.cosmeticId));
+  const drawnIds = new Set(drawn.map((row) => row.rewardDefinitionId));
+  return forTeam.filter(
+    (entry) => !ownedIds.has(entry.cosmeticId) && !drawnIds.has(entry.rewardDefinitionId)
+  );
 }
 
 /**
@@ -516,7 +527,8 @@ export async function openMysteryBox({
         FOR UPDATE
       `;
       // Opened by a request that held the lock before this one.
-      if (!item) return { replay: await replayOpening(tx, boxItemId, userId) };
+      if (!item)
+        return { kind: 'replay' as const, result: await replayOpening(tx, boxItemId, userId) };
 
       const box = await tx.itemDefinition.findUnique({
         where: { id: item.itemDefinitionId },
@@ -541,16 +553,12 @@ export async function openMysteryBox({
       const reward = pool.find((entry) => entry.contentId === draw.contentId);
       if (!reward) throw new Error(`box ${box.id} drew content ${draw.contentId} outside its pool`);
 
-      const cosmetic = await tx.cosmetic.findUnique({
-        where: { id: reward.cosmeticId },
-        select: { data: true },
-      });
       await tx.userCosmetic.create({
         data: {
           userId,
           cosmeticId: reward.cosmeticId,
           claimKey: `box-open-${item.id}`,
-          remaining: stickerUsesFromCosmeticData(cosmetic?.data),
+          remaining: stickerUsesFromCosmeticData(reward.cosmeticData),
         },
       });
       const opening = await tx.boxOpening.create({
@@ -575,10 +583,11 @@ export async function openMysteryBox({
       await tx.item.delete({ where: { id: item.id } });
 
       return {
+        kind: 'opened' as const,
         result: openingResult(opening, reward.cosmeticId, false),
         draw,
         sourceKey: item.sourceKey,
-        cosmeticEvent: (cosmetic?.data as { event?: unknown } | null)?.event,
+        cosmeticEvent: (reward.cosmeticData as { event?: unknown } | null)?.event,
       };
     })
     .catch((error) => {
@@ -589,7 +598,7 @@ export async function openMysteryBox({
       throw error;
     });
 
-  if ('replay' in opened) return opened.replay;
+  if (opened.kind === 'replay') return opened.result;
 
   const { result, draw, sourceKey, cosmeticEvent } = opened;
   logToAxiom({
