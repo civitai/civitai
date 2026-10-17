@@ -113,7 +113,8 @@ export async function refreshEquippedCosmetics(userIds: number[]) {
   for (const ids of chunk([...new Set(userIds)], REFRESH_CHUNK)) {
     try {
       await userCosmeticCache.refresh(ids);
-      await bustUserCreator(ids);
+      // Awaited purge: keeps one chunk's CDN purge finished before the next chunk starts.
+      await bustUserCreator(ids, { awaitPurge: true });
     } catch (e) {
       log('refreshing cosmetics after a grant failed', e);
     }

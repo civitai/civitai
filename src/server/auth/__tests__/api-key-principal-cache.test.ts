@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 import type * as KeyGenerator from '~/server/utils/key-generator';
 
 vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
@@ -19,12 +20,12 @@ const { evictCachedApiKeys, cacheApiKey } = cacheModule;
 
 // Literal, not imported: an expectation derived from the constant moves with a mutated constant.
 const ENTRY_TTL_S = 30;
-const TOMBSTONE_TTL_S = 900;
+const TOMBSTONE_TTL_S = 120;
 const LAST_USED_S = 3600;
 
 const HOUR = 60 * 60 * 1000;
-/** A lookup that began at `t`, on both clocks (the monotonic one follows the fake wall clock here). */
-const at = (t: Date) => ({ startedAt: t.getTime(), startedAtWallMs: t.getTime() });
+/** A lookup that began at `t` on the writing pod's clock. */
+const at = (t: Date) => ({ startedAtWallMs: t.getTime() });
 const T0 = new Date('2026-10-17T12:00:00.000Z');
 
 type Row = {
@@ -75,8 +76,6 @@ let store: ReturnType<typeof installFakeCacheRedis>;
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
-  // The refill age runs on the monotonic clock; by default let it follow the fake wall clock.
-  vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
   vi.setSystemTime(T0);
   rows = [personal()];
   store = installFakeCacheRedis();
@@ -88,7 +87,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
-  vi.mocked(performance.now).mockRestore();
 });
 
 describe('bearer lookup cache: hit, miss, TTL', () => {
@@ -155,14 +153,11 @@ describe('bearer lookup cache: hit, miss, TTL', () => {
 describe('bearer lookup cache: constants', () => {
   it('pins the TTLs and the ordering the tombstone argument rests on', () => {
     expect(cacheModule.API_KEY_PRINCIPAL_TTL_SECONDS).toBe(30);
-    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBe(900);
+    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBe(120);
     expect(cacheModule.API_KEY_LAST_USED_DEBOUNCE_SECONDS).toBe(3600);
-    expect(cacheModule.API_KEY_MAX_REFILL_AGE_SECONDS).toBe(10);
+    // A tombstone must outlast an entry plus a skew margin (see the skew test below).
     expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBeGreaterThanOrEqual(
-      cacheModule.API_KEY_PRINCIPAL_TTL_SECONDS
-    );
-    expect(cacheModule.API_KEY_TOMBSTONE_TTL_SECONDS).toBeGreaterThan(
-      cacheModule.API_KEY_MAX_REFILL_AGE_SECONDS
+      cacheModule.API_KEY_PRINCIPAL_TTL_SECONDS + 60
     );
   });
 });
@@ -250,7 +245,8 @@ describe('bearer lookup cache: revocation', () => {
     await vi.waitFor(() => expect(release).toBeTypeOf('function'));
     rows = [];
     await evictCachedApiKeys(['hash-of-personal']);
-    // The read stalls until the tombstone has expired, then returns the pre-revoke row.
+    // The read stalls until the tombstone has expired, then returns the pre-revoke row: the refill
+    // is past its absolute expiry (lookup start + 30 s), so it is not written.
     vi.setSystemTime(T0.getTime() + (TOMBSTONE_TTL_S + 1) * 1000);
     release();
     await inFlight;
@@ -258,20 +254,9 @@ describe('bearer lookup cache: revocation', () => {
     expect(await getSessionFromBearerToken('personal')).toBeNull();
   });
 
-  it('drops a refill older than the refill bound, and keeps one inside it', async () => {
-    const row = { ...personal() } as never;
-    const started = at(T0);
-    vi.setSystemTime(T0.getTime() + 10_500);
-    await cacheApiKey('hash-of-late', row, started);
-    expect(store.has(cacheKey('hash-of-late'))).toBe(false);
-    vi.setSystemTime(T0.getTime() + 9_500);
-    await cacheApiKey('hash-of-ontime', row, started);
-    expect(store.has(cacheKey('hash-of-ontime'))).toBe(true);
-  });
-
-  it('a refill queued in the client through a 5-minute reconnect still meets the tombstone', async () => {
-    // The refill is ISSUED in time (inside the age bound) but only REACHES Redis after the revoke
-    // and five minutes of reconnect, the way node-redis's offline queue delivers it.
+  it('a refill queued in the client through a 5-minute reconnect lands already expired', async () => {
+    // The refill is issued at once but only REACHES Redis after the revoke and five minutes of
+    // reconnect, the way node-redis's offline queue delivers it — after the tombstone has gone too.
     const realSet = redisMock.redis.packed.set.getMockImplementation()!;
     let deliver!: () => void;
     redisMock.redis.packed.set.mockImplementation(((
@@ -291,7 +276,8 @@ describe('bearer lookup cache: revocation', () => {
     vi.setSystemTime(T0.getTime() + 5 * 60 * 1000);
     deliver();
     await inFlight;
-    expect(store.peek(cacheKey('hash-of-personal'))).not.toHaveProperty('apiKey');
+    // Whatever landed carries an expiry already in the past.
+    expect(store.get(cacheKey('hash-of-personal'))?.expiresAt ?? 0).toBeLessThanOrEqual(Date.now());
     expect(await getSessionFromBearerToken('personal')).toBeNull();
   });
 
@@ -301,11 +287,6 @@ describe('bearer lookup cache: revocation', () => {
     await cacheApiKey('hash-of-aged', row, at(T0));
     // Written 8 s in: 22 s left, i.e. it expires at lookup start + 30 s.
     expect(store.get(cacheKey('hash-of-aged'))?.expiresAt).toBe(T0.getTime() + 30_000);
-    // An 11 s-old lookup is refused by the 10 s age bound alone: its expiry (lookup + 30 s) is still
-    // 19 s ahead, so the past-expiry guard would let it through.
-    vi.setSystemTime(T0.getTime() + 11_000);
-    await cacheApiKey('hash-of-old', row, at(T0));
-    expect(setsFor('hash-of-old')).toBe(0);
   });
 
   it('a refill delayed in the client with NO tombstone still expires 30 s after its lookup', async () => {
@@ -335,15 +316,6 @@ describe('bearer lookup cache: revocation', () => {
     expect(dbReads()).toBe(2);
   });
 
-  it('measures the refill age on the monotonic clock, not the wall clock', async () => {
-    // NTP steps the wall clock back 5 s while 11 s really pass.
-    const row = { ...personal() } as never;
-    vi.mocked(performance.now).mockReturnValue(T0.getTime() + 11_000);
-    vi.setSystemTime(T0.getTime() - 5_000);
-    await cacheApiKey('hash-of-stepped', row, at(T0));
-    expect(store.has(cacheKey('hash-of-stepped'))).toBe(false);
-  });
-
   it.each([
     ['rejects', () => Promise.reject(new Error('cache cluster down'))],
     [
@@ -356,6 +328,19 @@ describe('bearer lookup cache: revocation', () => {
     redisMock.redis.packed.set.mockImplementation(impl as never);
     await expect(evictCachedApiKeys(['hash-a', 'hash-b'])).resolves.toBeUndefined();
     expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refill from a pod whose clock runs 20 s ahead is still refused by the tombstone', async () => {
+    // The pod's clock is 20 s ahead of Redis, so its absolute expiry lands 20 s later in Redis time
+    // than "lookup + 30 s". The lookup read the row just before the revoke; its write arrives 35 s
+    // after the tombstone, past the entry TTL but not past the tombstone's skew margin.
+    const podClockAhead = 20_000;
+    await evictCachedApiKeys(['hash-of-skewed']);
+    vi.setSystemTime(T0.getTime() + 35_000);
+    await cacheApiKey('hash-of-skewed', { ...personal() } as never, {
+      startedAtWallMs: T0.getTime() - 1_000 + podClockAhead,
+    });
+    expect(store.peek(cacheKey('hash-of-skewed'))).toEqual({ revoked: true });
   });
 
   it('keeps reading the primary while the tombstone stands, and caches nothing', async () => {
@@ -379,6 +364,25 @@ describe('bearer lookup cache: Redis unavailable', () => {
   it('serves a cached key from the primary when only the refill write fails', async () => {
     redisMock.redis.packed.set.mockRejectedValue(new Error('write failed') as never);
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(31);
+  });
+});
+
+describe('bearer lookup cache: metrics', () => {
+  const misses = () => vi.mocked(cacheMissCounter.inc).mock.calls.length;
+  const hits = () => vi.mocked(cacheHitCounter.inc).mock.calls.length;
+
+  it('counts a cacheable key read from the primary as a miss, then a hit', async () => {
+    await getSessionFromBearerToken('personal');
+    expect([misses(), hits()]).toEqual([1, 0]);
+    await getSessionFromBearerToken('personal');
+    expect([misses(), hits()]).toEqual([1, 1]);
+  });
+
+  it('does not count an OAuth token or an unknown credential as a miss', async () => {
+    rows = [{ ...personal(), id: 35, key: 'hash-of-oauth', type: 'Access', clientId: 'client-q' }];
+    await getSessionFromBearerToken('oauth');
+    await getSessionFromBearerToken('garbage');
+    expect([misses(), hits()]).toEqual([0, 0]);
   });
 });
 

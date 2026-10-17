@@ -190,13 +190,21 @@ export async function bustUserCreatorCache(userIds: number | number[]) {
 export const userCreatorEdgeTag = (idOrUsername: number | string) => `user-creator-${idOrUsername}`;
 
 /**
- * Drop both copies of these users' creator card: the Redis entry first, then the edge cache.
- * Awaits the Redis bust; the edge purge is dispatched without being awaited, as the call sites did
- * before. Never throws.
+ * Drop both copies of these users' creator card: the Redis entry first, then the edge cache. Never
+ * throws.
+ *
+ * The Redis bust is always awaited. The edge purge is dispatched without being awaited, which is
+ * right for a single user's write. A BULK caller looping over chunks must pass `awaitPurge: true`:
+ * `purgeCache` reads one Redis set per tag and paces its dispatch to the CDN's rate limit, and that
+ * pacing only holds across chunks if each chunk's purge finishes before the next starts.
  */
-export async function bustUserCreator(userIds: number | number[]) {
+export async function bustUserCreator(
+  userIds: number | number[],
+  { awaitPurge = false }: { awaitPurge?: boolean } = {}
+) {
   const ids = [...new Set([userIds].flat())];
   if (!ids.length) return;
   await bustUserCreatorCache(ids);
-  purgeCache({ tags: ids.map(userCreatorEdgeTag) }).catch(() => undefined);
+  const purge = purgeCache({ tags: ids.map(userCreatorEdgeTag) }).catch(() => undefined);
+  if (awaitPurge) await purge;
 }

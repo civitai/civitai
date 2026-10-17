@@ -79,6 +79,18 @@ export async function addApiKey(
   return key;
 }
 
+/**
+ * The spend limit of an API key, read from the PRIMARY. `/api/v1/me` hands this to the orchestrator,
+ * which caches it for its own TTL, so it must never come from the bearer path's short-lived row cache:
+ * a lowered limit whose cache eviction failed would otherwise be picked up stale and held there.
+ * `undefined` when the key no longer exists (revoked mid-request) — never `null`, which means "no cap".
+ */
+export async function readApiKeyBuzzLimit(id: number): Promise<BuzzLimit | null | undefined> {
+  const row = await dbWrite.apiKey.findUnique({ where: { id }, select: { buzzLimit: true } });
+  if (!row) return undefined;
+  return (row.buzzLimit as BuzzLimit | null) ?? null;
+}
+
 export async function setApiKeyBuzzLimit({
   id,
   userId,

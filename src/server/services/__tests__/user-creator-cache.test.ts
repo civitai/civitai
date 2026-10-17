@@ -10,6 +10,7 @@ import { stripCodeComments } from '~/test-utils/strip-code-comments';
 import type * as SessionClient from '~/server/auth/session-client';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as UserLinkService from '~/server/services/user-link.service';
+import type * as UserService from '~/server/services/user.service';
 
 const { purgeCache, invalidateHub } = vi.hoisted(() => ({
   purgeCache: vi.fn(),
@@ -34,7 +35,15 @@ vi.mock('~/server/services/user-link.service', async (importOriginal) => ({
   upsertUserLink: vi.fn(async () => undefined),
 }));
 
+// The shop-settings write merges into User.settings with raw SQL; stand in for that one call.
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserService>()),
+  patchUserSettings: vi.fn(async () => ({ creatorShop: { enabled: false } })),
+  bustUserSettings: vi.fn(async () => undefined),
+}));
+
 const { getUserCreator, deleteUserCosmeticCache } = await import('~/server/services/user.service');
+const { updateCreatorShopSettings } = await import('~/server/services/creator-shop.service');
 const { getUserCreatorHandler } = await import('~/server/controllers/user.controller');
 const { clearSessionCache } = await import('~/server/auth/session-cache');
 const { bustUserCreator, USER_CREATOR_CACHE_TTL: ttlConstant } = await import(
@@ -219,6 +228,33 @@ describe('creator card cache: bust on write', () => {
     expect(await afterWrite(() => refreshEquippedCosmetics([USER]))).toBe('renamed');
   });
 
+  it('turning the creator shop on or off (updateCreatorShopSettings) busts it', async () => {
+    dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) =>
+      fn(dbMock.dbWrite)) as never);
+    expect(
+      await afterWrite(() => updateCreatorShopSettings({ userId: USER, enabled: false } as never))
+    ).toBe('renamed');
+    expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${USER}`] });
+  });
+
+  it('a bulk grant purges one chunk at a time: the next purge waits for the previous one', async () => {
+    // 201 users = two 200-user chunks.
+    const ids = Array.from({ length: 201 }, (_, i) => 5000 + i);
+    let releaseFirst!: () => void;
+    purgeCache.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (releaseFirst = () => resolve()))
+    );
+    const grant = refreshEquippedCosmetics(ids);
+    await vi.waitFor(() => expect(purgeCache).toHaveBeenCalledTimes(1));
+    // Give a non-waiting loop every chance to start the second chunk.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(purgeCache).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await grant;
+    expect(purgeCache).toHaveBeenCalledTimes(2);
+    expect((purgeCache.mock.calls[1][0] as { tags: string[] }).tags).toEqual(['user-creator-5200']);
+  });
+
   it('the first read after a bust goes to the database and is cached again', async () => {
     await getUserCreator({ id: USER });
     await bustUserCreator(USER);
@@ -289,6 +325,7 @@ describe('creator card invalidation ledger', () => {
       'src/server/controllers/user-profile.controller.ts': 2,
       'src/server/controllers/user.controller.ts': 1,
       'src/server/services/creator-milestone-grant.service.ts': 1,
+      'src/server/services/creator-shop.service.ts': 1,
     });
   });
 
