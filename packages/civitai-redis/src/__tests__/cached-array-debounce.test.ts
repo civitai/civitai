@@ -17,7 +17,9 @@ const KEY = 'packed:caches:test-debounce' as RedisKeyTemplateCache;
 const keyFor = (id: number) => `${KEY}:${id}`;
 const T0 = new Date('2026-01-01T00:00:00Z').getTime();
 
-function build({ debounceTime = 10 }: { debounceTime?: number } = {}) {
+// `debounceTime` omitted = the builder default. `swr` builds a stale-while-revalidate cache, whose
+// public bust is invalidate().
+function build({ debounceTime, swr = false }: { debounceTime?: number; swr?: boolean } = {}) {
   const store = new Map<string, { value: unknown; expiresAt: number }>();
   const read = (k: string) => {
     const e = store.get(k);
@@ -26,7 +28,8 @@ function build({ debounceTime = 10 }: { debounceTime?: number } = {}) {
       store.delete(k);
       return null;
     }
-    return e.value;
+    // A copy, as Redis decodes a fresh object per read: fetch() deletes cachedAt from what it returns.
+    return structuredClone(e.value);
   };
   const redis = {
     packed: {
@@ -38,7 +41,10 @@ function build({ debounceTime = 10 }: { debounceTime?: number } = {}) {
           opts?: { EX?: number; NX?: boolean }
         ) => {
           if (opts?.NX && read(key) !== null) return null;
-          store.set(key, { value, expiresAt: Date.now() + (opts?.EX ?? Infinity) * 1000 });
+          store.set(key, {
+            value: structuredClone(value),
+            expiresAt: Date.now() + (opts?.EX ?? Infinity) * 1000,
+          });
           return 'OK';
         }
       ),
@@ -78,7 +84,7 @@ function build({ debounceTime = 10 }: { debounceTime?: number } = {}) {
     lookupFn,
     ttl: 3600,
     debounceTime,
-    staleWhileRevalidate: false,
+    staleWhileRevalidate: swr,
   });
   // Ids the fetch path wrote a real value (not the marker) for.
   const valueWrites = () =>
@@ -176,5 +182,47 @@ describe('createCachedObject bust() debounce window (non-SWR)', () => {
     // What Redis holds: the marker is gone, so NX would not have stopped a notFound landing.
     expect(t.read(keyFor(100))).toBeNull();
     expect(t.notFoundWrites()).toEqual([]);
+  });
+});
+
+describe('builder default bust window', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a non-SWR cache with no debounceTime holds a bust for 2 s', async () => {
+    const t = build(); // no debounceTime: the builder default
+    await t.cache.bust(1);
+    expect(t.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 2 });
+
+    vi.setSystemTime(T0 + 1_000); // inside the 2 s window
+    await t.cache.fetch([1]);
+    expect(t.valueWrites()).toEqual([]);
+
+    vi.setSystemTime(T0 + 3_000); // past it
+    await t.cache.fetch([1]);
+    expect(t.valueWrites()).toEqual([keyFor(1)]);
+  });
+
+  it('[invariant] SWR invalidate() still backdates by 10 s by default', async () => {
+    const t = build({ swr: true }); // no debounceTime: the builder default
+    await t.cache.fetch([1]); // warm at T0
+    await t.cache.bust(1); // SWR: bust is invalidate()
+
+    // Backdated so the entry goes stale 10 s from now: cachedAt = now - ttl + 10 s.
+    const entry = t.read(keyFor(1)) as { cachedAt: Date };
+    expect(new Date(entry.cachedAt).getTime()).toBe(T0 - 3600_000 + 10_000);
+
+    // Still fresh at 5 s (a hit), stale at 11 s (revalidated through the lookup).
+    vi.setSystemTime(T0 + 5_000);
+    await t.cache.fetch([1]);
+    expect(t.lookupFn).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(T0 + 11_000);
+    await t.cache.fetch([1]);
+    expect(t.lookupFn).toHaveBeenCalledTimes(2);
   });
 });

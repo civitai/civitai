@@ -106,9 +106,10 @@ export const USER_CREATOR_CACHE_TTL = CacheTTL.xs;
 
 /**
  * Seconds a bust holds the entry uncached (see WHAT INVALIDATES IT below). Reads in it hit the replica
- * uncached, so it must outlast replica lag, and each second costs every read of a busted user a
- * database lookup. 2 s rather than the builder's 10 s default: this card is read on most signed-in
- * pages and busted on every session invalidation, and its TTL is only 60 s.
+ * uncached, so it must stay well above typical replica lag, and each second costs every read of a
+ * busted user a database lookup. Equal to the builder's non-SWR default today; pinned here because
+ * this card is read on most signed-in pages and busted on every session invalidation, so a change to
+ * that default should not move it silently.
  */
 export const USER_CREATOR_BUST_WINDOW_S = 2;
 
