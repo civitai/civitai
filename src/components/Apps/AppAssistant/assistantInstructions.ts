@@ -12,14 +12,14 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
   running: 'It is running and its tools are available.',
   starting: 'It is starting; its tools appear in a few seconds.',
   suspended:
-    'It is suspended, so you have no sandbox tools: ask the user to press Resume. Its files are kept.',
+    'It is paused, so you have no sandbox tools; its files are kept. It starts again by itself when the user sends a message. If it is still paused when you need it, call create_app with its name to start it again; its tools arrive with your next reply.',
 };
 
 /** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */
 export const APP_ASSISTANT_RULES = [
   'App Assistant rules (these come after the rules above and win where they differ):',
   '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',
-  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
+  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Before the call, in the same message, write one short sentence asking the user to tap Build it or say what to change. Your reply ends there so they can confirm or change the list.',
   '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
   '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
   '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
@@ -47,7 +47,7 @@ export function buildAssistantInstructions({
   const yourApps = others.length
     ? ` The user's other apps are ${others.join(
         ', '
-      )}; to keep working on one of those, they open it under Your apps at the top of the page, so tell them that instead of creating a copy.`
+      )}; to keep working on one of those, they pick it from the app name at the top of the page (only one app runs at a time, and opening one pauses the other), so tell them that instead of creating a copy.`
     : '';
 
   if (!sandbox) {
@@ -64,14 +64,14 @@ export function buildAssistantInstructions({
     );
     if (canPreview) {
       lines.push(
-        "Live preview (the pane beside this chat), once the dev server runs, in this order: 1) call sandbox__tunnel_key; 2) call start_preview with its publicKey as public_key, the blockId as block_id, and the manifest's scopes and auth as declared_scopes and declared_auth; 3) call sandbox__tunnel_connect with the host and ssh_host_public_key start_preview returned. A key works once: if the tunnel drops, repeat all three steps. When the user asks to stop it, call stop_preview, then sandbox__tunnel_disconnect.",
+        "Live preview (it opens beside this chat), once the dev server runs, in this order: 1) call sandbox__tunnel_key; 2) call start_preview with its publicKey as public_key, the blockId as block_id, and the manifest's scopes and auth as declared_scopes and declared_auth; 3) call sandbox__tunnel_connect with the host and ssh_host_public_key start_preview returned. A key works once: if the tunnel drops, repeat all three steps. When the user asks to stop it, call stop_preview, then sandbox__tunnel_disconnect.",
         previewHost
           ? `The preview is currently running at ${previewHost}.`
           : 'No preview is running yet.'
       );
     } else {
       lines.push(
-        'Live preview is not enabled for this account: do not call start_preview. Test with sandbox__run_command instead, and tell the user the preview pane will stay empty.'
+        'Live preview is not enabled for this account: do not call start_preview. Test with sandbox__run_command instead, and tell the user there is no live preview.'
       );
     }
   }

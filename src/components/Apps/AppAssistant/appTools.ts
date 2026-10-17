@@ -11,9 +11,10 @@ export const NO_APP_REFUSAL =
   'There is no app yet to plan features for. Start the app the user described first, then list its features.';
 export const APPS_LOADING = 'Your apps are still loading. Try again in a moment.';
 export const KEEP_LIMIT =
-  'You already have as many apps as you can keep. Delete one under Your apps at the top of the page, then ask again.';
+  'You already have as many apps as you can keep. Delete one you no longer need: tap the app name at the top of the page to see your apps. Then ask again.';
+// Opening an app pauses the one that runs, so this is another tab starting one at the same moment.
 export const RUNNING_LIMIT =
-  'Another of your apps is still running. Pause it under Your apps at the top of the page, then ask again.';
+  'Another of your apps started at the same moment, so this one could not. Ask again: opening an app pauses the others.';
 export const APPS_CHANGING = 'Your apps were changing at the same moment. Try again.';
 export const APPS_UNREACHABLE = 'Your apps could not be reached right now. Try again in a moment.';
 
@@ -128,7 +129,7 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     return {
       app,
       state: sandbox.state,
-      note: `The app ${app} is starting, and ${app} is also its blockId. Its tools arrive with your next reply, so call set_checklist now with the features the user asked for; that ends this reply.`,
+      note: `The app ${app} is starting, and ${app} is also its blockId. Its tools arrive with your next reply, so now write one short sentence asking the user to tap Build it or say what to change, then call set_checklist with the features they asked for; that ends this reply.`,
     };
   };
 

@@ -2,6 +2,7 @@ import { AppAssistantWorkspace } from '~/components/Apps/AppAssistant/AppAssista
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { canAccessAppAssistant } from '~/shared/utils/app-blocks-access';
 
@@ -37,6 +38,7 @@ export const getServerSideProps = createServerSideProps<AppAssistantPageProps>({
 });
 
 export default function AppAssistantPage({ canPreview, sandboxUrl }: AppAssistantPageProps) {
+  const currentUser = useCurrentUser();
   return (
     <>
       <Meta title="App Assistant — Civitai Apps" deIndex />
@@ -44,7 +46,11 @@ export default function AppAssistantPage({ canPreview, sandboxUrl }: AppAssistan
         title="App Assistant"
         subtitle="Describe an app and the assistant builds it while you watch."
       >
-        <AppAssistantWorkspace canPreview={canPreview} sandboxUrl={sandboxUrl} />
+        <AppAssistantWorkspace
+          canPreview={canPreview}
+          sandboxUrl={sandboxUrl}
+          userId={currentUser?.id ?? null}
+        />
       </AppsPageLayout>
     </>
   );

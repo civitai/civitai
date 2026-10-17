@@ -40,6 +40,8 @@ const m = vi.hoisted(() => ({
       isError: boolean;
     }) => void;
     chatRef?: { current: unknown };
+    onBeforeSend?: (text: string) => boolean;
+    onChatChange?: (chatId: string | null) => void;
   },
   list: [] as Sandbox[],
   open: vi.fn(),
@@ -49,6 +51,14 @@ const m = vi.hoisted(() => ({
   suspend: vi.fn(),
   remove: vi.fn(),
   newChat: vi.fn(),
+  /** How many more sends the chat keeps back, as it does while it lists a just-added app's tools. */
+  sendsHeld: 0,
+  /** Like the chat: a message that goes out fires `before-send` first. */
+  send: vi.fn(async (text: string) => {
+    if (m.sendsHeld > 0) m.sendsHeld--;
+    else m.chat?.onBeforeSend?.(text);
+  }),
+  compose: vi.fn(async () => undefined),
   getToken: vi.fn<(opts?: unknown) => Promise<string>>(async () => 'sandbox-token'),
   enable: vi.fn(async () => 'chat-token'),
   sandboxClient: null as null | { list: () => Promise<unknown> },
@@ -61,7 +71,8 @@ const m = vi.hoisted(() => ({
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
   AppAssistantChat: (props: NonNullable<typeof m.chat>) => {
     m.chat = props;
-    if (props.chatRef) props.chatRef.current = { newChat: m.newChat };
+    if (props.chatRef)
+      props.chatRef.current = { newChat: m.newChat, send: m.send, compose: m.compose };
     return <div data-testid="chat" />;
   },
 }));
@@ -90,8 +101,18 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
         error: m.listError,
       },
       open: {
-        mutate: (app: string, opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void }) =>
-          opts?.onSuccess?.(serve(app)),
+        mutate: (
+          app: string,
+          opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void; onError?: (e: unknown) => void }
+        ) => {
+          let served;
+          try {
+            served = serve(app);
+          } catch (error) {
+            return opts?.onError?.(error);
+          }
+          opts?.onSuccess?.(served);
+        },
         mutateAsync: async (app: string) => serve(app),
         isPending: false,
         error: m.openError,
@@ -144,16 +165,21 @@ async function mount() {
   return screen;
 }
 
-/** Opens `app` from the Your apps list, as a user does. */
-async function openFromYourApps(app: string) {
-  await page.getByRole('button', { name: /^Your apps/ }).click();
-  await page.getByRole('button', { name: new RegExp(`^${app}`) }).click();
+const switcher = () => page.getByRole('button', { name: /^Switch app:/ });
+
+/** Opens `app` from the app switcher, as a user does. */
+async function openFromSwitcher(app: string) {
+  await switcher().click();
+  await page
+    .getByRole('dialog', { name: 'Apps' })
+    .getByRole('button', { name: new RegExp(`^${app}`) })
+    .click();
   await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+  await expect.element(switcher()).toHaveAccessibleName(new RegExp(`^Switch app: ${app},`));
 }
 
 async function openFirst() {
-  await openFromYourApps('app-aaaa');
-  await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+  await openFromSwitcher('app-aaaa');
 }
 
 async function startPreview(blockId: string) {
@@ -174,6 +200,10 @@ beforeEach(() => {
   m.suspend.mockReset();
   m.remove.mockReset();
   m.newChat.mockReset();
+  m.send.mockClear();
+  m.sendsHeld = 0;
+  m.compose.mockClear();
+  localStorage.clear();
   m.getToken.mockReset().mockResolvedValue('sandbox-token');
   m.enable.mockClear();
   m.sandboxClient = null;
@@ -184,22 +214,22 @@ beforeEach(() => {
 });
 
 describe('AppAssistantWorkspace with no apps', () => {
-  test('shows only the chat: no app header, no Your apps, no preview and no Chat/Preview switch', async () => {
+  test('shows only the chat: no app switcher, no preview and no Chat/Preview switch', async () => {
     m.list = [];
     await mount();
-    expect(document.body.textContent).not.toMatch(/Your apps|sandbox|Preview/i);
+    expect(document.body.textContent).not.toMatch(/No app open|sandbox|Preview/i);
+    expect(document.querySelector('[aria-label^="Switch app"]')).toBeNull();
     expect(document.querySelector('[data-testid="app-assistant-preview-pane"]')).toBeNull();
     expect(document.querySelector('[role="radiogroup"]')).toBeNull();
   });
 
-  test('NEGATIVE CONTROL: with apps, Your apps shows how many, and an open app brings the preview and the switch', async () => {
+  test('NEGATIVE CONTROL: with apps, the switcher says none is open, and a started preview brings the preview and the switch', async () => {
     await mount();
-    await expect
-      .element(page.getByRole('button', { name: /^Your apps/ }))
-      .toHaveTextContent('Your apps2');
-    await expect.element(page.getByText('Describe a new app, or open one of yours.')).toBeVisible();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
+    await expect.element(page.getByText('No app open')).toBeVisible();
     await openFirst();
-    expect(document.querySelector('[data-testid="app-assistant-preview-pane"]')).not.toBeNull();
+    await startPreview('my-app');
+    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
     expect(document.querySelector('[role="radiogroup"]')).not.toBeNull();
   });
 
@@ -207,10 +237,10 @@ describe('AppAssistantWorkspace with no apps', () => {
     m.listError = new SandboxApiError('Sandbox service error (503)', 503, 'unavailable');
     m.listNeverLoaded = false;
     await mount();
-    await expect.element(page.getByRole('button', { name: /^Your apps/ })).toBeVisible();
+    await expect.element(switcher()).toBeVisible();
     expect(document.body.textContent).not.toMatch(/could not be reached/);
-    await page.getByRole('button', { name: /^Your apps/ }).click();
-    await expect.element(page.getByRole('dialog').getByText('Start a new app')).toBeVisible();
+    await switcher().click();
+    await expect.element(page.getByRole('dialog').getByText('New app')).toBeVisible();
     expect(document.body.textContent).not.toMatch(/could not be reached/);
   });
 
@@ -257,7 +287,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     expect(m.chat!.beforeToolCall!('create_app', {}, conv)).toEqual({ allow: true });
     await expect(
       Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Fourth app' }, ctx))
-    ).rejects.toThrow(/Delete one under Your apps/);
+    ).rejects.toThrow(/Delete one you no longer need/);
     expect(m.open).toHaveBeenCalledTimes(1);
 
     expect(m.chat!.beforeToolCall!('create_app', {}, conv)).toEqual({
@@ -275,6 +305,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     await m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
     expect(m.open).toHaveBeenLastCalledWith('game-2');
     const made = m.list.find((s) => s.app === 'game-2')!;
+    await switcher().click();
     await page.getByRole('button', { name: 'Actions for game-2' }).click();
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Delete app' }).click();
@@ -282,7 +313,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
 
     // The same app shows up again (listed late) and is opened from the list.
     m.list = [...m.list, made];
-    await openFromYourApps('game-2');
+    await openFromSwitcher('game-2');
     m.open.mockClear();
     await m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
     expect(m.open).toHaveBeenCalledWith('game-3');
@@ -313,11 +344,11 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     m.openReject = new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit');
     await expect(
       Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Fourth app' }, ctx))
-    ).rejects.toThrow(/Delete one under Your apps/);
+    ).rejects.toThrow(/Delete one you no longer need/);
     m.openError = m.openReject;
     screen.rerender(<Workspace />);
     await expect.element(page.getByText('You have as many apps as you can keep')).toBeVisible();
-    await expect.element(page.getByText('Describe a new app, or open one of yours.')).toBeVisible();
+    await expect.element(page.getByText('No app open')).toBeVisible();
   });
 
   test('refuses set_checklist until an app is open, then lets it through', async () => {
@@ -331,12 +362,12 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   });
 });
 
-describe('AppAssistantWorkspace Your apps', () => {
-  test('lists the apps in plain words and opens one', async () => {
+describe('AppAssistantWorkspace app switcher', () => {
+  test('lists the apps in plain words and opens one without starting it', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await mount();
-    await page.getByRole('button', { name: /^Your apps/ }).click();
-    const dialog = page.getByRole('dialog', { name: 'Your apps' });
+    await switcher().click();
+    const dialog = page.getByRole('dialog', { name: 'Apps' });
     await expect.element(dialog.getByText('Running', { exact: true })).toBeVisible();
     await expect.element(dialog.getByText('Paused', { exact: true })).toBeVisible();
     expect(dialog.getByText(/^(running|suspended|starting)$/).elements()).toHaveLength(0);
@@ -345,62 +376,58 @@ describe('AppAssistantWorkspace Your apps', () => {
     );
 
     await dialog.getByRole('button', { name: /^app-bbbb/ }).click();
-    expect(m.open).toHaveBeenCalledWith('app-bbbb');
-    await expect.element(page.getByText('app-bbbb', { exact: true })).toBeVisible();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Paused');
+    // Opening a paused app would pause the running one; that waits for a message that needs it.
+    expect(m.open).not.toHaveBeenCalled();
   });
 
-  test('a paused app’s menu in the list resumes and opens it', async () => {
-    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+  test('a paused app is shown as paused, with no banner and no Resume to press', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' })];
     await mount();
-    await page.getByRole('button', { name: /^Your apps/ }).click();
-    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
-    await expect.element(page.getByRole('menuitem', { name: 'Pause' })).not.toBeInTheDocument();
-    await page.getByRole('menuitem', { name: 'Resume' }).click();
-    expect(m.open).toHaveBeenCalledWith('app-bbbb');
-    await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
-    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+    await openFirst();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Paused');
+    expect(document.body.textContent).not.toMatch(/paused, so the assistant|Resume/);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Delete app' })).toBeVisible();
+    expect(page.getByRole('menuitem', { name: /Resume|Pause/ }).elements()).toHaveLength(0);
   });
 
-  test('the open app’s menu pauses it, and a paused app offers Resume', async () => {
-    const screen = await mount();
+  test('the switcher pauses a running app from its menu', async () => {
+    await mount();
     await openFirst();
+    await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
     await page.getByRole('menuitem', { name: 'Pause' }).click();
     expect(m.suspend).toHaveBeenCalledWith('sbx-aaaaaaaaaaaa');
-
-    m.list = [{ ...m.list[0], state: 'suspended' }, m.list[1]];
-    screen.rerender(<Workspace />);
-    await expect.element(page.getByText('Paused', { exact: true })).toBeVisible();
-    m.open.mockClear();
-    await page.getByRole('button', { name: 'Resume', exact: true }).click();
-    expect(m.open).toHaveBeenCalledWith('app-aaaa');
   });
 
   test('deletes the open app only after the confirmation, and closes it', async () => {
     await mount();
     await openFirst();
+    await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Keep it' }).click();
     expect(m.remove).not.toHaveBeenCalled();
 
+    await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Delete app' }).click();
     expect(m.remove).toHaveBeenCalledWith('sbx-aaaaaaaaaaaa');
-    await expect.element(page.getByTestId('preview')).not.toBeInTheDocument();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
   });
 
-  test('deleting another app from the list leaves the open one open', async () => {
+  test('deleting another app from the switcher leaves the open one open', async () => {
     await mount();
     await openFirst();
-    await page.getByRole('button', { name: /^Your apps/ }).click();
+    await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Delete app' }).click();
     expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
-    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
-    await expect.element(page.getByText('app-aaaa', { exact: true }).first()).toBeVisible();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
   });
 
   test('an open app that disappears from the list (deleted elsewhere) is closed, with its preview', async () => {
@@ -410,18 +437,206 @@ describe('AppAssistantWorkspace Your apps', () => {
     m.list = [m.list[1]];
     screen.rerender(<Workspace />);
     await expect.element(page.getByTestId('preview')).not.toBeInTheDocument();
-    await expect.element(page.getByText('Describe a new app, or open one of yours.')).toBeVisible();
+    await expect.element(page.getByText('No app open')).toBeVisible();
     await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
   });
 
-  test('Start a new app closes the open app and starts a new chat', async () => {
+  test('New app closes the open app and starts a new chat', async () => {
     await mount();
     await openFirst();
-    await page.getByRole('button', { name: /^Your apps/ }).click();
-    await page.getByRole('button', { name: 'Start a new app' }).click();
+    await startPreview('my-app');
+    await switcher().click();
+    await page.getByRole('button', { name: 'New app' }).click();
     expect(m.newChat).toHaveBeenCalledTimes(1);
-    await expect.element(page.getByText('Describe a new app, or open one of yours.')).toBeVisible();
+    await expect.element(page.getByText('No app open')).toBeVisible();
     expect(document.querySelector('[data-testid="preview"]')).toBeNull();
+  });
+});
+
+describe('AppAssistantWorkspace auto-resume', () => {
+  const paused = () => [
+    sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }),
+    sandbox('sbx-bbbbbbbbbbbb'),
+  ];
+
+  test('a message to a paused app is held, the app resumed, and the message sent once it runs', async () => {
+    m.list = paused();
+    const screen = await mount();
+    await openFirst();
+    expect(m.open).not.toHaveBeenCalled();
+    expect(m.chat!.holdReason).toBeUndefined();
+
+    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
+    expect(m.open).toHaveBeenCalledWith('app-aaaa');
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Starting…');
+
+    m.list = [{ ...m.list[0], state: 'starting' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await expect.element(page.getByText('Starting…')).toBeVisible();
+    expect(m.send).not.toHaveBeenCalled();
+
+    m.list = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledWith('Add a dark mode'));
+    expect(m.send).toHaveBeenCalledTimes(1);
+    expect(m.chat!.mcpServers).toHaveLength(1);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    // The released message passes through on its way out, and is not held again.
+    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(false);
+    expect(m.open).toHaveBeenCalledTimes(1);
+  });
+
+  test('a released message the chat still holds (listing the app’s tools) waits in the box and goes once it can', async () => {
+    m.list = paused();
+    const screen = await mount();
+    await openFirst();
+    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
+    m.sendsHeld = 2;
+    m.list = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.compose).toHaveBeenLastCalledWith(''), { timeout: 3000 });
+    expect(m.send.mock.calls).toEqual([
+      ['Add a dark mode'],
+      ['Add a dark mode'],
+      ['Add a dark mode'],
+    ]);
+    expect(m.compose.mock.calls).toEqual([['Add a dark mode'], ['']]);
+  });
+
+  test('a message the user sends while one is being released ends the release', async () => {
+    m.list = paused();
+    const screen = await mount();
+    await openFirst();
+    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
+    m.sendsHeld = 1000;
+    m.list = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
+    expect(m.chat!.onBeforeSend!('Actually, a light mode')).toBe(false);
+    await vi.waitFor(() => expect(m.compose).toHaveBeenLastCalledWith(''), { timeout: 3000 });
+    const sends = m.send.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(m.send.mock.calls.length).toBe(sends);
+  });
+
+  test('NEGATIVE CONTROL: a message to a running app goes straight out', async () => {
+    await mount();
+    await openFirst();
+    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(false);
+    expect(m.open).not.toHaveBeenCalled();
+    expect(m.chat!.holdReason).toBeUndefined();
+  });
+
+  test('a second message while it resumes resumes it once and sends the latest', async () => {
+    m.list = paused();
+    const screen = await mount();
+    await openFirst();
+    expect(m.chat!.onBeforeSend!('first')).toBe(true);
+    expect(m.chat!.onBeforeSend!('second')).toBe(true);
+    expect(m.open).toHaveBeenCalledTimes(1);
+    m.list = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledWith('second'));
+    expect(m.send).toHaveBeenCalledTimes(1);
+  });
+
+  test('a resume that fails gives the message back and shows why', async () => {
+    m.list = paused();
+    const screen = await mount();
+    await openFirst();
+    m.openReject = new SandboxApiError('busy', 409, 'conflict');
+    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
+    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledWith('Add a dark mode'));
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    m.openError = m.openReject;
+    screen.rerender(<Workspace />);
+    await expect
+      .element(page.getByText('That app was changing at the same moment. Try again.'))
+      .toBeVisible();
+    expect(m.send).not.toHaveBeenCalled();
+  });
+
+  test('opening another app while one resumes gives the held message back', async () => {
+    m.list = paused();
+    const screen = await mount();
+    await openFirst();
+    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
+    await openFromSwitcher('app-bbbb');
+    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledWith('Add a dark mode'));
+    m.list = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    expect(m.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppAssistantWorkspace chats remember their app', () => {
+  test('a chat reopens the app it last worked on, without starting it', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }), sandbox('sbx-bbbbbbbbbbbb')];
+    const screen = await mount();
+    m.chat!.onChatChange!('chat-1');
+    await openFromSwitcher('app-aaaa');
+    m.chat!.onChatChange!('chat-2');
+    await openFromSwitcher('app-bbbb');
+
+    m.chat!.onChatChange!('chat-1');
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Paused');
+    m.chat!.onChatChange!('chat-2');
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Running');
+
+    // …and after a reload.
+    screen.unmount();
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
+    m.chat!.onChatChange!('chat-1');
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Paused');
+    expect(m.open).not.toHaveBeenCalled();
+    expect(m.chat!.holdReason).toBeUndefined();
+  });
+
+  test('a chat with no app of its own keeps the open one', async () => {
+    await mount();
+    await openFirst();
+    m.chat!.onChatChange!('chat-new');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
+  });
+});
+
+describe('AppAssistantWorkspace Build it', () => {
+  test('the checklist card offers Build it, which sends the confirmation as the user', async () => {
+    m.list = [];
+    await mount();
+    m.chat!.beforeToolCall!('create_app', {}, conv);
+    await m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
+    const input = { items: [{ label: 'Ask questions' }] };
+    expect(m.chat!.beforeToolCall!('set_checklist', input, conv)).toEqual({ allow: true });
+    const output = await m.chat!.tools.set_checklist.execute(input, ctx);
+    const card = m.chat!.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input,
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    document.body.append(card);
+    const build = page.getByRole('button', { name: 'Build it' });
+    await build.click();
+    expect(m.send).toHaveBeenCalledWith('Looks good — build it.');
+    await expect.element(build).not.toBeInTheDocument();
+    card.remove();
+  });
+
+  test('a message the user sends instead takes Build it away', async () => {
+    m.list = [];
+    await mount();
+    await m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
+    const input = { items: [{ label: 'Ask questions' }] };
+    const output = await m.chat!.tools.set_checklist.execute(input, ctx);
+    const render = () =>
+      m.chat!.tools.set_checklist.render!({ name: 'set_checklist', input, state: 'done', output });
+    expect((render() as HTMLElement).querySelector('button')).not.toBeNull();
+    m.chat!.onBeforeSend!('Also add a timer');
+    expect((render() as HTMLElement).querySelector('button')).toBeNull();
   });
 });
 
@@ -446,7 +661,7 @@ describe('AppAssistantWorkspace preview teardown', () => {
     await mount();
     await openFirst();
     await startPreview('my-app');
-    await openFromYourApps('app-bbbb');
+    await openFromSwitcher('app-bbbb');
     await vi.waitFor(() => expect(m.stop).toHaveBeenCalledWith({ sessionId: 'bki_1' }));
     expect(m.stop).toHaveBeenCalledTimes(1);
   });
@@ -472,7 +687,7 @@ describe('AppAssistantWorkspace preview start racing an app switch', () => {
       { public_key: KEY, block_id: 'my-app' },
       ctx
     );
-    await openFromYourApps('app-bbbb');
+    await openFromSwitcher('app-bbbb');
     land({
       sessionId: 'bki_late',
       host: 'dev-0123456789abcdef.civit.ai',
@@ -602,11 +817,10 @@ describe('AppAssistantWorkspace revoke', () => {
 });
 
 describe('AppAssistantWorkspace header errors', () => {
-  test('a Resume refused for the running-app limit is shown as that, without opening the drawer', async () => {
+  test('a resume refused for the running-app limit is shown as that, with the switcher closed', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }), sandbox('sbx-bbbbbbbbbbbb')];
     const screen = await mount();
-    await openFromYourApps('app-aaaa');
-    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+    await openFromSwitcher('app-aaaa');
     m.openError = new SandboxApiError(
       'running-sandbox limit (1) reached: sbx-bbbbbbbbbbbb (app "app-bbbb") is running; suspend it first',
       409,
@@ -624,7 +838,7 @@ describe('AppAssistantWorkspace app errors', () => {
     await mount();
     const copy = 'That app was changing at the same moment. Try again.';
     await expect.element(page.getByText(copy)).toBeVisible();
-    await page.getByRole('button', { name: /^Your apps/ }).click();
+    await switcher().click();
     await expect.element(page.getByRole('dialog').getByText(copy)).toBeVisible();
     expect(page.getByText(copy).elements()).toHaveLength(1);
   });
@@ -734,7 +948,7 @@ describe('AppAssistantWorkspace tool gate', () => {
     await checkEverything();
     expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toEqual({ allow: true });
 
-    await openFromYourApps('app-bbbb');
+    await openFromSwitcher('app-bbbb');
     await vi.waitFor(() =>
       expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse')
     );

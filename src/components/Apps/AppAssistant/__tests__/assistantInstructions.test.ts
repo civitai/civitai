@@ -29,7 +29,7 @@ describe('buildAssistantInstructions', () => {
       previewHost: null,
     });
     expect(none).toMatch(
-      /other apps are tip-calculator, moodboard; to keep working on one of those, they open it under Your apps/
+      /other apps are tip-calculator, moodboard; to keep working on one of those, they pick it from the app name at the top of the page/
     );
     const open = buildAssistantInstructions({
       sandbox: { ...running, app: 'tip-calculator' },
@@ -109,7 +109,10 @@ describe('buildAssistantInstructions', () => {
   it.each([
     ['running', /running and its tools are available/],
     ['starting', /appear in a few seconds/],
-    ['suspended', /no sandbox tools: ask the user to press Resume/],
+    [
+      'suspended',
+      /no sandbox tools; its files are kept\. It starts again by itself when the user sends a message/,
+    ],
   ] as const)('explains a %s sandbox', (state, note) => {
     const text = buildAssistantInstructions({
       sandbox: { ...running, state },
@@ -133,7 +136,7 @@ describe('buildAssistantSystemPrompt', () => {
       [
         'App Assistant rules (these come after the rules above and win where they differ):',
         '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',
-        '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
+        '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Before the call, in the same message, write one short sentence asking the user to tap Build it or say what to change. Your reply ends there so they can confirm or change the list.',
         '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
         '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',

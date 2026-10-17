@@ -1,18 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Badge,
   Button,
   Center,
-  Drawer,
   Group,
   Loader,
   Paper,
+  Popover,
   SegmentedControl,
   Stack,
   Text,
   Title,
+  UnstyledButton,
 } from '@mantine/core';
+import { IconSelector } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import type { ChatMcpServer, CivitaiChat } from '@civitai/components-chat/civitai-chat';
@@ -21,6 +22,7 @@ import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistant
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { NO_APP_REFUSAL, createAppTools } from '~/components/Apps/AppAssistant/appTools';
 import {
+  BUILD_IT_MESSAGE,
   SANDBOX_SERVER_ID,
   SET_CHECKLIST,
   createAssistantGate,
@@ -30,6 +32,7 @@ import {
   AssistantTokenError,
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
+import { createChatAppStore } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -41,7 +44,6 @@ import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
 import {
   APP_STATUS,
   AppError,
-  AppMenu,
   appsError,
   YourAppsList,
 } from '~/components/Apps/AppAssistant/YourApps';
@@ -91,13 +93,41 @@ function EnableCard({
   );
 }
 
+const RELEASE_TRIES = 40;
+const RELEASE_INTERVAL_MS = 500;
+
+/**
+ * Sends a held message as the user's. The chat holds on its own while it lists a just-added app's tools
+ * and says nothing when that ends, so the message waits in the message box and is sent again until
+ * it goes; after that the box is cleared. If it never goes, it stays there for the user to send.
+ */
+export async function releaseHeld(
+  chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
+  replaying: { current: string | null },
+  text: string,
+  interval = RELEASE_INTERVAL_MS
+) {
+  replaying.current = text;
+  await chatRef.current?.compose(text);
+  for (let i = 0; i < RELEASE_TRIES && replaying.current === text; i++) {
+    await chatRef.current?.send(text);
+    if (replaying.current !== text) break;
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+  if (replaying.current === text) replaying.current = null;
+  else await chatRef.current?.compose('');
+}
+
 export function AppAssistantWorkspace({
   canPreview,
   sandboxUrl,
+  userId = null,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
   sandboxUrl: string | null;
+  /** Keeps what each chat worked on apart per account in this browser. */
+  userId?: number | null;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -138,9 +168,15 @@ export function AppAssistantWorkspace({
   const active = apps.find((s) => s.name === activeName) ?? null;
   const [session, setSession] = useState<PreviewSession | null>(null);
   const [tab, setTab] = useState<'chat' | 'preview'>('chat');
-  const shownTab = active ? tab : 'chat';
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const shownTab = session ? tab : 'chat';
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const switcherTitleId = useId();
   const chatRef = useRef<CivitaiChat | null>(null);
+  // A message sent while the open app was paused, held until the app runs again.
+  const [held, setHeld] = useState<{ text: string; app: string } | null>(null);
+  const replaying = useRef<string | null>(null);
+  const chatApps = useMemo(() => createChatAppStore(String(userId ?? 'anon')), [userId]);
+  const [chatId, setChatId] = useState<string | null>(null);
 
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
@@ -184,6 +220,7 @@ export function AppAssistantWorkspace({
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
+        onBuild: () => void chatRef.current?.send(BUILD_IT_MESSAGE),
       }),
     [appTools]
   );
@@ -256,14 +293,68 @@ export function AppAssistantWorkspace({
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
 
-  const selectApp = (app: string) => {
-    if (active?.app === app && active.state !== 'suspended') return setDrawerOpen(false);
-    sandboxes.open.mutate(app, {
-      onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
-        setActiveName(sandbox.name);
-        setDrawerOpen(false);
-      },
-    });
+  // Resuming pauses whichever other app runs, so a paused app starts again only once a message needs it.
+  const resumeRef = useRef(sandboxes.open.mutate);
+  resumeRef.current = sandboxes.open.mutate;
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const giveBack = useCallback(() => {
+    const message = heldRef.current;
+    heldRef.current = null;
+    setHeld(null);
+    if (message) void chatRef.current?.compose(message.text);
+  }, []);
+  const onBeforeSend = useCallback(
+    (text: string) => {
+      gate.answered();
+      // Any message going out ends a release in progress: it is that message, or the user sent another.
+      if (replaying.current !== null) {
+        const released = replaying.current === text;
+        replaying.current = null;
+        if (released) return false;
+      }
+      const app = live.current.active;
+      if (app?.state !== 'suspended') return false;
+      const resuming = heldRef.current !== null;
+      heldRef.current = { text, app: app.app };
+      setHeld(heldRef.current);
+      if (!resuming)
+        resumeRef.current(app.app, {
+          onSuccess: ({ sandbox }: { sandbox: Sandbox }) => setActiveName(sandbox.name),
+          // Its error shows on the page.
+          onError: giveBack,
+        });
+      return true;
+    },
+    [gate, giveBack]
+  );
+  useEffect(() => {
+    if (!held) return;
+    // The app was closed or another opened meanwhile: the message was meant for the paused one.
+    if (!active || active.app !== held.app) return giveBack();
+    if (active.state !== 'running' || !mcpServers.length) return;
+    heldRef.current = null;
+    setHeld(null);
+    void releaseHeld(chatRef, replaying, held.text);
+  }, [held, active, mcpServers, giveBack]);
+
+  const onChatChange = useCallback(
+    (id: string | null) => {
+      gate.answered();
+      setChatId(id);
+      const app = id ? chatApps.get(id) : null;
+      if (app) setActiveName(app);
+    },
+    [chatApps, gate]
+  );
+  useEffect(() => {
+    if (chatId && activeName) chatApps.set(chatId, activeName);
+  }, [chatId, activeName, chatApps]);
+
+  const status = active && (held ? APP_STATUS.starting : APP_STATUS[active.state]);
+  const selectApp = (sandbox: Sandbox) => {
+    setActiveName(sandbox.name);
+    setSwitcherOpen(false);
   };
   const onRemoved = (name: string) => {
     appTools.forget(name);
@@ -272,7 +363,7 @@ export function AppAssistantWorkspace({
   const startNewApp = () => {
     setActiveName(null);
     chatRef.current?.newChat();
-    setDrawerOpen(false);
+    setSwitcherOpen(false);
   };
 
   if (!sandboxUrl)
@@ -322,60 +413,48 @@ export function AppAssistantWorkspace({
   return (
     <div className={clsx('flex flex-col gap-3', classes.workspace)}>
       {(active || apps.length > 0) && (
-        <Group justify="space-between" wrap="nowrap" gap="sm" className="shrink-0">
-          {active ? (
-            <Group gap={4} wrap="nowrap" className="min-w-0">
+        <Popover
+          opened={switcherOpen}
+          onChange={setSwitcherOpen}
+          position="bottom-start"
+          width={360}
+          trapFocus
+          shadow="md"
+        >
+          <Popover.Target>
+            <UnstyledButton
+              className="flex min-h-11 min-w-0 max-w-full shrink-0 items-center gap-2 self-start rounded-md px-2"
+              aria-label={`Switch app: ${active ? `${active.app}, ${status}` : 'no app open'}`}
+              onClick={() => setSwitcherOpen((open) => !open)}
+            >
               <div className="min-w-0">
                 <Text fw={600} truncate>
-                  {active.app}
+                  {active ? active.app : 'No app open'}
                 </Text>
-                <Text size="xs" c="dimmed">
-                  {APP_STATUS[active.state]}
+                <Text size="xs" c="dimmed" truncate>
+                  {active ? status : 'Open one of yours, or describe a new one'}
                 </Text>
               </div>
-              <AppMenu
-                sandbox={active}
-                sandboxes={sandboxes}
-                onOpen={selectApp}
-                onRemoved={onRemoved}
-              />
-            </Group>
-          ) : (
-            <Text size="sm" c="dimmed">
-              Describe a new app, or open one of yours.
+              <IconSelector size={16} className="shrink-0" />
+            </UnstyledButton>
+          </Popover.Target>
+          <Popover.Dropdown aria-labelledby={switcherTitleId}>
+            <Text id={switcherTitleId} size="xs" fw={600} c="dimmed" tt="uppercase" mb="xs">
+              Apps
             </Text>
-          )}
-          <Button
-            variant="default"
-            className="min-h-11 shrink-0"
-            rightSection={
-              <Badge size="sm" variant="light" circle>
-                {apps.length}
-              </Badge>
-            }
-            onClick={() => setDrawerOpen(true)}
-          >
-            Your apps
-          </Button>
-        </Group>
+            <YourAppsList
+              sandboxes={sandboxes}
+              activeName={activeName}
+              onOpen={selectApp}
+              onRemoved={onRemoved}
+              onNewApp={startNewApp}
+            />
+          </Popover.Dropdown>
+        </Popover>
       )}
-      {active?.state === 'suspended' && (
-        <Alert color="gray" variant="light" className="shrink-0" py="xs">
-          <Group justify="space-between" wrap="nowrap" gap="sm">
-            <Text size="sm">This app is paused, so the assistant can’t work on it.</Text>
-            <Button
-              className="min-h-11 shrink-0"
-              loading={sandboxes.open.isPending}
-              onClick={() => selectApp(active.app)}
-            >
-              Resume
-            </Button>
-          </Group>
-        </Alert>
-      )}
-      {!drawerOpen && <AppError error={appsError(sandboxes)} />}
+      {!switcherOpen && <AppError error={appsError(sandboxes)} />}
 
-      {active && (
+      {session && (
         <SegmentedControl
           className="shrink-0 md:hidden"
           fullWidth
@@ -397,7 +476,7 @@ export function AppAssistantWorkspace({
           data-testid="app-assistant-chat-pane"
           className={clsx(
             'min-h-0 flex-col overflow-hidden',
-            active ? 'md:flex md:w-5/12 md:shrink-0' : 'w-full',
+            session ? 'md:flex md:w-5/12 md:shrink-0' : 'w-full',
             shownTab === 'chat' ? 'flex w-full' : 'hidden'
           )}
         >
@@ -406,13 +485,15 @@ export function AppAssistantWorkspace({
             tools={tools}
             instructions={instructions}
             mcpServers={mcpServers}
-            holdReason={active?.state === 'starting' ? APP_STARTING_HOLD : undefined}
+            holdReason={active?.state === 'starting' || held ? APP_STARTING_HOLD : undefined}
             beforeToolCall={gate.beforeToolCall}
             onToolResult={gate.onToolResult}
             chatRef={chatRef}
+            onBeforeSend={onBeforeSend}
+            onChatChange={onChatChange}
           />
         </Paper>
-        {active && (
+        {session && (
           <Paper
             withBorder
             radius="md"
@@ -426,22 +507,6 @@ export function AppAssistantWorkspace({
           </Paper>
         )}
       </div>
-
-      <Drawer
-        opened={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        position="right"
-        title="Your apps"
-        size="md"
-      >
-        <YourAppsList
-          sandboxes={sandboxes}
-          activeName={activeName}
-          onOpen={selectApp}
-          onRemoved={onRemoved}
-          onNewApp={startNewApp}
-        />
-      </Drawer>
     </div>
   );
 }

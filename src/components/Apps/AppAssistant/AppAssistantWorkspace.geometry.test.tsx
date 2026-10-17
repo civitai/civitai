@@ -114,6 +114,14 @@ async function mount(viewport: { width: number; height: number }) {
 /** Opens a new app the way the assistant does on a first build request. */
 async function createApp() {
   await m.tools!.create_app.execute({ name: 'Tip calculator' }, ctx);
+  await vi.waitFor(() =>
+    expect(document.querySelector('[aria-label^="Switch app: tip-calculator"]')).not.toBeNull()
+  );
+  await nextLayout();
+}
+
+async function startPreview() {
+  await m.tools!.start_preview.execute({ public_key: KEY, block_id: 'tip-calculator' }, ctx);
   await vi.waitFor(() => expect(pane('preview')).not.toBeNull());
   await nextLayout();
 }
@@ -162,15 +170,19 @@ describe.each(NARROW)('App Assistant at $width px (narrow)', (viewport) => {
     expect(box(pane('chat')!).width).toBe(box(workspace).width);
   });
 
-  test('with an app, Chat and Preview switch, one pane at a time, on 44 px targets', async () => {
+  test('with an app but no preview yet, only the chat shows, full width, with no switch', async () => {
     await mount(viewport);
     await createApp();
-    expect(shown(tabs())).toBe(true);
-    expect(shown(pane('chat'))).toBe(true);
-    expect(shown(pane('preview'))).toBe(false);
+    expect(tabs()).toBeNull();
+    expect(pane('preview')).toBeNull();
+    expect(box(pane('chat')!).width).toBe(box(pane('chat')!.parentElement!).width);
+  });
 
-    clickTab('Preview');
-    await nextLayout();
+  test('a started preview brings the switch on Preview; Chat and Preview then switch, one pane at a time, on 44 px targets', async () => {
+    await mount(viewport);
+    await createApp();
+    await startPreview();
+    expect(shown(tabs())).toBe(true);
     expect(shown(pane('chat'))).toBe(false);
     expect(shown(pane('preview'))).toBe(true);
 
@@ -179,36 +191,37 @@ describe.each(NARROW)('App Assistant at $width px (narrow)', (viewport) => {
     expect(shown(pane('chat'))).toBe(true);
     expect(shown(pane('preview'))).toBe(false);
 
+    clickTab('Preview');
+    await nextLayout();
+    expect(shown(pane('chat'))).toBe(false);
+    expect(shown(pane('preview'))).toBe(true);
+
     expectPanesOnScreen(viewport);
     expectTapTargets(
       [
         ...document.querySelectorAll<HTMLElement>('.mantine-SegmentedControl-label'),
-        document.querySelector<HTMLElement>('[aria-label="Actions for tip-calculator"]'),
-        buttonStartingWith('Your apps'),
+        document.querySelector<HTMLElement>('[aria-label^="Switch app"]'),
       ],
-      4
+      3
     );
   });
 
-  test('the Your apps list and a paused app’s Resume are 44 px targets', async () => {
-    m.state = 'suspended';
+  test('the app switcher and its list are 44 px targets', async () => {
     await mount(viewport);
     await createApp();
-    expectTapTargets([buttonStartingWith('Resume')], 1);
-
-    buttonStartingWith('Your apps')!.click();
+    document.querySelector<HTMLElement>('[aria-label^="Switch app"]')!.click();
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
     await nextLayout();
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
-    // It slides in from the right; wait for it to come to rest on screen.
     await vi.waitFor(() => expect(box(dialog).right).toBeLessThanOrEqual(viewport.width));
     expectTapTargets(
       [
-        buttonStartingWith('Start a new app'),
+        document.querySelector<HTMLElement>('[aria-label^="Switch app"]'),
+        buttonStartingWith('New app'),
         buttonStartingWith('tip-calculator'),
         dialog.querySelector<HTMLElement>('[aria-label="Actions for tip-calculator"]'),
       ],
-      3
+      4
     );
   });
 });
@@ -236,17 +249,17 @@ describe.each(WIDE)('App Assistant at $width px (wide)', (viewport) => {
     expectPanesOnScreen(viewport);
   }
 
-  test('with an app, chat and preview sit side by side with no switch', async () => {
+  test('with an app but no preview yet, the chat fills the width', async () => {
     await mount(viewport);
     await createApp();
-    expectSideBySide();
+    expect(pane('preview')).toBeNull();
+    expect(box(pane('chat')!).width).toBe(box(pane('chat')!.parentElement!).width);
   });
 
-  test('a started preview, which selects the Preview tab, keeps the chat beside it', async () => {
+  test('a started preview, which selects the Preview tab, sits beside the chat with no switch', async () => {
     await mount(viewport);
     await createApp();
-    await m.tools!.start_preview.execute({ public_key: KEY, block_id: 'tip-calculator' }, ctx);
-    await nextLayout();
+    await startPreview();
     expectSideBySide();
   });
 });
