@@ -53,9 +53,12 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
   // Retrying cannot clear a limit within a reply, and a running-limit retry pauses the user's apps again.
   let limited: string | null = null;
   // The name each app this page created was asked for, as a key: a numbered copy's key alone cannot
-  // be told from a name that ends in digits ("Room 101"). Kept per sandbox and creation time, so a
-  // different app later made under the same key is not mistaken for it.
+  // be told from a name that ends in digits ("Room 101"). Kept per sandbox (the service generates a
+  // new name for every creation) and its creation time, so a different app later made under the same
+  // key is not mistaken for it.
   const askedFor = new Map<string, { base: string; createdAt: string | null }>();
+  const recordCreated = (sandbox: Sandbox, base: string) =>
+    askedFor.set(sandbox.name, { base, createdAt: sandbox.createdAt });
   const recordedBase = (sandbox: Sandbox) => {
     const record = askedFor.get(sandbox.name);
     return record && record.createdAt === sandbox.createdAt ? record.base : undefined;
@@ -91,12 +94,14 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
         };
       const resumed = await openOrExplain(openNow.app);
       // The list can be a minute old; a paused app it still showed may have been deleted since.
-      if (resumed.created)
+      if (resumed.created) {
+        recordCreated(resumed.sandbox, base);
         return {
           app: openNow.app,
           state: resumed.sandbox.state,
           note: `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name. Tell the user its files are gone, then call set_checklist with the features they asked for; its tools arrive with your next reply.`,
         };
+      }
       return {
         app: openNow.app,
         state: resumed.sandbox.state,
@@ -111,7 +116,7 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     const opened = await openOrExplain(app);
     const { sandbox, created } = opened;
     // Only what this page made: an app the service found is the user's own, made elsewhere.
-    if (created) askedFor.set(sandbox.name, { base, createdAt: sandbox.createdAt });
+    if (created) recordCreated(sandbox, base);
     // The list it was named against can be stale, and the service finds before it creates.
     if (!created)
       return {

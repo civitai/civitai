@@ -165,6 +165,30 @@ describe('create_app', () => {
     expect(p.service.mock.calls).toEqual([['game-2'], ['game-3']]);
   });
 
+  it('keeps the new app it made when resuming one that had expired, so a third ask reuses it', async () => {
+    const p = page([sandbox('game', 'suspended')]);
+    await p.create('Game');
+    const made = p.state.open!;
+    expect(made.app).toBe('game-2');
+    // Paused, then deleted by idle expiry while the list still shows it.
+    const paused = { ...made, state: 'suspended' as const };
+    p.state.list = p.state.list.map((s) => (s.name === made.name ? paused : s));
+    p.state.open = paused;
+    const expired = {
+      ...sandbox('game-2', 'starting'),
+      name: 'sbx-game-2-new',
+      createdAt: 'later',
+    };
+    p.service.mockImplementationOnce(async () => {
+      p.state.list = [...p.state.list.filter((s) => s.app !== 'game-2'), expired];
+      p.state.open = expired;
+      return { sandbox: expired, created: true };
+    });
+    expect(await p.create('Game')).toMatchObject({ app: 'game-2', state: 'starting' });
+    await p.create('Game');
+    expect(p.service.mock.calls).toEqual([['game-2'], ['game-2']]);
+  });
+
   it('forgets an app the page deleted', async () => {
     const p = page([sandbox('game', 'suspended')]);
     await p.create('Game');
