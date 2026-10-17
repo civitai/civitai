@@ -332,7 +332,8 @@ export async function resolveIngestionError({
     nsfwLevelReason: 'Moderator ingestion error review',
   };
 
-  await dbWrite
+  // Only an image still in Error: one re-scanned since the queue loaded may now be Blocked.
+  const result = await dbWrite
     .updateTable('Image')
     .set({
       nsfwLevel,
@@ -343,7 +344,10 @@ export async function resolveIngestionError({
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
-    .execute();
+    .where('ingestion', '=', 'Error')
+    .executeTakeFirst();
+  if (Number(result?.numUpdatedRows ?? 0) === 0)
+    throw new Error('Image is no longer in an ingestion error state; reload the queue.');
   await invalidateThumbnails(id, [image.parentId]);
 
   // Cast to int[] — Postgres infers a bare `ARRAY[$1]` param array as text[], which won't match the

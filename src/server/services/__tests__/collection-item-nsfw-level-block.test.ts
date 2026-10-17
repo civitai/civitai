@@ -12,12 +12,13 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 }));
 
 const { setCollectionItemNsfwLevel } = await import('~/server/services/collection.service');
+const { imagesSearchIndex } = await import('~/server/search-index');
 
 const COLLECTION_ID = 10;
 const ITEM_ID = 20;
 const IMAGE_ID = 55;
 
-function arrange(ingestion: ImageIngestionStatus) {
+function arrange(updatedCount: number) {
   mockDbRead.collectionItem.findUniqueOrThrow.mockResolvedValue({
     id: ITEM_ID,
     imageId: IMAGE_ID,
@@ -25,40 +26,48 @@ function arrange(ingestion: ImageIngestionStatus) {
     collection: { type: 'Image', metadata: { judgesApplyBrowsingLevel: true } },
   } as never);
   mockDbRead.image.findUnique.mockResolvedValue({
-    ingestion,
     post: { collectionId: COLLECTION_ID },
   } as never);
-  mockDbWrite.image.update.mockResolvedValue({} as never);
+  mockDbWrite.image.updateMany.mockResolvedValue({ count: updatedCount } as never);
 }
 
-const writtenData = () =>
-  (mockDbWrite.image.update.mock.calls[0]?.[0] as { data: Record<string, unknown> } | undefined)
-    ?.data;
+const rate = () => setCollectionItemNsfwLevel({ collectionItemId: ITEM_ID, nsfwLevel: 4 });
 
 beforeEach(() => {
   vi.resetAllMocks();
 });
 
 describe('setCollectionItemNsfwLevel and blocked images', () => {
-  it('marks a pending image Scanned and clears any stale blockedFor', async () => {
-    arrange(ImageIngestionStatus.Pending);
+  it('writes only to an image that is not Blocked, in the same statement', async () => {
+    arrange(1);
 
-    await setCollectionItemNsfwLevel({ collectionItemId: ITEM_ID, nsfwLevel: 4 });
+    await rate();
 
-    expect(mockDbWrite.image.update).toHaveBeenCalledTimes(1);
-    expect(writtenData()).toMatchObject({
+    expect(mockDbWrite.image.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.image.updateMany.mock.calls[0][0]?.where).toEqual({
+      id: IMAGE_ID,
+      ingestion: { not: ImageIngestionStatus.Blocked },
+    });
+    expect(mockDbWrite.image.update).not.toHaveBeenCalled();
+  });
+
+  it('marks the image Scanned and clears any stale blockedFor', async () => {
+    arrange(1);
+
+    await rate();
+
+    expect(mockDbWrite.image.updateMany.mock.calls[0][0]?.data).toMatchObject({
       nsfwLevel: 4,
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
     });
+    expect(imagesSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('writes only the rating on a Blocked image, leaving its block in place', async () => {
-    arrange(ImageIngestionStatus.Blocked);
+  it('refuses when the image is Blocked, and queues no index update', async () => {
+    arrange(0);
 
-    await setCollectionItemNsfwLevel({ collectionItemId: ITEM_ID, nsfwLevel: 4 });
-
-    expect(mockDbWrite.image.update).toHaveBeenCalledTimes(1);
-    expect(writtenData()).toEqual({ nsfwLevel: 4 });
+    await expect(rate()).rejects.toThrow(/blocked/i);
+    expect(imagesSearchIndex.queueUpdate).not.toHaveBeenCalled();
   });
 });

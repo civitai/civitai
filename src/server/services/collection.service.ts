@@ -3959,7 +3959,6 @@ export const setCollectionItemNsfwLevel = async ({
   const image = await dbRead.image.findUnique({
     where: { id: collectionItem.imageId as number },
     select: {
-      ingestion: true,
       post: {
         select: {
           collectionId: true,
@@ -3980,19 +3979,20 @@ export const setCollectionItemNsfwLevel = async ({
 
   if (!nsfwLevel) throw throwBadRequestError();
 
-  // A rating must not lift a block.
-  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked;
-  await dbWrite.image.update({
-    where: { id: collectionItem.imageId as number },
-    data: isBlocked
-      ? { nsfwLevel }
-      : {
-          nsfwLevel,
-          scannedAt: new Date(),
-          ingestion: ImageIngestionStatus.Scanned,
-          blockedFor: null,
-        },
+  // A rating must not lift a block, so a Blocked image is never written.
+  const { count } = await dbWrite.image.updateMany({
+    where: {
+      id: collectionItem.imageId as number,
+      ingestion: { not: ImageIngestionStatus.Blocked },
+    },
+    data: {
+      nsfwLevel,
+      scannedAt: new Date(),
+      ingestion: ImageIngestionStatus.Scanned,
+      blockedFor: null,
+    },
   });
+  if (count === 0) throw throwBadRequestError('This image is blocked and cannot be rated.');
 
   await imagesSearchIndex.queueUpdate([
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
