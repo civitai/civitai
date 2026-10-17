@@ -22,7 +22,6 @@ import {
   TagIndexPayloadSizeError,
   TagIndexSnapshotUnservableError,
   TagIndexSpecHashMismatchError,
-  TagIndexStudyDuplicateError,
   TagIndexVocabularyMissingError,
   TagIndexVocabularyNotFrozenError,
   TagIndexVocabVersionMismatchError,
@@ -113,14 +112,14 @@ async function freshDb(vocabs: [typeof V1, Status][] = [[V1, 'frozen']]) {
       if (objects.failGet) throw objects.failGet;
       const b = store.get(key);
       if (!b) throw new TagIndexObjectMissingError(`no object ${key}`);
-      return Buffer.from(b);
+      return { bytes: Buffer.from(b), sha256: sha(b) };
     },
   };
   const deps: TagIndexStoreDeps = { sql, objects };
   const rows = async () =>
     (
-      await db.query<{ id: string; kind: string; status: string }>(
-        `SELECT "id", "kind", "status" FROM "ResourceIntentTagIndexSnapshot" ORDER BY "createdAt", "id"`
+      await db.query<{ id: string; status: string }>(
+        `SELECT "id", "status" FROM "ResourceIntentTagIndexSnapshot" ORDER BY "createdAt", "id"`
       )
     ).rows;
   return { db, sql, deps, objects, store, gets, log, rows };
@@ -135,21 +134,14 @@ function insertVocab(db: PGlite, v: typeof V1, status: Status) {
   );
 }
 
-const NOW = new Date();
 const meta = (over: Partial<PutTagIndexSnapshotMeta> = {}): PutTagIndexSnapshotMeta => ({
-  kind: 'production',
   vocabVersion: V1.vocabVersion,
   specHash: SPEC,
   buildStats: STATS,
-  pinnedUntil: null,
-  now: NOW,
   ...over,
 });
-const studyMeta = (over: Partial<PutTagIndexSnapshotMeta> = {}) =>
-  meta({ kind: 'study', pinnedUntil: new Date(Date.now() + 30 * DAY), ...over });
 
 type Row = {
-  kind: string;
   status: string;
   retiredAt: string | null;
   vocabVersion: string;
@@ -157,34 +149,30 @@ type Row = {
   payloadSha256: string;
   payloadBytes: number;
   objectKey: string;
-  pinnedUntil: string | null;
   buildStats: string;
   createdAt: string | null;
 };
 const ROW_SHA = sha(Buffer.from('x'));
-/** A valid production row; each column overridable. */
+/** A valid row; each column overridable. */
 function insertRow(db: PGlite, over: Partial<Row> = {}) {
   const r: Row = {
-    kind: 'production',
     status: 'ready',
     retiredAt: null,
     vocabVersion: V1.vocabVersion,
     specHash: SPEC,
     payloadSha256: ROW_SHA,
     payloadBytes: 1,
-    objectKey: `p/${over.kind ?? 'production'}/${over.payloadSha256 ?? ROW_SHA}`,
-    pinnedUntil: null,
+    objectKey: `p/${over.payloadSha256 ?? ROW_SHA}`,
     buildStats: '{}',
     createdAt: null,
     ...over,
   };
   return db.query(
     `INSERT INTO "ResourceIntentTagIndexSnapshot"
-       ("kind", "status", "retiredAt", "vocabVersion", "specHash", "payloadSha256", "payloadBytes",
-        "objectKey", "pinnedUntil", "buildStats", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, COALESCE($11::timestamp, now()))`,
+       ("status", "retiredAt", "vocabVersion", "specHash", "payloadSha256", "payloadBytes",
+        "objectKey", "buildStats", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamp, now()))`,
     [
-      r.kind,
       r.status,
       r.retiredAt,
       r.vocabVersion,
@@ -192,7 +180,6 @@ function insertRow(db: PGlite, over: Partial<Row> = {}) {
       r.payloadSha256,
       r.payloadBytes,
       r.objectKey,
-      r.pinnedUntil,
       r.buildStats,
       r.createdAt,
     ]
@@ -206,7 +193,7 @@ async function insertManifest(
   over: { specHash?: string; vocabVersion?: string } = {}
 ) {
   const s = sha(bytes);
-  const objectKey = `${PREFIX}/production/${s}`;
+  const objectKey = `${PREFIX}/${s}`;
   await insertRow(db, { ...over, payloadSha256: s, payloadBytes: bytes.length, objectKey });
   return objectKey;
 }
@@ -221,7 +208,6 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
       `SELECT conname FROM pg_constraint WHERE conrelid = '"ResourceIntentTagIndexSnapshot"'::regclass ORDER BY conname`
     );
     expect(cons.rows.map((r) => r.conname)).toEqual([
-      'ResourceIntentTagIndexSnapshot_kind_pin_check',
       'ResourceIntentTagIndexSnapshot_payload_check',
       'ResourceIntentTagIndexSnapshot_pkey',
       'ResourceIntentTagIndexSnapshot_status_check',
@@ -231,51 +217,73 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
       `SELECT indexname FROM pg_indexes WHERE tablename = 'ResourceIntentTagIndexSnapshot' ORDER BY indexname`
     );
     expect(idx.rows.map((r) => r.indexname)).toEqual([
-      'ResourceIntentTagIndexSnapshot_kind_payloadSha256_ready_key',
       'ResourceIntentTagIndexSnapshot_latest_ready_idx',
+      'ResourceIntentTagIndexSnapshot_payloadSha256_ready_key',
       'ResourceIntentTagIndexSnapshot_pkey',
+    ]);
+    const trg = await db.query<{ tgname: string }>(
+      `SELECT tgname FROM pg_trigger WHERE NOT tgisinternal ORDER BY tgname`
+    );
+    expect(trg.rows.map((r) => r.tgname)).toEqual([
+      'ResourceIntentTagIndexSnapshot_guard',
+      'ResourceIntentVocabulary_snapshot_guard',
     ]);
   });
 
   it('a row names an existing vocabulary, which cannot then be deleted', async () => {
     const { db } = await freshDb();
-    const study = { kind: 'study', pinnedUntil: ahead(30) };
-    await expect(insertRow(db, { ...study, vocabVersion: V2.vocabVersion })).rejects.toThrow(
+    // The guard's frozen check would refuse first; with only it off, the foreign key refuses.
+    const T = '"ResourceIntentTagIndexSnapshot"';
+    await db.exec(`ALTER TABLE ${T} DISABLE TRIGGER "ResourceIntentTagIndexSnapshot_guard"`);
+    await expect(insertRow(db, { vocabVersion: V2.vocabVersion })).rejects.toThrow(
       /vocabVersion_fkey/
     );
-    await insertRow(db, study);
+    await db.exec(`ALTER TABLE ${T} ENABLE TRIGGER "ResourceIntentTagIndexSnapshot_guard"`);
+    await insertRow(db);
     await expect(db.query(`DELETE FROM "ResourceIntentVocabulary"`)).rejects.toThrow(
       /vocabVersion_fkey/
     );
   });
 
-  it('a production row needs a frozen vocabulary when inserted; a study row does not', async () => {
+  it('a row needs a frozen vocabulary when inserted', async () => {
+    const V3 = vocabulary('three');
     const { db } = await freshDb([
       [V1, 'frozen'],
       [V2, 'candidate'],
+      [V3, 'retired'],
     ]);
     await expect(insertRow(db, { vocabVersion: V2.vocabVersion })).rejects.toThrow(
       /needs a frozen vocabulary/
     );
-    await expect(
-      insertRow(db, { vocabVersion: V2.vocabVersion, kind: 'study', pinnedUntil: ahead(30) })
-    ).resolves.toBeDefined();
+    await expect(insertRow(db, { vocabVersion: V3.vocabVersion })).rejects.toThrow(
+      /needs a frozen vocabulary/
+    );
     await expect(insertRow(db)).resolves.toBeDefined();
   });
 
+  it('a vocabulary a ready row names cannot go back to candidate, but may be retired', async () => {
+    const { db } = await freshDb();
+    await insertRow(db);
+    const toCandidate = () =>
+      db.query(
+        `UPDATE "ResourceIntentVocabulary" SET "status" = 'candidate', "frozenAt" = NULL, "frozenBy" = NULL`
+      );
+    await expect(toCandidate()).rejects.toThrow(/retire the snapshot first/);
+    await db.query(`UPDATE "ResourceIntentVocabulary" SET "status" = 'retired'`);
+    await expect(toCandidate()).rejects.toThrow(/retire the snapshot first/);
+    await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
+    await expect(toCandidate()).resolves.toBeDefined();
+  });
+
   it.each<[string, Partial<Row>, RegExp]>([
-    ['a key under another kind', { objectKey: `p/study/${ROW_SHA}` }, /payload_check/],
-    ['a key with an empty prefix', { objectKey: `/production/${ROW_SHA}` }, /payload_check/],
-    ['a key naming other bytes', { objectKey: `p/production/${'0'.repeat(64)}` }, /payload_check/],
+    ['a key with an empty prefix', { objectKey: `/${ROW_SHA}` }, /payload_check/],
+    ['a key with no prefix', { objectKey: ROW_SHA }, /payload_check/],
+    ['a key naming other bytes', { objectKey: `p/${'0'.repeat(64)}` }, /payload_check/],
     ['an uppercase sha256', { payloadSha256: ROW_SHA.toUpperCase() }, /payload_check/],
     ['a short spec hash', { specHash: 'd'.repeat(63) }, /payload_check/],
     ['zero bytes', { payloadBytes: 0 }, /payload_check/],
     ['bytes over the cap', { payloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES + 1 }, /payload_check/],
     ['stats that are not an object', { buildStats: '[]' }, /payload_check/],
-    ['a pinned production row', { pinnedUntil: ahead(1) }, /kind_pin_check/],
-    ['an unpinned study', { kind: 'study' }, /kind_pin_check/],
-    ['a study pinned 59 days', { kind: 'study', pinnedUntil: ahead(59) }, /kind_pin_check/],
-    ['a study pin already past', { kind: 'study', pinnedUntil: ahead(-1) }, /kind_pin_check/],
     ['a ready row with retiredAt', { retiredAt: ahead(0) }, /status_check/],
   ])('refuses %s', async (_, over, error) => {
     const { db } = await freshDb();
@@ -285,19 +293,16 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
   it('accepts the boundary values those CHECKs allow', async () => {
     const { db } = await freshDb();
     await insertRow(db, { payloadBytes: TAG_INDEX_MAX_PAYLOAD_BYTES });
-    await insertRow(db, { kind: 'study', pinnedUntil: ahead(57.9) });
-    expect((await db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(2);
+    expect((await db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(1);
   });
 
   it.each<[string, unknown]>([
     ['id', 'another-id'],
-    ['kind', 'study'],
     ['vocabVersion', V2.vocabVersion],
     ['specHash', OTHER_SPEC],
     ['payloadSha256', 'f'.repeat(64)],
     ['payloadBytes', 2],
-    ['objectKey', `q/production/${ROW_SHA}`],
-    ['pinnedUntil', ahead(1)],
+    ['objectKey', `q/${ROW_SHA}`],
     ['buildStats', '{"a":1}'],
     ['createdAt', '2000-01-01'],
   ])('the guard refuses a change to %s', async (column, value) => {
@@ -325,7 +330,7 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
     await expect(insertRow(db, { status: 'retired', retiredAt: ahead(0) })).rejects.toThrow(
       /inserted ready/
     );
-    // A writer-supplied createdAt is overwritten: the study pin CHECK measures from it.
+    // A writer-supplied createdAt is overwritten.
     await insertRow(db, { createdAt: '2000-01-01' });
     const [{ createdAt }] = (
       await db.query<{ createdAt: Date }>(
@@ -354,31 +359,21 @@ describe('putSnapshot', () => {
     const { deps, store, log, rows } = await freshDb();
     const payload = await payloadOf(V1.vocabVersion);
     const { manifest, created } = await putSnapshot(deps, payload, meta());
-    const key = `${PREFIX}/production/${sha(payload)}`;
+    const key = `${PREFIX}/${sha(payload)}`;
     expect(created).toBe(true);
     expect(manifest).toMatchObject({
-      kind: 'production',
       status: 'ready',
       vocabVersion: V1.vocabVersion,
       specHash: SPEC,
       payloadSha256: sha(payload),
       payloadBytes: payload.length,
       objectKey: key,
-      pinnedUntil: null,
       buildStats: STATS,
       retiredAt: null,
     });
     expect(store.get(key)?.equals(payload)).toBe(true);
     expect(log.indexOf(`put ${key}`)).toBeLessThan(log.indexOf('INSERT'));
     expect(await rows()).toHaveLength(1);
-  });
-
-  it('a study may name a candidate vocabulary', async () => {
-    const { deps } = await freshDb([[V1, 'candidate']]);
-    const payload = await payloadOf(V1.vocabVersion);
-    const { manifest } = await putSnapshot(deps, payload, studyMeta());
-    expect(manifest.kind).toBe('study');
-    expect(manifest.objectKey).toBe(`${PREFIX}/study/${sha(payload)}`);
   });
 
   describe('refuses, uploading and inserting nothing', () => {
@@ -395,24 +390,6 @@ describe('putSnapshot', () => {
       expect(setup.store.size).toBe(0);
       expect(await setup.rows()).toEqual([]);
     };
-
-    it('a pinned production build, or an unpinned study', async () => {
-      const payload = await payloadOf(V1.vocabVersion);
-      await refused(
-        await freshDb(),
-        payload,
-        meta({ pinnedUntil: new Date(Date.now() + DAY) }),
-        Error,
-        /production snapshot cannot be pinned/
-      );
-      await refused(
-        await freshDb(),
-        payload,
-        studyMeta({ pinnedUntil: null }),
-        Error,
-        /requires a pin/
-      );
-    });
 
     it('an empty payload', async () => {
       await refused(await freshDb(), Buffer.alloc(0), meta(), TagIndexPayloadSizeError, /0 bytes/);
@@ -439,19 +416,16 @@ describe('putSnapshot', () => {
       );
     });
 
-    it.each(['candidate', 'retired'] as const)(
-      'a production build naming a %s vocabulary',
-      async (status) => {
-        const payload = await payloadOf(V1.vocabVersion);
-        await refused(
-          await freshDb([[V1, status]]),
-          payload,
-          meta(),
-          TagIndexVocabularyNotFrozenError,
-          new RegExp(`is '${status}'`)
-        );
-      }
-    );
+    it.each(['candidate', 'retired'] as const)('a build naming a %s vocabulary', async (status) => {
+      const payload = await payloadOf(V1.vocabVersion);
+      await refused(
+        await freshDb([[V1, status]]),
+        payload,
+        meta(),
+        TagIndexVocabularyNotFrozenError,
+        new RegExp(`is '${status}'`)
+      );
+    });
 
     it('a payload that does not decode', async () => {
       const junk = Buffer.from('not a tag index');
@@ -497,9 +471,9 @@ describe('putSnapshot', () => {
     setup.objects.prefix = '';
     const err = await putSnapshot(setup.deps, payload, meta()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TagIndexManifestInsertError);
-    expect((err as TagIndexManifestInsertError).objectKey).toBe(`/production/${sha(payload)}`);
+    expect((err as TagIndexManifestInsertError).objectKey).toBe(`/${sha(payload)}`);
     expect((err as Error).message).toMatch(/payload_check/);
-    expect([...setup.store.keys()]).toEqual([`/production/${sha(payload)}`]);
+    expect([...setup.store.keys()]).toEqual([`/${sha(payload)}`]);
     expect(await setup.rows()).toEqual([]);
     expect(await loadLatestSnapshot(setup.deps, SPEC)).toBeNull();
 
@@ -509,7 +483,7 @@ describe('putSnapshot', () => {
     expect(await setup.rows()).toHaveLength(1);
   });
 
-  it('the same production payload again returns the standing row', async () => {
+  it('the same payload again returns the standing row', async () => {
     const { deps, rows } = await freshDb();
     const payload = await payloadOf(V1.vocabVersion);
     const first = await putSnapshot(deps, payload, meta());
@@ -549,17 +523,6 @@ describe('putSnapshot', () => {
     expect(err).toBeInstanceOf(TagIndexManifestInsertError);
     expect((err as Error).message).toMatch(/conflicted and is gone/);
   });
-
-  it('the same study payload again is refused; production and study rows of one payload coexist', async () => {
-    const { deps, rows } = await freshDb();
-    const payload = await payloadOf(V1.vocabVersion);
-    await putSnapshot(deps, payload, studyMeta());
-    await expect(putSnapshot(deps, payload, studyMeta())).rejects.toBeInstanceOf(
-      TagIndexStudyDuplicateError
-    );
-    await putSnapshot(deps, payload, meta());
-    expect((await rows()).map((r) => r.kind).sort()).toEqual(['production', 'study']);
-  });
 });
 
 describe('loadLatestSnapshot', () => {
@@ -577,7 +540,7 @@ describe('loadLatestSnapshot', () => {
     );
   });
 
-  it('serves the newest ready production row for the spec hash, nothing else', async () => {
+  it('serves the newest ready row for the spec hash, nothing else', async () => {
     const setup = await freshDb([
       [V1, 'frozen'],
       [V2, 'frozen'],
@@ -594,11 +557,6 @@ describe('loadLatestSnapshot', () => {
       await payloadOf(V1.vocabVersion, OTHER_SPEC),
       meta({ specHash: OTHER_SPEC })
     );
-    const study = await putSnapshot(
-      deps,
-      await payloadOf(V2.vocabVersion),
-      studyMeta({ vocabVersion: V2.vocabVersion })
-    );
     const setCreated = (id: string, daysAgo: number) =>
       asFixtureWriter(db, () =>
         db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "createdAt" = $1 WHERE "id" = $2`, [
@@ -608,7 +566,6 @@ describe('loadLatestSnapshot', () => {
       );
     await setCreated(older.manifest.id, 3);
     await setCreated(newer.manifest.id, 2);
-    await setCreated(study.manifest.id, 0);
     expect((await latestReadyManifest(setup.sql, SPEC))?.id).toBe(newer.manifest.id);
     expect((await latestReadyManifest(setup.sql, OTHER_SPEC))?.specHash).toBe(OTHER_SPEC);
 
@@ -621,7 +578,7 @@ describe('loadLatestSnapshot', () => {
     expect(loaded?.index.vocabulary.length).toBeGreaterThan(0);
   });
 
-  it('serves a production snapshot whose vocabulary was retired after the build', async () => {
+  it('serves a snapshot whose vocabulary was retired after the build', async () => {
     const { deps, db } = await freshDb();
     await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
     await db.query(`UPDATE "ResourceIntentVocabulary" SET "status" = 'retired'`);
@@ -641,18 +598,14 @@ describe('loadLatestSnapshot', () => {
       expect((err as Error).message).toMatch(message);
     };
 
-    it('a manifest whose vocabulary row is gone', async () => {
+    it('a manifest whose vocabulary is a candidate', async () => {
       const { deps, db } = await freshDb();
       await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
-      await asFixtureWriter(db, () => db.query(`DELETE FROM "ResourceIntentVocabulary"`));
-      await refusedLoad(deps, TagIndexVocabularyMissingError, /not found/);
-    });
-
-    it('a production manifest whose vocabulary is a candidate', async () => {
-      const { deps, db } = await freshDb();
-      await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
-      await db.query(
-        `UPDATE "ResourceIntentVocabulary" SET "status" = 'candidate', "frozenAt" = NULL, "frozenBy" = NULL`
+      // The vocabulary trigger refuses this; the loader still does not serve it.
+      await asFixtureWriter(db, () =>
+        db.query(
+          `UPDATE "ResourceIntentVocabulary" SET "status" = 'candidate', "frozenAt" = NULL, "frozenBy" = NULL`
+        )
       );
       await refusedLoad(deps, TagIndexVocabularyNotFrozenError, /is a candidate/);
     });

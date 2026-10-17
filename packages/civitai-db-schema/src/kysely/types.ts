@@ -4490,14 +4490,12 @@ export type ResourceIntentCoocSnapshot = {
 };
 export type ResourceIntentTagIndexSnapshot = {
   id: string;
-  kind: string;
   status: Generated<string>;
   vocabVersion: string;
   specHash: string;
   payloadSha256: string;
   payloadBytes: number;
   objectKey: string;
-  pinnedUntil: Timestamp | null;
   buildStats: unknown;
   createdAt: Generated<Timestamp>;
   retiredAt: Timestamp | null;

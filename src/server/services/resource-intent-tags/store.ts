@@ -1,12 +1,7 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 
-import {
-  assertCoocPin,
-  isAllocationFailure,
-  type CoocSnapshotKind,
-  type CoocSql,
-} from '~/server/services/resource-intent-cooc/store';
+import { isAllocationFailure, type CoocSql } from '~/server/services/resource-intent-cooc/store';
 import type { TagBuildStats } from './build';
 import { decodeTagIndex, TAG_INDEX_MAX_PAYLOAD_BYTES, type DecodedTagIndex } from './payload';
 import type { TagIndex } from './score';
@@ -16,27 +11,26 @@ import type { TagIndex } from './score';
  * key, and a manifest row inserted only after the upload succeeded.
  */
 
-export type TagIndexSnapshotKind = CoocSnapshotKind;
-
-/** Object storage as the store needs it; `get` may refuse early when the object's size is not `expectedBytes`. */
+/**
+ * Object storage as the store needs it. `get` returns the bytes and their sha256; it may refuse early
+ * when the object is not `expectedBytes` long.
+ */
 export type TagIndexObjectStore = {
   prefix: string;
   put: (key: string, bytes: Buffer) => Promise<void>;
-  get: (key: string, expectedBytes: number) => Promise<Buffer>;
+  get: (key: string, expectedBytes: number) => Promise<{ bytes: Buffer; sha256: string }>;
 };
 
 export type TagIndexStoreDeps = { sql: CoocSql; objects: TagIndexObjectStore };
 
 export type TagIndexSnapshotManifest = {
   id: string;
-  kind: TagIndexSnapshotKind;
   status: string;
   vocabVersion: string;
   specHash: string;
   payloadSha256: string;
   payloadBytes: number;
   objectKey: string;
-  pinnedUntil: Date | null;
   buildStats: TagBuildStats;
   createdAt: Date;
   retiredAt: Date | null;
@@ -56,7 +50,6 @@ export class TagIndexPayloadHashError extends TagIndexSnapshotUnservableError {}
 export class TagIndexPayloadCorruptError extends TagIndexSnapshotUnservableError {}
 export class TagIndexSpecHashMismatchError extends TagIndexSnapshotUnservableError {}
 export class TagIndexVocabVersionMismatchError extends TagIndexSnapshotUnservableError {}
-export class TagIndexStudyDuplicateError extends Error {}
 
 /**
  * The upload succeeded and the manifest insert did not. The object is left where it is: no row names
@@ -76,13 +69,12 @@ export class TagIndexManifestInsertError extends Error {
 
 export const sha256Hex = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
-export const tagIndexObjectKey = (prefix: string, kind: TagIndexSnapshotKind, sha256: string) =>
-  `${prefix}/${kind}/${sha256}`;
+export const tagIndexObjectKey = (prefix: string, sha256: string) => `${prefix}/${sha256}`;
 
 const T = Prisma.raw('"ResourceIntentTagIndexSnapshot"');
 const COLUMNS = Prisma.raw(
-  `"id", "kind", "status", "vocabVersion", "specHash", "payloadSha256", "payloadBytes",
-   "objectKey", "pinnedUntil", "buildStats", "createdAt", "retiredAt"`
+  `"id", "status", "vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey",
+   "buildStats", "createdAt", "retiredAt"`
 );
 
 async function vocabularyStatus(sql: CoocSql, vocabVersion: string): Promise<string | null> {
@@ -117,21 +109,15 @@ function assertHeader(
 }
 
 export type PutTagIndexSnapshotMeta = {
-  kind: TagIndexSnapshotKind;
   vocabVersion: string;
   specHash: string;
   buildStats: TagBuildStats;
-  pinnedUntil: Date | null;
-  /** Validates the pin up front; the row's `createdAt` is the database's clock. */
-  now: Date;
 };
 
 /**
- * Store a snapshot: refuse a production build whose vocabulary is not frozen (a study may name a
- * vocabulary of any status), and any payload that does not decode or whose header disagrees with
- * `meta`; upload it; then insert the manifest. A ready row of the same kind with the same bytes
- * already standing is returned with `created: false` for production, and refused for a study (its pin
- * belongs to another study).
+ * Store a snapshot: refuse a vocabulary that is missing or not frozen, and any payload that does not
+ * decode or whose header disagrees with `meta`; upload it; then insert the manifest. A ready row with
+ * the same bytes already standing is returned with `created: false`.
  */
 export async function putSnapshot(
   deps: TagIndexStoreDeps,
@@ -139,7 +125,6 @@ export async function putSnapshot(
   meta: PutTagIndexSnapshotMeta
 ): Promise<{ manifest: TagIndexSnapshotManifest; created: boolean }> {
   const { sql, objects } = deps;
-  assertCoocPin(meta.kind, meta.pinnedUntil, meta.now);
   if (payload.length === 0 || payload.length > TAG_INDEX_MAX_PAYLOAD_BYTES)
     throw new TagIndexPayloadSizeError(
       `tag index payload is ${payload.length} bytes; allowed 1..${TAG_INDEX_MAX_PAYLOAD_BYTES}`
@@ -147,25 +132,25 @@ export async function putSnapshot(
   const vocabStatus = await vocabularyStatus(sql, meta.vocabVersion);
   if (vocabStatus === null)
     throw new TagIndexVocabularyMissingError(`vocabulary ${meta.vocabVersion} not found`);
-  if (meta.kind === 'production' && vocabStatus !== 'frozen')
+  if (vocabStatus !== 'frozen')
     throw new TagIndexVocabularyNotFrozenError(
-      `a production build needs a frozen vocabulary; ${meta.vocabVersion} is '${vocabStatus}'`
+      `a snapshot needs a frozen vocabulary; ${meta.vocabVersion} is '${vocabStatus}'`
     );
   assertHeader(await decodeOrCorrupt(payload, 'tag index payload'), meta, 'tag index payload');
 
   const payloadSha256 = sha256Hex(payload);
-  const objectKey = tagIndexObjectKey(objects.prefix, meta.kind, payloadSha256);
+  const objectKey = tagIndexObjectKey(objects.prefix, payloadSha256);
   await objects.put(objectKey, payload);
 
   const buildStats = JSON.stringify(meta.buildStats);
   let inserted: TagIndexSnapshotManifest | undefined;
   try {
     [inserted] = await sql.query<TagIndexSnapshotManifest>(Prisma.sql`
-      INSERT INTO ${T} ("kind", "vocabVersion", "specHash", "payloadSha256", "payloadBytes",
-        "objectKey", "pinnedUntil", "buildStats")
-      VALUES (${meta.kind}, ${meta.vocabVersion}, ${meta.specHash}, ${payloadSha256},
-        ${payload.length}, ${objectKey}, ${meta.pinnedUntil}, ${buildStats}::jsonb)
-      ON CONFLICT ("kind", "payloadSha256") WHERE "status" = 'ready' DO NOTHING
+      INSERT INTO ${T} ("vocabVersion", "specHash", "payloadSha256", "payloadBytes", "objectKey",
+        "buildStats")
+      VALUES (${meta.vocabVersion}, ${meta.specHash}, ${payloadSha256}, ${payload.length},
+        ${objectKey}, ${buildStats}::jsonb)
+      ON CONFLICT ("payloadSha256") WHERE "status" = 'ready' DO NOTHING
       RETURNING ${COLUMNS}`);
   } catch (e) {
     throw new TagIndexManifestInsertError(objectKey, e);
@@ -174,66 +159,57 @@ export async function putSnapshot(
 
   const [existing] = await sql.query<TagIndexSnapshotManifest>(Prisma.sql`
     SELECT ${COLUMNS} FROM ${T}
-    WHERE "kind" = ${meta.kind} AND "payloadSha256" = ${payloadSha256} AND "status" = 'ready'`);
+    WHERE "payloadSha256" = ${payloadSha256} AND "status" = 'ready'`);
   if (!existing)
     throw new TagIndexManifestInsertError(
       objectKey,
       new Error('a ready row with this payload conflicted and is gone')
     );
-  if (meta.kind === 'study')
-    throw new TagIndexStudyDuplicateError(
-      `study snapshot ${payloadSha256} already exists, pinned until ${existing.pinnedUntil?.toISOString()}`
-    );
   return { manifest: existing, created: false };
 }
 
-/** The newest ready production manifest built under `specHash`. */
+/** The newest ready manifest built under `specHash`. */
 export async function latestReadyManifest(
   sql: CoocSql,
   specHash: string
 ): Promise<TagIndexSnapshotManifest | null> {
   const [row] = await sql.query<TagIndexSnapshotManifest>(Prisma.sql`
     SELECT ${COLUMNS} FROM ${T}
-    WHERE "kind" = 'production' AND "specHash" = ${specHash} AND "status" = 'ready'
+    WHERE "specHash" = ${specHash} AND "status" = 'ready'
     ORDER BY "createdAt" DESC, "id" DESC
     LIMIT 1`);
   return row ?? null;
 }
 
 /**
- * Download and decode the snapshot a production manifest names. Refuses, each with its own error: a
- * vocabulary row that is gone or still a candidate; an object that is gone; bytes of another length
- * or sha256 than the manifest's (checked before decoding); bytes that do not decode; a header whose
- * specHash or vocabVersion is not the manifest's. Any other download failure, or running out of
- * memory while decoding, is rethrown as it is.
+ * Download and decode the snapshot a manifest names. Refuses, each with its own error: a vocabulary
+ * that is a candidate; an object that is gone; bytes of another length or sha256 than the manifest's
+ * (checked before decoding); bytes that do not decode; a header whose specHash or vocabVersion is not
+ * the manifest's. Any other download failure, or running out of memory while decoding, is rethrown
+ * as it is.
  */
 async function loadSnapshot(
   deps: TagIndexStoreDeps,
   manifest: TagIndexSnapshotManifest
 ): Promise<{ manifest: TagIndexSnapshotManifest; index: TagIndex }> {
   const what = `tag index snapshot ${manifest.id}`;
-  const vocabStatus = await vocabularyStatus(deps.sql, manifest.vocabVersion);
-  if (vocabStatus === null)
-    throw new TagIndexVocabularyMissingError(
-      `${what}: vocabulary ${manifest.vocabVersion} not found`
-    );
-  if (vocabStatus === 'candidate')
+  if ((await vocabularyStatus(deps.sql, manifest.vocabVersion)) === 'candidate')
     throw new TagIndexVocabularyNotFrozenError(
       `${what}: vocabulary ${manifest.vocabVersion} is a candidate`
     );
-  const bytes = await deps.objects.get(manifest.objectKey, manifest.payloadBytes);
+  const { bytes, sha256 } = await deps.objects.get(manifest.objectKey, manifest.payloadBytes);
   if (bytes.length !== manifest.payloadBytes)
     throw new TagIndexPayloadSizeError(
       `${what}: ${bytes.length} bytes, manifest says ${manifest.payloadBytes}`
     );
-  if (sha256Hex(bytes) !== manifest.payloadSha256)
+  if (sha256 !== manifest.payloadSha256)
     throw new TagIndexPayloadHashError(`${what}: sha256 does not match the manifest`);
   const decoded = await decodeOrCorrupt(bytes, what);
   assertHeader(decoded, manifest, what);
   return { manifest, index: decoded.index };
 }
 
-/** The newest ready production snapshot for `specHash`, verified and decoded; `null` when there is none. */
+/** The newest ready snapshot for `specHash`, verified and decoded; `null` when there is none. */
 export async function loadLatestSnapshot(
   deps: TagIndexStoreDeps,
   specHash: string

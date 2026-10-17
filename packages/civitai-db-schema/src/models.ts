@@ -1558,7 +1558,6 @@ export interface ResourceIntentVocabulary {
 
 export interface ResourceIntentTagIndexSnapshot {
   id: string;
-  kind: string;
   status: string;
   vocabVersion: string;
   vocabulary?: ResourceIntentVocabulary;
@@ -1566,7 +1565,6 @@ export interface ResourceIntentTagIndexSnapshot {
   payloadSha256: string;
   payloadBytes: number;
   objectKey: string;
-  pinnedUntil: Date | null;
   buildStats: JsonValue;
   createdAt: Date;
   retiredAt: Date | null;

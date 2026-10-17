@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { GetObjectCommand, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 
 import { env } from '~/env/server';
@@ -8,16 +9,36 @@ import {
   type TagIndexObjectStore,
 } from './store';
 
+export const TAG_INDEX_OBJECT_PREFIX = 'resource-intent/tag-index';
+
+/** Every other bucket the app is configured with; snapshots must not share one. */
+const OTHER_BUCKETS = [
+  'S3_UPLOAD_BUCKET',
+  'S3_IMAGE_UPLOAD_BUCKET',
+  'S3_IMAGE_CACHE_BUCKET',
+  'S3_IMAGE_CACHE_BUCKET_OLD',
+  'CSAM_BUCKET_NAME',
+  'S3_VAULT_BUCKET',
+  'S3_UPLOAD_B2_BUCKET',
+  'S3_UPLOAD_B2_QUARANTINE_BUCKET',
+  'S3_IMAGE_B2_BUCKET',
+  'APPEAL_TRAINING_B2_BUCKET',
+  'SCAN_LABEL_P3_B2_BUCKET',
+  'BUNDLE_S3_BUCKET',
+] as const;
+
 /**
- * Tag-index snapshot objects in `RESOURCE_INTENT_TAG_INDEX_BUCKET` under
- * `RESOURCE_INTENT_TAG_INDEX_PREFIX`, through the S3_UPLOAD_* client.
+ * Tag-index snapshot objects in `RESOURCE_INTENT_TAG_INDEX_BUCKET` under `TAG_INDEX_OBJECT_PREFIX`,
+ * through the S3_UPLOAD_* client. The prefix is fixed, so the bucket alone separates environments.
  */
 export function s3TagIndexObjects(
   opts: { s3?: S3Client; bucket?: string; prefix?: string } = {}
 ): TagIndexObjectStore {
   const bucket = opts.bucket ?? env.RESOURCE_INTENT_TAG_INDEX_BUCKET;
   if (!bucket) throw new Error('RESOURCE_INTENT_TAG_INDEX_BUCKET is not set');
-  const prefix = opts.prefix ?? env.RESOURCE_INTENT_TAG_INDEX_PREFIX;
+  const shared = OTHER_BUCKETS.find((name) => env[name] === bucket);
+  if (shared) throw new Error(`RESOURCE_INTENT_TAG_INDEX_BUCKET must not be the ${shared} bucket`);
+  const prefix = opts.prefix ?? TAG_INDEX_OBJECT_PREFIX;
   const s3 = opts.s3 ?? getS3Client();
   return {
     prefix,
@@ -41,16 +62,29 @@ export function s3TagIndexObjects(
             throw new TagIndexObjectMissingError(`tag index object ${key} not found`);
           throw e;
         });
-      if (!res.Body) throw new Error(`tag index object ${key} has no body`);
-      // Refuse before reading: the body of a wrong object can be far larger than any snapshot.
-      if (typeof res.ContentLength === 'number' && res.ContentLength !== expectedBytes) {
-        (res.Body as { destroy?: () => void }).destroy?.();
-        throw new TagIndexPayloadSizeError(
-          `tag index object ${key} is ${res.ContentLength} bytes, manifest says ${expectedBytes}`
+      const body = res.Body as (AsyncIterable<Uint8Array> & { destroy?: () => void }) | undefined;
+      if (!body) throw new Error(`tag index object ${key} has no body`);
+      const sizeError = (got: string) => {
+        body.destroy?.();
+        return new TagIndexPayloadSizeError(
+          `tag index object ${key} is ${got} bytes, manifest says ${expectedBytes}`
         );
+      };
+      // Refuse before reading: the body of a wrong object can be far larger than any snapshot.
+      if (typeof res.ContentLength === 'number' && res.ContentLength !== expectedBytes)
+        throw sizeError(String(res.ContentLength));
+      // One buffer of the known size, filled and hashed as the body streams in.
+      const bytes = Buffer.allocUnsafe(expectedBytes);
+      const hash = createHash('sha256');
+      let n = 0;
+      for await (const chunk of body) {
+        if (n + chunk.length > expectedBytes) throw sizeError(`over ${expectedBytes}`);
+        bytes.set(chunk, n);
+        hash.update(chunk);
+        n += chunk.length;
       }
-      const bytes = await res.Body.transformToByteArray();
-      return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (n !== expectedBytes) throw sizeError(String(n));
+      return { bytes, sha256: hash.digest('hex') };
     },
   };
 }

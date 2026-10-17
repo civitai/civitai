@@ -1959,15 +1959,15 @@ model ResourceIntentVocabulary {
 }
 
 // The manifest of one stored resource-intent v1 tag-index snapshot; the payload is in object
-// storage under `objectKey` (content-addressed: it ends in /<kind>/<payloadSha256>). Inserted
-// 'ready' after the upload; 'retired' is one-way. A DB trigger sets `createdAt` and `retiredAt`,
-// refuses a production row whose vocabulary is not frozen, and refuses every other change. Pin
-// rules and formats are DB CHECKs. Written and read only through
+// storage under `objectKey` (content-addressed: it ends in /<payloadSha256>). Inserted 'ready'
+// after the upload; 'retired' is one-way. A DB trigger sets `createdAt` and `retiredAt`, refuses a
+// row whose vocabulary is not frozen, and refuses every other change; a trigger on
+// ResourceIntentVocabulary refuses moving a vocabulary a ready row names back to 'candidate'.
+// Formats are DB CHECKs. Written and read only through
 // src/server/services/resource-intent-tags/store.ts. The migration is applied manually per
 // environment (no prisma migrate deploy).
 model ResourceIntentTagIndexSnapshot {
   id            String                   @id @default(uuid())
-  kind          String
   status        String                   @default("ready")
   vocabVersion  String
   vocabulary    ResourceIntentVocabulary @relation(fields: [vocabVersion], references: [vocabVersion], onDelete: Restrict, onUpdate: Restrict)
@@ -1975,12 +1975,11 @@ model ResourceIntentTagIndexSnapshot {
   payloadSha256 String
   payloadBytes  Int
   objectKey     String
-  pinnedUntil   DateTime?
   buildStats    Json
   createdAt     DateTime                 @default(now())
   retiredAt     DateTime?
 
-  @@index([kind, specHash, status, createdAt(sort: Desc)], map: "ResourceIntentTagIndexSnapshot_latest_ready_idx")
+  @@index([specHash, status, createdAt(sort: Desc)], map: "ResourceIntentTagIndexSnapshot_latest_ready_idx")
 }
 
 enum ReviewReactions {
