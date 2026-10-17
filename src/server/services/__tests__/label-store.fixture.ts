@@ -71,7 +71,6 @@ const SOURCE_TABLES = `
   );
 `;
 
-/** The source tables, then the migration exactly as committed. */
 export async function bootLabelStore(db: PGlite) {
   await db.exec(SOURCE_TABLES);
   await db.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));

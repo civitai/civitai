@@ -9,7 +9,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
  * The label store migration, executed unmodified on an in-process Postgres with the source tables it
- * hooks into. Each case that expects nothing has a twin that differs in one property and does produce
+ * hooks into. Cases that expect nothing carry a twin that differs in one property and does produce
  * something, so an empty result cannot come from a store that records nothing.
  */
 

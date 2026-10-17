@@ -35,11 +35,13 @@ change.
 | `record_prediction(...)` | site code recording a model output | same |
 | `submit_prediction(...)` | the authenticated prediction endpoint, on behalf of pipelines | raises |
 | `submit_predictions(p_items)` | the endpoint's batch: a JSON array of `submit_prediction` arguments | refuses per item, never the batch |
-| `exclude(p_subject_type, p_subject_id, p_reason)` | taking an item out of training | `erasure` deletes it; `safety`, `removed` and `retention` keep the judgements and drop the content |
+| `exclude(p_subject_type, p_subject_id, p_reason)` | taking an item out of training | `erasure` deletes it; `safety`, `removed` and `retention` keep the judgements and drop snapshot, pHash and bytes pointer |
 | `erase_owner(p_user_id)` | a user's erasure request | deletes every subject the user owns and tombstones the owner; not called on account deletion |
 
-Excluded images are taken out by the nightly `appeal-decision-records` job, with the same rule it applies
-to appeal records (`sweepLabelStore`). Deleting an appeal record takes its image out too.
+The nightly `appeal-decision-records` job (`sweepLabelStore`) excludes images by the same rule it applies
+to appeal records; scan flags, votes and pipeline predictions also check it when they land. An image is
+excluded when it, or another image sharing its stored file, matches. Deleting an appeal record takes its
+image out too.
 
 The functions belong to the owner of the site tables; site code that calls them directly connects as
 that owner.
@@ -50,7 +52,9 @@ call a `p_source_ref` that is unique to the source row: a retry with the same re
 Wired today by triggers: scan label flags (predictions) and votes (labels), image appeal decisions, and
 scan label byte copies and withdrawals. `CALL label_store.backfill_batches()` replays those source tables,
 committing every 25 rows; `backfill()` does it in one transaction, for tests. Both are idempotent. A
-judgement on an image the site already excludes is recorded and excluded at once.
+scan flag, vote or pipeline prediction on an image the site already excludes is recorded and excluded at
+once; appeal decisions are refused upstream for such images, and direct `record_*` calls wait for the
+nightly sweep.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back

@@ -219,6 +219,14 @@ describe('what it accepts', () => {
     ['a zero subject id', { subjectId: 0 }],
     ['a subject id past int4', { subjectId: 2_147_483_648 }],
     ['a blank value', { value: '   ' }],
+    ['an uppercase hash', { contentHash: HASH.toUpperCase() }],
+    ['a 63-character hash', { contentHash: HASH.slice(1) }],
+    ['a 65-character hash', { contentHash: HASH + 'a' }],
+    ['a question with capitals', { question: 'Image.Block' }],
+    ['a question with no namespace', { question: 'block' }],
+    ['question version 0', { questionVersion: 0 }],
+    ['question version 1001', { questionVersion: 1001 }],
+    ['a 201-character sourceRef', { sourceRef: 'r'.repeat(201) }],
     ['a confidence above 1', { confidence: 5 }],
     [
       '65 scores',
@@ -315,6 +323,9 @@ describe('what it accepts', () => {
       batch(500).map((p) => p.sourceRef)
     );
     expect(await stored()).toHaveLength(500);
+    // 50 per statement keeps each under the 64 subtransactions a snapshot can track.
+    const statements = (dbMock.dbWrite.$queryRaw.mock.calls as unknown[][]).map((args) => args[1]);
+    expect(statements.map((json) => JSON.parse(json as string).length)).toEqual(Array(10).fill(50));
   });
 
   it('a re-submission is a duplicate, not a second row', async () => {

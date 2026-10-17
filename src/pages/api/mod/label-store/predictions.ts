@@ -33,7 +33,7 @@ const predictionSchema = z.strictObject({
     .min(1)
     .max(200)
     .describe(
-      'Your id for the run or prediction. The same sourceRef again for the same image and question is a duplicate.'
+      'Your id for the run or prediction. The same sourceRef again for the same image, question and questionVersion is a duplicate.'
     ),
   predictedAt: z.iso.datetime({ offset: true }).optional(),
   confidence: z.number().min(0).max(1).optional(),

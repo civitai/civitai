@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Removal } from '~/server/jobs/appeal-decision-records';
 
@@ -588,6 +589,19 @@ describe('sweepLabelStore', () => {
     expect(await excludedIds()).toEqual([108]);
   });
 
+  it('excludes the subject of an image sharing its stored file with an excluded image', async () => {
+    await image(110);
+    await image(112);
+    await holder.db.query(
+      `INSERT INTO "Image" ("id", "userId", "url", "needsReview") VALUES (111, 9, 'u-110', 'csam')`
+    );
+    await judged(110);
+    await judged(112);
+
+    expect(await sweepLabelStore()).toBe(1);
+    expect(await excludedIds()).toEqual([110]);
+  });
+
   it('counts a subject once, and nothing on the next run', async () => {
     await image(107, { blockedFor: 'CSAM' });
     await judged(107);
@@ -649,11 +663,15 @@ describe('the store sweep, absent or failing', () => {
     await holder.db.exec(
       `ALTER TABLE label_store.subject ADD CONSTRAINT forced_failure CHECK ("excludedAt" IS NULL) NOT VALID`
     );
+    vi.mocked(loggingMock.logToAxiom).mockClear();
     try {
       expect(await runAppealDecisionRecords(vi.fn(async () => new Map()))).toMatchObject({
         swept: 1,
         storeExcluded: 0,
       });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: 'Label store sweep failed' })
+      );
     } finally {
       await holder.db.exec(`ALTER TABLE label_store.subject DROP CONSTRAINT forced_failure`);
     }

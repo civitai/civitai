@@ -30,7 +30,10 @@ const reportNamesImage = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   WHERE c.images @> jsonb_build_array(jsonb_build_object('id', ${imageId}))
 )`;
 
-/** An excluded image, judged on its live row. */
+/**
+ * An excluded image, judged on its live row. Restated in sweepLabelStore and in
+ * `label_store.image_excluded` (label store migration); edit all three together.
+ */
 export const excludedImageRow = (i: Prisma.Sql) => Prisma.sql`(
   ${i}."needsReview" = 'csam'
   OR ${i}."blockedFor" = 'CSAM'
@@ -114,7 +117,8 @@ export async function sweepLabelStore() {
     SELECT to_regclass('label_store.subject') IS NOT NULL AS present
   `;
   if (!present) return 0;
-  // excludedImageRow's rule, with the report sets read once: per subject, it scans CsamReport twice.
+  // excludedImageRow's rule (also label_store.image_excluded), with the report sets read once: per
+  // subject, it scans CsamReport twice.
   const [{ excluded }] = await dbWrite.$queryRaw<{ excluded: number }[]>`
     WITH reported_images AS (
       SELECT DISTINCT e->>'id' AS id
@@ -124,20 +128,32 @@ export async function sweepLabelStore() {
     reported_users AS (
       SELECT DISTINCT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL
     ),
+    subjects AS (
+      SELECT s."subjectId", s."ownerHash",
+        CASE WHEN s."subjectId" ~ '^[0-9]{1,10}$' AND s."subjectId"::bigint <= 2147483647
+          THEN s."subjectId"::int END AS "imageId"
+      FROM label_store.subject s
+      WHERE s."subjectType" = 'image' AND s."excludedAt" IS NULL
+    ),
     hit AS (
       SELECT DISTINCT s."subjectId"
-      FROM label_store.subject s
-      WHERE s."subjectType" = 'image' AND s."excludedAt" IS NULL AND (
-        s."subjectId" IN (SELECT id FROM reported_images)
+      FROM subjects s
+      WHERE s."subjectId" IN (SELECT id FROM reported_images)
         OR s."ownerHash" IN (SELECT label_store.person_hash('owner', "userId") FROM reported_users)
         OR EXISTS (
           SELECT 1 FROM "Image" li
-          WHERE li.id = (CASE WHEN s."subjectId" ~ '^[0-9]{1,10}$' AND s."subjectId"::bigint <= 2147483647
-            THEN s."subjectId"::int END)
+          WHERE li.id = s."imageId"
             AND (li."needsReview" = 'csam' OR li."blockedFor" = 'CSAM'
               OR li."userId" IN (SELECT "userId" FROM reported_users))
         )
-      )
+        -- Another image sharing the stored file.
+        OR EXISTS (
+          SELECT 1 FROM "Image" li JOIN "Image" so ON so.url = li.url AND so.id <> li.id
+          WHERE li.id = s."imageId"
+            AND (so."needsReview" = 'csam' OR so."blockedFor" = 'CSAM'
+              OR so."userId" IN (SELECT "userId" FROM reported_users)
+              OR so.id::text IN (SELECT id FROM reported_images))
+        )
     )
     SELECT coalesce(sum(label_store.exclude('image', "subjectId", 'safety')), 0)::int AS excluded FROM hit
   `;
@@ -545,7 +561,6 @@ export async function recordRestoredLevels() {
 
 export async function runAppealDecisionRecords(lookup?: RemovalLabelLookup) {
   // The store first: deleting a record also excludes its image from the store, under a vaguer reason.
-  // A store failure must not stop the record sweep.
   const storeExcluded = await sweepLabelStore().catch((e: Error) => {
     logToAxiom({
       type: 'error',

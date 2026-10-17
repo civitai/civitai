@@ -75,7 +75,10 @@ describe('ModeratorGrantId', () => {
     const grants = readFileSync(path.join(root, 'src/server/services/moderator-grants.ts'), 'utf8');
     const union = grants.match(/export type ModeratorGrantId =([^;]+);/)?.[1] ?? '';
     const ids = [...union.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    const declared = readFileSync(path.join(root, 'apps/moderator/src/lib/permissions.ts'), 'utf8');
+    const declared = readFileSync(path.join(root, 'apps/moderator/src/lib/permissions.ts'), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
 
     expect(ids.length).toBeGreaterThan(4);
     expect(ids.filter((id) => !declared.includes(`id: '${id}'`))).toEqual([]);

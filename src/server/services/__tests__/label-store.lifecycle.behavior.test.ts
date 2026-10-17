@@ -134,7 +134,7 @@ describe('consensus', () => {
     await label('block', 'a-1', { user: MODS[0] });
     await label('block', 'b-1', { user: MODS[1] });
     await label('clear', 'c-1', { user: MODS[2] });
-    // MODS[0] changes their answer; then a late-arriving older answer must not win.
+    // a-0 arrives last but is older than a-2.
     await label('clear', 'a-2', { user: MODS[0], at: '2026-01-03T00:00:00Z' });
     await label('block', 'a-0', { user: MODS[0], at: '2026-01-02T00:00:00Z' });
 
@@ -378,14 +378,28 @@ describe('exclusion', () => {
       ['blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM'`],
       ['named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 501}]')`],
       ['owned by a reported user', `INSERT INTO "CsamReport" ("userId") VALUES (11)`],
+      [
+        'named by a report as a string id',
+        `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": "501"}]')`,
+      ],
+      [
+        'sharing its file with a flagged image',
+        `INSERT INTO "Image" ("id", "userId", "url", "needsReview") VALUES (502, 12, 'u-501', 'csam')`,
+      ],
     ].flatMap(([state, setup]) => [
       [state, 'votes', setup],
       [state, 'a flag', setup],
+      [state, 'a prediction', setup],
     ])
   )('an image already %s is excluded when %s land', async (_, judgement, setup) => {
     await db.pg.exec(setup);
     if (judgement === 'votes') for (const m of MODS.slice(0, 3)) await vote(m, false);
-    else await flag();
+    else if (judgement === 'a flag') await flag();
+    else
+      await db.pg.query(
+        `SELECT label_store.submit_prediction('image', '${IMAGE}', $1, 'image.block', 'block', 'm@1', 'p-1')`,
+        [HASH]
+      );
 
     expect(
       await rows(`SELECT "excludedReason", "snapshot", "pHash" FROM label_store.subject`)
@@ -477,18 +491,43 @@ describe('erasure', () => {
   it('a writer holds the subject and owner locks shared, and erasure takes them exclusively', async () => {
     const advisory = () =>
       rows<{ mode: string }>(`SELECT mode FROM pg_locks WHERE locktype = 'advisory' ORDER BY mode`);
+    // The eraser must lock the keys the writer locks, or neither waits for the other.
+    const keys = async () =>
+      (
+        await rows<{ key: string }>(
+          `SELECT classid::text || '/' || objid::text AS key FROM pg_locks
+           WHERE locktype = 'advisory' ORDER BY 1`
+        )
+      ).map((r) => r.key);
+    let writer: string[];
     await db.pg.exec('BEGIN');
     try {
       await vote(MODS[0], false);
       expect(await advisory()).toEqual([{ mode: 'ShareLock' }, { mode: 'ShareLock' }]);
+      writer = await keys();
+    } finally {
+      await db.pg.exec('COMMIT');
+    }
+    // erase_owner locks the owner and each of its subjects.
+    await db.pg.exec('BEGIN');
+    try {
+      await db.pg.query(`SELECT label_store.erase_owner(${OWNER})`);
+      expect(await advisory()).toEqual([{ mode: 'ExclusiveLock' }, { mode: 'ExclusiveLock' }]);
+      expect(await keys()).toEqual(writer);
     } finally {
       await db.pg.exec('COMMIT');
     }
     await db.pg.exec('BEGIN');
     try {
       await db.pg.query(`SELECT label_store.exclude('image', '${IMAGE}', 'erasure')`);
-      await db.pg.query(`SELECT label_store.erase_owner(${OWNER})`);
-      expect(await advisory()).toEqual([{ mode: 'ExclusiveLock' }, { mode: 'ExclusiveLock' }]);
+      expect(writer).toContain((await keys())[0]);
+    } finally {
+      await db.pg.exec('COMMIT');
+    }
+    await db.pg.exec('BEGIN');
+    try {
+      await db.pg.query(`SELECT label_store.exclude('image', '999', 'erasure')`);
+      expect(await advisory()).toEqual([{ mode: 'ExclusiveLock' }]);
     } finally {
       await db.pg.exec('COMMIT');
     }
@@ -509,6 +548,21 @@ describe('bytes', () => {
       await rows(`SELECT "bytesRef", "bytesExpireAt" FROM label_store.training_examples`)
     ).toEqual([{ bytesRef: null, bytesExpireAt: null }]);
     expect(await kinds()).toContain('subject');
+  });
+
+  it.each([
+    ['29 days', true],
+    ['30 days 1 hour', false],
+  ])('a copy made %s ago is visible: %s', async (age, visible) => {
+    for (const m of MODS.slice(0, 3)) await vote(m, false);
+    await db.pg.query(
+      `UPDATE "ScanLabelItem" SET "copyState" = 'copied', "copyKey" = 'k/1', "copiedAt" = now() - $1::interval`,
+      [age]
+    );
+
+    expect(await rows(`SELECT "bytesRef" FROM label_store.training_examples`)).toEqual([
+      { bytesRef: visible ? 'scan-label-copy:k/1' : null },
+    ]);
   });
 
   it('a copy fires once, and a re-update of a copied item changes nothing', async () => {
@@ -737,17 +791,56 @@ describe('erasure tombstones', () => {
 });
 
 describe('batches and triggers', () => {
-  it('backfill_batches commits every p_batch rows', async () => {
-    for (const m of MODS) await vote(m, false);
+  it('backfill_batches commits every p_batch rows of every source, 25 by default', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Image" ("id", "userId", "url") VALUES (502, 12, 'u-502');
+      INSERT INTO "ScanLabelItem" ("id", "imageId") VALUES (8, 502);
+    `);
+    for (const [item, wf] of [
+      [ITEM, 'wf-1'],
+      [8, 'wf-2'],
+    ] as const)
+      await db.pg.query(
+        `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+         VALUES ($1, 'orchestrator-scan', 'scanner@1', $2, now())`,
+        [item, wf]
+      );
+    for (const m of MODS.slice(0, 2)) await vote(m, false);
+    await db.pg.query(
+      `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel", "decision", "decidedAt")
+       VALUES (900, 501, 'u-501', 16, 'Rejected', now()), (901, 502, 'u-502', 1, 'Rejected', now())`
+    );
+    await db.pg.exec(`
+      UPDATE "ScanLabelItem" SET "copyState" = 'copied', "copyKey" = 'k/' || "id", "copiedAt" = now();
+      INSERT INTO "ScanLabelCopyObject" ("key", "itemId", "imageId") VALUES ('k/7', 7, 501), ('k/8', 8, 502);
+      UPDATE "ScanLabelCopyObject" SET "withdrawnAt" = now(), "withdrawReason" = 'gone';
+    `);
     await db.pg.exec(`TRUNCATE label_store.subject, label_store.change RESTART IDENTITY CASCADE`);
 
     await db.pg.exec(`CALL label_store.backfill_batches(1)`);
 
+    // Two source rows of each kind, so a loop that never commits shows as one transaction.
     expect(
       await rows(
-        `SELECT count(DISTINCT "txid")::int AS n FROM label_store.change WHERE "kind" = 'label'`
+        `SELECT CASE WHEN c."kind" = 'label' THEN l."family" ELSE c."kind" END AS source,
+           count(DISTINCT c."txid")::int AS n
+         FROM label_store.change c LEFT JOIN label_store.label l ON l."id" = c."refId" AND c."kind" = 'label'
+         WHERE c."kind" IN ('label', 'prediction', 'subject')
+         GROUP BY 1 ORDER BY 1`
       )
-    ).toEqual([{ n: 4 }]);
+    ).toEqual([
+      { source: 'appeal', n: 2 },
+      { source: 'prediction', n: 2 },
+      { source: 'scan_label', n: 2 },
+      { source: 'subject', n: 4 },
+    ]);
+    expect(
+      await rows(
+        `SELECT pg_get_function_arguments(p.oid) AS args FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'label_store' AND p.proname = 'backfill_batches'`
+      )
+    ).toEqual([{ args: 'IN p_batch integer DEFAULT 25' }]);
   });
 
   it('every trigger is created in its own transaction with a 5s lock timeout', () => {

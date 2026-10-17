@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS label_store.change (
   "questionVersion" INTEGER,
   "refId"           BIGINT,   -- the label or prediction id
   "at"              TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
-  -- Ids are assigned before commit, so a cursor on id alone can skip a row; changes_feed pages on (txid, id).
+  -- Ids are assigned before commit, so a cursor on id alone can skip a row; readers page on (txid, id).
   "txid"            BIGINT NOT NULL DEFAULT (pg_current_xact_id()::text::bigint)
 );
 CREATE INDEX IF NOT EXISTS change_txid_idx ON label_store.change ("txid", "id");
@@ -534,17 +534,27 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = label_store, pg_temp
 AS $$
+DECLARE
+  v_id BIGINT;
 BEGIN
   IF p_subject_type IS NULL OR p_subject_id IS NULL OR p_content_hash IS NULL OR p_question IS NULL
      OR p_value IS NULL OR p_model_ref IS NULL OR p_source_ref IS NULL THEN
     RAISE EXCEPTION 'submit_prediction: subject type, subject id, content hash, question, value, model ref and source ref are required';
   END IF;
-  RETURN label_store.put_prediction(
+  v_id := label_store.put_prediction(
     label_store.upsert_subject(p_subject_type, p_subject_id, p_content_hash, NULL, NULL, NULL),
     -- Prefixed, so a pipeline cannot take a ref a site producer will write later.
     'pipeline', p_question, p_question_version, p_value, p_model_ref, 'pipeline:' || p_source_ref, p_predicted_at,
     p_confidence, p_scores, p_versions, p_input_hash, p_detail
   );
+  IF p_subject_type = 'image' AND p_subject_id ~ '^[0-9]{1,10}$' THEN
+    IF p_subject_id::bigint <= 2147483647 THEN
+      IF label_store.image_excluded(p_subject_id::integer) THEN
+        PERFORM label_store.exclude('image', p_subject_id, 'safety');
+      END IF;
+    END IF;
+  END IF;
+  RETURN v_id;
 END;
 $$;
 
@@ -594,7 +604,7 @@ END;
 $$;
 
 -- 'erasure' deletes the subjects and everything under them, and tombstones them; any other reason
--- keeps the judgements (so counts stay honest) and drops snapshot and bytes.
+-- keeps the judgements (so counts stay honest), drops the content (snapshot, pHash, bytes) and untrains.
 CREATE OR REPLACE FUNCTION label_store.exclude(p_subject_type TEXT, p_subject_id TEXT, p_reason TEXT)
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -650,6 +660,9 @@ DECLARE
   v_n    INTEGER;
 BEGIN
   PERFORM pg_advisory_xact_lock(label_store.erasure_lock_key('owner', v_hash));
+  -- And each subject, for a writer that cannot see the owner.
+  PERFORM pg_advisory_xact_lock(label_store.erasure_lock_key('subject', s."subjectType" || ':' || s."subjectId"))
+  FROM label_store.subject s WHERE s."ownerHash" = v_hash;
   INSERT INTO label_store.erased_owner ("ownerHash") VALUES (v_hash) ON CONFLICT DO NOTHING;
   WITH gone AS (
     DELETE FROM label_store.subject WHERE "ownerHash" = v_hash
@@ -665,10 +678,10 @@ BEGIN
 END;
 $$;
 
--- The site's exclusion rule for a live image, as `excludedImageRow` in
--- src/server/jobs/appeal-decision-records.ts applies it nightly; edit both together. Checked when a
--- judgement lands, so an excluded image is never trainable while it waits for the sweep.
-CREATE OR REPLACE FUNCTION label_store.image_excluded(p_image_id INTEGER)
+-- The site's exclusion rule for one image row. Restated by `excludedImageRow` and by the inline SQL of
+-- `sweepLabelStore` (src/server/jobs/appeal-decision-records.ts); edit all three together. A report's
+-- image id is compared as text, as the sweep does.
+CREATE OR REPLACE FUNCTION label_store.image_row_excluded(p_image_id INTEGER)
 RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
@@ -682,8 +695,25 @@ AS $$
       OR i."userId" IN (SELECT c."userId" FROM public."CsamReport" c WHERE c."userId" IS NOT NULL)
     )
   ) OR EXISTS (
-    SELECT 1 FROM public."CsamReport" c
-    WHERE c."images" @> jsonb_build_array(jsonb_build_object('id', p_image_id))
+    SELECT 1
+    FROM public."CsamReport" c,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(c."images") = 'array' THEN c."images" ELSE '[]' END) e
+    WHERE e->>'id' = p_image_id::text
+  )
+$$;
+
+-- An image is excluded when it, or another image sharing its stored file, is. Checked when a judgement
+-- lands, so such an image is never trainable while it waits for the sweep.
+CREATE OR REPLACE FUNCTION label_store.image_excluded(p_image_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+  SELECT label_store.image_row_excluded(p_image_id) OR EXISTS (
+    SELECT 1 FROM public."Image" i JOIN public."Image" o ON o."url" = i."url" AND o."id" <> i."id"
+    WHERE i."id" = p_image_id AND label_store.image_row_excluded(o."id")
   )
 $$;
 
