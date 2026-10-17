@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
@@ -13,6 +12,7 @@ import {
 } from '@civitai/db-queries/tag';
 import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { loadParitySchema } from './parity-schema';
 
 /**
  * Behaviour-parity gate for the hot read queries ported from Prisma to Kysely-over-pg.
@@ -33,22 +33,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  */
 const parityUrl = process.env.KYSELY_PARITY_DATABASE_URL;
 
-// `$executeRawUnsafe` sends one prepared statement, so the DDL script is applied statement by
-// statement. A naive split on `;` is safe for this fixture: it is plain DDL with no function bodies,
-// dollar-quoting or semicolons inside literals.
-const schemaStatements = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/kysely-parity-schema.sql'),
-  'utf-8'
-)
-  .split(';')
-  .map((statement) =>
-    statement
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('--'))
-      .join('\n')
-      .trim()
-  )
-  .filter(Boolean);
+const schemaStatements = loadParitySchema(
+  resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/kysely-parity-schema.sql')
+);
 
 // Row order is unspecified on both paths (neither query has an ORDER BY, matching the source), so
 // parity is a multiset comparison: sort both sides by a total key before comparing.
@@ -85,6 +72,11 @@ const PORTED_QUERIES: Array<
   ['listModelTagVotes', 1, (db) => listModelTagVotes(db, { modelId: 1, userId: 1 })],
   ['listModelEngagements', 1, (db) => listModelEngagements(db, { userId: 1, modelIds: [1] })],
 ];
+// Not listed: `getImageGenerationFields` (@civitai/db-queries/image). Its correlated json subqueries
+// are outside what `selectedColumns` parses. Instead, its raw row (every selected column) is
+// compared to the Prisma row in the "the raw row matches Prisma" cases of
+// src/server/services/__tests__/image-generation-data.kysely-parity.test.ts. It selects no array
+// column today. If one is added with a non-empty fixture value, that comparison is what fails.
 
 /**
  * The (table, column) pairs a compiled single-table SELECT reads.
