@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { createContext, useContext, useMemo, useRef } from 'react';
 import { MODEL_SALE_IDS_PER_REQUEST } from '~/server/schema/model-sale.schema';
 import { chunkIds } from '~/utils/array-helpers';
-import { trpc, trpcVanilla } from '~/utils/trpc';
+import { isAuthedBrowser, trpc, trpcVanilla } from '~/utils/trpc';
 
 /**
  * `discountType` is `SaleDiscountKind` from the package the server declares this procedure's output
@@ -79,15 +79,19 @@ function flushSales() {
   pendingSales.clear();
   // Same chunk as the provider path, so one flush can never exceed the procedure's cap.
   for (const ids of chunkIds([...waiting.keys()], MODEL_SALE_IDS_PER_REQUEST)) {
-    modelSaleBatcher.fetch(ids).then(
-      (sales) => {
-        const byId = (sales ?? {}) as SalesByModelId;
-        for (const id of ids) for (const w of waiting.get(id) ?? []) w.resolve(byId[id] ?? null);
-      },
-      (error) => {
-        for (const id of ids) for (const w of waiting.get(id) ?? []) w.reject(error);
-      }
-    );
+    // Deferred into a promise so a fetch that throws SYNCHRONOUSLY rejects this chunk's waiters
+    // instead of aborting the loop and leaving this and every later chunk's cards pending forever.
+    Promise.resolve()
+      .then(() => modelSaleBatcher.fetch(ids))
+      .then(
+        (sales) => {
+          const byId = (sales ?? {}) as SalesByModelId;
+          for (const id of ids) for (const w of waiting.get(id) ?? []) w.resolve(byId[id] ?? null);
+        },
+        (error) => {
+          for (const id of ids) for (const w of waiting.get(id) ?? []) w.reject(error);
+        }
+      );
   }
 }
 
@@ -111,21 +115,44 @@ export function __resetModelSaleBatcher() {
 }
 
 /**
+ * One model's sale as its OWN request for exactly `{ ids: [modelId] }` — the input the per-card hook
+ * has always sent, through the same client links, so the request URL is unchanged.
+ */
+function loadModelSaleAlone(modelId: number): Promise<ModelSale | null> {
+  return modelSaleBatcher
+    .fetch([modelId])
+    .then((sales) => ((sales ?? {}) as SalesByModelId)[modelId] ?? null);
+}
+
+/**
  * The sale for ONE model, for a card rendered outside any provider — home blocks, collections, related
  * models, search results.
  *
- * Each card still owns a query (keyed per model, so two cards for one model share it), but the
- * queries resolve through `loadModelSale`, which coalesces every card that asks within
- * `MODEL_SALE_BATCH_WINDOW_MS` into ONE `getActiveSales` call. tRPC only batches for some
- * authenticated browsers (see shouldBatch in utils/trpc.ts), and its batches are capped by URL length,
- * so before this a grid of N provider-less cards issued N single-id calls. A container that can supply
- * the map should still pass `salesByModelId` and skip this entirely — that is why the skip flag is
- * "a provider owns this", not "the provider's data has arrived".
+ * Each card owns a query keyed per model (so two cards for one model share it). How it resolves
+ * depends on whether the browser is signed in:
+ *
+ * - SIGNED IN: through `loadModelSale`, which coalesces every card that asks within
+ *   `MODEL_SALE_BATCH_WINDOW_MS` into ONE `getActiveSales` call. A signed-in response is never
+ *   shared-cached, so every one of those lookups reached the server anyway; merging them only removes
+ *   work.
+ * - ANONYMOUS: one request per card for `{ ids: [modelId] }`, deliberately NOT batched. An anonymous
+ *   GET response is shared-cacheable and the cache is keyed by the exact URL, so the single-id URL of
+ *   a popular model is answered from cache for everyone who sees it. A merged URL lists whichever ids
+ *   happened to share a surface, which almost never repeats, so batching anonymous cards would turn
+ *   those cache hits into server requests.
+ *
+ * The predicate is `isAuthedBrowser` (`window.isAuthed`, set from the session user) — the same one
+ * the tRPC links route and tag requests on, and the same fact (a session user) the server keys its
+ * cache headers on. It is read when the query RUNS, not at render, so it sees the value the links will.
+ * Before the session resolves it reads false, the safe direction: an unbatched request.
+ *
+ * A container that can supply the map should still pass `salesByModelId` and skip this entirely —
+ * that is why the skip flag is "a provider owns this", not "the provider's data has arrived".
  */
 export const useModelSaleBadge = (modelId: number, skip: boolean) => {
   const { data } = useQuery({
     queryKey: ['model.getActiveSales.byModel', modelId],
-    queryFn: () => loadModelSale(modelId),
+    queryFn: () => (isAuthedBrowser() ? loadModelSale(modelId) : loadModelSaleAlone(modelId)),
     enabled: !skip,
     staleTime: 60_000,
   });
