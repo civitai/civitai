@@ -354,7 +354,9 @@ async function liftAccount(userId: number, moderatorId: number, canBan: boolean)
   const lifted: SiteAppealLift[] = [];
   if (user.bannedAt) {
     const unban = await setBanned({ userId, ban: false, moderatorId });
-    if (!unban.ok) return liftFailed(unban);
+    // Not `liftFailed`: this endpoint answers before it acts, so its failures are refusals, and
+    // whether it acted is `unbanConfirmed`'s question.
+    if (!unban.ok) return unban;
     if (!(await unbanConfirmed(userId)))
       return { ok: false, error: 'The unban did not land. Check the account, then try again.' };
     lifted.push('ban');
@@ -374,27 +376,30 @@ async function liftAccount(userId: number, moderatorId: number, canBan: boolean)
   return { ok: true, restored: lifted.length > 0, lifted };
 }
 
+// Restoring re-derives the scan state, which can leave a Published article hidden from everyone but
+// its owner; only a Scanned one is back for the appellant's audience.
+const visible = (a: { status: string; ingestion: string }) =>
+  a.status === ArticleStatus.Published && a.ingestion === 'Scanned';
+
 async function liftArticle(articleId: number, moderatorId: number): Promise<Lift> {
   const article = await dbWrite
     .selectFrom('Article')
-    .select('status')
+    .select(['status', 'ingestion'])
     .where('id', '=', articleId)
     .executeTakeFirst();
-  if (article?.status === ArticleStatus.Published) return { ok: true, restored: true, lifted: [] };
+  if (article?.status === ArticleStatus.Published)
+    return { ok: true, restored: visible(article), lifted: [] };
   // Anything but a moderator's unpublish (deleted, or unpublished by its owner) is not ours to put back.
   if (article?.status !== ArticleStatus.UnpublishedViolation) return NOTHING_LIFTED;
   if (await ownerBanned('Article', articleId)) return { ok: false, error: OWNER_BANNED };
   const result = await moderateArticle({ action: 'restore', articleId, userId: moderatorId });
   if (!result.ok) return result;
-  // Restoring re-derives the scan state, which can leave a Published article hidden from everyone
-  // but its owner; only a Scanned one is back for the appellant's audience.
   const after = await dbWrite
     .selectFrom('Article')
     .select(['status', 'ingestion'])
     .where('id', '=', articleId)
     .executeTakeFirst();
-  const restored = after?.status === ArticleStatus.Published && after.ingestion === 'Scanned';
-  return { ok: true, restored, lifted: ['article'] };
+  return { ok: true, restored: !!after && visible(after), lifted: ['article'] };
 }
 
 async function liftModel(modelId: number): Promise<Lift> {

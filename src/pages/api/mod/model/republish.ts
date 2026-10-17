@@ -30,8 +30,9 @@ export default defineModeratorEndpoint('model.republish', {
         deletedAt: true,
         meta: true,
         modelVersions: {
-          where: { status: ModelStatus.UnpublishedViolation },
-          select: { id: true, meta: true },
+          // A moderator take-down marks versions UnpublishedViolation; a ban marks them Unpublished.
+          where: { status: { in: [ModelStatus.UnpublishedViolation, ModelStatus.Unpublished] } },
+          select: { id: true, status: true, meta: true },
         },
       },
     });
@@ -40,15 +41,19 @@ export default defineModeratorEndpoint('model.republish', {
       throw throwBadRequestError('Model is not unpublished as a violation');
 
     // A take-down stamps the model and each version it moved with one `unpublishedAt`, which tells
-    // this take-down's versions from ones removed on their own. An unstamped model falls back to
-    // every violation-unpublished version.
+    // this take-down's versions from ones removed on their own or by their owner. An unstamped model
+    // falls back to its violation-unpublished versions.
     const takenDownAt = (model.meta as UnpublishStamp)?.unpublishedAt;
     const versionIds = model.modelVersions
-      .filter((v) => !takenDownAt || (v.meta as UnpublishStamp)?.unpublishedAt === takenDownAt)
+      .filter((v) =>
+        takenDownAt
+          ? (v.meta as UnpublishStamp)?.unpublishedAt === takenDownAt
+          : v.status === ModelStatus.UnpublishedViolation
+      )
       .map((v) => v.id);
     if (!versionIds.length)
       throw throwBadRequestError(
-        'No version came down with this model; republish it from the model page.'
+        'No version carries this take-down’s stamp; choose the versions from the model page.'
       );
 
     const updated = await publishModelHandler({

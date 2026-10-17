@@ -320,6 +320,23 @@ describe('resolveSiteAppeal', () => {
     });
   });
 
+  it('an article already live but hidden by its scan state is not called restored', async () => {
+    await pg.query(`UPDATE "Article" SET ingestion = 'Pending' WHERE id = 21`);
+    expect(await decide(103, 'Article', 'Approved')).toEqual({
+      ok: true,
+      lifted: [],
+      restored: false,
+    });
+  });
+
+  it('a refused unban is reported as refused, not as possibly done', async () => {
+    h.setBanned.mockResolvedValue({ ok: false, error: 'Ban endpoint returned 403.' });
+    expect(await decide(107, 'Account', 'Approved')).toEqual({
+      ok: false,
+      error: 'Ban endpoint returned 403.',
+    });
+  });
+
   it('approving an article that is already live restores nothing and still closes', async () => {
     expect(await decide(103, 'Article', 'Approved')).toEqual({
       ok: true,

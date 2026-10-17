@@ -48,9 +48,11 @@ const model = (over: Record<string, unknown> = {}) => ({
   deletedAt: null,
   meta: { unpublishedAt: TAKEN_DOWN },
   modelVersions: [
-    { id: 11, meta: { unpublishedAt: TAKEN_DOWN } },
-    { id: 12, meta: { unpublishedAt: TAKEN_DOWN } },
-    { id: 13, meta: { unpublishedAt: '2026-09-01T00:00:00.000Z' } },
+    { id: 11, status: 'UnpublishedViolation', meta: { unpublishedAt: TAKEN_DOWN } },
+    { id: 12, status: 'UnpublishedViolation', meta: { unpublishedAt: TAKEN_DOWN } },
+    { id: 13, status: 'UnpublishedViolation', meta: { unpublishedAt: '2026-09-01T00:00:00.000Z' } },
+    // The owner's own unpublish, before the take-down.
+    { id: 14, status: 'Unpublished', meta: { unpublishedAt: '2026-08-01T00:00:00.000Z' } },
   ],
   ...over,
 });
@@ -86,7 +88,9 @@ describe('model.republish', () => {
     expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({
-          modelVersions: expect.objectContaining({ where: { status: 'UnpublishedViolation' } }),
+          modelVersions: expect.objectContaining({
+            where: { status: { in: ['UnpublishedViolation', 'Unpublished'] } },
+          }),
         }),
       })
     );
@@ -100,10 +104,31 @@ describe('model.republish', () => {
     );
   });
 
+  it('puts back the versions a ban unpublished, which it marks Unpublished, not a violation', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        modelVersions: [
+          { id: 21, status: 'Unpublished', meta: { unpublishedAt: TAKEN_DOWN } },
+          { id: 22, status: 'Unpublished', meta: { unpublishedAt: '2026-08-01T00:00:00.000Z' } },
+        ],
+      }) as never
+    );
+    expect(await call({ modelId: 42 })).toBe(200);
+    expect(publishModelHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { id: 42, versionIds: [21] } })
+    );
+  });
+
   it('refuses when no version came down with the model', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       model({
-        modelVersions: [{ id: 13, meta: { unpublishedAt: '2026-09-01T00:00:00.000Z' } }],
+        modelVersions: [
+          {
+            id: 13,
+            status: 'UnpublishedViolation',
+            meta: { unpublishedAt: '2026-09-01T00:00:00.000Z' },
+          },
+        ],
       }) as never
     );
     expect(await call({ modelId: 42 })).toBe(400);
