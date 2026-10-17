@@ -2430,6 +2430,14 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
     BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
+    // String, Buzz. The smallest two-way amount between a creator and one user that the
+    // counterparty review files. Ops-owned and deliberately without a default in code: the review
+    // skips, and logs that it skipped, until it is set.
+    COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
+    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
+    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
+    // and only new volume after that is filed again. No TTL.
+    COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
