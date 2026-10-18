@@ -6,8 +6,8 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { StorylineLaneBand } from '~/components/Storyline/storyline-lane-map.utils';
 import {
   buildCanonLane,
+  buildStorylineLaneList,
   buildStorylineLaneMap,
-  buildStorylineLaneRows,
   storylineMayBranch,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import {
@@ -19,7 +19,7 @@ import {
   useStorylineForkShares,
   useStorylineGraph,
 } from '~/components/Storyline/storyline.queries';
-import { StorylineRoleChip } from '~/components/Storyline/StorylineChips';
+import { StorylineRoleChip, StorylineShareChip } from '~/components/Storyline/StorylineChips';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -47,10 +47,10 @@ const LANE_COLORS = ['blue', 'grape', 'teal', 'orange', 'pink', 'lime', 'cyan', 
 const laneColor = (lane: number) =>
   `var(--mantine-color-${LANE_COLORS[lane % LANE_COLORS.length]}-6)`;
 
-/** Sizes on a phone and from `sm` up. Rows are fixed so the branch lanes line up with the canon. */
+/** Rows are fixed-height so branch lanes line up with the canon rows. */
 const SIZES = {
   compact: { canon: 84, branch: 52, laneWidth: 64, row: 121, band: 30, visibleLanes: 2 },
-  wide: { canon: 112, branch: 72, laneWidth: 136, row: 156, band: 30, visibleLanes: 3 },
+  wide: { canon: 112, branch: 72, laneWidth: 124, row: 156, band: 30, visibleLanes: 2 },
 };
 const RATIO = 5 / 4;
 
@@ -66,7 +66,6 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
     enabled: storylineMayBranch(storyline),
   });
   const map = useMemo(() => (graph ? buildStorylineLaneMap(graph) : null), [graph]);
-  const branched = !!map && map.layout.lanes > 1;
   const canonById = useMemo(
     () => new Map(storyline.mainPath.map((c) => [c.chapterId, c])),
     [storyline.mainPath]
@@ -76,35 +75,29 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
     [storyline.collaborators]
   );
 
-  // Until the graph arrives (or when there is nothing to branch), the canon path alone.
-  const { rows, links, lanes } = useMemo(() => {
-    if (map && branched) {
-      const nodes = map.nodes as LaneNode[];
-      return {
-        rows: buildStorylineLaneRows(map.layout, nodes),
-        links: map.layout.links,
-        lanes: map.layout.lanes,
-      };
-    }
-    const nodes = buildCanonLane(storyline.mainPath) as LaneNode[];
-    return {
-      rows: buildStorylineLaneRows({ rows: nodes.length, links: [] }, nodes),
-      links: [],
-      lanes: 1,
-    };
-  }, [map, branched, storyline.mainPath]);
+  const { rows, links, lanes, canonForkOf } = useMemo(
+    () =>
+      buildStorylineLaneList(
+        map as { layout: NonNullable<typeof map>['layout']; nodes: LaneNode[] } | null,
+        buildCanonLane(storyline.mainPath) as (LaneNode & { chapter: CanonChapter })[]
+      ),
+    [map, storyline.mainPath]
+  );
 
-  // Where each row's bands and its chapters start, top to bottom.
-  const { tops, height } = useMemo(() => {
+  const { tops, height, bandYs } = useMemo(() => {
     let y = 0;
+    const bandYs = new Map<string, number>();
     const tops = rows.map((row) => {
       const bands = y;
+      row.bands.forEach((band, b) =>
+        bandYs.set(`${band.kind}:${band.chapterId}`, bands + b * size.band + size.band / 2)
+      );
       y += row.bands.length * size.band;
       const top = y;
       y += size.row;
       return { bands, top };
     });
-    return { tops, height: y };
+    return { tops, height: y, bandYs };
   }, [rows, size]);
 
   const branchLanes = lanes - 1;
@@ -112,19 +105,17 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
     x: lane === 0 ? 0 : (lane - 1) * size.laneWidth + size.laneWidth / 2,
     y: (tops[row]?.top ?? 0) + size.row / 2,
   });
-  // The canon lane sits left of the branch area, so a link to or from it runs out of the band
-  // that labels the fork or the join, at the area's edge.
-  const bandY = (row: number, chapterId: number) => {
-    const index = rows[row]?.bands.findIndex((band) => band.chapterId === chapterId) ?? -1;
-    return (tops[row]?.bands ?? 0) + Math.max(index, 0) * size.band + size.band / 2;
-  };
+  // Canon is outside the branch area, so its links attach at the edge, in the band that labels
+  // the fork or the join.
   const linkPath = (link: (typeof links)[number]) =>
     storylineLanePath(link, (point) => {
-      if (point === link.from && point.lane === 0)
-        return { x: 0, y: bandY(link.to.row, link.parentChapterId) };
-      if (point === link.to && point.lane === 0)
-        return { x: 0, y: bandY(link.to.row, link.chapterId) };
-      return at(point);
+      const band =
+        point === link.from && point.lane === 0
+          ? bandYs.get(`fork:${link.parentChapterId}`)
+          : point === link.to && point.lane === 0
+          ? bandYs.get(`rejoin:${link.chapterId}`)
+          : undefined;
+      return band === undefined ? at(point) : { x: 0, y: band };
     });
   const canonRows = rows.flatMap((r, i) => (r.canon ? [i] : []));
 
@@ -163,6 +154,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
                   key={row.canon.chapterId}
                   node={row.canon}
                   canon={canonById.get(row.canon.chapterId)}
+                  forkId={canonForkOf.get(row.canon.chapterId)}
                   collaboratorIds={collaboratorIds}
                   size={size}
                   top={tops[i].top}
@@ -199,7 +191,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
                 className="absolute inset-0"
               >
                 {links
-                  // The canon lane draws its own line; only links that touch a branch lane go here.
+                  // Canon-to-canon links are drawn by the canon rail.
                   .filter((l) => l.from.lane || l.to.lane || l.runLane)
                   .map((link) => (
                     <path
@@ -219,6 +211,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
                     <BranchStop
                       key={node.chapterId}
                       node={node}
+                      forkId={canonForkOf.get(node.chapterId)}
                       collaboratorIds={collaboratorIds}
                       size={size}
                       compact={compact}
@@ -244,11 +237,14 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
 function CanonStop({
   node,
   canon,
+  forkId,
   collaboratorIds,
   size,
   top,
 }: {
   node: LaneNode;
+  /** The canon fork this chapter is a way on from, whose reader split it shows. */
+  forkId: number | undefined;
   /** The same chapter from the canon path, which carries its author for the avatar. */
   canon: CanonChapter | undefined;
   collaboratorIds: Set<number>;
@@ -288,7 +284,9 @@ function CanonStop({
               ratio="4/5"
               fluid
               className="rounded-lg"
-            />
+            >
+              <ForkShare forkId={forkId} chapterId={node.chapterId} />
+            </StorylineThumb>
           </Link>
           <div className="min-w-0 flex-1 pt-0.5">
             {/* An untitled chapter is named by its number, so the eyebrow would only repeat it. */}
@@ -335,6 +333,7 @@ function CanonStop({
 
 function BranchStop({
   node,
+  forkId,
   collaboratorIds,
   size,
   compact,
@@ -342,6 +341,7 @@ function BranchStop({
   top,
 }: {
   node: LaneNode;
+  forkId: number | undefined;
   collaboratorIds: Set<number>;
   size: (typeof SIZES)['wide'];
   compact: boolean;
@@ -371,7 +371,9 @@ function BranchStop({
             className="block overflow-hidden rounded-lg border-2 border-solid bg-gray-0 shadow-sm dark:bg-dark-6"
             style={{ ...tile, borderColor: laneColor(node.lane) }}
           >
-            <StorylineThumb image={node.chapter.firstImage} width={size.branch} ratio="4/5" />
+            <StorylineThumb image={node.chapter.firstImage} width={size.branch} ratio="4/5">
+              <ForkShare forkId={forkId} chapterId={node.chapterId} />
+            </StorylineThumb>
           </span>
           {!compact && (
             <Text
@@ -419,7 +421,6 @@ function LaneBand({
   compact: boolean;
   top: number;
   height: number;
-  /** The band runs on under the branch lanes, so square its right end there. */
   extend: boolean;
 }) {
   const color = laneColor(band.lane);
@@ -441,10 +442,11 @@ function LaneBand({
         <>
           <IconGitFork size={14} aria-hidden className="shrink-0" />
           <span className="truncate">
-            {compact ? 'Forks' : 'The story forks'} after ch {band.number} · {band.childIds.length}{' '}
-            paths
+            {band.canon
+              ? `${compact ? 'Forks' : 'The story forks'} after ch ${band.number}`
+              : `${band.author ? `${band.author}'s path` : 'A path'} forks`}{' '}
+            · {band.paths} paths
           </span>
-          <ForkShares band={band} />
         </>
       ) : (
         <>
@@ -462,10 +464,10 @@ function LaneBand({
   );
 }
 
-/** The reader split at a fork, in lane order, once enough readers have chosen. */
-function ForkShares({ band }: { band: Extract<StorylineLaneBand, { kind: 'fork' }> }) {
-  const { data: shares } = useStorylineForkShares(band.chapterId);
-  const percents = band.childIds.map((id) => getForkShare(shares, id)?.percent);
-  if (percents.some((p) => p === undefined)) return null;
-  return <span className="ml-auto shrink-0 tabular-nums">{percents.join('% / ')}%</span>;
+/** A way on's share of readers at its fork, once enough readers have chosen. */
+function ForkShare({ forkId, chapterId }: { forkId: number | undefined; chapterId: number }) {
+  const { data: shares } = useStorylineForkShares(forkId);
+  const share = forkId ? getForkShare(shares, chapterId) : null;
+  if (!share) return null;
+  return <StorylineShareChip percent={share.percent} className="absolute bottom-1 right-1" />;
 }

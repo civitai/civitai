@@ -18,8 +18,8 @@ export const storylineMayBranch = (storyline: { chapterCount: number; mainPath: 
   storyline.chapterCount > storyline.mainPath.length;
 
 /**
- * The Story page map of a storyline graph: its lane layout, and for each chapter the name and link
- * the map shows. Both follow the route the map draws to the chapter, so the number in an untitled
+ * The lane layout of a storyline graph, and for each chapter the name and link the chapters list
+ * shows. Both follow the route the layout draws to the chapter, so the number in an untitled
  * chapter's name is the one the reader shows when the link opens it. Null without chapter 1.
  */
 export function buildStorylineLaneMap<T extends LaneMapChapter>(graph: {
@@ -90,69 +90,138 @@ export function buildCanonLane<
 }
 
 export type StorylineLaneBand =
-  /** Before the first row of the ways on from `chapterId`, in lane order. */
-  | { kind: 'fork'; chapterId: number; number: number; childIds: number[]; lane: number }
+  /**
+   * Before the first row of the ways on from `chapterId`. `canon` when it is on the canon path (its
+   * number is then the canon chapter's); otherwise `author` wrote the branch chapter that forks.
+   */
+  | {
+      kind: 'fork';
+      chapterId: number;
+      number: number;
+      paths: number;
+      canon: boolean;
+      author: string | null;
+      lane: number;
+    }
   /** Before a chapter where `joining` other paths arrive; `authors` wrote the chapters they leave. */
   | { kind: 'rejoin'; chapterId: number; joining: number; authors: string[]; lane: number };
 
-type LaneRowNode = {
+type LaneListNode = {
   chapterId: number;
   row: number;
   lane: number;
   number: number;
   chapter: { post: { username: string | null } | null };
 };
+type LaneListLink = Pick<
+  StorylineLanes['links'][number],
+  'parentChapterId' | 'chapterId' | 'from' | 'to' | 'runLane' | 'lane'
+>;
 
 /**
- * The lane map as a list: per row its canon chapter (lane 0) and its branch chapters, and before
- * it the bands that say where the story forks and where paths join back.
+ * The storyline page's chapters list: per row its canon chapter and the chapters of other paths in
+ * their lanes, and before it the bands where the story forks and where a path joins back.
+ *
+ * The canon column is `canon` (the canon path, in order), not the layout's lane 0: the layout hands
+ * lane 0 on once the canon path ends, so a later branch chapter there moves to a lane of its own.
+ * Canon chapters past the end of `map` (a capped graph) follow it, in rows of their own. Without a
+ * map, the canon path alone, with a band wherever it forks.
  */
-export function buildStorylineLaneRows<N extends LaneRowNode>(
-  layout: Pick<StorylineLanes, 'rows' | 'links'>,
-  nodes: N[]
+export function buildStorylineLaneList<N extends LaneListNode>(
+  map: { layout: Pick<StorylineLanes, 'rows' | 'lanes' | 'links'>; nodes: N[] } | null,
+  canon: (N & { chapter: { childCount?: number } })[]
 ) {
-  const rows = Array.from({ length: layout.rows }, (_, row) => ({
+  const canonIds = new Set(canon.map((c) => c.chapterId));
+  const mapNodes = map?.nodes ?? [];
+  const mapLinks = map?.layout.links ?? [];
+  const isCanonCell = (chapterId: number) => canonIds.has(chapterId);
+  // A spare lane for whatever sits in lane 0 off the canon path.
+  const spare = map?.layout.lanes ?? 1;
+  const laneOf = new Map<number, number>();
+  for (const node of mapNodes)
+    laneOf.set(node.chapterId, node.lane === 0 && !isCanonCell(node.chapterId) ? spare : node.lane);
+
+  const inMap = new Set(mapNodes.map((n) => n.chapterId));
+  const firstExtraRow = map?.layout.rows ?? 0;
+  const extra = canon.filter((c) => !inMap.has(c.chapterId));
+  const nodes = [
+    ...mapNodes.map((n) => ({ ...n, lane: laneOf.get(n.chapterId) as number })),
+    ...extra.map((n, i) => ({ ...n, row: firstExtraRow + i, lane: 0 })),
+  ];
+  const links: LaneListLink[] = mapLinks.map((link) => {
+    const canonLink = isCanonCell(link.parentChapterId) && isCanonCell(link.chapterId);
+    const run = link.runLane === 0 && !canonLink ? spare : link.runLane;
+    const from = { ...link.from, lane: laneOf.get(link.parentChapterId) as number };
+    const to = { ...link.to, lane: laneOf.get(link.chapterId) as number };
+    const fork = mapLinks.filter((l) => l.chapterId === link.chapterId).length === 1;
+    return { ...link, from, to, runLane: run, lane: run ?? (fork ? to.lane : from.lane) };
+  });
+  const lanes = Math.max(
+    1,
+    ...nodes.map((n) => n.lane + 1),
+    ...links.map((l) => (l.runLane ?? 0) + 1)
+  );
+
+  const rows = Array.from({ length: firstExtraRow + extra.length }, (_, row) => ({
     row,
     canon: null as N | null,
     branches: [] as N[],
     bands: [] as StorylineLaneBand[],
   }));
-  const byId = new Map(nodes.map((n) => [n.chapterId, n]));
   for (const node of nodes) {
     if (node.lane === 0) rows[node.row].canon = node;
     else rows[node.row].branches.push(node);
   }
   for (const row of rows) row.branches.sort((a, b) => a.lane - b.lane);
+  const byId = new Map(nodes.map((n) => [n.chapterId, n]));
 
-  const out = new Map<number, typeof layout.links>();
-  const into = new Map<number, typeof layout.links>();
-  for (const link of layout.links) {
+  const out = new Map<number, LaneListLink[]>();
+  const into = new Map<number, LaneListLink[]>();
+  for (const link of links) {
     out.set(link.parentChapterId, [...(out.get(link.parentChapterId) ?? []), link]);
     into.set(link.chapterId, [...(into.get(link.chapterId) ?? []), link]);
   }
 
   const forks: { row: number; band: StorylineLaneBand }[] = [];
-  for (const [chapterId, links] of out) {
-    const parent = byId.get(chapterId);
-    if (!parent || links.length < 2) continue;
-    const ordered = [...links].sort((a, b) => a.to.lane - b.to.lane);
+  const fork = (parent: N, paths: number, row: number, lane: number) =>
     forks.push({
-      row: Math.min(...links.map((l) => l.to.row)),
+      row,
       band: {
         kind: 'fork',
-        chapterId,
+        chapterId: parent.chapterId,
         number: parent.number,
-        childIds: ordered.map((l) => l.chapterId),
-        lane: ordered.find((l) => l.to.lane !== parent.lane)?.lane ?? parent.lane,
+        paths,
+        canon: isCanonCell(parent.chapterId),
+        author: parent.chapter.post?.username ?? null,
+        lane,
       },
     });
-  }
+  if (map)
+    for (const [chapterId, outLinks] of out) {
+      const parent = byId.get(chapterId);
+      if (!parent || outLinks.length < 2) continue;
+      const parentLane = laneOf.get(chapterId) as number;
+      const away = outLinks.find((l) => l.to.lane !== parentLane);
+      fork(
+        parent,
+        outLinks.length,
+        Math.min(...outLinks.map((l) => l.to.row)),
+        parentLane === 0 ? away?.lane ?? 0 : parentLane
+      );
+    }
+  else
+    canon.forEach((c, i) => {
+      const paths = c.chapter.childCount ?? 0;
+      if (paths > 1 && i + 1 < canon.length) fork(c, paths, i + 1, 1);
+    });
+
   const rejoins: { row: number; band: StorylineLaneBand }[] = [];
-  for (const [chapterId, links] of into) {
+  for (const [chapterId, inLinks] of into) {
     const node = byId.get(chapterId);
-    if (!node || links.length < 2) continue;
-    const joining = links.filter((l) => l.from.lane !== node.lane);
-    const from = joining.length ? joining : links.slice(1);
+    if (!node || inLinks.length < 2) continue;
+    // A link arrives in the lane it runs down, else its parent's.
+    const joining = inLinks.filter((l) => (l.runLane ?? l.from.lane) !== node.lane);
+    const from = joining.length ? joining : inLinks.slice(1);
     const authors = [
       ...new Set(from.flatMap((l) => byId.get(l.parentChapterId)?.chapter.post?.username ?? [])),
     ];
@@ -163,5 +232,12 @@ export function buildStorylineLaneRows<N extends LaneRowNode>(
   }
   // At one boundary, where a branch leaves is read before where another arrives.
   for (const { row, band } of [...forks, ...rejoins]) rows[row]?.bands.push(band);
-  return rows;
+
+  /** The canon chapter each way on from a canon fork leaves: its share of readers is shown there. */
+  const canonForkOf = new Map<number, number>();
+  for (const [parentId, outLinks] of out)
+    if (outLinks.length > 1 && isCanonCell(parentId))
+      for (const l of outLinks) canonForkOf.set(l.chapterId, parentId);
+
+  return { rows, links, lanes, canonForkOf };
 }

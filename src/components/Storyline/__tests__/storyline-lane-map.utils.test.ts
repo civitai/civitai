@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCanonLane,
   buildStorylineLaneMap,
-  buildStorylineLaneRows,
+  buildStorylineLaneList,
   storylineMayBranch,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import { parseIdListParam, STORYLINE_VIA_PARAM } from '~/components/Storyline/storyline-mode.utils';
@@ -136,22 +136,26 @@ describe('storylineMayBranch', () => {
   });
 });
 
-describe('buildStorylineLaneRows', () => {
+describe('buildStorylineLaneList', () => {
   // The demo story, with B's chapters by a second author so the join can name them.
   const map = build((id) =>
     [21, 22, 23].includes(id)
       ? { ...visible(id), post: { ...visible(id).post, username: 'civchan' } }
       : visible(id)
-  );
-  const rows = buildStorylineLaneRows(map!.layout, map!.nodes);
-  const shape = rows.map((r) => ({
-    canon: r.canon?.chapterId ?? null,
-    branches: r.branches.map((n) => n.chapterId),
-    bands: r.bands.map((b) => (b.kind === 'fork' ? `fork@${b.chapterId}` : `join@${b.chapterId}`)),
-  }));
+  )!;
+  const canonOf = (m: typeof map, ids: number[]) =>
+    ids.map((id) => m.nodes.find((n) => n.chapterId === id)!);
+  const list = buildStorylineLaneList(map, canonOf(map, [1, 2, 3, 11, 12, 13, 30, 41, 42, 60]));
+  const shape = (rows: typeof list.rows) =>
+    rows.map((r) => ({
+      ids: [r.canon?.chapterId ?? null, ...r.branches.map((n) => n.chapterId)],
+      bands: r.bands.map((b) =>
+        b.kind === 'fork' ? `fork@${b.chapterId}` : `join@${b.chapterId}`
+      ),
+    }));
 
-  it('puts the canon path down lane 0 and the other paths beside it, row by row', () => {
-    expect(shape.map((r) => [r.canon, ...r.branches])).toEqual([
+  it('puts the canon path down the canon column and the other paths beside it, row by row', () => {
+    expect(shape(list.rows).map((r) => r.ids)).toEqual([
       [1],
       [2],
       [3],
@@ -167,7 +171,7 @@ describe('buildStorylineLaneRows', () => {
   });
 
   it('marks each fork before the row its ways on start in, and each join before its chapter', () => {
-    expect(shape.map((r) => r.bands)).toEqual([
+    expect(shape(list.rows).map((r) => r.bands)).toEqual([
       [],
       [],
       [],
@@ -180,15 +184,83 @@ describe('buildStorylineLaneRows', () => {
       [],
       ['join@60'],
     ]);
-  });
-
-  it('names the fork by the chapter it follows and lists its ways on canon first', () => {
-    expect(rows[3].bands[0]).toMatchObject({ kind: 'fork', number: 3, childIds: [11, 21] });
+    expect(list.rows[3].bands[0]).toMatchObject({ kind: 'fork', number: 3, paths: 2, canon: true });
   });
 
   it('names who wrote the path that joins, not the one it joins', () => {
-    expect(rows[6].bands[0]).toMatchObject({ kind: 'rejoin', joining: 1, authors: ['civchan'] });
-    expect(rows[10].bands[0]).toMatchObject({ kind: 'rejoin', joining: 1, authors: ['author'] });
+    expect(list.rows[6].bands[0]).toMatchObject({
+      kind: 'rejoin',
+      joining: 1,
+      authors: ['civchan'],
+    });
+    expect(list.rows[10].bands[0]).toMatchObject({
+      kind: 'rejoin',
+      joining: 1,
+      authors: ['author'],
+    });
+  });
+
+  it('shows each way on from a canon fork its share at that fork', () => {
+    expect(Object.fromEntries(list.canonForkOf)).toEqual({ 11: 3, 21: 3, 41: 30, 51: 30 });
+  });
+
+  // The layout hands lane 0 on once the canon path ends: here canon 2 is a leaf, and the branch
+  // chapter 5 (a way on from branch chapter 3) is laid out in lane 0 below it.
+  const offCanon = buildStorylineLaneMap({
+    rootChapterId: 1,
+    chapters: [1, 2, 3, 4, 5].map(visible),
+    edges: [
+      { chapterId: 2, parentChapterId: 1, canon: true },
+      { chapterId: 3, parentChapterId: 1, canon: false },
+      { chapterId: 4, parentChapterId: 3, canon: true },
+      { chapterId: 5, parentChapterId: 3, canon: false },
+    ],
+    truncated: false,
+  })!;
+
+  it('never puts a branch chapter in the canon column, even in lane 0 of the layout', () => {
+    expect(offCanon.nodes.find((n) => n.chapterId === 5)?.lane).toBe(0);
+    const { rows, lanes } = buildStorylineLaneList(offCanon, canonOf(offCanon, [1, 2]));
+    expect(rows.map((r) => r.canon?.chapterId ?? null)).toEqual([1, 2, null]);
+    expect(rows[2].branches.map((n) => [n.chapterId, n.lane])).toEqual([
+      [4, 1],
+      [5, 2],
+    ]);
+    expect(lanes).toBe(3);
+  });
+
+  it('says whose path forks when the fork is off the canon path, not a canon chapter number', () => {
+    const { rows, canonForkOf } = buildStorylineLaneList(offCanon, canonOf(offCanon, [1, 2]));
+    // Shares load only at canon forks, as the page did before.
+    expect(Object.fromEntries(canonForkOf)).toEqual({ 2: 1, 3: 1 });
+    expect(rows[2].bands).toEqual([
+      expect.objectContaining({ kind: 'fork', chapterId: 3, canon: false, author: 'author' }),
+    ]);
+  });
+
+  it('keeps canon chapters past the end of a capped graph, after it', () => {
+    const capped = buildStorylineLaneMap({
+      rootChapterId: 1,
+      chapters: [1, 2].map(visible),
+      edges: [{ chapterId: 2, parentChapterId: 1, canon: true }],
+      truncated: true,
+    })!;
+    const canon = buildCanonLane([1, 2, 3, 4].map((id, depth) => ({ ...visible(id), depth })));
+    const { rows } = buildStorylineLaneList(capped as never, canon);
+    expect(rows.map((r) => r.canon?.chapterId)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('marks the canon forks from the canon path alone while there is no graph', () => {
+    const canon = buildCanonLane(
+      [1, 2, 3].map((id, depth) => ({ ...visible(id), depth, childCount: id === 2 ? 3 : 1 }))
+    );
+    const { rows, lanes } = buildStorylineLaneList(null, canon);
+    expect(lanes).toBe(1);
+    expect(rows.map((r) => r.bands)).toEqual([
+      [],
+      [],
+      [expect.objectContaining({ kind: 'fork', chapterId: 2, number: 2, paths: 3, canon: true })],
+    ]);
   });
 });
 

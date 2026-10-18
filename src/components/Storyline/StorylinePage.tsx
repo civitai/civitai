@@ -264,7 +264,6 @@ function Section({
   );
 }
 
-/** Every chapter: the canon path down the left, the other paths in lanes, forks and joins labelled. */
 function StorylineChapters({ storyline }: { storyline: Storyline }) {
   return (
     <Section icon={<IconBook2 size={20} />} title="Chapters" id="storyline-chapters">

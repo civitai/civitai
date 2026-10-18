@@ -532,21 +532,22 @@ describe('StorylinePage', () => {
       name: 'Rest in pieces',
     });
     await expect.element(branch).toHaveAttribute('href', '/images/5600?storylineChapter=160');
-    // One section: the canon path stays the list, the branch sits beside chapter 3.
-    expect(page.getByRole('region', { name: 'Story map' }).elements()).toHaveLength(0);
+    // Each way on from the fork carries its own share of readers: canon chapter 3 its 62%.
     expect(stops()).toEqual([
       '1Chapter 1The cat patchSillycat83',
       '2Chapter 2tehalex86Endorsed',
-      '3Chapter 3Sillycat83',
+      '362%Chapter 3Sillycat83',
       '4Chapter 4Framedtehalex86Endorsed',
     ]);
+    expect(branch.element().textContent).toBe('29%');
+    // The branch sits beside chapter 3, between the canon rows on either side of it.
     const rowTop = (el: Element) => (el as HTMLElement).style.top;
     const branchStop = branch.element().closest('[data-testid="storyline-lane-node"]')!;
     expect(parseFloat(rowTop(branchStop))).toBeGreaterThan(parseFloat(rowTop(stopElements()[1])));
     expect(parseFloat(rowTop(branchStop))).toBeLessThan(parseFloat(rowTop(stopElements()[3])));
-    // Where it forks, with the reader split in lane order, and whose path joins back. The harness
-    // frame is phone width, so the fork band has its short copy.
-    expect(testIds('storyline-fork')).toEqual(['Forks after ch 2 · 2 paths62% / 29%']);
+    // Where it forks and whose path joins back. The harness frame is phone width, so the fork
+    // band has its short copy.
+    expect(testIds('storyline-fork')).toEqual(['Forks after ch 2 · 2 paths']);
     expect(testIds('storyline-rejoin')).toEqual(["tehalex86's path joins here"]);
 
     // Every tile opens the reader over the page; chapter 4 on the canon route through chapter 3.
