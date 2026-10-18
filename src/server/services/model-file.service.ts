@@ -197,6 +197,17 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
+  // On a trained version, the dataset rules (and the dataset's domain stamp) key on a file being
+  // training data, so there a file never becomes, or stops being, training data after it was created.
+  // An uploaded model's training data is an ordinary attachment its owner may relabel.
+  if (
+    modelFile.modelVersion.uploadType === ModelUploadType.Trained &&
+    inputData.type &&
+    inputData.type !== modelFile.type &&
+    (inputData.type === 'Training Data' || modelFile.type === 'Training Data')
+  )
+    throw throwBadRequestError("A file can't be changed to or from training data.");
+
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
 
   if (inputData.url && inputData.url !== modelFile.url)
@@ -243,6 +254,7 @@ const replaceableFileSelect = {
       baseModel: true,
       status: true,
       trainingStatus: true,
+      uploadType: true,
       model: { select: { type: true, userId: true } },
     },
   },
@@ -405,6 +417,8 @@ async function replaceFileContent({
   };
 }
 
+const reviewedDatasetStatuses: TrainingStatus[] = [TrainingStatus.Paused, TrainingStatus.Denied];
+
 export async function deleteFile({
   id,
   userId,
@@ -431,13 +445,16 @@ export async function deleteFile({
 
   if (!file) throw throwNotFoundError();
 
-  // A denied dataset stays on record for moderators; only they may remove it.
+  // A dataset under review, or denied, stays on record for moderators; only they may remove it.
   if (
     file.type === 'Training Data' &&
-    file.modelVersion.trainingStatus === TrainingStatus.Denied &&
+    file.modelVersion.trainingStatus &&
+    reviewedDatasetStatuses.includes(file.modelVersion.trainingStatus) &&
     !isModerator
   )
-    throw throwBadRequestError("Training data for a denied training run can't be deleted.");
+    throw throwBadRequestError(
+      "Training data for a training run under review or denied can't be deleted."
+    );
 
   const modelStatus = file.modelVersion.model.status;
   const isTrainingFile = file.type === 'Training Data';
@@ -457,6 +474,15 @@ export async function deleteFile({
     AND mv."modelId" = m.id
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
+    ${
+      // Repeats the check above at delete time, in case the run was moved to review in between.
+      isModerator
+        ? Prisma.empty
+        : // COALESCE: a NULL status would make the whole condition NULL and drop every dataset row.
+          Prisma.sql`AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (${Prisma.join(
+            reviewedDatasetStatuses
+          )}))`
+    }
     RETURNING
       mv.id as "modelVersionId",
       m.id as "modelId",

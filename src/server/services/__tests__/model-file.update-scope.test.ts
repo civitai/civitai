@@ -70,6 +70,7 @@ const FILE = {
     baseModel: 'SDXL 1.0',
     status: 'Draft',
     trainingStatus: null as string | null,
+    uploadType: 'Trained',
     model: { type: 'LORA', userId: 7 },
   },
 };
@@ -94,6 +95,7 @@ function withFile(
   overrides: Partial<VersionState> & {
     type?: string;
     metadata?: Record<string, unknown>;
+    uploadType?: string;
     lockedAs?: Partial<VersionState>;
   } = {}
 ) {
@@ -106,7 +108,12 @@ function withFile(
     ...FILE,
     type: overrides.type ?? FILE.type,
     metadata: overrides.metadata ?? FILE.metadata,
-    modelVersion: { ...FILE.modelVersion, status, trainingStatus },
+    modelVersion: {
+      ...FILE.modelVersion,
+      status,
+      trainingStatus,
+      uploadType: overrides.uploadType ?? FILE.modelVersion.uploadType,
+    },
   });
   locked = { status, trainingStatus, ...overrides.lockedAs };
 }
@@ -443,6 +450,47 @@ describe('training data once training has started', () => {
     await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).resolves.toMatchObject({
       id: NEW_ID,
     });
+  });
+});
+
+// The dataset rules key on a file being training data, so that can never change after creation.
+describe('a file type change to or from training data on a trained version', () => {
+  const REFUSED = "A file can't be changed to or from training data.";
+
+  it('refuses turning a file into training data, with or without a new upload', async () => {
+    await expect(updateFile({ id: 1, type: 'Training Data', userId: 7 })).rejects.toThrow(REFUSED);
+    await expect(
+      updateFile({ id: 1, url: NEW_URL, type: 'Training Data', userId: 7 })
+    ).rejects.toThrow(REFUSED);
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(tx.modelFile.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses turning training data into another type', async () => {
+    withFile({ type: 'Training Data' });
+
+    await expect(updateFile({ id: 1, type: 'Model', userId: 7 })).rejects.toThrow(REFUSED);
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('still allows other type changes and a training-data edit that keeps its type', async () => {
+    await expect(updateFile({ id: 1, type: 'VAE', userId: 7 })).resolves.toMatchObject({ id: 1 });
+
+    withFile({ type: 'Training Data' });
+    await expect(
+      updateFile({ id: 1, type: 'Training Data', overrideName: 'x', userId: 7 })
+    ).resolves.toMatchObject({ id: 1 });
+  });
+
+  // The Files tab offers 'Training Data' as an attachment type on uploaded models.
+  it("lets an uploaded model's owner relabel an attachment as training data, and back", async () => {
+    withFile({ uploadType: 'Created' });
+    await expect(updateFile({ id: 1, type: 'Training Data', userId: 7 })).resolves.toMatchObject({
+      id: 1,
+    });
+
+    withFile({ type: 'Training Data', uploadType: 'Created' });
+    await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).resolves.toMatchObject({ id: 1 });
   });
 });
 

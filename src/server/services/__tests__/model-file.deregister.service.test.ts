@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -186,16 +187,51 @@ describe('deleteFile — file_locations deregistration', () => {
   });
 });
 
-// Decision (2026-10-18): a denied dataset stays on record; only a moderator may remove it.
-describe('deleteFile — a denied dataset', () => {
-  it('refuses the owner, and deletes nothing', async () => {
+// The DELETE as Postgres receives it: the tagged template with its nested fragments composed.
+const deleteSql = () => {
+  const call = mockDbWrite.$queryRaw.mock.calls.at(-1) as unknown as [
+    TemplateStringsArray,
+    ...Prisma.Sql[]
+  ];
+  return Prisma.sql(call[0], ...call.slice(1));
+};
+
+// Decision (2026-10-18): a dataset under review or denied stays on record; only a moderator may
+// remove it.
+describe('deleteFile — a dataset under review or denied', () => {
+  it.each(['Denied', 'Paused'])(
+    'refuses the owner on a %s run, and deletes nothing',
+    async (status) => {
+      stubDeletableFile({ type: 'Training Data', trainingStatus: status });
+
+      await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
+        "Training data for a training run under review or denied can't be deleted."
+      );
+      expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+    }
+  );
+
+  // The status can change between the check and the DELETE, so the DELETE carries it too; a NULL
+  // status must not make the condition NULL and drop the row.
+  it("repeats the check inside an owner's DELETE, NULL-safe", async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: null });
+
+    await deleteFile({ id: FILE_ID, userId: USER_ID });
+
+    const { sql, values } = deleteSql();
+    expect(sql.replace(/\s+/g, ' ')).toContain(
+      `AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (?,?))`
+    );
+    expect(values).toEqual([FILE_ID, 'Paused', 'Denied']);
+  });
+
+  it("leaves a moderator's DELETE without the check", async () => {
     stubDeletableFile({ type: 'Training Data', trainingStatus: 'Denied' });
 
-    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
-      "Training data for a denied training run can't be deleted."
-    );
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
-    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+    await deleteFile({ id: FILE_ID, userId: USER_ID, isModerator: true });
+
+    expect(deleteSql().sql).not.toContain('COALESCE');
   });
 
   it('lets a moderator remove it', async () => {
