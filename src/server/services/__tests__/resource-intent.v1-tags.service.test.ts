@@ -36,7 +36,7 @@ vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
 vi.mock('~/server/services/resource-intent-matcher.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MatcherModule>()),
   findPoolMergeCandidates: (...args: unknown[]) => mockPoolMerge(...(args as [])),
-  findV1TagsCandidates: (...args: unknown[]) => mockV1Candidates(...(args as [])),
+  findRankedCandidates: (...args: unknown[]) => mockV1Candidates(...(args as [])),
   findCheckpointCandidates: (...args: unknown[]) => mockCheckpointCandidates(...(args as [])),
 }));
 vi.mock('~/server/services/resource-intent-cooc/holder', async (importOriginal) => ({
@@ -356,6 +356,7 @@ describe('served v1_tags', () => {
       browsingLevel: 3,
       coverage: CTX.coverage,
       cap: 50,
+      maxModels: 50,
     });
     expect(result).toMatchObject({ degraded: false, arm: 'v1_tags', v1Fallback: false });
     expect(result).not.toHaveProperty('coocFallback');
@@ -428,8 +429,7 @@ describe('served v1_tags', () => {
       tagSnapshotHash: SNAPSHOT_SHA,
       vocabVersion: VOCAB,
       tagsSpecHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
-      literalTagIds: [0, 1],
-      keptTagIds: [0, 1],
+      literalTagCount: 2,
       explicitTagsRemoved: 0,
       ecosystemSource: 'tags',
       suggestionIds: V1_IDS,
@@ -488,6 +488,13 @@ describe('🔴 the failure ladder: each rung serves the POOL_MERGE list, flagged
     expect(mockPoolMerge).not.toHaveBeenCalled();
     await flush();
     expect(shadowRow()).toMatchObject({ v1FallbackReason: 'no_tags', shortlistCount: 0 });
+  });
+
+  it('the row counts the literal tags found, not those kept, and how many the gate removed', async () => {
+    mockStage1();
+    await getResourceIntent({ prompt: 'zephyr, velvet', baseModel: 'SDXL 1.0' }, V1);
+    await flush();
+    expect(shadowRow()).toMatchObject({ literalTagCount: 2, explicitTagsRemoved: 1 });
   });
 
   it('D3: every tag explicit at an SFW level (no_tags), though the same prompt ranks at a mature level', async () => {
@@ -594,7 +601,7 @@ describe('served v1_tags cache hit', () => {
     expect(shadowRow()).toMatchObject({
       v1Fallback: 1,
       v1FallbackReason: 'cached_fallback',
-      literalTagIds: [],
+      literalTagCount: 0,
       tagSnapshotHash: SNAPSHOT_SHA,
     });
   });
@@ -629,7 +636,7 @@ describe('🔴 the shadow beside another arm', () => {
       shadowReason: '',
       shadowSuggestionIds: V1_IDS,
       tagSnapshotHash: SNAPSHOT_SHA,
-      literalTagIds: [0, 2],
+      literalTagCount: 2,
       ecosystemSource: 'caller',
     });
     expect(mockAskJev).toHaveBeenCalledTimes(2);
@@ -918,7 +925,13 @@ describe('🔴 judge capture', () => {
 describe('🔴 rows write only columns the shadow migrations declare', () => {
   const dir = path.resolve(__dirname, '../../clickhouse/migrations');
   const create = readFileSync(path.join(dir, '2026-09-29-resource-intent-shadow.sql'), 'utf8');
-  const declared = new Set([
+  const columnsOf = (files: string[]) =>
+    files.flatMap((f) =>
+      [...readFileSync(path.join(dir, f), 'utf8').matchAll(/ADD COLUMN IF NOT EXISTS (\w+)/g)].map(
+        (m) => m[1]
+      )
+    );
+  const preV1 = new Set([
     ...create
       .slice(create.indexOf('resourceIntentShadow\n(') + 'resourceIntentShadow\n('.length)
       .split('\n)\nENGINE')[0]
@@ -926,17 +939,39 @@ describe('🔴 rows write only columns the shadow migrations declare', () => {
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith('--'))
       .map((l) => l.split(/\s+/)[0]),
-    ...[
+    ...columnsOf([
       '2026-10-08-resource-intent-shadow-stage3.sql',
       '2026-10-10-resource-intent-shadow-pool-merge.sql',
       '2026-10-11-resource-intent-shadow-checkpoint.sql',
-      '2026-10-17-resource-intent-shadow-v1.sql',
-    ].flatMap((f) =>
-      [...readFileSync(path.join(dir, f), 'utf8').matchAll(/ADD COLUMN IF NOT EXISTS (\w+)/g)].map(
-        (m) => m[1]
-      )
-    ),
+    ]),
   ]);
+  const v1Columns = columnsOf(['2026-10-17-resource-intent-shadow-v1.sql']);
+  const declared = new Set([...preV1, ...v1Columns]);
+
+  it('with every v1 flag off, HYBRID_10, POOL_MERGE and checkpoint rows write only pre-v1 columns', async () => {
+    expect(v1Columns).toContain('literalTagCount');
+    const runs: [
+      Parameters<typeof getResourceIntent>[0],
+      Parameters<typeof getResourceIntent>[1]
+    ][] = [
+      [{ prompt: PROMPT, baseModel: 'SDXL 1.0' }, CTX],
+      [
+        { prompt: PROMPT, baseModel: 'SDXL 1.0' },
+        { ...CTX, poolMerge: true },
+      ],
+      [{ prompt: PROMPT, baseModel: 'SDXL 1.0', kind: 'checkpoint' }, CTX],
+    ];
+    for (const [input, ctx] of runs) {
+      mockInsert.mockClear();
+      mockStage1();
+      await getResourceIntent(input, ctx);
+      await flush();
+      expect(
+        Object.keys(shadowRow()).filter((k) => !preV1.has(k)),
+        JSON.stringify(ctx)
+      ).toEqual([]);
+    }
+  });
 
   it('a served v1 row', async () => {
     mockStage1();

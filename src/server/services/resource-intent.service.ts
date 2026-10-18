@@ -27,7 +27,8 @@ import {
   findCheckpointCandidates,
   findPoolMergeCandidates,
   findResourceIntentCandidates,
-  findV1TagsCandidates,
+  findRankedCandidates,
+  V1_TAGS_LIST_MODELS,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
@@ -42,11 +43,6 @@ import {
   type TagKind,
   type TagScoreResult,
 } from '~/server/services/resource-intent-tags/score';
-import {
-  recordJudgeCapture,
-  recordV1Fallback,
-  recordV1Shadow,
-} from '~/server/prom/resource-intent-v1.metrics';
 import { CHECKPOINT_ATTACH_BUILD_HASH } from '~/server/services/resource-intent-cooc/checkpoint-attach';
 import {
   coocSnapshotHolder,
@@ -415,8 +411,7 @@ type V1TagColumns = {
   tagSnapshotHash: string;
   vocabVersion: string;
   tagsSpecHash: string;
-  literalTagIds: number[];
-  keptTagIds: number[];
+  literalTagCount: number;
   explicitTagsRemoved: number;
   ecosystemSource: '' | 'caller' | 'tags';
   ecosystemTop3: string[];
@@ -461,7 +456,8 @@ async function listV1Tags(
       suggestions: [],
       fallbackReason: score.status === 'ok' ? 'unknown_ecosystem' : score.status,
     };
-  const entries = await findV1TagsCandidates({
+  const entries = await findRankedCandidates({
+    maxModels: V1_TAGS_LIST_MODELS,
     modelIds: score.candidates.map((c) => c.modelId),
     modelTypes: req.kind === 'checkpoint' ? ['Checkpoint'] : RESOURCE_INTENT_COOC_SPEC.addonTypes,
     baseModel: score.ecosystem,
@@ -482,8 +478,7 @@ function v1TagColumns(
     tagSnapshotHash: snapshot.payloadSha256,
     vocabVersion: snapshot.vocabVersion,
     tagsSpecHash: snapshot.specHash,
-    literalTagIds: score?.foundTagIds ?? [],
-    keptTagIds: score ? [...score.weights.keys()] : [],
+    literalTagCount: score?.foundTagIds.length ?? 0,
     explicitTagsRemoved: score ? score.foundTagIds.length - score.weights.size : 0,
     ecosystemSource: !score ? '' : baseModel ? 'caller' : score.ecosystem ? 'tags' : '',
     ecosystemTop3: score?.ecosystems ?? [],
@@ -491,8 +486,8 @@ function v1TagColumns(
 }
 
 /**
- * Per pod. Skipped rather than queued so slow index queries cannot pile up behind responses already
- * sent.
+ * Per pod. The shadow's search goes through the same limiter as foreground searches
+ * (`withMeiliResourceSelect`), so its load is bounded and it is skipped rather than queued.
  */
 const V1_SHADOW_MAX_IN_FLIGHT = 4;
 let v1ShadowsInFlight = 0;
@@ -509,17 +504,14 @@ async function v1TagsShadow(
 ): Promise<V1ShadowColumns> {
   const startedAt = Date.now();
   let tags: Partial<V1TagColumns> = {};
-  const columns = (outcome: { shadowReason: string; shadowDegraded?: 0 | 1; ids?: number[] }) => {
-    recordV1Shadow(kind, outcome.shadowDegraded ? 'error' : outcome.shadowReason || 'ok');
-    return {
-      ...tags,
-      shadowArm: 'v1_tags' as const,
-      shadowDegraded: outcome.shadowDegraded ?? 0,
-      shadowReason: outcome.shadowReason,
-      shadowSuggestionIds: outcome.ids ?? [],
-      shadowLatencyMs: Date.now() - startedAt,
-    };
-  };
+  const columns = (outcome: { shadowReason: string; shadowDegraded?: 0 | 1; ids?: number[] }) => ({
+    ...tags,
+    shadowArm: 'v1_tags' as const,
+    shadowDegraded: outcome.shadowDegraded ?? 0,
+    shadowReason: outcome.shadowReason,
+    shadowSuggestionIds: outcome.ids ?? [],
+    shadowLatencyMs: Date.now() - startedAt,
+  });
   if (v1ShadowsInFlight >= V1_SHADOW_MAX_IN_FLIGHT) return columns({ shadowReason: 'skipped' });
   v1ShadowsInFlight++;
   try {
@@ -549,8 +541,8 @@ export const JUDGE_SAMPLE_TABLE = 'p2m_restricted.routeJudgeSample';
 
 /**
  * One judge-capture row (`2026-10-17-resource-intent-route-judge-sample.sql`). Carries no caller
- * field, but joins its request's shadow row by `promptHash`, so read access to this table is the
- * control. Never logged anywhere else: with no ClickHouse client the row is dropped.
+ * field, but joins its request's shadow row by `promptHash`; the table's row policies are the
+ * read control. Never logged anywhere else: with no ClickHouse client the row is dropped.
  */
 async function writeJudgeSample(row: {
   time: string;
@@ -559,13 +551,11 @@ async function writeJudgeSample(row: {
   browsingLevel: number;
   baseModel: string;
 }): Promise<void> {
-  if (!clickhouse) return recordJudgeCapture('no_client');
+  if (!clickhouse) return;
   try {
     await clickhouse.insert({ table: JUDGE_SAMPLE_TABLE, values: [row], format: 'JSONEachRow' });
-    recordJudgeCapture('ok');
   } catch {
     // Not logged: the error text could carry the prompt.
-    recordJudgeCapture('error');
   }
 }
 
@@ -814,7 +804,6 @@ export async function getResourceIntent(
           v1FallbackReason = listed.fallbackReason;
         }
         if (v1FallbackReason) {
-          recordV1Fallback('addon', v1FallbackReason);
           coocServing = await coocSnapshotHolder().resolve();
           cooc = coocServing.snapshot;
           coocFallback = !cooc;

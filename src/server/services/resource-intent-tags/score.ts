@@ -25,7 +25,7 @@ export const TAG_SCORE_PARAMS = {
   popularityWeight: 0.02,
   /** The ecosystem distribution's weight inside the user-side score. */
   userEcosystemWeight: 0.05,
-  /** Candidates kept, before the matcher's request-time gates (`findV1TagsCandidates`). */
+  /** Candidates kept, before the matcher's request-time gates (`findRankedCandidates`). */
   maxCandidates: 300,
   /** Dirichlet prior strength of the (tag, ecosystem) lift. */
   liftPrior: 50,

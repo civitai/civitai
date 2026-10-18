@@ -14,7 +14,9 @@
 --   shadowDegraded       1 when the shadow threw.
 --   shadowReason         why the shadow arm would have fallen back (as v1FallbackReason), 'error'
 --                        on shadowDegraded, 'skipped' when the pod already had its maximum of
---                        shadows running, '' when it produced a list.
+--                        shadows running, '' when it produced a list. Exclude 'skipped' and
+--                        'loading' from any shadow-health rate: they mark bursts and cold pods,
+--                        not an unhealthy arm.
 --   shadowSuggestionIds  the version ids the shadow arm would have served.
 --   shadowLatencyMs      the shadow's own wall time, after the response was returned.
 --   v1Fallback           1 when a served v1_tags row's list is the POOL_MERGE arm's.
@@ -25,13 +27,13 @@
 --   tagSnapshotHash      payload sha256 of the tag-index snapshot the v1 arm (served or shadow) used.
 --   vocabVersion         that snapshot's vocabulary version.
 --   tagsSpecHash         RESOURCE_INTENT_TAGS_SPEC_HASH (resource-intent-tags/spec.ts).
---   literalTagIds        vocabulary ids found literally in the prompt, before the explicit gate.
---   keptTagIds           the ids that passed it.
---   explicitTagsRemoved  how many the gate removed.
+--   literalTagCount      how many vocabulary tags were found literally in the prompt, before the
+--                        explicit gate. A count, not the ids: no per-prompt bag of tags is kept.
+--   explicitTagsRemoved  how many of them the gate removed.
 --   ecosystemSource      'caller' (the request's baseModel), 'tags' (tag-derived), or '' when none
 --                        was chosen.
 --   ecosystemTop3        the tag-derived ecosystems, best first; [] when the caller gave one.
--- On a served row replayed from the cache the per-prompt columns (literalTagIds through
+-- On a served row replayed from the cache the per-prompt columns (literalTagCount through
 -- ecosystemTop3) are empty: the tags were not computed.
 
 ALTER TABLE default.resourceIntentShadow
@@ -45,8 +47,7 @@ ALTER TABLE default.resourceIntentShadow
   ADD COLUMN IF NOT EXISTS tagSnapshotHash String DEFAULT '',
   ADD COLUMN IF NOT EXISTS vocabVersion String DEFAULT '',
   ADD COLUMN IF NOT EXISTS tagsSpecHash String DEFAULT '',
-  ADD COLUMN IF NOT EXISTS literalTagIds Array(UInt16) DEFAULT [],
-  ADD COLUMN IF NOT EXISTS keptTagIds Array(UInt16) DEFAULT [],
+  ADD COLUMN IF NOT EXISTS literalTagCount UInt16 DEFAULT 0,
   ADD COLUMN IF NOT EXISTS explicitTagsRemoved UInt16 DEFAULT 0,
   ADD COLUMN IF NOT EXISTS ecosystemSource LowCardinality(String) DEFAULT '',
   ADD COLUMN IF NOT EXISTS ecosystemTop3 Array(String) DEFAULT [];

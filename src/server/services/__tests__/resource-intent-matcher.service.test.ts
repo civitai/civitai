@@ -37,7 +37,7 @@ const {
   buildResourceIntentFilter,
   expandShortlist,
   findResourceIntentCandidates,
-  findV1TagsCandidates,
+  findRankedCandidates,
 } = await import('~/server/services/resource-intent-matcher.service');
 // The two floors live in the leaf, not in the module under test, and are imported from
 // there rather than through a re-export — see that module's header for why there is one
@@ -995,7 +995,7 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
   });
 });
 
-describe('🔴 findV1TagsCandidates — the request-time gates on the tag index', () => {
+describe('🔴 findRankedCandidates — the request-time gates on a ranked list (v1_tags, attach_bm)', () => {
   // Not the anonymous default, so a gate that ignored the request's coverage would show.
   const coverage = { next: true, member: true };
   const opts = {
@@ -1004,6 +1004,7 @@ describe('🔴 findV1TagsCandidates — the request-time gates on the tag index'
     browsingLevel: 3,
     coverage,
     cap: 50,
+    maxModels: 50,
   };
   const doc = (
     id: number,
@@ -1023,7 +1024,7 @@ describe('🔴 findV1TagsCandidates — the request-time gates on the tag index'
 
   it("asks the index for the candidates under the matcher's own filter, unsorted, as wide as the list", async () => {
     const { and, inArray } = await import('~/shared/utils/meili-filter');
-    await findV1TagsCandidates({ ...opts, modelIds: [7, 3, 9] });
+    await findRankedCandidates({ ...opts, modelIds: [7, 3, 9] });
     expect(meiliArgsOf()).toEqual({
       filter: and(
         buildResourceIntentFilter({
@@ -1051,7 +1052,7 @@ describe('🔴 findV1TagsCandidates — the request-time gates on the tag index'
         ]),
       ],
     });
-    const entries = await findV1TagsCandidates({ ...opts, modelIds: [7, 3, 9] });
+    const entries = await findRankedCandidates({ ...opts, modelIds: [7, 3, 9] });
     expect(entries.map((e) => [e.modelId, e.versionId])).toEqual([
       [7, 73],
       [9, 91],
@@ -1061,10 +1062,10 @@ describe('🔴 findV1TagsCandidates — the request-time gates on the tag index'
   it('is at most min(cap, 50) models wide, and makes no query without candidates', async () => {
     const ids = Array.from({ length: 70 }, (_, i) => 1000 + i);
     searchWithSignal.mockResolvedValue({ hits: ids.map((id) => doc(id, [{ id: id * 10 }])) });
-    expect(await findV1TagsCandidates({ ...opts, modelIds: ids, cap: 255 })).toHaveLength(50);
-    expect(await findV1TagsCandidates({ ...opts, modelIds: ids, cap: 7 })).toHaveLength(7);
+    expect(await findRankedCandidates({ ...opts, modelIds: ids, cap: 255 })).toHaveLength(50);
+    expect(await findRankedCandidates({ ...opts, modelIds: ids, cap: 7 })).toHaveLength(7);
     searchWithSignal.mockClear();
-    expect(await findV1TagsCandidates({ ...opts, modelIds: [] })).toEqual([]);
+    expect(await findRankedCandidates({ ...opts, modelIds: [] })).toEqual([]);
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 });
