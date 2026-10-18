@@ -329,7 +329,7 @@ export function inFlightLimit({
 
 /**
  * Purchases and box opens each hold a pooled connection while waiting on the buyer's
- * `lockItemHolder`, so they share one bucket.
+ * `lockItemHolder` (at most `ITEM_HOLDER_LOCK_TIMEOUT`), so they share one bucket.
  */
 export const itemHolderInFlightLimit = inFlightLimit({
   bucket: 'item-holder',

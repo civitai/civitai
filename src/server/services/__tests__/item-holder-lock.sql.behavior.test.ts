@@ -7,28 +7,24 @@ import { ITEM_HOLDER_LOCK_CLASS, lockItemHolder } from '~/server/services/item-h
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * `lockItemHolder` run as written against an in-process Postgres. PGlite has one session, so no
- * second buyer can hold the lock and the `55P03` itself cannot happen here; what is read instead is
- * the `lock_timeout` each statement ran under, and what is left once the transaction ends.
+ * PGlite has one session, so a second buyer cannot hold the lock and `55P03` cannot happen here; this
+ * reads the `lock_timeout` each statement ran under, and what is left after the transaction ends.
  */
 
 const db = { pg: null as unknown as PGlite };
-/** `lock_timeout` as each statement of the transaction started, in order. */
 let ranUnder: { sql: string; lockTimeout: string }[] = [];
 
+const showLockTimeout = async () =>
+  (await db.pg.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0].lock_timeout;
 const tx = () => {
   const raw = pgliteRaw(db.pg);
   return {
     $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const [{ lock_timeout }] = (await db.pg.query<{ lock_timeout: string }>('SHOW lock_timeout'))
-        .rows;
-      ranUnder.push({ sql: strings.join('?'), lockTimeout: lock_timeout });
+      ranUnder.push({ sql: strings.join('?'), lockTimeout: await showLockTimeout() });
       return raw.executeRaw(strings, ...values);
     },
   } as unknown as Prisma.TransactionClient;
 };
-const showLockTimeout = async () =>
-  (await db.pg.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0].lock_timeout;
 
 beforeAll(async () => {
   db.pg = new PGlite();
@@ -40,9 +36,11 @@ afterEach(async () => {
 });
 
 describe('lockItemHolder', () => {
-  it('waits for the lock under a lock timeout, and leaves none once the transaction ends', async () => {
+  it('waits for the lock, and every later statement, under a lock timeout that ends with the transaction', async () => {
     await db.pg.exec('BEGIN');
-    await lockItemHolder(tx(), 7);
+    const client = tx();
+    await lockItemHolder(client, 7);
+    await client.$executeRaw`SELECT 1`;
     const locksHeld = await db.pg.query<{ classid: number; objid: number }>(
       `SELECT classid::int, objid::int FROM pg_locks WHERE locktype = 'advisory' AND granted`
     );
@@ -51,8 +49,8 @@ describe('lockItemHolder', () => {
     const lock = ranUnder.find((s) => s.sql.includes('pg_advisory_xact_lock'));
     expect(lock?.sql).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
     expect(lock?.lockTimeout).toBe('2s');
+    expect(ranUnder.at(-1)).toEqual({ sql: 'SELECT 1', lockTimeout: '2s' });
     expect(locksHeld.rows).toEqual([{ classid: ITEM_HOLDER_LOCK_CLASS, objid: 7 }]);
-    // Transaction-local: the pooled connection goes back with the role's own setting.
     expect(await showLockTimeout()).toBe('0');
   });
 });

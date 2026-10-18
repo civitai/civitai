@@ -109,7 +109,8 @@
       return;
     }
     return async ({ result, update }) => {
-      if (result.type === 'success') {
+      // Busy users were skipped: keep the selection so granting again finishes the job.
+      if (result.type === 'success' && !result.data?.busyUserIds?.length) {
         selectedCosmetics.clear();
         selectedUsers.clear();
       }
@@ -134,6 +135,12 @@
       ? `, ${form.alreadyOwned} already owned`
       : ''}.
   </div>
+  {#if form.busyUserIds.length}
+    <ErrorAlert
+      class="mb-4"
+      message={`Skipped ${form.busyUserIds.length === 1 ? 'user' : 'users'} ${form.busyUserIds.join(', ')}: a purchase or box opening was in progress. Grant again in a moment to finish.`}
+    />
+  {/if}
 {/if}
 
 <div class="mb-6 grid gap-4 rounded-xl border p-4 md:grid-cols-2">

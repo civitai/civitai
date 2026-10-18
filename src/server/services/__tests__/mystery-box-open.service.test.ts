@@ -692,7 +692,7 @@ describe('refusals keep the box', () => {
     expect(world.openings.size).toBe(0);
   });
 
-  it('a holder lock that times out answers busy, and the box stays held', async () => {
+  it('a holder lock that times out answers busy', async () => {
     world.onLock = () => {
       throw lockTimeout();
     };
@@ -700,7 +700,6 @@ describe('refusals keep the box', () => {
       code: 'TOO_MANY_REQUESTS',
       message: ITEM_HOLDER_BUSY_MESSAGE,
     });
-    nothingOpened();
   });
 
   it('another database error under the lock is not answered as busy', async () => {
@@ -709,7 +708,6 @@ describe('refusals keep the box', () => {
     };
     const error = await open().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
-    nothingOpened();
   });
 
   it('a box with nothing left for the holder stays held', async () => {

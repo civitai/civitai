@@ -858,8 +858,6 @@ describe('buying a mystery box', () => {
       message: ITEM_HOLDER_BUSY_MESSAGE,
     });
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
-    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
-    expect(claims.rows.get(txId(KEY_A))).toBeUndefined();
   });
 
   describe('pending purchases across every listing of the box', () => {

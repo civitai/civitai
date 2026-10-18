@@ -69,7 +69,7 @@ const isHolderLock = (a: unknown[]) =>
 const saleCount = vi.fn();
 const isSaleCount = (a: unknown[]) =>
   (a[0] as readonly string[]).join('').includes('UPDATE "CosmeticShopItem"');
-// The sale count and the grant lock both set one first; neither is a grant.
+// Not a grant: the sale count and the holder lock each set a lock timeout first.
 const isLockTimeout = (a: unknown[]) =>
   (a[0] as readonly string[]).join('').includes("set_config('lock_timeout'");
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;

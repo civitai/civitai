@@ -3,7 +3,10 @@ import { ITEM_HOLDER_LOCK_CLASS, ITEM_HOLDER_LOCK_TIMEOUT } from '@civitai/share
 
 export { ITEM_HOLDER_LOCK_CLASS };
 
-/** What a buyer sees when their previous purchase or box opening still holds their lock. */
+/**
+ * The answer to a cancelled lock wait in a box claim or open: usually the buyer's own earlier request
+ * holding their lock, or a later wait in the same transaction.
+ */
 export const ITEM_HOLDER_BUSY_MESSAGE =
   'Your last purchase or box opening is still processing. Try again in a moment.';
 
@@ -16,10 +19,10 @@ export const ITEM_HOLDER_BUSY_MESSAGE =
  * Mutual exclusion only between callers that take it, so every such grant path must. Call inside
  * the grant transaction; the lock is released when it ends.
  *
- * Gives up after `ITEM_HOLDER_LOCK_TIMEOUT` with `55P03` (`isPrismaLockTimeout`). Prisma's
- * transaction timeout does not cancel a statement that is waiting, so without it a waiter would hold
- * its pooled connection, and any row it already locked, for as long as the role's own `lock_timeout`
- * allows. The timeout stays set for the rest of the transaction.
+ * Gives up after `ITEM_HOLDER_LOCK_TIMEOUT` with `55P03` (`isPrismaLockTimeout`): Prisma's
+ * transaction timeout does not cancel a waiting statement, and a waiter would otherwise hold its
+ * connection and any rows it locked until the role's own `lock_timeout`, if it has one. The timeout
+ * stays set for the rest of the transaction.
  */
 export async function lockItemHolder(tx: Prisma.TransactionClient, userId: number) {
   await tx.$executeRaw`SELECT set_config('lock_timeout', ${ITEM_HOLDER_LOCK_TIMEOUT}, true)`;

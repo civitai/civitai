@@ -78,8 +78,8 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
 }
 
 /**
- * True when a raw query was cancelled by `lock_timeout` (Postgres `55P03`): Prisma reports it as a
- * raw-query failure (P2010) carrying the Postgres code in `meta.code`.
+ * Postgres `55P03` (lock_not_available, e.g. a `lock_timeout` expiry). A raw query surfaces it as
+ * P2010 with the SQLSTATE in `meta.code`; a typed Prisma call does not, and is not matched.
  */
 export function isPrismaLockTimeout(error: unknown): boolean {
   return (

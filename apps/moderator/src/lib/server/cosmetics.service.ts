@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
-import { lockItemHolder } from './item-holder-lock';
+import { isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import type { CosmeticType } from '$lib/cosmetics';
 
 export type CosmeticRow = {
@@ -43,7 +43,13 @@ export async function getPaginatedCosmetics({
   return { items, totalItems, page, limit };
 }
 
-export type GrantResult = { totalPairs: number; alreadyOwned: number; newlyGranted: number };
+export type GrantResult = {
+  totalPairs: number;
+  alreadyOwned: number;
+  newlyGranted: number;
+  /** Skipped: their own purchase or box open held their lock. Granting them again is safe. */
+  busyUserIds: number[];
+};
 
 export async function grantCosmeticsToUsers({
   cosmeticIds,
@@ -83,19 +89,27 @@ export async function grantCosmeticsToUsers({
   const alreadyOwned = Number(owned?.count ?? 0);
 
   // One transaction per user, so each holds a single user's lock.
+  let newlyGranted = 0;
+  const busyUserIds: number[] = [];
   for (const userId of uniqueUserIds) {
-    await dbWrite.transaction().execute(async (trx) => {
-      await lockItemHolder(trx, userId);
-      await sql`
-        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
-        SELECT ${userId}, c.id, 'claimed'
-        FROM "Cosmetic" c
-        WHERE c.id IN (${sql.join(uniqueCosmeticIds)})
-        ON CONFLICT DO NOTHING
-      `.execute(trx);
-    });
+    try {
+      const inserted = await dbWrite.transaction().execute(async (trx) => {
+        await lockItemHolder(trx, userId);
+        return sql`
+          INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
+          SELECT ${userId}, c.id, 'claimed'
+          FROM "Cosmetic" c
+          WHERE c.id IN (${sql.join(uniqueCosmeticIds)})
+          ON CONFLICT DO NOTHING
+        `.execute(trx);
+      });
+      newlyGranted += Number(inserted.numAffectedRows ?? 0);
+    } catch (error) {
+      if (!isItemHolderBusy(error)) throw error;
+      busyUserIds.push(userId);
+    }
   }
 
   const totalPairs = uniqueUserIds.length * uniqueCosmeticIds.length;
-  return { totalPairs, alreadyOwned, newlyGranted: totalPairs - alreadyOwned };
+  return { totalPairs, alreadyOwned, newlyGranted, busyUserIds };
 }

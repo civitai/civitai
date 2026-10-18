@@ -44,6 +44,7 @@ const { grantCosmetic, refundShopPurchase, removeCosmetic } = await import(
   '../user-actions.service'
 );
 const { grantCosmeticsToUsers } = await import('../cosmetics.service');
+const { ITEM_HOLDER_BUSY_MESSAGE } = await import('../item-holder-lock');
 
 const MIGRATIONS = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -96,12 +97,13 @@ const SHELF_LISTING = 12;
 
 let db: PGlite;
 let statements: { sql: string; params: unknown[] }[];
-// Every item holder lock waits at most this long, set before it so the lock wait is bounded too.
 const LOCK_TIMEOUT = { sql: "SELECT set_config('lock_timeout', $1, true)", params: ['2s'] };
 /** Which acquired connection ran each statement, by index into `statements`. */
 let statementConnections: number[];
 /** Runs once, straight after the service's first statement (its read of the purchase). */
 let afterFirstStatement: (() => Promise<unknown>) | null;
+/** Users whose item holder lock times out, as if their own purchase or box open held it. */
+let busyUsers: Set<number>;
 /** Calls the service made to the main app, and how the main app answers them. */
 let mainApp: { url: string; body: unknown; afterCommit: boolean }[];
 let mainAppAnswers: () => Response;
@@ -124,10 +126,16 @@ beforeEach(async () => {
   statements = [];
   statementConnections = [];
   afterFirstStatement = null;
+  busyUsers = new Set();
   const recording = {
     query: async (sql: string, params: unknown[]) => {
       statements.push({ sql, params });
       statementConnections.push(activeConnection);
+      // Postgres's own 55P03, raised in the transaction, so it aborts it as a real timeout would.
+      if (sql.includes('pg_advisory_xact_lock') && busyUsers.has(params[1] as number))
+        await db.query(
+          `DO $$ BEGIN RAISE EXCEPTION 'canceling statement due to lock timeout' USING ERRCODE = '55P03'; END $$`
+        );
       const result = await db.query(sql, params);
       const hook = afterFirstStatement;
       afterFirstStatement = null;
@@ -345,9 +353,16 @@ describe('refundShopPurchase: a mystery box', () => {
         params: [1229455361, BUYER],
       },
     ]);
-    // Set for the transaction only: the pooled connection goes back without it.
-    const [{ lock_timeout }] = (await db.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows;
-    expect(lock_timeout).toBe('0');
+  });
+
+  it('answers busy and changes nothing when the buyer’s lock is held', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await holdBox('box-a');
+    busyUsers.add(BUYER);
+
+    await expect(refund('box-a')).resolves.toEqual({ ok: false, error: ITEM_HOLDER_BUSY_MESSAGE });
+    expect(await isRefunded('box-a')).toBe(false);
+    expect(await heldBoxes()).toEqual(['box-a']);
   });
 });
 
@@ -555,6 +570,25 @@ describe('moderator grants take the item holder lock', () => {
     ]);
     expect(transactions()).toEqual([['select', 'select', 'insert']]);
     expect(await holdings()).toEqual([{ userId: BUYER, cosmeticId: 700, claimKey: 'claimed' }]);
+  });
+
+  it('a single grant answers busy when the user’s lock is held', async () => {
+    busyUsers.add(BUYER);
+
+    await expect(
+      grantCosmetic({ userId: BUYER, cosmeticId: 700, moderatorId: MOD })
+    ).resolves.toEqual({ ok: false, error: ITEM_HOLDER_BUSY_MESSAGE });
+    expect(await holdings()).toEqual([]);
+  });
+
+  it('a bulk grant skips a busy user, grants the rest, and names who was skipped', async () => {
+    await db.exec(`INSERT INTO "User" ("id") VALUES (${BUYER}), (${OTHER})`);
+    busyUsers.add(BUYER);
+
+    await expect(
+      grantCosmeticsToUsers({ cosmeticIds: [700], userIds: [BUYER, OTHER] })
+    ).resolves.toEqual({ totalPairs: 2, alreadyOwned: 0, newlyGranted: 1, busyUserIds: [BUYER] });
+    expect(await holdings()).toEqual([{ userId: OTHER, cosmeticId: 700, claimKey: 'claimed' }]);
   });
 
   it('a bulk grant locks each user in their own transaction', async () => {
