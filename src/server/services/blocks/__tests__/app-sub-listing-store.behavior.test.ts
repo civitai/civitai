@@ -467,6 +467,19 @@ describe('store catalog with sub-listings, executed', () => {
     expect(await cover()).toBe('parent-cover');
   });
 
+  // Every flag column, so a swapped or mistyped SQL alias for any one of them is caught.
+  it.each(['poi', 'minor', 'tosViolation', 'acceptableMinor'])(
+    'the %s flag on the parent cover hides it from the fallback',
+    async (column) => {
+      await holder.db.exec(
+        `UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2`
+      );
+      expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
+      await holder.db.exec(`UPDATE "Image" SET "${column}" = true WHERE id = 1`);
+      expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBeNull();
+    }
+  );
+
   it('a moderation flag on the parent cover hides it from the fallback', async () => {
     await holder.db.exec(
       `UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2`

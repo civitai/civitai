@@ -24,6 +24,7 @@ vi.mock('~/client-utils/edge-url', () => ({
 import { NsfwLevel } from '~/server/common/enums';
 import {
   isListingImageVisible,
+  isModerationFlagSet,
   listingMediaCeiling,
   listingMediaImageSelect,
   MODERATOR_REVIEW_MEDIA,
@@ -188,5 +189,16 @@ describe('listingMediaImageSelect covers every field the visibility decision rea
     expect(read.has('nsfwLevel') && read.has('ingestion')).toBe(true);
     const missing = [...read].filter((k) => !(k in listingMediaImageSelect));
     expect(missing).toEqual([]);
+  });
+});
+
+// The fail-closed contract every reader of a raw / untyped row relies on: only a literal `false`
+// or an absent value means "not flagged".
+describe('isModerationFlagSet', () => {
+  it.each([false, null, undefined])('%s is not set', (v) => {
+    expect(isModerationFlagSet(v)).toBe(false);
+  });
+  it.each([true, 't', 'false', 1, 0, ''])('%j counts as set', (v) => {
+    expect(isModerationFlagSet(v)).toBe(true);
   });
 });
