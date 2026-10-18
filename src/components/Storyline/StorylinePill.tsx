@@ -31,20 +31,24 @@ function TitleTooltip({ title, children }: { title: string; children: ReactEleme
   );
 }
 
-/** A feed card's mark that its image is part of a storyline. */
-export function StorylinePill({
-  title,
-  depth,
-  onClick,
-  className,
-}: {
-  title: string;
-  depth: number;
-  onClick?: MouseEventHandler<HTMLButtonElement>;
-  className?: string;
-}) {
+/**
+ * A mark that an image or post is part of a storyline. Forwards its ref and props, so a menu can
+ * drop from it (`menu` adds the chevron that says one does).
+ */
+export const StorylinePill = forwardRef<
+  HTMLButtonElement,
+  {
+    title: string;
+    depth: number;
+    onClick?: MouseEventHandler<HTMLButtonElement>;
+    className?: string;
+    menu?: boolean;
+  } & Omit<ComponentPropsWithoutRef<'button'>, 'title' | 'onClick' | 'className'>
+>(function StorylinePill({ title, depth, onClick, className, menu, ...props }, ref) {
   return (
     <Badge
+      {...props}
+      ref={ref}
       component="button"
       type="button"
       variant="filled"
@@ -53,6 +57,7 @@ export function StorylinePill({
       h={26}
       onClick={onClick}
       leftSection={<IconRoute size={14} stroke={2.5} />}
+      rightSection={menu ? <IconChevronDown size={13} stroke={2.5} /> : undefined}
       className={clsx('max-w-[240px] cursor-pointer normal-case', className)}
       title={`Part of the storyline "${title}"`}
       aria-label={`Storyline: ${title}, chapter ${depth + 1}`}
@@ -62,7 +67,7 @@ export function StorylinePill({
       <ChipLabel title={title} depth={depth} />
     </Badge>
   );
-}
+});
 
 /**
  * In storyline mode, the reader's place, in the stage toolbar: the storyline and chapter. It opens

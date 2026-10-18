@@ -50,6 +50,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
+import { StorylinePostNext, StorylinePostPill } from '~/components/Storyline/StorylinePostChapter';
 import { PostPublishedWithApp } from '~/components/Post/Detail/PostPublishedWithApp';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -237,6 +238,7 @@ export function PostDetailContent({ postId }: Props) {
               </Alert>
             )}
             <div className="flex flex-col">
+              <StorylinePostPill postId={post.id} />
               <div className="flex items-center justify-between">
                 {post.title && (
                   <Title order={1} lineClamp={2} size={26}>
@@ -472,6 +474,7 @@ export function PostDetailContent({ postId }: Props) {
                 )}
               </>
             )}
+            <StorylinePostNext postId={post.id} />
             <Stack className="mb-20 mt-6 gap-6" id="comments" mb={90}>
               {!!post.tags.length && (
                 <Collection
