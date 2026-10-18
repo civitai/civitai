@@ -51,10 +51,34 @@ describe('/models/[id]/reviews near-duplicate redirect', () => {
     });
   });
 
+  // The canonical this page used to emit. It 404'd (the query failed validation) instead of
+  // consolidating onto the listing.
+  it('redirects `?modelVersionId=undefined` to the unfiltered listing', async () => {
+    expect((await run({ modelVersionId: 'undefined' })).redirect).toEqual({
+      destination: '/models/4201/reviews',
+      permanent: true,
+    });
+  });
+
   it('still redirects the single review dialog it always did', async () => {
     expect((await run({ dialog: 'resourceReview', reviewId: '9' })).redirect?.destination).toBe(
       '/models/4201/reviews'
     );
+  });
+
+  it('404s a non-numeric model id instead of redirecting it', async () => {
+    const result = await (getServerSideProps as any)({
+      params: { id: 'abc' },
+      req: {
+        url: '/_next/data/build/models/abc/reviews.json',
+        headers: { host: `case-${nextHost++}.civitai.com` },
+        cookies: {},
+      },
+      res: { setHeader: vi.fn(), getHeader: vi.fn() },
+      query: { id: 'abc', reviewId: '9' },
+      resolvedUrl: '/models/abc/reviews',
+    });
+    expect(result).toEqual({ notFound: true });
   });
 
   it('renders the listing', async () => {

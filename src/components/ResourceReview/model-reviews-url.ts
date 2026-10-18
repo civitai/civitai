@@ -31,6 +31,8 @@ export function getModelReviewsCanonical(modelId: number, modelVersionId?: numbe
  * - the same dialog repeated (`dialog=resourceReview&dialog=resourceReview…`), which links built
  *   from an already-open dialog append to;
  * - `reviewId` without any dialog, which the listing ignores;
+ * - a version param that is not a single positive integer — including `modelVersionId=undefined`,
+ *   which this page once emitted as its own canonical;
  * - keys prefixed `amp;` — a link whose `&` was HTML-escaped twice before being followed, which
  *   hides every param from the page and, since dialog links are built from the current query,
  *   grows by one more `dialog` on every hop.
@@ -51,12 +53,16 @@ export function getModelReviewsRedirect(modelId: number, query: Query): string |
 
   const dialogs = ([] as string[]).concat(normalized.dialog ?? []);
   const reviewDialogCount = dialogs.filter((d) => d === 'resourceReview').length;
+  const rawVersion = normalized.modelVersionId;
+  const modelVersionId = toPositiveInt(rawVersion);
   const isDuplicate =
     escaped ||
+    // `?modelVersionId=undefined` (the old broken canonical) or a repeated version param
+    (rawVersion !== undefined && (Array.isArray(rawVersion) || modelVersionId === undefined)) ||
     (dialogs.length === 1 && reviewDialogCount === 1) ||
     reviewDialogCount > 1 ||
     (dialogs.length === 0 && normalized.reviewId !== undefined);
 
   if (!isDuplicate) return null;
-  return getModelReviewsCanonical(modelId, toPositiveInt(normalized.modelVersionId));
+  return getModelReviewsCanonical(modelId, modelVersionId);
 }

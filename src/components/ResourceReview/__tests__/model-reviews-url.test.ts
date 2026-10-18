@@ -78,9 +78,14 @@ describe('getModelReviewsRedirect', () => {
     expect(getModelReviewsRedirect(MODEL, { 'amp;modelVersionId': VERSION })).toBe(CANONICAL);
   });
 
-  it('drops a version param that is not a positive integer', () => {
-    expect(getModelReviewsRedirect(MODEL, { modelVersionId: 'undefined', reviewId: '9' })).toBe(
-      '/models/4201/reviews'
-    );
+  it.each([['undefined'], ['0'], ['1.5'], ['abc']])(
+    'redirects the malformed version param %s to the unfiltered listing',
+    (modelVersionId) => {
+      expect(getModelReviewsRedirect(MODEL, { modelVersionId })).toBe('/models/4201/reviews');
+    }
+  );
+
+  it('redirects a repeated version param to its first value', () => {
+    expect(getModelReviewsRedirect(MODEL, { modelVersionId: [VERSION, '55'] })).toBe(CANONICAL);
   });
 });

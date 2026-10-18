@@ -55,13 +55,17 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { id: string };
+
+    // Redirect near-duplicate review URLs (review dialogs, stray reviewId, escaped-`&` loops, a
+    // malformed version param) to the clean reviews page. Runs before the query is validated so a
+    // malformed version param is redirected rather than 404'd.
+    if (/^\d+$/.test(params.id ?? '')) {
+      const destination = getModelReviewsRedirect(Number(params.id), ctx.query);
+      if (destination) return { redirect: { destination, permanent: true } };
+    }
+
     const result = getResourceReviewPagedSchema.safeParse({ modelId: params.id, ...ctx.query });
     if (!result.success) return { notFound: true };
-
-    // Redirect near-duplicate review URLs (review dialogs, stray reviewId, escaped-`&` loops) to
-    // the clean reviews page
-    const destination = getModelReviewsRedirect(result.data.modelId, ctx.query);
-    if (destination) return { redirect: { destination, permanent: true } };
 
     const { modelId, modelVersionId } = result.data;
 
