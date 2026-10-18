@@ -32,12 +32,17 @@ import {
  * scanner re-rate does not). Before this module no public projection read `Image.nsfwLevel` at
  * all, so in both cases a mature image rendered on a SFW card. Gating each image when it is
  * rendered closes both without touching the rating: the next render after a level change drops
- * the image, with no cache to bust (the catalog cache holds ids only; media is hydrated live).
+ * the image. No SERVER cache holds media (the catalog cache holds ids only; media is hydrated
+ * live). The one CLIENT copy that did — the "Recently opened" store in localStorage, which used
+ * to persist each app's icon url and render it without a live card — no longer keeps icon urls
+ * at all (`recentlyOpenedAppsStore.ts`), so a stored, ungated icon is never rendered.
  *
- * THE CEILING (see {@link listingMediaCeiling}):
+ * THE CEILING (see {@link listingMediaCeiling} and {@link redHostMediaCeiling}):
  *   - any host that is NOT red-capable: SFW ∩ the levels the listing's `content_rating` allows;
- *   - a red-capable host: every rated level (Blocked excluded) ∩ the VIEWER's browsing level, so
- *     an anonymous viewer there sees PG media only.
+ *   - a red-capable host: exactly that non-red ceiling, UNION the levels the VIEWER has opted
+ *     into (Blocked excluded). A red host never shows less SFW media than a non-red host does:
+ *     an anonymous or non-opted-in viewer there sees what the non-red host shows, and an
+ *     opted-in viewer additionally sees R/X/XXX media up to their own browsing level.
  * The visibility test itself is `classifyGatedImageForViewer`: moderation flags, a hard block and a
  * terminal scan refusal hide the image whatever its level, and an image nothing has rated yet is
  * `pending`, which here means NOT SHOWN. Every caller treats anything but `visible` as hidden.
@@ -98,7 +103,11 @@ export function isModerationFlagSet(value: unknown): boolean {
 export type ListingMediaAudience = {
   /** `isRedCapableHost(host)` — never `getRequestDomainColor`, which reads `.red` as blue. */
   redCapable: boolean;
-  /** The viewer's browsing level. Absent / 0 ⇒ the public floor (PG). Used on a red host only. */
+  /**
+   * The viewer's browsing level. Used on a red host only, where it can only ADD levels to the
+   * non-red ceiling; absent / 0 adds nothing beyond the public floor (PG), which that ceiling
+   * already holds.
+   */
   viewerBrowsingLevel?: number | null;
 };
 
@@ -106,26 +115,44 @@ export type ListingMediaAudience = {
 export const SFW_LISTING_MEDIA_AUDIENCE: ListingMediaAudience = { redCapable: false };
 
 /**
+ * 🔴 THE RED-HOST RULE, for every listing-media surface: on a red-capable host the ceiling is
+ * `nonRedCeiling` (what a non-red host would apply to this same image on this same surface)
+ * UNION the viewer's browsing level, Blocked excluded. Off a red host it is `nonRedCeiling`
+ * unchanged. So a red host can only ever show MORE than a non-red host, never less, and only a
+ * viewer who opted into a mature level sees anything above the non-red ceiling.
+ *
+ * Every surface computes its own `nonRedCeiling` (a store card: SFW ∩ the listing rating; a
+ * sub-listing card's parent fallback: that card's own non-red ceiling) and lifts it through
+ * here, so the red half of the rule exists exactly once.
+ */
+export function redHostMediaCeiling(audience: ListingMediaAudience, nonRedCeiling: number): number {
+  if (!audience.redCapable) return nonRedCeiling;
+  // `allBrowsingLevelsFlag` is PG..XXX (no Blocked bit), and `effectiveBrowsingCeiling` is the
+  // shared domain ∩ viewer rule: an absent, non-finite or negative viewer level is the public
+  // floor (PG), which adds nothing here. A `0` level is "no level" too, not "hide everything".
+  const viewerLevels = effectiveBrowsingCeiling(
+    allBrowsingLevelsFlag,
+    audience.viewerBrowsingLevel || null
+  );
+  return (nonRedCeiling | viewerLevels) & allBrowsingLevelsFlag;
+}
+
+/**
  * The browsing-level ceiling one listing's media is held to for one request.
  *
- * Off a red-capable host the listing's own `content_rating` caps it as well as SFW, so a `g`
- * listing does not show a PG-13 screenshot. On a red-capable host the cap is the viewer's level
- * (any rated level up to XXX, never Blocked), so a listing may show media above its `.com`
- * rating there — but only to a viewer who has opted into that level.
+ * Off a red-capable host: SFW ∩ the levels the listing's own `content_rating` allows, so a `g`
+ * listing does not show a PG-13 screenshot. On a red-capable host: that same ceiling, lifted by
+ * {@link redHostMediaCeiling} to include the viewer's opted-in levels — so a `pg13` listing's
+ * PG-13 cover shows to an anonymous viewer there exactly as it does off a red host, and an R
+ * screenshot shows only to a viewer who has opted into R.
  */
 export function listingMediaCeiling(
   audience: ListingMediaAudience,
   contentRating: string | null | undefined
 ): number {
-  if (audience.redCapable) {
-    // `allBrowsingLevelsFlag` is PG..XXX (no Blocked bit), and `effectiveBrowsingCeiling` is the
-    // shared domain ∩ viewer rule: an absent, non-finite or negative viewer level is the public
-    // floor. A `0` level is "no level" here too, not "hide everything".
-    return effectiveBrowsingCeiling(allBrowsingLevelsFlag, audience.viewerBrowsingLevel || null);
-  }
   const ratingMax = nsfwLevelFromContentRating(contentRating);
   const ratingLevels = flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
-  return sfwBrowsingLevelsFlag & ratingLevels;
+  return redHostMediaCeiling(audience, sfwBrowsingLevelsFlag & ratingLevels);
 }
 
 /** The fields `classifyGatedImageForViewer` reads. */

@@ -276,6 +276,43 @@ describe('SEAM — one shared cache, two host classes, two viewers', () => {
   });
 });
 
+// THE RED-HOST RULE through the real store reads: on a red host the media ceiling is the one the
+// non-red host applies to the same listing, UNION the viewer's opted-in levels. A red host never
+// shows less SFW media than a non-red host, and shows mature media only to a viewer who opted in.
+describe('T6 — a red host never shows less than a non-red host', () => {
+  /** A viewer who opted into PG and R but not PG-13 (5): distinct from every ceiling constant. */
+  const PG_AND_R_VIEWER = PG | R;
+
+  beforeEach(() => {
+    // A `pg13` listing: PG-13 cover, an R screenshot behind it.
+    shape = { contentRating: 'pg13', iconId: 13, coverId: 13, screenshotIds: [12] };
+  });
+
+  it('an anonymous viewer on a red host sees the PG-13 cover a non-red host shows', async () => {
+    const com = await card(false, undefined);
+    expect(com, 'positive control: the non-red host shows the PG-13 cover').toMatchObject({
+      coverUrl: 'edge:c.png@1200',
+      iconUrl: 'edge:c.png@256',
+    });
+    const red = await card(true, undefined);
+    expect(red).toMatchObject({ coverUrl: 'edge:c.png@1200', iconUrl: 'edge:c.png@256' });
+    // …and still no R screenshot for that viewer.
+    expect((await detail(true, undefined)).screenshots).toEqual([]);
+  });
+
+  it('a red-host viewer who opted into R but not PG-13 keeps the PG-13 cover and gains the R shot', async () => {
+    const d = await detail(true, PG_AND_R_VIEWER);
+    expect(d.coverUrl).toBe('edge:c.png@1200');
+    expect(d.screenshots).toEqual([{ url: 'edge:b.png@1200', caption: 'cap-0' }]);
+  });
+
+  it('a non-red host still hides the R screenshot from the same opted-in viewer (unchanged)', async () => {
+    const d = await detail(false, PG_AND_R_VIEWER);
+    expect(d.coverUrl).toBe('edge:c.png@1200');
+    expect(d.screenshots).toEqual([]);
+  });
+});
+
 describe('the two views that are NOT a per-request public audience', () => {
   beforeEach(() => {
     images.set(14, { ...scanned(14, 'd.png', PG), ingestion: 'Pending' });

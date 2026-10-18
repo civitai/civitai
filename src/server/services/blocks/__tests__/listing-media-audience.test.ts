@@ -78,16 +78,36 @@ describe('listingMediaCeiling', () => {
     expect(listingMediaCeiling({ redCapable: false }, null)).toBe(PG);
   });
 
-  it('on a red host: the viewer level, up to XXX, never Blocked, and not capped by the rating', () => {
+  // THE RED-HOST RULE: the non-red ceiling for the same listing, UNION the viewer's opted-in
+  // levels, never Blocked. Fixture viewer levels (R alone = 4, PG|R = 5, PG|R|XXX = 21) are
+  // distinct from every constant the code names (PG = 1, SFW = 3, all rated = 31).
+  it('on a red host: the non-red ceiling UNION the viewer level, up to XXX, never Blocked', () => {
+    // The viewer adds mature levels, uncapped by the listing rating…
     expect(listingMediaCeiling({ redCapable: true, viewerBrowsingLevel: PG | R | XXX }, 'g')).toBe(
       PG | R | XXX
     );
+    // …but never Blocked.
     expect(
       listingMediaCeiling({ redCapable: true, viewerBrowsingLevel: PG | R | Blocked }, 'g')
     ).toBe(PG | R);
-    // Anonymous (no level) and a nonsense 0 both read as the public floor.
-    expect(listingMediaCeiling({ redCapable: true }, 'x')).toBe(PG);
-    expect(listingMediaCeiling({ redCapable: true, viewerBrowsingLevel: 0 }, 'x')).toBe(PG);
+    // A viewer who opted into R alone still keeps what the non-red host shows (PG-13 on pg13).
+    expect(listingMediaCeiling({ redCapable: true, viewerBrowsingLevel: R }, 'pg13')).toBe(
+      PG | PG13 | R
+    );
+  });
+
+  // A red host never shows LESS than a non-red host: with no viewer level (anonymous, or not
+  // opted in) it is EXACTLY the non-red ceiling, rating cap included.
+  it.each([
+    ['g', PG],
+    ['pg13', PG | PG13],
+    ['x', PG | PG13],
+    [null, PG],
+  ])('on a red host with no viewer level, a %s listing gets the non-red ceiling', (rating, want) => {
+    expect(listingMediaCeiling({ redCapable: true }, rating)).toBe(want);
+    // A nonsense 0 is "no level" too, not "hide everything".
+    expect(listingMediaCeiling({ redCapable: true, viewerBrowsingLevel: 0 }, rating)).toBe(want);
+    expect(listingMediaCeiling({ redCapable: false }, rating)).toBe(want);
   });
 });
 

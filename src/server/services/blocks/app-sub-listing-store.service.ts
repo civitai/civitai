@@ -9,6 +9,7 @@ import {
   gatedListingIconUrl,
   isListingImageVisible,
   isModerationFlagSet,
+  redHostMediaCeiling,
   type ListingMediaImage,
 } from '~/server/services/blocks/listing-media-audience';
 import {
@@ -156,13 +157,19 @@ export function projectSubListingCard(
       : null;
   if (row.parent_kind === 'offsite' && !externalHref) return null;
   const contentRating = effectiveSubListingRating(row.parent_content_rating, row.content_rating);
-  // ONE ceiling for everything on this card: the parent's cover and icon fallback are held to the
-  // same `subListingImageCeiling` as the child's own image (viewer ∩ host ∩ this card's effective
-  // rating — the more mature of parent and child), so a fallback can never put an image on the card
-  // that the card's own image could not show. On a red host this is stricter than the parent's own
-  // store card, which is not capped by its rating there.
-  const cardCeiling = subListingImageCeiling(viewer, contentRating);
-  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], cardCeiling);
+  // The child's own image keeps its long-standing ceiling, `subListingImageCeiling` (viewer ∩
+  // host ∩ this card's effective rating — the more mature of parent and child).
+  const childCeiling = subListingImageCeiling(viewer, contentRating);
+  // The parent's cover and icon FALLBACK follow the shared listing-media red-host rule: off a red
+  // host they get exactly the ceiling the child's image gets there; on a red host, that same
+  // non-red ceiling UNION the viewer's opted-in levels (`redHostMediaCeiling`). So the fallback
+  // never shows less on a red host than off one, and shows mature parent media only to a viewer
+  // who opted into it.
+  const parentCeiling = redHostMediaCeiling(
+    { redCapable: viewer.redCapable, viewerBrowsingLevel: viewer.browsingLevel },
+    subListingImageCeiling({ ...viewer, redCapable: false }, contentRating)
+  );
+  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], parentCeiling);
   let coverUrl = parentCover;
   // The image was public when it was submitted; this re-checks it on every render, so a post
   // made private or unpublished later stops showing its image on the card.
@@ -178,7 +185,7 @@ export function projectSubListingCard(
         acceptableMinor: row.image_acceptable_minor,
         blockedFor: row.image_blocked_for,
       },
-      cardCeiling
+      childCeiling
     );
     // Anything short of `visible` (pending scan included) falls back to the parent cover.
     coverUrl = visible ? getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH }) : parentCover;
@@ -201,7 +208,7 @@ export function projectSubListingCard(
       id: row.parent_id,
       slug: row.parent_slug,
       name: row.parent_name,
-      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), cardCeiling),
+      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), parentCeiling),
     },
     ...(externalHref
       ? { runHref: externalHref, external: true as const }

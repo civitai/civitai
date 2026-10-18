@@ -23,6 +23,7 @@ import {
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
@@ -589,6 +590,9 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       postId: post.id,
       user: ctx.user,
       host: ctx.req?.headers?.host ?? '',
+      // The chip icon follows the store's listing-media rule, which on a red-capable host
+      // admits the viewer's opted-in levels on top of the non-red ceiling.
+      viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
     });
 
     return { ...post, publishedWithApp };

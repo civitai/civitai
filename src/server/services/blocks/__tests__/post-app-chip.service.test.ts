@@ -221,6 +221,40 @@ describe('both reads use the exact builders, on the right client', () => {
     });
   });
 
+  it('passes the viewer browsing level through to the icon gate', async () => {
+    // Same R icon, same red host, two viewer levels. Dropping the parameter collapses the
+    // opted-in read onto the anonymous one. Level 5 (PG|R) is distinct from every ceiling constant.
+    const withRIcon = {
+      ...approvedAppRow,
+      appBlocks: [
+        {
+          ...approvedAppRow.appBlocks[0],
+          appListing: {
+            ...approvedAppRow.appBlocks[0].appListing,
+            icon: {
+              url: 'svc-r.png',
+              nsfwLevel: 4,
+              ingestion: 'Scanned',
+              needsReview: null,
+              poi: false,
+              minor: false,
+              tosViolation: false,
+              acceptableMinor: false,
+              blockedFor: null,
+            },
+          },
+        },
+      ],
+    };
+    const read = async (viewerBrowsingLevel?: number) => {
+      markerDb({ blockPublishedAppId: MARKER });
+      dbMock.dbRead.oauthClient.findUnique.mockResolvedValue(withRIcon);
+      return readPostAppChip({ postId: POST_ID, user: USER, host: 'civitai.red', viewerBrowsingLevel });
+    };
+    expect((await read(5))?.iconUrl).toEqual(expect.stringContaining('svc-r.png'));
+    expect((await read(undefined))?.iconUrl).toBeNull();
+  });
+
   it('does not look up an app for a post with no marker', async () => {
     const findUnique = markerDb({ imageNsfwLevel: 1 });
 

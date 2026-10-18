@@ -73,6 +73,7 @@ export async function readPostAppChip({
   postId,
   user,
   host,
+  viewerBrowsingLevel,
 }: {
   postId: number;
   user?: SessionUser;
@@ -82,6 +83,11 @@ export async function readPostAppChip({
    * missing host under-links rather than over-links.
    */
   host: string;
+  /**
+   * The viewer's browsing level. On a red-capable host it lifts the chip icon's media ceiling
+   * exactly as it lifts the store card's (`listingMediaCeiling`); absent ⇒ the non-red view.
+   */
+  viewerBrowsingLevel?: number | null;
 }): Promise<PostAppChip | null> {
   try {
     // SERVER-resolved, never re-derived from the client `features` object — see
@@ -115,6 +121,7 @@ export async function readPostAppChip({
       postId,
       storeScope,
       host,
+      viewerBrowsingLevel,
       readPostMetadata: async (id) => {
         // 🔴 `getDbWithoutLag`, not a bare `dbRead` — the SAME routing
         // `getPostDetail` uses for this post. The chip's own write happens inside

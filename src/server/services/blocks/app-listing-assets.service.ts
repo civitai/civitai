@@ -2001,9 +2001,12 @@ export async function backfillListingAssets(
 
       // 1) Ensure at least one screenshot exists.
       // The COVER candidate: the first SFW-eligible screenshot, never simply the first one.
-      // The cover is the one image every host shows first, so a mature screenshot must not be
-      // promoted into it (the store's per-image gate would hide it on a non-red host anyway,
-      // leaving the card with no cover where a SFW screenshot was available).
+      // Why it matters even though the store gates every image at render: the listing's OWN card
+      // and detail fall back from a hidden cover to the first screenshot the viewer may see
+      // (`gatedListingCoverUrl`), so a mature cover there costs nothing. A sub-listing card's
+      // parent-cover fallback does NOT — it gates the stored cover with no screenshot fallback
+      // (`projectSubListingCard`) — so a mature stored cover would leave those cards coverless for
+      // every viewer who may not see it, where a SFW screenshot was available.
       let firstScreenshotImageId: number | null = hasScreenshots
         ? firstSfwEligibleScreenshotId(candidate.screenshots)
         : null;
