@@ -341,6 +341,34 @@ describe('assertNotCrossOwnerDuplicate', () => {
     expect(queryRaw).toHaveBeenCalledTimes(1);
   });
 
+  it("checks a model publish against its versions' ids, not a sub-select the planner misjudges", async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: 11 }, { id: 12 }]);
+    queryRaw.mockResolvedValue([]);
+
+    await assertNotCrossOwnerDuplicate({ modelId: MODEL_ID, ownerId: OWNER_ID });
+
+    expect(dbMock.dbWrite.modelVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { modelId: MODEL_ID } })
+    );
+    const [, ...values] = queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    const scope = values.find(
+      (v): v is { sql: string; values: unknown[] } =>
+        typeof (v as { sql?: unknown })?.sql === 'string' &&
+        (v as { sql: string }).sql.includes('"modelVersionId"')
+    );
+    expect(scope?.sql).not.toMatch(/SELECT/i);
+    expect(scope?.values).toEqual([11, 12]);
+  });
+
+  it('does not query a model with no versions', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
+
+    await expect(
+      assertNotCrossOwnerDuplicate({ modelId: MODEL_ID, ownerId: OWNER_ID })
+    ).resolves.toBeUndefined();
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['a moderator', { isModerator: true }],
     ['an official model', { ownerId: constants.system.officialUserId }],
