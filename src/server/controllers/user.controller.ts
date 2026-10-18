@@ -53,6 +53,7 @@ import type {
 import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
+  CardDecorationCosmetic,
   ContentDecorationCosmetic,
   StickerCosmetic,
   NamePlateCosmetic,
@@ -1328,6 +1329,7 @@ export const getUserCosmeticsHandler = async ({
         acc,
         {
           obtainedAt,
+          equippedAt,
           equippedToId,
           equippedToType,
           claimKey,
@@ -1344,6 +1346,8 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
+          // Worn by the user (a profile slot); `inUse` is placed on content.
+          equipped: !!equippedAt,
           equippedToId,
           equippedToType,
           entityImage: coverImages.find(
@@ -1379,6 +1383,8 @@ export const getUserCosmeticsHandler = async ({
           });
         else if (type === CosmeticType.Sticker)
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
+        else if (type === CosmeticType.CardDecoration)
+          acc.cardDecorations.push({ ...sharedData, data: data as CardDecorationCosmetic['data'] });
 
         return acc;
       },
@@ -1389,6 +1395,7 @@ export const getUserCosmeticsHandler = async ({
         profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
         contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
         sticker: [] as WithClaimKey<StickerCosmetic>[],
+        cardDecorations: [] as WithClaimKey<CardDecorationCosmetic>[],
       }
     );
 

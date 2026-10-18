@@ -1643,6 +1643,7 @@ export const getUserCosmetics = ({
         where: equipped ? { equippedAt: { not: null } } : undefined,
         select: {
           obtainedAt: true,
+          equippedAt: true,
           equippedToId: true,
           equippedToType: true,
           forId: true,

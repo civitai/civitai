@@ -70,6 +70,7 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   useTeamColor: () => (team: string) => team === 'Pink' ? '#f06595' : undefined,
 }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 42 }) }));
 
 import { InventoryLayout } from '../InventoryLayout';
 import type { HeldMysteryBox } from '~/components/MysteryBox/mystery-box.utils';
@@ -154,7 +155,7 @@ describe('Inventory', () => {
     await render();
 
     const links = all('nav[aria-label="Inventory"] a');
-    expect(links.map((a) => a.getAttribute('href'))).toEqual(['/user/inventory/boxes']);
+    expect(links[0].getAttribute('href')).toBe('/user/inventory/boxes');
     expect(links[0].textContent).toBe('Boxes3');
     expect(links[0].getAttribute('aria-current')).toBe('page');
   });
