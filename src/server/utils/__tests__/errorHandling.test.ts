@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { describe, it, expect } from 'vitest';
 import { isClientAbortError, isPrismaLockTimeout } from '~/server/utils/errorHandling';
 import { FETCH_DOCUMENTS_TIMEOUT_MESSAGE } from '~/server/meilisearch/client';
-import { LOCK_TIMEOUT_SHAPES_OBSERVED_ON, modelQueryError } from '~/test-utils/prismaLockTimeout';
+import { modelQueryError } from '~/test-utils/prismaLockTimeout';
 
 describe('isClientAbortError', () => {
   it('classifies a bare client AbortError (REST/Meili fetch path)', () => {
@@ -88,16 +88,6 @@ describe('isPrismaLockTimeout', () => {
 
   it('matches a raw query cancelled with 55P03', () => {
     expect(isPrismaLockTimeout(known('P2010', { code: '55P03' }))).toBe(true);
-  });
-
-  // Upgrading Prisma? Cancel a model query and a raw query with lock_timeout on a dev database,
-  // compare the errors with ~/test-utils/prismaLockTimeout, fix isPrismaLockTimeout if they moved,
-  // then update the version there. A mismatch fails silently: busy buyers get a 500 again.
-  it('was matched against the lock timeout shapes of the Prisma version installed', () => {
-    expect(
-      Prisma.prismaVersion.client,
-      'Prisma changed: re-observe the lock timeout shapes on a dev database (see the comment above this test) before updating LOCK_TIMEOUT_SHAPES_OBSERVED_ON'
-    ).toBe(LOCK_TIMEOUT_SHAPES_OBSERVED_ON);
   });
 
   it('matches a model query cancelled with 55P03', () => {

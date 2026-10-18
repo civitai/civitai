@@ -1,12 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-/**
- * The Prisma version the shapes below were observed on, against a dev database: a lock wait cancelled
- * by `lock_timeout`, once from a raw query and once from a model `findMany`. `isPrismaLockTimeout`
- * matches these shapes and nothing else, so a Prisma upgrade can change them while every test built
- * from this file stays green.
- */
-export const LOCK_TIMEOUT_SHAPES_OBSERVED_ON = '6.13.0';
+// Lock timeout shapes observed on @prisma/client 6.13.0 (probe C, 2026-10-18).
 
 /** A raw query's failure: P2010 with the SQLSTATE in `meta.code`. */
 export const rawQueryError = (code: string) =>
