@@ -20,7 +20,8 @@ import { recordAppListingOpen } from '~/server/services/blocks/app-listing-open.
 import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag';
 import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { isRedCapableHost, ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { Page } from '~/components/AppLayout/Page';
 import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
@@ -170,7 +171,13 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     const [page, beta, iconUrl] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
-      readListingIconBySlugForRender(slug, dbRead),
+      readListingIconBySlugForRender(slug, dbRead, {
+        redCapable: isRedCapableHost(ctx.req.headers.host),
+        viewerBrowsingLevel: getServerBrowsingLevel({
+          canViewNsfw: !!features.canViewNsfw,
+          user: session?.user,
+        }),
+      }),
     ]);
 
     // ── PRIVATE RUN — THE DELISTED/SUSPENDED FALLBACK ──────────────────────────

@@ -432,6 +432,36 @@ describe('store catalog with sub-listings, executed', () => {
     expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
   });
 
+  // T4 — the PARENT fallback goes through the same per-image gate as the parent's own card. It
+  // used to be projected raw, so a child whose own image was not cleared fell back to whatever
+  // the parent's cover was, at any level.
+  it('never falls back to a parent cover the viewer may not see — no cover instead', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2;
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 1`);
+    const card = (await page()).find((i) => i.id === CHILD_A);
+    expect(card, 'the child left the page — the cover assertion would be vacuous').toBeDefined();
+    expect(card?.coverUrl).toBeNull();
+    // The same row on a red host, for a viewer who has opted into R: the parent cover is shown.
+    const red = (await page({ redCapable: true, viewerBrowsingLevel: 7 })).find(
+      (i) => i.id === CHILD_A
+    );
+    expect(red?.coverUrl).toBe('parent-cover');
+  });
+
+  it('gates the parent ICON on a child card the same way', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "postId") VALUES (5, 'parent-icon', ${OWNER}, 4, NULL);
+      UPDATE app_listings SET icon_id = 5 WHERE id = '${PARENT}'`);
+    const iconOf = async () =>
+      ((await page()).find((i) => i.id === CHILD_A) as { parent?: { iconUrl: string | null } })
+        ?.parent?.iconUrl;
+    expect(await iconOf()).toBeNull();
+    // Positive control: the same icon at PG is shown, so the null above is the gate.
+    await holder.db.exec(`UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = 5`);
+    expect(await iconOf()).toBe('parent-icon');
+  });
+
   it('orders a parent before its children on a tied sort key', async () => {
     const all = ids(await page({}, 'popular'));
     const p = all.indexOf(PARENT);

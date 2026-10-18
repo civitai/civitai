@@ -7549,7 +7549,8 @@ export async function updateImageNsfwLevel({
       activity: activity ?? 'setNsfwLevel',
     });
     // Knights consensus locks through this branch too, but it is a vote, not a moderator's
-    // decision, so it does not move a store listing's rating.
+    // decision, so it does not move a store listing's rating. The new level still takes effect
+    // in the store: listing media is gated per image on every render (`listing-media-audience`).
     if (activity !== 'setNsfwLevelKono') {
       const { reDeriveListingRatingsForModeratedImage } = await import(
         '~/server/services/blocks/app-listing-rating-rederive.service'

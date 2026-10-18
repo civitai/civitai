@@ -3667,7 +3667,9 @@ async function applyApprovedRevision(opts: {
       // and leaves ALL manifest-governed scalars untouched. CAP-AT-APP-RATING:
       // `resolveApprovalContentRating`'s asset-floor is deliberately NOT applied here —
       // the listing rating stays the app's manifest rating; over-rated media is a
-      // mod-reject at review, never an auto-raise. The connect fields are also left
+      // mod-reject at review, never an auto-raise. If such media IS approved, the store's
+      // per-image gate (`listing-media-audience`) still keeps it off any card or gallery
+      // whose host and rating do not allow its level. The connect fields are also left
       // untouched (an onsite listing has no OAuth-connect client — always null).
       //
       // 🔴 AND THAT INCLUDES THE BETA COLUMNS, WHICH ARE **NOT** COPIED HERE — deliberately,

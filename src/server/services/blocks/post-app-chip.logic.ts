@@ -100,9 +100,15 @@
  *
  * `OauthClient.logoUrl` is dead weight — NULL for every `appblk-%` client
  * measured. The real app icon is `app_listings.icon_id → Image.url`, projected
- * through the shared `listingIconUrl` so the chip's icon is byte-identical to
- * the one the store renders for the same app. A live app has no icon at all, so
- * `iconUrl: null` is an ordinary case the UI must render gracefully.
+ * through the shared listing-media gate (`listing-media-audience`) so the chip's
+ * icon is the one a non-red host's store card renders for the same app. A live
+ * app has no icon at all, so `iconUrl: null` is an ordinary case the UI must
+ * render gracefully.
+ *
+ * 🔴 THE CHIP SHOWS THE ICON ONLY WHEN A NON-RED HOST'S STORE WOULD, ON EVERY HOST.
+ * It is decoration on a post page, not a store showcase, so it is held to the
+ * narrowest listing-media view rather than to the request host: an icon that is
+ * still scanning, flagged, or above SFW / the listing's rating renders as no icon.
  *
  * ## ⚠ THE WORDING TRAP, recorded because it already shipped once
  *
@@ -124,7 +130,13 @@
  */
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
-import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import {
+  gatedListingIconUrl,
+  listingMediaCeiling,
+  listingMediaImageSelect,
+  SFW_LISTING_MEDIA_AUDIENCE,
+  type ListingMediaImage,
+} from '~/server/services/blocks/listing-media-audience';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import { scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
@@ -275,7 +287,7 @@ export function postAppChipQuery(appId: string) {
               kind: true,
               contentRating: true,
               revisionOfId: true,
-              icon: { select: { url: true } },
+              icon: { select: listingMediaImageSelect },
             },
           },
         },
@@ -387,18 +399,38 @@ function readListingCandidate(
     slug,
     // Publisher-controlled — sanitized at the projection, see projectPostAppChip.
     name: typeof l.name === 'string' ? sanitizeAppChromeName(l.name) ?? '' : '',
-    iconUrl: listingIconUrl(
-      typeof icon === 'object' && icon !== null
-        ? {
-            url:
-              typeof (icon as { url?: unknown }).url === 'string'
-                ? (icon as { url: string }).url
-                : null,
-          }
-        : null
+    iconUrl: gatedListingIconUrl(
+      readChipIcon(icon),
+      listingMediaCeiling(
+        SFW_LISTING_MEDIA_AUDIENCE,
+        typeof l.contentRating === 'string' ? l.contentRating : null
+      )
     ),
     viewable: lifecycleOk && maturityOk,
     maturityRefused: !maturityOk,
+  };
+}
+
+/**
+ * The joined icon row → the shape the listing-media gate reads, or null. Defensive like the rest
+ * of this reader (the row is typed `unknown`): any missing or mistyped field fails CLOSED — an
+ * absent `ingestion` makes no image at all, and an absent level reads as unrated, which the gate
+ * refuses.
+ */
+function readChipIcon(icon: unknown): ListingMediaImage | null {
+  if (typeof icon !== 'object' || icon === null) return null;
+  const i = icon as Record<string, unknown>;
+  if (typeof i.url !== 'string' || typeof i.ingestion !== 'string') return null;
+  return {
+    url: i.url,
+    ingestion: i.ingestion,
+    nsfwLevel: typeof i.nsfwLevel === 'number' ? i.nsfwLevel : 0,
+    needsReview: i.needsReview == null ? null : String(i.needsReview),
+    poi: i.poi === true,
+    minor: i.minor === true,
+    tosViolation: i.tosViolation === true,
+    acceptableMinor: i.acceptableMinor === true,
+    blockedFor: i.blockedFor == null ? null : String(i.blockedFor),
   };
 }
 

@@ -5,6 +5,7 @@ import {
   readListingIconBySlugForRender,
   type ListingIconReadClient,
 } from '~/server/services/blocks/app-listing-icon.service';
+import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 
 /**
  * The render-safe listing-icon reader used by `/apps/run/<slug>`.
@@ -33,11 +34,27 @@ import {
  */
 const logToAxiom = loggingMock.logToAxiom;
 
-/** A client whose single read returns `row`. */
+/** A listing icon as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
+function scannedPgIcon(url: string | null) {
+  return {
+    url,
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+  };
+}
+
+/** A client whose single read returns `row` (a `g` listing unless the row says otherwise). */
 function clientReturning(
-  row: { icon: { url: string | null } | null } | null
+  row: { contentRating?: string | null; icon: ReturnType<typeof scannedPgIcon> | null } | null
 ): ListingIconReadClient {
-  return { appListing: { findUnique: vi.fn(async () => row) } };
+  const full = row ? { contentRating: 'g', ...row } : null;
+  return { appListing: { findUnique: vi.fn(async () => full) } };
 }
 
 /** A client whose single read rejects — the outage / missing-table / timeout shape. */
@@ -59,7 +76,7 @@ describe('readListingIconBySlugForRender', () => {
   it('projects the icon through the SHARED store projection, so the chrome and the store agree', async () => {
     const url = await readListingIconBySlugForRender(
       'my-app',
-      clientReturning({ icon: { url: 'abc-123' } })
+      clientReturning({ icon: scannedPgIcon('abc-123') })
     );
 
     // 🔴 ASSERTED AS A CDN URL DERIVED FROM THE ROW, NOT AS A LITERAL. Pinning the exact
@@ -78,13 +95,13 @@ describe('readListingIconBySlugForRender', () => {
   it.each([
     ['no such listing', null],
     ['a listing with no icon assigned', { icon: null }],
-    ['an icon row whose url is null', { icon: { url: null } }],
+    ['an icon row whose url is null', { icon: scannedPgIcon(null) }],
   ])('returns null for %s', async (_label, row) => {
     expect(await readListingIconBySlugForRender('my-app', clientReturning(row))).toBeNull();
   });
 
   it('returns null for an empty slug WITHOUT issuing a query', async () => {
-    const db = clientReturning({ icon: { url: 'abc-123' } });
+    const db = clientReturning({ icon: scannedPgIcon('abc-123') });
     expect(await readListingIconBySlugForRender('', db)).toBeNull();
     // The early return is the point: `slug` is `@unique`, and a lookup on '' is a
     // guaranteed-empty round trip on the launch path.
@@ -139,11 +156,12 @@ describe('readListingIconBySlugForRender', () => {
   });
 
   it('reads by slug — the key the run page already holds, so no extra identifier is needed', async () => {
-    const db = clientReturning({ icon: { url: 'abc-123' } });
+    const db = clientReturning({ icon: scannedPgIcon('abc-123') });
     await readListingIconBySlugForRender('my-app', db);
+    // The rating and the image's scan/level columns ride along for the per-image gate.
     expect(db.appListing.findUnique).toHaveBeenCalledWith({
       where: { slug: 'my-app' },
-      select: { icon: { select: { url: true } } },
+      select: { contentRating: true, icon: { select: listingMediaImageSelect } },
     });
   });
 });

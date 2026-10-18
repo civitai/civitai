@@ -96,6 +96,17 @@ export function isHostForColor(host: string, color: ColorDomain): boolean {
  * change the global color resolution.
  */
 
+/**
+ * True when `host` may serve mature App-Blocks content: a primary or alias of the RED domain.
+ * Fail-closed: an empty or missing host is not red-capable.
+ *
+ * The one App-Blocks "is this request red-capable?" test — the store routers, the public apps
+ * REST endpoints and the listing-media gate all call this rather than re-spelling it.
+ */
+export function isRedCapableHost(host: string | null | undefined): boolean {
+  return !!host && isHostForColor(host, 'red');
+}
+
 /** Mature content ratings (App Blocks). Everything else is SFW. */
 const MATURE_CONTENT_RATINGS = new Set(['r', 'x']);
 

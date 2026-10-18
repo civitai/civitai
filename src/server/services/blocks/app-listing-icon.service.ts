@@ -33,7 +33,14 @@
  * findable instead of presenting only as icons that quietly stopped appearing.
  */
 import { logToAxiom } from '~/server/logging/client';
-import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import {
+  gatedListingIconUrl,
+  listingMediaCeiling,
+  listingMediaImageSelect,
+  SFW_LISTING_MEDIA_AUDIENCE,
+  type ListingMediaAudience,
+  type ListingMediaImage,
+} from '~/server/services/blocks/listing-media-audience';
 
 /**
  * The narrow client shape this reader needs.
@@ -46,8 +53,8 @@ export type ListingIconReadClient = {
   appListing: {
     findUnique: (args: {
       where: { slug: string };
-      select: { icon: { select: { url: true } } };
-    }) => Promise<{ icon: { url: string | null } | null } | null>;
+      select: { contentRating: true; icon: { select: typeof listingMediaImageSelect } };
+    }) => Promise<{ contentRating: string | null; icon: ListingMediaImage | null } | null>;
   };
 };
 
@@ -77,22 +84,26 @@ function noteDegradedIconRead(err: unknown): void {
  * icon row whose `url` is null, or a read that failed. Consumers render their own
  * fallback for all four.
  *
- * The URL is built with the SHARED `listingIconUrl` projection, so this icon is
- * byte-identical to the one the store renders for the same app — which is the point. An
- * icon that differed between the store and the chrome would undermine the chrome's job of
- * telling the viewer which app they are actually looking at.
+ * The URL comes from the SHARED listing-media gate (`listing-media-audience`) with the same
+ * `audience` the store card uses, so this icon is the one the store renders for the same app
+ * and viewer — which is the point. An icon that differed between the store and the chrome would
+ * undermine the chrome's job of telling the viewer which app they are actually looking at; an icon
+ * the store would HIDE for this viewer must not appear here either, so a hidden icon is `null`.
+ * `audience` defaults to the narrowest (non-red host) view.
  */
 export async function readListingIconBySlugForRender(
   slug: string,
-  db: ListingIconReadClient
+  db: ListingIconReadClient,
+  audience: ListingMediaAudience = SFW_LISTING_MEDIA_AUDIENCE
 ): Promise<string | null> {
   if (!slug) return null;
   try {
     const row = await db.appListing.findUnique({
       where: { slug },
-      select: { icon: { select: { url: true } } },
+      select: { contentRating: true, icon: { select: listingMediaImageSelect } },
     });
-    return listingIconUrl(row?.icon);
+    if (!row) return null;
+    return gatedListingIconUrl(row.icon, listingMediaCeiling(audience, row.contentRating));
   } catch (err) {
     noteDegradedIconRead(err);
     return null;

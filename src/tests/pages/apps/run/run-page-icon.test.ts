@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
 // budget. See vitest.config.mts.
 import '~/pages/apps/run/[slug]/[[...path]]';
@@ -76,7 +77,10 @@ function respond(opts: { icon?: unknown; iconThrows?: unknown }) {
   });
 }
 
-vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
+vi.mock('~/server/utils/server-domain', () => ({
+  ratingAllowedOnHost: () => true,
+  isRedCapableHost: (host: string | null | undefined) => host === 'civitai.red',
+}));
 
 vi.mock('@mantine/core', () => ({
   Alert: () => null,
@@ -88,6 +92,21 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({ PageBlockHost: () => nu
 vi.mock('~/components/AppBlocks/useBlockToken', () => ({ useBlockToken: () => ({}) }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+/** A listing icon as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
+function scannedPgIcon(url: string | null) {
+  return {
+    url,
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+  };
+}
 
 const PAGE = {
   appBlockId: 'ab_1',
@@ -120,9 +139,38 @@ beforeEach(() => {
   respond({ icon: null });
 });
 
+// The icon goes through the listing-media gate with THIS request's host and browsing level, so an
+// R icon shows on a red host to a viewer who opted into R, and nowhere else. A page that dropped
+// either input would fall back to the narrowest view — the reader's own tests cannot see that.
+describe('run page — the icon gate gets the request host and browsing level', () => {
+  const rIcon = { contentRating: 'g', icon: { ...scannedPgIcon('icon-r-77'), nsfwLevel: 4 } };
+  const runAs = (host: string, user: unknown) => {
+    if (!capturedResolver.fn) throw new Error('resolver not captured');
+    return capturedResolver.fn({
+      features: { appBlocks: true, appBlocksPages: true, canViewNsfw: true },
+      ctx: { params: { slug: 'cool-app' }, req: { headers: { host } } },
+      session: user ? { user } : null,
+    } as never);
+  };
+  const optedIn = { id: 5, showNsfw: true, browsingLevel: 7 };
+
+  it('shows an R icon on a red host to a viewer who opted into R', async () => {
+    respond({ icon: rIcon });
+    const { iconUrl } = (await runAs('civitai.red', optedIn)).props;
+    expect(iconUrl, 'the R icon was withheld from an opted-in viewer on a red host').not.toBeNull();
+    expect(iconUrl).toContain('icon-r-77');
+  });
+
+  it('hides it on a non-red host, and from an anonymous viewer on a red host', async () => {
+    respond({ icon: rIcon });
+    expect((await runAs('civitai.com', optedIn)).props.iconUrl).toBeNull();
+    expect((await runAs('civitai.red', null)).props.iconUrl).toBeNull();
+  });
+});
+
 describe('run page — the listing icon reaches the props', () => {
   it('carries an `iconUrl` when the listing has an icon', async () => {
-    respond({ icon: { icon: { url: 'icon-key-123' } } });
+    respond({ icon: { contentRating: 'g', icon: scannedPgIcon('icon-key-123') } });
     const res = await run();
 
     // Asserted as "derived from the row", not as a literal CDN string: pinning the exact
@@ -138,7 +186,7 @@ describe('run page — the listing icon reaches the props', () => {
 
   it.each([
     ['the listing has no icon assigned', { icon: null }],
-    ['the icon row has a null url', { icon: { url: null } }],
+    ['the icon row has a null url', { contentRating: 'g', icon: scannedPgIcon(null) }],
     ['there is no listing row at all', null],
   ])('carries a null `iconUrl` when %s', async (_label, icon) => {
     respond({ icon });
@@ -151,9 +199,10 @@ describe('run page — the listing icon reaches the props', () => {
 
   it('keys the icon lookup on the SLUG and selects only the icon relation', async () => {
     await run('cool-app');
+    // Plus the listing rating and the image's scan/level columns, for the per-image gate.
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { slug: 'cool-app' },
-      select: { icon: { select: { url: true } } },
+      select: { contentRating: true, icon: { select: listingMediaImageSelect } },
     });
   });
 

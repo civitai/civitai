@@ -3,12 +3,14 @@ import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { PrismaClient } from '@prisma/client';
 import type { ListingKind, SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
-import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { LISTING_COVER_WIDTH } from '~/server/services/blocks/listing-media-url';
 import {
-  LISTING_COVER_WIDTH,
-  listingCoverUrl,
-  listingIconUrl,
-} from '~/server/services/blocks/listing-media-url';
+  gatedListingCoverUrl,
+  gatedListingIconUrl,
+  isListingImageVisible,
+  listingMediaCeiling,
+  type ListingMediaImage,
+} from '~/server/services/blocks/listing-media-audience';
 import {
   effectiveSubListingRating,
   subListingExternalHref,
@@ -39,7 +41,23 @@ type SubListingHydrateRow = {
   parent_category: string | null;
   parent_content_rating: string | null;
   parent_cover_url: string | null;
+  parent_cover_nsfw_level: number | null;
+  parent_cover_ingestion: string | null;
+  parent_cover_needs_review: string | null;
+  parent_cover_poi: boolean | null;
+  parent_cover_minor: boolean | null;
+  parent_cover_tos_violation: boolean | null;
+  parent_cover_acceptable_minor: boolean | null;
+  parent_cover_blocked_for: string | null;
   parent_icon_url: string | null;
+  parent_icon_nsfw_level: number | null;
+  parent_icon_ingestion: string | null;
+  parent_icon_needs_review: string | null;
+  parent_icon_poi: boolean | null;
+  parent_icon_minor: boolean | null;
+  parent_icon_tos_violation: boolean | null;
+  parent_icon_acceptable_minor: boolean | null;
+  parent_icon_blocked_for: string | null;
   parent_link_template: string | null;
   image_url: string | null;
   image_nsfw_level: number | null;
@@ -106,6 +124,27 @@ export function subListingImageCeiling(viewer: SubListingViewer, rating: string 
   return viewerLevel & ratingLevels & hostLevels;
 }
 
+/**
+ * One parent image (`parent_cover_*` / `parent_icon_*`) as the listing-media gate reads it, or
+ * null when the parent has none. A row with no `ingestion` (a LEFT JOIN miss) has no image.
+ */
+function parentImage(row: SubListingHydrateRow, which: 'cover' | 'icon'): ListingMediaImage | null {
+  const url = row[`parent_${which}_url` as const];
+  const ingestion = row[`parent_${which}_ingestion` as const];
+  if (!url || ingestion == null) return null;
+  return {
+    url,
+    ingestion,
+    nsfwLevel: row[`parent_${which}_nsfw_level` as const] ?? 0,
+    needsReview: row[`parent_${which}_needs_review` as const],
+    poi: row[`parent_${which}_poi` as const] === true,
+    minor: row[`parent_${which}_minor` as const] === true,
+    tosViolation: row[`parent_${which}_tos_violation` as const] === true,
+    acceptableMinor: row[`parent_${which}_acceptable_minor` as const] === true,
+    blockedFor: row[`parent_${which}_blocked_for` as const],
+  };
+}
+
 /** Null when the card has nowhere valid to link to. */
 export function projectSubListingCard(
   row: SubListingHydrateRow,
@@ -117,12 +156,19 @@ export function projectSubListingCard(
       : null;
   if (row.parent_kind === 'offsite' && !externalHref) return null;
   const contentRating = effectiveSubListingRating(row.parent_content_rating, row.content_rating);
-  const parentCover = listingCoverUrl({ url: row.parent_cover_url }, null);
+  // The parent's cover and icon go through the same per-image gate as the parent's own store card
+  // (`listing-media-audience`), held to THIS card's rating — never looser than the parent's — so
+  // the fallback cannot put an image on a child card that the child's rating would not allow.
+  const parentCeiling = listingMediaCeiling(
+    { redCapable: viewer.redCapable, viewerBrowsingLevel: viewer.browsingLevel },
+    contentRating
+  );
+  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], parentCeiling);
   let coverUrl = parentCover;
   // The image was public when it was submitted; this re-checks it on every render, so a post
   // made private or unpublished later stops showing its image on the card.
   if (row.image_url && row.image_ingestion != null && row.image_public) {
-    const verdict = classifyGatedImageForViewer(
+    const visible = isListingImageVisible(
       {
         ingestion: row.image_ingestion,
         nsfwLevel: row.image_nsfw_level ?? 0,
@@ -136,10 +182,7 @@ export function projectSubListingCard(
       subListingImageCeiling(viewer, contentRating)
     );
     // Anything short of `visible` (pending scan included) falls back to the parent cover.
-    coverUrl =
-      verdict.status !== 'visible'
-        ? parentCover
-        : getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH });
+    coverUrl = visible ? getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH }) : parentCover;
   }
   return {
     cardType: 'sub-listing',
@@ -159,7 +202,7 @@ export function projectSubListingCard(
       id: row.parent_id,
       slug: row.parent_slug,
       name: row.parent_name,
-      iconUrl: listingIconUrl({ url: row.parent_icon_url }),
+      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), parentCeiling),
     },
     ...(externalHref
       ? { runHref: externalHref, external: true as const }
@@ -186,7 +229,18 @@ export async function hydrateSubListingCards(
            al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
            al.kind AS parent_kind, al.category AS parent_category,
            al.content_rating AS parent_content_rating,
-           pc.url AS parent_cover_url, pi.url AS parent_icon_url,
+           pc.url AS parent_cover_url, pc."nsfwLevel" AS parent_cover_nsfw_level,
+           pc.ingestion::text AS parent_cover_ingestion,
+           pc."needsReview" AS parent_cover_needs_review, pc.poi AS parent_cover_poi,
+           pc.minor AS parent_cover_minor, pc."tosViolation" AS parent_cover_tos_violation,
+           pc."acceptableMinor" AS parent_cover_acceptable_minor,
+           pc."blockedFor" AS parent_cover_blocked_for,
+           pi.url AS parent_icon_url, pi."nsfwLevel" AS parent_icon_nsfw_level,
+           pi.ingestion::text AS parent_icon_ingestion,
+           pi."needsReview" AS parent_icon_needs_review, pi.poi AS parent_icon_poi,
+           pi.minor AS parent_icon_minor, pi."tosViolation" AS parent_icon_tos_violation,
+           pi."acceptableMinor" AS parent_icon_acceptable_minor,
+           pi."blockedFor" AS parent_icon_blocked_for,
            ${PARENT_LINK_TEMPLATE_SQL} AS parent_link_template,
            i.url AS image_url, i."nsfwLevel" AS image_nsfw_level,
            i.ingestion::text AS image_ingestion, i."needsReview" AS image_needs_review,
