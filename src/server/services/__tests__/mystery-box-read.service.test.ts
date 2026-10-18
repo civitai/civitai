@@ -21,6 +21,7 @@ import {
   getMysteryBoxesForEvent,
 } from '../mystery-box.service';
 import {
+  baseOddsView,
   boxOddsFor,
   revealChance,
   sharedBaseTierOdds,
@@ -287,7 +288,11 @@ beforeEach(() => {
   mocks.boxViewer.mockReset();
   mocks.boxViewer.mockResolvedValue({ team: 'Pink', playable: true });
   mocks.catalogAccess.mockReset();
-  mocks.catalogAccess.mockResolvedValue({ title: 'Birthday', teams: ['Pink', 'Blue'] });
+  mocks.catalogAccess.mockResolvedValue({
+    title: 'Birthday',
+    teams: ['Pink', 'Blue'],
+    playable: true,
+  });
 });
 
 afterAll(() => {
@@ -644,6 +649,7 @@ describe('getMysteryBoxCatalogForEvent', () => {
       { contentId: 4, tierId: RARE, team: 'Pink' },
       { contentId: 5, tierId: RARE, team: null },
     ]);
+    expect(view.teams).toEqual(['Pink', 'Blue']);
     expect(mocks.boxViewer).not.toHaveBeenCalled();
     expect(mocks.catalogAccess).toHaveBeenCalledWith(EVENT, undefined);
   });
@@ -653,25 +659,91 @@ describe('getMysteryBoxCatalogForEvent', () => {
     expect(mocks.catalogAccess).toHaveBeenCalledWith(EVENT, { id: VIEWER, isModerator: false });
   });
 
-  // Same source: the base odds shown are the odds a member of any team who owns nothing draws under.
-  it.each(['Pink', 'Blue'])(
-    'shows the odds Team %s draws under before owning anything',
-    async (team) => {
-      const [view] = await catalog();
-      const pool = await getBoxPoolForUser(dbMock.dbRead as never, {
-        boxDefinitionId: BOX,
-        userId: VIEWER,
-        team,
-      });
-      const drawnUnder = computeBoxOdds(
-        world.tiers.map(({ id, weight, sortOrder }) => ({ id, weight, sortOrder })),
-        pool
-      );
-      expect(sharedBaseTierOdds(view)?.map((t) => [t.tier.id, t.probability])).toEqual(
-        [...drawnUnder.tiers].reverse().map((t) => [t.tierId, t.probability])
-      );
-    }
-  );
+  // Same source: each team's base view holds exactly the pool a member who owns nothing draws from,
+  // and the card shows one bar only when every team's odds are the same.
+  const drawnBy = async (team: string | undefined) => {
+    const pool = await getBoxPoolForUser(dbMock.dbRead as never, {
+      boxDefinitionId: BOX,
+      userId: VIEWER,
+      team,
+    });
+    const odds = computeBoxOdds(
+      world.tiers.map(({ id, weight, sortOrder }) => ({ id, weight, sortOrder })),
+      pool
+    );
+    return { pool, tiers: [...odds.tiers].reverse().map((t) => [t.tierId, t.probability]) };
+  };
+
+  it.each(['Pink', 'Blue'])("holds Team %s's own pool in its base view", async (team) => {
+    const [view] = await catalog();
+    const { pool } = await drawnBy(team);
+    expect(baseOddsView(view, team).contents.map((c) => c.contentId)).toEqual(
+      pool.map((entry) => entry.contentId)
+    );
+  });
+
+  it('shows the odds every team draws under when they match', async () => {
+    const [view] = await catalog();
+    const pink = await drawnBy('Pink');
+    expect((await drawnBy('Blue')).tiers).toEqual(pink.tiers);
+    expect(sharedBaseTierOdds(view)?.map((t) => [t.tier.id, t.probability])).toEqual(pink.tiers);
+  });
+
+  it('shows no shared odds when a team draws under different ones', async () => {
+    // Without hat 3, Blue has nothing Common: its draw is always the shared Rare hat.
+    world.contents = world.contents.filter((c) => c.id !== 3);
+    const [view] = await catalog();
+    expect((await drawnBy('Blue')).tiers).not.toEqual((await drawnBy('Pink')).tiers);
+    expect(sharedBaseTierOdds(view)).toBeNull();
+  });
+
+  it('counts an event team with nothing of its own in the box', async () => {
+    // Green draws only the shared Rare hat, so its odds differ from Pink's and Blue's.
+    mocks.catalogAccess.mockResolvedValue({
+      title: 'B',
+      teams: ['Pink', 'Blue', 'Green'],
+      playable: true,
+    });
+    const [view] = await catalog();
+    expect(view.teams).toEqual(['Pink', 'Blue', 'Green']);
+    expect(sharedBaseTierOdds(view)).toBeNull();
+  });
+
+  it('shows the odds of an event without teams', async () => {
+    mocks.catalogAccess.mockResolvedValue({ title: 'B', teams: [], playable: true });
+    world.contents = [hat(1, COMMON), hat(2, COMMON), hat(5, RARE)];
+    const [view] = await catalog();
+    expect(sharedBaseTierOdds(view)?.map((t) => [t.tier.id, t.probability])).toEqual(
+      (await drawnBy(undefined)).tiers
+    );
+  });
+
+  it("keeps each box's price, tiers and contents to itself, in id order", async () => {
+    world.boxes.push(box(SECOND_BOX, { event: EVENT }, 7));
+    world.tiers.push(tier(SECOND_TIER, SECOND_BOX, 1, 0));
+    world.contents.push(hat(30, SECOND_TIER, undefined, SECOND_BOX));
+    world.listings.push(listing({ id: 45, itemDefinitionId: SECOND_BOX, unitAmount: 900 }));
+
+    const views = await catalog();
+
+    expect(
+      views.map((v) => ({
+        box: v.boxDefinitionId,
+        price: v.unitAmount,
+        tiers: v.tiers.map((t) => t.id),
+        contents: v.contents.map((c) => c.contentId),
+      }))
+    ).toEqual([
+      { box: BOX, price: 500, tiers: [COMMON, RARE], contents: [1, 2, 3, 4, 5] },
+      { box: SECOND_BOX, price: 900, tiers: [SECOND_TIER], contents: [30] },
+    ]);
+  });
+
+  it('shows nothing once the event is no longer playable', async () => {
+    mocks.catalogAccess.mockResolvedValue({ title: 'B', teams: ['Pink', 'Blue'], playable: false });
+    expect(await catalog()).toEqual([]);
+    expect(dbMock.dbRead.itemDefinition.findMany).not.toHaveBeenCalled();
+  });
 
   it.each([
     ['not started', { availableFrom: new Date(base + 365 * 86_400_000) }],

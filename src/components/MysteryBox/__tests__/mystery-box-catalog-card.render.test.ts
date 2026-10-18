@@ -80,12 +80,13 @@ const box = (overrides: Partial<MysteryBoxCatalogView> = {}): MysteryBoxCatalogV
     { contentId: 3, tierId: RARE, team: 'Blue' },
     { contentId: 4, tierId: RARE, team: 'Pink' },
   ],
+  teams: ['Blue', 'Pink'],
   ...overrides,
 });
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
-const render = async () => {
+const render = async (showBoxes?: boolean) => {
   await act(async () =>
     root.render(
       React.createElement(
@@ -95,6 +96,7 @@ const render = async () => {
           event: 'birthday2026',
           onJoin: vi.fn(),
           joining: false,
+          showBoxes,
         })
       )
     )
@@ -158,6 +160,11 @@ describe('the mystery box in the hat catalog', () => {
 
     expect(byTestId('box-odds-bar')).toBeNull();
     expect(byTestId('box-odds-by-team')).not.toBeNull();
+  });
+
+  it("waits to fetch the box until it's known the viewer is not on a team", async () => {
+    await render(false);
+    expect(byTestId('mystery-box-catalog-card')).toBeNull();
   });
 
   it('shows no box with the flag off', async () => {

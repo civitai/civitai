@@ -238,6 +238,40 @@ describe('mysteryBox.getCatalogForEvent hands the service the flag, the country 
   });
 });
 
+// A signed-out request is edge-cached for a minute by default, keyed by URL alone; these answers
+// depend on the visitor's country and flags.
+describe('the public box reads are never edge-cached', () => {
+  it.each([
+    [
+      'getCatalogForEvent',
+      (c: ReturnType<typeof mysteryBoxRouter.createCaller>) =>
+        c.getCatalogForEvent({ event: 'birthday2026' }),
+    ],
+    [
+      'getOddsPage',
+      (c: ReturnType<typeof mysteryBoxRouter.createCaller>) =>
+        c.getOddsPage({ boxDefinitionId: 9 }),
+    ],
+  ])('%s zeroes the signed-out edge and browser cache', async (_, call) => {
+    const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, canCache: true };
+    const signedOut = mysteryBoxRouter.createCaller({
+      acceptableOrigin: true,
+      user: null,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} } as never,
+      res: { setHeader: () => undefined } as never,
+      cache,
+      features: { mysteryBox: true } as never,
+      track: undefined,
+    } as never);
+
+    await call(signedOut);
+
+    expect(cache).toMatchObject({ edgeTTL: 0, browserTTL: 0 });
+  });
+});
+
 describe('mysteryBox.getOddsPage hands the service the flag, the country and the viewer', () => {
   beforeEach(() => mockOddsPage.mockClear());
 

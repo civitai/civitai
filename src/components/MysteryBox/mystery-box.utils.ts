@@ -13,6 +13,9 @@ export type MysteryBoxCatalogView = RouterOutput['mysteryBox']['getCatalogForEve
 export type OddsContent = Pick<MysteryBoxContent, 'contentId' | 'tierId' | 'left'>;
 type OddsView<C extends OddsContent> = { tiers: MysteryBoxTier[]; contents: C[] };
 
+/** What a box says about itself when it has no description. */
+export const MYSTERY_BOX_FALLBACK_DESCRIPTION = "1 random hat you don't own yet.";
+
 /** Rarity colours for a tier with none of its own, rarest last. */
 const FALLBACK_TIER_COLORS = ['#9ca3af', '#22c55e', '#3b82f6', '#f59e0b'];
 
@@ -154,8 +157,13 @@ export function baseOddsView<C extends { team: string | null }>(
  * The tier odds every team has before it owns anything, or null when they differ by team (a team
  * with nothing in some tier). For a viewer not on a team, who can't be shown their own.
  */
-export function sharedBaseTierOdds(box: Pick<MysteryBoxCatalogView, 'tiers' | 'contents'>) {
-  const teams = [...new Set(box.contents.flatMap((c) => (c.team ? [c.team] : [])))];
+export function sharedBaseTierOdds(
+  box: Pick<MysteryBoxCatalogView, 'tiers' | 'contents' | 'teams'>
+) {
+  // The event's teams too: a team with nothing of its own in the box draws the shared contents only.
+  const teams = [
+    ...new Set([...box.teams, ...box.contents.flatMap((c) => (c.team ? [c.team] : []))]),
+  ];
   const perTeam = (teams.length ? teams : [undefined]).map((team) =>
     tierSummaries(baseOddsView(box, team))
   );

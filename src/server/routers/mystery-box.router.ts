@@ -14,6 +14,7 @@ import {
   getMysteryBoxesForEvent,
   openMysteryBox,
 } from '~/server/services/mystery-box.service';
+import { noEdgeCache } from '~/server/middleware.trpc';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { mysteryBoxViewer, publicMysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -23,14 +24,16 @@ export const mysteryBoxRouter = router({
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getEventMysteryBoxesInput)
     .query(({ input, ctx }) => getMysteryBoxesForEvent({ ...input, ...mysteryBoxViewer(ctx) })),
-  // Per viewer (flag, country, event access): never edge-cache.
+  // Per viewer (flag, country, event access): a signed-out answer is otherwise edge-cached by URL.
   getOddsPage: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
+    .use(noEdgeCache())
     .input(getMysteryBoxOddsPageInput)
     .query(({ input, ctx }) => getMysteryBoxOddsPage({ ...input, ...publicMysteryBoxViewer(ctx) })),
-  // For a viewer not on a team, signed in or not. Per viewer like the odds page: never edge-cache.
+  // For a viewer not on a team, signed in or not. Per viewer, like the odds page.
   getCatalogForEvent: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
+    .use(noEdgeCache())
     .input(getEventMysteryBoxesInput)
     .query(({ input, ctx }) =>
       getMysteryBoxCatalogForEvent({ ...input, ...publicMysteryBoxViewer(ctx) })

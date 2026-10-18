@@ -478,8 +478,11 @@ export async function buildMysteryBoxView(
   };
 }
 
-/** Which published listing of each box is on sale now (stock, then its sale window). */
-async function readBoxListingsOnSale(boxIds: number[]) {
+/**
+ * The published listings of these boxes, and which of a box's is on sale now (stock, then its sale
+ * window).
+ */
+export async function readBoxListings(boxIds: number[]) {
   const listings = await dbRead.cosmeticShopItem.findMany({
     where: { itemDefinitionId: { in: boxIds }, status: CosmeticShopItemStatus.Published },
     select: {
@@ -498,13 +501,27 @@ async function readBoxListingsOnSale(boxIds: number[]) {
     listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
   );
   const now = new Date();
-  return (boxId: number) =>
+  const onSale = (boxId: number) =>
     listings.find(
       (l) => l.itemDefinitionId === boxId && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
     );
+  return { listings, onSale };
 }
 
-export type MysteryBoxCatalogView = {
+/** An event's boxes in these statuses, in id order. */
+function readEventBoxes(event: string, statuses: string[]) {
+  return dbRead.itemDefinition.findMany({
+    where: {
+      type: ITEM_TYPE.box,
+      status: { in: statuses },
+      params: { path: ['event'], equals: event },
+    },
+    select: BOX_DEFINITION_SELECT,
+    orderBy: { id: 'asc' },
+  });
+}
+
+export type MysteryBoxCatalogEntry = {
   boxDefinitionId: number;
   name: string;
   description: string | null;
@@ -513,12 +530,15 @@ export type MysteryBoxCatalogView = {
   tiers: MysteryBoxView['tiers'];
   /** Every enabled content with the team it is for; each team draws only from its own. */
   contents: { contentId: number; tierId: number; team: string | null }[];
+  /** The event's teams, including any with nothing of its own in the box. */
+  teams: string[];
 };
 
 /**
  * An event's mystery boxes on sale now, for a viewer not on a team (signed out, or not joined): the
  * box and its contents by tier, for base odds. It reads no team, so it places no one and shows no
- * pool of anyone's; the odds page's gates apply (flag, country, the event open to them).
+ * pool of anyone's; the odds page's gates apply (flag, country, the event open to them), and the
+ * event must be playable, as it must for a team member to be offered the box.
  */
 export async function getMysteryBoxCatalogForEvent({
   event,
@@ -530,25 +550,18 @@ export async function getMysteryBoxCatalogForEvent({
   viewer: EventViewer;
   mysteryBoxEnabled: boolean | undefined;
   countryCode: string | null | undefined;
-}): Promise<MysteryBoxCatalogView[]> {
+}): Promise<MysteryBoxCatalogEntry[]> {
   if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
-  if (!(await getEventBoxCatalogAccess(event, viewer))) return [];
+  const access = await getEventBoxCatalogAccess(event, viewer);
+  if (!access?.playable) return [];
 
-  const boxes = await dbRead.itemDefinition.findMany({
-    where: {
-      type: ITEM_TYPE.box,
-      status: ITEM_DEFINITION_STATUS.published,
-      params: { path: ['event'], equals: event },
-    },
-    select: BOX_DEFINITION_SELECT,
-    orderBy: { id: 'asc' },
-  });
+  const boxes = await readEventBoxes(event, [ITEM_DEFINITION_STATUS.published]);
   if (!boxes.length) return [];
   const boxIds = boxes.map((box) => box.id);
-  const [onSale, tiers] = await Promise.all([readBoxListingsOnSale(boxIds), getBoxTiers(boxIds)]);
+  const [{ onSale }, tiers] = await Promise.all([readBoxListings(boxIds), getBoxTiers(boxIds)]);
 
   const views = await Promise.all(
-    boxes.map(async (box): Promise<MysteryBoxCatalogView | null> => {
+    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
       const listing = onSale(box.id);
       if (!listing) return null;
       const catalog = await getBoxCatalogForDisplay(box);
@@ -565,10 +578,11 @@ export async function getMysteryBoxCatalogForEvent({
           tierId,
           team: team ?? null,
         })),
+        teams: [...access.teams],
       };
     })
   );
-  return views.filter((view): view is MysteryBoxCatalogView => view !== null);
+  return views.filter((view): view is MysteryBoxCatalogEntry => view !== null);
 }
 
 /**
@@ -595,20 +609,12 @@ export async function getMysteryBoxesForEvent({
   if (!viewer) return [];
   const { team, playable } = viewer;
 
-  const boxes = await dbRead.itemDefinition.findMany({
-    where: {
-      type: ITEM_TYPE.box,
-      status: { in: SHOWN_BOX_STATUSES },
-      params: { path: ['event'], equals: event },
-    },
-    select: BOX_DEFINITION_SELECT,
-    orderBy: { id: 'asc' },
-  });
+  const boxes = await readEventBoxes(event, SHOWN_BOX_STATUSES);
   if (!boxes.length) return [];
   const boxIds = boxes.map((box) => box.id);
 
-  const [onSale, held, tiers] = await Promise.all([
-    readBoxListingsOnSale(boxIds),
+  const [{ onSale }, held, tiers] = await Promise.all([
+    readBoxListings(boxIds),
     listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
     getBoxTiers(boxIds),
   ]);

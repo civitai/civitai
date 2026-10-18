@@ -4,6 +4,7 @@ import { MysteryBoxArt } from '~/components/MysteryBox/MysteryBoxArt';
 import { MysteryBoxOddsBar } from '~/components/MysteryBox/MysteryBoxOddsBar';
 import type { MysteryBoxCatalogView } from '~/components/MysteryBox/mystery-box.utils';
 import {
+  MYSTERY_BOX_FALLBACK_DESCRIPTION,
   mysteryBoxOddsPageUrl,
   sharedBaseTierOdds,
 } from '~/components/MysteryBox/mystery-box.utils';
@@ -44,7 +45,7 @@ export function MysteryBoxCatalogCard({ box }: { box: MysteryBoxCatalogView }) {
           {box.name}
         </Text>
         <Text size="sm" c="dimmed">
-          {box.description ?? "1 random hat you don't own yet."}
+          {box.description ?? MYSTERY_BOX_FALLBACK_DESCRIPTION}
         </Text>
         {odds ? (
           <MysteryBoxOddsBar tiers={odds} />

@@ -18,14 +18,17 @@ export function HatCatalogPreview({
   event,
   onJoin,
   joining,
+  showBoxes = true,
 }: {
   event: string;
   onJoin: () => void;
   joining: boolean;
+  /** False while it isn't yet known that the viewer is not on a team. */
+  showBoxes?: boolean;
 }) {
   const teamColor = useTeamColor();
   const { data: designs } = trpc.event.getHatCatalog.useQuery({ event });
-  const boxes = useEventMysteryBoxCatalog(event);
+  const boxes = useEventMysteryBoxCatalog(event, showBoxes);
   if (!designs?.length) return null;
   const teamCount = Math.max(...designs.map((d) => d.hats.length));
 

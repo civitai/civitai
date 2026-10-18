@@ -16,13 +16,13 @@ export function useEventMysteryBoxes(event: string) {
 
 /**
  * An event's mystery boxes on sale, with base odds, for a viewer not on a team (signed out, or not
- * joined). Fetches nothing with the `mysteryBox` flag off.
+ * joined). Fetches nothing with the `mysteryBox` flag off, or until `enabled`.
  */
-export function useEventMysteryBoxCatalog(event: string) {
+export function useEventMysteryBoxCatalog(event: string, enabled = true) {
   const features = useOptionalFeatureFlags();
   const { data } = trpc.mysteryBox.getCatalogForEvent.useQuery(
     { event },
-    { enabled: !!features?.mysteryBox }
+    { enabled: enabled && !!features?.mysteryBox }
   );
   return data ?? [];
 }
