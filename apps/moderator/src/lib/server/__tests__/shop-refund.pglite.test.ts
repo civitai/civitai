@@ -96,6 +96,8 @@ const SHELF_LISTING = 12;
 
 let db: PGlite;
 let statements: { sql: string; params: unknown[] }[];
+/** Which acquired connection ran each statement, by index into `statements`. */
+let statementConnections: number[];
 /** Runs once, straight after the service's first statement (its read of the purchase). */
 let afterFirstStatement: (() => Promise<unknown>) | null;
 /** Calls the service made to the main app, and how the main app answers them. */
@@ -118,10 +120,12 @@ beforeEach(async () => {
   `);
 
   statements = [];
+  statementConnections = [];
   afterFirstStatement = null;
   const recording = {
     query: async (sql: string, params: unknown[]) => {
       statements.push({ sql, params });
+      statementConnections.push(activeConnection);
       const result = await db.query(sql, params);
       const hook = afterFirstStatement;
       afterFirstStatement = null;
@@ -129,7 +133,33 @@ beforeEach(async () => {
       return result;
     },
   } as unknown as PGlite;
-  dbHandle.current = new Kysely({ dialect: pgliteDialect(recording) });
+  // PGlite is one connection, so every query shares it, a transaction's and a stray `dbWrite` alike.
+  // Each acquire gets its own id here, so a test can tell which statements a transaction ran.
+  const base = pgliteDialect(recording);
+  let acquired = 0;
+  let activeConnection = 0;
+  dbHandle.current = new Kysely({
+    dialect: {
+      ...base,
+      createDriver: () => {
+        const driver = base.createDriver();
+        return {
+          ...driver,
+          async acquireConnection() {
+            const conn = await driver.acquireConnection();
+            const id = ++acquired;
+            return {
+              executeQuery: (query) => {
+                activeConnection = id;
+                return conn.executeQuery(query);
+              },
+              streamQuery: (query, chunk) => conn.streamQuery(query, chunk),
+            };
+          },
+        };
+      },
+    },
+  });
   recordModActivity.mockClear();
   bustUserCosmeticCaches.mockClear();
   logAxiomError.mockClear();
@@ -486,14 +516,22 @@ describe('a take-back of something equipped refreshes the main app', () => {
 describe('moderator grants take the item holder lock', () => {
   const lockedTransactions = () =>
     statements.flatMap((s, i) => (s.sql === 'begin' ? [statements[i + 1]] : []));
-  // The first word of each statement inside each transaction: the grant must be inside the lock's.
+  // The first word of each statement each transaction's connection ran: the grant must be inside the
+  // lock's transaction, not beside it on another connection.
   const transactions = () =>
-    statements
-      .map((s) => s.sql.trim().split(/\s+/)[0].toLowerCase())
-      .join(' ')
-      .split('begin ')
-      .slice(1)
-      .map((t) => t.split(' commit')[0].split(' '));
+    statements.flatMap((s, i) => {
+      if (s.sql !== 'begin') return [];
+      const conn = statementConnections[i];
+      const end = statements.findIndex(
+        (t, j) => j > i && t.sql === 'commit' && statementConnections[j] === conn
+      );
+      return [
+        statements
+          .slice(i + 1, end)
+          .filter((_, k) => statementConnections[i + 1 + k] === conn)
+          .map((t) => t.sql.trim().split(/\s+/)[0].toLowerCase()),
+      ];
+    });
 
   it('a single grant locks the user before inserting', async () => {
     await expect(
