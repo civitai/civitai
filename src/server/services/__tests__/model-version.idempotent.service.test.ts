@@ -363,6 +363,18 @@ describe('mergeVersions file remaps', () => {
     );
     expect(fileUpdateMany).not.toHaveBeenCalled();
   });
+
+  it('still applies other type changes on a trained version', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ modelVersion: { uploadType: 'Trained', trainingStatus: 'Approved' } }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Pruned Model' }])).rejects.toThrow(PAST_REMAP);
+    expect(fileUpdateMany).toHaveBeenCalledWith({
+      where: { id: FILE, ...inMerge },
+      data: { type: 'Pruned Model' },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
