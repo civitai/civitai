@@ -4,3 +4,9 @@
  * path takes it.
  */
 export const ITEM_HOLDER_LOCK_CLASS = 0x49480001;
+
+/**
+ * How long `lockItemHolder` waits before Postgres cancels with `55P03`. Set for the rest of the
+ * transaction, so it also bounds every later lock wait in it.
+ */
+export const ITEM_HOLDER_LOCK_TIMEOUT = '2s';

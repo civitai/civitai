@@ -397,12 +397,12 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await purchase();
 
-    // The sale counter also goes through executeRaw, so count only the lock.
-    const locks = mocks.executeRaw.mock.calls.filter(([strings]) =>
-      (strings as string[]).join('').includes('pg_advisory_xact_lock')
+    // The sale counter and the lock's own timeout also go through executeRaw, so find the lock.
+    const lockAt = mocks.executeRaw.mock.calls.flatMap(([strings], i) =>
+      (strings as string[]).join('').includes('pg_advisory_xact_lock') ? [i] : []
     );
-    expect(locks).toHaveLength(1);
-    const [sql, lockClass, lockedUser] = mocks.executeRaw.mock.calls[0] as [
+    expect(lockAt).toHaveLength(1);
+    const [sql, lockClass, lockedUser] = mocks.executeRaw.mock.calls[lockAt[0]] as [
       readonly string[],
       number,
       number
@@ -410,7 +410,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(sql.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
     expect(lockClass).toBe(ITEM_HOLDER_LOCK_CLASS);
     expect(lockedUser).toBe(BUYER_ID);
-    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.executeRaw.mock.invocationCallOrder[lockAt[0]]).toBeLessThan(
       mocks.userCosmeticCreate.mock.invocationCallOrder[0]
     );
   });

@@ -26,6 +26,7 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
           return holderLock(...a);
         }
         if (isSaleCount(a)) return saleCount({ tx, committed: [...committed] }, ...a);
+        if (isLockTimeout(a)) return 0;
         return executeRaw(...a);
       },
       userCosmetic: {
@@ -63,11 +64,14 @@ const executeRaw = vi.fn();
 const holderLock = vi.fn();
 const isHolderLock = (a: unknown[]) =>
   (a[0] as readonly string[]).join('').includes('pg_advisory_xact_lock');
-// The listing's sale counter and its lock timeout (cosmetic-shop-sale-count.ts), kept apart from the
-// grants; called with `{ tx, committed }` first.
+// The listing's sale counter (cosmetic-shop-sale-count.ts), kept apart from the grants; called with
+// `{ tx, committed }` first.
 const saleCount = vi.fn();
 const isSaleCount = (a: unknown[]) =>
-  /UPDATE "CosmeticShopItem"|set_config\('lock_timeout'/.test((a[0] as readonly string[]).join(''));
+  (a[0] as readonly string[]).join('').includes('UPDATE "CosmeticShopItem"');
+// The sale count and the grant lock both set one first; neither is a grant.
+const isLockTimeout = (a: unknown[]) =>
+  (a[0] as readonly string[]).join('').includes("set_config('lock_timeout'");
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 const createManyComponents = vi.fn();
 const createManyUserCosmetic = vi.fn();

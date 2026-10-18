@@ -28,7 +28,7 @@ import {
   listHeldItems,
 } from '~/server/services/item.service';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
-import { lockItemHolder } from '~/server/services/item-holder-lock';
+import { ITEM_HOLDER_BUSY_MESSAGE, lockItemHolder } from '~/server/services/item-holder-lock';
 import {
   assertConfirmedPrice,
   beginShopPurchase,
@@ -44,7 +44,12 @@ import {
   runPurchaseChecks,
   shopPurchaseTransactionId,
 } from '~/server/services/shop-purchase-charge';
-import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  isPrismaLockTimeout,
+  isPrismaUniqueViolation,
+  throwBadRequestError,
+  throwRateLimitError,
+} from '~/server/utils/errorHandling';
 import { createKeyedTtlMemo, createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -786,43 +791,49 @@ export async function purchaseMysteryBox({
     ? await runPurchaseChecks(pendingClaim, () => getEventBuyerTeam(event, userId))
     : undefined;
 
-  const claim = await dbWrite.$transaction(async (tx) => {
-    await lockItemHolder(tx, userId);
-    // A request with the same key that claimed while this one was on its way here: its purchase
-    // was checked when it claimed, and resuming it answers 'already completed' once it is paid.
-    const sameKeyClaim = existingClaim ? null : await findShopPurchaseClaim(transactionId, tx);
-    if (!chargedBefore && !sameKeyClaim)
-      await runPurchaseChecks(pendingClaim, async () => {
-        await assertBoxSellable(tx, box.id);
-        const left = (await getBoxPoolForUser(tx, { boxDefinitionId: box.id, userId, team }))
-          .length;
-        const held = await countHeldItems(tx, { itemDefinitionId: box.id, userId });
-        const listings = await tx.cosmeticShopItem.findMany({
-          where: { itemDefinitionId: box.id },
-          select: { id: true },
+  const claim = await dbWrite
+    .$transaction(async (tx) => {
+      await lockItemHolder(tx, userId);
+      // A request with the same key that claimed while this one was on its way here: its purchase
+      // was checked when it claimed, and resuming it answers 'already completed' once it is paid.
+      const sameKeyClaim = existingClaim ? null : await findShopPurchaseClaim(transactionId, tx);
+      if (!chargedBefore && !sameKeyClaim)
+        await runPurchaseChecks(pendingClaim, async () => {
+          await assertBoxSellable(tx, box.id);
+          const left = (await getBoxPoolForUser(tx, { boxDefinitionId: box.id, userId, team }))
+            .length;
+          const held = await countHeldItems(tx, { itemDefinitionId: box.id, userId });
+          const listings = await tx.cosmeticShopItem.findMany({
+            where: { itemDefinitionId: box.id },
+            select: { id: true },
+          });
+          const pending = await countPendingShopPurchaseClaims(tx, {
+            userId,
+            shopItemIds: listings.map((listing) => listing.id),
+            exceptTransactionId: transactionId,
+            since: new Date(Date.now() - PENDING_CLAIM_RESERVES_MS),
+          });
+          if (left <= held + pending)
+            throw throwBadRequestError(
+              held + pending > 0
+                ? 'Your unopened boxes already cover everything left in this box'
+                : "You've collected everything in this box"
+            );
         });
-        const pending = await countPendingShopPurchaseClaims(tx, {
-          userId,
-          shopItemIds: listings.map((listing) => listing.id),
-          exceptTransactionId: transactionId,
-          since: new Date(Date.now() - PENDING_CLAIM_RESERVES_MS),
-        });
-        if (left <= held + pending)
-          throw throwBadRequestError(
-            held + pending > 0
-              ? 'Your unopened boxes already cover everything left in this box'
-              : "You've collected everything in this box"
-          );
-      });
-    // Committed with the checks above, before the lock is released: a competing purchase waiting on
-    // the lock then counts it as pending.
-    return claimShopPurchaseUnderLock(
-      tx,
-      claimContext(shopItem.unitAmount),
-      existingClaim ?? sameKeyClaim,
-      expectedUnitAmount
-    );
-  });
+      // Committed with the checks above, before the lock is released: a competing purchase waiting on
+      // the lock then counts it as pending.
+      return claimShopPurchaseUnderLock(
+        tx,
+        claimContext(shopItem.unitAmount),
+        existingClaim ?? sameKeyClaim,
+        expectedUnitAmount
+      );
+    })
+    .catch((error) => {
+      // Rolled back before the charge, so trying again is safe.
+      if (isPrismaLockTimeout(error)) throw throwRateLimitError(ITEM_HOLDER_BUSY_MESSAGE, error);
+      throw error;
+    });
 
   const unitAmount = claim.amount;
   const chargeContext = { shopItemId, userId, transactionId, amount: unitAmount };
@@ -1078,6 +1089,7 @@ export async function openMysteryBox({
       // unreachable. Nothing committed, so the box is still held.
       if (isPrismaUniqueViolation(error))
         throw throwBadRequestError('This box could not be opened. Please try again.');
+      if (isPrismaLockTimeout(error)) throw throwRateLimitError(ITEM_HOLDER_BUSY_MESSAGE, error);
       throw error;
     });
 

@@ -77,6 +77,18 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
 }
 
+/**
+ * True when a raw query was cancelled by `lock_timeout` (Postgres `55P03`): Prisma reports it as a
+ * raw-query failure (P2010) carrying the Postgres code in `meta.code`.
+ */
+export function isPrismaLockTimeout(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2010' &&
+    (error.meta as { code?: unknown } | undefined)?.code === '55P03'
+  );
+}
+
 /** Is this specific object a database driver's own error? */
 function isDriverError(e: unknown): e is Error {
   return (

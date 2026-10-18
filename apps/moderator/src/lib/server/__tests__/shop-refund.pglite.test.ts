@@ -96,6 +96,8 @@ const SHELF_LISTING = 12;
 
 let db: PGlite;
 let statements: { sql: string; params: unknown[] }[];
+// Every item holder lock waits at most this long, set before it so the lock wait is bounded too.
+const LOCK_TIMEOUT = { sql: "SELECT set_config('lock_timeout', $1, true)", params: ['2s'] };
 /** Which acquired connection ran each statement, by index into `statements`. */
 let statementConnections: number[];
 /** Runs once, straight after the service's first statement (its read of the purchase). */
@@ -335,11 +337,17 @@ describe('refundShopPurchase: a mystery box', () => {
 
     const begin = statements.findIndex((s) => s.sql === 'begin');
     expect(begin).toBeGreaterThan(-1);
-    expect(statements[begin + 1]).toEqual({
-      sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)',
-      // The literal, not the shared constant: the main app locks under this number too.
-      params: [1229455361, BUYER],
-    });
+    expect(statements.slice(begin + 1, begin + 3)).toEqual([
+      LOCK_TIMEOUT,
+      {
+        sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)',
+        // The literal, not the shared constant: the main app locks under this number too.
+        params: [1229455361, BUYER],
+      },
+    ]);
+    // Set for the transaction only: the pooled connection goes back without it.
+    const [{ lock_timeout }] = (await db.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows;
+    expect(lock_timeout).toBe('0');
   });
 });
 
@@ -517,7 +525,7 @@ describe('a take-back of something equipped refreshes the main app', () => {
 
 describe('moderator grants take the item holder lock', () => {
   const lockedTransactions = () =>
-    statements.flatMap((s, i) => (s.sql === 'begin' ? [statements[i + 1]] : []));
+    statements.flatMap((s, i) => (s.sql === 'begin' ? [statements.slice(i + 1, i + 3)] : []));
   // The leading keyword of each statement a transaction's own connection ran, so the grant is shown
   // inside the lock's transaction, not beside it.
   const transactions = () =>
@@ -540,9 +548,12 @@ describe('moderator grants take the item holder lock', () => {
       grantCosmetic({ userId: BUYER, cosmeticId: 700, moderatorId: MOD })
     ).resolves.toEqual({ ok: true });
     expect(lockedTransactions()).toEqual([
-      { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
+      [
+        LOCK_TIMEOUT,
+        { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
+      ],
     ]);
-    expect(transactions()).toEqual([['select', 'insert']]);
+    expect(transactions()).toEqual([['select', 'select', 'insert']]);
     expect(await holdings()).toEqual([{ userId: BUYER, cosmeticId: 700, claimKey: 'claimed' }]);
   });
 
@@ -552,12 +563,18 @@ describe('moderator grants take the item holder lock', () => {
     await grantCosmeticsToUsers({ cosmeticIds: [700], userIds: [BUYER, OTHER] });
 
     expect(lockedTransactions()).toEqual([
-      { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
-      { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, OTHER] },
+      [
+        LOCK_TIMEOUT,
+        { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
+      ],
+      [
+        LOCK_TIMEOUT,
+        { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, OTHER] },
+      ],
     ]);
     expect(transactions()).toEqual([
-      ['select', 'insert'],
-      ['select', 'insert'],
+      ['select', 'select', 'insert'],
+      ['select', 'select', 'insert'],
     ]);
     expect(await holdings()).toEqual([
       { userId: BUYER, cosmeticId: 700, claimKey: 'claimed' },

@@ -9,6 +9,7 @@ import { hSetWithTTL, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
+import { ITEM_HOLDER_BUSY_MESSAGE } from '~/server/services/item-holder-lock';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
 import { resolveClientIp } from '~/server/utils/client-ip';
@@ -335,7 +336,7 @@ export const itemHolderInFlightLimit = inFlightLimit({
   limit: 2,
   ttlMs: 60_000,
   acquireTimeoutMs: 500,
-  errorMessage: 'Your last purchase or box opening is still processing. Try again in a moment.',
+  errorMessage: ITEM_HOLDER_BUSY_MESSAGE,
 });
 
 export type EdgeCacheItProps = {

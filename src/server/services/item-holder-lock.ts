@@ -1,7 +1,11 @@
 import type { Prisma } from '@prisma/client';
-import { ITEM_HOLDER_LOCK_CLASS } from '@civitai/shared/item-holder-lock';
+import { ITEM_HOLDER_LOCK_CLASS, ITEM_HOLDER_LOCK_TIMEOUT } from '@civitai/shared/item-holder-lock';
 
 export { ITEM_HOLDER_LOCK_CLASS };
+
+/** What a buyer sees when their previous purchase or box opening still holds their lock. */
+export const ITEM_HOLDER_BUSY_MESSAGE =
+  'Your last purchase or box opening is still processing. Try again in a moment.';
 
 /**
  * Serialises everything that grants a cosmetic to one user or reads what they own to decide a
@@ -11,8 +15,14 @@ export { ITEM_HOLDER_LOCK_CLASS };
  *
  * Mutual exclusion only between callers that take it, so every such grant path must. Call inside
  * the grant transaction; the lock is released when it ends.
+ *
+ * Gives up after `ITEM_HOLDER_LOCK_TIMEOUT` with `55P03` (`isPrismaLockTimeout`). Prisma's
+ * transaction timeout does not cancel a statement that is waiting, so without it a waiter would hold
+ * its pooled connection, and any row it already locked, for as long as the role's own `lock_timeout`
+ * allows. The timeout stays set for the rest of the transaction.
  */
 export async function lockItemHolder(tx: Prisma.TransactionClient, userId: number) {
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${ITEM_HOLDER_LOCK_TIMEOUT}, true)`;
   // Both arguments int4: Prisma binds a JS number as int8, and there is no (int4, int8) overload.
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ITEM_HOLDER_LOCK_CLASS}::int, ${userId}::int)`;
 }
