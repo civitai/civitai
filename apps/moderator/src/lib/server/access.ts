@@ -191,6 +191,7 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/comics-review', label: 'Comics Review' },
+  { path: '/audio-review', label: 'Audio Review' },
   // Not `informational`: this is a queue somebody works through, so it belongs in the dashboard's
   // "needs attention" total — unlike the stuck-scan counts beside it.
   // One grant covers the queue and its per-report page (`/feedback/<id>`), which resolves here by

@@ -3,6 +3,7 @@ import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
 export enum FLIPT_FEATURE_FLAGS {
+  POSTED_AUDIO_MODERATION = 'posted-audio-moderation',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
