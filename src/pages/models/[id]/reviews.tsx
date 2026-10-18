@@ -39,6 +39,10 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  getModelReviewsCanonical,
+  getModelReviewsRedirect,
+} from '~/components/ResourceReview/model-reviews-url';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { ResourceReviewPagedModel } from '~/types/router';
@@ -51,19 +55,17 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { id: string };
+
+    // Redirect near-duplicate review URLs (review dialogs, stray reviewId, escaped-`&` loops, a
+    // malformed version param) to the clean reviews page. Runs before the query is validated so a
+    // malformed version param is redirected rather than 404'd.
+    if (/^\d+$/.test(params.id ?? '')) {
+      const destination = getModelReviewsRedirect(Number(params.id), ctx.query);
+      if (destination) return { redirect: { destination, permanent: true } };
+    }
+
     const result = getResourceReviewPagedSchema.safeParse({ modelId: params.id, ...ctx.query });
     if (!result.success) return { notFound: true };
-
-    // Redirect resourceReview dialog URLs to the clean reviews page
-    if (ctx.query.dialog === 'resourceReview') {
-      const { modelVersionId } = result.data;
-      const destination = `/models/${params.id}/reviews${
-        modelVersionId ? `?modelVersionId=${modelVersionId}` : ''
-      }`;
-      return {
-        redirect: { destination, permanent: true },
-      };
-    }
 
     const { modelId, modelVersionId } = result.data;
 
@@ -203,7 +205,7 @@ export default function ModelReviews() {
       <Meta
         title={`${model?.name} Reviews | Rated ${ratingAverage} Stars by ${ratingCount} Users on Civitai`}
         description={`Explore user reviews of the ${model?.name} AI model on Civitai, rated ${ratingAverage} stars by ${ratingCount} users, and see how it has helped others bring their creative visions to life`}
-        canonical={`/models/${modelId}/reviews?modelVersionId=${modelVersionId}`}
+        canonical={getModelReviewsCanonical(modelId, modelVersionId)}
       />
       <Container size="xl">
         <ContainerGrid2 gutter={48}>
