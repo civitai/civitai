@@ -91,9 +91,23 @@ export const FeatureFlagsProvider = ({
   );
 
   // Bridge the resolved `trpcBatching` flag to the module-scope tRPC terminating
-  // link (which can't read a hook). Runs client-side only; until this fires the
-  // link stays unbatched (dark default), so anon + early-hydration queries never
-  // batch. See `shouldBatch` in `~/utils/trpc`.
+  // link (which can't read a hook). See `shouldBatch` in `~/utils/trpc`.
+  //
+  // Set DURING RENDER, not only in an effect: React runs child effects before
+  // parent effects, and React Query starts a mounted query's fetch from the
+  // child's effect. An effect here therefore fired after every query in the
+  // first commit had already gone out unbatched — the flag only reached
+  // queries mounted later. Setting it while rendering means it is in place
+  // before any descendant mounts. Anonymous sessions still never batch:
+  // `shouldBatch` also requires `isAuthedBrowser()`.
+  //
+  // Browser only. On the server this module flag would be shared by every
+  // concurrent request (and `queryRetry` reads it), so it must not be set there.
+  if (typeof window !== 'undefined') {
+    setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
+  }
+  // Re-applies the committed value, so a render React discards without
+  // committing cannot leave a stale value behind.
   useEffect(() => {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
   }, [featureFlags.trpcBatching]);

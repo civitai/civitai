@@ -157,8 +157,8 @@ function httpLinkWithLargeQuerySupport({
 
 /**
  * Module-scoped, flag-driven batch toggle. Default OFF so batching is dark until the
- * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider` once the per-user
- * flag overlay resolves in the browser. Kept as a mutable module flag (not React state)
+ * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider` while it renders in
+ * the browser — before any descendant query mounts — and never on the server. Kept as a mutable module flag (not React state)
  * because the tRPC terminating link is built once at module init and cannot read a hook;
  * the `splitLink` condition re-reads this per operation, so a later flip takes effect on
  * subsequent queries without rebuilding the client.
@@ -180,9 +180,9 @@ export const __getTrpcBatchingEnabled = getTrpcBatchingEnabled;
 
 /**
  * True ONLY when we are definitively in an authenticated browser session.
- * `window.isAuthed` is set by `CivitaiSessionProvider` AFTER hydration, so on the server
- * and during early hydration this is `false` — the SAFE direction: anonymous + unknown
- * ⇒ do NOT batch, so anonymous edge-cacheable tRPC GETs stay unbatched (no `?batch`
+ * `window.isAuthed` is set by `CivitaiSessionProvider` while it renders, before any query
+ * below it mounts. On the server, and while the session is not yet known, this is
+ * `false` — the SAFE direction: anonymous + unknown ⇒ do NOT batch, so anonymous edge-cacheable tRPC GETs stay unbatched (no `?batch`
  * param) and remain CF-cacheable.
  */
 export function isAuthedBrowser() {
@@ -272,7 +272,16 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
  * and, worse, would sit there looking derived. Two sets, two mechanisms: neither can silently
  * disable the other.
  *
- * Both current members are PENDING-CACHEABLE: their `edgeCacheIt` is commented out in the
+ * HEAVY FEED procedures — `image.getInfinite`, `image.getImagesAsPostsInfinite`,
+ * `model.getAll`, `user.getAll` — are served by a dedicated backend route keyed on the
+ * procedure path in the request URL. A batched URL names several procedures in one path, so
+ * it either misses that route (the heavy query lands on the general API backend) or, when a
+ * heavy procedure happens to be listed first, pulls the rest of the batch onto the dedicated
+ * one. Either way the routing stops meaning what it says, so these always go out on their
+ * own. (Until the batching flag was applied before the first commit's queries fired, most of
+ * their calls were unbatched only by accident of that timing.)
+ *
+ * `event.getData` and `image.getGenerationData` are PENDING-CACHEABLE: their `edgeCacheIt` is commented out in the
  * router with the intent of restoring it. They must stay unbatched anyway, because batching
  * appends `?batch=1` and `edgeCacheIt` refuses to cache a batched request. If they started
  * batching now, restoring the commented-out middleware would silently deliver zero edge-cache
@@ -286,7 +295,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
  * `event.getData` — `src/server/routers/event.router.ts`, `// .use(edgeCacheIt({ ttl:
  * CacheTTL.lg }))`.
  *
- * 🔴 Neither was ever DELIBERATELY excluded: both were on the never-batch list only because the
+ * 🔴 Neither of those two was ever DELIBERATELY excluded: both were on the never-batch list only because the
  * drift guard's substring test also matched their commented-out code. Making that guard
  * comment-aware is what surfaced them, and it would otherwise have silently started batching
  * both. Listing them here keeps today's behaviour unchanged and gives it an actual reason —
@@ -295,6 +304,11 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
 export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getData',
   'image.getGenerationData',
+  // Heavy feed procedures (dedicated backend route) — see above.
+  'image.getImagesAsPostsInfinite',
+  'image.getInfinite',
+  'model.getAll',
+  'user.getAll',
 ]);
 
 /**

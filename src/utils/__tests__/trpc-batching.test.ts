@@ -36,6 +36,18 @@ const op = (over: Partial<Op> = {}): Op => ({
   ...over,
 });
 
+/**
+ * The heavy feed procedures have a dedicated backend route matched on the procedure path in the
+ * URL; a batched URL would not keep them on it. Listed LITERALLY (not iterated from the set), so
+ * dropping one from `NEVER_BATCH_PROCEDURES` fails by name.
+ */
+const HEAVY_FEED_PROCEDURES = [
+  'image.getInfinite',
+  'image.getImagesAsPostsInfinite',
+  'model.getAll',
+  'user.getAll',
+];
+
 const setWindowAuthed = (isAuthed: boolean | undefined) => {
   (globalThis as any).window = isAuthed === undefined ? {} : { isAuthed };
 };
@@ -475,13 +487,13 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
 
   it('resolves a bespoke authed opt-out expressed in a local middleware', () => {
     const content = [
-      "const skipIt = middleware(async ({ ctx, next }) => {",
-      "  return next({ ctx: { cache: { ...ctx.cache, skip: !!ctx.user } } });",
-      "});",
-      "",
-      "  getAll: publicProcedure",
-      "    .use(skipIt)",
-      "    .use(edgeCacheIt({ ttl: 60 }))",
+      'const skipIt = middleware(async ({ ctx, next }) => {',
+      '  return next({ ctx: { cache: { ...ctx.cache, skip: !!ctx.user } } });',
+      '});',
+      '',
+      '  getAll: publicProcedure',
+      '    .use(skipIt)',
+      '    .use(edgeCacheIt({ ttl: 60 }))',
     ].join('\n');
     const block = procedureBlocks(content).find((b) => b.name === 'getAll')!.block;
     // The bare block cannot see it; resolving `.use()` is what makes it visible.
@@ -491,13 +503,13 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
 
   it('does not invent an opt-out for a local middleware that ignores the caller', () => {
     const content = [
-      "const skipIt = middleware(async ({ input, ctx, next }) => {",
-      "  return next({ ctx: { cache: { ...ctx.cache, skip: !!(input as any).favorites } } });",
-      "});",
-      "",
-      "  getAll: publicProcedure",
-      "    .use(skipIt)",
-      "    .use(edgeCacheIt({ ttl: 60 }))",
+      'const skipIt = middleware(async ({ input, ctx, next }) => {',
+      '  return next({ ctx: { cache: { ...ctx.cache, skip: !!(input as any).favorites } } });',
+      '});',
+      '',
+      '  getAll: publicProcedure',
+      '    .use(skipIt)',
+      '    .use(edgeCacheIt({ ttl: 60 }))',
     ].join('\n');
     const block = procedureBlocks(content).find((b) => b.name === 'getAll')!.block;
     expect(optsOutForAuthed(withResolvedUses(block, localMiddlewares(content)))).toBe(false);
@@ -572,6 +584,15 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
     expect(CACHEABLE_PROCEDURES.has('event.getTeamScores')).toBe(true);
     expect(CACHEABLE_PROCEDURES.has('image.getResources')).toBe(true);
   });
+
+  it.each(HEAVY_FEED_PROCEDURES)('heavy feed procedure %s exists in its router', (path) => {
+    // A renamed procedure would leave its old name in NEVER_BATCH_PROCEDURES excluding nothing.
+    const [key, procedure] = path.split('.');
+    const file = Object.entries(buildFileToKey()).find(([, k]) => k === key)?.[0];
+    expect(file).toBeDefined();
+    const content = stripTsComments(readFileSync(join(routersDir, file!), 'utf8'));
+    expect(procedureBlocks(content).map((b) => b.name)).toContain(procedure);
+  });
 });
 
 describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', () => {
@@ -584,12 +605,26 @@ describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', ()
     clearWindow();
   });
 
-  it('pins both pending-cacheable procedures to the never-batch set', () => {
+  it('pins the pending-cacheable and heavy feed procedures to the never-batch set', () => {
     expect([...NEVER_BATCH_PROCEDURES].sort()).toEqual([
       'event.getData',
       'image.getGenerationData',
+      'image.getImagesAsPostsInfinite',
+      'image.getInfinite',
+      'model.getAll',
+      'user.getAll',
     ]);
   });
+
+  it.each(HEAVY_FEED_PROCEDURES)(
+    'keeps heavy feed procedure %s unbatched with batching on in an authed browser',
+    (path) => {
+      // Positive control: an ordinary query with the same shape DOES batch, so the false below
+      // can only come from the path.
+      expect(shouldBatch(op({ path: 'model.getInfinite' }))).toBe(true);
+      expect(shouldBatch(op({ path }))).toBe(false);
+    }
+  );
 
   it.each([...NEVER_BATCH_PROCEDURES])(
     'keeps %s unbatched even with every other condition satisfied',
