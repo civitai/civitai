@@ -353,13 +353,14 @@ describe('mergeVersions file remaps', () => {
     );
   });
 
-  it('refuses turning a trained version’s file into training data', async () => {
-    fileFindMany.mockResolvedValue([
-      storedFile({ modelVersion: { uploadType: 'Trained', trainingStatus: 'Approved' } }),
-    ]);
+  it.each([
+    { uploadType: 'Trained', trainingStatus: 'Approved' },
+    { uploadType: 'Created', trainingStatus: null },
+  ])('refuses turning a file into training data (%o)', async (modelVersion) => {
+    fileFindMany.mockResolvedValue([storedFile({ modelVersion })]);
 
     await expect(merge([{ fileId: FILE, type: 'Training Data' }])).rejects.toThrow(
-      "A file can't be changed to or from training data."
+      "A file can't be changed to training data. Upload the dataset as training data instead."
     );
     expect(fileUpdateMany).not.toHaveBeenCalled();
   });

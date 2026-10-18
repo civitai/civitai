@@ -96,6 +96,60 @@ describe('the model-file create path', () => {
   });
 });
 
+// Downloads resolve a file id through storage-resolver first, and the scan reads the record's url, so
+// the registered location must be the url's own key whatever path the request names.
+describe('the storage location registered for a new file', () => {
+  const CLIENT_PATH = 'someone-else/other.safetensors';
+
+  it.each([
+    {
+      store: 'B2',
+      backend: 'b2',
+      url: 'https://s3.us-west-004.backblazeb2.com/model-bucket/model/7/flux.safetensors',
+      registered: { backend: 'backblaze', path: 'model/7/flux.safetensors' },
+    },
+    {
+      store: 'R2',
+      backend: undefined,
+      url: 'https://model-bucket.r2.example.com/model/7/flux.safetensors',
+      registered: { backend: 'cloudflare', path: 'model/7/flux.safetensors' },
+    },
+  ])(
+    'registers the key in the url on a $store upload, not a client-supplied path',
+    async ({ backend, url, registered }) => {
+      await createFileHandler({
+        input: { ...input, url, backend, s3Path: CLIENT_PATH },
+        ctx: { user: { id: 7, isModerator: false }, track, domain: 'green' } as never,
+      });
+
+      expect(registerFileLocation).toHaveBeenCalledTimes(1);
+      expect(registerFileLocation).toHaveBeenCalledWith(
+        expect.objectContaining({ fileId: 900, ...registered })
+      );
+    }
+  );
+
+  // The Hugging Face transfer builds its key server-side from the bucket it wrote to.
+  it('still registers the key a server-side caller passes', async () => {
+    await createModelFile({
+      input: {
+        ...input,
+        url: 'https://s3.us-west-004.backblazeb2.com/model-bucket/model/7/flux.safetensors',
+        backend: 'b2',
+        s3Path: 'imports/7/flux.safetensors',
+      },
+      userId: -1,
+      isModerator: true,
+      track: track as never,
+      uploadDomain: null,
+    });
+
+    expect(registerFileLocation).toHaveBeenCalledWith(
+      expect.objectContaining({ backend: 'backblaze', path: 'imports/7/flux.safetensors' })
+    );
+  });
+});
+
 /**
  * `uploadDomain` is what lets the paid training submit refuse an NSFW dataset prepared on red being
  * paid for on green (`createTrainingWorkflow` in training.orch.ts reads it off the 'Training Data'

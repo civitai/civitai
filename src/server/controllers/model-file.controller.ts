@@ -88,8 +88,8 @@ async function safeRegisterFileLocation(params: {
  *
  * Resolution order:
  *   1. If the URL is recognizable as B2 → backend='backblaze', key from
- *      `parseB2Url`. Prefer the explicit `s3Path` from the upload payload
- *      (stale client bundles may omit it, so the URL parse is a fallback).
+ *      `parseB2Url`, unless a server-side caller passed an explicit `s3Path`
+ *      (the Hugging Face import). Request handlers never pass one.
  *   2. Otherwise, if the URL parses cleanly via `parseKey` and the key is
  *      non-empty → backend='cloudflare' (S3_UPLOAD_ENDPOINT, i.e. R2).
  *   3. Otherwise → null (skip registration; logged upstream).
@@ -114,8 +114,6 @@ function resolveRegistration(args: {
   // R2 / S3_UPLOAD_ENDPOINT path — uses parseKey, which handles both
   // path-style and virtual-host-style URLs against the configured host.
   if (!args.url) return null;
-  // Trust client-provided s3Path when present even for R2 (forward-compat
-  // with future client changes that send it for non-B2 uploads).
   if (args.s3Path) return { backend: 'cloudflare', s3Path: args.s3Path };
   const parsed = parseKey(args.url);
   if (!parsed.key) return null;
@@ -193,7 +191,9 @@ export const createFileHandler = async ({
   ctx: ProtectedContext;
 }) =>
   createModelFile({
-    input,
+    // The storage location is registered from the record's own url, as on update, never from a
+    // client-supplied path, so what downloads resolve to is what gets scanned.
+    input: { ...input, s3Path: undefined },
     userId: ctx.user.id,
     isModerator: !!ctx.user.isModerator,
     track: ctx.track,
