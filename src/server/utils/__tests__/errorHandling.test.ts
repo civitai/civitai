@@ -85,14 +85,27 @@ describe('isPrismaLockTimeout', () => {
       meta,
     });
 
+  // The engine's message for a findMany cancelled by lock_timeout on a dev database.
+  const unknown = (code: string) =>
+    new Prisma.PrismaClientUnknownRequestError(
+      `Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+      { clientVersion: 'test' }
+    );
+
   it('matches a raw query cancelled with 55P03', () => {
     expect(isPrismaLockTimeout(known('P2010', { code: '55P03' }))).toBe(true);
+  });
+
+  it('matches a model query cancelled with 55P03', () => {
+    expect(isPrismaLockTimeout(unknown('55P03'))).toBe(true);
   });
 
   it.each([
     ['another Postgres code on a raw query', known('P2010', { code: '40P01' })],
     ['a raw query failure with no Postgres code', known('P2010')],
     ['another Prisma code carrying 55P03', known('P2002', { code: '55P03' })],
+    ['a model query failing with another Postgres code', unknown('40P01')],
     [
       'a plain error with the driver code',
       Object.assign(new Error('lock timeout'), { code: '55P03' }),

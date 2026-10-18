@@ -157,6 +157,14 @@ const pgError = (code: string) =>
     meta: { code },
   });
 const lockTimeout = () => pgError('55P03');
+// A model query carries no code: the engine names the Postgres error in its message, as on a dev
+// database for a findMany cancelled by lock_timeout.
+const modelQueryError = (code: string) =>
+  new Prisma.PrismaClientUnknownRequestError(
+    `Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+    { clientVersion: 'test' }
+  );
 
 type ContentWhere = {
   boxDefinitionId: number;
@@ -856,6 +864,35 @@ describe('buying a mystery box', () => {
       code: 'TOO_MANY_REQUESTS',
       message: ITEM_HOLDER_BUSY_MESSAGE,
     });
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'times out answers busy',
+      '55P03',
+      { code: 'TOO_MANY_REQUESTS', message: ITEM_HOLDER_BUSY_MESSAGE },
+    ],
+    [
+      'fails with another Postgres code is not answered as busy',
+      '40P01',
+      { name: 'PrismaClientUnknownRequestError' },
+    ],
+  ])('a model query in the claim that %s, charging nothing', async (_label, code, expected) => {
+    const tx = makeTx(async () => undefined);
+    dbMock.dbWrite.$transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
+      claims.rollbackOnThrow(() =>
+        fn({
+          ...tx,
+          cosmeticShopItem: {
+            findMany: async () => {
+              throw modelQueryError(code);
+            },
+          },
+        })
+      )
+    );
+    await expect(buy()).rejects.toMatchObject(expected);
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 

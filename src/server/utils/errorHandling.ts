@@ -78,14 +78,18 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
 }
 
 /**
- * Postgres `55P03` (lock_not_available, e.g. a `lock_timeout` expiry), surfaced by a raw query as
- * P2010 with the SQLSTATE in `meta.code`.
+ * Postgres `55P03` (lock_not_available, e.g. a `lock_timeout` expiry). A raw query surfaces it as
+ * P2010 with the SQLSTATE in `meta.code`; a model query as an unknown request error with no code,
+ * the SQLSTATE only in the engine's message.
  */
 export function isPrismaLockTimeout(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError)
+    return (
+      error.code === 'P2010' && (error.meta as { code?: unknown } | undefined)?.code === '55P03'
+    );
   return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === 'P2010' &&
-    (error.meta as { code?: unknown } | undefined)?.code === '55P03'
+    error instanceof Prisma.PrismaClientUnknownRequestError &&
+    error.message.includes('PostgresError { code: "55P03"')
   );
 }
 

@@ -120,6 +120,14 @@ const pgError = (code: string) =>
     meta: { code },
   });
 const lockTimeout = () => pgError('55P03');
+// A model query carries no code: the engine names the Postgres error in its message, as on a dev
+// database for a findMany cancelled by lock_timeout.
+const modelQueryError = (code: string) =>
+  new Prisma.PrismaClientUnknownRequestError(
+    `Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+    { clientVersion: 'test' }
+  );
 
 const definition = (id: number) => {
   if (id === world.box.id) return { ...world.box, cosmeticId: null };
@@ -707,6 +715,35 @@ describe('refusals keep the box', () => {
     };
     const error = await open().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+  });
+
+  it.each([
+    [
+      'times out answers busy',
+      '55P03',
+      { code: 'TOO_MANY_REQUESTS', message: ITEM_HOLDER_BUSY_MESSAGE },
+    ],
+    [
+      'fails with another Postgres code is not answered as busy',
+      '40P01',
+      { name: 'PrismaClientUnknownRequestError' },
+    ],
+  ])('a model query under the lock that %s', async (_label, code, expected) => {
+    const realTx = dbMock.dbWrite.$transaction.getMockImplementation()!;
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
+      realTx(async (tx: ReturnType<typeof makeTx>) =>
+        fn({
+          ...tx,
+          boxTier: {
+            findMany: async () => {
+              throw modelQueryError(code);
+            },
+          },
+        })
+      )
+    );
+    await expect(open()).rejects.toMatchObject(expected);
+    nothingOpened();
   });
 
   it('a box with nothing left for the holder stays held', async () => {
