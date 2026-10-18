@@ -246,7 +246,6 @@ export function boxSaleRefusal(
   return null;
 }
 
-/** A box's tiers as every page shows them, in draw order. */
 export const BOX_TIER_SELECT = {
   id: true,
   key: true,
@@ -255,6 +254,7 @@ export const BOX_TIER_SELECT = {
   weight: true,
   sortOrder: true,
 } satisfies Prisma.BoxTierSelect;
+/** Draw order; `tierSummaries` and the odds chain depend on it. */
 export const BOX_TIER_ORDER = [
   { sortOrder: 'asc' },
   { id: 'asc' },
@@ -271,7 +271,6 @@ function boxArtFor(params: BoxParams, team: string | undefined): BoxArt | null {
   };
 }
 
-/** What a page needs to draw one content: its name and art. */
 export function boxContentDisplay(entry: BoxPoolEntry) {
   const data = (entry.cosmeticData ?? {}) as {
     url?: unknown;

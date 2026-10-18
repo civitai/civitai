@@ -142,9 +142,8 @@ export async function getEventBoxViewer(
 }
 
 /**
- * Whether this viewer, signed in or not, may read the event's box catalog (every team's contents,
- * as the public odds page shows them), with the event's title and teams. Null while the event is
- * closed to them, or when it isn't registered or can't be loaded.
+ * The event's title and teams for a viewer who may read its boxes, signed in or not. Null when the
+ * event is closed to them, unregistered or unloadable.
  */
 export async function getEventBoxCatalogAccess(eventName: string, viewer: EventViewer) {
   const readable = await readableBoxEvent(eventName, viewer);
@@ -152,7 +151,6 @@ export async function getEventBoxCatalogAccess(eventName: string, viewer: EventV
   return { title: readable.event.title, teams: readable.event.teams };
 }
 
-/** The gate both box reads share: the event, if registered, loadable and readable by the viewer. */
 async function readableBoxEvent(eventName: string, viewer: EventViewer) {
   const events = await loadEvents().catch(() => undefined);
   const event = events?.find((e) => e.name === eventName);

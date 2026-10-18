@@ -22,8 +22,7 @@ export const mysteryBoxRouter = router({
         countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
       })
     ),
-  // The public odds page: signed out too, under the event's own access. Per viewer (flag, country,
-  // event access), so never edge-cached.
+  // Per viewer (flag, country, event access): never edge-cache.
   getOddsPage: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getMysteryBoxOddsPageInput)

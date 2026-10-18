@@ -70,8 +70,7 @@ const TIERS = [
 
 /**
  * A v1 snapshot of the world below in the writer's shape: tiers in draw order, contents by tier then
- * cosmetic. The writer is the box seed (SQL run by hand, outside this repo) until the box builder
- * writes them; `boxOddsSnapshotSchema` is the contract both must meet.
+ * cosmetic. `boxOddsSnapshotSchema` is the contract any snapshot writer must meet.
  */
 const seedSnapshot = (): BoxOddsSnapshotData => ({
   tiers: [

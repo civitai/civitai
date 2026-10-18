@@ -18,13 +18,10 @@ import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
 /**
- * The public odds page of a mystery box: its base odds (nothing owned), everything it holds, and how
- * its tiers and contents changed version by version.
- *
- * The odds and contents come from the live tiers and contents, the rows the draw reads, so the page
- * cannot show odds the draw does not use. The history comes from `BoxOddsSnapshot`, one row per box
- * version (written by the box seed today, the box builder later); a current version whose snapshot is missing or differs from the live box is
- * logged, so the history can be repaired.
+ * A box's public odds page. Odds and contents come from the live tiers and contents, the rows the
+ * draw reads, so the page cannot show odds the draw does not use. The history comes from
+ * `BoxOddsSnapshot` (one row per version, written outside this service); a current version whose
+ * snapshot is missing or differs from the live box is logged so the history can be repaired.
  */
 
 const boxOddsSnapshotSchema = z.object({
@@ -121,7 +118,6 @@ function rewardNoun(contents: BoxCatalogEntry[]) {
 
 export type MysteryBoxOddsPage = NonNullable<Awaited<ReturnType<typeof getMysteryBoxOddsPage>>>;
 
-// A box whose history can't be read logs once per pod per minute, not on every view.
 const oddsPageErrorLog = createFallbackDedup({ windowMs: 60_000, maxSize: 1000 });
 function logOddsPageError(message: string, fields: { boxDefinitionId: number; version: number }) {
   if (!oddsPageErrorLog.shouldLog(`${fields.boxDefinitionId}:${fields.version}:${message}`)) return;
@@ -167,7 +163,6 @@ export async function getMysteryBoxOddsPage({
   )
     return null;
 
-  // An event's box is read only by those the event is open to, as on the event page.
   const params = box.params ?? {};
   const event = isEventShopItemData(params)
     ? await getEventBoxCatalogAccess(params.event, viewer)
@@ -203,10 +198,8 @@ export async function getMysteryBoxOddsPage({
       orderBy: { version: 'asc' },
       select: { version: true, snapshot: true, createdAt: true },
     }),
-    // Only a listing with a quantity needs its sold count.
     getSoldCounts(listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)),
   ]);
-  // The price of a listing on sale now, as the event page sells it.
   const onSale =
     box.status === ITEM_DEFINITION_STATUS.published
       ? listings.find((l) => !boxSaleRefusal(l, sold.get(l.id) ?? 0, now))
@@ -264,7 +257,7 @@ export async function getMysteryBoxOddsPage({
     contents: contents.map((entry) => ({ ...boxContentDisplay(entry), team: entry.team ?? null })),
     /** Newest first. */
     history: history.reverse(),
-    /** False when the current version's change is missing from the history. */
+    /** False when the current version's snapshot is missing or differs from the live box. */
     historyComplete,
   };
 }
