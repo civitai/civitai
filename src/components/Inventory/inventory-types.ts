@@ -34,7 +34,6 @@ export type InventoryType = {
   useCount: () => number | undefined;
 };
 
-// Every kind ships with the Mystery Box launch; opening the cosmetic kinds to everyone is a later call.
 const mysteryBoxGate = (features: FeatureAccess) => !!features.mysteryBox;
 
 export const INVENTORY_TYPES = [

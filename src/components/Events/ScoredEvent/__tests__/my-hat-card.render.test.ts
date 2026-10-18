@@ -46,8 +46,6 @@ afterEach(async () => {
   container.remove();
 });
 
-// Shared by the event page and the Inventory: the Inventory leaves out `onPlace` where the server
-// would refuse a placement, and the card must then offer nothing.
 describe('MyHatCard', () => {
   it('shows no action without onPlace', async () => {
     await render({ hat: hat(false), color: '#f06595', minutesLeft: 0 });

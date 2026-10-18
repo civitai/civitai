@@ -19,7 +19,7 @@ import { trpc } from '~/utils/trpc';
 
 type Owned = UserCosmetics[keyof UserCosmetics][number];
 
-/** The `user.update` input that equips one slot (null takes it off) and leaves every other slot alone. */
+/** `cosmeticId` null takes the slot off. */
 export function equipSlotInput(
   kind: EquippableKind,
   userId: number,
@@ -32,7 +32,7 @@ function useEquipSlot(kind: EquippableKind) {
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
   const mutation = trpc.user.update.useMutation({
-    // As Customize profile does: the worn badge and nameplate ride on the session.
+    // The worn badge and nameplate ride on the session, so it is refreshed.
     onSuccess: () =>
       Promise.all([
         utils.user.getCosmetics.invalidate(),

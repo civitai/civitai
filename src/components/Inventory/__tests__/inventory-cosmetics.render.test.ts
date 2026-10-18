@@ -245,8 +245,7 @@ describe('Inventory equip pages', () => {
     expect(container.textContent).toContain("You don't have any card glows yet.");
   });
 
-  // Equipping stamps every copy held at the time; a copy got afterwards is not stamped, and the
-  // page lists one card per cosmetic, so the worn state must come from any copy.
+  // A later copy is unstamped, and the page lists one card per cosmetic.
   it('shows a cosmetic as equipped when a later, unstamped copy is listed first', async () => {
     state.cosmetics = cosmetics({
       badges: [
@@ -371,9 +370,8 @@ describe('Inventory hats', () => {
     ]);
   });
 
-  // The server places a hat only for an event it has a definition for, and refuses the read for an
-  // event the viewer can no longer see: neither may offer an action that would fail, and the hats
-  // are still theirs, so both are listed.
+  // No definition: the server refuses placement. Unreadable event: it refuses the read. Both still
+  // list the hats.
   it('lists hats it cannot place, with no action', async () => {
     state.cosmetics = cosmetics({
       contentDecorations: [hat(1, 'retired2024'), hat(2, 'hidden2026')],
@@ -389,7 +387,7 @@ describe('Inventory hats', () => {
       'Hat 2',
     ]);
     expect(buttons('Place it')).toEqual([]);
-    // Its event page would refuse them too.
+    // No link for an event the viewer can't open.
     expect(
       all('[data-testid="inventory-event-hats"]').map(
         (s) => s.querySelector('a')?.getAttribute('href') ?? null

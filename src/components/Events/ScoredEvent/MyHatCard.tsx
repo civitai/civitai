@@ -14,10 +14,7 @@ export type MyHat = RouterOutput['event']['getMyHats'][number];
 const CARD = `flex flex-col rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
 const PICTURE_RADIUS = 'rounded-t-[7px]';
 
-/**
- * One of your hats: where it is worn, its score, and Place it / Move. Shared by the event page's
- * "Your hats" and the Inventory's Hats page. Without `onPlace` it shows no action.
- */
+/** One of your hats: where it is worn, its score, and Place it / Move. Without `onPlace` it shows no action. */
 export function MyHatCard({
   hat,
   color,
@@ -26,14 +23,13 @@ export function MyHatCard({
 }: {
   hat: MyHat;
   color: string;
-  /** Until the move cooldown ends; the action is disabled while above zero. */
+  /** Minutes until the move cooldown ends. */
   minutesLeft: number;
   onPlace?: () => void;
 }) {
   return (
     <div className={CARD} data-testid="my-hat">
-      {/* The action sits on the picture: Move in the free top-right corner (the hat wears
-          the top-left), Place it in the middle of an empty frame. */}
+      {/* Move takes the free top-right corner; the worn hat sits on the top-left. */}
       <div className="relative">
         {hat.placedOn ? (
           <EventContentThumb
@@ -53,7 +49,7 @@ export function MyHatCard({
             <HatArt url={hat.data.url} color={color} width={192} className="!bg-transparent" />
           </div>
         )}
-        {/* Hats are kept after the event, so they can still be moved then. */}
+        {/* Not gated on the event having ended: hats can still be moved afterwards. */}
         {onPlace && (
           <Button
             size="compact-xs"

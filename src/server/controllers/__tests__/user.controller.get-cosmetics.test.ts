@@ -34,7 +34,6 @@ const row = (id: number, type: string, equippedAt: Date | null = null) => ({
 beforeEach(() => vi.clearAllMocks());
 
 describe('user.getCosmetics', () => {
-  // The Inventory's Card glows page reads this group; before it, card glows were dropped here.
   it('groups card glows with the rest', async () => {
     getUserCosmetics.mockResolvedValue({
       cosmetics: [row(1, 'Badge'), row(2, 'CardDecoration')],

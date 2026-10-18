@@ -6,8 +6,8 @@ import type { RouterOutput } from '~/types/router';
 export type UserCosmetics = RouterOutput['user']['getCosmetics'];
 
 /**
- * The profile slots an Inventory page equips, each a `user.update` field. Sent alone, the others stay
- * as they are: `updateUserHandler` only touches a slot whose id is defined.
+ * The profile slots an Inventory page equips, each a `user.update` field. Sent alone, a slot leaves
+ * the others as they are: `updateUserHandler` skips any slot whose id is undefined.
  */
 export const EQUIPPABLE_KINDS = {
   badges: { group: 'badges', slot: 'badgeId', noun: 'badge' },
@@ -40,12 +40,11 @@ type EquippableItem = UserCosmetics[(typeof EQUIPPABLE_KINDS)[EquippableKind]['g
 
 export function equippableOf(data: UserCosmetics | undefined, kind: EquippableKind) {
   const items: EquippableItem[] = data?.[EQUIPPABLE_KINDS[kind].group] ?? [];
-  // Equipping stamps every copy held then; one got later is not, and may be the copy listed.
+  // Equipping stamps only the copies held at the time, so the copy listed may be a later, unstamped one.
   const worn = new Set(items.filter((item) => item.equipped).map((item) => item.id));
   return uniqueCosmetics(items).map((item) => ({ ...item, equipped: worn.has(item.id) }));
 }
 
-/** Hats are event decorations; every other content decoration is a frame. */
 export function hatsOf(data: UserCosmetics | undefined) {
   return (data?.contentDecorations ?? []).filter((c) => isEventDecorationData(c.data));
 }
@@ -66,7 +65,6 @@ const ENTITY_PATHS: Record<CosmeticEntity, string> = {
   Model3D: '3d-models',
 };
 
-/** Where a frame is applied, or null when it is not on anything. */
 export function frameTargetHref(equippedToType: string | null, equippedToId: number | null) {
   const path = equippedToType ? ENTITY_PATHS[equippedToType as CosmeticEntity] : undefined;
   return path && equippedToId ? `/${path}/${equippedToId}` : null;
@@ -74,7 +72,6 @@ export function frameTargetHref(equippedToType: string | null, equippedToId: num
 
 export const useInventoryCosmetics = useQueryUserCosmetics;
 
-/** Nav counts from the same `user.getCosmetics` read the pages make. */
 export function useInventoryCosmeticCount(count: (data: UserCosmetics) => number) {
   const { data } = useInventoryCosmetics();
   return data ? count(data) : undefined;

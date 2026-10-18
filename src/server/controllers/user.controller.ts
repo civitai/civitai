@@ -1299,7 +1299,6 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
-// `equipped` is read by the Inventory's equip pages.
 type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean };
 
 export const getUserCosmeticsHandler = async ({
@@ -1349,7 +1348,7 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
-          // Set while worn in a profile slot, and while a content decoration is placed (as `inUse`).
+          // Also set while a content decoration is placed (that is `inUse`).
           equipped: !!equippedAt,
           equippedToId,
           equippedToType,

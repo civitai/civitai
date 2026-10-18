@@ -51,7 +51,6 @@ function groupByEvent(hats: OwnedHat[]) {
   return byEvent;
 }
 
-/** One event's hats, from the same read and with the same Place it / Move as its event page. */
 function EventHats({ event, owned }: { event: string; owned: OwnedHat[] }) {
   const {
     data: hats,
@@ -61,7 +60,6 @@ function EventHats({ event, owned }: { event: string; owned: OwnedHat[] }) {
   } = trpc.event.getMyHats.useQuery({ event });
   const teamColor = useTeamColor();
   const definition = getEventDecorationDefinition(event);
-  // Re-reads the clock every half minute, so a hat's Move button unlocks when its cooldown ends.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30_000);
@@ -81,8 +79,8 @@ function EventHats({ event, owned }: { event: string; owned: OwnedHat[] }) {
         )}
       </Group>
       {isError ? (
-        // An event this viewer can no longer read refuses the read and every placement, so its hats
-        // are listed from what they own, with nothing to do.
+        // The read is refused for an event the viewer can no longer see (any error lands here too):
+        // list their hats from what they own, with no action.
         <SimpleGrid cols={{ base: 2, md: 3 }} spacing="md">
           {owned.map((hat) => (
             <CosmeticCard
