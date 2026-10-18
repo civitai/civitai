@@ -21,6 +21,18 @@ describe('redisEnvSchema — REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED', () => {
   });
 });
 
+describe('redisEnvSchema — REDIS_SYS_SENTINEL_STALE_MASTER_GIVEUP_ENABLED', () => {
+  it('defaults ON; only the literal "false" turns it off', () => {
+    const parse = (v?: string) =>
+      redisEnvSchema.parse(
+        v === undefined ? base : { ...base, REDIS_SYS_SENTINEL_STALE_MASTER_GIVEUP_ENABLED: v }
+      ).REDIS_SYS_SENTINEL_STALE_MASTER_GIVEUP_ENABLED;
+    expect(parse()).toBe(true);
+    expect(parse('false')).toBe(false);
+    expect(parse('true')).toBe(true);
+  });
+});
+
 describe('redisEnvSchema — HA defaults', () => {
   it('applies the sysRedis HA / socket defaults', () => {
     const parsed = redisEnvSchema.parse(base);

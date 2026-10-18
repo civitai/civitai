@@ -36,6 +36,12 @@ export const redisEnvSchema = z
     REDIS_SYS_SENTINEL_NAME: z.string().optional(),
     // Only set if sentinel-auth is enabled (not initially).
     REDIS_SYS_SENTINEL_PASSWORD: z.string().optional(),
+    // Sentinel path only (./sentinel-reconnect). ON unless the literal 'false', which makes the
+    // master connections retry their address forever.
+    REDIS_SYS_SENTINEL_STALE_MASTER_GIVEUP_ENABLED: z.preprocess(
+      (x) => x !== 'false',
+      z.boolean().default(true)
+    ),
     // Socket-level inactivity guard (node-redis -> net.Socket.setTimeout). On a SILENT
     // half-open the idle timer tears the dead socket down in ~this many ms instead of
     // ~30s OS TCP keepalive (the 504-cascade structural fix). Cluster (cache) client.
@@ -224,7 +230,9 @@ export const redisEnvSchema = z
 function buildEnv() {
   const parsed = redisEnvSchema.safeParse(process.env);
   if (!parsed.success) {
-    throw new Error('[@civitai/redis] Invalid environment variables:\n' + z.prettifyError(parsed.error));
+    throw new Error(
+      '[@civitai/redis] Invalid environment variables:\n' + z.prettifyError(parsed.error)
+    );
   }
   return {
     url: parsed.data.REDIS_URL,
@@ -238,6 +246,7 @@ function buildEnv() {
     sysSentinels: parsed.data.REDIS_SYS_SENTINELS,
     sysSentinelName: parsed.data.REDIS_SYS_SENTINEL_NAME,
     sysSentinelPassword: parsed.data.REDIS_SYS_SENTINEL_PASSWORD,
+    sysSentinelStaleMasterGiveUpEnabled: parsed.data.REDIS_SYS_SENTINEL_STALE_MASTER_GIVEUP_ENABLED,
     socketTimeoutMs: parsed.data.REDIS_SOCKET_TIMEOUT_MS,
     sysSocketTimeoutMs: parsed.data.REDIS_SYS_SOCKET_TIMEOUT_MS,
     sysCommandsQueueMaxLength: parsed.data.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH,
