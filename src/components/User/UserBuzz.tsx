@@ -1,6 +1,8 @@
 import type { MantineSize, TextProps } from '@mantine/core';
 import { Group, Loader, Text, Tooltip } from '@mantine/core';
+import { BuzzDeltaPop } from '~/components/Buzz/BuzzDeltaPop';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
@@ -21,6 +23,10 @@ type Props = TextProps & {
   textSize?: MantineSize;
   withTooltip?: boolean;
   withAbbreviation?: boolean;
+  /** Roll the digits when the balance changes. */
+  animated?: boolean;
+  /** Show the "-N" that rolls out of the counter. Renders inside a positioned wrapper. */
+  withDeltaPop?: boolean;
   accountId?: number;
   accountTypes?: BuzzSpendType[];
   theme?: string;
@@ -31,6 +37,8 @@ export function UserBuzz({
   textSize = 'md',
   withTooltip,
   withAbbreviation = true,
+  animated = false,
+  withDeltaPop = false,
   accountId,
   accountTypes,
   ...textProps
@@ -96,6 +104,12 @@ export function UserBuzz({
               color={gradient ? undefined : config.color}
               className={clsx(classes.buzzLoader, gradient && classes.withGradient)}
             />
+          ) : animated ? (
+            <AnimatedBalance
+              balance={balance}
+              abbreviate={withAbbreviation}
+              gradient={!!gradient}
+            />
           ) : withAbbreviation ? (
             abbreviateNumber(balance, { floor: true, decimals: 1 })
           ) : (
@@ -106,5 +120,37 @@ export function UserBuzz({
     </Text>
   );
 
-  return withTooltip ? <Tooltip label={label}>{content}</Tooltip> : content;
+  const counter = withTooltip ? <Tooltip label={label}>{content}</Tooltip> : content;
+  if (!withDeltaPop) return counter;
+
+  return (
+    <div className="relative">
+      {counter}
+      <BuzzDeltaPop accountTypes={accountTypes} />
+    </div>
+  );
+}
+
+function AnimatedBalance({
+  balance,
+  abbreviate,
+  gradient,
+}: {
+  balance: number;
+  abbreviate: boolean;
+  gradient: boolean;
+}) {
+  if (!abbreviate) return <CustomNumberFlow value={balance} gradient={gradient} />;
+
+  // Floored like `abbreviateNumber`, which `NumberFlow`'s own compact notation would round instead.
+  const text = abbreviateNumber(balance, { floor: true, decimals: 1 });
+  const match = /^(-?\d+(?:\.\d+)?)([kmbt]?)$/.exec(text);
+  if (!match) return <>{text}</>;
+
+  return (
+    <span className="inline-flex items-baseline leading-none">
+      <CustomNumberFlow value={Number(match[1])} gradient={gradient} />
+      {match[2]}
+    </span>
+  );
 }

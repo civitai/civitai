@@ -1,0 +1,83 @@
+.pop {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 1;
+  display: flex;
+  gap: var(--mantine-spacing-xs);
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: var(--mantine-font-size-sm);
+  font-weight: 800;
+  animation: popIn 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.exiting {
+  animation: popOut 600ms ease-in forwards;
+}
+
+.big {
+  font-size: var(--mantine-font-size-lg);
+}
+
+.line {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.debit {
+  color: var(--mantine-color-red-7);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-red-4);
+  }
+}
+
+.credit {
+  color: var(--mantine-color-yellow-7);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-yellow-4);
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes popOut {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop {
+    animation: none;
+  }
+
+  .exiting {
+    animation: fadeOut 150ms linear forwards;
+  }
+}

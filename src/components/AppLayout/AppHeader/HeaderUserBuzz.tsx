@@ -8,5 +8,12 @@ export function HeaderUserBuzz() {
 
   // Undefined, not the full list: `UserBuzz` resolves its own default, so the off state stays
   // whatever the blended header has always shown.
-  return <UserBuzz pr="sm" accountTypes={hideBlueBuzzInHeader ? [mainBuzzColor] : undefined} />;
+  return (
+    <UserBuzz
+      animated
+      withDeltaPop
+      pr="sm"
+      accountTypes={hideBlueBuzzInHeader ? [mainBuzzColor] : undefined}
+    />
+  );
 }

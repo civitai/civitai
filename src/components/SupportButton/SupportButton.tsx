@@ -7,7 +7,7 @@ import {
   Stack,
   Badge,
   createPolymorphicComponent,
-  UnstyledButton
+  UnstyledButton,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps, Icon } from '@tabler/icons-react';
@@ -85,7 +85,7 @@ const holidayButton: SupportButtonOption = {
   href: '/pricing?utm_campaign=holiday_promo',
 };
 
-export const SupportButton = () => {
+export function useSupportOption() {
   const { seed } = useAppContext();
   const features = useFeatureFlags();
   const selectedOption = new Random(seed).fromArray(options);
@@ -93,6 +93,13 @@ export const SupportButton = () => {
   // funnel users to the buzz purchase flow where NoCryptoUpsell pitches the
   // membership in context.
   const href = features.isGreen ? selectedOption.href : '/purchase/buzz';
+
+  return { ...selectedOption, href };
+}
+
+export const SupportButton = () => {
+  const selectedOption = useSupportOption();
+  const { href } = selectedOption;
 
   return (
     <HoverCard withArrow openDelay={400} closeDelay={100}>

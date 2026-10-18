@@ -1,74 +1,30 @@
-import { Badge, Text } from '@mantine/core';
-import { IconSparkles } from '@tabler/icons-react';
+import { VisuallyHidden } from '@mantine/core';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { SignalMessages } from '~/server/common/enums';
-import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
-import { showBuzzNotification } from '~/utils/notifications';
-import { formatMultiplier } from '~/utils/buzz';
+import { recordBuzzUpdate, useBuzzDeltaStore } from '~/store/buzz-delta.store';
 
-const baseNotificationConfig: Record<BuzzSpendType, { color: string }> = {
-  blue: { color: 'blue.4' },
-  green: { color: 'green.7' },
-  yellow: { color: 'yellow.7' },
-  red: { color: 'red.4' },
-};
+function BuzzDeltaAnnouncer() {
+  const settled = useBuzzDeltaStore((state) => state.settled);
+  if (!settled) return <VisuallyHidden role="status" aria-live="polite" aria-atomic="true" />;
 
-export function BonusBadge({ multiplier }: { multiplier: number }) {
+  const verb = settled.direction === 'debit' ? 'Spent' : 'Received';
+  const transactions = settled.count > 1 ? ` in ${settled.count} transactions` : '';
+
   return (
-    <Badge
-      component="span"
-      size="sm"
-      radius="xl"
-      variant="light"
-      color="yellow"
-      leftSection={<IconSparkles size={10} />}
-      style={{ verticalAlign: 'middle' }}
-    >
-      {formatMultiplier(multiplier)} bonus
-    </Badge>
+    <VisuallyHidden role="status" aria-live="polite" aria-atomic="true">
+      {`${verb} ${settled.total.toLocaleString()} Buzz${transactions}.`}
+    </VisuallyHidden>
   );
 }
 
 export const SignalNotifications = () => {
-  const { multipliers } = useUserMultipliers();
-  const globalBonus = multipliers.globalRewardsBonus;
-
-  const onBalanceUpdate = useCallback(
-    (updated: BuzzUpdateSignalSchema) => {
-      const type = BuzzTypes.toClientType(updated.accountType) as BuzzSpendType;
-
-      // Only show bonus indicator on blue buzz credits (where rewards land)
-      const showBonus = updated.delta > 0 && globalBonus > 1 && type === 'blue';
-
-      showBuzzNotification({
-        ...baseNotificationConfig[type],
-        title: 'User Buzz Update',
-        message:
-          updated.delta > 0 ? (
-            <Text>
-              <Text fw="bold" span>
-                {updated.delta.toLocaleString()} Buzz
-              </Text>{' '}
-              has been added to your Buzz account{' '}
-              {showBonus && <BonusBadge multiplier={globalBonus} />}
-            </Text>
-          ) : (
-            <Text>
-              <Text fw="bold" span>
-                {Math.abs(updated.delta).toLocaleString()} Buzz
-              </Text>{' '}
-              has been debited from your Buzz account
-            </Text>
-          ),
-      });
-    },
-    [globalBonus]
-  );
+  const onBalanceUpdate = useCallback((updated: BuzzUpdateSignalSchema) => {
+    recordBuzzUpdate(updated);
+  }, []);
 
   useSignalConnection(SignalMessages.BuzzUpdate, onBalanceUpdate);
 
-  return null;
+  return <BuzzDeltaAnnouncer />;
 };
