@@ -3,14 +3,15 @@ import Document, { Html, Main, NextScript, Head } from 'next/document';
 import type { DocumentContext } from 'next/document';
 import clsx from 'clsx';
 import { recordPageRender } from '~/server/prom/route-traffic.metrics';
-import { measureSsrCpu } from '~/server/prom/ssr-cpu.metrics';
+import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
 
 export default class _Document extends Document {
   // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
-  // `/404` and a thrown error as `/_error`, while redirects and `/_next/data` requests never do.
+  // `/404` and a thrown error as `/_error`, while redirects and `/_next/data` requests for a
+  // getServerSideProps page never do. A `/_next/data` request for any other page renders here.
   static async getInitialProps(ctx: DocumentContext) {
     if (!ctx.req) return Document.getInitialProps(ctx);
-    const initialProps = await measureSsrCpu(ctx.pathname, 'render', 'html', () =>
+    const initialProps = await measureRenderCpu(ctx.pathname, ssrRequestKind(ctx.req), () =>
       Document.getInitialProps(ctx)
     );
     recordPageRender(ctx.pathname, ctx.req as never);
