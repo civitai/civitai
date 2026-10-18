@@ -13,8 +13,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
  * `/api/mod/cosmetic/holdings-removed`, which the moderator app calls after it deletes an equipped
- * cosmetic in its own transaction. The hat sync runs for real, against an in-process Postgres with the
- * placement trigger, so the deletes below end placements the way the moderator's do.
+ * cosmetic. The hat sync runs for real, against an in-process Postgres with the placement trigger, so
+ * the deletes below end placements the way the moderator's do.
  */
 
 vi.mock('~/server/events/points/enabled', () => ({
@@ -194,7 +194,6 @@ beforeEach(async () => {
     }
   );
 
-  // The owner's hat, equipped to their image and on the live map.
   await db.pg.query(
     `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "equippedToId", "equippedToType")
      VALUES ($1, $2, 'box-open-77', $3, 'Image')`,

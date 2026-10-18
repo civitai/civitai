@@ -801,5 +801,7 @@ describe('a hat placement change writes through to the live hat map', () => {
     expect(caches.frame.Image.refresh).toHaveBeenCalledWith([IMAGE, 10]);
     expect(caches.event.Image.refresh).toHaveBeenCalledWith([IMAGE, 10]);
     expect(caches.event.Model.refresh).toHaveBeenCalledWith([9]);
+    const { userCosmeticCache } = await import('~/server/redis/caches');
+    expect(userCosmeticCache.refresh).toHaveBeenCalledWith([OWNER, 8]);
   });
 });

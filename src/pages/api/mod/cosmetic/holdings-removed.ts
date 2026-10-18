@@ -10,7 +10,7 @@ export default defineModeratorEndpoint('cosmetic.holdingsRemoved', {
   summary: 'Refresh what shows a cosmetic after its holdings were deleted elsewhere.',
   returns: '{ refreshed }',
   notes: [
-    'For a caller that deleted equipped `UserCosmetic` rows itself (the moderator app, inside a refund). ' +
+    'For a caller that deleted equipped `UserCosmetic` rows itself (the moderator app). ' +
       'The rows only name what to re-derive: an entity whose cosmetic is still equipped keeps it.',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },

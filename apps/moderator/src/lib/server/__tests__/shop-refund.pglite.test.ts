@@ -412,8 +412,6 @@ describe('box listing CHECK', () => {
   });
 });
 
-// The main app serves what is equipped on an entity, and the live event hat map, from its own caches.
-// A take-back here re-derives them through the main app once it has committed.
 describe('a take-back of something equipped refreshes the main app', () => {
   it('refunding an opened box whose hat is equipped names that hat and where it was', async () => {
     await purchase('box-a', BOX_LISTING, null);
@@ -496,13 +494,32 @@ describe('a take-back of something equipped refreshes the main app', () => {
       },
     ]);
   });
+
+  it('a removal whose refresh fails still removes, warns the moderator and logs the ids', async () => {
+    mainAppAnswers = () => new Response('down', { status: 503 });
+    await grant(700, 'claimed', BUYER, IMAGE);
+
+    await expect(
+      removeCosmetic({ userId: BUYER, cosmeticId: 700, claimKey: 'claimed', moderatorId: MOD })
+    ).resolves.toEqual({
+      ok: true,
+      warning:
+        "Removed. The site's caches didn't refresh, so it may keep showing on their profile and content until those expire.",
+    });
+    expect(await holdings()).toEqual([]);
+    expect(logAxiomError).toHaveBeenCalledWith(expect.any(Error), {
+      event: 'moderator-holdings-refresh',
+      userIds: [BUYER],
+      cosmeticIds: [700],
+    });
+  });
 });
 
 describe('moderator grants take the item holder lock', () => {
   const lockedTransactions = () =>
     statements.flatMap((s, i) => (s.sql === 'begin' ? [statements[i + 1]] : []));
-  // The first word of each statement each transaction's connection ran: the grant must be inside the
-  // lock's transaction, not beside it on another connection.
+  // The leading keyword of each statement a transaction's own connection ran, so the grant is shown
+  // inside the lock's transaction, not beside it.
   const transactions = () =>
     statements.flatMap((s, i) => {
       if (s.sql !== 'begin') return [];

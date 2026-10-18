@@ -82,8 +82,7 @@ export async function grantCosmeticsToUsers({
     .executeTakeFirst();
   const alreadyOwned = Number(owned?.count ?? 0);
 
-  // One transaction per user, so each holds one user's lock: a box open decides what it may draw from
-  // what that user owns, and a grant inside that window would hand them the same cosmetic twice.
+  // One transaction per user, so each holds a single user's lock.
   for (const userId of uniqueUserIds) {
     await dbWrite.transaction().execute(async (trx) => {
       await lockItemHolder(trx, userId);

@@ -2,8 +2,8 @@
   import { cn } from '@civitai/ui/utils.js';
 
   /**
-   * The amber banner for an action that worked with something to know: `ErrorAlert`'s sibling, in the
-   * markup the existing hand-rolled copies use. `class` carries the caller's margin.
+   * The amber banner for an action that worked with something to know. `class` carries the caller's
+   * margin.
    */
   let {
     message,

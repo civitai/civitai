@@ -963,7 +963,7 @@ export async function refundShopPurchase(input: {
   let removed: RemovedHolding[];
   try {
     removed = await dbWrite.transaction().execute(async (trx) => {
-      // First. A box open reads the held box and writes its opening under it, so without it this
+      // A box open reads the held box and writes its opening under this lock; without it the refund
       // could find neither while the open commits.
       await lockItemHolder(trx, input.userId);
 
@@ -1011,10 +1011,8 @@ type RemovedHolding = {
 };
 
 /**
- * After a take-back commits: what was equipped still shows from the main app's entity caches, and an
- * event hat stays on the live hat map, until the main app re-derives them. Never a failure, since the
- * take-back is already committed and a retry would only be refused; a warning the moderator sees, and
- * an error in Axiom.
+ * Never a failure: the take-back has already committed and a retry would be refused. Returns a warning
+ * for the moderator and logs to Axiom instead.
  */
 async function refreshRemovedHoldings(removed: RemovedHolding[], done: string) {
   const equipped = removed.flatMap(({ equippedToId, equippedToType, ...row }) =>
@@ -1100,8 +1098,6 @@ export async function grantCosmetic(input: {
   if (!exists) return { ok: false, error: 'No such cosmetic.' };
 
   const result = await dbWrite.transaction().execute(async (trx) => {
-    // A box open decides what it may draw from what the user owns; a grant landing inside that
-    // window would hand them the same cosmetic twice.
     await lockItemHolder(trx, input.userId);
     // (userId, cosmeticId, claimKey) is the PK and Retool's plain INSERT threw on a repeat grant.
     return trx

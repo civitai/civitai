@@ -722,8 +722,6 @@ type RemovedEquippedHolding = {
   cosmetic?: { data: unknown } | null;
 };
 
-// What follows a delete of `UserCosmetic` rows: every step re-derives from the database, so `equipped`
-// only names which owners and entities to look at again.
 async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquippedHolding[]) {
   const hatSync = writeThroughRemovedEventHats(equipped);
 
@@ -755,10 +753,9 @@ async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquipped
 }
 
 /**
- * The cleanup `revokeCosmeticsFromUsers` runs, for holdings another app already deleted (the
- * moderator app, inside its own refund transaction). `removed` is what the caller says it deleted:
- * only the owners and entities to re-derive, never what to take off, so a wrong or stale entry
- * refreshes what is there.
+ * The cleanup `revokeCosmeticsFromUsers` runs, for holdings the moderator app already deleted.
+ * `removed` only names the owners and entities to re-derive, never what to take off, so a wrong or
+ * stale entry refreshes what is there.
  */
 export async function refreshAfterHoldingsRemoved(
   removed: {
