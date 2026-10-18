@@ -62,7 +62,9 @@ describe('create_app', () => {
     expect(result).toEqual({
       app: 'quiz-game-2',
       state: 'starting',
-      note: expect.stringMatching(/^The app quiz-game-2 is starting.*call set_checklist now/),
+      note: expect.stringMatching(
+        /^The app quiz-game-2 is starting.*tap Build it.*then call set_checklist/
+      ),
     });
     // A result with no `error` is not shown to the user, so only this one may name tools.
     expect(result).not.toHaveProperty('error');
@@ -344,7 +346,7 @@ describe('what the user can read when create_app fails', () => {
     [
       'the kept-apps limit',
       new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit'),
-      'You already have as many apps as you can keep. Delete one under Your apps at the top of the page, then ask again.',
+      'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
     ],
     [
       'the running limit',
@@ -353,7 +355,7 @@ describe('what the user can read when create_app fails', () => {
         409,
         'limit'
       ),
-      'Another of your apps is still running. Pause it under Your apps at the top of the page, then ask again.',
+      'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.',
     ],
     [
       'a concurrent change',

@@ -1,12 +1,6 @@
 import { ActionIcon, Alert, Button, Group, Menu, Stack, Text, UnstyledButton } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import {
-  IconDotsVertical,
-  IconPlayerPause,
-  IconPlayerPlay,
-  IconPlus,
-  IconTrash,
-} from '@tabler/icons-react';
+import { IconDotsVertical, IconPlayerPause, IconPlus, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -30,13 +24,15 @@ export function AppError({ error }: { error: unknown }) {
   if (isRunningLimit(error))
     return (
       <Alert color="yellow" variant="light" title="Only one app can run at a time">
-        Pause your other app under Your apps, then try again.
+        Another of your apps started at the same moment. Send your message again: starting this app
+        pauses the others.
       </Alert>
     );
   if (error instanceof SandboxApiError && error.kind === 'limit')
     return (
       <Alert color="yellow" variant="light" title="You have as many apps as you can keep">
-        Delete an app you no longer need under Your apps, then try again.
+        Delete an app you no longer need from the app switcher at the top of the page, then try
+        again.
       </Alert>
     );
   if (error instanceof SandboxApiError && error.kind === 'conflict')
@@ -56,17 +52,11 @@ export function AppError({ error }: { error: unknown }) {
 
 interface AppActions {
   sandboxes: SandboxesState;
-  onOpen: (app: string) => void;
   onRemoved: (name: string) => void;
 }
 
-/** Pause, Resume and Delete for one app. */
-export function AppMenu({
-  sandbox,
-  sandboxes,
-  onOpen,
-  onRemoved,
-}: AppActions & { sandbox: Sandbox }) {
+/** Pause and Delete for one app. */
+export function AppMenu({ sandbox, sandboxes, onRemoved }: AppActions & { sandbox: Sandbox }) {
   const { suspend, remove } = sandboxes;
   const confirmDelete = () =>
     openConfirmModal({
@@ -83,7 +73,8 @@ export function AppMenu({
     });
 
   return (
-    <Menu position="bottom-end" withinPortal>
+    // Inside the app list's popover: a portalled dropdown would count as a click outside it.
+    <Menu position="bottom-end" withinPortal={false}>
       <Menu.Target>
         <ActionIcon
           size={44}
@@ -99,11 +90,7 @@ export function AppMenu({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        {sandbox.state === 'suspended' ? (
-          <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => onOpen(sandbox.app)}>
-            Resume
-          </Menu.Item>
-        ) : (
+        {sandbox.state !== 'suspended' && (
           <Menu.Item
             leftSection={<IconPlayerPause size={16} />}
             onClick={() => suspend.mutate(sandbox.name)}
@@ -126,14 +113,18 @@ function statusLine(sandbox: Sandbox): string {
     : status;
 }
 
-/** The user's apps: open one, start a new one, or pause, resume or delete one from its menu. */
+/** The user's apps: open one, start a new one, or pause or delete one from its menu. */
 export function YourAppsList({
   sandboxes,
   activeName,
   onOpen,
   onRemoved,
   onNewApp,
-}: AppActions & { activeName: string | null; onNewApp: () => void }) {
+}: AppActions & {
+  activeName: string | null;
+  onOpen: (sandbox: Sandbox) => void;
+  onNewApp: () => void;
+}) {
   const apps = sandboxes.list.data ?? [];
 
   return (
@@ -144,7 +135,7 @@ export function YourAppsList({
         className="min-h-11"
         onClick={onNewApp}
       >
-        Start a new app
+        New app
       </Button>
       <AppError error={appsError(sandboxes)} />
       <Stack gap={4} component="ul" className="m-0 list-none p-0">
@@ -161,7 +152,7 @@ export function YourAppsList({
               <UnstyledButton
                 className="min-h-11 min-w-0 flex-1 py-1"
                 aria-current={isActive ? 'true' : undefined}
-                onClick={() => onOpen(sandbox.app)}
+                onClick={() => onOpen(sandbox)}
               >
                 <Text fw={600} truncate>
                   {sandbox.app}
@@ -170,20 +161,15 @@ export function YourAppsList({
                   {isActive ? `Open now · ${statusLine(sandbox)}` : statusLine(sandbox)}
                 </Text>
               </UnstyledButton>
-              <AppMenu
-                sandbox={sandbox}
-                sandboxes={sandboxes}
-                onOpen={onOpen}
-                onRemoved={onRemoved}
-              />
+              <AppMenu sandbox={sandbox} sandboxes={sandboxes} onRemoved={onRemoved} />
             </Group>
           );
         })}
       </Stack>
       <Text size="xs" c="dimmed">
-        You can keep 3 apps, and one runs at a time: opening another pauses the one that runs. An
-        app also pauses after 30 minutes idle or 8 hours running, and is deleted after 14 days
-        unused.
+        You can keep 3 apps, and one runs at a time: picking a paused app, or sending it a message,
+        starts it and pauses the one that runs. An app also pauses after 30 minutes idle or 8 hours
+        running, and is deleted after 14 days unused.
       </Text>
     </Stack>
   );

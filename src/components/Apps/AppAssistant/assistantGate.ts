@@ -115,9 +115,16 @@ interface Verification {
 
 const unverified = (): Verification => ({ preview: null, tests: null, typecheck: null });
 
+/** What Build it sends as the user. */
+export const BUILD_IT_MESSAGE = 'Looks good — build it.';
+
 export interface AssistantGate {
   /** Forget what was verified, e.g. when another sandbox opens. */
   reset(): void;
+  /** The user answered the checklist another way (sent a message, opened another chat): remove Build it. */
+  answered(): void;
+  /** Another app opened: a checklist shown for a different one loses its Build it. */
+  appChanged(app: string | null): void;
   beforeToolCall: ChatToolGate;
   onToolResult(result: ChatToolResult): void;
   tools: Record<string, ChatTool>;
@@ -130,11 +137,17 @@ export interface AssistantGate {
 export function createAssistantGate({
   refuse,
   onReply,
+  onBuild,
+  currentApp,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
   /** Told when a new reply makes its first tool call, before that call's refusal is asked. */
   onReply?: () => void;
+  /** The user pressed Build it under a checklist that waits for them. */
+  onBuild?: () => void;
+  /** The app open now; a checklist belongs to the app it was shown for. */
+  currentApp?: () => string | null;
 } = {}): AssistantGate {
   let conversationId: string | null = null;
   // The chat numbers every reply, Continue and Retry included.
@@ -145,6 +158,19 @@ export function createAssistantGate({
   // Calls other than report_ready that were allowed and have not returned. The chat starts every call of
   // a step together, so a write in the same step as report_ready could land after it said ready.
   let running = 0;
+  // Which set_checklist call ended the last reply and waits for the user; only its card offers Build it.
+  // Per page load, so a card restored from an earlier visit never matches.
+  const page = Math.random().toString(36).slice(2, 10);
+  let checklistCalls = 0;
+  let awaiting: string | null = null;
+  let awaitingApp: string | null = null;
+  let buildButtons: HTMLButtonElement[] = [];
+
+  const answered = () => {
+    awaiting = null;
+    for (const button of buildButtons) button.remove();
+    buildButtons = [];
+  };
 
   const reset = () => {
     verification = unverified();
@@ -199,6 +225,7 @@ export function createAssistantGate({
       reply = context.reply;
       turnCalls = 0;
       running = 0;
+      answered();
       onReply?.();
     }
     if (turnCalls >= APP_ASSISTANT_TURN_TOOL_CALL_LIMIT)
@@ -230,7 +257,7 @@ export function createAssistantGate({
 
   const set_checklist: ChatTool = {
     description:
-      'Show the user the list of features they asked for, as a checklist they can confirm or change. Call it before you scaffold, with every requested feature and nothing they did not ask for. Call it again with done: true on an item once it works and has a passing test. Changing the labels shows the user the new list and ends your reply.',
+      'Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels shows the user the new list and ends your reply.',
     activity: 'Writing the feature checklist…',
     inputSchema: {
       properties: {
@@ -261,15 +288,33 @@ export function createAssistantGate({
         checklist.length !== items.length ||
         checklist.some((item, i) => item.label !== items[i].label);
       checklist = items;
-      if (changed)
+      if (changed) {
+        awaiting = `${page}-${++checklistCalls}`;
+        awaitingApp = currentApp?.() ?? null;
         return {
           shown: true,
           awaitsUser: true,
-          note: 'The user now sees this list. Your reply ends here: wait for them to confirm or change it.',
+          checklist: awaiting,
+          note: 'The user now sees this list with a Build it button. Your reply ends here: wait for them to press it or say what to change.',
         };
+      }
       return { updated: true, open: items.filter((item) => !item.done).length };
     },
-    render: renderChecklist,
+    render(call) {
+      const card = renderChecklist(call);
+      const shownAs = (call.output as { checklist?: unknown } | null | undefined)?.checklist;
+      if (!card || !onBuild || !awaiting || shownAs !== awaiting) return card;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Build it';
+      button.style.cssText =
+        'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
+      // The page removes it (`answered`) once the message goes, or once it puts it in the message box.
+      button.addEventListener('click', onBuild);
+      buildButtons.push(button);
+      card.append(button);
+      return card;
+    },
   };
 
   const report_ready: ChatTool = {
@@ -296,6 +341,10 @@ export function createAssistantGate({
 
   return {
     reset,
+    answered,
+    appChanged: (app) => {
+      if (awaiting && app !== awaitingApp) answered();
+    },
     beforeToolCall,
     onToolResult,
     tools: { [SET_CHECKLIST]: set_checklist, [REPORT_READY]: report_ready },

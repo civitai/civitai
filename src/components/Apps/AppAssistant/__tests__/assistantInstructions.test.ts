@@ -29,7 +29,7 @@ describe('buildAssistantInstructions', () => {
       previewHost: null,
     });
     expect(none).toMatch(
-      /other apps are tip-calculator, moodboard; to keep working on one of those, they open it under Your apps/
+      /other apps are tip-calculator, moodboard; to keep working on one of those, they pick it from the app switcher at the top of the page/
     );
     const open = buildAssistantInstructions({
       sandbox: { ...running, app: 'tip-calculator' },
@@ -109,7 +109,10 @@ describe('buildAssistantInstructions', () => {
   it.each([
     ['running', /running and its tools are available/],
     ['starting', /appear in a few seconds/],
-    ['suspended', /no sandbox tools: ask the user to press Resume/],
+    [
+      'suspended',
+      /no sandbox tools; its files are kept\. It starts again by itself when the user sends a message/,
+    ],
   ] as const)('explains a %s sandbox', (state, note) => {
     const text = buildAssistantInstructions({
       sandbox: { ...running, state },

@@ -180,4 +180,72 @@ describe('AppAssistantChat', () => {
     expect(next.mock.calls).toEqual([[detail]]);
     expect(onToolResult).toHaveBeenCalledTimes(1);
   });
+
+  test('a message the page holds back is kept from the chat; any other goes out', async () => {
+    const hold = vi.fn((text: string) => text === 'hold me');
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        onBeforeSend={hold}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    const send = (text: string) => {
+      const event = new CustomEvent('before-send', {
+        detail: { text },
+        cancelable: true,
+        bubbles: true,
+        composed: true,
+      });
+      chatEl().dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    await vi.waitFor(() => expect(send('hold me')).toBe(true));
+    expect(send('let me go')).toBe(false);
+    expect(hold.mock.calls.at(-1)).toEqual(['let me go']);
+  });
+
+  test('tells the page which chat is open, including the one it started on', async () => {
+    const onChatChange = vi.fn();
+    const props = { tokens: tokens(), tools: {}, instructions: () => '', mcpServers: [] };
+    const { rerender } = await renderWithProviders(<AppAssistantChat {...props} />);
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    // Already open before the page listens.
+    Object.defineProperty(chatEl(), 'chatId', { value: 'chat-1', configurable: true });
+    await rerender(<AppAssistantChat {...props} onChatChange={onChatChange} />);
+    await vi.waitFor(() => expect(onChatChange).toHaveBeenCalledWith('chat-1'));
+    chatEl().dispatchEvent(
+      new CustomEvent('chat-change', {
+        detail: { chatId: 'chat-2' },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    expect(onChatChange.mock.calls).toEqual([['chat-1'], ['chat-2']]);
+  });
+
+  test('tells the page each time the user edits the message box', async () => {
+    const onTyping = vi.fn();
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        onTyping={onTyping}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    // The box sits in the chat's shadow root; its `input` is composed, so it reaches the element.
+    const root = chatEl().shadowRoot ?? chatEl().attachShadow({ mode: 'open' });
+    const box = document.createElement('textarea');
+    root.append(box);
+    await vi.waitFor(() => {
+      box.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+      expect(onTyping).toHaveBeenCalled();
+    });
+  });
 });
