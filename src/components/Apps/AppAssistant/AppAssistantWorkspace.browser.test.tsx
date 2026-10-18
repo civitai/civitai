@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
@@ -42,7 +42,6 @@ const m = vi.hoisted(() => ({
     chatRef?: { current: unknown };
     onBeforeSend?: (text: string) => boolean;
     onChatChange?: (chatId: string | null) => void;
-    onTyping?: () => void;
   },
   list: [] as Sandbox[],
   open: vi.fn(),
@@ -63,7 +62,7 @@ const m = vi.hoisted(() => ({
   /**
    * The element's own send, as 0.11.0 has it: nothing while a reply runs; while it holds, the text
    * fills an EMPTY box and nothing fires; otherwise `before-send`, and it goes unless the page cancels
-   * it, which empties the box.
+   * it. It never empties the box: the box empties itself when the user presses Send.
    */
   chatSend: async (text: string) => {
     if (m.running) return;
@@ -71,11 +70,27 @@ const m = vi.hoisted(() => ({
       if (!m.box) m.box = text;
       return;
     }
-    if (m.chat?.onBeforeSend?.(text)) {
-      m.box = '';
-      return;
-    }
+    if (m.chat?.onBeforeSend?.(text)) return;
     m.delivered.push(text);
+  },
+  /**
+   * The element's shadow root as 0.11.0 draws it: the message box (a composer holding `draft` and its
+   * textarea) beside the chat's other fields, which fire `input` too.
+   */
+  drawChat: (host: HTMLElement) => {
+    const root = host.attachShadow({ mode: 'open' });
+    const composer = document.createElement('civitai-chat-composer');
+    Object.defineProperty(composer, 'draft', {
+      get: () => m.box,
+      set: (value: string) => (m.box = value),
+    });
+    const box = document.createElement('textarea');
+    box.setAttribute('aria-label', 'Message');
+    composer.append(box);
+    const search = document.createElement('input');
+    search.setAttribute('aria-label', 'Search models');
+    root.append(search, composer);
+    return root;
   },
   send: vi.fn(async (text: string) => m.chatSend(text)),
   /** Set to keep the next resume pending until the test settles it. */
@@ -94,14 +109,27 @@ const m = vi.hoisted(() => ({
   listNeverLoaded: true,
 }));
 
-vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
-  AppAssistantChat: (props: NonNullable<typeof m.chat>) => {
-    m.chat = props;
-    if (props.chatRef)
-      props.chatRef.current = { newChat: m.newChat, send: m.send, compose: m.compose };
-    return <div data-testid="chat" />;
-  },
-}));
+vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
+  const { useLayoutEffect, useRef } = await import('react');
+  return {
+    AppAssistantChat: (props: NonNullable<typeof m.chat>) => {
+      m.chat = props;
+      const host = useRef<HTMLDivElement>(null);
+      useLayoutEffect(() => {
+        const el = host.current!;
+        const renderRoot = el.shadowRoot ?? m.drawChat(el);
+        if (props.chatRef)
+          props.chatRef.current = {
+            newChat: m.newChat,
+            send: m.send,
+            compose: m.compose,
+            renderRoot,
+          };
+      });
+      return <div data-testid="chat" ref={host} />;
+    },
+  };
+});
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
   AppAssistantPreview: () => <div data-testid="preview" />,
 }));
@@ -177,7 +205,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   }),
 }));
 
-const { AppAssistantWorkspace } = await import('./AppAssistantWorkspace');
+const { AppAssistantWorkspace, HELD_TIMEOUT_MS } = await import('./AppAssistantWorkspace');
 const { AssistantTokenError } = await import('~/components/Apps/AppAssistant/assistantToken');
 
 const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExample sandbox-dev-tunnel';
@@ -214,11 +242,22 @@ async function openFirst() {
   await openFromSwitcher('app-aaaa');
 }
 
+/** The user edits a field in the chat, which fires `input` as a browser does. */
+function fill(field: 'Message' | 'Search models', text: string) {
+  const root = document.querySelector('[data-testid="chat"]')!.shadowRoot!;
+  const el = root.querySelector<HTMLInputElement>(`[aria-label="${field}"]`)!;
+  el.value = text;
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+}
+
 /** The user edits the message box. */
 function type(text: string) {
   m.box = text;
-  m.chat?.onTyping?.();
+  fill('Message', text);
 }
+
+/** The user types in one of the chat's other fields: the model search, a chat's name, settings. */
+const typeElsewhere = (text: string) => fill('Search models', text);
 
 /** The user types `text` and presses Send, which does nothing while the chat holds or replies. */
 async function userSends(text: string) {
@@ -233,6 +272,10 @@ const settle = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
 async function startPreview(blockId: string) {
   await m.chat!.tools.start_preview.execute({ public_key: KEY, block_id: blockId }, ctx);
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   m.chat = null;
@@ -432,6 +475,19 @@ describe('AppAssistantWorkspace app switcher', () => {
     await dialog.getByRole('button', { name: /^app-bbbb/ }).click();
     expect(m.open).toHaveBeenCalledWith('app-bbbb');
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+  });
+
+  test('INVARIANT: picking an app from the switcher puts focus back on it', async () => {
+    await mount();
+    await switcher().click();
+    // Focus is trapped in the list while it is open, so it has to be given back.
+    await vi.waitFor(() => expect(switcher().element()).not.toBe(document.activeElement));
+    await page
+      .getByRole('dialog', { name: 'Apps' })
+      .getByRole('button', { name: /^app-aaaa/ })
+      .click();
+    await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+    await expect.element(switcher()).toHaveFocus();
   });
 
   test('NEGATIVE CONTROL: picking a running app does not ask the service', async () => {
@@ -654,7 +710,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     expect(m.delivered).toEqual([]);
   });
 
-  test('a message given back over one the user typed is offered back instead of replacing it', async () => {
+  test('🟢 a message given back over one the user typed is offered back, and Put it back keeps what they typed', async () => {
     await openPaused();
     m.deferOpen = true;
     await userSends('Add a dark mode');
@@ -665,7 +721,105 @@ describe('AppAssistantWorkspace auto-resume', () => {
       .toBeVisible();
     expect(m.box).toBe('something else');
     await page.getByRole('button', { name: 'Put it back' }).click();
+    expect(m.box).toBe('Add a dark mode\n\nsomething else');
+  });
+
+  test('NEGATIVE CONTROL: Put it back into a box the user emptied puts back just the message', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    type('something else');
+    m.chat!.onChatChange!('chat-2');
+    await expect.element(page.getByRole('button', { name: 'Put it back' })).toBeVisible();
+    type('');
+    await page.getByRole('button', { name: 'Put it back' }).click();
     expect(m.box).toBe('Add a dark mode');
+  });
+
+  test('🟡 a message the user sends while the held one waits on the chat does not drop it silently', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
+    type('and a timer');
+    m.listing = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    // The chat has listed the tools; the user presses Send before the page tries again.
+    m.listing = false;
+    await userSends('and a timer');
+    expect(m.delivered).toEqual(['and a timer']);
+    await expect
+      .element(page.getByText('This message was not sent: “Add a dark mode”'))
+      .toBeVisible();
+    await settle(1200);
+    expect(m.delivered).toEqual(['and a timer']);
+  });
+
+  test('🟡 a released message the chat never takes, because a reply outlasts the tries, is reported unsent', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
+    m.running = true;
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    runsB(screen);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.useRealTimers();
+    await expect
+      .element(page.getByText('This message was not sent: “Add a dark mode”'))
+      .toBeVisible();
+    expect(m.delivered).toEqual([]);
+    expect(m.box).toBe('');
+  });
+
+  test('NEGATIVE CONTROL: a released message the chat takes on a later try is not reported unsent', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.running = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
+    m.running = false;
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
+    await settle(100);
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+  });
+
+  test('🟡 typing in another of the chat’s fields while it resumes leaves no sent copy in the box', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    typeElsewhere('flux');
+    m.listing = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    m.listing = false;
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
+    await vi.waitFor(() => expect(m.box).toBe(''));
+  });
+
+  test('🟡 typing in another of the chat’s fields does not stop a held message coming back into the box', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    typeElsewhere('My dark mode chat');
+    m.chat!.onChatChange!('chat-2');
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+  });
+
+  test('INVARIANT: a held message whose app never runs comes back after HELD_TIMEOUT_MS, not before', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    await userSends('Add a dark mode');
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
+    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS - 2000);
+    expect(m.box).toBe('');
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(m.box).toBe('Add a dark mode');
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    expect(m.delivered).toEqual([]);
   });
 
   test('a resume that fails gives the message back and shows why', async () => {
@@ -777,6 +931,20 @@ describe('AppAssistantWorkspace Build it', () => {
     await buildIt().click();
     await expect.element(buildIt()).not.toBeInTheDocument();
     expect(m.box).toBe('Looks good — build it.');
+    expect(m.delivered).toEqual([]);
+    card.remove();
+  });
+
+  test('🟢 Build it pressed while the reply is still ending keeps what the user typed, and offers itself back', async () => {
+    const card = await checklistCard();
+    type('Also add a timer');
+    m.running = true;
+    await buildIt().click();
+    await expect.element(buildIt()).not.toBeInTheDocument();
+    expect(m.box).toBe('Also add a timer');
+    await expect
+      .element(page.getByText('This message was not sent: “Looks good — build it.”'))
+      .toBeVisible();
     expect(m.delivered).toEqual([]);
     card.remove();
   });

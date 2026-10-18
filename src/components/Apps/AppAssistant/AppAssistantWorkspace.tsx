@@ -32,6 +32,7 @@ import {
   AssistantTokenError,
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
+import { messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -106,36 +107,39 @@ export interface Release {
 
 /**
  * Sends `text` as the user's. The chat holds silently while it lists a just-added app's tools, and a
- * send while it holds only fills an EMPTY message box, so it is sent again until it goes. `typed`
- * counts the user's edits in the box; `since` is that count when the message left it. A box the user
- * has typed in since keeps their text: nothing goes in, and nothing is cleared. A copy the chat put
- * there is the user's once they edit it: nothing more is sent. An untouched copy is cleared once the
- * message went.
+ * send while it holds only fills an EMPTY message box, so it is sent again until it goes. A copy the
+ * chat put in the box is the user's once they change it: nothing more is sent. An untouched copy is
+ * cleared once the message went. Resolves false when the message neither went nor reached the box —
+ * the user sent something else first, the chat or app changed, or the tries ran out — so it would
+ * otherwise be lost without a word.
  */
 export async function releaseHeld(
   chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
   replaying: { current: Release | null },
-  typed: { current: number },
+  box: () => string,
   text: string,
-  since: number,
   interval = RELEASE_INTERVAL_MS
-) {
+): Promise<boolean> {
   const release: Release = { text, went: false };
   replaying.current = release;
   const live = () => replaying.current === release && !release.went;
-  const draft = typed.current !== since;
-  let parkedAt: number | null = null;
+  let parked = false;
   for (let i = 0; i < RELEASE_TRIES && live(); i++) {
-    if (parkedAt !== null && typed.current !== parkedAt) break;
-    const before = typed.current;
+    if (parked && box() !== text) break;
+    const empty = !box();
     await chatRef.current?.send(text);
     if (!live()) break;
-    if (!draft && parkedAt === null && typed.current === before) parkedAt = before;
+    if (empty && box() === text) parked = true;
     await sleep(interval);
   }
   if (replaying.current === release) replaying.current = null;
-  if (release.went && parkedAt !== null && typed.current === parkedAt)
-    await chatRef.current?.compose('');
+  if (release.went && parked && box() === text) await chatRef.current?.compose('');
+  return release.went || parked || box() === text;
+}
+
+/** What "Put it back" leaves in the message box: the message, ahead of anything typed there since. */
+function putBack(message: string, box: string): string {
+  return box.trim() ? `${message}\n\n${box}` : message;
 }
 
 /** The app the user worked on last, to open on a visit with none open; none when no app says when. */
@@ -196,13 +200,13 @@ export function AppAssistantWorkspace({
   const switcherTitleId = useId();
   const chatRef = useRef<CivitaiChat | null>(null);
   // A message sent while the open app was paused, held until the app runs again. `started` once the
-  // app was seen starting; `typed` is the edit count when it left the message box.
-  type Held = { text: string; app: string; chatId: string | null; started: boolean; typed: number };
+  // app was seen starting.
+  type Held = { text: string; app: string; chatId: string | null; started: boolean };
   const [held, setHeld] = useState<Held | null>(null);
-  // A held message that could not go back into the message box, because the user typed there since.
+  // A message of the user's that did not go and could not go back into the message box unasked.
   const [unsent, setUnsent] = useState<string | null>(null);
   const replaying = useRef<Release | null>(null);
-  const typed = useRef(0);
+  const boxText = useCallback(() => messageBoxText(chatRef.current), []);
   const [chatId, setChatId] = useState<string | null>(null);
   const chatIdRef = useRef(chatId);
   const previewShown = useRef(false);
@@ -346,24 +350,32 @@ export function AppAssistantWorkspace({
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
-  // Build it: a send the chat could not take now (a reply still ending, or a hold) goes into the
-  // message box for the user to send instead, so it is never pressed twice.
+  // A message that did not go comes back to the user, never over what they have in the box.
+  const giveBack = useCallback(
+    (text: string) => {
+      const box = boxText();
+      if (box === text) return;
+      if (box.trim()) setUnsent(text);
+      else void chatRef.current?.compose(text);
+    },
+    [boxText]
+  );
+  // Build it: a send the chat could not take now (a reply still ending, or a hold) comes back to the
+  // user to send instead, so it is never pressed twice.
   const buildWent = useRef(false);
   const buildRef = useRef(async () => {
     buildWent.current = false;
     await chatRef.current?.send(BUILD_IT_MESSAGE);
     if (buildWent.current) return;
-    await chatRef.current?.compose(BUILD_IT_MESSAGE);
+    giveBack(BUILD_IT_MESSAGE);
     gate.answered();
   });
-  const giveBack = useCallback(() => {
+  const giveBackHeld = useCallback(() => {
     const message = heldRef.current;
     heldRef.current = null;
     setHeld(null);
-    if (!message) return;
-    if (typed.current === message.typed) void chatRef.current?.compose(message.text);
-    else setUnsent(message.text);
-  }, []);
+    if (message) giveBack(message.text);
+  }, [giveBack]);
   const onBeforeSend = useCallback(
     (text: string) => {
       gate.answered();
@@ -371,7 +383,7 @@ export function AppAssistantWorkspace({
       if (text === BUILD_IT_MESSAGE) buildWent.current = true;
       const release = replaying.current;
       if (release?.text === text) release.went = true;
-      // The user sent something else: stop sending the page's message.
+      // The user sent something else: stop sending the page's message (the release reports it unsent).
       else if (release) replaying.current = null;
       const app = live.current.active;
       // While a message is held the chat holds too, so nothing else reaches here then.
@@ -381,7 +393,6 @@ export function AppAssistantWorkspace({
         app: app.app,
         chatId: chatIdRef.current,
         started: false,
-        typed: typed.current,
       };
       setHeld(heldRef.current);
       resumeRef.current(app.app, {
@@ -389,15 +400,12 @@ export function AppAssistantWorkspace({
         onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
           if (heldRef.current?.app === sandbox.app) setActiveName(sandbox.name);
         },
-        onError: giveBack,
+        onError: giveBackHeld,
       });
       return true;
     },
-    [gate, giveBack]
+    [gate, giveBackHeld]
   );
-  const onTyping = useCallback(() => {
-    typed.current++;
-  }, []);
   // A message on its way out belongs to the chat and app it was written in, and to this page.
   useEffect(() => {
     replaying.current = null;
@@ -411,10 +419,10 @@ export function AppAssistantWorkspace({
   useEffect(() => {
     if (!held) return;
     // The app was closed, another opened, or another chat opened meanwhile.
-    if (!active || active.app !== held.app || chatId !== held.chatId) return giveBack();
+    if (!active || active.app !== held.app || chatId !== held.chatId) return giveBackHeld();
     // Paused again once it had started (paused by hand, or from another tab).
     if (active.state === 'suspended') {
-      if (held.started) giveBack();
+      if (held.started) giveBackHeld();
       return;
     }
     if (active.state === 'starting') {
@@ -425,17 +433,19 @@ export function AppAssistantWorkspace({
       return;
     }
     // Running, but its tools are not handed to the chat (an address outside the sandbox service).
-    if (!mcpServers.length) return giveBack();
+    if (!mcpServers.length) return giveBackHeld();
     heldRef.current = null;
     setHeld(null);
-    void releaseHeld(chatRef, replaying, typed, held.text, held.typed);
-  }, [held, active, chatId, mcpServers, giveBack]);
+    void releaseHeld(chatRef, replaying, boxText, held.text).then((kept) => {
+      if (!kept) setUnsent(held.text);
+    });
+  }, [held, active, chatId, mcpServers, giveBackHeld, boxText]);
   const holding = !!held;
   useEffect(() => {
     if (!holding) return;
-    const timer = setTimeout(giveBack, HELD_TIMEOUT_MS);
+    const timer = setTimeout(giveBackHeld, HELD_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [holding, giveBack]);
+  }, [holding, giveBackHeld]);
 
   const onChatChange = useCallback(
     (id: string | null) => {
@@ -575,7 +585,7 @@ export function AppAssistantWorkspace({
               variant="light"
               className="min-h-11 shrink-0"
               onClick={() => {
-                void chatRef.current?.compose(unsent);
+                void chatRef.current?.compose(putBack(unsent, boxText()));
                 setUnsent(null);
               }}
             >
@@ -622,7 +632,6 @@ export function AppAssistantWorkspace({
             chatRef={chatRef}
             onBeforeSend={onBeforeSend}
             onChatChange={onChatChange}
-            onTyping={onTyping}
           />
         </Paper>
         {session && (

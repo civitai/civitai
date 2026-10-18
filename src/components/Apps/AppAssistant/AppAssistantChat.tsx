@@ -15,11 +15,7 @@ import {
   APP_ASSISTANT_PLACEHOLDER,
 } from '~/components/Apps/AppAssistant/assistantChatConfig';
 import { buildAssistantSystemPrompt } from '~/components/Apps/AppAssistant/assistantInstructions';
-import {
-  listenBeforeSend,
-  listenChatChange,
-  listenTyping,
-} from '~/components/Apps/AppAssistant/chatAdapter';
+import { listenBeforeSend, listenChatChange } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 import classes from './AppAssistant.module.scss';
@@ -45,8 +41,6 @@ export interface AppAssistantChatProps {
   /** Asked before each message goes out; true keeps it back. */
   onBeforeSend?: (text: string) => boolean;
   onChatChange?: (chatId: string | null) => void;
-  /** The user edited the message box. */
-  onTyping?: () => void;
 }
 
 export function AppAssistantChat({
@@ -60,7 +54,6 @@ export function AppAssistantChat({
   chatRef,
   onBeforeSend,
   onChatChange,
-  onTyping,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
   const [ready, setReady] = useState(false);
@@ -143,12 +136,6 @@ export function AppAssistantChat({
     if (opened) onChatChange(opened);
     return listenChatChange(el, onChatChange);
   }, [ready, onChatChange]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!ready || !el || !onTyping) return;
-    return listenTyping(el, onTyping);
-  }, [ready, onTyping]);
 
   if (error)
     return (

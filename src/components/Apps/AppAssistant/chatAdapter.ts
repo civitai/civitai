@@ -1,4 +1,8 @@
-import type { BeforeSendDetail, ChatChangeDetail } from '@civitai/components-chat/civitai-chat';
+import type {
+  BeforeSendDetail,
+  ChatChangeDetail,
+  CivitaiChat,
+} from '@civitai/components-chat/civitai-chat';
 
 /** Calls `hold` before each message the chat sends; returning true keeps that message from going out. */
 export function listenBeforeSend(el: HTMLElement, hold: (text: string) => boolean): () => void {
@@ -20,9 +24,14 @@ export function listenChatChange(
   return () => el.removeEventListener('chat-change', listener);
 }
 
-/** Calls `onTyping` on each edit the user makes in the chat's message box. */
-export function listenTyping(el: HTMLElement, onTyping: () => void): () => void {
-  // Typing in the box is the only `input` the chat's own controls fire.
-  el.addEventListener('input', onTyping);
-  return () => el.removeEventListener('input', onTyping);
+/**
+ * What is in the chat's message box now; `''` before the chat has drawn it. Read from the box itself:
+ * the chat's other fields (model search, settings, chat rename) fire `input` too, and the chat fills
+ * and empties the box with no `input` at all.
+ */
+export function messageBoxText(chat: Pick<CivitaiChat, 'renderRoot'> | null): string {
+  const composer = chat?.renderRoot?.querySelector('civitai-chat-composer') as {
+    draft?: unknown;
+  } | null;
+  return typeof composer?.draft === 'string' ? composer.draft : '';
 }
