@@ -189,6 +189,9 @@ const RAIL_ACTIVATE_WIDTH = 1440;
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  // 'always': ad gating, and any notFound or redirect, is decided from the prefetched entity, so a
+  // client navigation must prefetch too.
+  prefetch: 'always',
   useSession: true,
   resolver: async ({ ssg, ctx, session, features }) => {
     const params = (ctx.params ?? {}) as {

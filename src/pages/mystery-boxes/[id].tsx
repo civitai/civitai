@@ -15,6 +15,9 @@ const paramsSchema = z.object({ id: z.coerce.number().int().positive().max(INT4_
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   useSSG: true,
+  // 'always': notFound, and any redirect, is decided from prefetched data, so a client navigation
+  // must prefetch too.
+  prefetch: 'always',
   resolver: async ({ ctx, ssg }) => {
     const parsed = paramsSchema.safeParse(ctx.params);
     if (!parsed.success) return { notFound: true };

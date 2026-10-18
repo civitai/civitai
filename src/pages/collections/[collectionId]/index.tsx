@@ -5,6 +5,9 @@ import { CollectionsLayout } from '~/components/Collections/CollectionsLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  // 'always': ad gating, and any notFound or redirect, is decided from the prefetched entity, so a
+  // client navigation must prefetch too.
+  prefetch: 'always',
   useSession: true,
   resolver: async ({ ssg, session = null, features, ctx }) => {
     const raw = String(ctx.query.collectionId);

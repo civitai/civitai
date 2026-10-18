@@ -22,6 +22,9 @@ const querySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  // 'always': notFound, and any redirect, is decided from prefetched data, so a client navigation
+  // must prefetch too.
+  prefetch: 'always',
   resolver: async ({ ctx, ssg, features }) => {
     if (!features?.challengePlatform) return { notFound: true };
 

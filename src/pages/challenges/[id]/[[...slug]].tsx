@@ -191,6 +191,9 @@ const querySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
+  // 'always': ad gating, and any notFound or redirect, is decided from the prefetched entity, so a
+  // client navigation must prefetch too.
+  prefetch: 'always',
   resolver: async ({ ctx, ssg, features }) => {
     if (!features?.challengePlatform) return { notFound: true };
 
