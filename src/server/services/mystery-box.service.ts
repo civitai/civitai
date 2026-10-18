@@ -48,7 +48,7 @@ import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/er
 import { createKeyedTtlMemo, createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
+import { BOX_OPENING_REWARD_STATUS, boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
@@ -889,8 +889,6 @@ export async function purchaseMysteryBox({
   }
 }
 
-export const BOX_OPENING_REWARD_STATUS = { granted: 'granted' } as const;
-
 export type MysteryBoxOpenResult = {
   /** The opened box's `Item.id`, as a string: it is a BIGINT. */
   boxItemId: string;
@@ -948,6 +946,9 @@ const NOT_YOUR_BOX = 'This box is not yours to open';
 async function replayOpening(client: Prisma.TransactionClient, boxItemId: bigint, userId: number) {
   const opening = await client.boxOpening.findUnique({ where: { boxItemId } });
   if (!opening || opening.userId !== userId) throw throwBadRequestError(NOT_YOUR_BOX);
+  // Its reward was taken back: answering the reveal again would show a hat they no longer hold.
+  if (opening.rewardStatus !== BOX_OPENING_REWARD_STATUS.granted)
+    throw throwBadRequestError('This box was refunded');
   const reward = await client.itemDefinition.findUnique({
     where: { id: opening.rewardDefinitionId },
     select: { cosmeticId: true },

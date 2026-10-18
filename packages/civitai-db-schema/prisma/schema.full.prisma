@@ -5433,7 +5433,7 @@ model CosmeticShopItem {
   listed            Boolean   @default(true)
   // Set on a listing that sells an item (a mystery box). Such a listing also has
   // no `cosmeticId`, so it must be routed before anything that reads a NULL
-  // `cosmeticId` as a pack.
+  // `cosmeticId` as a pack. A CHECK keeps it unlisted.
   itemDefinitionId  Int?
   itemDefinition    ItemDefinition? @relation(fields: [itemDefinitionId], references: [id], onDelete: Restrict)
 
@@ -5672,7 +5672,7 @@ model BoxOpening {
   tierRoll           Int
   tierPoolSize       Int
   itemRoll           Int
-  /// granted (text + CHECK)
+  /// granted | refunded (text + CHECK)
   rewardStatus       String
   createdAt          DateTime @default(now())
 

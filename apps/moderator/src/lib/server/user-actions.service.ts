@@ -3,7 +3,11 @@ import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
+import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
+import type { DB } from '@civitai/db-schema/kysely';
+import { ITEM_HOLDER_LOCK_CLASS } from '@civitai/shared/item-holder-lock';
+import { BOX_OPENING_REWARD_STATUS, boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustUserCosmeticCaches } from './cache';
@@ -928,9 +932,9 @@ export async function setRewardsEligibility(input: {
 
 // SHOP REFUND (Retool's DeleteUserCosmetic + UpdateShopTransaction + LogShopRefund).
 //
-// Two writes that must not half-apply: flagging the purchase refunded while the cosmetic stays
-// equipped leaves the user holding something they were paid back for, and deleting the cosmetic
-// without the flag makes the purchase eligible to be refunded twice. Hence one transaction.
+// Flagging the purchase refunded and taking back what it granted must not half-apply: one without the
+// other either leaves the user holding something they were paid back for, or makes the purchase
+// refundable twice. Hence one transaction.
 //
 // Retool deleted by `claimKey` ALONE. `UserCosmetic.claimKey` defaults to the literal 'claimed' for
 // anything not bought from the shop, so that statement was one mistyped key away from deleting every
@@ -944,32 +948,44 @@ export async function refundShopPurchase(input: {
   moderatorId: number;
 }): Promise<ActionResult> {
   const purchase = await dbWrite
-    .selectFrom('UserCosmeticShopPurchases')
-    .select(['cosmeticId', 'refunded'])
-    .where('buzzTransactionId', '=', input.buzzTransactionId)
-    .where('userId', '=', input.userId)
+    .selectFrom('UserCosmeticShopPurchases as p')
+    .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
+    .select(['p.refunded', 'csi.itemDefinitionId'])
+    .where('p.buzzTransactionId', '=', input.buzzTransactionId)
+    .where('p.userId', '=', input.userId)
     .executeTakeFirst();
 
   if (!purchase) return { ok: false, error: 'That purchase does not belong to this user.' };
   if (purchase.refunded) return { ok: false, error: 'That purchase is already refunded.' };
 
-  await dbWrite.transaction().execute(async (trx) => {
-    await trx
-      .updateTable('UserCosmeticShopPurchases')
-      .set({ refunded: true })
-      .where('buzzTransactionId', '=', input.buzzTransactionId)
-      .where('userId', '=', input.userId)
-      .execute();
+  try {
+    await dbWrite.transaction().execute(async (trx) => {
+      // First, as the main app's shop and box grants take it first (`lockItemHolder`). A box open
+      // reads the held box and writes its opening under it, so without it this could find neither
+      // while the open commits. Both casts matter: there is no (int4, int8) overload.
+      await sql`SELECT pg_advisory_xact_lock(${ITEM_HOLDER_LOCK_CLASS}::int, ${input.userId}::int)`.execute(
+        trx
+      );
 
-    // The purchase id is the claimKey on the granted row — that is how a shop grant is distinguished
-    // from every other way of holding the same cosmetic.
-    await trx
-      .deleteFrom('UserCosmetic')
-      .where('userId', '=', input.userId)
-      .where('cosmeticId', '=', purchase.cosmeticId)
-      .where('claimKey', '=', input.buzzTransactionId)
-      .execute();
-  });
+      const flagged = await trx
+        .updateTable('UserCosmeticShopPurchases')
+        .set({ refunded: true })
+        .where('buzzTransactionId', '=', input.buzzTransactionId)
+        .where('userId', '=', input.userId)
+        .where('refunded', '=', false)
+        .executeTakeFirst();
+      if (Number(flagged.numUpdatedRows) === 0)
+        throw new RefundRefused('That purchase is already refunded.');
+
+      // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
+      if (purchase.itemDefinitionId != null)
+        await takeBackBox(trx, { ...input, boxDefinitionId: purchase.itemDefinitionId });
+      else await takeBackCosmetics(trx, input);
+    });
+  } catch (error) {
+    if (error instanceof RefundRefused) return { ok: false, error: error.message };
+    throw error;
+  }
 
   // The main app serves equipped cosmetics from a day-TTL cache with no stale-while-revalidate, so
   // without this the refunded badge or frame keeps rendering on their profile, comments and images for
@@ -978,6 +994,62 @@ export async function refundShopPurchase(input: {
 
   await logAction('shopRefund', input.userId, input.moderatorId);
   return { ok: true };
+}
+
+/** A refusal found inside the refund transaction; thrown to roll it back. */
+class RefundRefused extends Error {}
+
+type RefundTarget = { userId: number; buzzTransactionId: string };
+
+/**
+ * The cosmetics a shelf purchase granted, all under its transaction id as `claimKey`: its one cosmetic,
+ * or a pack's components. A pack member the buyer already owned was never granted, so has no such row.
+ * Correct only while nothing else grants under a purchase's id.
+ */
+async function takeBackCosmetics(
+  trx: Transaction<DB>,
+  { userId, buzzTransactionId }: RefundTarget
+) {
+  await trx
+    .deleteFrom('UserCosmetic')
+    .where('userId', '=', userId)
+    .where('claimKey', '=', buzzTransactionId)
+    .execute();
+}
+
+/**
+ * The held box, or once opened, its reward. The opening stays as the record of the draw, marked
+ * refunded; it still counts as drawn, so the box cannot hand that reward to this user again.
+ */
+async function takeBackBox(
+  trx: Transaction<DB>,
+  { userId, buzzTransactionId, boxDefinitionId }: RefundTarget & { boxDefinitionId: number }
+) {
+  const held = await trx
+    .deleteFrom('Item')
+    .where('sourceKey', '=', buzzTransactionId)
+    .where('itemDefinitionId', '=', boxDefinitionId)
+    .where('holderType', '=', 'user')
+    .where('holderId', '=', userId)
+    .executeTakeFirst();
+  if (Number(held.numDeletedRows) > 0) return;
+
+  const opening = await trx
+    .updateTable('BoxOpening')
+    .set({ rewardStatus: BOX_OPENING_REWARD_STATUS.refunded })
+    .where('userId', '=', userId)
+    .where('boxDefinitionId', '=', boxDefinitionId)
+    .where('boxSourceKey', '=', buzzTransactionId)
+    .where('rewardStatus', '=', BOX_OPENING_REWARD_STATUS.granted)
+    .returning('boxItemId')
+    .executeTakeFirst();
+  if (!opening) throw new RefundRefused('Neither the box nor what it gave is on this account.');
+
+  await trx
+    .deleteFrom('UserCosmetic')
+    .where('userId', '=', userId)
+    .where('claimKey', '=', boxOpenClaimKey(opening.boxItemId))
+    .execute();
 }
 
 // GRANT A COSMETIC (Retool's UnlockCosmetics).

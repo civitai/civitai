@@ -1847,7 +1847,7 @@ export type BoxOpening = {
   tierPoolSize: number;
   itemRoll: number;
   /**
-   * granted (text + CHECK)
+   * granted | refunded (text + CHECK)
    */
   rewardStatus: string;
   createdAt: Generated<Timestamp>;

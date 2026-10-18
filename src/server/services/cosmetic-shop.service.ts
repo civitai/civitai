@@ -34,7 +34,11 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
+import {
+  computeCreatorShopSplit,
+  PACK_FILTER_VALUE,
+  PACK_SHOP_ITEM_WHERE,
+} from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import {
@@ -543,6 +547,12 @@ export const upsertCosmeticShopSection = async ({
   // resale — a creator who never marked their item sellable-by-others hasn't
   // consented to official-shop placement.
   if (items?.length) {
+    // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
+    const boxes = await dbWrite.cosmeticShopItem.count({
+      where: { id: { in: items }, itemDefinitionId: { not: null } },
+    });
+    if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
+
     const ineligible = await dbWrite.cosmeticShopItem.findMany({
       where: {
         id: { in: items },
@@ -737,7 +747,9 @@ export const getShopSectionsWithItems = async ({
               ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
                 ? [
                     {
-                      cosmeticId: null,
+                      // Not a mystery box listing: those are sold only through their own surface,
+                      // which applies the box's flag, region and event checks.
+                      ...PACK_SHOP_ITEM_WHERE,
                       ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
                     },
                   ]

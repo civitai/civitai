@@ -601,6 +601,13 @@ describe('an open that already happened', () => {
     await open();
     await expect(open({ userId: OTHER_USER })).rejects.toThrow('not yours');
   });
+
+  it('a retry after a moderator refunded it does not reveal the reward again', async () => {
+    await open();
+    world.openings.get(BOX_ITEM)!.rewardStatus = 'refunded';
+
+    await expect(open()).rejects.toThrow('This box was refunded');
+  });
 });
 
 describe('two different boxes opened at once', () => {
