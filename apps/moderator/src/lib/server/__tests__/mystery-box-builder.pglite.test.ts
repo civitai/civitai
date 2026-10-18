@@ -431,8 +431,7 @@ describe('editing a published box', () => {
   });
 });
 
-// Every open waits on the box lock a save holds, and the birthday box has ~480 contents: a save that
-// rewrote every row held opens for ~480 round trips. Keep a save to the rows it changes.
+// A save holds the lock every open waits on, so a large box must not have every row rewritten.
 describe('a save writes only the tier and content rows it changes', () => {
   const countWrites = async () => {
     await db.exec(`
@@ -473,30 +472,108 @@ describe('a save writes only the tier and content rows it changes', () => {
     expect((await liveBox(boxId)).tiers).toContainEqual({ key: 'rare', name: 'Rare', weight: 2 });
   });
 
-  it('moving one content to another tier writes that content row', async () => {
-    // A draft: the published checklist would refuse a tier left with nothing for one team.
+  // A draft: the published checklist would refuse a tier left with nothing for one team.
+  const draftBox = async () => {
     const boxId = await createBox({ name: 'Party Box', userId: MOD });
     const base = await partyDraft();
     await saveAt({ boxId, expectedVersion: 1, draft: base, publish: false, userId: MOD });
-    const draft = await savedDraft(boxId, base);
+    return { boxId, draft: await savedDraft(boxId, base) };
+  };
+  const tierRows = (boxId: number) =>
+    rows<{ key: string; name: string; color: string | null; sortOrder: number }>(
+      `SELECT key, name, color, "sortOrder" FROM "BoxTier" WHERE "boxDefinitionId" = $1 ORDER BY key`,
+      [boxId]
+    );
+
+  it.each([
+    {
+      field: 'colour',
+      edit: (tiers: BoxDraft['tiers']) =>
+        tiers.map((t) => (t.key === 'common' ? { ...t, color: null } : t)),
+      written: 1,
+      expected: [
+        { key: 'common', name: 'Common', color: null, sortOrder: 0 },
+        { key: 'rare', name: 'Rare', color: '#3b82f6', sortOrder: 1 },
+      ],
+    },
+    {
+      field: 'name',
+      edit: (tiers: BoxDraft['tiers']) =>
+        tiers.map((t) => (t.key === 'rare' ? { ...t, name: 'Legendary' } : t)),
+      written: 1,
+      expected: [
+        { key: 'common', name: 'Common', color: '#9ca3af', sortOrder: 0 },
+        { key: 'rare', name: 'Legendary', color: '#3b82f6', sortOrder: 1 },
+      ],
+    },
+    {
+      field: 'order',
+      edit: (tiers: BoxDraft['tiers']) => [...tiers].reverse(),
+      written: 2,
+      expected: [
+        { key: 'common', name: 'Common', color: '#9ca3af', sortOrder: 1 },
+        { key: 'rare', name: 'Rare', color: '#3b82f6', sortOrder: 0 },
+      ],
+    },
+  ])('a $field edit writes the tier rows it changes', async ({ edit, written, expected }) => {
+    const { boxId, draft } = await draftBox();
     const writes = await countWrites();
-    const moved = draft.contents[0].rewardDefinitionId;
+
+    await saveAt({
+      boxId,
+      expectedVersion: 2,
+      draft: { ...draft, tiers: edit(draft.tiers) },
+      publish: false,
+      userId: MOD,
+    });
+
+    expect(await writes()).toEqual([{ table: 'BoxTier', op: 'UPDATE', n: written }]);
+    expect(await tierRows(boxId)).toEqual(expected);
+  });
+
+  it('a name that differs only by surrounding spaces writes none: the save trims it', async () => {
+    const { boxId, draft } = await draftBox();
+    const writes = await countWrites();
+    const padded = { ...draft, tiers: draft.tiers.map((t) => ({ ...t, name: ` ${t.name} ` })) };
+
+    await saveAt({ boxId, expectedVersion: 2, draft: padded, publish: false, userId: MOD });
+
+    expect(await writes()).toEqual([]);
+  });
+
+  it('moving two contents between tiers writes those two content rows', async () => {
+    const { boxId, draft } = await draftBox();
+    const writes = await countWrites();
+    const blueCap = await defOf(1);
+    const blueCrown = await defOf(3);
     const edited = {
       ...draft,
       contents: draft.contents.map((c) =>
-        c.rewardDefinitionId === moved ? { ...c, tierKey: 'rare' } : c
+        c.rewardDefinitionId === blueCap
+          ? { ...c, tierKey: 'rare' }
+          : c.rewardDefinitionId === blueCrown
+          ? { ...c, tierKey: 'common' }
+          : c
       ),
     };
 
     await saveAt({ boxId, expectedVersion: 2, draft: edited, publish: false, userId: MOD });
 
-    expect(await writes()).toEqual([{ table: 'BoxContent', op: 'UPDATE', n: 1 }]);
-    const [{ key }] = await rows<{ key: string }>(
-      `SELECT t.key FROM "BoxContent" c JOIN "BoxTier" t ON t.id = c."tierId"
-       WHERE c."rewardDefinitionId" = $1`,
-      [moved]
-    );
-    expect(key).toBe('rare');
+    expect(await writes()).toEqual([{ table: 'BoxContent', op: 'UPDATE', n: 2 }]);
+    expect(
+      await rows(
+        `SELECT d."cosmeticId", t.key FROM "BoxContent" c
+         JOIN "BoxTier" t ON t.id = c."tierId"
+         JOIN "ItemDefinition" d ON d.id = c."rewardDefinitionId"
+         WHERE c."boxDefinitionId" = $1 ORDER BY d."cosmeticId"`,
+        [boxId]
+      )
+    ).toEqual([
+      { cosmeticId: 1, key: 'rare' },
+      { cosmeticId: 2, key: 'common' },
+      { cosmeticId: 3, key: 'common' },
+      { cosmeticId: 4, key: 'rare' },
+    ]);
   });
 
   it('adds new tiers and contents in one save, beside rows it leaves alone', async () => {

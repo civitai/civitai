@@ -355,7 +355,7 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
     if (content.id === null) continue;
     if (!contentById.has(content.id))
       throw new BoxRefusal(`Content #${content.id} isn't in this box.`);
-    // One UPDATE … FROM VALUES applies one of two rows for the same id, chosen by the planner.
+    // UPDATE … FROM VALUES applies only one of several rows for the same id, and which is unspecified.
     if (contentIds.has(content.id))
       throw new BoxRefusal(`Content #${content.id} is in the box twice.`);
     contentIds.add(content.id);
@@ -370,8 +370,7 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
     .$if(keptContentIds.length > 0, (qb) => qb.where('id', 'not in', keptContentIds))
     .execute();
 
-  // A save runs under the box lock that every open waits on, so it writes only the rows it changes,
-  // one statement per kind of write.
+  // Runs under the lock every open waits on: write only changed rows, batched, not row by row.
   const tierIdByKey = new Map<string, number>();
   const newTiers = [];
   const changedTiers = [];
