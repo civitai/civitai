@@ -108,6 +108,8 @@ describe('classifying a failed purchase', () => {
       trpcError(500),
       trpcError(502),
       trpcError(504),
+      trpcError(408),
+      trpcError(429),
       new Error('Failed to fetch'),
       new Error('The operation timed out'),
       {},

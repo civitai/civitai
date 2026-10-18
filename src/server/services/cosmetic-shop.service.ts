@@ -1335,7 +1335,7 @@ export const purchaseCosmeticShopItem = async ({
       });
 
       // Update the cosmetic with the new amount:
-      await dbWrite.cosmeticShopItem.update({
+      await tx.cosmeticShopItem.update({
         where: { id: shopItemId },
         data: {
           meta: {

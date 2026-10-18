@@ -16,6 +16,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     shopItemFindUnique: vi.fn(),
     shopItemUpdate: vi.fn(),
+    txShopItemUpdate: vi.fn(),
     userCosmeticFindFirst: vi.fn(),
     purchasesCreate: vi.fn(),
     purchasesUpdate: vi.fn(),
@@ -84,6 +85,7 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
   claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      cosmeticShopItem: { update: mocks.txShopItemUpdate },
       userCosmetic: { create: mocks.userCosmeticCreate, findFirst: mocks.txUserCosmeticFindFirst },
       cosmeticShopPurchaseClaim: claims.txDelegate,
       $executeRaw: mocks.executeRaw,
@@ -234,6 +236,20 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
     expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toBe(TX);
     expect(claims.rows.get(TX)?.status).toBe('paid');
+  });
+
+  // Moving this write back to dbWrite makes the grant need a second pooled connection while it
+  // holds the buyer's lock: once the pool is full of waiters it never gets one, and the grant fails
+  // after the charge. The row lock it takes on tx lasts one commit (it is the last write).
+  it("counts the sale on the grant's own transaction, not a second connection", async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+
+    await purchase();
+
+    expect(mocks.txShopItemUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: SHOP_ITEM_ID } })
+    );
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
   // A mystery box open decides "not owned" from a read under this lock; a grant that skips it

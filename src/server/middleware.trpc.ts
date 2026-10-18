@@ -12,6 +12,7 @@ import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
 import { resolveClientIp } from '~/server/utils/client-ip';
+import { acquireConcurrencySlot } from '~/server/utils/concurrency-slots';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -273,6 +274,53 @@ export function rateLimit<TInput = any>(
     return await next();
   });
 }
+
+export type InFlightLimit = {
+  /** Procedures given the same bucket share one per-user limit. */
+  bucket: string;
+  limit: number;
+  /** Longest a slot is held; a request running longer frees its slot early. */
+  ttlMs: number;
+  errorMessage: string;
+};
+/**
+ * Caps how many of a user's requests run at once; `rateLimit` bounds rate, not concurrency. Admits
+ * when the store fails.
+ */
+export function inFlightLimit({ bucket, limit, ttlMs, errorMessage }: InFlightLimit) {
+  return middleware(async ({ ctx, next }) => {
+    if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+
+    const key = `${REDIS_KEYS.TRPC.IN_FLIGHT}:${bucket}:${ctx.user.id}`;
+    const slot = await acquireConcurrencySlot(key, limit, ttlMs);
+    if (!slot.acquired) {
+      if (slot.reason === 'full')
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: errorMessage });
+      logSysRedisFailOpen('read-degraded', 'middleware.trpc.inFlightLimit', slot.error, {
+        bucket,
+        userId: ctx.user.id,
+      });
+      return await next();
+    }
+
+    try {
+      return await next();
+    } finally {
+      await slot.release();
+    }
+  });
+}
+
+/**
+ * Shop purchases and box opens all wait on the buyer's `lockItemHolder`, each holding a pooled
+ * connection while it waits, so they share one bucket.
+ */
+export const itemHolderInFlightLimit = inFlightLimit({
+  bucket: 'item-holder',
+  limit: 2,
+  ttlMs: 60_000,
+  errorMessage: 'Your last purchase or box opening is still processing. Try again in a moment.',
+});
 
 export type EdgeCacheItProps = {
   ttl?: number;
