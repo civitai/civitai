@@ -23,6 +23,9 @@ const { state } = vi.hoisted(() => ({
     unopenedBoxes: 0,
     trigger: vi.fn(),
     setCounts: vi.fn(),
+    openingsOptions: undefined as undefined | { getNextPageParam: (page: unknown) => unknown },
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
   },
 }));
 
@@ -32,13 +35,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     {
       'mysteryBox.getHeld': { useQuery: () => ({ data: state.held, isLoading: false }) },
       'mysteryBox.getOpenings': {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: state.openings, nextCursor: undefined }] },
-          isLoading: false,
-          hasNextPage: false,
-          fetchNextPage: vi.fn(),
-          isFetchingNextPage: false,
-        }),
+        useInfiniteQuery: (
+          _input: unknown,
+          options: { getNextPageParam: (page: unknown) => unknown }
+        ) => {
+          state.openingsOptions = options;
+          return {
+            data: { pages: [{ items: state.openings, nextCursor: undefined }] },
+            isLoading: false,
+            hasNextPage: state.hasNextPage,
+            fetchNextPage: state.fetchNextPage,
+            isFetchingNextPage: false,
+          };
+        },
       },
     },
     { useUtils: () => ({ user: { checkNotifications: { setData: state.setCounts } } }) }
@@ -131,6 +140,9 @@ const triggered = () =>
 beforeEach(() => {
   state.trigger.mockReset();
   state.setCounts.mockReset();
+  state.fetchNextPage.mockReset();
+  state.hasNextPage = false;
+  state.openingsOptions = undefined;
   state.held = [];
   state.openings = [];
   state.flags = { mysteryBox: true };
@@ -228,6 +240,25 @@ describe('Inventory boxes', () => {
     expect(tabs).toEqual(['Unopened (2)', 'Opened']);
     const [, update] = state.setCounts.mock.calls.at(-1)!;
     expect(update({ all: 4, unopenedBoxes: 5 })).toEqual({ all: 4, unopenedBoxes: 2 });
+  });
+
+  it('pages the opened list by the cursor the server returns', async () => {
+    state.openings = [
+      { boxItemId: '32', openedAt: new Date(2026, 10, 3, 12), box: null, tier: null, reward: null },
+    ];
+    state.hasNextPage = true;
+    await render();
+    const openedTab = all('[role="tab"]').find((t) => t.textContent === 'Opened') as HTMLElement;
+    await act(async () => openedTab.click());
+
+    expect(state.openingsOptions?.getNextPageParam({ items: [], nextCursor: '33' })).toBe('33');
+    expect(
+      state.openingsOptions?.getNextPageParam({ items: [], nextCursor: undefined })
+    ).toBeUndefined();
+    const more = all('button').find((b) => b.textContent === 'Load more') as HTMLButtonElement;
+    await act(async () => more.click());
+    expect(state.fetchNextPage).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('A reward');
   });
 
   it("can't open a box the viewer has collected everything in, and says why", async () => {

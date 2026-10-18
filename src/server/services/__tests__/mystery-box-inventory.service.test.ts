@@ -330,12 +330,13 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(base + step++ * 5 * 60_000);
   world = {
+    // Out of id order throughout: the reads must sort, not inherit the order rows were written in.
     definitions: [
+      definition(ARCHIVED_BOX, {}, { status: 'archived' }),
       definition(EVENT_BOX, { event: EVENT }),
       definition(PLAIN_BOX, { emptyRule: 'keep' }),
       definition(CLOSED_BOX, { event: CLOSED_EVENT }),
       definition(DRAFT_BOX, {}, { status: 'draft' }),
-      definition(ARCHIVED_BOX, {}, { status: 'archived' }),
       definition(HAT_DEF, {}, { type: 'cosmetic', name: 'Hat 1' }),
       ...[1, 2, 3, 4, 5].map((n) =>
         definition(
@@ -353,18 +354,20 @@ beforeEach(() => {
       ),
     ],
     items: [
-      item(1, EVENT_BOX),
+      item(6, ARCHIVED_BOX),
       item(2, EVENT_BOX),
+      item(1, EVENT_BOX),
       item(3, PLAIN_BOX),
       item(4, CLOSED_BOX),
       item(5, DRAFT_BOX),
-      item(6, ARCHIVED_BOX),
       item(7, HAT_DEF),
       item(8, EVENT_BOX, OTHER_USER),
+      // The viewer's id, but held by something other than a user.
+      { ...item(10, EVENT_BOX), holderType: 'faction' },
     ],
     tiers: [
-      tier(COMMON, EVENT_BOX, 3, 0),
       tier(RARE, EVENT_BOX, 1, 1),
+      tier(COMMON, EVENT_BOX, 3, 0),
       tier(20, PLAIN_BOX, 1, 0),
       tier(21, ARCHIVED_BOX, 1, 0),
       tier(22, CLOSED_BOX, 1, 0),
@@ -412,7 +415,24 @@ describe('getHeldMysteryBoxes', () => {
       { box: ARCHIVED_BOX, event: null, team: undefined, held: ['6'] },
     ]);
     expect(views[0].heldBoxItemIds).toEqual(['1', '2']);
-    expect(views[0].heldItems[0].acquiredAt).toEqual(world.items[0].createdAt);
+    expect(views[0].heldItems[0].acquiredAt).toEqual(
+      world.items.find((i) => i.id === 1n)?.createdAt
+    );
+    // The draw walks tiers by sortOrder; the view keeps that order.
+    expect(views[0].tiers.map((t) => t.id)).toEqual([COMMON, RARE]);
+  });
+
+  it('drops a kind whose boxes were all opened between the count and the list', async () => {
+    const list = dbMock.dbRead.item.findMany.getMockImplementation()!;
+    dbMock.dbRead.item.findMany.mockImplementationOnce(async (args: Args) =>
+      ((await list(args)) as { itemDefinitionId: number }[]).filter(
+        (row) => row.itemDefinitionId !== PLAIN_BOX
+      )
+    );
+
+    const views = await getHeldMysteryBoxes(viewer());
+
+    expect(views.map((v) => v.boxDefinitionId)).toEqual([EVENT_BOX, ARCHIVED_BOX]);
   });
 
   it('asks each event once, as the viewer, moderator bit included', async () => {
@@ -575,6 +595,28 @@ describe('getMysteryBoxOpenings', () => {
     expect(first.nextCursor).toBe('33');
     expect(second.items.map((o) => o.boxItemId)).toEqual(['31']);
     expect(second.nextCursor).toBeUndefined();
+  });
+
+  it('answers an opening whose box, tier or reward is gone with nulls', async () => {
+    world.openings = [
+      opening(51, '2026-11-06T00:00:00Z', {
+        boxDefinitionId: 999,
+        tierId: 999,
+        rewardDefinitionId: 999,
+      }),
+    ];
+
+    const { items } = await getMysteryBoxOpenings({ ...viewer(), limit: 10 });
+
+    expect(items).toEqual([
+      {
+        boxItemId: '51',
+        openedAt: new Date('2026-11-06T00:00:00Z'),
+        box: null,
+        tier: null,
+        reward: null,
+      },
+    ]);
   });
 
   it('offers no next page when the last page is exactly full', async () => {

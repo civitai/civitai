@@ -17,7 +17,7 @@ export function InventoryBoxes() {
   const utils = trpc.useUtils();
   const { data: held, isLoading } = trpc.mysteryBox.getHeld.useQuery();
   const unopened = held?.reduce((total, view) => total + view.heldItems.length, 0);
-  // The menu's badge is read once a session; the list is newer.
+  // The menu's badge is read once per page load; the list is newer.
   useEffect(() => {
     if (unopened === undefined) return;
     utils.user.checkNotifications.setData(undefined, (counts) =>

@@ -31,7 +31,10 @@ export function grantItem(
   });
 }
 
-/** How many of one definition a user holds. */
+/**
+ * How many of one definition a user holds, summing `quantity`. The Inventory counts rows instead
+ * (`countHeldItemsByDefinition`); the two agree while every grant makes one row of 1.
+ */
 export async function countHeldItems(
   client: Prisma.TransactionClient,
   { itemDefinitionId, userId }: { itemDefinitionId: number; userId: number }
@@ -59,7 +62,10 @@ export async function countHeldItemsByDefinition(
   return new Map(rows.map((row) => [row.itemDefinitionId, row._count._all]));
 }
 
-/** The items a user holds of these definitions, oldest first. */
+/**
+ * The items a user holds of these definitions, oldest first. It filters by holder only: pass
+ * definition ids already checked for type and status.
+ */
 export function listHeldItems(
   client: Prisma.TransactionClient,
   { userId, itemDefinitionIds }: { userId: number; itemDefinitionIds: number[] }

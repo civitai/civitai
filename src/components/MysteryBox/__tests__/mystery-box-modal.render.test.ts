@@ -160,6 +160,12 @@ describe('MysteryBoxModal opened from the Inventory', () => {
     expect(document.body.textContent).toContain('Box');
   });
 
+  it('opens nothing on its own when only shown', async () => {
+    await render({ inventory: true }, { boxItemId: '502' });
+
+    expect(state.openHeld).not.toHaveBeenCalled();
+  });
+
   it('opens the box the viewer picked', async () => {
     await render({ inventory: true }, { start: 'open', boxItemId: '502' });
 

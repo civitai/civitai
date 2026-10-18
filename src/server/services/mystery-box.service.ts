@@ -23,6 +23,7 @@ import {
   grantItem,
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
+  listHeldItems,
 } from '~/server/services/item.service';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
@@ -90,8 +91,8 @@ export function isMysteryBoxBlockedIn(countryCode: string | null | undefined, bl
 }
 
 // For showing boxes only. Purchase and open read the list uncached, so a change refuses at once
-// even where a pod still shows a box. A list that can't be read is remembered as null too: this runs
-// once a session for every signed-in user, so a bad row costs one read a minute, not one per user.
+// even where a pod still shows a box. A list that can't be read is remembered as null too: the menu
+// badge reads this on every signed-in page load, so a bad row costs one read a minute, not one each.
 const blockedRegionsForDisplay = createTtlMemo(
   () => getMysteryBoxBlockedRegions().catch(() => null),
   60_000,
@@ -449,11 +450,7 @@ export async function getMysteryBoxesForEvent({
       },
       orderBy: { id: 'asc' },
     }),
-    dbRead.item.findMany({
-      where: { holderType: 'user', holderId: userId, itemDefinitionId: { in: boxIds } },
-      select: { id: true, itemDefinitionId: true },
-      orderBy: { id: 'asc' },
-    }),
+    listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
     getBoxTiers(boxIds),
   ]);
 
