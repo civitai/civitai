@@ -48,10 +48,10 @@ const turboAwareSlider =
   (opts: Parameters<typeof sliderDef>[0], turboDefault: number) =>
   ({ _ext, resources }: MossSliderCtx) => {
     const turbo = hasMossImageTurboLora(resources);
-    const scope = perModelScope(_ext);
+    const modelId = modelIdOf(_ext.model);
     return {
       ...sliderDef({ ...opts, default: turbo ? turboDefault : opts.default }),
-      scope: turbo ? [...(scope ?? []), 'turbo'] : scope,
+      scope: turbo ? [...(modelId != null ? [modelId] : []), 'turbo'] : perModelScope(_ext),
     };
   };
 
