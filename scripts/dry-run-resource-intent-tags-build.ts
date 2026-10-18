@@ -14,7 +14,7 @@ import { runScriptAndExit } from './lib/run-as-script';
  * any server that is not a standby, and ClickHouse with `readonly` set. Writes nothing anywhere.
  * Prints aggregates only — counts, bytes, milliseconds, tag ids — never a prompt, tag or model name.
  *
- * Environment: the job's (`tagBuildConfig`), without the snapshot bucket:
+ * Environment: the job's (`tagBuildConfig`), without the snapshot bucket or its credentials:
  *   P2M_CLICKHOUSE_URL, P2M_CLICKHOUSE_USER, P2M_CLICKHOUSE_PASSWORD
  *       a ClickHouse user that can read the generator observations and their prompt text
  *   P2M_HASH_KEY, P2M_HASH_KEY_FINGERPRINT

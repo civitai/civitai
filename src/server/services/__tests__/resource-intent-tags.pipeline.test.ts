@@ -82,6 +82,9 @@ const PAYLOAD_CAP_SQL = migration('20261106120000_resource_intent_tag_index_snap
 const KEY = Buffer.alloc(32, 0x11);
 const ENV: Required<TagBuildEnv> = {
   RESOURCE_INTENT_TAG_INDEX_BUCKET: 'ri-tag-index-test',
+  RESOURCE_INTENT_TAG_INDEX_B2_ENDPOINT: 'https://b2.invalid',
+  RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY: 'ri-key-id',
+  RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY: 'ri-secret',
   P2M_CLICKHOUSE_URL: 'https://clickhouse.invalid:8443',
   P2M_CLICKHOUSE_USER: 'p2m-reader',
   P2M_CLICKHOUSE_PASSWORD: 'pw',
@@ -450,8 +453,16 @@ describe('the happy path (the control every refusal below departs from)', () => 
     expect(Buffer.compare(a.payload, c.payload)).not.toBe(0);
   });
 
-  it('a dry run needs no bucket, makes no object store and stores nothing', async () => {
-    const w = await world({ env: { ...ENV, RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined } });
+  it('a dry run needs no bucket or bucket credentials, makes no object store and stores nothing', async () => {
+    const w = await world({
+      env: {
+        ...ENV,
+        RESOURCE_INTENT_TAG_INDEX_BUCKET: undefined,
+        RESOURCE_INTENT_TAG_INDEX_B2_ENDPOINT: undefined,
+        RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY: undefined,
+        RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY: undefined,
+      },
+    });
     const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
     expect(summary).toMatchObject({
       dryRun: true,
@@ -505,6 +516,21 @@ describe('gate 1: the environment, before anything is read', () => {
   it('names every missing variable at once', () => {
     expect(() => tagBuildConfig({}, { requireBucket: true })).toThrow(
       `tag index build: ${keys.join(', ')} not set; refusing before reading anything`
+    );
+  });
+
+  it("names the snapshot bucket's credentials, so a production build refuses before reading without them", () => {
+    // Pinned literally: the list above is derived from the fixture, which a removed key leaves.
+    expect(() => tagBuildConfig({}, { requireBucket: true })).toThrow(
+      'tag index build: RESOURCE_INTENT_TAG_INDEX_BUCKET, RESOURCE_INTENT_TAG_INDEX_B2_ENDPOINT, ' +
+        'RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY, RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY, ' +
+        'P2M_CLICKHOUSE_URL, P2M_CLICKHOUSE_USER, P2M_CLICKHOUSE_PASSWORD, P2M_HASH_KEY, ' +
+        'P2M_HASH_KEY_FINGERPRINT not set; refusing before reading anything'
+    );
+    // A dry run stores nothing and needs none of them.
+    expect(() => tagBuildConfig({}, { requireBucket: false })).toThrow(
+      'tag index build: P2M_CLICKHOUSE_URL, P2M_CLICKHOUSE_USER, P2M_CLICKHOUSE_PASSWORD, ' +
+        'P2M_HASH_KEY, P2M_HASH_KEY_FINGERPRINT not set; refusing before reading anything'
     );
   });
 

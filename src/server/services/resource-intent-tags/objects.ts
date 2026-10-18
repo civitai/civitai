@@ -3,11 +3,11 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
-  type S3Client,
+  S3Client,
 } from '@aws-sdk/client-s3';
 
 import { env } from '~/env/server';
-import { getS3Client } from '~/utils/s3-utils';
+import { instrumentB2Client } from '~/server/prom/b2-put.metrics';
 import {
   isTagIndexObjectKey,
   TagIndexObjectMissingError,
@@ -34,10 +34,40 @@ const OTHER_BUCKETS = [
 ] as const;
 
 /**
+ * The snapshot bucket's own credentials (a B2 bucket and a key scoped to it). Without all of these
+ * the store refuses; it never falls back to another client. The region is optional.
+ */
+export const TAG_INDEX_STORE_ENV = [
+  'RESOURCE_INTENT_TAG_INDEX_B2_ENDPOINT',
+  'RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY',
+  'RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY',
+] as const;
+
+/** The snapshot bucket's client, from `TAG_INDEX_STORE_ENV`; one error names every missing var. */
+function tagIndexS3ClientFromEnv(): S3Client {
+  const missing = TAG_INDEX_STORE_ENV.filter((name) => !env[name]);
+  if (missing.length) throw new Error(`${missing.join(', ')} not set`);
+  return instrumentB2Client(
+    new S3Client({
+      credentials: {
+        accessKeyId: env.RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY as string,
+        secretAccessKey: env.RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY as string,
+      },
+      region: env.RESOURCE_INTENT_TAG_INDEX_B2_REGION ?? 'us-west-004',
+      endpoint: env.RESOURCE_INTENT_TAG_INDEX_B2_ENDPOINT,
+      forcePathStyle: true,
+    })
+  );
+}
+
+/**
  * Tag-index snapshot objects in `RESOURCE_INTENT_TAG_INDEX_BUCKET` under `TAG_INDEX_OBJECT_PREFIX`,
- * through the S3_UPLOAD_* client. The prefix is fixed, so the bucket alone separates environments.
- * `delete` is retention's, and refuses any key that is not a snapshot key there. Nothing lists the
- * bucket (retention deletes only keys its own rows name), so no ListBucket permission is needed.
+ * through that bucket's own client (`TAG_INDEX_STORE_ENV`) unless `opts.s3` is given. The prefix is
+ * fixed, so the bucket alone separates environments. `delete` is retention's, and refuses any key
+ * that is not a snapshot key there. Nothing lists the bucket (retention deletes only keys its own
+ * rows name). On B2 a delete hides the file and its versions stay until a lifecycle rule purges
+ * them, and a get of a never-written key reads as `NoSuchKey` only for a key holding `listBuckets`
+ * besides `listFiles` (otherwise `AccessDenied`, which is retried rather than refused as missing).
  */
 export function s3TagIndexObjects(
   opts: { s3?: S3Client; bucket?: string; prefix?: string } = {}
@@ -47,7 +77,7 @@ export function s3TagIndexObjects(
   const shared = OTHER_BUCKETS.find((name) => env[name] === bucket);
   if (shared) throw new Error(`RESOURCE_INTENT_TAG_INDEX_BUCKET must not be the ${shared} bucket`);
   const prefix = opts.prefix ?? TAG_INDEX_OBJECT_PREFIX;
-  const s3 = opts.s3 ?? getS3Client();
+  const s3 = opts.s3 ?? tagIndexS3ClientFromEnv();
   return {
     prefix,
     put: async (key, bytes) => {
