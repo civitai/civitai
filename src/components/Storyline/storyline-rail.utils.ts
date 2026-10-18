@@ -25,8 +25,7 @@ export type StorylineRailSegment<T extends RailChapter> = {
 
 /**
  * The viewer's chapter rail: one segment per chapter on the reader's line (the path, then the
- * canon line ahead), with ticks for the current chapter's images only. The rail replaces the
- * image dots, which counted every image on the path and vanished past 20.
+ * canon line ahead), with ticks for the current chapter's images only.
  */
 export function buildStorylineRail<T extends RailChapter>({
   path,
@@ -38,9 +37,9 @@ export function buildStorylineRail<T extends RailChapter>({
 }: {
   path: T[];
   ahead: T[];
-  /** The chapter of each walked image, in walk order. */
+  /** The chapter of each carousel image, in carousel order (undefined off the path). */
   imageChapterIds: (number | undefined)[];
-  /** The walked image being shown. */
+  /** The carousel image being shown. */
   index: number;
   /** Whether the canon line ahead has arrived. Until it has, the path's end is not marked as forking. */
   aheadKnown: boolean;

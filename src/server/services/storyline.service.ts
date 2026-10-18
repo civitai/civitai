@@ -1854,7 +1854,6 @@ export async function getStorylinePath({
     postIds.length
       ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
       : [],
-    // The viewer's chapter rail marks where other paths leave the route from these.
     rows.length
       ? dbRead.storylineChapterEdge.groupBy({
           by: ['parentChapterId'],

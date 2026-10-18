@@ -7,23 +7,25 @@ import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.u
 import type { StorylineRailSegment } from '~/components/Storyline/storyline-rail.utils';
 import { buildStorylineRail } from '~/components/Storyline/storyline-rail.utils';
 
-const STUB = 'absolute bottom-1/2 h-2.5 w-0.5 bg-[var(--mantine-color-pink-5)]';
+const STUB = 'pointer-events-none absolute bottom-1/2 h-2.5 w-0.5 bg-[var(--mantine-color-pink-5)]';
 
 /**
- * Image detail's dots in storyline mode: a fixed-width rail of the reader's line, one segment per
- * chapter, where only the current chapter opens into a tick per image. Pink stubs mark where other
- * paths leave and join; they open the map, which lists them.
+ * Storyline-mode replacement for the carousel dots. Pink stubs mark where other paths leave or
+ * join; they are marks only, since the map lists forks for the stops nearest the end alone.
  */
 export function StorylineChapterRail({
   storyline,
+  images,
   index,
   navigate,
 }: {
   storyline: ActiveStorylineMode;
+  /** The carousel's own items, which `index` points into: not always the walked images alone. */
+  images: { id: number }[];
   index: number;
   navigate: (index: number) => void;
 }) {
-  const { path, images, chapterIdOfImage, jumpToChapter, continueTo, setDrawerOpen } = storyline;
+  const { path, chapterIdOfImage, jumpToChapter, continueTo } = storyline;
   const end = path.chapters[path.chapters.length - 1];
   const canonAhead = useStorylineCanonAhead(end?.chapterId, { enabled: true, forks: false });
   type RailLineChapter = (typeof path.chapters)[number] | (typeof canonAhead.ahead)[number];
@@ -34,9 +36,14 @@ export function StorylineChapterRail({
         ahead: canonAhead.ahead,
         imageChapterIds: images.map((image) => chapterIdOfImage(image.id)),
         index,
-        aheadKnown: !canonAhead.isLoading,
+        aheadKnown: canonAhead.isSuccess,
       }),
-    [path.chapters, canonAhead.ahead, canonAhead.isLoading, images, chapterIdOfImage, index]
+    [path.chapters, canonAhead.ahead, canonAhead.isSuccess, images, chapterIdOfImage, index]
+  );
+  // jumpToChapter opens a chapter's first walked image, so a chapter with none cannot be jumped to.
+  const readable = useMemo(
+    () => new Set(storyline.images.map((image) => chapterIdOfImage(image.id))),
+    [storyline.images, chapterIdOfImage]
   );
 
   const open = (segment: StorylineRailSegment<(typeof rail.line)[number]>) => {
@@ -44,7 +51,6 @@ export function StorylineChapterRail({
     const before = rail.line[rail.line.indexOf(segment.chapter) - 1];
     continueTo(segment.chapter, { track: false, from: before?.chapterId, line: rail.line });
   };
-  const openMap = () => setDrawerOpen(true);
 
   return (
     <nav
@@ -52,10 +58,10 @@ export function StorylineChapterRail({
       className="mx-auto flex h-4 w-full max-w-[420px] items-center gap-1.5"
       data-testid="storyline-rail"
     >
-      {rail.clippedStart && <Ellipsis />}
+      {rail.clippedStart && <Ellipsis label="Earlier chapters not shown" />}
       {rail.segments.map((segment) => {
-        const { chapter, kind, depth, current, leaves, joins, ticks } = segment;
-        const label = `Chapter ${depth + 1}: ${getStorylineChapterName(chapter)}`;
+        const { chapter, kind, current, leaves, joins, ticks } = segment;
+        const label = railLabel(segment);
         return (
           <div
             key={chapter.chapterId}
@@ -68,9 +74,8 @@ export function StorylineChapterRail({
             data-current={current || undefined}
           >
             {joins && (
-              <UnstyledButton
-                onClick={openMap}
-                aria-label={`Another path joins at chapter ${depth + 1}. Open the map`}
+              <span
+                aria-hidden
                 className={clsx(STUB, '-left-1 origin-bottom -rotate-45')}
                 data-testid="storyline-rail-join"
               />
@@ -99,8 +104,9 @@ export function StorylineChapterRail({
             ) : (
               <UnstyledButton
                 onClick={() => open(segment)}
-                disabled={!chapter.post}
-                aria-label={kind === 'ahead' ? `${label} (canon ahead)` : label}
+                // Ahead, a tombstone stays passable: continuing into it opens its end view.
+                disabled={kind === 'path' && !readable.has(chapter.chapterId)}
+                aria-label={label}
                 className="flex size-full items-center"
               >
                 <span
@@ -113,9 +119,8 @@ export function StorylineChapterRail({
               </UnstyledButton>
             )}
             {leaves && (
-              <UnstyledButton
-                onClick={openMap}
-                aria-label={`Another path leaves after chapter ${depth + 1}. Open the map`}
+              <span
+                aria-hidden
                 className={clsx(STUB, '-right-1 origin-bottom rotate-45')}
                 data-testid="storyline-rail-leave"
               />
@@ -123,15 +128,35 @@ export function StorylineChapterRail({
           </div>
         );
       })}
-      {rail.clippedEnd && <Ellipsis />}
+      {rail.clippedEnd && <Ellipsis label="Later chapters not shown" />}
     </nav>
   );
 }
 
-function Ellipsis() {
+function railLabel({
+  chapter,
+  kind,
+  depth,
+  leaves,
+  joins,
+}: StorylineRailSegment<Parameters<typeof getStorylineChapterName>[0] & { chapterId: number }>) {
+  // An untitled chapter's name is its number, which the label already starts with.
+  const name = chapter.post && !chapter.post.title ? '' : `: ${getStorylineChapterName(chapter)}`;
+  return [
+    `Chapter ${depth + 1}${name}`,
+    kind === 'ahead' && 'canon ahead',
+    joins && 'another path joins here',
+    leaves && 'another path leaves after it',
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+function Ellipsis({ label }: { label: string }) {
   return (
-    <span aria-hidden className="shrink-0 text-xs leading-none text-white/70">
-      …
+    <span className="shrink-0 text-xs leading-none text-white/70">
+      <span aria-hidden>…</span>
+      <span className="sr-only">{label}</span>
     </span>
   );
 }

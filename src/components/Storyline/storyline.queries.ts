@@ -92,9 +92,10 @@ export function useStorylineCanonAhead(
     enabled: enabled && (options.forks ?? true),
   });
   const isLoading = enabled && query.isLoading;
+  const isSuccess = enabled && query.isSuccess;
   return useMemo(
-    () => ({ ahead, childrenByChapterId, isLoading }),
-    [ahead, childrenByChapterId, isLoading]
+    () => ({ ahead, childrenByChapterId, isLoading, isSuccess }),
+    [ahead, childrenByChapterId, isLoading, isSuccess]
   );
 }
 

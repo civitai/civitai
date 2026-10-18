@@ -494,6 +494,7 @@ export function ImageDetail2() {
                         {storyline.active ? (
                           <StorylineChapterRail
                             storyline={storyline}
+                            images={images}
                             index={carouselNavigation.index}
                             navigate={carouselNavigation.navigate}
                           />

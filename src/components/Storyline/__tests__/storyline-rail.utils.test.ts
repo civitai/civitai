@@ -16,7 +16,7 @@ const chapter = (chapterId: number, depth: number, extra: Partial<Chapter> = {})
   ...extra,
 });
 
-// Storyline 2 on prod: chapters of 4, 4, 5, 4, 4, 4, 5 images, 30 on the path at chapter 7.
+// A 30-image, 7-chapter path: more than the 20 images the old dots could show.
 const SIZES = [4, 4, 5, 4, 4, 4, 5];
 const PATH = SIZES.map((_, i) => chapter(10 + i, i));
 const IMAGE_CHAPTERS = SIZES.flatMap((n, i) => Array<number>(n).fill(10 + i));
@@ -33,7 +33,6 @@ const rail = (index: number, extra: Partial<Parameters<typeof buildStorylineRail
 
 describe('buildStorylineRail', () => {
   it('draws a 30-image path as one segment per chapter, ticking only the current chapter', () => {
-    // The dots this replaces counted all 30 images and hid themselves past 20.
     const { segments } = rail(IMAGE_CHAPTERS.length - 2);
     expect(segments.map((s) => s.chapter.chapterId)).toEqual([10, 11, 12, 13, 14, 15, 16]);
     expect(segments.filter((s) => s.current).map((s) => s.chapter.chapterId)).toEqual([16]);
