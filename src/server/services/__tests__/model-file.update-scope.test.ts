@@ -113,6 +113,10 @@ function withFile(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps a queued mockRejectedValueOnce; a test that never reaches its bust would
+  // otherwise hand that rejection to the next test.
+  for (const bust of [mockFileListBust, mockResourceDataBust, mockBustOrchestrator])
+    bust.mockReset().mockImplementation(() => Promise.resolve());
   withFile();
   linkedRows = [];
   dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
