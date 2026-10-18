@@ -36,13 +36,24 @@ export type CrossOwnerDuplicate = {
 };
 
 type Scope = { fileId: number } | { versionId: number } | { modelId: number };
+type ResolvedScope = { fileId: number } | { versionIds: number[] };
 
-function scopeFilter(scope: Scope) {
+// A model scope is resolved to its version ids before the query runs. Written as a sub-select, the
+// planner cannot see how few files it selects, so it joins every published primary file first:
+// ~55s per publish on production, against under a millisecond for the same query given literal ids.
+async function resolveScope(scope: Scope): Promise<ResolvedScope> {
+  if ('fileId' in scope) return scope;
+  if ('versionId' in scope) return { versionIds: [scope.versionId] };
+  const versions = await dbWrite.modelVersion.findMany({
+    where: { modelId: scope.modelId },
+    select: { id: true },
+  });
+  return { versionIds: versions.map((v) => v.id) };
+}
+
+function scopeFilter(scope: ResolvedScope) {
   if ('fileId' in scope) return Prisma.sql`c.id = ${scope.fileId}`;
-  if ('versionId' in scope) return Prisma.sql`c."modelVersionId" = ${scope.versionId}`;
-  return Prisma.sql`c."modelVersionId" IN (
-    SELECT id FROM "ModelVersion" WHERE "modelId" = ${scope.modelId}
-  )`;
+  return Prisma.sql`c."modelVersionId" IN (${Prisma.join(scope.versionIds)})`;
 }
 
 type CandidateRow = CrossOwnerDuplicate & { ownerFirstFileId: number };
@@ -82,6 +93,8 @@ export async function findCrossOwnerDuplicate({
   ownerId,
   ...scope
 }: Scope & { ownerId: number }): Promise<CrossOwnerDuplicate | null> {
+  const resolved = await resolveScope(scope);
+  if ('versionIds' in resolved && !resolved.versionIds.length) return null;
   const rows = await dbWrite.$queryRaw<CandidateRow[]>`
     SELECT
       c.id "fileId",
@@ -136,7 +149,7 @@ export async function findCrossOwnerDuplicate({
       ORDER BY f.id ASC
       LIMIT 1
     ) eh ON true
-    WHERE ${scopeFilter(scope)}
+    WHERE ${scopeFilter(resolved)}
       AND c.type IN (${Prisma.join(primaryModelFileTypes)})
       AND c."sizeKB" >= ${DUPLICATE_HASH_MIN_SIZE_KB}
       AND om."userId" <> ${ownerId}
