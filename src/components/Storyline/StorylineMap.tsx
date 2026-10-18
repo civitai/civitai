@@ -19,7 +19,10 @@ import {
   IconRoute,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import Router from 'next/router';
+import type { MouseEvent } from 'react';
 import { useId, useMemo } from 'react';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import type { StorylineCoverImage } from '~/components/Storyline/StorylineChapterImage';
@@ -32,6 +35,7 @@ import {
   useStorylineForkShares,
   useStorylinePathChildren,
 } from '~/components/Storyline/storyline.queries';
+import { isModifiedClick } from '~/components/Storyline/storyline-read-link';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import type { SubwayStop } from '~/components/Storyline/storyline-mode.utils';
 import {
@@ -142,6 +146,7 @@ function StorylineMap({
   titleId: string;
 }) {
   const { path, drawerOpen, setDrawerOpen, jumpToChapter, continueTo, leave } = storyline;
+  const dialog = useDialogContext();
   const forkStopIds = useMemo(
     () => path.chapters.slice(-STORYLINE_DRAWER_FORK_STOPS).map((c) => c.chapterId),
     [path.chapters]
@@ -368,6 +373,13 @@ function StorylineMap({
           variant="default"
           component={Link}
           href={storylineUrl(path.storyline.id)}
+          onClick={(e: MouseEvent<HTMLElement>) => {
+            // Over its own story page, the reader is a dialog: close it rather than stack the page.
+            if (isModifiedClick(e)) return;
+            if (Router.asPath.split('?')[0] !== storylineUrl(path.storyline.id)) return;
+            e.preventDefault();
+            dialog.onClose();
+          }}
           leftSection={<IconBook2 size={16} />}
           className={clsx(!next && 'flex-1')}
           data-testid="storyline-map-story-page"

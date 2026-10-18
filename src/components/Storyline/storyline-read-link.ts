@@ -2,16 +2,13 @@ import type { MouseEvent } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import type { StorylineReadTarget } from '~/components/Storyline/storyline-mode.utils';
 
-/**
- * A click the browser should handle itself: a new tab or window, a download, a middle click.
- */
-const isModifiedClick = (e: MouseEvent) =>
+/** Left to the browser, so new-tab, new-window and download gestures still follow the href. */
+export const isModifiedClick = (e: MouseEvent) =>
   e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
 
 /**
- * Props for a chapter link: its href stays the reader URL, so a new tab or a copied link opens
- * the reader, while a plain click opens it as a dialog over the current page and closing it comes
- * back there.
+ * The href stays the full reader URL so a copied link or a new tab works; a plain click opens it
+ * as a dialog over the current page instead.
  */
 export function storylineChapterLinkProps(link: {
   href: string;

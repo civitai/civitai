@@ -9,7 +9,8 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
 
-const click = (init: Partial<Record<'button' | 'metaKey' | 'ctrlKey' | 'shiftKey', unknown>>) => {
+type ClickField = 'button' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey' | 'defaultPrevented';
+const click = (init: Partial<Record<ClickField, unknown>>) => {
   const event = {
     button: 0,
     metaKey: false,
@@ -45,7 +46,15 @@ describe('storylineChapterLinkProps', () => {
 
   it('leaves a new-tab click to the browser, which follows the href', () => {
     const props = storylineChapterLinkProps(link);
-    for (const init of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { button: 1 }]) {
+    for (const init of [
+      { metaKey: true },
+      { ctrlKey: true },
+      { shiftKey: true },
+      { altKey: true },
+      { button: 1 },
+      // Something else already handled it.
+      { defaultPrevented: true },
+    ]) {
       const event = click(init);
       props.onClick?.(event as never);
       expect(event.preventDefault).not.toHaveBeenCalled();

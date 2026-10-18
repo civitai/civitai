@@ -340,7 +340,6 @@ function ChapterStop({
   endorsed,
 }: {
   chapter: PathChapter;
-  /** The canon path up to and including this chapter. */
   route: PathChapter[];
   endorsed: boolean;
 }) {
@@ -425,7 +424,8 @@ function StorylineForkPaths({ route, count }: { route: PathChapter[]; count: num
         <ul className="m-0 mt-2.5 flex list-none gap-2.5 overflow-x-auto p-0 pb-1">
           {children.map((child) => {
             const share = getForkShare(shares, child.chapterId);
-            const name = getStorylineChapterName(child);
+            // Numbered on the route its link opens, as the reader will number it.
+            const name = getStorylineChapterName({ ...child, depth: route.length });
             const link = storylineChapterLink(child, routeVia([...route, child]));
             return (
               <li

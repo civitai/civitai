@@ -548,6 +548,17 @@ describe('StorylinePage', () => {
     });
   });
 
+  test('a fork path is numbered on the route its link opens, not by its stored depth', async () => {
+    // Stored depth 7, from an older parent: under chapter 2 it is chapter 3 here and in the reader.
+    mocks.children = { 104: [{ ...FORK_104[0], depth: 7 }] };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(forks()[1]).toEqual([
+      { text: 'Canon62%Chapter 3Sillycat83', href: '/images/5030?storylineChapter=121' },
+    ]);
+  });
+
   test('a Story map chapter opens the reader over the page too', async () => {
     const graphChapter = (chapterId: number, postId: number, title: string | null = null) => ({
       ...chapter(0, postId, 1, title ?? undefined),
