@@ -24,6 +24,11 @@
  * client that is merely slow would only add load to a slow server. A rejected command (a Redis
  * error reply, a dropped connection) is neither a success nor a timeout.
  *
+ * BEFORE THE FIRST SUCCESS — at process start, and again after a heal clears the records — there is
+ * no success to wait out, so a record reads its timeouts at once: the trigger can fire as soon as
+ * the threshold's worth of commands have hit the backstop (from about backstop + threshold × the
+ * command spacing, and never inside the cooldown), not only after a whole window without a success.
+ *
  * Pure (no redis/prom imports) so it can be unit-tested and sampled without a prom dependency.
  */
 
@@ -43,7 +48,10 @@ export interface SysTimeoutRecord {
 }
 
 // Every record created in this process (one per instrumented sys connection — two at most per
-// sys client), read together by the watchdog.
+// sys client), read together by the watchdog. Records are never removed, and a record counts
+// whether or not the watchdog reconnects its connection: a second sys client (which the
+// single-client invariant in client.ts getClient rules out) would add its timeouts here while the
+// heal reconnected only the first client's connections.
 const records = new Set<SysTimeoutRecord>();
 
 /** Create (and register for the watchdog) the record for one sys base connection. */

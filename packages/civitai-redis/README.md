@@ -26,7 +26,7 @@ builds its own client (caching, pub/sub, or to inject `isRevoked` into the auth 
 | `REDIS_SYS_SENTINELS` / `_NAME`          | no      | sysRedis HA via Sentinel discovery                                                                                                  |
 | `REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED` | no      | default on; `false` stops a cluster node's connection errors from triggering a slot-map re-read (the node-address-change fix)       |
 | `REDIS_CLUSTER_BATCHED_GET_ENABLED`      | no      | default on; `false` makes `packed.mGet` on a cluster issue one routed GET per key instead of pipelining each master's GETs together |
-| `REDIS_SYS_COMMAND_TIMEOUT_MS`           | no      | sys per-command backstop, default `30000`; `0` disables it                                                                          |
+| `REDIS_SYS_COMMAND_TIMEOUT_MS`           | no      | sys per-command backstop, default `30000`; `0` disables it, and with it the sys self-heal's timeout-rate trigger                    |
 
 `loadRedisEnv()` **requires both `REDIS_URL` and `REDIS_SYS_URL`** — a partial config throws. Dozens of
 optional tuning knobs (socket timeouts, self-heal thresholds, routing retries) have safe defaults; see

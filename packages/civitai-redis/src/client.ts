@@ -2081,9 +2081,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
   // Start the sys (sysRedis / Sentinel) self-heal watchdog ONCE per process (incident 2026-07-03),
   // mirroring the cluster watchdog started in getBaseClient's cluster connect() callback. It
-  // reconnects ALL sys base connections when the aggregate sys inflight counter stays wedged: the
-  // serving `client` always, plus the dedicated Buffer-mode base on the sentinel path (both feed
-  // the counter). The watchdog only samples a counter + reconnects on a wedge, so starting it here
+  // reconnects ALL sys base connections when the aggregate sys inflight counter stays wedged or
+  // sys commands keep timing out with no success (the timeout-rate trigger): the serving `client`
+  // always, plus the dedicated Buffer-mode base on the sentinel path (both feed both signals). The watchdog only samples a counter + reconnects on a wedge, so starting it here
   // (before the background connect() settles) is safe. Guarded by sysSelfHealInterval so re-entry /
   // the buffer-base build can't stack a second interval.
   //

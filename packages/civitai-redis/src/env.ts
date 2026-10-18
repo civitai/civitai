@@ -140,7 +140,9 @@ export const redisEnvSchema = z
     // "no success" condition is the false-positive guard — a healthy client that times out the odd
     // slow command keeps completing everything else. 10 in 60s: a wedge on an app sending a sys
     // command every 6s or more often trips it; a 60s window with no success at all is already far
-    // outside healthy behaviour. Shares the cooldown and jitter above. Inert when the
+    // outside healthy behaviour. Before the first success (process start, or after a heal) there is
+    // no success to wait out, so it can fire (outside the cooldown) once THRESHOLD commands have timed
+    // out (./sys-timeouts). Shares the cooldown and jitter above. Inert when the
     // backstop is off (REDIS_SYS_COMMAND_TIMEOUT_MS=0). THRESHOLD <= 0 disables this trigger only.
     REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD: z.coerce.number().default(10),
     REDIS_SYS_SELFHEAL_TIMEOUT_WINDOW_MS: z.coerce.number().default(60000),
