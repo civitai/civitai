@@ -207,9 +207,9 @@ export function normalizeKind(kind) {
 }
 
 export const DEFAULT_CONCURRENCY = 1;
-// null, not a number: no cap is not the same decision as a cap that happens to equal today's core
-// count, and only the first one keeps following the box when it changes.
-export const DEFAULT_MAX_WORKERS = null;
+// A queue restart must not bring back an unclamped suite: one uncapped run took 15 workers and
+// ~4.7 GB. `null` is still the explicit uncap (`test config --max-workers none`).
+export const DEFAULT_MAX_WORKERS = 4;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
 const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_KILL_GRACE_MS = 30 * 1000;
