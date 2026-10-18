@@ -13,7 +13,11 @@ vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
   getEventBoxViewer: mocks.boxViewer,
 }));
 
-import { getBoxPoolForUser, getMysteryBoxesForEvent } from '../mystery-box.service';
+import {
+  clearBoxCatalogDisplayCache,
+  getBoxPoolForUser,
+  getMysteryBoxesForEvent,
+} from '../mystery-box.service';
 import { boxOddsFor, revealChance, tierSummaries } from '~/components/MysteryBox/mystery-box.utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -255,6 +259,7 @@ let step = 0;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(base + step++ * 5 * 60_000);
+  clearBoxCatalogDisplayCache();
   world = {
     boxes: [box(BOX, { event: EVENT }), box(OTHER_EVENT_BOX, { event: 'other' }, 1)],
     listings: [listing(), listing({ id: 43, itemDefinitionId: OTHER_EVENT_BOX })],
@@ -358,6 +363,57 @@ describe('getMysteryBoxesForEvent', () => {
       [1004, false],
       [1005, true],
     ]);
+  });
+
+  it('reads the contents once per box version; an edit that bumps the version shows at once', async () => {
+    await read();
+    world.contents.push(hat(8, COMMON, 'Pink'));
+    expect((await read())[0].contents.map((c) => c.contentId)).toEqual([1, 2, 4, 5]);
+    expect(dbMock.dbRead.boxContent.findMany).toHaveBeenCalledTimes(1);
+
+    world.boxes[0].version = 4;
+    const [view] = await read();
+    expect(view.version).toBe(4);
+    expect(view.contents.map((c) => c.contentId)).toEqual([1, 2, 4, 5, 8]);
+  });
+
+  it('shows a change made without a version bump after five minutes', async () => {
+    await read();
+    (world.contents[0].reward.cosmetic!.data as Record<string, unknown>).url = 'hat-1-v2.png';
+
+    vi.setSystemTime(Date.now() + 4 * 60_000);
+    expect((await read())[0].contents[0].url).toBe('hat-1.png');
+    vi.setSystemTime(Date.now() + 61_000);
+    expect((await read())[0].contents[0].url).toBe('hat-1-v2.png');
+  });
+
+  it('marks what the viewer collected since the contents were cached as not left', async () => {
+    await read();
+    world.owned.push({ userId: VIEWER, cosmeticId: 1001 });
+    world.drawn.push({ userId: VIEWER, boxDefinitionId: BOX, rewardDefinitionId: 102 });
+
+    const [view] = await read();
+
+    expect(dbMock.dbRead.boxContent.findMany).toHaveBeenCalledTimes(1);
+    expect(view.contents.map((c) => [c.cosmeticId, c.left])).toEqual([
+      [1001, false],
+      [1002, false],
+      [1004, true],
+      [1005, true],
+    ]);
+  });
+
+  it("the open's pool reads the contents live, not the cached ones the page shows", async () => {
+    await read();
+    world.contents = world.contents.filter((c) => c.id !== 2);
+
+    const pool = await getBoxPoolForUser(dbMock.dbRead as never, {
+      boxDefinitionId: BOX,
+      userId: VIEWER,
+      team: 'Pink',
+    });
+
+    expect(pool.map((entry) => entry.contentId)).toEqual([1, 4, 5]);
   });
 
   it('shows the odds the open draws under: the shared rule over the same pool', async () => {

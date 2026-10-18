@@ -19,7 +19,7 @@ import {
   snapshotOfLiveBox,
   snapshotsMatch,
 } from '../mystery-box-odds-page.service';
-import { getBoxPoolForUser } from '../mystery-box.service';
+import { clearBoxCatalogDisplayCache, getBoxPoolForUser } from '../mystery-box.service';
 import { baseOddsView, tierSummaries } from '~/components/MysteryBox/mystery-box.utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -255,6 +255,7 @@ let step = 0;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(base + step++ * 5 * 60_000);
+  clearBoxCatalogDisplayCache();
   world = {
     boxes: [
       {

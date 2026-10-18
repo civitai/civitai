@@ -5,21 +5,21 @@ import { getEventBoxCatalogAccess, isEventShopItemData } from '~/server/events/e
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup } from '~/server/logging/devalue-fallback-log';
 import { ITEM_DEFINITION_STATUS, ITEM_TYPE } from '~/server/services/item.service';
-import type { BoxCatalogEntry } from '~/server/services/mystery-box.service';
+import type { BoxCatalogEntry, BoxDisplayEntry } from '~/server/services/mystery-box.service';
 import {
   BOX_TIER_ORDER,
   BOX_TIER_SELECT,
-  boxContentDisplay,
   boxSaleRefusal,
-  getBoxCatalog,
+  getBoxCatalogForDisplay,
   mysteryBoxesHiddenIn,
 } from '~/server/services/mystery-box.service';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
 /**
- * A box's public odds page. Odds and contents come from the live tiers and contents, the rows the
- * draw reads, so the page cannot show odds the draw does not use. The history comes from
+ * A box's public odds page. Odds and contents come from the live tiers and the contents of the
+ * current version (cached per version), the rows the draw reads, so the page cannot show odds the
+ * draw does not use. The history comes from
  * `BoxOddsSnapshot` (one row per version, written outside this service); a current version whose
  * snapshot is missing or differs from the live box is logged so the history can be repaired.
  */
@@ -106,12 +106,11 @@ export function snapshotsMatch(a: BoxOddsSnapshotData, b: BoxOddsSnapshotData) {
 }
 
 /** "hat" when everything in the box is a hat (an event decoration), else "item". */
-function rewardNoun(contents: BoxCatalogEntry[]) {
+function rewardNoun(contents: BoxDisplayEntry[]) {
   const allHats =
     contents.length > 0 &&
     contents.every(
-      (c) =>
-        c.cosmeticType === CosmeticType.ContentDecoration && isEventShopItemData(c.cosmeticData)
+      (c) => c.cosmeticType === CosmeticType.ContentDecoration && c.event !== undefined
     );
   return allHats ? 'hat' : 'item';
 }
@@ -192,7 +191,7 @@ export async function getMysteryBoxOddsPage({
       orderBy: BOX_TIER_ORDER,
       select: BOX_TIER_SELECT,
     }),
-    getBoxCatalog(dbRead, box.id),
+    getBoxCatalogForDisplay(box),
     dbRead.boxOddsSnapshot.findMany({
       where: { boxDefinitionId: box.id },
       orderBy: { version: 'asc' },
@@ -254,7 +253,15 @@ export async function getMysteryBoxOddsPage({
     teams,
     price: onSale?.unitAmount ?? null,
     tiers,
-    contents: contents.map((entry) => ({ ...boxContentDisplay(entry), team: entry.team ?? null })),
+    contents: contents.map(({ contentId, tierId, cosmeticId, name, url, fit, team }) => ({
+      contentId,
+      tierId,
+      cosmeticId,
+      name,
+      url,
+      fit,
+      team: team ?? null,
+    })),
     /** Newest first. */
     history: history.reverse(),
     /** False when the current version's snapshot is missing or differs from the live box. */
