@@ -31,10 +31,7 @@ function TitleTooltip({ title, children }: { title: string; children: ReactEleme
   );
 }
 
-/**
- * A mark that an image or post is part of a storyline. Forwards its ref and props, so a menu can
- * drop from it (`menu` adds the chevron that says one does).
- */
+/** Forwards ref and props so a Menu.Target can wrap it; `menu` adds the chevron. */
 export const StorylinePill = forwardRef<
   HTMLButtonElement,
   {

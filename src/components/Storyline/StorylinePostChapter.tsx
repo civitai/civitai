@@ -25,7 +25,6 @@ import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-/** The storyline a post is a chapter of, and the path to it. Null when it is none, or hidden. */
 function useStorylinePostChapter(postId: number) {
   const enabled = useStorylinesEnabled();
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -42,13 +41,18 @@ function useStorylinePostChapter(postId: number) {
     const data = pathQuery.data;
     const end = data?.chapters[data.chapters.length - 1];
     if (!data || !entry || end?.chapterId !== entry.chapterId) return undefined;
-    return { ...data, chapters: hideHiddenUsersChapters(data.chapters, hiddenUserIds) };
+    return {
+      ...data,
+      chapters: hideHiddenUsersChapters(data.chapters, hiddenUserIds).map((chapter) => ({
+        ...chapter,
+        joins: hideHiddenUsersChapters(chapter.joins, hiddenUserIds),
+      })),
+    };
   }, [pathQuery.data, entry, hiddenUserIds]);
   if (!entry) return null;
   return { entry, path, end: path?.chapters[path.chapters.length - 1] };
 }
 
-/** Above a chapter's post: the storyline it belongs to, opening a menu of ways into it. */
 export function StorylinePostPill({ postId }: { postId: number }) {
   const chapter = useStorylinePostChapter(postId);
   if (!chapter) return null;
@@ -60,7 +64,8 @@ export function StorylinePostPill({ postId }: { postId: number }) {
       <Menu.Target>
         <StorylinePill
           title={entry.title}
-          depth={end?.depth ?? entry.depth}
+          // The stored number, as image detail's entry chip shows it for the same post.
+          depth={entry.depth}
           menu
           className="mb-2 self-start"
         />
@@ -89,17 +94,14 @@ export function StorylinePostPill({ postId }: { postId: number }) {
   );
 }
 
-/**
- * Below a chapter's post: the end-of-chapter cards, whose choices open the viewer on that chapter,
- * and the ways back. The post page is a doorway; the reading happens in the viewer.
- */
+/** The post page only routes into the viewer: reading happens there, so a choice opens it. */
 export function StorylinePostNext({ postId }: { postId: number }) {
   const chapter = useStorylinePostChapter(postId);
   const currentUser = useCurrentUser();
   const tracking = useStorylineTracking();
   if (!chapter?.path || !chapter.end) return null;
-  const { path, end } = chapter;
-  const parents = getStorylinePostParents(path.chapters);
+  const { entry, path, end } = chapter;
+  const parents = getStorylinePostParents(path.chapters, path.storyline.userId);
 
   const onContinue = (child: StorylineChild & { firstImage?: { id: number } | null }) => {
     tracking.trackBranchChoice({ fromChapterId: end.chapterId, toChapterId: child.chapterId });
@@ -126,9 +128,10 @@ export function StorylinePostNext({ postId }: { postId: number }) {
         layout="section"
         chapterId={end.chapterId}
         storylineId={path.storyline.id}
-        chapterDepth={end.depth}
-        chapterTombstone={end.tombstone}
-        parentPostId={end.post?.id}
+        chapterDepth={entry.depth}
+        // The reader is on this post: getForPosts let them see it, even where the path read
+        // tombstones it for them (their own post above the story's rating, an author they hid).
+        parentPostId={postId}
         isOwner={!!currentUser && currentUser.id === path.storyline.userId}
         onContinue={onContinue}
       />

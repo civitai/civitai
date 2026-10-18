@@ -81,7 +81,7 @@ export function StorylineEndOfChapter({
   parentPostId?: number;
   /** The reader made this storyline: they add chapters directly, never by continuing it. */
   isOwner?: boolean;
-  /** Over the viewer's stage, or as a section in a page (the chapter's post page). */
+  /** 'section' renders inline in a page instead of covering the viewer's stage. */
   layout?: 'overlay' | 'section';
 }) {
   const { data: children, isLoading } = useStorylineChildren(chapterId);
