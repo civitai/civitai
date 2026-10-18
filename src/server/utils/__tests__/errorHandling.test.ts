@@ -94,7 +94,10 @@ describe('isPrismaLockTimeout', () => {
   // compare the errors with ~/test-utils/prismaLockTimeout, fix isPrismaLockTimeout if they moved,
   // then update the version there. A mismatch fails silently: busy buyers get a 500 again.
   it('was matched against the lock timeout shapes of the Prisma version installed', () => {
-    expect(Prisma.prismaVersion.client).toBe(LOCK_TIMEOUT_SHAPES_OBSERVED_ON);
+    expect(
+      Prisma.prismaVersion.client,
+      'Prisma changed: re-observe the lock timeout shapes on a dev database (see the comment above this test) before updating LOCK_TIMEOUT_SHAPES_OBSERVED_ON'
+    ).toBe(LOCK_TIMEOUT_SHAPES_OBSERVED_ON);
   });
 
   it('matches a model query cancelled with 55P03', () => {
