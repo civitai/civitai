@@ -8,7 +8,13 @@
  * Linux only: the test process connects to the containers' bridge addresses directly. Names and
  * the /24 are per run (see docker-redis-cluster.ts); `teardown()` removes only this run's own.
  */
-import { IMAGE, createRunNetwork, docker, runScopedName } from './docker-redis-cluster';
+import {
+  IMAGE,
+  createRunNetwork,
+  docker,
+  removeContainers,
+  runScopedName,
+} from './docker-redis-cluster';
 
 const PORT = 6379;
 const SENTINEL_PORT = 26379;
@@ -177,9 +183,7 @@ export class DockerRedisSentinel {
   }
 
   teardown(): void {
-    for (const c of [this.master, this.replica, this.sentinel]) {
-      docker(['rm', '-f', c], { allowFail: true });
-    }
+    removeContainers([this.master, this.replica, this.sentinel]);
     docker(['network', 'rm', this.name], { allowFail: true });
   }
 

@@ -39,11 +39,15 @@ export type RedisFailoverResolver = (context: Record<string, string>) => Promise
 
 /**
  * node-redis 6 changed three client defaults that this package depends on. Every client it builds
- * pins the 5.x behaviour back, so the upgrade changes no reply shape and no timeout:
+ * pins the 5.x behaviour back for these three. What the pins do NOT restore: object-like replies
+ * (`hGetAll`, `xRange` message objects, `CONFIG GET`, …) are plain `{}` objects, not
+ * `Object.create(null)`, so a hash field named `__proto__` is dropped and a lookup of an absent
+ * `constructor`/`toString` returns the inherited function:
  *  - RESP: 6.0 defaults to RESP3, which changes reply shapes (hGetAll, xRange, multi().exec(), Lua
  *    replies, Buffer type mapping) and, through `maintNotifications: 'auto'`, relaxes socket and
  *    command timeouts during server maintenance pushes. RESP3 is a separate change.
- *  - command timeout: 6.0 rejects any command still waiting after 5000 ms. Our own deadlines must
+ *  - command timeout: 6.0 rejects any command still UNWRITTEN after 5000 ms (the timer is cleared
+ *    once the command is written, so a slow reply is never cut). Our own deadlines must
  *    fire first and alone: the cluster deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS) and the sys
  *    backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) feed the self-heal watchdogs, which a 5 s rejection of a
  *    different error class would starve. @redis/client 6.3.0 builds its defaults as
