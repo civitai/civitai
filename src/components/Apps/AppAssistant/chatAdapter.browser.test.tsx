@@ -162,15 +162,12 @@ test('a message released into the real chat waits out its hold in the box, sends
   expect(chat.canSend).toBe(false);
   const replaying: { current: Release | null } = { current: null };
   const went: string[] = [];
-  // The page's before-send, as the workspace has it: the message it is sending went.
+  // The page's before-send, as the workspace's onBeforeSend marks it: the message it is sending went.
   chat.addEventListener('before-send', (event) => {
     const text = (event as CustomEvent<{ text: string }>).detail.text;
     went.push(text);
     const release = replaying.current;
-    if (release?.text === text) {
-      release.went = true;
-      release.wake();
-    }
+    if (release?.text === text) release.went = true;
   });
   const sends = vi.spyOn(chat, 'send');
 

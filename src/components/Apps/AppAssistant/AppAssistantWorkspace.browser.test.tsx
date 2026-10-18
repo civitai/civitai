@@ -709,9 +709,12 @@ describe('AppAssistantWorkspace auto-resume', () => {
     m.running = true;
     runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    // The reply ends and the user sends before the chat's can-send-change reaches the page.
     m.running = false;
     await userSends('Actually, a light mode');
-    await settle(1200);
+    // The event then arrives: an ended release must not send the page's message after all.
+    m.announce();
+    await settle(100);
     expect(m.delivered).toEqual(['Actually, a light mode']);
   });
 
@@ -722,8 +725,23 @@ describe('AppAssistantWorkspace auto-resume', () => {
     runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     m.chat!.onChatChange!('chat-2');
-    m.running = false;
-    await settle(1200);
+    // The reply ends and the chat says it can send: a release still running would send now.
+    setRunning(false);
+    await settle(100);
+    expect(m.send).toHaveBeenCalledTimes(1);
+    expect(m.delivered).toEqual([]);
+  });
+
+  test('opening another app while a message is released stops it going out for that app', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.running = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    await openFromSwitcher('app-aaaa');
+    // The reply ends and the chat says it can send: a release still running would send now.
+    setRunning(false);
+    await settle(100);
     expect(m.send).toHaveBeenCalledTimes(1);
     expect(m.delivered).toEqual([]);
   });
@@ -735,7 +753,8 @@ describe('AppAssistantWorkspace auto-resume', () => {
     runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     screen.unmount();
-    await settle(1200);
+    setRunning(false);
+    await settle(100);
     expect(m.send).toHaveBeenCalledTimes(1);
   });
 
@@ -1596,11 +1615,12 @@ describe('releaseHeld', () => {
 
   /**
    * A chat as 0.13.0 has it, alone: while it holds, a send only fills an EMPTY box; once it can send, a
-   * send goes (and the page's before-send marks the release as gone). `lift()` ends the hold and fires
-   * `can-send-change`, as the element does.
+   * send goes, and the page's before-send marks the release as gone, as `onBeforeSend` does. With
+   * `refusing`, a send the chat can take is still kept back as a refused grant keeps it: in an EMPTY box.
+   * `lift()` ends the hold and fires `can-send-change`, as the element does.
    */
   function heldChat(replaying: Replaying, after?: () => void) {
-    const state = { box: '', canSend: false, went: [] as string[] };
+    const state = { box: '', canSend: false, refusing: false, went: [] as string[] };
     // defineProperty, not Object.assign: assign would copy `canSend`'s value once, not the getter.
     const chat = Object.assign(
       Object.defineProperty(new EventTarget(), 'canSend', {
@@ -1608,16 +1628,13 @@ describe('releaseHeld', () => {
       }) as EventTarget & { readonly canSend: boolean },
       {
         send: vi.fn(async (text: string) => {
-          if (!state.canSend) {
+          if (!state.canSend || state.refusing) {
             if (!state.box) state.box = text;
             return;
           }
           state.went.push(text);
           const release = replaying.current;
-          if (release?.text === text) {
-            release.went = true;
-            release.wake();
-          }
+          if (release?.text === text) release.went = true;
           after?.();
         }),
         compose: vi.fn(async (text: string) => {
@@ -1731,9 +1748,11 @@ describe('releaseHeld', () => {
     expect(replaying.current).toBeNull();
   });
 
-  test('a release stopped while it waits ends at once and sends nothing more', async () => {
+  test('a release stopped while it waits ends at once, with no timer run, and is reported unsent', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
     const replaying: Replaying = { current: null };
     const { chat, state } = heldChat(replaying);
+    let settled = false;
     // The user is dictating into an empty box, so nothing is put there and nothing is kept.
     const kept = releaseHeld(
       { current: chat },
@@ -1741,13 +1760,50 @@ describe('releaseHeld', () => {
       () => state.box,
       () => true,
       HELD
-    );
-    await vi.waitFor(() => expect(replaying.current).not.toBeNull());
+    ).then((value) => ((settled = true), value));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
     stopRelease(replaying);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
     expect(await kept).toBe(false);
-    chat.lift();
-    await settle();
     expect(chat.send).not.toHaveBeenCalled();
     expect(state.went).toEqual([]);
+  });
+
+  test('🟡 a message the chat can take but keeps back in the box while the user dictates is taken out and reported unsent', async () => {
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    // The chat can send, but refuses this one (as a refused grant does) by putting it in the empty box,
+    // hidden behind the dictation that would join it.
+    state.canSend = true;
+    state.refusing = true;
+    const kept = await releaseHeld(
+      { current: chat },
+      replaying,
+      () => state.box,
+      () => true,
+      HELD
+    );
+    expect(chat.send).toHaveBeenCalledTimes(1);
+    expect(state.went).toEqual([]);
+    expect(state.box).toBe('');
+    expect(kept).toBe(false);
+  });
+
+  test('NEGATIVE CONTROL: kept back while the user is NOT dictating, the copy stays in the box for them', async () => {
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    state.canSend = true;
+    state.refusing = true;
+    const kept = await releaseHeld(
+      { current: chat },
+      replaying,
+      () => state.box,
+      () => false,
+      HELD
+    );
+    expect(state.box).toBe(HELD);
+    expect(kept).toBe(true);
   });
 });

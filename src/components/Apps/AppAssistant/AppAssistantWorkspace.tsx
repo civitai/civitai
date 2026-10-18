@@ -166,8 +166,11 @@ export async function releaseHeld(
       if (parked && box() !== text) break;
       if (chat.canSend) {
         // It goes now, or the chat took it and still kept it back (the page's before-send, a refused
-        // grant): either way there is nothing more to wait for.
+        // grant): either way there is nothing more to wait for. A refused grant puts it in an empty
+        // box, which the user's dictation would join: that copy is taken out and reported unsent.
+        const hidden = !box() && dictating();
         await chat.send(text);
+        if (hidden && !release.went && box() === text) await chat.compose('');
         break;
       }
       if (!parked && !box() && !dictating()) {
@@ -511,6 +514,9 @@ export function AppAssistantWorkspace({
   const onChatChange = useCallback(
     (id: string | null) => {
       gate.answered();
+      // At once, not only in the effect after the next render: the chat can say it can send before then,
+      // and the message would go to the chat just opened.
+      if (id !== chatIdRef.current) stopRelease(replaying);
       chatIdRef.current = id;
       setChatId(id);
     },
