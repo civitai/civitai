@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as MysteryBoxService from '~/server/services/mystery-box.service';
+import type * as MysteryBoxOddsPageService from '~/server/services/mystery-box-odds-page.service';
 
 /**
  * The kill switch and region block reach the open here: the router reads the `mysteryBox` flag and
@@ -7,15 +8,21 @@ import type * as MysteryBoxService from '~/server/services/mystery-box.service';
  * the real procedure builds the arguments.
  */
 
-const { mockOpen, mockRead } = vi.hoisted(() => ({
+const { mockOpen, mockRead, mockOddsPage } = vi.hoisted(() => ({
   mockOpen: vi.fn(async () => ({ replayed: false })),
   mockRead: vi.fn(async () => []),
+  mockOddsPage: vi.fn(async () => null),
 }));
 
 vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxService>()),
   openMysteryBox: mockOpen,
   getMysteryBoxesForEvent: mockRead,
+}));
+
+vi.mock('~/server/services/mystery-box-odds-page.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof MysteryBoxOddsPageService>()),
+  getMysteryBoxOddsPage: mockOddsPage,
 }));
 
 import { mysteryBoxRouter } from '../mystery-box.router';
@@ -190,5 +197,44 @@ describe('mysteryBox.getForEvent hands the service the flag, the country and the
       'UNAUTHORIZED'
     );
     expect(mockRead).not.toHaveBeenCalled();
+  });
+});
+
+describe('mysteryBox.getOddsPage hands the service the flag, the country and the viewer', () => {
+  beforeEach(() => mockOddsPage.mockClear());
+
+  it('serves a signed-out visitor as no viewer, and a signed-in one with their moderator bit', async () => {
+    await caller({ mysteryBox: true }, { 'cf-ipcountry': 'BE' }, { user: null }).getOddsPage({
+      boxDefinitionId: 9,
+    });
+    await caller({ mysteryBox: false }, {}, { user: { ...holder, isModerator: true } }).getOddsPage(
+      {
+        boxDefinitionId: 9,
+      }
+    );
+    await caller({ mysteryBox: true }).getOddsPage({ boxDefinitionId: 9 });
+    expect(mockOddsPage.mock.calls.map(([arg]) => arg)).toEqual([
+      { boxDefinitionId: 9, viewer: undefined, mysteryBoxEnabled: true, countryCode: 'BE' },
+      {
+        boxDefinitionId: 9,
+        viewer: { id: holder.id, isModerator: true },
+        mysteryBoxEnabled: false,
+        countryCode: undefined,
+      },
+      {
+        boxDefinitionId: 9,
+        viewer: { id: holder.id, isModerator: false },
+        mysteryBoxEnabled: true,
+        countryCode: undefined,
+      },
+    ]);
+  });
+
+  it.each([0, -1, 2_147_483_648, 1.5])('refuses box id %s before the service', async (id) => {
+    await rejectsWithCode(
+      caller({ mysteryBox: true }).getOddsPage({ boxDefinitionId: id }),
+      'BAD_REQUEST'
+    );
+    expect(mockOddsPage).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
  */
 
 type ShopEvent = GatedEvent & {
+  title: string;
   teams: readonly string[];
   getUserTeam: (userId: number, opts?: { strict?: boolean }) => Promise<string>;
   settleBalancedTeam: (userId: number) => Promise<string | undefined>;
@@ -132,14 +133,30 @@ export async function getEventBoxViewer(
   eventName: string,
   viewer: { id: number; isModerator?: boolean }
 ) {
+  const readable = await readableBoxEvent(eventName, viewer);
+  if (!readable) return null;
+  const { event, access } = readable;
+  if (!event.teams.length) return { playable: canPlayEvent(access), team: undefined };
+  const team = await event.getUserTeam(viewer.id, { strict: true }).catch(() => null);
+  return team ? { playable: canPlayEvent(access), team } : null;
+}
+
+/**
+ * The event's title and teams for a viewer who may read its boxes, signed in or not. Null when the
+ * event is closed to them, unregistered or unloadable.
+ */
+export async function getEventBoxCatalogAccess(eventName: string, viewer: EventViewer) {
+  const readable = await readableBoxEvent(eventName, viewer);
+  if (!readable) return null;
+  return { title: readable.event.title, teams: readable.event.teams };
+}
+
+async function readableBoxEvent(eventName: string, viewer: EventViewer) {
   const events = await loadEvents().catch(() => undefined);
   const event = events?.find((e) => e.name === eventName);
   if (!event) return null;
   const access = await getEventAccess(event, viewer).catch(() => 'closed' as const);
-  if (!canReadEvent(access)) return null;
-  if (!event.teams.length) return { playable: canPlayEvent(access), team: undefined };
-  const team = await event.getUserTeam(viewer.id, { strict: true }).catch(() => null);
-  return team ? { playable: canPlayEvent(access), team } : null;
+  return canReadEvent(access) ? { event, access } : null;
 }
 
 /**
