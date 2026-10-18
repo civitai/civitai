@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 const { mockCreateModelFileScanRequest } = vi.hoisted(() => ({
@@ -81,14 +81,74 @@ describe('mod/clean-up', () => {
       mockCreateModelFileScanRequest.mockResolvedValue(undefined);
     });
 
-    it('selects only Pending files unless force=true', async () => {
+    const NOW = new Date('2026-10-18T12:00:00.000Z');
+    const DAY_AGO = new Date('2026-10-17T12:00:00.000Z');
+    const waitingForScan = {
+      virusScanResult: 'Pending',
+      OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: DAY_AGO } }],
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('bulk selection takes only files still waiting for a scan, and not in flight', async () => {
       await run({ after: '2026-01-01' });
-      expect(where().virusScanResult).toBe('Pending');
+      expect(where()).toEqual({
+        createdAt: { gte: new Date('2026-01-01') },
+        ...waitingForScan,
+        type: { not: 'Training Data' },
+      });
+    });
+
+    it('force=true lifts the bulk filter', async () => {
+      await run({ after: '2026-01-01', force: 'true' });
+      expect(where()).toEqual({
+        createdAt: { gte: new Date('2026-01-01') },
+        type: { not: 'Training Data' },
+      });
+    });
+
+    // Naming files means "re-scan these", settled or not; filtering them to Pending would
+    // quietly answer files: 0. Do not move the bulk filter up to the top level.
+    it('named files are re-scanned whatever their scan state', async () => {
+      await run({ modelFileIds: '7,8' });
+      expect(where()).toEqual({ id: { in: [7, 8] }, type: { not: 'Training Data' } });
 
       vi.clearAllMocks();
       dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
-      await run({ after: '2026-01-01', force: 'true' });
-      expect(where()).not.toHaveProperty('virusScanResult');
+      await run({ modelVersionIds: '10', after: '2026-01-01' });
+      expect(where()).toEqual({
+        OR: [
+          { modelVersionId: { in: [10] } },
+          { createdAt: { gte: new Date('2026-01-01') }, ...waitingForScan },
+        ],
+        type: { not: 'Training Data' },
+      });
+    });
+
+    it('stamps the page as requested, and releases a file whose submit fails transiently', async () => {
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue(fileRows(2));
+      dbMock.dbWrite.modelFile.update.mockResolvedValue({});
+      mockCreateModelFileScanRequest
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('orchestrator 503'));
+
+      await run({ after: '2026-01-01' });
+
+      expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: [1, 2] } },
+        data: { scanRequestedAt: NOW },
+      });
+      expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledTimes(1);
+      expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
+        where: { id: 2 },
+        data: { scanRequestedAt: null },
+      });
     });
 
     it('submits at most 500 files and returns a cursor for the next page', async () => {
@@ -122,16 +182,19 @@ describe('mod/clean-up', () => {
       });
     });
 
-    it('resumes after the cursor', async () => {
-      await run({ after: '2026-01-01', afterId: '500' });
-      expect(where().id).toEqual({ gt: 500 });
+    it('resumes after the cursor without dropping a named-file filter', async () => {
+      await run({ modelFileIds: '7,900', afterId: '500' });
+      expect(where()).toEqual({
+        id: { in: [7, 900] },
+        type: { not: 'Training Data' },
+        AND: [{ id: { gt: 500 } }],
+      });
     });
 
     // Prisma matches nothing for `OR: []`, so passing the empty list made `all` a silent no-op.
-    it('all=true selects without an OR filter', async () => {
+    it('all=true selects without an empty OR', async () => {
       await run({ all: 'true' });
-      expect(where()).not.toHaveProperty('OR');
-      expect(where().virusScanResult).toBe('Pending');
+      expect(where()).toEqual({ ...waitingForScan, type: { not: 'Training Data' } });
     });
 
     it('never has more than 5 submissions in flight', async () => {

@@ -34,31 +34,47 @@ const importSchema = z.object({
 // (low-priority model-file scans never complete), so one call is bounded and slow by design.
 const CLEAN_UP_MAX_FILES = 500;
 const CLEAN_UP_CONCURRENCY = 5;
+const IN_FLIGHT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export default ModEndpoint(
   async function cleanModel(req: NextApiRequest, res: NextApiResponse) {
     const { modelIds, modelVersionIds, modelFileIds, after, wait, all, force, afterId } =
       importSchema.parse(req.query);
 
-    const OR: Prisma.Enumerable<Prisma.ModelFileWhereInput> = [];
-    if (!!modelFileIds?.length) OR.push({ id: { in: modelFileIds } });
-    if (!!modelVersionIds?.length) OR.push({ modelVersionId: { in: modelVersionIds } });
-    if (!!modelIds?.length) OR.push({ modelVersion: { modelId: { in: modelIds } } });
-    if (!!after) OR.push({ createdAt: { gte: after } });
-    if (OR.length === 0 && !all) {
+    // Named files are re-scanned whatever their state: naming them is the ask.
+    const branches: Prisma.ModelFileWhereInput[] = [];
+    if (!!modelFileIds?.length) branches.push({ id: { in: modelFileIds } });
+    if (!!modelVersionIds?.length) branches.push({ modelVersionId: { in: modelVersionIds } });
+    if (!!modelIds?.length) branches.push({ modelVersion: { modelId: { in: modelIds } } });
+
+    // Bulk selection (`after`, or `all` alone) only takes files still waiting for a scan, and not
+    // ones submitted in the last day, which are in flight. The same window as scanFilesFallbackJob.
+    if (!!after || (all && branches.length === 0)) {
+      branches.push({
+        ...(after && { createdAt: { gte: after } }),
+        ...(!force && {
+          virusScanResult: ScanResultCode.Pending,
+          OR: [
+            { scanRequestedAt: null },
+            { scanRequestedAt: { lt: new Date(Date.now() - IN_FLIGHT_WINDOW_MS) } },
+          ],
+        }),
+      });
+    }
+    if (branches.length === 0) {
       res.status(400).json({
         error: 'Must provide at least one of modelIds, modelVersionIds, modelFileIds, or all',
       });
       return;
     }
 
-    // An empty OR matches nothing in Prisma, so `all` has to drop it rather than pass it.
+    // Not `{ OR: [one] }` for a single branch: `all` alone with force is an empty branch, and the
+    // cursor goes in AND so it can't overwrite a branch's own `id` filter.
     const rows = await dbRead.modelFile.findMany({
       where: {
-        ...(OR.length > 0 && { OR }),
+        ...(branches.length === 1 ? branches[0] : { OR: branches }),
         type: { not: 'Training Data' },
-        ...(!force && { virusScanResult: ScanResultCode.Pending }),
-        ...(afterId !== undefined && { id: { gt: afterId } }),
+        ...(afterId !== undefined && { AND: [{ id: { gt: afterId } }] }),
       },
       orderBy: { id: 'asc' },
       take: CLEAN_UP_MAX_FILES + 1,
@@ -82,6 +98,15 @@ export default ModEndpoint(
       nextAfterId: capped ? modelFiles[modelFiles.length - 1].id : null,
     };
 
+    // Stamped up front, as the fallback job does, so a repeat call and the job both see these as
+    // in flight; a transient submit failure below hands the file back.
+    if (modelFiles.length > 0) {
+      await dbWrite.modelFile.updateMany({
+        where: { id: { in: modelFiles.map((f) => f.id) } },
+        data: { scanRequestedAt: new Date() },
+      });
+    }
+
     const failed: number[] = [];
     const tasks = modelFiles.map((file) => async () => {
       // Guard against orphaned files whose modelVersion was soft-deleted.
@@ -101,13 +126,15 @@ export default ModEndpoint(
         });
       } catch (err) {
         failed.push(file.id);
-        // Admin endpoint: tombstone on permanent 'not-found' so the file
-        // exits the scan retry loop. Matches scanFilesFallbackJob policy.
-        if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
-          await dbWrite.modelFile
-            .update({ where: { id: file.id }, data: { exists: false } })
-            .catch(() => null);
-        }
+        // Matches scanFilesFallbackJob: tombstone a permanent 'not-found' so the file exits the
+        // scan retry loop; anything else is released for the next tick.
+        const notFound = err instanceof ModelFileScanSubmissionError && err.code === 'not-found';
+        await dbWrite.modelFile
+          .update({
+            where: { id: file.id },
+            data: notFound ? { exists: false } : { scanRequestedAt: null },
+          })
+          .catch(() => null);
       }
     });
 
