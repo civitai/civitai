@@ -380,7 +380,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return shopFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   },
 
   grantCosmetic: requiresGrant('user.cosmetics.grant', async ({ request, locals }) => {
@@ -417,7 +417,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return cosmeticsFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   },
 
   sendBuzz: requiresGrant('user.buzz.send', async ({ request, locals }) => {
