@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
+import { ITEM_HOLDER_LOCK_CLASS } from '@civitai/shared/item-holder-lock';
 
-export const ITEM_HOLDER_LOCK_CLASS = 0x49480001;
+export { ITEM_HOLDER_LOCK_CLASS };
 
 /**
  * Serialises everything that grants a cosmetic to one user or reads what they own to decide a

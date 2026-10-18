@@ -48,7 +48,7 @@ import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/er
 import { createKeyedTtlMemo, createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
+import { BOX_OPENING_REWARD_STATUS, boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
@@ -888,8 +888,6 @@ export async function purchaseMysteryBox({
     throw throwBadRequestError('Failed to purchase box');
   }
 }
-
-export const BOX_OPENING_REWARD_STATUS = { granted: 'granted' } as const;
 
 export type MysteryBoxOpenResult = {
   /** The opened box's `Item.id`, as a string: it is a BIGINT. */

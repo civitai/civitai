@@ -543,6 +543,12 @@ export const upsertCosmeticShopSection = async ({
   // resale — a creator who never marked their item sellable-by-others hasn't
   // consented to official-shop placement.
   if (items?.length) {
+    // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
+    const boxes = await dbWrite.cosmeticShopItem.count({
+      where: { id: { in: items }, itemDefinitionId: { not: null } },
+    });
+    if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
+
     const ineligible = await dbWrite.cosmeticShopItem.findMany({
       where: {
         id: { in: items },
@@ -738,6 +744,9 @@ export const getShopSectionsWithItems = async ({
                 ? [
                     {
                       cosmeticId: null,
+                      // A mystery box listing has no cosmetic either, and is sold only through its
+                      // own surface, which applies the box's flag, region and event checks.
+                      itemDefinitionId: null,
                       ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
                     },
                   ]

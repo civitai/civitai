@@ -122,14 +122,15 @@ import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-acc
 // A `cosmetic` relation filter is an EXISTS on a nullable to-one, so ANY
 // condition nested under it silently excludes every pack. The pack branch keeps
 // them visible; a pack containing stickers is refused at purchase either way.
+// A mystery box listing has no cosmetic either, and is not a pack.
 const hideStickers = (stickersEnabled?: boolean, packsEnabled?: boolean) =>
   stickersEnabled
     ? packsEnabled
-      ? {}
+      ? { itemDefinitionId: null }
       : { cosmeticId: { not: null } }
     : {
         OR: [
-          ...(packsEnabled ? [{ cosmeticId: null }] : []),
+          ...(packsEnabled ? [{ cosmeticId: null, itemDefinitionId: null }] : []),
           { cosmetic: { type: { not: CosmeticType.Sticker } } },
         ],
       };
@@ -647,6 +648,7 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       // Prior values, so an edit can record what it moved from.
       description: true,
       availableQuantity: true,
+      itemDefinitionId: true,
       cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
@@ -1088,6 +1090,9 @@ export const setCreatorShopItemListed = async ({
   listed: boolean;
 }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // The storefront would show it as a pack; a box is sold only through its own surface.
+  if (existing.itemDefinitionId != null)
+    throw throwBadRequestError('Mystery box listings stay unlisted');
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Restore this item before changing its listing');
   // Listing resets an item to PendingReview and clears the verdict, so without
@@ -1479,8 +1484,9 @@ export const getCommunityCosmetics = async ({
     // filter still excludes them: a pack has no type to match.
     OR: [
       // Packs show when nothing is filtered, or when the Pack chip is on.
+      // A mystery box listing has no cosmetic either, and is not a pack.
       ...(packsEnabled && (!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE))
-        ? [{ cosmeticId: null }]
+        ? [{ cosmeticId: null, itemDefinitionId: null }]
         : []),
       ...(cosmeticTypes?.length && !realTypes.length
         ? []

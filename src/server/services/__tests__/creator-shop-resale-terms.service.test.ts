@@ -508,6 +508,40 @@ describe('getCreatorShop resold section', () => {
     expect(resold[0].meta.sellerShare).toBe(50);
   });
 
+  // Read only for the keys these two queries gate a NULL-cosmetic listing with.
+  const admitsBoxListing = (where: Record<string, unknown>): boolean => {
+    if (where.itemDefinitionId === null) return false;
+    if (where.cosmetic !== undefined) return false;
+    if (where.cosmeticId !== undefined && where.cosmeticId !== null) return false;
+    if (Array.isArray(where.OR) && !where.OR.some(admitsBoxListing)) return false;
+    return true;
+  };
+
+  // A mystery box listing has no cosmetic, so the pack branch would show it as a pack.
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])(
+    'never shows a mystery box listing (stickers %s, packs %s)',
+    async (stickersEnabled, packsEnabled) => {
+      mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 20 }]);
+      // The reading admits what the pack branch used to be.
+      expect(admitsBoxListing({ listed: true, OR: [{ cosmeticId: null }] })).toBe(true);
+
+      await getCreatorShop({
+        userId: RESELLER_ID,
+        viewerId: RESELLER_ID,
+        stickersEnabled,
+        packsEnabled,
+      });
+
+      expect(admitsBoxListing(mocks.shopItemFindMany.mock.calls[0][0].where)).toBe(false);
+      expect(admitsBoxListing(resoldWhere())).toBe(false);
+    }
+  );
+
   // Preview is a moderator design aid with no resale rows behind it, so it must
   // keep showing only what's genuinely on offer.
   it('preview still requires a live, resellable item', async () => {
@@ -579,6 +613,17 @@ describe('withdrawing an item ends its resale listings', () => {
     mocks.shopItemFindFirst.mockResolvedValue(null);
     mocks.packMemberFindMany.mockResolvedValue([]);
     mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it('refuses to list a mystery box listing, for a moderator too', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      ownedItem({ cosmeticId: null, cosmetic: null, itemDefinitionId: 9 })
+    );
+
+    await expect(
+      setCreatorShopItemListed({ id: SHOP_ITEM_ID, userId: 1, isModerator: true, listed: true })
+    ).rejects.toThrow('Mystery box listings stay unlisted');
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
   it('deletes every listing when the item is delisted', async () => {

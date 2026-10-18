@@ -1,4 +1,5 @@
 import { dbRead } from '~/server/db/client';
+import { BOX_OPENING_REWARD_STATUS } from '@civitai/shared/mystery-box';
 import { getEventBoxViewer, isEventShopItemData } from '~/server/events/event-shop-item';
 import {
   countHeldItemsByDefinition,
@@ -146,7 +147,8 @@ export async function getMysteryBoxOpenings({
     return { items: [], nextCursor: undefined };
 
   const rows = await dbRead.boxOpening.findMany({
-    where: { userId },
+    // A refunded open's reward was taken back.
+    where: { userId, rewardStatus: BOX_OPENING_REWARD_STATUS.granted },
     orderBy: [{ createdAt: 'desc' }, { boxItemId: 'desc' }],
     take: limit + 1,
     ...(cursor ? { cursor: { boxItemId: BigInt(cursor) }, skip: 1 } : {}),

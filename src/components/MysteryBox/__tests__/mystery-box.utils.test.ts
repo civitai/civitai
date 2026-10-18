@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
+import { boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import type { MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   afterOpen,
