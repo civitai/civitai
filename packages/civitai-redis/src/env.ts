@@ -135,13 +135,12 @@ export const redisEnvSchema = z
     REDIS_SYS_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(4000),
     // TIMEOUT-RATE TRIGGER (2026-10-18): reconnect when at least THRESHOLD sys commands hit the
     // REDIS_SYS_COMMAND_TIMEOUT_MS backstop within WINDOW_MS AND no sys command succeeded in that
-    // window. The in-flight trigger above cannot see a wedge on a low-traffic app: the backstop
-    // releases each caller after 30s, so in-flight stays near `rate × 30s`, far below 500. The
+    // window. The in-flight trigger above cannot see a wedge on a low-traffic app (see
+    // ./sys-timeouts). The
     // "no success" condition is the false-positive guard — a healthy client that times out the odd
     // slow command keeps completing everything else. 10 in 60s: a wedge on an app sending a sys
-    // command every 6s or more often trips it (the 2026-10-18 wedge timed out ~20 a minute, so a
-    // threshold of 20 would have sat right at that rate); a 60s window with no success at all is
-    // already far outside healthy behaviour. Shares the cooldown and jitter above. Inert when the
+    // command every 6s or more often trips it; a 60s window with no success at all is already far
+    // outside healthy behaviour. Shares the cooldown and jitter above. Inert when the
     // backstop is off (REDIS_SYS_COMMAND_TIMEOUT_MS=0). THRESHOLD <= 0 disables this trigger only.
     REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD: z.coerce.number().default(10),
     REDIS_SYS_SELFHEAL_TIMEOUT_WINDOW_MS: z.coerce.number().default(60000),
@@ -200,7 +199,7 @@ export const redisEnvSchema = z
           message:
             `REDIS_SYS_COMMAND_TIMEOUT_MS (${sysDeadlineMs}) must be > REDIS_SYS_SELFHEAL_SUSTAINED_MS ` +
             `(${sustainedMs}): a shorter backstop drains sys inflight before the sustained window ` +
-            `fills, so the sys self-heal watchdog can never fire.`,
+            `fills, so the sys self-heal's in-flight trigger can never fire.`,
         });
       }
       const cap = env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH;
@@ -212,7 +211,7 @@ export const redisEnvSchema = z
           message:
             `REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH (${cap}) must be > REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD ` +
             `(${threshold}): the in-flight cap would keep sys inflight at or under the threshold, ` +
-            `so the sys self-heal watchdog can never fire.`,
+            `so the sys self-heal's in-flight trigger can never fire.`,
         });
       }
     }

@@ -25,8 +25,7 @@ import {
 import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from './sys-inflight';
 import {
   countSysTimeoutsWithoutSuccess,
-  recordSysCommandSuccess,
-  recordSysCommandTimeout,
+  createSysTimeoutRecord,
   resetSysTimeouts,
 } from './sys-timeouts';
 import {
@@ -825,11 +824,10 @@ export type SysSelfHealSettings = Pick<
  *  - TIMEOUT RATE (2026-10-18), via the watchdog's deadline-hit slot: at least
  *    REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD backstop timeouts within
  *    REDIS_SYS_SELFHEAL_TIMEOUT_WINDOW_MS with NO successful sys command in that window
- *    (./sys-timeouts). The backstop releases each caller after 30 s, so a wedged low-traffic app
- *    never gets near the in-flight threshold; this is what heals it. Reported as trigger="deadline".
+ *    (./sys-timeouts): what heals a wedged low-traffic app, whose in-flight count never gets near
+ *    the threshold. Reported as trigger="deadline".
  *
- * Exported (with the settings injected) so the wiring can be unit-tested against fake clients
- * without booting the factory; startSysSelfHeal passes the module config.
+ * startSysSelfHeal passes the module config.
  */
 export function createSysSelfHealWatchdog(
   sysClients: any[],
@@ -1301,6 +1299,8 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysDeadlineMs ?? config?.sysCommandTimeoutMs ?? 0 : 0;
   const sysInflightCap =
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
+  // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
+  const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
   self[methodName] = function (this: any, ...args: any[]) {
     if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
       return Promise.reject(
@@ -1357,11 +1357,10 @@ export function instrumentCommands(
     // fires whether or not the deadline actually reaps the command (2026-07-06 fix).
     // Sys self-heal TIMEOUT-RATE signal (./sys-timeouts): the backstop records each timeout it
     // fires, and every command whose underlying call fulfils — even after its caller was released —
-    // records a success, which holds the trigger off. The extra handler is on a branch of
-    // `executed`, so it changes nothing the caller sees.
-    if (clientLabel === 'sys')
+    // records a success, which holds the trigger off.
+    if (sysTimeouts)
       executed.then(
-        () => recordSysCommandSuccess(),
+        () => sysTimeouts.recordSuccess(),
         () => undefined
       );
     const settled = wrapWithDeadline
@@ -1371,7 +1370,7 @@ export function instrumentCommands(
           executed,
           sysDeadlineMs,
           `sysRedis command timed out after ${sysDeadlineMs}ms`,
-          () => recordSysCommandTimeout()
+          () => sysTimeouts?.recordTimeout()
         )
       : executed;
     return settled.finally(done);

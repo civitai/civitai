@@ -42,8 +42,8 @@ export function withCommandDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
  * Also used to bound the self-heal reconnects (a `connect()` that eagerly dials a dead node never
  * settles on its own) and the sys client's per-command backstop.
  *
- * `onTimeout` runs when the timer fires, before the rejection. Only a timeout that actually happens
- * calls it; the sys backstop uses it to count timeouts for the sys self-heal (./sys-timeouts).
+ * `onTimeout` runs when the timer fires, before the rejection; the sys backstop uses it to count
+ * timeouts for the sys self-heal (./sys-timeouts).
  */
 export function withTimeout<T>(
   p: Promise<T>,
