@@ -6,19 +6,26 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // viewer's team, what is still left for them, and the boxes they hold. The odds the page shows are
 // `computeBoxOdds` over the left contents, the rule and the pool the open draws from.
 
-const { mocks } = vi.hoisted(() => ({ mocks: { boxViewer: vi.fn() } }));
+const { mocks } = vi.hoisted(() => ({ mocks: { boxViewer: vi.fn(), catalogAccess: vi.fn() } }));
 
 vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
   ...(await importOriginal<typeof EventShopItem>()),
   getEventBoxViewer: mocks.boxViewer,
+  getEventBoxCatalogAccess: mocks.catalogAccess,
 }));
 
 import {
   clearBoxCatalogDisplayCache,
   getBoxPoolForUser,
+  getMysteryBoxCatalogForEvent,
   getMysteryBoxesForEvent,
 } from '../mystery-box.service';
-import { boxOddsFor, revealChance, tierSummaries } from '~/components/MysteryBox/mystery-box.utils';
+import {
+  boxOddsFor,
+  revealChance,
+  sharedBaseTierOdds,
+  tierSummaries,
+} from '~/components/MysteryBox/mystery-box.utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const VIEWER = 1;
@@ -279,6 +286,8 @@ beforeEach(() => {
   installWorld();
   mocks.boxViewer.mockReset();
   mocks.boxViewer.mockResolvedValue({ team: 'Pink', playable: true });
+  mocks.catalogAccess.mockReset();
+  mocks.catalogAccess.mockResolvedValue({ title: 'Birthday', teams: ['Pink', 'Blue'] });
 });
 
 afterAll(() => {
@@ -602,5 +611,96 @@ describe('getMysteryBoxesForEvent', () => {
 
     mocks.boxViewer.mockResolvedValue({ team: 'Green', playable: true });
     expect((await read())[0].art).toBeNull();
+  });
+});
+
+describe('getMysteryBoxCatalogForEvent', () => {
+  const catalog = (
+    overrides: Partial<Parameters<typeof getMysteryBoxCatalogForEvent>[0]> = {}
+  ): ReturnType<typeof getMysteryBoxCatalogForEvent> =>
+    getMysteryBoxCatalogForEvent({
+      event: EVENT,
+      viewer: undefined,
+      mysteryBoxEnabled: true,
+      countryCode: 'US',
+      ...overrides,
+    });
+
+  it("shows a box on sale with every team's contents, reading no one's team", async () => {
+    const [view, ...rest] = await catalog();
+
+    expect(rest).toEqual([]);
+    expect(view).toMatchObject({
+      boxDefinitionId: BOX,
+      name: `Box ${BOX}`,
+      description: `About box ${BOX}`,
+      unitAmount: 500,
+    });
+    expect(view.tiers.map((t) => t.id)).toEqual([COMMON, RARE]);
+    expect(view.contents).toEqual([
+      { contentId: 1, tierId: COMMON, team: 'Pink' },
+      { contentId: 2, tierId: COMMON, team: 'Pink' },
+      { contentId: 3, tierId: COMMON, team: 'Blue' },
+      { contentId: 4, tierId: RARE, team: 'Pink' },
+      { contentId: 5, tierId: RARE, team: null },
+    ]);
+    expect(mocks.boxViewer).not.toHaveBeenCalled();
+    expect(mocks.catalogAccess).toHaveBeenCalledWith(EVENT, undefined);
+  });
+
+  it('asks the event about a signed-in viewer', async () => {
+    await catalog({ viewer: { id: VIEWER, isModerator: false } });
+    expect(mocks.catalogAccess).toHaveBeenCalledWith(EVENT, { id: VIEWER, isModerator: false });
+  });
+
+  // Same source: the base odds shown are the odds a member of any team who owns nothing draws under.
+  it.each(['Pink', 'Blue'])(
+    'shows the odds Team %s draws under before owning anything',
+    async (team) => {
+      const [view] = await catalog();
+      const pool = await getBoxPoolForUser(dbMock.dbRead as never, {
+        boxDefinitionId: BOX,
+        userId: VIEWER,
+        team,
+      });
+      const drawnUnder = computeBoxOdds(
+        world.tiers.map(({ id, weight, sortOrder }) => ({ id, weight, sortOrder })),
+        pool
+      );
+      expect(sharedBaseTierOdds(view)?.map((t) => [t.tier.id, t.probability])).toEqual(
+        [...drawnUnder.tiers].reverse().map((t) => [t.tierId, t.probability])
+      );
+    }
+  );
+
+  it.each([
+    ['not started', { availableFrom: new Date(base + 365 * 86_400_000) }],
+    ['ended', { availableTo: new Date(base - 86_400_000) }],
+    ['sold out', { availableQuantity: 10, sold: 10 }],
+    ['unpublished', { status: 'Unpublished' }],
+  ])('leaves out a box whose listing is %s', async (_, change) => {
+    world.listings[0] = listing(change);
+    expect(await catalog()).toEqual([]);
+  });
+
+  it('leaves out an archived box, even one someone holds', async () => {
+    world.boxes[0].status = 'archived';
+    world.items.push(held(501n));
+    expect(await catalog()).toEqual([]);
+  });
+
+  it('shows nothing while the event is closed to the viewer', async () => {
+    mocks.catalogAccess.mockResolvedValue(null);
+    expect(await catalog()).toEqual([]);
+    expect(dbMock.dbRead.itemDefinition.findMany).not.toHaveBeenCalled();
+  });
+
+  it('shows nothing with boxes off, or in a blocked country', async () => {
+    expect(await catalog({ mysteryBoxEnabled: false })).toEqual([]);
+    expect(mocks.catalogAccess).not.toHaveBeenCalled();
+
+    world.blocked = ['BE'];
+    expect(await catalog({ countryCode: 'BE' })).toEqual([]);
+    expect(await catalog({ countryCode: 'US' })).toHaveLength(1);
   });
 });

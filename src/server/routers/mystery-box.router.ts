@@ -9,10 +9,13 @@ import {
   getHeldMysteryBoxes,
   getMysteryBoxOpenings,
 } from '~/server/services/mystery-box-inventory.service';
-import { getMysteryBoxesForEvent, openMysteryBox } from '~/server/services/mystery-box.service';
+import {
+  getMysteryBoxCatalogForEvent,
+  getMysteryBoxesForEvent,
+  openMysteryBox,
+} from '~/server/services/mystery-box.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { mysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
-import { getRegion } from '~/server/utils/region-blocking';
+import { mysteryBoxViewer, publicMysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const mysteryBoxRouter = router({
@@ -24,13 +27,13 @@ export const mysteryBoxRouter = router({
   getOddsPage: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getMysteryBoxOddsPageInput)
+    .query(({ input, ctx }) => getMysteryBoxOddsPage({ ...input, ...publicMysteryBoxViewer(ctx) })),
+  // For a viewer not on a team, signed in or not. Per viewer like the odds page: never edge-cache.
+  getCatalogForEvent: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getEventMysteryBoxesInput)
     .query(({ input, ctx }) =>
-      getMysteryBoxOddsPage({
-        ...input,
-        viewer: ctx.user ? { id: ctx.user.id, isModerator: ctx.user.isModerator } : undefined,
-        mysteryBoxEnabled: ctx.features.mysteryBox,
-        countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
-      })
+      getMysteryBoxCatalogForEvent({ ...input, ...publicMysteryBoxViewer(ctx) })
     ),
   open: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite, blockApiKeys: true })

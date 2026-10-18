@@ -7,6 +7,11 @@ export type MysteryBoxTier = MysteryBoxView['tiers'][number];
 export type MysteryBoxContent = MysteryBoxView['contents'][number];
 export type MysteryBoxOpenResult = RouterOutput['mysteryBox']['open'];
 export type MysteryBoxOddsPageData = NonNullable<RouterOutput['mysteryBox']['getOddsPage']>;
+export type MysteryBoxCatalogView = RouterOutput['mysteryBox']['getCatalogForEvent'][number];
+
+/** What the odds read of a content: its tier, and whether it is still left. */
+export type OddsContent = Pick<MysteryBoxContent, 'contentId' | 'tierId' | 'left'>;
+type OddsView<C extends OddsContent> = { tiers: MysteryBoxTier[]; contents: C[] };
 
 /** Rarity colours for a tier with none of its own, rarest last. */
 const FALLBACK_TIER_COLORS = ['#9ca3af', '#22c55e', '#3b82f6', '#f59e0b'];
@@ -16,16 +21,16 @@ export function tierColor(tier: Pick<MysteryBoxTier, 'color' | 'sortOrder'>) {
 }
 
 /** The viewer's odds: the shared rule the draw uses, over what is left for them. */
-export function boxOddsFor(view: Pick<MysteryBoxView, 'tiers' | 'contents'>): BoxOdds {
+export function boxOddsFor(view: OddsView<OddsContent>): BoxOdds {
   return computeBoxOdds(
     view.tiers,
     view.contents.filter((c) => c.left)
   );
 }
 
-export type TierSummary = {
+export type TierSummary<C extends OddsContent = MysteryBoxContent> = {
   tier: MysteryBoxTier;
-  contents: MysteryBoxContent[];
+  contents: C[];
   left: number;
   /** 0 once nothing is left in it. */
   probability: number;
@@ -33,7 +38,7 @@ export type TierSummary = {
 };
 
 /** Every tier, rarest first (the draw walks them the other way), with the viewer's odds. */
-export function tierSummaries(view: Pick<MysteryBoxView, 'tiers' | 'contents'>): TierSummary[] {
+export function tierSummaries<C extends OddsContent>(view: OddsView<C>): TierSummary<C>[] {
   const odds = boxOddsFor(view);
   return [...view.tiers]
     .sort((a, b) => b.sortOrder - a.sortOrder || b.id - a.id)
@@ -133,8 +138,8 @@ export function mysteryBoxOddsPageUrl(view: Pick<MysteryBoxView, 'boxDefinitionI
 }
 
 /** One team's view of the box (or the whole box, without teams), as if nothing were owned yet. */
-export function baseOddsView(
-  page: Pick<MysteryBoxOddsPageData, 'tiers' | 'contents'>,
+export function baseOddsView<C extends { team: string | null }>(
+  page: { tiers: MysteryBoxTier[]; contents: C[] },
   team?: string
 ) {
   return {
@@ -143,4 +148,18 @@ export function baseOddsView(
       .filter((c) => c.team === null || team === undefined || c.team === team)
       .map((c) => ({ ...c, left: true })),
   };
+}
+
+/**
+ * The tier odds every team has before it owns anything, or null when they differ by team (a team
+ * with nothing in some tier). For a viewer not on a team, who can't be shown their own.
+ */
+export function sharedBaseTierOdds(box: Pick<MysteryBoxCatalogView, 'tiers' | 'contents'>) {
+  const teams = [...new Set(box.contents.flatMap((c) => (c.team ? [c.team] : [])))];
+  const perTeam = (teams.length ? teams : [undefined]).map((team) =>
+    tierSummaries(baseOddsView(box, team))
+  );
+  const odds = (summary: TierSummary<OddsContent>[]) =>
+    summary.map((t) => `${t.tier.id}:${t.probability}`).join('|');
+  return perTeam.every((summary) => odds(summary) === odds(perTeam[0])) ? perTeam[0] : null;
 }

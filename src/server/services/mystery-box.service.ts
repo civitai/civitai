@@ -3,8 +3,10 @@ import { computeBoxOdds, drawFromOdds } from '@civitai/shared/box-odds';
 import { randomInt } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
+import type { EventViewer } from '~/server/events/event-access';
 import {
   assertEventShopItemPurchasable,
+  getEventBoxCatalogAccess,
   getEventBuyerTeam,
   getEventBoxViewer,
   isEventShopItemData,
@@ -476,6 +478,99 @@ export async function buildMysteryBoxView(
   };
 }
 
+/** Which published listing of each box is on sale now (stock, then its sale window). */
+async function readBoxListingsOnSale(boxIds: number[]) {
+  const listings = await dbRead.cosmeticShopItem.findMany({
+    where: { itemDefinitionId: { in: boxIds }, status: CosmeticShopItemStatus.Published },
+    select: {
+      id: true,
+      itemDefinitionId: true,
+      title: true,
+      unitAmount: true,
+      availableQuantity: true,
+      availableFrom: true,
+      availableTo: true,
+    },
+    orderBy: { id: 'asc' },
+  });
+  // Only a listing with a quantity needs its sold count, read for those ids alone.
+  const sold = await getSoldCounts(
+    listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
+  );
+  const now = new Date();
+  return (boxId: number) =>
+    listings.find(
+      (l) => l.itemDefinitionId === boxId && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
+    );
+}
+
+export type MysteryBoxCatalogView = {
+  boxDefinitionId: number;
+  name: string;
+  description: string | null;
+  /** The price of the listing on sale now. */
+  unitAmount: number;
+  tiers: MysteryBoxView['tiers'];
+  /** Every enabled content with the team it is for; each team draws only from its own. */
+  contents: { contentId: number; tierId: number; team: string | null }[];
+};
+
+/**
+ * An event's mystery boxes on sale now, for a viewer not on a team (signed out, or not joined): the
+ * box and its contents by tier, for base odds. It reads no team, so it places no one and shows no
+ * pool of anyone's; the odds page's gates apply (flag, country, the event open to them).
+ */
+export async function getMysteryBoxCatalogForEvent({
+  event,
+  viewer,
+  mysteryBoxEnabled,
+  countryCode,
+}: {
+  event: string;
+  viewer: EventViewer;
+  mysteryBoxEnabled: boolean | undefined;
+  countryCode: string | null | undefined;
+}): Promise<MysteryBoxCatalogView[]> {
+  if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
+  if (!(await getEventBoxCatalogAccess(event, viewer))) return [];
+
+  const boxes = await dbRead.itemDefinition.findMany({
+    where: {
+      type: ITEM_TYPE.box,
+      status: ITEM_DEFINITION_STATUS.published,
+      params: { path: ['event'], equals: event },
+    },
+    select: BOX_DEFINITION_SELECT,
+    orderBy: { id: 'asc' },
+  });
+  if (!boxes.length) return [];
+  const boxIds = boxes.map((box) => box.id);
+  const [onSale, tiers] = await Promise.all([readBoxListingsOnSale(boxIds), getBoxTiers(boxIds)]);
+
+  const views = await Promise.all(
+    boxes.map(async (box): Promise<MysteryBoxCatalogView | null> => {
+      const listing = onSale(box.id);
+      if (!listing) return null;
+      const catalog = await getBoxCatalogForDisplay(box);
+      return {
+        boxDefinitionId: box.id,
+        name: box.name,
+        description: box.description,
+        unitAmount: listing.unitAmount,
+        tiers: tiers
+          .filter((tier) => tier.boxDefinitionId === box.id)
+          .map(({ boxDefinitionId: _box, ...tier }) => tier),
+        contents: catalog.map(({ contentId, tierId, team }) => ({
+          contentId,
+          tierId,
+          team: team ?? null,
+        })),
+      };
+    })
+  );
+  return views.filter((view): view is MysteryBoxCatalogView => view !== null);
+}
+
 /**
  * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
  * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
@@ -512,37 +607,16 @@ export async function getMysteryBoxesForEvent({
   if (!boxes.length) return [];
   const boxIds = boxes.map((box) => box.id);
 
-  const [listings, held, tiers] = await Promise.all([
-    dbRead.cosmeticShopItem.findMany({
-      where: { itemDefinitionId: { in: boxIds }, status: CosmeticShopItemStatus.Published },
-      select: {
-        id: true,
-        itemDefinitionId: true,
-        title: true,
-        unitAmount: true,
-        availableQuantity: true,
-        availableFrom: true,
-        availableTo: true,
-      },
-      orderBy: { id: 'asc' },
-    }),
+  const [onSale, held, tiers] = await Promise.all([
+    readBoxListingsOnSale(boxIds),
     listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
     getBoxTiers(boxIds),
   ]);
 
-  // Only a listing with a quantity needs its sold count, read for those ids alone.
-  const sold = await getSoldCounts(
-    listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
-  );
-  const now = new Date();
   const views = await Promise.all(
     boxes.map(async (box): Promise<MysteryBoxView | null> => {
       const listing =
-        playable && box.status === ITEM_DEFINITION_STATUS.published
-          ? listings.find(
-              (l) => l.itemDefinitionId === box.id && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
-            )
-          : undefined;
+        playable && box.status === ITEM_DEFINITION_STATUS.published ? onSale(box.id) : undefined;
       const heldBoxItemIds = held
         .filter((item) => item.itemDefinitionId === box.id)
         .map((item) => item.id.toString());
