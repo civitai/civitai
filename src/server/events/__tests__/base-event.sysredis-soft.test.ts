@@ -69,6 +69,9 @@ describe('getUserTeam → getManualAssignment — sysRedis hGet (fail-open, park
       field === '5' ? 'Team2' : null
     );
     await expect(event.getUserTeam(5)).resolves.toBe('Team2');
+    // One field of the event's hash, never the whole hash.
+    expect(hGet).toHaveBeenCalledWith('event:event:test:manual-assignments', '5');
+    expect(hGetAll).not.toHaveBeenCalled();
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });

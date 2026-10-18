@@ -50,9 +50,11 @@ describe('getUserTeam', () => {
   });
 
   it('by default falls back to the computed team when the read fails', async () => {
+    mockHGet.mockResolvedValueOnce(null);
+    const computed = await event.getUserTeam(USER);
     mockHGet.mockRejectedValue(new Error('sysRedis down'));
 
-    expect(TEAMS).toContain(await event.getUserTeam(USER));
+    expect(await event.getUserTeam(USER)).toBe(computed);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
   });
 
