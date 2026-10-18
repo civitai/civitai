@@ -226,6 +226,22 @@ describe.each(NARROW)('App Assistant at $width px (narrow)', (viewport) => {
   });
 });
 
+describe('App Assistant at 320 px', () => {
+  test('the app list fits the window', async () => {
+    const viewport = { width: 320, height: 640 };
+    await mount(viewport);
+    await createApp();
+    document.querySelector<HTMLElement>('[aria-label^="Switch app"]')!.click();
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    await nextLayout();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    await vi.waitFor(() => {
+      expect(box(dialog).left).toBeGreaterThanOrEqual(0);
+      expect(box(dialog).right).toBeLessThanOrEqual(viewport.width);
+    });
+  });
+});
+
 describe.each(WIDE)('App Assistant at $width px (wide)', (viewport) => {
   test('with no app, the chat fills the width', async () => {
     await mount(viewport);

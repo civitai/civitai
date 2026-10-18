@@ -47,7 +47,7 @@ export function buildAssistantInstructions({
   const yourApps = others.length
     ? ` The user's other apps are ${others.join(
         ', '
-      )}; to keep working on one of those, they pick it from the app switcher at the top of the page (only one app runs at a time; it starts when they send it a message, which pauses the other), so tell them that instead of creating a copy.`
+      )}; to keep working on one of those, they pick it from the app switcher at the top of the page (only one app runs at a time; picking a paused one starts it and pauses the other), so tell them that instead of creating a copy.`
     : '';
 
   if (!sandbox) {

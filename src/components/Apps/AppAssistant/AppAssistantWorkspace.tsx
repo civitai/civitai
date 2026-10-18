@@ -32,7 +32,6 @@ import {
   AssistantTokenError,
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
-import { createChatAppStore } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -96,6 +95,8 @@ function EnableCard({
 
 const RELEASE_TRIES = 40;
 const RELEASE_INTERVAL_MS = 500;
+/** A held message comes back to the user if its app has not run by then. */
+export const HELD_TIMEOUT_MS = 3 * 60_000;
 
 /** A message the page is sending as the user's; `went` once the chat let it through. */
 export interface Release {
@@ -105,38 +106,51 @@ export interface Release {
 
 /**
  * Sends `text` as the user's. The chat holds silently while it lists a just-added app's tools, and a
- * send while it holds would only fill an empty message box, so the text waits in the box and is sent
- * again until it goes; then the box is cleared. Stopped (another message went, or the user moved on)
- * or never let through, it stays in the box for the user.
+ * send while it holds only fills an EMPTY message box, so it is sent again until it goes. `typed`
+ * counts the user's edits in the box; `since` is that count when the message left it. A box the user
+ * has typed in since keeps their text: nothing goes in, and nothing is cleared. A copy the chat put
+ * there is the user's once they edit it: nothing more is sent. An untouched copy is cleared once the
+ * message went.
  */
 export async function releaseHeld(
   chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
   replaying: { current: Release | null },
+  typed: { current: number },
   text: string,
+  since: number,
   interval = RELEASE_INTERVAL_MS
 ) {
   const release: Release = { text, went: false };
   replaying.current = release;
   const live = () => replaying.current === release && !release.went;
-  await chatRef.current?.compose(text);
+  const draft = typed.current !== since;
+  let parkedAt: number | null = null;
   for (let i = 0; i < RELEASE_TRIES && live(); i++) {
+    if (parkedAt !== null && typed.current !== parkedAt) break;
+    const before = typed.current;
     await chatRef.current?.send(text);
-    if (live()) await sleep(interval);
+    if (!live()) break;
+    if (!draft && parkedAt === null && typed.current === before) parkedAt = before;
+    await sleep(interval);
   }
   if (replaying.current === release) replaying.current = null;
-  if (release.went) await chatRef.current?.compose('');
+  if (release.went && parkedAt !== null && typed.current === parkedAt)
+    await chatRef.current?.compose('');
+}
+
+/** The app the user worked on last, to open on a visit with none open; none when no app says when. */
+export function mostRecentApp(apps: Sandbox[]): Sandbox | null {
+  const at = (s: Sandbox) => Date.parse(s.lastActivityAt ?? s.createdAt ?? '') || 0;
+  return apps.reduce<Sandbox | null>((best, s) => (at(s) > (best ? at(best) : 0) ? s : best), null);
 }
 
 export function AppAssistantWorkspace({
   canPreview,
   sandboxUrl,
-  userId = null,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
   sandboxUrl: string | null;
-  /** Keeps what each chat worked on apart per account in this browser. */
-  userId?: number | null;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -181,22 +195,18 @@ export function AppAssistantWorkspace({
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const switcherTitleId = useId();
   const chatRef = useRef<CivitaiChat | null>(null);
-  // A message sent while the open app was paused, held until the app runs again.
-  const [held, setHeld] = useState<{ text: string; app: string; chatId: string | null } | null>(
-    null
-  );
+  // A message sent while the open app was paused, held until the app runs again. `started` once the
+  // app was seen starting; `typed` is the edit count when it left the message box.
+  type Held = { text: string; app: string; chatId: string | null; started: boolean; typed: number };
+  const [held, setHeld] = useState<Held | null>(null);
+  // A held message that could not go back into the message box, because the user typed there since.
+  const [unsent, setUnsent] = useState<string | null>(null);
   const replaying = useRef<Release | null>(null);
-  const chatApps = useMemo(() => createChatAppStore(String(userId ?? 'anon')), [userId]);
+  const typed = useRef(0);
   const [chatId, setChatId] = useState<string | null>(null);
-  // Read by the tools, which are built once.
-  const chatRemembers = useRef({ chatApps, chatId });
-  chatRemembers.current = { chatApps, chatId };
-  /** This chat now works on `name`, so reopening it reopens that app. */
-  const remember = useCallback((name: string) => {
-    const { chatApps, chatId } = chatRemembers.current;
-    if (chatId) chatApps.set(chatId, name);
-  }, []);
+  const chatIdRef = useRef(chatId);
   const previewShown = useRef(false);
+  const pickedOnLoad = useRef(false);
 
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
@@ -228,11 +238,10 @@ export function AppAssistantWorkspace({
           // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
           live.current.active = opened.sandbox;
           setActiveName(opened.sandbox.name);
-          remember(opened.sandbox.name);
           return opened;
         },
       }),
-    [remember]
+    []
   );
   const gate = useMemo(
     () =>
@@ -242,11 +251,15 @@ export function AppAssistantWorkspace({
           name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
         onBuild: () => void buildRef.current(),
+        currentApp: () => live.current.active?.name ?? null,
       }),
     [appTools]
   );
-  // What was verified belongs to the sandbox it was verified in.
-  useEffect(() => gate.reset(), [activeName, gate]);
+  // What was verified belongs to the sandbox it was verified in, and so does a checklist's Build it.
+  useEffect(() => {
+    gate.reset();
+    gate.appChanged(activeName);
+  }, [activeName, gate]);
 
   const tools = useMemo(
     () => ({
@@ -320,89 +333,132 @@ export function AppAssistantWorkspace({
   useEffect(() => {
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
+  // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
+  useEffect(() => {
+    if (pickedOnLoad.current || !sandboxes.list.data) return;
+    pickedOnLoad.current = true;
+    if (activeName) return;
+    const recent = mostRecentApp(sandboxes.list.data);
+    if (recent) setActiveName(recent.name);
+  }, [sandboxes.list.data, activeName]);
 
   const resumeRef = useRef(sandboxes.open.mutate);
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
-  // Build it: a send the chat holds back lands in an empty message box instead, so the button goes
-  // and the user sends it from there; pressing again would send it twice.
+  // Build it: a send the chat could not take now (a reply still ending, or a hold) goes into the
+  // message box for the user to send instead, so it is never pressed twice.
   const buildWent = useRef(false);
   const buildRef = useRef(async () => {
     buildWent.current = false;
     await chatRef.current?.send(BUILD_IT_MESSAGE);
-    if (!buildWent.current) gate.answered();
+    if (buildWent.current) return;
+    await chatRef.current?.compose(BUILD_IT_MESSAGE);
+    gate.answered();
   });
   const giveBack = useCallback(() => {
     const message = heldRef.current;
     heldRef.current = null;
     setHeld(null);
-    if (message) void chatRef.current?.compose(message.text);
+    if (!message) return;
+    if (typed.current === message.typed) void chatRef.current?.compose(message.text);
+    else setUnsent(message.text);
   }, []);
   const onBeforeSend = useCallback(
     (text: string) => {
       gate.answered();
+      setUnsent(null);
       if (text === BUILD_IT_MESSAGE) buildWent.current = true;
       const release = replaying.current;
       if (release?.text === text) release.went = true;
       // The user sent something else: stop sending the page's message.
       else if (release) replaying.current = null;
       const app = live.current.active;
-      if (app) remember(app.name);
-      if (app?.state !== 'suspended') return false;
-      const resuming = heldRef.current !== null;
-      // A follow-up while it resumes goes with the first, which has already left the message box.
-      const before = heldRef.current?.text;
+      // While a message is held the chat holds too, so nothing else reaches here then.
+      if (app?.state !== 'suspended' || heldRef.current) return false;
       heldRef.current = {
-        text: before ? `${before}\n\n${text}` : text,
+        text,
         app: app.app,
-        chatId: chatRemembers.current.chatId,
+        chatId: chatIdRef.current,
+        started: false,
+        typed: typed.current,
       };
       setHeld(heldRef.current);
-      if (!resuming)
-        resumeRef.current(app.app, {
-          // Unless the user moved on meanwhile.
-          onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
-            if (heldRef.current?.app === sandbox.app) setActiveName(sandbox.name);
-          },
-          onError: giveBack,
-        });
+      resumeRef.current(app.app, {
+        // Unless the user moved on meanwhile.
+        onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+          if (heldRef.current?.app === sandbox.app) setActiveName(sandbox.name);
+        },
+        onError: giveBack,
+      });
       return true;
     },
-    [gate, giveBack, remember]
+    [gate, giveBack]
   );
-  // A message on its way out belongs to the chat and app it was written in.
+  const onTyping = useCallback(() => {
+    typed.current++;
+  }, []);
+  // A message on its way out belongs to the chat and app it was written in, and to this page.
   useEffect(() => {
     replaying.current = null;
   }, [activeName, chatId]);
+  useEffect(
+    () => () => {
+      replaying.current = null;
+    },
+    []
+  );
   useEffect(() => {
     if (!held) return;
     // The app was closed, another opened, or another chat opened meanwhile.
     if (!active || active.app !== held.app || chatId !== held.chatId) return giveBack();
-    if (active.state !== 'running') return;
+    // Paused again once it had started (paused by hand, or from another tab).
+    if (active.state === 'suspended') {
+      if (held.started) giveBack();
+      return;
+    }
+    if (active.state === 'starting') {
+      if (!held.started) {
+        heldRef.current = { ...held, started: true };
+        setHeld(heldRef.current);
+      }
+      return;
+    }
     // Running, but its tools are not handed to the chat (an address outside the sandbox service).
     if (!mcpServers.length) return giveBack();
     heldRef.current = null;
     setHeld(null);
-    void releaseHeld(chatRef, replaying, held.text);
+    void releaseHeld(chatRef, replaying, typed, held.text, held.typed);
   }, [held, active, chatId, mcpServers, giveBack]);
+  const holding = !!held;
+  useEffect(() => {
+    if (!holding) return;
+    const timer = setTimeout(giveBack, HELD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [holding, giveBack]);
 
   const onChatChange = useCallback(
     (id: string | null) => {
       gate.answered();
-      chatRemembers.current.chatId = id;
+      chatIdRef.current = id;
       setChatId(id);
-      const app = id ? chatApps.get(id) : null;
-      if (app) setActiveName(app);
     },
-    [chatApps, gate]
+    [gate]
   );
 
-  const status = active && (held ? APP_STATUS.starting : APP_STATUS[active.state]);
-  // Not resumed here: resuming pauses the running app, so it waits for a message that needs this one.
+  const starting = held || (sandboxes.open.isPending && sandboxes.open.variables === active?.app);
+  const status = active && (starting ? APP_STATUS.starting : APP_STATUS[active.state]);
+  // Picking a paused app starts it, which pauses the one that runs.
   const selectApp = (sandbox: Sandbox) => {
     setActiveName(sandbox.name);
     setSwitcherOpen(false);
+    if (sandbox.state === 'suspended')
+      sandboxes.open.mutate(sandbox.app, {
+        // Unless the user moved on meanwhile; a deleted app comes back under a new name.
+        onSuccess: ({ sandbox: opened }: { sandbox: Sandbox }) => {
+          if (live.current.active?.app === opened.app) setActiveName(opened.name);
+        },
+      });
   };
   const onRemoved = (name: string) => {
     appTools.forget(name);
@@ -465,8 +521,9 @@ export function AppAssistantWorkspace({
           opened={switcherOpen}
           onChange={setSwitcherOpen}
           position="bottom-start"
-          width={360}
+          width="min(360px, calc(100vw - 32px))"
           trapFocus
+          returnFocus
           shadow="md"
         >
           <Popover.Target>
@@ -501,6 +558,32 @@ export function AppAssistantWorkspace({
         </Popover>
       )}
       {!switcherOpen && <AppError error={appsError(sandboxes)} />}
+      {unsent && (
+        <Alert
+          color="yellow"
+          variant="light"
+          className="shrink-0"
+          withCloseButton
+          onClose={() => setUnsent(null)}
+        >
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Text size="sm" className="min-w-0">
+              This message was not sent: “{unsent}”
+            </Text>
+            <Button
+              size="compact-sm"
+              variant="light"
+              className="min-h-11 shrink-0"
+              onClick={() => {
+                void chatRef.current?.compose(unsent);
+                setUnsent(null);
+              }}
+            >
+              Put it back
+            </Button>
+          </Group>
+        </Alert>
+      )}
 
       {session && (
         <SegmentedControl
@@ -539,6 +622,7 @@ export function AppAssistantWorkspace({
             chatRef={chatRef}
             onBeforeSend={onBeforeSend}
             onChatChange={onChatChange}
+            onTyping={onTyping}
           />
         </Paper>
         {session && (

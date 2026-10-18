@@ -226,4 +226,26 @@ describe('AppAssistantChat', () => {
     );
     expect(onChatChange.mock.calls).toEqual([['chat-1'], ['chat-2']]);
   });
+
+  test('tells the page each time the user edits the message box', async () => {
+    const onTyping = vi.fn();
+    renderWithProviders(
+      <AppAssistantChat
+        tokens={tokens()}
+        tools={{}}
+        instructions={() => ''}
+        mcpServers={[]}
+        onTyping={onTyping}
+      />
+    );
+    await vi.waitFor(() => expect(chatEl().app).toBeDefined());
+    // The box sits in the chat's shadow root; its `input` is composed, so it reaches the element.
+    const root = chatEl().shadowRoot ?? chatEl().attachShadow({ mode: 'open' });
+    const box = document.createElement('textarea');
+    root.append(box);
+    await vi.waitFor(() => {
+      box.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+      expect(onTyping).toHaveBeenCalled();
+    });
+  });
 });

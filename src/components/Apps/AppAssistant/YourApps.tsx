@@ -167,9 +167,9 @@ export function YourAppsList({
         })}
       </Stack>
       <Text size="xs" c="dimmed">
-        You can keep 3 apps, and one runs at a time: sending a message to a paused app starts it and
-        pauses the one that runs. An app also pauses after 30 minutes idle or 8 hours running, and
-        is deleted after 14 days unused.
+        You can keep 3 apps, and one runs at a time: picking a paused app, or sending it a message,
+        starts it and pauses the one that runs. An app also pauses after 30 minutes idle or 8 hours
+        running, and is deleted after 14 days unused.
       </Text>
     </Stack>
   );

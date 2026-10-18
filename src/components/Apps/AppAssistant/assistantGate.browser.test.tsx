@@ -66,12 +66,33 @@ describe('Build it under the checklist', () => {
     expect(getComputedStyle(button).minHeight).toBe('44px');
     button.click();
     expect(onBuild).toHaveBeenCalledTimes(1);
-    // A press the chat could not send yet (its reply still ending) can be pressed again.
+    // The page decides when it goes: once the message went, or once it put it in the message box.
     expect(buildButton(shown)).not.toBeNull();
     gate.answered();
     expect(buildButton(shown)).toBeNull();
     expect(buildButton(card())).toBeNull();
     shown.remove();
+  });
+
+  test('goes when another app opens, and stays when the same one does', async () => {
+    let app: string | null = 'sbx-a';
+    const gate = createAssistantGate({ onBuild: vi.fn(), currentApp: () => app });
+    gate.beforeToolCall('set_checklist', { items }, conv);
+    const output = await gate.tools.set_checklist.execute({ items }, ctx);
+    const card = () =>
+      gate.tools.set_checklist.render!({
+        name: 'set_checklist',
+        input: { items },
+        state: 'done',
+        output,
+      }) as HTMLElement;
+    const shown = card();
+    gate.appChanged('sbx-a');
+    expect(buildButton(shown)).not.toBeNull();
+    app = 'sbx-b';
+    gate.appChanged('sbx-b');
+    expect(buildButton(shown)).toBeNull();
+    expect(buildButton(card())).toBeNull();
   });
 
   test('goes once the next reply starts, or the user answers some other way', async () => {

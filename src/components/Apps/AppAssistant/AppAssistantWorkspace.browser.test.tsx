@@ -42,6 +42,7 @@ const m = vi.hoisted(() => ({
     chatRef?: { current: unknown };
     onBeforeSend?: (text: string) => boolean;
     onChatChange?: (chatId: string | null) => void;
+    onTyping?: () => void;
   },
   list: [] as Sandbox[],
   open: vi.fn(),
@@ -51,20 +52,39 @@ const m = vi.hoisted(() => ({
   suspend: vi.fn(),
   remove: vi.fn(),
   newChat: vi.fn(),
-  /** How many more sends the chat keeps back, as it does while it lists a just-added app's tools. */
-  sendsHeld: 0,
+  /** The chat's message box. */
+  box: '',
+  /** The chat is listing a just-added app's tools, so it holds as it does for `holdReason`. */
+  listing: false,
+  /** A reply is running. */
+  running: false,
   /** What the chat actually sent to the assistant. */
   delivered: [] as string[],
-  /** Like the chat: a send it does not hold fires `before-send`, and goes unless the page cancels it. */
-  send: vi.fn(async (text: string) => {
-    if (m.sendsHeld > 0) m.sendsHeld--;
-    else if (!m.chat?.onBeforeSend?.(text)) m.delivered.push(text);
-  }),
+  /**
+   * The element's own send, as 0.11.0 has it: nothing while a reply runs; while it holds, the text
+   * fills an EMPTY box and nothing fires; otherwise `before-send`, and it goes unless the page cancels
+   * it, which empties the box.
+   */
+  chatSend: async (text: string) => {
+    if (m.running) return;
+    if (m.chat?.holdReason || m.listing) {
+      if (!m.box) m.box = text;
+      return;
+    }
+    if (m.chat?.onBeforeSend?.(text)) {
+      m.box = '';
+      return;
+    }
+    m.delivered.push(text);
+  },
+  send: vi.fn(async (text: string) => m.chatSend(text)),
   /** Set to keep the next resume pending until the test settles it. */
   deferOpen: false,
   resume: vi.fn(),
   settleOpen: null as null | (() => void),
-  compose: vi.fn(async () => undefined),
+  compose: vi.fn(async (text: string) => {
+    m.box = text;
+  }),
   getToken: vi.fn<(opts?: unknown) => Promise<string>>(async () => 'sandbox-token'),
   enable: vi.fn(async () => 'chat-token'),
   sandboxClient: null as null | { list: () => Promise<unknown> },
@@ -121,8 +141,9 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
             opts?.onSuccess?.(served);
           };
           m.resume(app);
+          // The service answers later, never inside the call.
           if (m.deferOpen) m.settleOpen = settle;
-          else settle();
+          else setTimeout(settle, 0);
         },
         mutateAsync: async (app: string) => serve(app),
         isPending: false,
@@ -193,6 +214,22 @@ async function openFirst() {
   await openFromSwitcher('app-aaaa');
 }
 
+/** The user edits the message box. */
+function type(text: string) {
+  m.box = text;
+  m.chat?.onTyping?.();
+}
+
+/** The user types `text` and presses Send, which does nothing while the chat holds or replies. */
+async function userSends(text: string) {
+  type(text);
+  if (m.chat?.holdReason || m.listing || m.running) return;
+  m.box = '';
+  await m.chatSend(text);
+}
+
+const settle = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function startPreview(blockId: string) {
   await m.chat!.tools.start_preview.execute({ public_key: KEY, block_id: blockId }, ctx);
 }
@@ -212,7 +249,9 @@ beforeEach(() => {
   m.remove.mockReset();
   m.newChat.mockReset();
   m.send.mockClear();
-  m.sendsHeld = 0;
+  m.box = '';
+  m.listing = false;
+  m.running = false;
   m.delivered = [];
   m.deferOpen = false;
   m.resume.mockClear();
@@ -378,7 +417,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
 });
 
 describe('AppAssistantWorkspace app switcher', () => {
-  test('lists the apps in plain words and opens one without starting it', async () => {
+  test('lists the apps in plain words, and picking a paused one starts it', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await mount();
     await switcher().click();
@@ -391,8 +430,13 @@ describe('AppAssistantWorkspace app switcher', () => {
     );
 
     await dialog.getByRole('button', { name: /^app-bbbb/ }).click();
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Paused');
-    // Opening a paused app would pause the running one; that waits for a message that needs it.
+    expect(m.open).toHaveBeenCalledWith('app-bbbb');
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+  });
+
+  test('NEGATIVE CONTROL: picking a running app does not ask the service', async () => {
+    await mount();
+    await openFirst();
     expect(m.open).not.toHaveBeenCalled();
   });
 
@@ -473,275 +517,305 @@ describe('AppAssistantWorkspace auto-resume', () => {
     sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }),
     sandbox('sbx-bbbbbbbbbbbb'),
   ];
-  const runs = (screen: Awaited<ReturnType<typeof mount>>) => {
-    m.list = [{ ...m.list[0], state: 'running' }, ...m.list.slice(1)];
+  /** Opens the paused app the way a visit finds it: open on the page, not started. */
+  async function openPaused() {
+    m.list = paused();
+    const screen = await mount();
+    m.chat!.onChatChange!('chat-1');
+    // A paused app the page shows open without starting it (as after a visit or another tab pausing it).
+    await openFromSwitcher('app-bbbb');
+    m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
+    screen.rerender(<Workspace />);
+    m.open.mockClear();
+    m.resume.mockClear();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Paused');
+    return screen;
+  }
+  const runsB = (screen: Awaited<ReturnType<typeof mount>>) => {
+    m.list = [m.list[0], { ...m.list[1], state: 'running' }];
     screen.rerender(<Workspace />);
   };
 
   test('a message to a paused app is held, the app resumed, and the message sent once it runs', async () => {
-    m.list = paused();
-    const screen = await mount();
-    await openFirst();
-    expect(m.open).not.toHaveBeenCalled();
-    expect(m.chat!.holdReason).toBeUndefined();
-
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    expect(m.open).toHaveBeenCalledWith('app-aaaa');
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    expect(m.box).toBe('');
+    expect(m.resume.mock.calls).toEqual([['app-bbbb']]);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Starting…');
-
-    m.list = [{ ...m.list[0], state: 'starting' }, m.list[1]];
-    screen.rerender(<Workspace />);
-    await expect.element(page.getByText('Starting…')).toBeVisible();
-    expect(m.send).not.toHaveBeenCalled();
-
-    runs(screen);
+    expect(m.delivered).toEqual([]);
+    runsB(screen);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
-    expect(m.chat!.mcpServers).toHaveLength(1);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    expect(m.open).toHaveBeenCalledTimes(1);
+    expect(m.box).toBe('');
   });
 
   test('NEGATIVE CONTROL: a message to a running app goes straight out', async () => {
     await mount();
     await openFirst();
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(false);
-    expect(m.open).not.toHaveBeenCalled();
-    expect(m.chat!.holdReason).toBeUndefined();
+    await userSends('Add a dark mode');
+    expect(m.delivered).toEqual(['Add a dark mode']);
+    expect(m.resume).not.toHaveBeenCalled();
   });
 
-  test('a released message the chat still holds (listing the app’s tools) waits in the box and goes once it can', async () => {
-    m.list = paused();
-    const screen = await mount();
-    await openFirst();
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    m.sendsHeld = 2;
-    runs(screen);
+  test('🔴 a follow-up typed while it resumes is not lost', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
+    await userSends('and a timer');
+    expect(m.box).toBe('and a timer');
+    m.listing = true;
+    runsB(screen);
+    await settle(100);
+    m.listing = false;
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
-    expect(m.send).toHaveBeenCalledTimes(3);
-    await vi.waitFor(() => expect(m.compose.mock.calls).toEqual([['Add a dark mode'], ['']]));
+    expect(m.box).toBe('and a timer');
+  });
+
+  test('a released message the chat still holds (listing the app’s tools) goes once it can, and its copy leaves the box', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.listing = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    m.listing = false;
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
+    await vi.waitFor(() => expect(m.box).toBe(''));
+  });
+
+  test('🟡 a copy the user edits while the chat holds is theirs: the original is not sent over it', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.listing = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    type('Add a light mode');
+    m.listing = false;
+    await settle(1200);
+    expect(m.delivered).toEqual([]);
+    expect(m.box).toBe('Add a light mode');
+  });
+
+  test('🟡 an app paused again while the message waits gives it back and lifts the hold', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.list = [m.list[0], { ...m.list[1], state: 'starting' }];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
+    m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    expect(m.box).toBe('Add a dark mode');
+    expect(m.delivered).toEqual([]);
   });
 
   test('a message the user sends while one is being released ends the release', async () => {
-    m.list = paused();
-    const screen = await mount();
-    await openFirst();
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    // Held once while the chat lists the app's tools; the user sends their own before the retry.
-    m.sendsHeld = 1;
-    runs(screen);
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.running = true;
+    runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    expect(m.chat!.onBeforeSend!('Actually, a light mode')).toBe(false);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    expect(m.send).toHaveBeenCalledTimes(1);
-    expect(m.delivered).toEqual([]);
-  });
-
-  test('a second message while it resumes resumes it once and goes with the first', async () => {
-    m.list = paused();
-    const screen = await mount();
-    await openFirst();
-    m.deferOpen = true;
-    expect(m.chat!.onBeforeSend!('first')).toBe(true);
-    expect(m.chat!.onBeforeSend!('second')).toBe(true);
-    expect(m.resume.mock.calls).toEqual([['app-aaaa']]);
-    m.settleOpen!();
-    runs(screen);
-    await vi.waitFor(() => expect(m.delivered).toEqual(['first\n\nsecond']));
+    m.running = false;
+    await userSends('Actually, a light mode');
+    await settle(1200);
+    expect(m.delivered).toEqual(['Actually, a light mode']);
   });
 
   test('opening another chat while a message is released stops it going there', async () => {
-    m.list = paused();
-    const screen = await mount();
-    m.chat!.onChatChange!('chat-1');
-    await openFirst();
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    m.sendsHeld = 1;
-    runs(screen);
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.running = true;
+    runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     m.chat!.onChatChange!('chat-2');
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    m.running = false;
+    await settle(1200);
     expect(m.send).toHaveBeenCalledTimes(1);
     expect(m.delivered).toEqual([]);
   });
 
+  test('a release stops when the page goes away', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.running = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    screen.unmount();
+    await settle(1200);
+    expect(m.send).toHaveBeenCalledTimes(1);
+  });
+
   test('opening another chat while the app resumes gives the held message back', async () => {
-    m.list = paused();
-    const screen = await mount();
-    m.chat!.onChatChange!('chat-1');
-    await openFirst();
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
     m.chat!.onChatChange!('chat-2');
-    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledWith('Add a dark mode'));
-    runs(screen);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(m.send).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    runsB(screen);
+    await settle(100);
+    expect(m.delivered).toEqual([]);
+  });
+
+  test('a message given back over one the user typed is offered back instead of replacing it', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    type('something else');
+    m.chat!.onChatChange!('chat-2');
+    await expect
+      .element(page.getByText('This message was not sent: “Add a dark mode”'))
+      .toBeVisible();
+    expect(m.box).toBe('something else');
+    await page.getByRole('button', { name: 'Put it back' }).click();
+    expect(m.box).toBe('Add a dark mode');
   });
 
   test('a resume that fails gives the message back and shows why', async () => {
-    m.list = paused();
-    const screen = await mount();
-    await openFirst();
+    const screen = await openPaused();
     m.openReject = new SandboxApiError('busy', 409, 'conflict');
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledWith('Add a dark mode'));
+    await userSends('Add a dark mode');
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     m.openError = m.openReject;
     screen.rerender(<Workspace />);
     await expect
       .element(page.getByText('That app was changing at the same moment. Try again.'))
       .toBeVisible();
-    expect(m.send).not.toHaveBeenCalled();
+    expect(m.delivered).toEqual([]);
   });
 
   test('opening another app while one resumes gives the held message back, and the resume does not pull the user back', async () => {
-    m.list = paused();
-    const screen = await mount();
-    await openFirst();
+    const screen = await openPaused();
     m.deferOpen = true;
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    await openFromSwitcher('app-bbbb');
-    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledWith('Add a dark mode'));
+    await userSends('Add a dark mode');
+    await openFromSwitcher('app-aaaa');
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    m.deferOpen = false;
     m.settleOpen!();
-    runs(screen);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Running');
-    expect(m.send).not.toHaveBeenCalled();
+    runsB(screen);
+    await settle(100);
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-aaaa,/);
+    expect(m.delivered).toEqual([]);
   });
 
   test('a running app whose tools cannot be handed over gives the message back rather than holding forever', async () => {
     m.list = [
-      sandbox('sbx-aaaaaaaaaaaa', {
-        state: 'suspended',
-        mcpUrl: 'https://elsewhere.example/s/x/mcp',
-      }),
+      sandbox('sbx-aaaaaaaaaaaa'),
+      sandbox('sbx-bbbbbbbbbbbb', { mcpUrl: 'https://elsewhere.example/s/x/mcp' }),
     ];
     const screen = await mount();
-    await openFirst();
-    expect(m.chat!.onBeforeSend!('Add a dark mode')).toBe(true);
-    runs(screen);
-    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledWith('Add a dark mode'));
+    await openFromSwitcher('app-bbbb');
+    m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
+    screen.rerender(<Workspace />);
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Paused');
+    await userSends('Add a dark mode');
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    expect(m.send).not.toHaveBeenCalled();
+    expect(m.delivered).toEqual([]);
   });
 });
 
-describe('AppAssistantWorkspace chats remember their app', () => {
-  test('a chat reopens the app a message last went to, without starting it', async () => {
-    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb')];
-    const screen = await mount();
-    m.chat!.onChatChange!('chat-1');
-    await openFromSwitcher('app-aaaa');
-    m.chat!.onBeforeSend!('one');
-    m.chat!.onChatChange!('chat-2');
-    await openFromSwitcher('app-bbbb');
-    m.chat!.onBeforeSend!('two');
-
-    m.chat!.onChatChange!('chat-1');
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
-    m.chat!.onChatChange!('chat-2');
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Running');
-
-    // …and after a reload, for the same account only, even once the app has paused.
-    screen.unmount();
-    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' }), m.list[1]];
-    const again = await mount();
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
-    m.chat!.onChatChange!('chat-1');
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Paused');
+describe('AppAssistantWorkspace on a visit', () => {
+  test('opens the app used most recently, without starting it', async () => {
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended', lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended', lastActivityAt: '2026-10-03T10:00:00Z' }),
+      sandbox('sbx-cccccccccccc', { state: 'suspended', createdAt: '2026-10-02T10:00:00Z' }),
+    ];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Paused');
     expect(m.open).not.toHaveBeenCalled();
     expect(m.chat!.holdReason).toBeUndefined();
-
-    again.unmount();
-    await page.viewport(1440, 900);
-    renderWithProviders(
-      <ModalsProvider>
-        <AppAssistantWorkspace canPreview sandboxUrl={BASE} userId={2} />
-      </ModalsProvider>
-    );
-    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
-    m.chat!.onChatChange!('chat-1');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
   });
 
-  test('the app create_app makes is remembered for its chat', async () => {
-    m.list = [];
+  test('New app after that stays on no app', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' })];
     const screen = await mount();
-    m.chat!.onChatChange!('chat-1');
-    await m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
-    screen.unmount();
-    await mount();
-    m.chat!.onChatChange!('chat-1');
-    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: quiz,/);
-  });
-
-  test('a chat only browsed past keeps no app, and one with no app keeps the open one', async () => {
-    await mount();
-    await openFirst();
-    m.chat!.onChatChange!('chat-browsed');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    m.chat!.onChatChange!('chat-other');
-    await openFromSwitcher('app-bbbb');
-    m.chat!.onChatChange!('chat-browsed');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-bbbb, Running');
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-aaaa,/);
+    await switcher().click();
+    await page.getByRole('button', { name: 'New app' }).click();
+    screen.rerender(<Workspace />);
+    await settle();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
   });
 });
 
 describe('AppAssistantWorkspace Build it', () => {
+  /** A checklist card for a new app that runs, so the chat no longer holds. */
   async function checklistCard() {
     m.list = [];
-    await mount();
+    const screen = await mount();
     m.chat!.beforeToolCall!('create_app', {}, conv);
     await m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
+    m.list = [{ ...m.list[0], state: 'running' }];
+    screen.rerender(<Workspace />);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     const input = { items: [{ label: 'Ask questions' }] };
     expect(m.chat!.beforeToolCall!('set_checklist', input, conv)).toEqual({ allow: true });
     const output = await m.chat!.tools.set_checklist.execute(input, ctx);
-    const render = () =>
-      m.chat!.tools.set_checklist.render!({
-        name: 'set_checklist',
-        input,
-        state: 'done',
-        output,
-      }) as HTMLElement;
-    return render;
+    const card = m.chat!.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input,
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    document.body.append(card);
+    return card;
   }
+  const buildIt = () => page.getByRole('button', { name: 'Build it' });
 
   test('the checklist card offers Build it, which sends the confirmation as the user', async () => {
-    const card = (await checklistCard())();
-    document.body.append(card);
-    const build = page.getByRole('button', { name: 'Build it' });
-    await build.click();
+    const card = await checklistCard();
+    await buildIt().click();
     await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
-    await expect.element(build).not.toBeInTheDocument();
+    await expect.element(buildIt()).not.toBeInTheDocument();
     card.remove();
   });
 
-  test('Build it pressed while the chat still holds goes away rather than being pressed twice', async () => {
-    const card = (await checklistCard())();
-    document.body.append(card);
-    m.sendsHeld = 1;
-    const build = page.getByRole('button', { name: 'Build it' });
-    await build.click();
-    // The chat put it in the message box for the user to send.
-    await expect.element(build).not.toBeInTheDocument();
+  test('🟢 Build it pressed while the reply is still ending puts it in the box for the user to send', async () => {
+    const card = await checklistCard();
+    m.running = true;
+    await buildIt().click();
+    await expect.element(buildIt()).not.toBeInTheDocument();
+    expect(m.box).toBe('Looks good — build it.');
     expect(m.delivered).toEqual([]);
-    expect(m.send).toHaveBeenCalledTimes(1);
     card.remove();
   });
 
-  test('a message the user sends instead, or another chat, takes Build it away', async () => {
-    const render = await checklistCard();
-    expect(render().querySelector('button')).not.toBeNull();
-    m.chat!.onBeforeSend!('Also add a timer');
-    expect(render().querySelector('button')).toBeNull();
+  test('a message the user sends instead takes Build it away', async () => {
+    const card = await checklistCard();
+    await userSends('Also add a timer');
+    expect(m.delivered).toEqual(['Also add a timer']);
+    expect(card.querySelector('button')).toBeNull();
+    card.remove();
   });
 
   test('opening another chat takes Build it away', async () => {
-    const render = await checklistCard();
+    const card = await checklistCard();
     m.chat!.onChatChange!('chat-2');
-    expect(render().querySelector('button')).toBeNull();
+    expect(card.querySelector('button')).toBeNull();
+    card.remove();
+  });
+
+  test('🟡 opening another app takes Build it away: the checklist was for the first', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa')];
+    const screen = await mount();
+    await openFirst();
+    const input = { items: [{ label: 'Ask questions' }] };
+    m.chat!.beforeToolCall!('set_checklist', input, conv);
+    const output = await m.chat!.tools.set_checklist.execute(input, ctx);
+    const card = m.chat!.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input,
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    document.body.append(card);
+    expect(card.querySelector('button')).not.toBeNull();
+    m.list = [...m.list, sandbox('sbx-bbbbbbbbbbbb')];
+    screen.rerender(<Workspace />);
+    await openFromSwitcher('app-bbbb');
+    await vi.waitFor(() => expect(card.querySelector('button')).toBeNull());
+    card.remove();
   });
 });
 

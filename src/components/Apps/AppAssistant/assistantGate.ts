@@ -123,6 +123,8 @@ export interface AssistantGate {
   reset(): void;
   /** The user answered the checklist another way (sent a message, opened another chat): remove Build it. */
   answered(): void;
+  /** Another app opened: a checklist shown for a different one loses its Build it. */
+  appChanged(app: string | null): void;
   beforeToolCall: ChatToolGate;
   onToolResult(result: ChatToolResult): void;
   tools: Record<string, ChatTool>;
@@ -136,6 +138,7 @@ export function createAssistantGate({
   refuse,
   onReply,
   onBuild,
+  currentApp,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
@@ -143,6 +146,8 @@ export function createAssistantGate({
   onReply?: () => void;
   /** The user pressed Build it under a checklist that waits for them. */
   onBuild?: () => void;
+  /** The app open now; a checklist belongs to the app it was shown for. */
+  currentApp?: () => string | null;
 } = {}): AssistantGate {
   let conversationId: string | null = null;
   // The chat numbers every reply, Continue and Retry included.
@@ -158,6 +163,7 @@ export function createAssistantGate({
   const page = Math.random().toString(36).slice(2, 10);
   let checklistCalls = 0;
   let awaiting: string | null = null;
+  let awaitingApp: string | null = null;
   let buildButtons: HTMLButtonElement[] = [];
 
   const answered = () => {
@@ -284,6 +290,7 @@ export function createAssistantGate({
       checklist = items;
       if (changed) {
         awaiting = `${page}-${++checklistCalls}`;
+        awaitingApp = currentApp?.() ?? null;
         return {
           shown: true,
           awaitsUser: true,
@@ -302,7 +309,7 @@ export function createAssistantGate({
       button.textContent = 'Build it';
       button.style.cssText =
         'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
-      // It goes once the message does (`answered`): a send while the reply is still ending does nothing.
+      // The page removes it (`answered`) once the message goes, or once it puts it in the message box.
       button.addEventListener('click', onBuild);
       buildButtons.push(button);
       card.append(button);
@@ -335,6 +342,9 @@ export function createAssistantGate({
   return {
     reset,
     answered,
+    appChanged: (app) => {
+      if (awaiting && app !== awaitingApp) answered();
+    },
     beforeToolCall,
     onToolResult,
     tools: { [SET_CHECKLIST]: set_checklist, [REPORT_READY]: report_ready },
