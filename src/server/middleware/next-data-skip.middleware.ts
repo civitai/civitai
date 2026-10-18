@@ -63,10 +63,16 @@ function isPropslessPage(pathname: string) {
   return propslessPages.has(pathname);
 }
 
-// Next's server sets `x-nextjs-data` on `/_next/data/…json` requests and strips a client-sent value;
-// `nextUrl.pathname` is the page path with build id, locale and `.json` removed.
+// Next's server sets `x-nextjs-data` on every `/_next/data/<any build>/…json` request and strips a
+// client-sent value. It strips the build id from the URL only when it is this server's, so a
+// `nextUrl.buildId` means a tab from another build: its 404 is what makes that tab reload, and this
+// build's manifest says nothing about that tab's pages.
 function isPropslessDataRequest(request: NextRequest) {
-  return request.headers.has('x-nextjs-data') && isPropslessPage(request.nextUrl.pathname);
+  return (
+    request.headers.has('x-nextjs-data') &&
+    !request.nextUrl.buildId &&
+    isPropslessPage(request.nextUrl.pathname)
+  );
 }
 
 export const nextDataSkipMiddleware = createMiddleware({

@@ -92,6 +92,17 @@ describe('proxy: client-navigation data requests', () => {
     }
   );
 
+  it('passes through a data request from another build, so its 404 still makes that tab reload', async () => {
+    const { runMiddlewares } = await loadProxy();
+    // What the proxy receives when the build id is not this server's: Next only strips its own.
+    const request = new NextRequest('http://localhost/_next/data/older-build/en/models.json', {
+      headers: { 'x-nextjs-data': '1' },
+      nextConfig: { i18n: { locales: ['en'], defaultLocale: 'en' } },
+    });
+    expect(request.nextUrl.pathname).toBe('/models');
+    expect(isPassthrough(await runMiddlewares(request))).toBe(true);
+  });
+
   it.each(['/', '/pricing'])(
     'passes a data request for %s (has server props) through to render its props',
     async (pathname) => {
