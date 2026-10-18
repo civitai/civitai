@@ -387,6 +387,7 @@ export type DeleteModelFileObjectOutcome =
         | 'still-referenced'
         | 'bucket-not-allowed'
         | 'unparseable'
+        | 'non-canonical-url'
         // 🔴 THE THREE BELOW ARE QUARANTINE REFUSALS AND THEY ALL MEAN THE SAME THING TO A
         // CALLER: THE OBJECT IS STILL THERE. They are separated because they need different
         // human responses — `not-configured` is an operator task, `copy-failed` is usually the
@@ -562,9 +563,25 @@ async function copyToQuarantine(args: {
  * a query, so a preview built on this function must say it has not checked rather than imply the
  * delete would succeed.
  */
+/**
+ * A url with a query string or fragment is not a plain object location. The refcount guard compares
+ * the url string exactly, but the delete parses out only the pathname's bucket/key — so `<victim
+ * url>?x` passes the refcount (it matches no live row) yet resolves to the victim's object. Refusing
+ * these here keeps that mismatch from ever reaching a delete; the cost is an object that nothing
+ * references is left rather than removed, which a later by-key sweep can reclaim.
+ */
+function urlHasExtraComponents(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.search !== '' || parsed.hash !== '';
+  } catch {
+    return false;
+  }
+}
+
 export type ModelFileDeleteTarget =
   | { ok: true; backend: 'b2' | 'default'; bucket: string; key: string }
-  | { ok: false; reason: 'empty-url' | 'unparseable' }
+  | { ok: false; reason: 'empty-url' | 'unparseable' | 'non-canonical-url' }
   // 🔴 `bucket-not-allowed` CARRIES THE BUCKET, and the other two refusals cannot. A refusal that
   // only says "not allowed" is unqueryable: the field that names WHICH foreign bucket was
   // targeted is the whole value of this event to anyone investigating. An earlier version of this
@@ -575,6 +592,7 @@ export type ModelFileDeleteTarget =
 
 export function resolveModelFileDeleteTarget(url: string): ModelFileDeleteTarget {
   if (!url) return { ok: false, reason: 'empty-url' };
+  if (urlHasExtraComponents(url)) return { ok: false, reason: 'non-canonical-url' };
   const b2 = parseB2Url(url);
   if (b2) {
     if (!isAllowedModelFileBucket(b2.bucket))
@@ -722,6 +740,17 @@ export async function deleteModelFileObjects(urls: string[]) {
   const groups = new Map<string, { backend: 'b2' | 'r2'; bucket: string; keys: string[] }>();
 
   for (const url of safe) {
+    // A url carrying a query string or fragment is a mismatch between the exact-string refcount
+    // above and the pathname-only parse below — the same hijack guarded in deleteModelFileObject.
+    if (urlHasExtraComponents(url)) {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        reason: 'non-canonical-url',
+        url,
+      });
+      continue;
+    }
     const b2 = parseB2Url(url);
     if (b2) {
       // Drop URLs targeting non-civitai buckets before they enter a group, so
