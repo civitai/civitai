@@ -57,9 +57,11 @@ const m = vi.hoisted(() => ({
   listing: false,
   /** A reply is running. */
   running: false,
-  /** The user is dictating: the composer shows its recording or transcribing bar over the box. */
-  recording: false,
-  transcribing: false,
+  /**
+   * The chat's `dictating`: the user is recording, has just stopped, or what they said is being
+   * turned into text. The box keeps what it held until the words are joined to it.
+   */
+  dictating: false,
   /** What the chat actually sent to the assistant. */
   delivered: [] as string[],
   /**
@@ -75,27 +77,6 @@ const m = vi.hoisted(() => ({
     }
     if (m.chat?.onBeforeSend?.(text)) return;
     m.delivered.push(text);
-  },
-  /**
-   * The element's shadow root as 0.11.0 draws it: the message box (a composer holding `draft` and its
-   * textarea) beside the chat's other fields, which fire `input` too.
-   */
-  drawChat: (host: HTMLElement) => {
-    const root = host.attachShadow({ mode: 'open' });
-    const composer = document.createElement('civitai-chat-composer');
-    Object.defineProperty(composer, 'draft', {
-      get: () => m.box,
-      set: (value: string) => (m.box = value),
-    });
-    Object.defineProperty(composer, 'recording', { get: () => m.recording });
-    Object.defineProperty(composer, 'transcribing', { get: () => m.transcribing });
-    const box = document.createElement('textarea');
-    box.setAttribute('aria-label', 'Message');
-    composer.append(box);
-    const search = document.createElement('input');
-    search.setAttribute('aria-label', 'Search models');
-    root.append(search, composer);
-    return root;
   },
   send: vi.fn(async (text: string) => m.chatSend(text)),
   /** Set to keep the next resume pending until the test settles it. */
@@ -115,23 +96,26 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
-  const { useLayoutEffect, useRef } = await import('react');
+  const { useLayoutEffect } = await import('react');
   return {
     AppAssistantChat: (props: NonNullable<typeof m.chat>) => {
       m.chat = props;
-      const host = useRef<HTMLDivElement>(null);
       useLayoutEffect(() => {
-        const el = host.current!;
-        const renderRoot = el.shadowRoot ?? m.drawChat(el);
+        // The element's public surface as 0.12.0 has it: `draft` and `dictating` are read-only getters.
         if (props.chatRef)
           props.chatRef.current = {
             newChat: m.newChat,
             send: m.send,
             compose: m.compose,
-            renderRoot,
+            get draft() {
+              return m.box;
+            },
+            get dictating() {
+              return m.dictating;
+            },
           };
       });
-      return <div data-testid="chat" ref={host} />;
+      return <div data-testid="chat" />;
     },
   };
 });
@@ -249,22 +233,27 @@ async function openFirst() {
   await openFromSwitcher('app-aaaa');
 }
 
-/** The user edits a field in the chat, which fires `input` as a browser does. */
-function fill(field: 'Message' | 'Search models', text: string) {
-  const root = document.querySelector('[data-testid="chat"]')!.shadowRoot!;
-  const el = root.querySelector<HTMLInputElement>(`[aria-label="${field}"]`)!;
-  el.value = text;
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+/**
+ * The user edits a field in the chat. Outside the chat's shadow root that is an `input` event
+ * retargeted to the element itself, whichever field it came from.
+ */
+function fireInput() {
+  document
+    .querySelector('[data-testid="chat"]')!
+    .dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
 }
 
 /** The user edits the message box. */
 function type(text: string) {
   m.box = text;
-  fill('Message', text);
+  fireInput();
 }
 
-/** The user types in one of the chat's other fields: the model search, a chat's name, settings. */
-const typeElsewhere = (text: string) => fill('Search models', text);
+/**
+ * The user types in one of the chat's other fields (the model search, a chat's name, settings): an
+ * `input` event the page sees, with the message box unchanged.
+ */
+const typeElsewhere = () => fireInput();
 
 /** The user types `text` and presses Send, which does nothing while the chat holds or replies. */
 async function userSends(text: string) {
@@ -274,11 +263,13 @@ async function userSends(text: string) {
   await m.chatSend(text);
 }
 
-/** Dictation ends as 0.11.0 ends it: what was said is joined to whatever is in the box. */
+/**
+ * Dictation ends as 0.12.0 ends it: what was said is joined to whatever is in the box, and only then
+ * does `dictating` read false.
+ */
 function endDictation(words: string) {
-  m.recording = false;
-  m.transcribing = false;
   m.box = [m.box.trim(), words].filter(Boolean).join(' ');
+  m.dictating = false;
 }
 
 const settle = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -309,8 +300,7 @@ beforeEach(() => {
   m.box = '';
   m.listing = false;
   m.running = false;
-  m.recording = false;
-  m.transcribing = false;
+  m.dictating = false;
   m.delivered = [];
   m.deferOpen = false;
   m.resume.mockClear();
@@ -806,7 +796,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
   test('🟡 typing in another of the chat’s fields while it resumes leaves no sent copy in the box', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
-    typeElsewhere('flux');
+    typeElsewhere();
     m.listing = true;
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
@@ -819,7 +809,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await openPaused();
     m.deferOpen = true;
     await userSends('Add a dark mode');
-    typeElsewhere('My dark mode chat');
+    typeElsewhere();
     m.chat!.onChatChange!('chat-2');
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
     expect(document.body.textContent).not.toMatch(/was not sent/);
@@ -868,41 +858,35 @@ describe('AppAssistantWorkspace auto-resume', () => {
     expect(m.delivered).toEqual([]);
   });
 
-  test.each(['recording', 'transcribing'] as const)(
-    '🟡 a held message given back while the user is %s goes to the notice, not under what they say',
-    async (state) => {
-      await openPaused();
-      m.deferOpen = true;
-      await userSends('Add a dark mode');
-      m[state] = true;
-      m.chat!.onChatChange!('chat-2');
-      await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-      await settle(100);
-      endDictation('and a timer');
-      expect(m.box).toBe('and a timer');
-      await expect
-        .element(page.getByText('This message was not sent: “Add a dark mode”'))
-        .toBeVisible();
-    }
-  );
+  test('🟡 a held message given back while the user is dictating goes to the notice, not under what they say', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    m.dictating = true;
+    m.chat!.onChatChange!('chat-2');
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    await settle(100);
+    endDictation('and a timer');
+    expect(m.box).toBe('and a timer');
+    await expect
+      .element(page.getByText('This message was not sent: “Add a dark mode”'))
+      .toBeVisible();
+  });
 
-  test.each(['recording', 'transcribing'] as const)(
-    '🟡 a released message the chat holds while the user is %s is not joined to what they say',
-    async (state) => {
-      const screen = await openPaused();
-      await userSends('Add a dark mode');
-      m[state] = true;
-      m.listing = true;
-      runsB(screen);
-      await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-      await settle(700);
-      endDictation('and a timer');
-      expect(m.box).toBe('and a timer');
-      m.listing = false;
-      await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
-      expect(m.box).toBe('and a timer');
-    }
-  );
+  test('🟡 a released message the chat holds while the user is dictating is not joined to what they say', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.dictating = true;
+    m.listing = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    await settle(700);
+    endDictation('and a timer');
+    expect(m.box).toBe('and a timer');
+    m.listing = false;
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
+    expect(m.box).toBe('and a timer');
+  });
 
   test('🟡 a released copy the chat parked before the user began dictating still goes, and leaves the box to what they say', async () => {
     const screen = await openPaused();
@@ -910,7 +894,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     m.listing = true;
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    m.recording = true;
+    m.dictating = true;
     m.listing = false;
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
     await vi.waitFor(() => expect(m.box).toBe(''));
@@ -926,7 +910,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    m.recording = true;
+    m.dictating = true;
     await vi.advanceTimersByTimeAsync(60_000);
     vi.useRealTimers();
     await vi.waitFor(() => expect(m.box).toBe(''));
@@ -942,7 +926,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     type('my words');
-    m.recording = true;
+    m.dictating = true;
     runsB(screen);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
     expect(m.box).toBe('my words');
@@ -1138,7 +1122,7 @@ describe('AppAssistantWorkspace Build it', () => {
 
   test('🟡 Build it pressed while the user dictates goes straight out when the chat does not hold', async () => {
     const card = await checklistCard();
-    m.recording = true;
+    m.dictating = true;
     await buildIt().click();
     await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
     expect(m.box).toBe('');
@@ -1149,7 +1133,7 @@ describe('AppAssistantWorkspace Build it', () => {
 
   test('🟡 Build it pressed while the user dictates and the chat holds is offered back, not joined to what they say', async () => {
     const card = await checklistCard();
-    m.recording = true;
+    m.dictating = true;
     m.listing = true;
     await buildIt().click();
     await expect.element(buildIt()).not.toBeInTheDocument();

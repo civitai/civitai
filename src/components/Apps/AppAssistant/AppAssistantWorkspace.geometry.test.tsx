@@ -31,11 +31,12 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
     m.beforeToolCall = props.beforeToolCall;
     // A chat that takes no message, with something typed in its box: a Build it it cannot send comes back
     // as a "not sent" notice.
-    const composer = document.createElement('civitai-chat-composer');
-    Object.assign(composer, { draft: 'my words' });
-    const renderRoot = document.createElement('div');
-    renderRoot.append(composer);
-    props.chatRef.current = { send: vi.fn(), compose: vi.fn(), renderRoot };
+    props.chatRef.current = {
+      send: vi.fn(),
+      compose: vi.fn(),
+      draft: 'my words',
+      dictating: false,
+    };
     return <div data-testid="chat" className="h-full" />;
   },
 }));
