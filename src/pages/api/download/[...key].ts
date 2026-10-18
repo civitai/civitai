@@ -32,6 +32,14 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     else return res.redirect(`/login?returnUrl=/api/download/${key}`);
   }
 
+  // Upload keys are `<type>/<userId>/<name>` (buildUploadKey): a caller may fetch their own uploads
+  // here; anything else goes through the download route for its record. Moderators may fetch any key.
+  const allowed = !!session.user?.isModerator || keyParts[1] === String(userId);
+  logToAxiom({ type: 'info', name: 'download-key-route', userId, key, allowed }).catch(
+    () => undefined
+  );
+  if (!allowed) return res.status(404).json({ error: 'Not found' });
+
   // This is a catch-all `/api/download/[...key]` route. Clients that hit a
   // non-existent sub-path (e.g. `/api/download/images/:id`, which is NOT a real
   // download endpoint) fall through here: the segments are joined into a key
