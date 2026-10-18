@@ -283,10 +283,14 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
-  it('completes the purchase when the sale cannot be counted', async () => {
+  // Any failure, not only a lock timeout: here a rethrow reaches the refund path and fails a granted sale.
+  it.each([
+    ['a lock timeout', lockTimeout],
+    ['a dropped connection', () => new Error('Connection terminated unexpectedly')],
+  ])('completes the purchase when the sale cannot be counted (%s)', async (_label, failure) => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
     mocks.executeRaw.mockImplementation(async (...a: unknown[]) => {
-      if (isRaw(a, 'UPDATE "CosmeticShopItem"')) throw lockTimeout();
+      if (isRaw(a, 'UPDATE "CosmeticShopItem"')) throw failure();
       return 1;
     });
 
