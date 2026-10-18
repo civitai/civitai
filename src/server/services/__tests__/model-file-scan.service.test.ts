@@ -658,6 +658,86 @@ describe('model-file-scan.service', () => {
       expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
     });
 
+    // A key held through a failed attempt turns the orchestrator's redelivery into a "duplicate",
+    // and the file stays Pending forever. The key store here is stateful so the second delivery
+    // sees exactly what the first one left behind.
+    it('lets the redelivery through when the first attempt throws', async () => {
+      const held = new Set<string>();
+      mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+        if (held.has(key)) return false;
+        held.add(key);
+        return true;
+      });
+      redisMock.sysRedis.del.mockImplementationOnce(async (key: string) => {
+        held.delete(key);
+        return 1;
+      });
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1, modelVersionId: 100 },
+          steps: [{ $type: 'modelClamScan', output: { exitCode: 0, output: '' } }],
+        },
+      });
+      mockDbWrite.modelFile.update.mockRejectedValueOnce(new Error('transient write failure'));
+
+      const req = makeReq({ workflowId: 'wf-retry', type: 'workflow', status: 'succeeded' });
+      await expect(processModelFileScanResult(req)).rejects.toThrow('transient write failure');
+      await processModelFileScanResult(req);
+
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      expect(mockDbWrite.modelFile.update.mock.calls[1][0].data.virusScanResult).toBe(
+        ScanResultCode.Success
+      );
+    });
+
+    it('keeps the original error when releasing the dedupe key also fails', async () => {
+      redisMock.sysRedis.del.mockRejectedValueOnce(new Error('redis down'));
+      mockGetWorkflow.mockResolvedValue({ data: null });
+
+      await expect(
+        processModelFileScanResult(
+          makeReq({ workflowId: 'wf-both', type: 'workflow', status: 'succeeded' })
+        )
+      ).rejects.toThrow('could not find workflow: wf-both');
+    });
+
+    // Postgres rejects U+0000 in text and jsonb (22P05). Trainers do write it into safetensors
+    // metadata; before the strip, one such header failed the update and lost the scan.
+    it('strips NUL characters from everything it writes', async () => {
+      const NUL = String.fromCharCode(0);
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            { $type: 'modelClamScan', output: { exitCode: 1, output: `bad${NUL}file` } },
+            {
+              $type: 'modelParseMetadata',
+              output: { metadata: JSON.stringify({ [`key${NUL}`]: `a${NUL}b`, list: [NUL] }) },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-nul', type: 'workflow', status: 'succeeded' })
+      );
+
+      const { data } = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(data.headerData).toEqual({ key: 'ab', list: [''] });
+      expect(data.virusScanMessage).toBe('badfile');
+      const nulPaths: string[] = [];
+      const walk = (v: unknown, path: string) => {
+        if (typeof v === 'string' && v.includes(NUL)) nulPaths.push(path);
+        else if (v && typeof v === 'object')
+          for (const [k, child] of Object.entries(v)) {
+            if (k.includes(NUL)) nulPaths.push(`${path}.<key>`);
+            walk(child, `${path}.${k}`);
+          }
+      };
+      walk(data, 'data');
+      expect(nulPaths).toEqual([]);
+    });
+
     it('throws when the orchestrator returns no workflow data', async () => {
       mockGetWorkflow.mockResolvedValue({ data: null });
 
