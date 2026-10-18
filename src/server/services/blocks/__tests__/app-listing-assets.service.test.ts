@@ -1612,6 +1612,20 @@ describe('backfillListingAssets', () => {
       expect(res.coversSet).toBe(0);
     });
 
+    it('the dry run does not count a cover for a mature migration', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ contentRating: 'r', appBlock: { screenshots: [{ key: 'k1' }] } }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({ dryRun: true }, makeDeps());
+      // Positive control: the dry run did count the migration itself.
+      expect(res.screenshotsCreated).toBe(1);
+      expect(res.coversSet).toBe(0);
+    });
+
+    // An unrated screenshot is eligible for the pick (the same rule as the block upload SFW
+    // ceiling); if it is still unrated at render time the store gate hides it and falls back to
+    // the next visible screenshot, so the pick can never surface it early.
     it('the dry run counts the same pick', async () => {
       mockDb.appListing.findMany.mockResolvedValue([
         row({ iconId: 900, screenshots: [shot(711, 0, 4)] }),

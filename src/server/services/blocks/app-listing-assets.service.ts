@@ -13,7 +13,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
-import { isSfwEligibleLevel } from '~/server/services/blocks/listing-media-audience';
+import { isWithinSfwImageCeiling } from '~/server/services/blocks/block-image-upload.logic';
 import {
   MAX_LISTING_SCREENSHOTS,
   validateListingImage,
@@ -1818,14 +1818,15 @@ export function chooseScreenshotSource(candidate: BackfillCandidate): Screenshot
 
 /**
  * The backfill's cover pick from EXISTING screenshots: the first whose Image is SFW-eligible
- * (`isSfwEligibleLevel`), never simply the first. `null` ⇒ no cover is set and the card keeps its
+ * (`isWithinSfwImageCeiling`: unrated or PG/PG-13), never simply the first. `null` ⇒ no cover is set and the card keeps its
  * placeholder.
  */
 export function firstSfwEligibleScreenshotId(
   screenshots: BackfillCandidate['screenshots']
 ): number | null {
   return (
-    screenshots.find((s) => s.imageId != null && isSfwEligibleLevel(s.nsfwLevel))?.imageId ?? null
+    screenshots.find((s) => s.imageId != null && isWithinSfwImageCeiling(s.nsfwLevel ?? 0))
+      ?.imageId ?? null
   );
 }
 
@@ -1977,7 +1978,7 @@ export async function backfillListingAssets(
         plan.mode === 'existing'
           ? firstSfwEligibleScreenshotId(candidate.screenshots) !== null
           : plan.mode === 'migrate' &&
-            isSfwEligibleLevel(nsfwLevelFromContentRating(candidate.contentRating));
+            isWithinSfwImageCeiling(nsfwLevelFromContentRating(candidate.contentRating));
       if (candidate.coverId == null && coverWillBeSet) {
         result.coversSet += 1;
         willChange = true;
@@ -2039,7 +2040,7 @@ export async function backfillListingAssets(
           result.screenshotsCreated += imageIds.length;
           // Migrated screenshots are all stamped `derivedNsfwLevel`, so either the first one is
           // SFW-eligible or none is.
-          firstScreenshotImageId = isSfwEligibleLevel(derivedNsfwLevel)
+          firstScreenshotImageId = isWithinSfwImageCeiling(derivedNsfwLevel)
             ? imageIds[0] ?? null
             : null;
           changed = true;

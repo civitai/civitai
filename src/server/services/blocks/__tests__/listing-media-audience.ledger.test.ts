@@ -53,31 +53,42 @@ const RAW_DEFINITION = 'server/services/blocks/listing-media-url.ts';
 const MEDIA_MODULE_IMPORT =
   /from\s*['"][^'"]*listing-media-(?:url|audience)(?:\.[jt]sx?)?['"]|import\(\s*['"][^'"]*listing-media-(?:url|audience)['"]/;
 const MEDIA_CALL =
-  /\b(?:listingIconUrl|listingCoverUrl|projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible|isSfwEligibleLevel)\s*\(/;
+  /\b(?:listingIconUrl|listingCoverUrl|projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible)\s*\(/;
 const GATE_CALL =
-  /\b(?:projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible|isSfwEligibleLevel)\s*\(/;
+  /\b(?:projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible)\s*\(/;
 
-/** A listing image `url` read without the gate's columns. */
+/**
+ * A listing image `url` read without the gate's columns. Three shapes: an icon/cover relation
+ * selecting only `url`; a `screenshots` relation whose `image` selects only `url`; a raw join of
+ * `"Image"` onto any `<alias>.icon_id` / `<alias>.cover_id` whose alias's level is never read.
+ *
+ * ⚠️ WHAT THIS CANNOT SEE: a hydration that DOES select the level columns and then renders the
+ * url without calling the gate. Only the behaviour suites catch that shape; the projector half of
+ * this ledger narrows where it could live.
+ */
 const UNGATED_PRISMA_MEDIA = /\b(?:icon|cover)\s*:\s*\{\s*select\s*:\s*\{\s*url\s*:\s*true\s*\}/;
-const UNGATED_RAW_JOIN = /JOIN\s+"Image"\s+(\w+)\s+ON\s+\1\.id\s*=\s*al\.(?:cover_id|icon_id)/;
+const UNGATED_SCREENSHOT_MEDIA =
+  /\bscreenshots\s*:\s*\{[\s\S]{0,600}?\bimage\s*:\s*\{\s*select\s*:\s*\{\s*url\s*:\s*true\s*\}/;
+const RAW_JOIN = /JOIN\s+"Image"\s+(\w+)\s+ON\s+\1\.id\s*=\s*\w+\.(?:cover_id|icon_id)/g;
 
 function isProjector(code: string): boolean {
   return MEDIA_MODULE_IMPORT.test(code) || MEDIA_CALL.test(code);
 }
 
 function isUngatedHydration(code: string): boolean {
-  if (UNGATED_PRISMA_MEDIA.test(code)) return true;
-  // A raw join counts as GATED only when the same statement source also reads the image's level
-  // for that alias; otherwise its url can reach a response raw.
-  const m = UNGATED_RAW_JOIN.exec(code);
-  if (!m) return false;
-  return !new RegExp(`\\b${m[1]}\\."nsfwLevel"`).test(code);
+  if (UNGATED_PRISMA_MEDIA.test(code) || UNGATED_SCREENSHOT_MEDIA.test(code)) return true;
+  // A raw join counts as GATED only when the same source also reads that alias's level; otherwise
+  // its url can reach a response raw. EVERY join is checked, not only the first.
+  for (const m of code.matchAll(RAW_JOIN)) {
+    if (!new RegExp(`\\b${m[1]}\\."nsfwLevel"`).test(code)) return true;
+  }
+  return false;
 }
 
 const CODE = new Map<string, string>();
 for (const { rel, full } of PRODUCTION) {
   const raw = readFileSync(full, 'utf8');
-  if (!/listing-media-|listingIconUrl|listingCoverUrl|url: true|al\.(?:cover|icon)_id/.test(raw)) {
+  if (!/listing-media-|listingIconUrl|listingCoverUrl|url: true|\.(?:cover|icon)_id/.test(raw)) {
     continue;
   }
   CODE.set(rel, stripSourceComments(raw));
@@ -99,8 +110,6 @@ const EXPECTED_PROJECTORS: Record<
   'server/services/blocks/app-listing-icon.service.ts': 'gated',
   // Post "Published with" chip icon.
   'server/services/blocks/post-app-chip.logic.ts': 'gated',
-  // The asset backfill's one-time cover pick.
-  'server/services/blocks/app-listing-assets.service.ts': 'gated',
   // The owner's own "My apps" row: shows exactly what is attached.
   'server/services/blocks/app-access.service.ts': 'raw: author',
 };
@@ -150,7 +159,25 @@ describe('listing-media call-site ledger', () => {
     expect(
       isUngatedHydration(`pc."nsfwLevel" AS l\n LEFT JOIN "Image" pc ON pc.id = al.cover_id`)
     ).toBe(false);
-    // An unrelated url select (not a listing icon/cover) is not this ledger's business.
+    // The pre-gate screenshot hydration, and its gated form.
+    expect(
+      isUngatedHydration(
+        `screenshots: {\n  where: { imageId: { not: null } },\n  select: { caption: true, image: { select: { url: true } } },\n}`
+      )
+    ).toBe(true);
+    expect(
+      isUngatedHydration(
+        `screenshots: { select: { caption: true, image: { select: listingMediaImageSelect } } }`
+      )
+    ).toBe(false);
+    // Every raw join is checked: a gated first join does not excuse an ungated second one, and the
+    // listing alias need not be `al`.
+    expect(
+      isUngatedHydration(
+        `pc."nsfwLevel" AS a\n LEFT JOIN "Image" pc ON pc.id = al.cover_id\n LEFT JOIN "Image" pi ON pi.id = l.icon_id`
+      )
+    ).toBe(true);
+    // An unrelated url select (not under icon/cover/screenshots) is not this ledger's business.
     expect(isUngatedHydration(`image: { select: { url: true } }`)).toBe(false);
   });
 
@@ -168,7 +195,6 @@ describe('listing-media call-site ledger', () => {
       .map(([rel]) => rel);
     // Named rather than counted, so re-labelling an entry cannot empty this loop silently.
     expect(gated.sort()).toEqual([
-      'server/services/blocks/app-listing-assets.service.ts',
       'server/services/blocks/app-listing-icon.service.ts',
       'server/services/blocks/app-listing.service.ts',
       'server/services/blocks/app-sub-listing-store.service.ts',

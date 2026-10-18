@@ -24,8 +24,8 @@ vi.mock('~/client-utils/edge-url', () => ({
 import { NsfwLevel } from '~/server/common/enums';
 import {
   isListingImageVisible,
-  isSfwEligibleLevel,
   listingMediaCeiling,
+  listingMediaImageSelect,
   MODERATOR_REVIEW_MEDIA,
   projectListingMedia,
   SFW_PUBLIC_MEDIA,
@@ -169,9 +169,24 @@ describe('projectListingMedia', () => {
   });
 });
 
-describe('isSfwEligibleLevel', () => {
-  it('admits unrated and SFW levels only', () => {
-    expect([0, PG, PG13, PG | PG13].map(isSfwEligibleLevel)).toEqual([true, true, true, true]);
-    expect([R, XXX, Blocked, PG | R].map(isSfwEligibleLevel)).toEqual([false, false, false, false]);
+// The select is the contract between the hydration and the decision: a column the classifier reads
+// but the select omits would arrive `undefined` from the database, and every mocked suite would
+// still pass (their rows carry every field whatever is selected). So the READ set is recorded from
+// the classifier itself, not restated here.
+describe('listingMediaImageSelect covers every field the visibility decision reads', () => {
+  it('a Proxy over a visible image records the reads; each must be selected', () => {
+    const read = new Set<string>();
+    const tracked = new Proxy(img('t.png', PG), {
+      get(target, key) {
+        if (typeof key === 'string') read.add(key);
+        return Reflect.get(target, key);
+      },
+    });
+    // A visible image walks every branch of the classifier (each flag, ingestion, level).
+    expect(isListingImageVisible(tracked, PG)).toBe(true);
+    // Positive control: the recorder saw the obvious ones, so an empty set cannot pass below.
+    expect(read.has('nsfwLevel') && read.has('ingestion')).toBe(true);
+    const missing = [...read].filter((k) => !(k in listingMediaImageSelect));
+    expect(missing).toEqual([]);
   });
 });

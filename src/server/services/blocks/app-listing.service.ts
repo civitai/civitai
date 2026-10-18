@@ -490,7 +490,9 @@ export function projectListingCard(
   media: ListingMediaView = SFW_PUBLIC_MEDIA
 ): ListingCard {
   const recommend = recommendRollup(row.metric);
-  const { iconUrl: cardIconUrl, coverUrl: cardCoverUrl } = projectListingMedia(row, media);
+  const { iconUrl: cardIconUrl, coverUrl: cardCoverUrl } = projectListingMedia(row, media, {
+    gallery: false,
+  });
   return {
     // Author-declared beta label — resolved by the caller through the manual-apply guard,
     // never selected on `row`. `false` covers BOTH "not in beta" and "the columns are not

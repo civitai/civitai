@@ -213,6 +213,10 @@ describe('T2 — the cover falls back to the first screenshot THIS viewer may se
     expect(c.coverUrl).toBe('edge:a.png@1200');
     // The R icon has nothing to fall back to: the renderer's placeholder (null).
     expect(c.iconUrl).toBeNull();
+    // The detail projection gates its icon the same way.
+    const d = await detail(false, R_VIEWER_LEVEL);
+    expect(d.iconUrl).toBeNull();
+    expect(d.coverUrl).toBe('edge:a.png@1200');
   });
 });
 
@@ -278,7 +282,8 @@ describe('the two views that are NOT a per-request public audience', () => {
     shape = { contentRating: 'g', iconId: 12, coverId: 14, screenshotIds: [12, 11] };
   });
 
-  // INVARIANT GUARD (cannot be red before the gate existed: there was no default to get wrong).
+  // Red before the gate existed (every caller then showed everything), and the guard on the
+  // default itself: flipping it to the ungated view fails this case.
   it('a projection called WITHOUT a view gets the narrowest public one', () => {
     const row = listingRow(shape);
     const c = projectListingCard(row as never);
@@ -288,7 +293,8 @@ describe('the two views that are NOT a per-request public audience', () => {
     ]);
   });
 
-  // INVARIANT GUARD: the moderator preview shows what is attached — the R icon, the still-scanning
+  // INVARIANT GUARD (green before the gate too; certified by flipping the preview to a public
+  // view): the moderator preview shows what is attached — the R icon, the still-scanning
   // cover, every screenshot — so a reviewer can see, and reject, what the public would not get.
   it('the moderator review preview is ungated', async () => {
     dbMock.dbRead.appListing.findUnique.mockImplementation(async () => ({

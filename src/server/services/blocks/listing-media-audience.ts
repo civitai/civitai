@@ -9,10 +9,9 @@ import {
 import {
   allBrowsingLevelsFlag,
   browsingLevels,
+  effectiveBrowsingCeiling,
   flagifyBrowsingLevel,
   nsfwLevelFromContentRating,
-  onlySelectableLevels,
-  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 
@@ -110,9 +109,10 @@ export function listingMediaCeiling(
   contentRating: string | null | undefined
 ): number {
   if (audience.redCapable) {
-    const viewerLevel =
-      onlySelectableLevels(audience.viewerBrowsingLevel ?? 0) || publicBrowsingLevelsFlag;
-    return allBrowsingLevelsFlag & viewerLevel;
+    // `allBrowsingLevelsFlag` is PG..XXX (no Blocked bit), and `effectiveBrowsingCeiling` is the
+    // shared domain ∩ viewer rule: an absent, non-finite or negative viewer level is the public
+    // floor. A `0` level is "no level" here too, not "hide everything".
+    return effectiveBrowsingCeiling(allBrowsingLevelsFlag, audience.viewerBrowsingLevel || null);
   }
   const ratingMax = nsfwLevelFromContentRating(contentRating);
   const ratingLevels = flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
@@ -221,27 +221,39 @@ export const SFW_PUBLIC_MEDIA: ListingMediaView = {
   audience: SFW_LISTING_MEDIA_AUDIENCE,
 };
 
-/** Project a listing row's media for one view. */
+/**
+ * Project a listing row's media for one view. `gallery: false` skips the screenshot list for a
+ * caller that only renders the icon and cover (the store card); the cover fallback still reads
+ * the screenshots.
+ */
 export function projectListingMedia(
   row: ListingMediaRow,
-  view: ListingMediaView
+  view: ListingMediaView,
+  opts: { gallery?: boolean } = {}
 ): {
   iconUrl: string | null;
   coverUrl: string | null;
   screenshots: { url: string; caption: string | null }[];
 } {
+  const gallery = opts.gallery !== false;
   if (view.kind === 'moderator-review') {
+    const firstShot = row.screenshots.find((s) => s.image?.url)?.image?.url ?? null;
     const screenshots: { url: string; caption: string | null }[] = [];
-    for (const s of row.screenshots) {
-      if (!s.image?.url) continue;
-      screenshots.push({
-        url: getEdgeUrl(s.image.url, { width: LISTING_SCREENSHOT_WIDTH }),
-        caption: s.caption ?? null,
-      });
+    if (gallery) {
+      for (const s of row.screenshots) {
+        if (!s.image?.url) continue;
+        screenshots.push({
+          url: getEdgeUrl(s.image.url, { width: LISTING_SCREENSHOT_WIDTH }),
+          caption: s.caption ?? null,
+        });
+      }
     }
     return {
       iconUrl: listingIconUrl(row.icon),
-      coverUrl: listingCoverUrl(row.cover, screenshots[0]?.url ?? null),
+      coverUrl: listingCoverUrl(
+        row.cover,
+        firstShot ? getEdgeUrl(firstShot, { width: LISTING_COVER_WIDTH }) : null
+      ),
       screenshots,
     };
   }
@@ -249,16 +261,6 @@ export function projectListingMedia(
   return {
     iconUrl: gatedListingIconUrl(row.icon, ceiling),
     coverUrl: gatedListingCoverUrl(row.cover, row.screenshots, ceiling),
-    screenshots: gatedListingScreenshots(row.screenshots, ceiling),
+    screenshots: gallery ? gatedListingScreenshots(row.screenshots, ceiling) : [],
   };
-}
-
-/**
- * True when an image's level is unrated or SFW — i.e. it could be shown on a non-red host for
- * some SFW listing. Used where a single asset is CHOSEN once rather than gated per request (the
- * listing-asset backfill's cover pick), so that a mature screenshot is never promoted into the
- * one slot every host shows first.
- */
-export function isSfwEligibleLevel(nsfwLevel: number | null | undefined): boolean {
-  return ((nsfwLevel ?? 0) & ~sfwBrowsingLevelsFlag) === 0;
 }

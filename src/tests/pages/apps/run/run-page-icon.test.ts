@@ -161,6 +161,17 @@ describe('run page — the icon gate gets the request host and browsing level', 
     expect(iconUrl).toContain('icon-r-77');
   });
 
+  it('hides it on a red host when the request may not view NSFW, whatever the saved level', async () => {
+    respond({ icon: rIcon });
+    if (!capturedResolver.fn) throw new Error('resolver not captured');
+    const res = await capturedResolver.fn({
+      features: { appBlocks: true, appBlocksPages: true, canViewNsfw: false },
+      ctx: { params: { slug: 'cool-app' }, req: { headers: { host: 'civitai.red' } } },
+      session: { user: optedIn },
+    } as never);
+    expect(res.props.iconUrl).toBeNull();
+  });
+
   it('hides it on a non-red host, and from an anonymous viewer on a red host', async () => {
     respond({ icon: rIcon });
     expect((await runAs('civitai.com', optedIn)).props.iconUrl).toBeNull();

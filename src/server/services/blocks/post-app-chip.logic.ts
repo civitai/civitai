@@ -414,8 +414,8 @@ function readListingCandidate(
 /**
  * The joined icon row → the shape the listing-media gate reads, or null. Defensive like the rest
  * of this reader (the row is typed `unknown`): any missing or mistyped field fails CLOSED — an
- * absent `ingestion` makes no image at all, and an absent level reads as unrated, which the gate
- * refuses.
+ * absent `ingestion` makes no image at all, an absent level reads as unrated (which the gate
+ * refuses), and a moderation flag counts as SET unless it is literally `false` or absent.
  */
 function readChipIcon(icon: unknown): ListingMediaImage | null {
   if (typeof icon !== 'object' || icon === null) return null;
@@ -426,10 +426,10 @@ function readChipIcon(icon: unknown): ListingMediaImage | null {
     ingestion: i.ingestion,
     nsfwLevel: typeof i.nsfwLevel === 'number' ? i.nsfwLevel : 0,
     needsReview: i.needsReview == null ? null : String(i.needsReview),
-    poi: i.poi === true,
-    minor: i.minor === true,
-    tosViolation: i.tosViolation === true,
-    acceptableMinor: i.acceptableMinor === true,
+    poi: i.poi != null && i.poi !== false,
+    minor: i.minor != null && i.minor !== false,
+    tosViolation: i.tosViolation != null && i.tosViolation !== false,
+    acceptableMinor: i.acceptableMinor != null && i.acceptableMinor !== false,
     blockedFor: i.blockedFor == null ? null : String(i.blockedFor),
   };
 }

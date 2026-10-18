@@ -125,3 +125,88 @@ describe('T5 — the post "Published with" chip icon', () => {
     );
   });
 });
+
+// The LISTING RATING reaches both surfaces' ceilings. Fixtures vary it on purpose: a `g` listing
+// and a `pg13` listing with the same PG-13 icon must disagree off a red host.
+describe('T5 — the listing rating caps a single-image surface', () => {
+  const PG13 = NsfwLevel.PG13;
+
+  it('run-page icon: PG-13 shows on a pg13 listing and not on a g one', async () => {
+    const client = (contentRating: string) =>
+      ({
+        appListing: {
+          findUnique: vi.fn(async () => ({ contentRating, icon: img('run-pg13.png', PG13) })),
+        },
+      } as unknown as ListingIconReadClient);
+    expect(await readListingIconBySlugForRender('app', client('pg13'))).toBe(
+      'edge:run-pg13.png@256'
+    );
+    expect(await readListingIconBySlugForRender('app', client('g'))).toBeNull();
+  });
+
+  it('post chip: the same split, on a red host too — the chip is held to the SFW view', () => {
+    const chipFor = (contentRating: string, host: string) =>
+      projectPostAppChip(
+        {
+          name: 'Client',
+          appBlocks: [
+            {
+              status: 'approved',
+              currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+              appListing: {
+                id: 'apl_chip2',
+                slug: 'chip-two',
+                name: 'Chip Two',
+                status: 'approved',
+                kind: 'onsite',
+                contentRating,
+                revisionOfId: null,
+                icon: img('chip-pg13.png', PG13),
+              },
+            },
+          ],
+        },
+        { host, hiddenListingIds: new Set() }
+      )?.iconUrl;
+    expect(chipFor('pg13', 'civitai.com')).toBe('edge:chip-pg13.png@256');
+    expect(chipFor('g', 'civitai.com')).toBeNull();
+    // On a red host the SFW view still shows a pg13 listing's PG-13 icon. A gate keyed on the
+    // HOST instead (with no viewer level, i.e. the public floor) would hide it — so this case is
+    // what separates "SFW view everywhere" from "host view".
+    expect(chipFor('pg13', 'civitai.red')).toBe('edge:chip-pg13.png@256');
+  });
+});
+
+// The chip reads its row as `unknown`, so a moderation flag arriving as something other than a
+// boolean must count as SET (fail-closed), never as clear.
+describe('T5 — the chip icon reader fails closed on a malformed flag', () => {
+  it.each([
+    ['a string', 'yes'],
+    ['a number', 1],
+  ])('treats a tosViolation that is %s as flagged', (_label, value) => {
+    const chip = projectPostAppChip(
+      {
+        name: 'Client',
+        appBlocks: [
+          {
+            status: 'approved',
+            currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+            appListing: {
+              id: 'apl_chip3',
+              slug: 'chip-three',
+              name: 'Chip Three',
+              status: 'approved',
+              kind: 'onsite',
+              contentRating: 'g',
+              revisionOfId: null,
+              icon: img('chip-flag.png', PG, { tosViolation: value }),
+            },
+          },
+        ],
+      },
+      { host: 'civitai.com', hiddenListingIds: new Set() }
+    );
+    expect(chip?.slug, 'the chip itself must still render').toBe('chip-three');
+    expect(chip?.iconUrl).toBeNull();
+  });
+});

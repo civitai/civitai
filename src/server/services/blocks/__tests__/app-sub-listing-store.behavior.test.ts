@@ -442,11 +442,38 @@ describe('store catalog with sub-listings, executed', () => {
     const card = (await page()).find((i) => i.id === CHILD_A);
     expect(card, 'the child left the page — the cover assertion would be vacuous').toBeDefined();
     expect(card?.coverUrl).toBeNull();
-    // The same row on a red host, for a viewer who has opted into R: the parent cover is shown.
-    const red = (await page({ redCapable: true, viewerBrowsingLevel: 7 })).find(
-      (i) => i.id === CHILD_A
+    // Positive control: the same parent cover at PG is the fallback, so the null above is the gate.
+    await holder.db.exec(`UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = 1`);
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
+  });
+
+  // ONE ceiling per card: the parent fallback is held to the card's effective rating (and the
+  // viewer), exactly like the child's own image — on a red host too, where the parent's OWN store
+  // card is not rating-capped and would show this cover to the same viewer.
+  it('holds the parent fallback to the card rating, on a red host too', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2;
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 1;
+      UPDATE app_listings SET content_rating = 'pg' WHERE id = '${PARENT}'`);
+    const cover = async () =>
+      (await page({ redCapable: true, viewerBrowsingLevel: 7 })).find((i) => i.id === CHILD_A)
+        ?.coverUrl;
+    // A `pg` card (the child inherits the parent's rating): the R parent cover is hidden.
+    expect(await cover()).toBeNull();
+    // The same card rated `r` (a child may be more mature than its parent): now it shows.
+    await holder.db.exec(
+      `UPDATE app_sub_listings SET content_rating = 'r' WHERE id = '${CHILD_A}'`
     );
-    expect(red?.coverUrl).toBe('parent-cover');
+    expect(await cover()).toBe('parent-cover');
+  });
+
+  it('a moderation flag on the parent cover hides it from the fallback', async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2`
+    );
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
+    await holder.db.exec(`UPDATE "Image" SET "tosViolation" = true WHERE id = 1`);
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBeNull();
   });
 
   it('gates the parent ICON on a child card the same way', async () => {

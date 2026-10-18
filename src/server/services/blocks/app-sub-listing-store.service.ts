@@ -8,7 +8,6 @@ import {
   gatedListingCoverUrl,
   gatedListingIconUrl,
   isListingImageVisible,
-  listingMediaCeiling,
   type ListingMediaImage,
 } from '~/server/services/blocks/listing-media-audience';
 import {
@@ -124,6 +123,9 @@ export function subListingImageCeiling(viewer: SubListingViewer, rating: string 
   return viewerLevel & ratingLevels & hostLevels;
 }
 
+/** A moderation flag counts as set unless it is literally `false` or absent (fail-closed). */
+const isFlagSet = (v: boolean | null) => v != null && v !== false;
+
 /**
  * One parent image (`parent_cover_*` / `parent_icon_*`) as the listing-media gate reads it, or
  * null when the parent has none. A row with no `ingestion` (a LEFT JOIN miss) has no image.
@@ -137,10 +139,10 @@ function parentImage(row: SubListingHydrateRow, which: 'cover' | 'icon'): Listin
     ingestion,
     nsfwLevel: row[`parent_${which}_nsfw_level` as const] ?? 0,
     needsReview: row[`parent_${which}_needs_review` as const],
-    poi: row[`parent_${which}_poi` as const] === true,
-    minor: row[`parent_${which}_minor` as const] === true,
-    tosViolation: row[`parent_${which}_tos_violation` as const] === true,
-    acceptableMinor: row[`parent_${which}_acceptable_minor` as const] === true,
+    poi: isFlagSet(row[`parent_${which}_poi` as const]),
+    minor: isFlagSet(row[`parent_${which}_minor` as const]),
+    tosViolation: isFlagSet(row[`parent_${which}_tos_violation` as const]),
+    acceptableMinor: isFlagSet(row[`parent_${which}_acceptable_minor` as const]),
     blockedFor: row[`parent_${which}_blocked_for` as const],
   };
 }
@@ -156,13 +158,13 @@ export function projectSubListingCard(
       : null;
   if (row.parent_kind === 'offsite' && !externalHref) return null;
   const contentRating = effectiveSubListingRating(row.parent_content_rating, row.content_rating);
-  // The parent's cover and icon go through the same per-image gate as the parent's own store card
-  // (`listing-media-audience`), held to THIS card's rating — never looser than the parent's — so
-  // the fallback cannot put an image on a child card that the child's rating would not allow.
-  const parentCeiling = listingMediaCeiling(
-    { redCapable: viewer.redCapable, viewerBrowsingLevel: viewer.browsingLevel },
-    contentRating
-  );
+  // ONE ceiling for everything on this card: the parent's cover and icon fallback are held to the
+  // same `subListingImageCeiling` as the child's own image (viewer ∩ host ∩ this card's effective
+  // rating — the more mature of parent and child), so a fallback can never put an image on the card
+  // that the card's own image could not show. On a red host this is stricter than the parent's own
+  // store card, which is not capped by its rating there.
+  const cardCeiling = subListingImageCeiling(viewer, contentRating);
+  const parentCeiling = cardCeiling;
   const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], parentCeiling);
   let coverUrl = parentCover;
   // The image was public when it was submitted; this re-checks it on every render, so a post
@@ -179,7 +181,7 @@ export function projectSubListingCard(
         acceptableMinor: row.image_acceptable_minor,
         blockedFor: row.image_blocked_for,
       },
-      subListingImageCeiling(viewer, contentRating)
+      cardCeiling
     );
     // Anything short of `visible` (pending scan included) falls back to the parent cover.
     coverUrl = visible ? getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH }) : parentCover;
