@@ -75,13 +75,16 @@ export default ModEndpoint(
     }
 
     // Composed with AND, never spread, so the cursor and the branches can't overwrite each other's
-    // keys. `all` alone with force is an empty branch, which selects everything.
+    // keys. `all` alone with force is an empty branch: left out, so nothing rests on how Prisma
+    // reads an empty filter.
+    const selection = branches.length === 1 ? branches[0] : { OR: branches };
+    const conditions: Prisma.ModelFileWhereInput[] = [
+      ...(Object.keys(selection).length > 0 ? [selection] : []),
+      ...(afterId !== undefined ? [{ id: { gt: afterId } }] : []),
+    ];
     const rows = await dbRead.modelFile.findMany({
       where: {
-        AND: [
-          branches.length === 1 ? branches[0] : { OR: branches },
-          ...(afterId !== undefined ? [{ id: { gt: afterId } }] : []),
-        ],
+        ...(conditions.length > 0 && { AND: conditions }),
         type: { not: 'Training Data' },
       },
       orderBy: { id: 'asc' },

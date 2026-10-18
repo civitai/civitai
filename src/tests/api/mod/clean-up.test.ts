@@ -119,6 +119,11 @@ describe('mod/clean-up', () => {
         AND: [{ createdAt: { gte: new Date('2026-01-01') } }],
         ...notTrainingData,
       });
+
+      vi.clearAllMocks();
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
+      await run({ all: 'true', force: 'true' });
+      expect(where()).toEqual(notTrainingData);
     });
 
     // Naming files means "re-scan these", settled or not; filtering them to Pending would
