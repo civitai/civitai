@@ -132,6 +132,7 @@ import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
 import {
   gatedListingIconUrl,
+  isModerationFlagSet,
   listingMediaCeiling,
   listingMediaImageSelect,
   SFW_LISTING_MEDIA_AUDIENCE,
@@ -426,10 +427,10 @@ function readChipIcon(icon: unknown): ListingMediaImage | null {
     ingestion: i.ingestion,
     nsfwLevel: typeof i.nsfwLevel === 'number' ? i.nsfwLevel : 0,
     needsReview: i.needsReview == null ? null : String(i.needsReview),
-    poi: i.poi != null && i.poi !== false,
-    minor: i.minor != null && i.minor !== false,
-    tosViolation: i.tosViolation != null && i.tosViolation !== false,
-    acceptableMinor: i.acceptableMinor != null && i.acceptableMinor !== false,
+    poi: isModerationFlagSet(i.poi),
+    minor: isModerationFlagSet(i.minor),
+    tosViolation: isModerationFlagSet(i.tosViolation),
+    acceptableMinor: isModerationFlagSet(i.acceptableMinor),
     blockedFor: i.blockedFor == null ? null : String(i.blockedFor),
   };
 }

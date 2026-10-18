@@ -1626,6 +1626,24 @@ describe('backfillListingAssets', () => {
     // An unrated screenshot is eligible for the pick (the same rule as the block upload SFW
     // ceiling); if it is still unrated at render time the store gate hides it and falls back to
     // the next visible screenshot, so the pick can never surface it early.
+    it('picks an unrated first screenshot (level 0 or absent) as the cover', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({
+          iconId: 900,
+          screenshots: [{ imageId: 715, order: 0, image: null }, shot(716, 1, 1)],
+        }),
+        row({ id: 'apl_z', iconId: 902, screenshots: [shot(717, 0, 0), shot(718, 1, 1)] }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      await backfillListingAssets({}, makeDeps());
+      expect(mockDb.appListing.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { coverId: 715 } })
+      );
+      expect(mockDb.appListing.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { coverId: 717 } })
+      );
+    });
+
     it('the dry run counts the same pick', async () => {
       mockDb.appListing.findMany.mockResolvedValue([
         row({ iconId: 900, screenshots: [shot(711, 0, 4)] }),

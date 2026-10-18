@@ -8,6 +8,7 @@ import {
   gatedListingCoverUrl,
   gatedListingIconUrl,
   isListingImageVisible,
+  isModerationFlagSet,
   type ListingMediaImage,
 } from '~/server/services/blocks/listing-media-audience';
 import {
@@ -123,9 +124,6 @@ export function subListingImageCeiling(viewer: SubListingViewer, rating: string 
   return viewerLevel & ratingLevels & hostLevels;
 }
 
-/** A moderation flag counts as set unless it is literally `false` or absent (fail-closed). */
-const isFlagSet = (v: boolean | null) => v != null && v !== false;
-
 /**
  * One parent image (`parent_cover_*` / `parent_icon_*`) as the listing-media gate reads it, or
  * null when the parent has none. A row with no `ingestion` (a LEFT JOIN miss) has no image.
@@ -139,10 +137,10 @@ function parentImage(row: SubListingHydrateRow, which: 'cover' | 'icon'): Listin
     ingestion,
     nsfwLevel: row[`parent_${which}_nsfw_level` as const] ?? 0,
     needsReview: row[`parent_${which}_needs_review` as const],
-    poi: isFlagSet(row[`parent_${which}_poi` as const]),
-    minor: isFlagSet(row[`parent_${which}_minor` as const]),
-    tosViolation: isFlagSet(row[`parent_${which}_tos_violation` as const]),
-    acceptableMinor: isFlagSet(row[`parent_${which}_acceptable_minor` as const]),
+    poi: isModerationFlagSet(row[`parent_${which}_poi` as const]),
+    minor: isModerationFlagSet(row[`parent_${which}_minor` as const]),
+    tosViolation: isModerationFlagSet(row[`parent_${which}_tos_violation` as const]),
+    acceptableMinor: isModerationFlagSet(row[`parent_${which}_acceptable_minor` as const]),
     blockedFor: row[`parent_${which}_blocked_for` as const],
   };
 }
@@ -164,8 +162,7 @@ export function projectSubListingCard(
   // that the card's own image could not show. On a red host this is stricter than the parent's own
   // store card, which is not capped by its rating there.
   const cardCeiling = subListingImageCeiling(viewer, contentRating);
-  const parentCeiling = cardCeiling;
-  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], parentCeiling);
+  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], cardCeiling);
   let coverUrl = parentCover;
   // The image was public when it was submitted; this re-checks it on every render, so a post
   // made private or unpublished later stops showing its image on the card.
@@ -204,7 +201,7 @@ export function projectSubListingCard(
       id: row.parent_id,
       slug: row.parent_slug,
       name: row.parent_name,
-      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), parentCeiling),
+      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), cardCeiling),
     },
     ...(externalHref
       ? { runHref: externalHref, external: true as const }

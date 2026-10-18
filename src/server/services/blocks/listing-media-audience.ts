@@ -85,6 +85,15 @@ export type ListingMediaImage = {
   blockedFor: string | null;
 };
 
+/**
+ * A moderation flag read from an untyped or raw-SQL row counts as SET unless it is literally
+ * `false` or absent — fail-closed, so a malformed value can only ever hide an image. The one rule
+ * for every reader that builds a {@link ListingMediaImage} from such a row.
+ */
+export function isModerationFlagSet(value: unknown): boolean {
+  return value != null && value !== false;
+}
+
 /** Who is looking, and from which host. */
 export type ListingMediaAudience = {
   /** `isRedCapableHost(host)` — never `getRequestDomainColor`, which reads `.red` as blue. */
