@@ -27,6 +27,8 @@ import {
   ModelStatus,
   ModelUploadType,
 } from '~/shared/utils/prisma/enums';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -220,6 +222,23 @@ export async function updateFile({
   }
 
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
+
+  // The orchestrator resolves a version's files by AIR and caches what it resolved, and
+  // resourceDataCache holds the version's coverage for an hour; both still describe the old object.
+  // Logged, not thrown: the update itself has landed.
+  if (oldUrl) {
+    await Promise.all([
+      resourceDataCache.bust([modelFile.modelVersionId]),
+      bustOrchestratorModelCache(modelFile.modelVersionId),
+    ]).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-url-change',
+        message: `Failed to bust resource caches for file ${id}`,
+        error,
+      }).catch(() => undefined)
+    );
+  }
 
   // Clean up old S3 object after DB update succeeds (best-effort).
   // Only fires when we actually swapped the URL on this call — pure-metadata
