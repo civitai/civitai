@@ -29,8 +29,9 @@ export default function ImageDetailModal({
   hideReactionCount?: boolean;
   hideReactions?: boolean;
   collectionId?: number;
-  /** Consumed by the route, which puts it in the URL; storyline mode reads it from there. */
+  /** Consumed by the route, which puts them in the URL; storyline mode reads them from there. */
   storylineChapterId?: number;
+  storylineVia?: number[] | string;
 }) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();

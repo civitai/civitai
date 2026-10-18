@@ -4,6 +4,8 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as NextRouterModule from 'next/router';
+import type * as DialogProviderModule from '~/components/Dialog/DialogProvider';
 import type * as ImageGuardModule from '~/components/ImageGuard/ImageGuard2';
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
 import type * as ModeModule from '~/components/Storyline/StorylineModeProvider';
@@ -24,6 +26,22 @@ const mocks = vi.hoisted(() => ({
   mobile: false,
   narrowStage: false,
   mode: { active: false } as unknown,
+  dialog: { opened: false, onClose: vi.fn() },
+  asPath: '/images/10',
+}));
+
+vi.mock('~/components/Dialog/DialogProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof DialogProviderModule>()),
+  useDialogContext: () => mocks.dialog,
+}));
+// The page under the dialog: Next's router keeps it while the reader is a routed dialog.
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<typeof NextRouterModule>()),
+  default: {
+    get asPath() {
+      return mocks.asPath;
+    },
+  },
 }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
@@ -79,6 +97,8 @@ beforeEach(() => {
   mocks.mobile = false;
   mocks.narrowStage = false;
   mocks.mode = { active: false };
+  mocks.dialog = { opened: false, onClose: vi.fn() };
+  mocks.asPath = '/images/10';
 });
 
 const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s/g, ' ');
@@ -392,6 +412,26 @@ describe('the map', () => {
       q('storyline-map-story-page')?.getAttribute('href'),
       q('storyline-map-read-next'),
     ]).toEqual(['/storylines/2', null]);
+  });
+
+  it('closes the reader when it is a dialog over its own story page, instead of stacking it', () => {
+    mocks.dialog = { opened: true, onClose: vi.fn() };
+    mocks.asPath = '/storylines/2';
+    renderMap();
+    const link = q('storyline-map-story-page');
+    const click = () => {
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+      act(() => void link?.dispatchEvent(event));
+      return event.defaultPrevented;
+    };
+    expect(click()).toBe(true);
+    expect(mocks.dialog.onClose).toHaveBeenCalledTimes(1);
+
+    // Over any other page (the feed it was opened from), it is a plain link to the story page.
+    mocks.asPath = '/images';
+    mocks.dialog.onClose.mockReset();
+    click();
+    expect(mocks.dialog.onClose).not.toHaveBeenCalled();
   });
 
   it('leaves the storyline from the foot of the sheet', () => {

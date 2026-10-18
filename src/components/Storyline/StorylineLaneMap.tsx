@@ -2,6 +2,7 @@ import { Text, Tooltip } from '@mantine/core';
 import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { buildStorylineLaneMap } from '~/components/Storyline/storyline-lane-map.utils';
+import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
 import { useStorylineGraph } from '~/components/Storyline/storyline.queries';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
@@ -112,7 +113,7 @@ function LaneNode({ node }: { node: LaneMapNode }) {
       <Tooltip label={node.name} withinPortal openDelay={200}>
         {node.href ? (
           <Link
-            href={node.href}
+            {...storylineChapterLinkProps({ href: node.href, read: node.read })}
             aria-label={node.name}
             className="absolute block overflow-hidden rounded-lg border-2 border-solid bg-gray-0 shadow-sm dark:bg-dark-6"
             style={{ ...position, borderColor: laneColor(node.lane) }}

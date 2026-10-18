@@ -69,6 +69,11 @@ describe('buildStorylineLaneMap', () => {
     expect(viaOf(node(map, 22)?.href)).toEqual([]);
   });
 
+  it('opens the same route on a plain click as its href does', () => {
+    expect(node(map, 60)?.read).toEqual({ imageId: 6000, chapterId: 60, via: [13, 42] });
+    expect(node(map, 53)?.read).toEqual({ imageId: 5300, chapterId: 53, via: [13] });
+  });
+
   it('links a chapter the reader cannot see nowhere, even with an image left on it', () => {
     // As a chapter whose author the reader just hid reaches the map: no post, image still there.
     const hidden = build((id) =>
@@ -82,10 +87,14 @@ describe('buildStorylineLaneMap', () => {
           }
         : visible(id)
     );
-    expect(node(hidden, 22)).toMatchObject({ href: null, name: 'This chapter is not available' });
+    expect(node(hidden, 22)).toMatchObject({
+      href: null,
+      read: null,
+      name: 'This chapter is not available',
+    });
     // Control: a chapter with a post but no image this reader may see opens its post.
     const noImage = build((id) => (id === 22 ? { ...visible(22), firstImage: null } : visible(id)));
-    expect(node(noImage, 22)?.href).toBe('/posts/220');
+    expect(node(noImage, 22)).toMatchObject({ href: '/posts/220', read: null });
     expect(node(map, 22)?.href).toBe('/images/2200?storylineChapter=22');
   });
 

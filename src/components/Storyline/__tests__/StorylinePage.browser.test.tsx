@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as QueriesMod from '~/components/Storyline/storyline.queries';
+import type * as RoutedDialogLinkMod from '~/components/Dialog/RoutedDialogLink';
 import { StorylinePage } from '~/components/Storyline/StorylinePage';
 
 /**
@@ -90,8 +91,10 @@ const mocks = vi.hoisted(() => ({
   commentsPostId: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
+  openDialog: vi.fn(),
   children: {} as Record<number, unknown[]>,
   shares: {} as Record<number, unknown>,
+  graph: undefined as Record<string, unknown> | undefined,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -113,6 +116,12 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   },
   useStorylineChildren: (chapterId: number) => ({ data: mocks.children[chapterId] }),
   useStorylineForkShares: (chapterId: number) => ({ data: mocks.shares[chapterId] }),
+  // Unmocked, it reads the feature flags, which this scaffold does not provide.
+  useStorylineGraph: () => ({ data: mocks.graph, isLoading: false }),
+}));
+vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutedDialogLinkMod>()),
+  triggerRoutedDialog: mocks.openDialog,
 }));
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,
@@ -181,7 +190,14 @@ beforeEach(() => {
   mocks.terms = null;
   mocks.children = { 104: FORK_104 };
   mocks.shares = { 104: { total: 20, shares: { 121: 0.62, 160: 0.29, 161: 0.09 } } };
-  for (const fn of [mocks.termsFor, mocks.commentsPostId, mocks.openContinue, mocks.openManage])
+  mocks.graph = undefined;
+  for (const fn of [
+    mocks.termsFor,
+    mocks.commentsPostId,
+    mocks.openContinue,
+    mocks.openManage,
+    mocks.openDialog,
+  ])
     fn.mockReset();
 });
 
@@ -234,7 +250,7 @@ describe('StorylinePage', () => {
     expect(testIds('storyline-ceiling-chip')).toContain('Up to PG-13');
     await expect
       .element(page.getByRole('link', { name: 'Start reading' }))
-      .toHaveAttribute('href', '/posts/501');
+      .toHaveAttribute('href', '/images/5010?storylineChapter=130');
 
     expect(stops()).toEqual([
       '1Chapter 1The cat patchSillycat83',
@@ -257,13 +273,16 @@ describe('StorylinePage', () => {
       [],
       [{ image: 'first-of-504', ratio: '4/5' }],
     ]);
-    // Each way on from a fork, ranked, named, linked to its post, with its share; a hidden one
+    // Each way on from a fork, ranked, named, opening the reader, with its share; a hidden one
     // keeps its place without a link.
     expect(forks()).toEqual([
       null,
       [
-        { text: 'Canon62%Chapter 3Sillycat83', href: '/posts/503' },
-        { text: 'Endorsed29%Rest in piecestehalex86', href: '/posts/560' },
+        { text: 'Canon62%Chapter 3Sillycat83', href: '/images/5030?storylineChapter=121' },
+        {
+          text: 'Endorsed29%Rest in piecestehalex86',
+          href: '/images/5600?storylineChapter=160',
+        },
         { text: "This chapter is rated above the storyline's maximum9%", href: null },
       ],
       null,
@@ -499,5 +518,78 @@ describe('StorylinePage', () => {
     await expect.element(heading()).toBeVisible();
     expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
     expect(mocks.termsFor).toHaveBeenLastCalledWith(undefined);
+  });
+
+  test('a chapter past a rejoin opens the reader on the canon route, over the page', async () => {
+    // Chapter 4 has two parents: its link must say it is reached through chapter 3 (id 121).
+    mocks.storyline = {
+      ...STORYLINE,
+      mainPath: [
+        ...STORYLINE.mainPath.slice(0, 2),
+        chapter(2, 503),
+        { ...chapter(3, 504, 1, 'Framed'), parentCount: 2 },
+      ],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    const framed = page.getByRole('link', { name: 'Framed' });
+    await expect
+      .element(framed)
+      .toHaveAttribute('href', '/images/5040?storylineChapter=102&storylineVia=121');
+    await framed.click();
+    expect(mocks.openDialog).toHaveBeenCalledWith({
+      name: 'imageDetail',
+      state: { imageId: 5040, storylineChapterId: 102, storylineVia: [121] },
+    });
+    await page.getByRole('link', { name: 'Start reading' }).click();
+    expect(mocks.openDialog).toHaveBeenLastCalledWith({
+      name: 'imageDetail',
+      state: { imageId: 5010, storylineChapterId: 130, storylineVia: [] },
+    });
+  });
+
+  test('a fork path is numbered on the route its link opens, not by its stored depth', async () => {
+    // Stored depth 7, from an older parent: under chapter 2 it is chapter 3 here and in the reader.
+    mocks.children = { 104: [{ ...FORK_104[0], depth: 7 }] };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(forks()[1]).toEqual([
+      { text: 'Canon62%Chapter 3Sillycat83', href: '/images/5030?storylineChapter=121' },
+    ]);
+  });
+
+  test('a Story map chapter opens the reader over the page too', async () => {
+    const graphChapter = (chapterId: number, postId: number, title: string | null = null) => ({
+      ...chapter(0, postId, 1, title ?? undefined),
+      chapterId,
+    });
+    mocks.graph = {
+      rootChapterId: 130,
+      chapters: [
+        graphChapter(130, 501, 'The cat patch'),
+        graphChapter(104, 502),
+        graphChapter(121, 503),
+        graphChapter(160, 560, 'Rest in pieces'),
+      ],
+      edges: [
+        { chapterId: 104, parentChapterId: 130, canon: true },
+        { chapterId: 121, parentChapterId: 104, canon: true },
+        { chapterId: 160, parentChapterId: 104, canon: false },
+      ],
+      truncated: false,
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    const node = page.getByRole('list', { name: 'Story map' }).getByRole('link', {
+      name: /Rest in pieces/,
+    });
+    await expect.element(node).toHaveAttribute('href', '/images/5600?storylineChapter=160');
+    // The mocked thumb has no size, so the tile has nothing to click by pointer.
+    (node.element() as HTMLElement).click();
+    expect(mocks.openDialog).toHaveBeenCalledWith({
+      name: 'imageDetail',
+      state: { imageId: 5600, storylineChapterId: 160, storylineVia: [] },
+    });
   });
 });
