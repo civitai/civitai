@@ -4,3 +4,5 @@
  * path takes it.
  */
 export const ITEM_HOLDER_LOCK_CLASS = 0x49480001;
+
+export const ITEM_HOLDER_LOCK_TIMEOUT = '2s';

@@ -11,7 +11,7 @@ import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
-import { lockItemHolder } from './item-holder-lock';
+import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
@@ -984,6 +984,7 @@ export async function refundShopPurchase(input: {
     });
   } catch (error) {
     if (error instanceof RefundRefused) return { ok: false, error: error.message };
+    if (isItemHolderBusy(error)) return { ok: false, error: ITEM_HOLDER_BUSY_MESSAGE };
     throw error;
   }
 
@@ -1097,15 +1098,21 @@ export async function grantCosmetic(input: {
     .executeTakeFirst();
   if (!exists) return { ok: false, error: 'No such cosmetic.' };
 
-  const result = await dbWrite.transaction().execute(async (trx) => {
-    await lockItemHolder(trx, input.userId);
-    // (userId, cosmeticId, claimKey) is the PK and Retool's plain INSERT threw on a repeat grant.
-    return trx
-      .insertInto('UserCosmetic')
-      .values({ userId: input.userId, cosmeticId: input.cosmeticId, obtainedAt: new Date() })
-      .onConflict((oc) => oc.columns(['userId', 'cosmeticId', 'claimKey']).doNothing())
-      .executeTakeFirst();
-  });
+  let result;
+  try {
+    result = await dbWrite.transaction().execute(async (trx) => {
+      await lockItemHolder(trx, input.userId);
+      // (userId, cosmeticId, claimKey) is the PK and Retool's plain INSERT threw on a repeat grant.
+      return trx
+        .insertInto('UserCosmetic')
+        .values({ userId: input.userId, cosmeticId: input.cosmeticId, obtainedAt: new Date() })
+        .onConflict((oc) => oc.columns(['userId', 'cosmeticId', 'claimKey']).doNothing())
+        .executeTakeFirst();
+    });
+  } catch (error) {
+    if (isItemHolderBusy(error)) return { ok: false, error: ITEM_HOLDER_BUSY_MESSAGE };
+    throw error;
+  }
 
   if (Number(result.numInsertedOrUpdatedRows ?? 0) === 0)
     return { ok: false, error: 'This account already holds that cosmetic.' };

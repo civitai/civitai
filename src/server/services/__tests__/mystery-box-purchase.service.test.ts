@@ -58,7 +58,7 @@ import {
   isMysteryBoxBlockedIn,
   MYSTERY_BOX_BLOCKED_REGIONS_KEY,
 } from '../mystery-box.service';
-import { ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
+import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
 import { PURCHASE_ALREADY_COMPLETED_MESSAGE } from '~/shared/constants/cosmetic-shop.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -149,6 +149,14 @@ const p2002 = () =>
     code: 'P2002',
     clientVersion: 'test',
   });
+
+const pgError = (code: string) =>
+  new Prisma.PrismaClientKnownRequestError('Raw query failed', {
+    code: 'P2010',
+    clientVersion: 'test',
+    meta: { code },
+  });
+const lockTimeout = () => pgError('55P03');
 
 type ContentWhere = {
   boxDefinitionId: number;
@@ -835,6 +843,20 @@ describe('buying a mystery box', () => {
     await expect(buy()).rejects.toThrow('Failed to purchase box');
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
     expect(claims.rows.get(txId(KEY_A))?.status).toBe('refunded');
+  });
+
+  it('answers a holder lock that times out before the charge as busy, charging nothing', async () => {
+    const tx = makeTx(async () => {
+      throw lockTimeout();
+    });
+    dbMock.dbWrite.$transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
+      claims.rollbackOnThrow(() => fn(tx))
+    );
+    await expect(buy()).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: ITEM_HOLDER_BUSY_MESSAGE,
+    });
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
   describe('pending purchases across every listing of the box', () => {

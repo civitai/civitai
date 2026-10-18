@@ -77,6 +77,18 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
 }
 
+/**
+ * Postgres `55P03` (lock_not_available, e.g. a `lock_timeout` expiry), surfaced by a raw query as
+ * P2010 with the SQLSTATE in `meta.code`.
+ */
+export function isPrismaLockTimeout(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2010' &&
+    (error.meta as { code?: unknown } | undefined)?.code === '55P03'
+  );
+}
+
 /** Is this specific object a database driver's own error? */
 function isDriverError(e: unknown): e is Error {
   return (
