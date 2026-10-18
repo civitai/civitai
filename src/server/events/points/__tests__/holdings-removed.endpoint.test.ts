@@ -40,7 +40,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   cosmeticEntityCaches: entityCaches.frame,
   eventDecorationEntityCaches: entityCaches.event,
   refreshOwnedStickerCache: vi.fn(),
-  userCosmeticCache: { refresh: vi.fn() },
+  userCosmeticCache,
 }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
@@ -56,10 +56,15 @@ vi.mock('~/server/events/points/roster-sync', async (importOriginal) => ({
 }));
 const { testerFlag } = await import('~/test-utils/testerFlagFake');
 
+type Removed = {
+  userId: number;
+  cosmeticId: number;
+  equippedToId: number;
+  equippedToType: string;
+};
 type Handler = {
-  handler: (input: {
-    removed: { userId: number; cosmeticId: number; equippedToId: number; equippedToType: string }[];
-  }) => Promise<unknown>;
+  input: z.ZodType;
+  handler: (input: { removed: Removed[] }) => Promise<unknown>;
 };
 const endpoint = (await import('~/pages/api/mod/cosmetic/holdings-removed'))
   .default as unknown as Handler;
@@ -75,6 +80,7 @@ const db = { pg: null as unknown as PGlite };
 const OWNER = 1;
 const HAT = 7;
 const IMAGE = 100;
+const userCosmeticCache = vi.hoisted(() => ({ refresh: vi.fn() }));
 const LIVE = new Date('2026-11-05T12:00:00.000Z');
 const HAT_DATA = { type: 'hat', event: birthday2026.name, url: 'hat.png', team: 'Blue' };
 const keys = eventPointKeys(birthday2026.name);
@@ -127,7 +133,15 @@ beforeEach(async () => {
   const raw = pgliteRaw(db.pg);
   dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
-  dbMock.dbWrite.cosmetic.findMany.mockResolvedValue([{ id: HAT, data: HAT_DATA }] as never);
+  dbMock.dbWrite.cosmetic.findMany.mockImplementation(
+    (async ({ where }: { where: { id: { in: number[] } } }) =>
+      (
+        await db.pg.query<{ id: number; data: unknown }>(
+          `SELECT "id", "data" FROM "Cosmetic" WHERE "id" = ANY($1)`,
+          [where.id.in]
+        )
+      ).rows) as never
+  );
 
   // The live hat map and the owner lock, as sync.behavior.test.ts fakes them.
   hashes.clear();
@@ -197,10 +211,14 @@ const takeBack = () =>
   db.pg.query(`DELETE FROM "UserCosmetic" WHERE "userId" = $1 AND "claimKey" = 'box-open-77'`, [
     OWNER,
   ]);
+// The body the moderator app sends (its shop-refund.pglite.test.ts asserts the same shape), through
+// the endpoint's own schema.
 const report = () =>
-  endpoint.handler({
-    removed: [{ userId: OWNER, cosmeticId: HAT, equippedToId: IMAGE, equippedToType: 'Image' }],
-  });
+  endpoint.handler(
+    endpoint.input.parse({
+      removed: [{ userId: OWNER, cosmeticId: HAT, equippedToId: IMAGE, equippedToType: 'Image' }],
+    }) as { removed: Removed[] }
+  );
 
 describe('holdings-removed', () => {
   it('takes a hat the moderator took back off the live map, and refreshes the image', async () => {
@@ -213,6 +231,16 @@ describe('holdings-removed', () => {
     expect(entityCaches.frame.Image.refresh).toHaveBeenCalledWith([IMAGE]);
     expect(entityCaches.event.Image.refresh).toHaveBeenCalledWith([IMAGE]);
     expect(roster.syncMembers).toHaveBeenCalledWith([OWNER], { onlyIfListed: true });
+    expect(userCosmeticCache.refresh).toHaveBeenCalledWith([OWNER]);
+  });
+
+  it('refuses a body that is not the moderator app’s shape', () => {
+    expect(() =>
+      endpoint.input.parse({
+        removed: [{ userId: OWNER, cosmeticId: HAT, equippedToId: IMAGE, equippedToType: 'Post ' }],
+      })
+    ).toThrow();
+    expect(() => endpoint.input.parse({ removed: [] })).toThrow();
   });
 
   it('without the call, the taken-back hat stays on the map (control)', async () => {

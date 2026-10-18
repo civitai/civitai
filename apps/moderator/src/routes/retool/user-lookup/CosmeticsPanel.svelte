@@ -6,6 +6,7 @@
   import type { Account } from './user-account';
   import ListCard from './ListCard.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
 
   let {
     account,
@@ -21,27 +22,14 @@
 
   // Called through, not captured: reading the prop inside the closure is what stops a re-passed
   // callback being ignored (svelte’s `state_referenced_locally`).
-  // A take-back that committed but could not refresh the site's caches.
-  let warning = $state<string | null>(null);
-  const form = new FormState({
-    onSuccess: (data) => {
-      warning = typeof data?.warning === 'string' ? data.warning : null;
-      onSuccess();
-    },
-    onSubmit: () => (warning = null),
-  });
+  const form = new FormState({ onSuccess: () => onSuccess() });
 </script>
 
 {#if form.error}
   <ErrorAlert class="mb-4" message={form.error} />
 {/if}
-{#if warning}
-  <p
-    class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-sm text-amber-200"
-    role="status"
-  >
-    {warning}
-  </p>
+{#if form.warning}
+  <WarningAlert class="mb-4" message={form.warning} />
 {/if}
 
 {#await account}

@@ -780,7 +780,8 @@ export async function refreshAfterHoldingsRemoved(
       cosmetic: { data: dataById.get(cosmeticId) ?? null },
     }))
   );
-  // Awaited here, unlike the revoke: the moderator's request is what the hat waits on.
+  // Awaited here, unlike the revoke, so the hat is off the map when the moderator's request returns.
+  // The sync logs its own failures and the hourly reconcile settles them: a 200 does not prove it.
   await hatSync;
 }
 
@@ -865,8 +866,7 @@ export async function unassignCosmetic({
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
-  void writeThroughRemovedEventHats(equipped);
-  await refreshOwnedStickerCache(userIds);
+  await afterHoldingsRemoved(userIds, equipped);
   return { count: result.count };
 }
 

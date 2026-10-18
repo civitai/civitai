@@ -101,7 +101,7 @@ let statementConnections: number[];
 /** Runs once, straight after the service's first statement (its read of the purchase). */
 let afterFirstStatement: (() => Promise<unknown>) | null;
 /** Calls the service made to the main app, and how the main app answers them. */
-let mainApp: { url: string; body: unknown }[];
+let mainApp: { url: string; body: unknown; afterCommit: boolean }[];
 let mainAppAnswers: () => Response;
 
 beforeEach(async () => {
@@ -133,32 +133,9 @@ beforeEach(async () => {
       return result;
     },
   } as unknown as PGlite;
-  // PGlite is one connection, so every query shares it, a transaction's and a stray `dbWrite` alike.
-  // Each acquire gets its own id here, so a test can tell which statements a transaction ran.
-  const base = pgliteDialect(recording);
-  let acquired = 0;
   let activeConnection = 0;
   dbHandle.current = new Kysely({
-    dialect: {
-      ...base,
-      createDriver: () => {
-        const driver = base.createDriver();
-        return {
-          ...driver,
-          async acquireConnection() {
-            const conn = await driver.acquireConnection();
-            const id = ++acquired;
-            return {
-              executeQuery: (query) => {
-                activeConnection = id;
-                return conn.executeQuery(query);
-              },
-              streamQuery: (query, chunk) => conn.streamQuery(query, chunk),
-            };
-          },
-        };
-      },
-    },
+    dialect: pgliteDialect(recording, { onQuery: (conn) => (activeConnection = conn) }),
   });
   recordModActivity.mockClear();
   bustUserCosmeticCaches.mockClear();
@@ -167,7 +144,13 @@ beforeEach(async () => {
   mainApp = [];
   mainAppAnswers = () => new Response(JSON.stringify({ refreshed: 1 }), { status: 200 });
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
-    mainApp.push({ url: String(url), body: JSON.parse(String(init.body)) });
+    mainApp.push({
+      url: String(url),
+      body: JSON.parse(String(init.body)),
+      // The main app reads on its own connection: called before the commit, it re-derives the hat
+      // as still held.
+      afterCommit: statements.at(-1)?.sql === 'commit',
+    });
     return mainAppAnswers();
   });
 });
@@ -442,6 +425,7 @@ describe('a take-back of something equipped refreshes the main app', () => {
     expect(mainApp).toEqual([
       {
         url: REFRESH_URL,
+        afterCommit: true,
         body: {
           removed: [
             { userId: BUYER, cosmeticId: HAT, equippedToId: IMAGE.id, equippedToType: 'Image' },
@@ -483,12 +467,13 @@ describe('a take-back of something equipped refreshes the main app', () => {
 
     await expect(refund('box-a')).resolves.toEqual({
       ok: true,
-      warning: "Refunded. The site's caches didn't refresh, so it may keep showing for a while.",
+      warning:
+        "Refunded. The site's caches didn't refresh, so it may keep showing on their profile and content until those expire.",
     });
     expect(await isRefunded('box-a')).toBe(true);
     expect(await holdings()).toEqual([]);
     expect(logAxiomError).toHaveBeenCalledWith(expect.any(Error), {
-      name: 'moderator-holdings-refresh',
+      event: 'moderator-holdings-refresh',
       userIds: [BUYER],
       cosmeticIds: [HAT],
     });

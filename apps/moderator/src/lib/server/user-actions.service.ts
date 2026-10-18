@@ -1029,11 +1029,11 @@ async function refreshRemovedHoldings(removed: RemovedHolding[], done: string) {
   );
   if (result.ok) return undefined;
   void logAxiomError(new Error(result.error), {
-    name: 'moderator-holdings-refresh',
+    event: 'moderator-holdings-refresh',
     userIds: [...new Set(equipped.map((r) => r.userId))],
     cosmeticIds: [...new Set(equipped.map((r) => r.cosmeticId))],
   });
-  return `${done}. The site's caches didn't refresh, so it may keep showing for a while.`;
+  return `${done}. The site's caches didn't refresh, so it may keep showing on their profile and content until those expire.`;
 }
 
 /**
