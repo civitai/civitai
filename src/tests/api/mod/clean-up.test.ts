@@ -11,10 +11,15 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 // The real orchestrator module runs env validation on import.
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createModelFileScanRequest: mockCreateModelFileScanRequest,
-  ModelFileScanSubmissionError: class extends Error {},
+  ModelFileScanSubmissionError: class extends Error {
+    constructor(message: string, public readonly code: 'not-found' | 'transient') {
+      super(message);
+    }
+  },
 }));
 
 import handler from '~/pages/api/mod/clean-up';
+import { ModelFileScanSubmissionError } from '~/server/services/orchestrator/orchestrator.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 function createMocks(query: Record<string, string>) {
@@ -85,8 +90,12 @@ describe('mod/clean-up', () => {
     const DAY_AGO = new Date('2026-10-17T12:00:00.000Z');
     const waitingForScan = {
       virusScanResult: 'Pending',
-      OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: DAY_AGO } }],
+      AND: [
+        { OR: [{ exists: null }, { exists: true }] },
+        { OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: DAY_AGO } }] },
+      ],
     };
+    const notTrainingData = { type: { not: 'Training Data' } };
 
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['Date'] });
@@ -96,20 +105,19 @@ describe('mod/clean-up', () => {
       vi.useRealTimers();
     });
 
-    it('bulk selection takes only files still waiting for a scan, and not in flight', async () => {
+    it('bulk selection takes what the fallback job would: Pending, not tombstoned, not in flight', async () => {
       await run({ after: '2026-01-01' });
       expect(where()).toEqual({
-        createdAt: { gte: new Date('2026-01-01') },
-        ...waitingForScan,
-        type: { not: 'Training Data' },
+        AND: [{ createdAt: { gte: new Date('2026-01-01') }, ...waitingForScan }],
+        ...notTrainingData,
       });
     });
 
     it('force=true lifts the bulk filter', async () => {
       await run({ after: '2026-01-01', force: 'true' });
       expect(where()).toEqual({
-        createdAt: { gte: new Date('2026-01-01') },
-        type: { not: 'Training Data' },
+        AND: [{ createdAt: { gte: new Date('2026-01-01') } }],
+        ...notTrainingData,
       });
     });
 
@@ -117,38 +125,44 @@ describe('mod/clean-up', () => {
     // quietly answer files: 0. Do not move the bulk filter up to the top level.
     it('named files are re-scanned whatever their scan state', async () => {
       await run({ modelFileIds: '7,8' });
-      expect(where()).toEqual({ id: { in: [7, 8] }, type: { not: 'Training Data' } });
+      expect(where()).toEqual({ AND: [{ id: { in: [7, 8] } }], ...notTrainingData });
 
       vi.clearAllMocks();
       dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
       await run({ modelVersionIds: '10', after: '2026-01-01' });
       expect(where()).toEqual({
-        OR: [
-          { modelVersionId: { in: [10] } },
-          { createdAt: { gte: new Date('2026-01-01') }, ...waitingForScan },
+        AND: [
+          {
+            OR: [
+              { modelVersionId: { in: [10] } },
+              { createdAt: { gte: new Date('2026-01-01') }, ...waitingForScan },
+            ],
+          },
         ],
-        type: { not: 'Training Data' },
+        ...notTrainingData,
       });
     });
 
-    it('stamps the page as requested, and releases a file whose submit fails transiently', async () => {
+    it('all=true alongside named files selects only the named files', async () => {
+      await run({ all: 'true', modelFileIds: '7' });
+      expect(where()).toEqual({ AND: [{ id: { in: [7] } }], ...notTrainingData });
+    });
+
+    it('tombstones a file the scanner reports not-found, and leaves a transient failure alone', async () => {
       dbMock.dbRead.modelFile.findMany.mockResolvedValue(fileRows(2));
       dbMock.dbWrite.modelFile.update.mockResolvedValue({});
       mockCreateModelFileScanRequest
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error('orchestrator 503'));
+        .mockRejectedValueOnce(new ModelFileScanSubmissionError('gone', 'not-found'))
+        .mockRejectedValueOnce(new ModelFileScanSubmissionError('503', 'transient'));
 
-      await run({ after: '2026-01-01' });
+      const res = await run({ after: '2026-01-01' });
 
-      expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: [1, 2] } },
-        data: { scanRequestedAt: NOW },
-      });
       expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledTimes(1);
       expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
-        where: { id: 2 },
-        data: { scanRequestedAt: null },
+        where: { id: 1 },
+        data: { exists: false },
       });
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ failed: 2 }));
     });
 
     it('submits at most 500 files and returns a cursor for the next page', async () => {
@@ -182,19 +196,27 @@ describe('mod/clean-up', () => {
       });
     });
 
-    it('resumes after the cursor without dropping a named-file filter', async () => {
+    // Each side carries its own `id` / `AND` keys; spread together, one would silently replace the other.
+    it('resumes after the cursor without dropping the selection', async () => {
       await run({ modelFileIds: '7,900', afterId: '500' });
       expect(where()).toEqual({
-        id: { in: [7, 900] },
-        type: { not: 'Training Data' },
-        AND: [{ id: { gt: 500 } }],
+        AND: [{ id: { in: [7, 900] } }, { id: { gt: 500 } }],
+        ...notTrainingData,
+      });
+
+      vi.clearAllMocks();
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
+      await run({ all: 'true', afterId: '500' });
+      expect(where()).toEqual({
+        AND: [waitingForScan, { id: { gt: 500 } }],
+        ...notTrainingData,
       });
     });
 
     // Prisma matches nothing for `OR: []`, so passing the empty list made `all` a silent no-op.
     it('all=true selects without an empty OR', async () => {
       await run({ all: 'true' });
-      expect(where()).toEqual({ ...waitingForScan, type: { not: 'Training Data' } });
+      expect(where()).toEqual({ AND: [waitingForScan], ...notTrainingData });
     });
 
     it('never has more than 5 submissions in flight', async () => {

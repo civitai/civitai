@@ -47,16 +47,22 @@ export default ModEndpoint(
     if (!!modelVersionIds?.length) branches.push({ modelVersionId: { in: modelVersionIds } });
     if (!!modelIds?.length) branches.push({ modelVersion: { modelId: { in: modelIds } } });
 
-    // Bulk selection (`after`, or `all` alone) only takes files still waiting for a scan, and not
-    // ones submitted in the last day, which are in flight. The same window as scanFilesFallbackJob.
+    // Bulk selection (`after`, or `all` alone) takes what scanFilesFallbackJob would: still Pending,
+    // not tombstoned, and not submitted in the last day (a successful submit stamps
+    // scanRequestedAt, so those are in flight).
     if (!!after || (all && branches.length === 0)) {
       branches.push({
         ...(after && { createdAt: { gte: after } }),
         ...(!force && {
           virusScanResult: ScanResultCode.Pending,
-          OR: [
-            { scanRequestedAt: null },
-            { scanRequestedAt: { lt: new Date(Date.now() - IN_FLIGHT_WINDOW_MS) } },
+          AND: [
+            { OR: [{ exists: null }, { exists: true }] },
+            {
+              OR: [
+                { scanRequestedAt: null },
+                { scanRequestedAt: { lt: new Date(Date.now() - IN_FLIGHT_WINDOW_MS) } },
+              ],
+            },
           ],
         }),
       });
@@ -68,13 +74,15 @@ export default ModEndpoint(
       return;
     }
 
-    // Not `{ OR: [one] }` for a single branch: `all` alone with force is an empty branch, and the
-    // cursor goes in AND so it can't overwrite a branch's own `id` filter.
+    // Composed with AND, never spread, so the cursor and the branches can't overwrite each other's
+    // keys. `all` alone with force is an empty branch, which selects everything.
     const rows = await dbRead.modelFile.findMany({
       where: {
-        ...(branches.length === 1 ? branches[0] : { OR: branches }),
+        AND: [
+          branches.length === 1 ? branches[0] : { OR: branches },
+          ...(afterId !== undefined ? [{ id: { gt: afterId } }] : []),
+        ],
         type: { not: 'Training Data' },
-        ...(afterId !== undefined && { AND: [{ id: { gt: afterId } }] }),
       },
       orderBy: { id: 'asc' },
       take: CLEAN_UP_MAX_FILES + 1,
@@ -98,15 +106,6 @@ export default ModEndpoint(
       nextAfterId: capped ? modelFiles[modelFiles.length - 1].id : null,
     };
 
-    // Stamped up front, as the fallback job does, so a repeat call and the job both see these as
-    // in flight; a transient submit failure below hands the file back.
-    if (modelFiles.length > 0) {
-      await dbWrite.modelFile.updateMany({
-        where: { id: { in: modelFiles.map((f) => f.id) } },
-        data: { scanRequestedAt: new Date() },
-      });
-    }
-
     const failed: number[] = [];
     const tasks = modelFiles.map((file) => async () => {
       // Guard against orphaned files whose modelVersion was soft-deleted.
@@ -126,15 +125,13 @@ export default ModEndpoint(
         });
       } catch (err) {
         failed.push(file.id);
-        // Matches scanFilesFallbackJob: tombstone a permanent 'not-found' so the file exits the
-        // scan retry loop; anything else is released for the next tick.
-        const notFound = err instanceof ModelFileScanSubmissionError && err.code === 'not-found';
-        await dbWrite.modelFile
-          .update({
-            where: { id: file.id },
-            data: notFound ? { exists: false } : { scanRequestedAt: null },
-          })
-          .catch(() => null);
+        // Admin endpoint: tombstone on permanent 'not-found' so the file
+        // exits the scan retry loop. Matches scanFilesFallbackJob policy.
+        if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
+          await dbWrite.modelFile
+            .update({ where: { id: file.id }, data: { exists: false } })
+            .catch(() => null);
+        }
       }
     });
 
