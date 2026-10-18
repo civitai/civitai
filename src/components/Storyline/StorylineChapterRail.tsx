@@ -80,7 +80,7 @@ export function StorylineChapterRail({
                 role="group"
                 aria-label={label}
                 aria-current="step"
-                className="flex size-full items-center gap-0.5 rounded-full bg-black/30 px-1"
+                className="flex size-full items-center gap-0.5 rounded-full bg-white/15 px-1.5 ring-1 ring-white/40"
               >
                 {ticks.map((imageIndex, i) => (
                   <UnstyledButton
