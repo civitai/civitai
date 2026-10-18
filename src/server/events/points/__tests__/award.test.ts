@@ -372,32 +372,6 @@ describe('awardEventPoints', () => {
     expect(ledger.map((r) => r.entityId)).toEqual([300]);
   });
 
-  it('never throws, and logs when Redis fails', async () => {
-    const logError = vi.fn();
-    build({
-      logError,
-      redis: { ...fake.redis, sAdd: () => Promise.reject(new Error('redis down')) },
-    });
-    await engine.refresh();
-    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBeUndefined();
-    expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.award', expect.any(Error));
-  });
-
-  it('keeps the other actions of a batch when one fails in Redis', async () => {
-    const real = fake.redis.sAdd;
-    build({
-      redis: {
-        ...fake.redis,
-        sAdd: ((key: string, member: string) =>
-          member === '2'
-            ? Promise.reject(new Error('redis blip'))
-            : real(key as never, member)) as typeof real,
-      },
-    });
-    await engine.awardEventPoints([reaction(1), reaction(2), reaction(3)]);
-    expect(ledger.map((r) => r.actorId)).toEqual([1, 3]);
-  });
-
   it('writes the whole fact to the ledger: who, what, which hat, and the source id', async () => {
     await engine.awardEventPoints([reaction(1)]);
     expect(ledger).toEqual([
@@ -557,6 +531,49 @@ describe('when the ledger write fails', () => {
     build();
     await engine.awardEventPoints([reaction(1)]);
     expect(ledger.map((r) => `${r.op}:${r.actorId}`)).toEqual(['add:1', 'add:1']);
+  });
+});
+
+// The referee dedupes and caps from the ledger alone, so a row written without its mark cannot score
+// twice; a row not written is lost for good.
+describe('when the dedupe mark cannot be written', () => {
+  const sAddFailsFor = (actors: string[]) => {
+    const real = fake.redis.sAdd;
+    return {
+      ...fake.redis,
+      sAdd: ((key: string, member: string) =>
+        actors.includes(member)
+          ? Promise.reject(new Error('redis down'))
+          : real(key as never, member)) as typeof real,
+    };
+  };
+
+  it('still writes the ledger row, with no live points, and never throws', async () => {
+    build({ redis: sAddFailsFor(['1']) });
+    await expect(engine.awardEventPoints([reaction(1)])).resolves.toBeUndefined();
+    expect(ledger.map((r) => [r.op, r.actorId, r.sourceId])).toEqual([
+      ['add', 1, 'ImageReaction:100:1'],
+    ]);
+    expect(livePoints('hat', HAT_FIELD)).toBe(0);
+    expect(granted).toEqual([]);
+  });
+
+  it('keeps the rest of the batch earning live', async () => {
+    build({ redis: sAddFailsFor(['2']) });
+    await engine.awardEventPoints([reaction(1), reaction(2), reaction(3)]);
+    expect(ledger.map((r) => r.actorId)).toEqual([1, 2, 3]);
+    expect(livePoints('hat', HAT_FIELD)).toBe(10);
+  });
+
+  it('writes nothing for an action that could not earn anyway', async () => {
+    build({ redis: sAddFailsFor(['1', '2', '3', String(OWNER)]) });
+    await engine.awardEventPoints([
+      { ...reaction(1), actor: { createdAt: new Date('2026-10-30T00:00:00.000Z') } },
+      { ...reaction(2), actor: { bannedAt: new Date('2026-10-01T00:00:00.000Z') } },
+      reaction(OWNER),
+      reaction(3, 999),
+    ]);
+    expect(ledger).toEqual([]);
   });
 });
 
