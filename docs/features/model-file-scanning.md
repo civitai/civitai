@@ -206,6 +206,14 @@ On `'transient'`, the fallback job resets `scanRequestedAt = null` so the next 5
 - During processing, `virusScanResult` / `pickleScanResult` may transition through Pending before settling
 - If the file's content hasn't changed, results should land the same; differences indicate scanner-rule changes (which is what you'd want to know about anyway)
 
+Its submissions share the scanner pool with new uploads, so each call is bounded:
+
+- Files named by `modelFileIds`, `modelVersionIds` or `modelIds` are re-scanned whatever their state.
+- Bulk selection (`after`, or `all` alone) takes what the fallback job would: `virusScanResult` still `Pending`, not tombstoned (`exists` null or true), and not submitted in the last day (`scanRequestedAt` null or older than 1 day). A file is stamped only once its own submit succeeds, so files still queued inside a running call are not yet marked: the fallback job or a repeat call can submit them too. Pass `force=true` to lift all three.
+- At most 500 files per call, in id order. A capped response carries `capped: true` and `nextAfterId`; pass that back as `afterId` for the next page. Page with `wait=false`: a `wait=true` call holds the response until all 500 submissions finish, which can outlast a proxy timeout and lose the cursor. Each call runs its own 5-way loop, so fetch the next page only once the previous one has drained.
+- Submissions run 5 at a time.
+- `all=true` with no other filter selects every non-Training-Data file, under the bulk rules above.
+
 The legacy HTTP scanner accepted per-task gating (`['Hash', 'ParseMetadata']` only); the orchestrator does not. If a metadata-only refresh path is ever needed, it would require extending `createModelFileScanRequest` with optional step selection.
 
 ### Hash Blocking
