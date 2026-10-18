@@ -135,7 +135,7 @@ export function StorylinePostNext({ postId }: { postId: number }) {
       <Text
         component="div"
         size="sm"
-        className="flex flex-wrap items-center gap-x-2 gap-y-1"
+        className="flex flex-wrap items-center gap-x-4 gap-y-1"
         data-testid="storyline-post-ways-back"
       >
         {parents.length > 0 && (
@@ -158,11 +158,6 @@ export function StorylinePostNext({ postId }: { postId: number }) {
               </span>
             ))}
           </span>
-        )}
-        {parents.length > 0 && (
-          <Text span c="dimmed" inherit aria-hidden>
-            ·
-          </Text>
         )}
         <Anchor component={Link} href={storylineUrl(path.storyline.id)} inherit>
           Story map
