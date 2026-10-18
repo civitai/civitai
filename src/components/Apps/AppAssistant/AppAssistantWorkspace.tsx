@@ -110,7 +110,11 @@ export interface Release {
   wake: () => void;
 }
 
-/** Ends the message the page is sending, if any; unless it already went, it is reported unsent. */
+/**
+ * Ends the message the page is sending, if any. Its release then resolves as any release ends: kept
+ * when the message went or a copy of it is still in the box (the user's to send), otherwise false, and
+ * the caller reports it unsent. A copy left in a box hidden by dictation is taken out first.
+ */
 export function stopRelease(replaying: { current: Release | null }): void {
   const release = replaying.current;
   replaying.current = null;

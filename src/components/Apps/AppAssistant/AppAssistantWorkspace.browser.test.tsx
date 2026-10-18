@@ -56,6 +56,8 @@ const m = vi.hoisted(() => ({
   box: '',
   /** The chat is listing a just-added app's tools, so it holds as it does for `holdReason`. */
   listing: false,
+  /** A saved chat is opening: the chat holds until it is open, as it does for `holdReason`. */
+  opening: false,
   /** A reply is running. */
   running: false,
   /**
@@ -73,7 +75,7 @@ const m = vi.hoisted(() => ({
    * The element's `canSend` as 0.13.0 has it: a send would go now (no reply running, nothing holding),
    * and its `can-send-change`, fired once each time that changes.
    */
-  canSend: () => !m.running && !m.chat?.holdReason && !m.listing,
+  canSend: () => !m.running && !m.chat?.holdReason && !m.listing && !m.opening,
   announce: () => {
     const canSend = m.canSend();
     if (canSend === m.announced) return;
@@ -87,7 +89,7 @@ const m = vi.hoisted(() => ({
    */
   chatSend: async (text: string) => {
     if (m.running) return;
-    if (m.chat?.holdReason || m.listing) {
+    if (m.chat?.holdReason || m.listing || m.opening) {
       if (!m.box) m.box = text;
       return;
     }
@@ -278,6 +280,12 @@ function setListing(listing: boolean) {
   m.announce();
 }
 
+/** A saved chat starts or finishes opening, and the chat says so if that changes `canSend`. */
+function setOpening(opening: boolean) {
+  m.opening = opening;
+  m.announce();
+}
+
 /** A reply starts or ends, and the chat says so if that changes `canSend`. */
 function setRunning(running: boolean) {
   m.running = running;
@@ -328,6 +336,7 @@ beforeEach(() => {
   m.send.mockClear();
   m.box = '';
   m.listing = false;
+  m.opening = false;
   m.running = false;
   m.dictating = false;
   m.delivered = [];
@@ -724,9 +733,13 @@ describe('AppAssistantWorkspace auto-resume', () => {
     m.running = true;
     runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    m.chat!.onChatChange!('chat-2');
-    // The reply ends and the chat says it can send: a release still running would send now.
+    // The user opens another chat from history, in the order the element reports it: the chat holds
+    // while it opens, which stops the reply (no event: it still cannot send); the open lands and
+    // chat-change fires; then can-send-change says it can send, before the page has re-rendered.
+    setOpening(true);
     setRunning(false);
+    m.chat!.onChatChange!('chat-2');
+    setOpening(false);
     await settle(100);
     expect(m.send).toHaveBeenCalledTimes(1);
     expect(m.delivered).toEqual([]);
