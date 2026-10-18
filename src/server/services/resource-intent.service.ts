@@ -487,7 +487,7 @@ function v1TagColumns(
 
 /**
  * Per pod. The shadow's search shares the foreground's `withMeiliResourceSelect` limiter, which
- * queues; past this cap a shadow is skipped instead, so shadows cannot crowd foreground searches.
+ * queues; past this cap a shadow is skipped instead, so shadows add at most 4 to its load.
  */
 const V1_SHADOW_MAX_IN_FLIGHT = 4;
 let v1ShadowsInFlight = 0;
