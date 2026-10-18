@@ -58,6 +58,10 @@ const m = vi.hoisted(() => ({
   listing: false,
   /** A saved chat is opening: the chat holds until it is open, as it does for `holdReason`. */
   opening: false,
+  /** A message the chat took is on its way to its agent (say, asking for the viewer's grant): it holds. */
+  sending: false,
+  /** The chat is starting again for a new app: it holds. */
+  starting: false,
   /** A reply is running. */
   running: false,
   /**
@@ -72,10 +76,16 @@ const m = vi.hoisted(() => ({
   /** What the chat's `can-send-change` last said. */
   announced: false,
   /**
-   * The element's `canSend` as 0.13.0 has it: a send would go now (no reply running, nothing holding),
-   * and its `can-send-change`, fired once each time that changes.
+   * Whether the element holds, as 0.13.0 does, keeping a send in an EMPTY box: the page's
+   * `holdReason`, the chat starting again for a new app, a saved chat opening, a message on its way,
+   * or a just-added app's tools being listed.
    */
-  canSend: () => !m.running && !m.chat?.holdReason && !m.listing && !m.opening,
+  holds: () => Boolean(m.chat?.holdReason) || m.starting || m.opening || m.sending || m.listing,
+  /**
+   * The element's `canSend` as 0.13.0 has it: a send would go now (no reply running, nothing holding;
+   * the fake chat is always signed in), and its `can-send-change`, fired once each time that changes.
+   */
+  canSend: () => !m.running && !m.holds(),
   announce: () => {
     const canSend = m.canSend();
     if (canSend === m.announced) return;
@@ -83,13 +93,13 @@ const m = vi.hoisted(() => ({
     m.element?.dispatchEvent(new CustomEvent('can-send-change', { detail: { canSend } }));
   },
   /**
-   * The element's own send, as 0.11.0 has it: nothing while a reply runs; while it holds, the text
+   * The element's own send, as 0.13.0 has it: nothing while a reply runs; while it holds, the text
    * fills an EMPTY box and nothing fires; otherwise `before-send`, and it goes unless the page cancels
    * it. It never empties the box: the box empties itself when the user presses Send.
    */
   chatSend: async (text: string) => {
     if (m.running) return;
-    if (m.chat?.holdReason || m.listing || m.opening) {
+    if (m.holds()) {
       if (!m.box) m.box = text;
       return;
     }
@@ -286,6 +296,12 @@ function setOpening(opening: boolean) {
   m.announce();
 }
 
+/** A message the chat took starts or stops being on its way, and the chat says so if that changes `canSend`. */
+function setSending(sending: boolean) {
+  m.sending = sending;
+  m.announce();
+}
+
 /** A reply starts or ends, and the chat says so if that changes `canSend`. */
 function setRunning(running: boolean) {
   m.running = running;
@@ -337,6 +353,8 @@ beforeEach(() => {
   m.box = '';
   m.listing = false;
   m.opening = false;
+  m.sending = false;
+  m.starting = false;
   m.running = false;
   m.dictating = false;
   m.delivered = [];
@@ -889,6 +907,20 @@ describe('AppAssistantWorkspace auto-resume', () => {
     setListing(false);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
     expect(m.send).toHaveBeenCalledTimes(2);
+  });
+
+  test('a released message waits while another message is still on its way, and goes once it is', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    // Something else the chat took is still on its way (say, waiting on the viewer's Buzz permission).
+    setSending(true);
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    await settle(100);
+    expect(m.delivered).toEqual([]);
+    setSending(false);
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
+    await vi.waitFor(() => expect(m.box).toBe(''));
   });
 
   test('🟡 typing in another of the chat’s fields while it resumes leaves no sent copy in the box', async () => {
