@@ -27,6 +27,8 @@ import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
+import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 
 type ResolverBackend = 'backblaze' | 'cloudflare';
 
@@ -118,6 +120,60 @@ function resolveRegistration(args: {
   const parsed = parseKey(args.url);
   if (!parsed.key) return null;
   return { backend: 'cloudflare', s3Path: parsed.key };
+}
+
+/**
+ * Submit a new file's scan workflow to the orchestrator. Failures here are non-fatal:
+ * scanFilesFallbackJob retries the file within 5 minutes since scanRequestedAt is still null. We DO
+ * want them in Axiom though — the inline path is the happy case, and a sustained spike here is the
+ * earliest signal the orchestrator is unreachable.
+ */
+async function submitInlineScan({
+  handler,
+  ...file
+}: {
+  fileId: number;
+  modelVersionId: number;
+  modelId: number;
+  modelType: ModelType;
+  baseModel: string;
+  url: string;
+  handler: 'createFileHandler' | 'updateFileHandler';
+}) {
+  await createModelFileScanRequest({
+    ...file,
+    // Skip pre-flight on inline submission: the file just landed and
+    // storage-resolver may not have finished propagating, so the
+    // pre-flight's 60s retry would block the upload response. If the
+    // file truly is missing, scanFilesFallbackJob will catch it 5 min
+    // later via its own pre-flight and tombstone properly.
+    preflight: false,
+  }).catch((err) => {
+    // Inline path is log-only on failure regardless of code: never
+    // tombstone here. A 'not-found' would only happen if pre-flight had
+    // run, which it didn't. 'transient' is the expected case (orchestrator
+    // outage); fallback job will retry. Inline-path errors stay visible
+    // in Axiom so a sustained spike still surfaces as the earliest
+    // signal the orchestrator is unreachable.
+    const submissionErrorCode =
+      err instanceof ModelFileScanSubmissionError ? err.code : 'transient';
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'model-file-scan',
+        message: `inline scan submission failed in ${handler}`,
+        fileId: file.fileId,
+        modelVersionId: file.modelVersionId,
+        submissionErrorCode,
+        responseStatus: err instanceof ModelFileScanSubmissionError ? err.status : undefined,
+        orchestratorMessages:
+          err instanceof ModelFileScanSubmissionError ? err.orchestratorMessages : undefined,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      },
+      'webhooks'
+    ).catch();
+  });
 }
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
@@ -230,49 +286,14 @@ export const createModelFile = async ({
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);
 
-    // Submit model file scan workflow to orchestrator. Failures here are
-    // non-fatal: scanFilesFallbackJob will retry the file within 5 minutes
-    // since scanRequestedAt is still null. We DO want them in Axiom though —
-    // the inline path is the happy case, and a sustained spike here is the
-    // earliest signal the orchestrator is unreachable.
-    await createModelFileScanRequest({
+    await submitInlineScan({
       fileId: file.id,
       modelVersionId: file.modelVersion.id,
       modelId: file.modelVersion.modelId,
       modelType: file.modelVersion.model.type,
       baseModel: file.modelVersion.baseModel,
       url: createInput.url,
-      // Skip pre-flight on inline submission: the file just landed and
-      // storage-resolver may not have finished propagating, so the
-      // pre-flight's 60s retry would block the upload response. If the
-      // file truly is missing, scanFilesFallbackJob will catch it 5 min
-      // later via its own pre-flight and tombstone properly.
-      preflight: false,
-    }).catch((err) => {
-      // Inline path is log-only on failure regardless of code: never
-      // tombstone here. A 'not-found' would only happen if pre-flight had
-      // run, which it didn't. 'transient' is the expected case (orchestrator
-      // outage); fallback job will retry. Inline-path errors stay visible
-      // in Axiom so a sustained spike still surfaces as the earliest
-      // signal the orchestrator is unreachable.
-      const submissionErrorCode =
-        err instanceof ModelFileScanSubmissionError ? err.code : 'transient';
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'model-file-scan',
-          message: 'inline scan submission failed in createFileHandler',
-          fileId: file.id,
-          modelVersionId: file.modelVersion.id,
-          submissionErrorCode,
-          responseStatus: err instanceof ModelFileScanSubmissionError ? err.status : undefined,
-          orchestratorMessages:
-            err instanceof ModelFileScanSubmissionError ? err.orchestratorMessages : undefined,
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        },
-        'webhooks'
-      ).catch();
+      handler: 'createFileHandler',
     });
 
     // Mark this version as recently mutated so subsequent reads route to the
@@ -313,13 +334,14 @@ export const updateFileHandler = async ({
       isModerator: ctx.user.isModerator,
     });
 
-    // Re-register with storage-resolver when the file was re-uploaded
-    // (e.g. training data re-uploads to B2, or new model uploads to R2),
-    // so downloads resolve to the new path.
+    const { replacedFileId } = result;
+
+    // A re-upload is a new file record (`result.id`), registered with storage-resolver so
+    // downloads resolve to the new path. Registered before the scan below can resolve it.
     const resolved = resolveRegistration({ backend, s3Path, url: updateInput.url });
     if (resolved) {
       await safeRegisterFileLocation({
-        op: 'update',
+        op: replacedFileId ? 'create' : 'update',
         userId: ctx.user.id,
         fileId: result.id,
         modelVersionId: result.modelVersionId,
@@ -330,9 +352,47 @@ export const updateFileHandler = async ({
       });
     }
 
-    ctx.track
-      .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
-      .catch(handleLogError);
+    if (replacedFileId) {
+      ctx.track
+        .modelFile({ type: 'Delete', id: replacedFileId, modelVersionId: result.modelVersionId })
+        .catch(handleLogError);
+      ctx.track
+        .modelFile({ type: 'Create', id: result.id, modelVersionId: result.modelVersionId })
+        .catch(handleLogError);
+      // Links the old record's history to the new one.
+      const ownerId = result.modelVersion.model.userId;
+      ctx.track
+        .entityChanges(
+          diffEntityChanges({
+            entityType: 'ModelFile',
+            entityId: replacedFileId,
+            ownerId,
+            before: { replacedBy: null },
+            after: { replacedBy: result.id },
+            actorRole: resolveActorRole({
+              actorUserId: ctx.user.id,
+              ownerId,
+              isModerator: ctx.user.isModerator,
+            }),
+            reason: 'new-upload',
+          })
+        )
+        .catch(handleLogError);
+
+      await submitInlineScan({
+        fileId: result.id,
+        modelVersionId: result.modelVersionId,
+        modelId: result.modelVersion.modelId,
+        modelType: result.modelVersion.model.type,
+        baseModel: result.modelVersion.baseModel,
+        url: result.url,
+        handler: 'updateFileHandler',
+      });
+    } else {
+      ctx.track
+        .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
+        .catch(handleLogError);
+    }
 
     await preventModelVersionLag(result.modelVersion.modelId, result.modelVersionId);
 

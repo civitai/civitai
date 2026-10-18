@@ -10,6 +10,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   ModelFileCreateInput,
+  ModelFileMetadata,
   ModelFileUpdateInput,
   RecentTrainingDataInput,
 } from '~/server/schema/model-file.schema';
@@ -26,13 +27,14 @@ import {
   ModelHashType,
   ModelStatus,
   ModelUploadType,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
-import { prepareFile, unscannedFile } from '~/utils/file-helpers';
+import { prepareFile } from '~/utils/file-helpers';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -183,90 +185,208 @@ export async function updateFile({
 }: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
   const modelFile = await dbWrite.modelFile.findUnique({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
-    select: {
-      id: true,
-      url: true,
-      metadata: true,
-      modelVersionId: true,
-      sizeKB: true,
-      modelVersion: { select: { modelId: true } },
-    },
+    select: replaceableFileSelect,
   });
   if (!modelFile) throw throwNotFoundError();
 
-  // If URL is changing, capture the old one for S3 cleanup
-  const oldUrl = inputData.url && inputData.url !== modelFile.url ? modelFile.url : undefined;
-
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
-  // CAS guard on URL changes: only apply if the row's url is still what we read.
-  // Prevents two concurrent URL-changing updateFile calls from both scheduling a
-  // delete of the same captured `oldUrl`. Pure-metadata updates skip the guard
-  // so they aren't starved by url-change races.
-  const updateResult = await dbWrite.modelFile.updateMany({
-    where: oldUrl ? { id, url: modelFile.url } : { id },
-    data: {
-      ...inputData,
-      metadata,
-      // New bytes behind the row: the old scan results describe the old object, so put the file
-      // back in the scan fallback job's queue as if it were a fresh upload.
-      ...(oldUrl && { ...unscannedFile, rawScanResult: Prisma.JsonNull, exists: null }),
-    },
-  });
 
-  // CAS lost: another writer swapped the URL between findUnique and updateMany.
-  // Surface the conflict instead of silently returning success — the caller
-  // needs to know their write did NOT apply. Skip the cache bust too, since
-  // we didn't change anything that would invalidate it.
-  if (oldUrl && updateResult.count === 0) {
-    throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
-  }
+  if (inputData.url && inputData.url !== modelFile.url)
+    return replaceFileContent({
+      file: modelFile,
+      input: { ...inputData, url: inputData.url, metadata },
+      userId,
+      isModerator,
+    });
 
+  await dbWrite.modelFile.updateMany({ where: { id }, data: { ...inputData, metadata } });
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
-  // The orchestrator resolves a version's files by AIR and caches what it resolved, and
-  // resourceDataCache holds the version's coverage for an hour; both still describe the old object.
-  // Logged, not thrown: the update itself has landed.
-  if (oldUrl) {
-    await Promise.all([
-      resourceDataCache.bust([modelFile.modelVersionId]),
-      bustOrchestratorModelCache(modelFile.modelVersionId),
-    ]).catch((error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'model-file-url-change',
-        message: `Failed to bust resource caches for file ${id}`,
-        error,
-      }).catch(() => undefined)
-    );
-  }
-
-  // Clean up old S3 object after DB update succeeds (best-effort).
-  // Only fires when we actually swapped the URL on this call — pure-metadata
-  // updates have no oldUrl to clean up. Terminal .catch on the chain so an
-  // Axiom-side rejection can't leak as an unhandled rejection in this
-  // fire-and-forget path. The refcount check inside deleteModelFileObject is
-  // the load-bearing safety: it skips the delete if any other ModelFile row
-  // still references the URL.
-  if (oldUrl) {
-    deleteModelFileObject(oldUrl)
-      .catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'model-file-delete-s3-object',
-          message: `Failed to delete old S3 object for file ${id}`,
-          error,
-        })
-      )
-      .catch(() => {});
-  }
-
   // Merge committed updates back into the snapshot so the returned record
-  // reflects post-update state (e.g. `sizeKB` on a re-upload). `updateMany`
-  // doesn't return the updated row, and we don't want a second round-trip.
+  // reflects post-update state. `updateMany` doesn't return the updated row,
+  // and we don't want a second round-trip.
   return {
     ...modelFile,
     metadata,
     ...(inputData.sizeKB !== undefined ? { sizeKB: inputData.sizeKB } : {}),
+    replacedFileId: undefined as number | undefined,
+  };
+}
+
+const replaceableFileSelect = {
+  id: true,
+  name: true,
+  overrideName: true,
+  url: true,
+  type: true,
+  visibility: true,
+  metadata: true,
+  modelVersionId: true,
+  sizeKB: true,
+  modelVersion: {
+    select: {
+      modelId: true,
+      baseModel: true,
+      status: true,
+      trainingStatus: true,
+      model: { select: { type: true, userId: true } },
+    },
+  },
+} satisfies Prisma.ModelFileSelect;
+
+type ReplaceableFile = Prisma.ModelFileGetPayload<{ select: typeof replaceableFileSelect }>;
+
+// A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
+// new version. Unpublished counts, since publishing it again brings back what it had.
+const contentEditableVersionStatuses: ModelStatus[] = [ModelStatus.Draft, ModelStatus.Training];
+
+// A running training workflow writes its results back to the training-data row by id, so that
+// row must still exist when the run reports in.
+const runningTrainingStatuses: TrainingStatus[] = [
+  TrainingStatus.Submitted,
+  TrainingStatus.Processing,
+  TrainingStatus.Paused,
+];
+
+/**
+ * A new upload behind an existing file becomes a new file record: the old row (and its hashes) is
+ * deleted and a new one created in its place, unscanned, so nothing recorded about the old object
+ * carries over to the new one.
+ */
+async function replaceFileContent({
+  file,
+  input,
+  userId,
+  isModerator,
+}: {
+  file: ReplaceableFile;
+  input: Omit<ModelFileUpdateInput, 'id' | 'modelVersionId' | 'backend' | 's3Path'> & {
+    url: string;
+  };
+  userId: number;
+  isModerator?: boolean;
+}) {
+  if (!contentEditableVersionStatuses.includes(file.modelVersion.status))
+    throw throwBadRequestError(
+      'This version has been published. Upload the new file as a new version.'
+    );
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus &&
+    runningTrainingStatuses.includes(file.modelVersion.trainingStatus)
+  )
+    throw throwBadRequestError(
+      'Training is still running. Wait for it to finish before replacing the training data.'
+    );
+
+  const { overrideName, ...fields } = input;
+  const prepared = prepareFile({
+    name: fields.name ?? file.name,
+    url: fields.url,
+    sizeKB: fields.sizeKB ?? file.sizeKB,
+    type: (fields.type ?? file.type) as ModelFileType,
+    visibility: fields.visibility ?? file.visibility,
+    metadata: (fields.metadata ?? file.metadata ?? {}) as ModelFileMetadata,
+  });
+
+  // Other versions can link this file as a component (settings.fileId); without a repoint they
+  // would lose it. Only a file that could be a component can be linked, which keeps the unindexed
+  // RecommendedResource scan off LoRA epochs and training data.
+  const linkable =
+    (componentTypeFromModelType(file.modelVersion.model.type) ??
+      accessoryComponentType(file.type)) != null;
+  const fileName = prepared.name;
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    const removed = await tx.modelFile.deleteMany({
+      where: {
+        id: file.id,
+        url: file.url,
+        modelVersion: { model: !isModerator ? { userId } : undefined },
+      },
+    });
+    // Another writer replaced or removed the file since we read it.
+    if (removed.count === 0)
+      throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
+
+    const row = await tx.modelFile.create({
+      data: {
+        ...prepared,
+        overrideName: overrideName !== undefined ? overrideName : file.overrideName,
+        rawScanResult: Prisma.JsonNull,
+        modelVersionId: file.modelVersionId,
+      },
+      select: { id: true },
+    });
+
+    const linkedFrom = linkable
+      ? await tx.$queryRaw<{ sourceId: number | null }[]>`
+          UPDATE "RecommendedResource"
+          SET settings = settings || jsonb_build_object(
+            'fileId', ${row.id}::int,
+            'fileName', ${fileName}::text
+          )
+          WHERE "resourceId" = ${file.modelVersionId}::int
+            AND settings->>'isLinkedComponent' = 'true'
+            AND settings->>'fileId' = ${String(file.id)}
+          RETURNING "sourceId"
+        `
+      : [];
+
+    return { id: row.id, linkedSourceIds: linkedFrom.flatMap((r) => r.sourceId ?? []) };
+  });
+
+  await deleteFilesForModelVersionCache(file.modelVersionId);
+
+  // The orchestrator resolves a version's files by AIR and caches what it resolved, and
+  // resourceDataCache holds the version's coverage (and linked components) for an hour; all of it
+  // still describes the old file. Logged, not thrown: the replacement has landed.
+  await Promise.all([
+    resourceDataCache.bust([file.modelVersionId, ...created.linkedSourceIds]),
+    bustOrchestratorModelCache(file.modelVersionId),
+  ]).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-url-change',
+      message: `Failed to bust resource caches for file ${file.id}`,
+      error,
+    }).catch(() => undefined)
+  );
+
+  // Best-effort, after commit. The refcount check inside deleteModelFileObject skips the delete if
+  // any other ModelFile row still references the url.
+  deleteModelFileObject(file.url)
+    .catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-s3-object',
+        message: `Failed to delete old S3 object for file ${file.id}`,
+        error,
+      })
+    )
+    .catch(() => undefined);
+  deregisterFileLocationsByFile([file.id])
+    .catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-deregister-file-locations',
+        message: `Failed to deregister file locations for file ${file.id}`,
+        error,
+      })
+    )
+    .catch(() => undefined);
+
+  return {
+    ...file,
+    id: created.id,
+    name: prepared.name,
+    overrideName: overrideName !== undefined ? overrideName : file.overrideName,
+    url: prepared.url,
+    type: prepared.type,
+    visibility: prepared.visibility ?? file.visibility,
+    sizeKB: prepared.sizeKB,
+    metadata: prepared.metadata as Prisma.JsonObject,
+    replacedFileId: file.id as number | undefined,
   };
 }
 
