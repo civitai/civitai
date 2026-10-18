@@ -904,6 +904,21 @@ describe('AppAssistantWorkspace auto-resume', () => {
     }
   );
 
+  test('🟡 a released copy the chat parked before the user began dictating still goes, and leaves the box to what they say', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.listing = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    m.recording = true;
+    m.listing = false;
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
+    await vi.waitFor(() => expect(m.box).toBe(''));
+    endDictation('and a timer');
+    expect(m.box).toBe('and a timer');
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+  });
+
   test('NEGATIVE CONTROL: a held message given back when the user is not dictating goes into the empty box', async () => {
     await openPaused();
     m.deferOpen = true;
@@ -941,6 +956,15 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await expect.element(second).toBeVisible();
     await expect.element(first).toBeVisible();
     expect(m.box).toBe('my words');
+    // Each notice's buttons say which message they act on.
+    for (const [notice, text] of [
+      [first, 'Add a dark mode'],
+      [second, 'Looks good — build it.'],
+    ] as const)
+      for (const name of ['Put it back', 'Dismiss'])
+        await expect
+          .element(notice.getByRole('button', { name }))
+          .toHaveAccessibleDescription(`This message was not sent: “${text}”`);
 
     await first.getByRole('button', { name: 'Put it back' }).click();
     expect(m.box).toBe('Add a dark mode\n\nmy words');
@@ -1081,7 +1105,18 @@ describe('AppAssistantWorkspace Build it', () => {
     card.remove();
   });
 
-  test('🟡 Build it pressed while the user dictates is offered back, not joined to what they say', async () => {
+  test('🟡 Build it pressed while the user dictates goes straight out when the chat does not hold', async () => {
+    const card = await checklistCard();
+    m.recording = true;
+    await buildIt().click();
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
+    expect(m.box).toBe('');
+    await settle(100);
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+    card.remove();
+  });
+
+  test('🟡 Build it pressed while the user dictates and the chat holds is offered back, not joined to what they say', async () => {
     const card = await checklistCard();
     m.recording = true;
     m.listing = true;

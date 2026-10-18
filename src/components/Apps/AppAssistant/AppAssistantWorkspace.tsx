@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Center,
+  CloseButton,
   Group,
   Loader,
   Paper,
@@ -111,8 +112,9 @@ export interface Release {
  * chat put in the box is the user's once they change it: nothing more is sent. An untouched copy is
  * cleared once the message went. Resolves false when the message neither went nor reached the box —
  * the user sent something else first, the chat or app changed, or the tries ran out — so it would
- * otherwise be lost without a word. Nothing is sent while the user dictates: the box then reads empty,
- * and a copy the chat put in it would be joined to what they said.
+ * otherwise be lost without a word. While the user dictates, nothing is sent until a copy is in the box:
+ * the box is hidden then, and a copy the chat put in it would be joined to what they said. The tries
+ * are not stretched for dictation, so one that outlasts them leaves the message unsent.
  */
 export async function releaseHeld(
   chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
@@ -128,7 +130,7 @@ export async function releaseHeld(
   let parked = false;
   for (let i = 0; i < RELEASE_TRIES && live(); i++) {
     if (parked && box() !== text) break;
-    if (!dictating()) {
+    if (parked || !dictating()) {
       const empty = !box();
       await chatRef.current?.send(text);
       if (!live()) break;
@@ -373,13 +375,16 @@ export function AppAssistantWorkspace({
     },
     [boxText, dictating, offerBack]
   );
-  // Build it: a send the chat could not take now (a reply still ending, or a hold), or one pressed while
-  // the user dictates, comes back to the user to send instead, so it is never pressed twice.
+  // Build it: a send the chat could not take now (a reply still ending, or a hold) comes back to the
+  // user to send instead, so it is never pressed twice.
   const buildWent = useRef(false);
   const buildRef = useRef(async () => {
     buildWent.current = false;
-    if (!dictating()) await chatRef.current?.send(BUILD_IT_MESSAGE);
+    const empty = !boxText();
+    await chatRef.current?.send(BUILD_IT_MESSAGE);
     if (buildWent.current) return;
+    // A copy the chat put in a box hidden by dictation would be joined to what the user says.
+    if (empty && dictating() && boxText() === BUILD_IT_MESSAGE) await chatRef.current?.compose('');
     giveBack(BUILD_IT_MESSAGE);
     gate.answered();
   });
@@ -582,15 +587,7 @@ export function AppAssistantWorkspace({
       )}
       {!switcherOpen && <AppError error={appsError(sandboxes)} />}
       {unsent.map(({ id, text }) => (
-        <Alert
-          key={id}
-          color="yellow"
-          variant="light"
-          className="shrink-0"
-          withCloseButton
-          closeButtonLabel="Dismiss"
-          onClose={() => dismissUnsent(id)}
-        >
+        <Alert key={id} color="yellow" variant="light" className="shrink-0">
           <Group justify="space-between" wrap="nowrap" gap="sm">
             <Text id={`${unsentId}-${id}`} size="sm" className="min-w-0">
               This message was not sent: “{text}”
@@ -607,6 +604,12 @@ export function AppAssistantWorkspace({
             >
               Put it back
             </Button>
+            <CloseButton
+              className="min-h-11 min-w-11 shrink-0"
+              aria-label="Dismiss"
+              aria-describedby={`${unsentId}-${id}`}
+              onClick={() => dismissUnsent(id)}
+            />
           </Group>
         </Alert>
       ))}

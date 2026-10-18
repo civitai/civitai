@@ -35,8 +35,8 @@ export function messageBoxText(chat: Pick<CivitaiChat, 'renderRoot'> | null): st
 }
 
 /**
- * Whether the user is dictating: the message box is hidden under the recording or transcribing bar
- * and reads empty, but what they said goes into it when dictation ends, joined to whatever is in it.
+ * Whether the user is dictating: the message box is hidden under the recording or transcribing bar,
+ * and what they said goes into it when dictation ends, joined to whatever it holds by then.
  */
 export function isDictating(chat: Pick<CivitaiChat, 'renderRoot'> | null): boolean {
   const box = composer(chat);
