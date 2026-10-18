@@ -61,7 +61,9 @@ export function toResourceData(r: GenerationResource): ResourceData {
   return {
     id: r.id,
     baseModel: r.baseModel,
-    model: { type: r.model?.type as ResourceData['model']['type'] },
+    // model.id rides along in form state (the output schema drops it): families key
+    // behaviour off the model, e.g. MOSS Image's turbo LoRA defaults
+    model: { id: r.model?.id, type: r.model?.type } as ResourceData['model'],
     strength: r.strength,
     trainedWords: r.trainedWords && r.trainedWords.length > 0 ? r.trainedWords : undefined,
   };

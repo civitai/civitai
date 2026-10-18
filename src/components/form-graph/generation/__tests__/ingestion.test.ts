@@ -336,3 +336,25 @@ describe('replay null params (QueueItem shape)', () => {
     expect(state(store).seed).toBe(42);
   });
 });
+
+// Remix rebuilds each resource through `toResourceData`; MOSS Image keys its turbo
+// defaults off `model.id`, so a remix that dropped it would leave turbo values behind
+// once the LoRA is removed.
+describe('applyGenerationData: MOSS Image turbo LoRA remix', () => {
+  it('a remixed turbo LoRA is recognised, so removing it restores the standard values', () => {
+    const store = makeStore();
+    applyGenerationData(store, {
+      runType: 'remix',
+      params: { workflow: 'txt2img', ecosystem: 'MossImage', prompt: 'p', steps: 9, cfgScale: 1 },
+      resources: [
+        res({ id: 3409867, model: { id: 2960000, type: 'Checkpoint' }, baseModel: 'MOSS Image' }),
+        res({ id: 3411385, model: { id: 3006599, type: 'LORA' }, baseModel: 'MOSS Image' }),
+      ],
+    } satisfies Payload);
+    expect(state(store)).toMatchObject({ steps: 9, cfgScale: 1 });
+    expect(state(store).resources).toHaveLength(1);
+
+    store.set({ resources: [] });
+    expect(state(store)).toMatchObject({ steps: 25, cfgScale: 3 });
+  });
+});
