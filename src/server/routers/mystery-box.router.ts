@@ -1,13 +1,26 @@
 import {
   getEventMysteryBoxesInput,
   getMysteryBoxOddsPageInput,
+  getMysteryBoxOpeningsInput,
   openMysteryBoxInput,
 } from '~/server/schema/mystery-box.schema';
 import { getMysteryBoxOddsPage } from '~/server/services/mystery-box-odds-page.service';
+import type { ProtectedContext } from '~/server/createContext';
+import {
+  getHeldMysteryBoxes,
+  getMysteryBoxOpenings,
+} from '~/server/services/mystery-box-inventory.service';
 import { getMysteryBoxesForEvent, openMysteryBox } from '~/server/services/mystery-box.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { getRegion } from '~/server/utils/region-blocking';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const inventoryViewer = (ctx: ProtectedContext) => ({
+  userId: ctx.user.id,
+  isModerator: ctx.user.isModerator,
+  mysteryBoxEnabled: ctx.features.mysteryBox,
+  countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
+});
 
 export const mysteryBoxRouter = router({
   getForEvent: protectedProcedure
@@ -45,4 +58,12 @@ export const mysteryBoxRouter = router({
         countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
       })
     ),
+  // The Inventory: every box the caller holds, event or not.
+  getHeld: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .query(({ ctx }) => getHeldMysteryBoxes(inventoryViewer(ctx))),
+  getOpenings: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getMysteryBoxOpeningsInput)
+    .query(({ input, ctx }) => getMysteryBoxOpenings({ ...input, ...inventoryViewer(ctx) })),
 });

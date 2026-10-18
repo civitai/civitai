@@ -22,6 +22,10 @@ const { spies } = vi.hoisted(() => ({
     setData: vi.fn(),
     invalidateBoxes: vi.fn(),
     invalidateHats: vi.fn(),
+    setHeld: vi.fn(),
+    invalidateHeld: vi.fn(),
+    invalidateOpenings: vi.fn(),
+    setCounts: vi.fn(),
     notify: vi.fn(),
     reducedMotion: { value: false },
   },
@@ -35,8 +39,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useUtils: () => ({
         mysteryBox: {
           getForEvent: { setData: spies.setData, invalidate: spies.invalidateBoxes },
+          getHeld: { setData: spies.setHeld, invalidate: spies.invalidateHeld },
+          getOpenings: { invalidate: spies.invalidateOpenings },
         },
         event: { getMyHats: { invalidate: spies.invalidateHats } },
+        user: { checkNotifications: { setData: spies.setCounts } },
       }),
     }
   ),
@@ -55,7 +62,7 @@ vi.mock('@mantine/hooks', async (importOriginal) => ({
 }));
 
 import { useMysteryBoxOpen } from '../useMysteryBoxOpen';
-import type { MysteryBoxView } from '../mystery-box.utils';
+import type { HeldMysteryBox, MysteryBoxSource, MysteryBoxView } from '../mystery-box.utils';
 
 const view = (overrides: Partial<MysteryBoxView> = {}): MysteryBoxView => ({
   boxDefinitionId: 9,
@@ -89,10 +96,18 @@ const opened = (boxItemId = '501') => ({
 let hook: ReturnType<typeof useMysteryBoxOpen>;
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
+let source: MysteryBoxSource = { event: 'birthday2026' };
 function Harness() {
-  hook = useMysteryBoxOpen('birthday2026');
+  hook = useMysteryBoxOpen(source);
   return null;
 }
+
+/** The menu badge's count after every update the hook made to it. */
+const unopenedAfterUpdates = (start: number) =>
+  spies.setCounts.mock.calls.reduce(
+    (counts: { unopenedBoxes: number }, [, update]) => update(counts),
+    { unopenedBoxes: start }
+  ).unopenedBoxes;
 
 /** Applies every `setData` updater the hook made, in order, to a starting view. */
 const viewAfterUpdates = (start: MysteryBoxView) =>
@@ -105,6 +120,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   for (const spy of Object.values(spies)) if (typeof spy === 'function') spy.mockReset();
   spies.reducedMotion.value = false;
+  source = { event: 'birthday2026' };
   container = document.createElement('div');
   root = createRoot(container);
   await act(async () => root.render(React.createElement(Harness)));
@@ -138,6 +154,11 @@ describe('useMysteryBoxOpen', () => {
     expect(spies.invalidateBoxes).not.toHaveBeenCalled();
     for (const [key] of spies.setData.mock.calls) expect(key).toEqual({ event: 'birthday2026' });
     expect(spies.invalidateHats).toHaveBeenCalledWith({ event: 'birthday2026' });
+    // Bought and opened: the menu badge ends where it began, and the Inventory reloads when shown.
+    expect(unopenedAfterUpdates(2)).toBe(2);
+    expect(spies.setHeld).not.toHaveBeenCalled();
+    expect(spies.invalidateHeld).toHaveBeenCalled();
+    expect(spies.invalidateOpenings).toHaveBeenCalled();
 
     expect(hook.phase).toBe('shaking');
     await act(async () => vi.advanceTimersByTime(1000));
@@ -195,6 +216,7 @@ describe('useMysteryBoxOpen', () => {
     });
 
     expect(viewAfterUpdates(view()).heldBoxItemIds).toEqual(['501']);
+    expect(unopenedAfterUpdates(0)).toBe(1);
     expect(hook.phase).toBe('idle');
     expect(spies.notify).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Your box is safe' })
@@ -274,5 +296,98 @@ describe('useMysteryBoxOpen', () => {
     });
 
     expect(spies.open).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useMysteryBoxOpen from the Inventory', () => {
+  const heldView = (overrides: Partial<HeldMysteryBox> = {}): HeldMysteryBox => ({
+    ...view({ listing: null, heldBoxItemIds: ['501', '502'] }),
+    event: 'birthday2026',
+    heldItems: [
+      { id: '501', acquiredAt: new Date('2026-11-01') },
+      { id: '502', acquiredAt: new Date('2026-11-02') },
+    ],
+    ...overrides,
+  });
+
+  beforeEach(async () => {
+    source = { inventory: true };
+    await act(async () => root.render(React.createElement(Harness)));
+  });
+
+  it('opens the box the viewer picked, not the first one held', async () => {
+    spies.open.mockResolvedValue(opened('502'));
+
+    await act(async () => {
+      await hook.openHeld(heldView(), '502');
+    });
+
+    expect(spies.open).toHaveBeenCalledWith({ boxItemId: '502', expectedVersion: 3 });
+  });
+
+  it('falls back to the first held box when the picked one is no longer held', async () => {
+    spies.open.mockResolvedValue(opened('501'));
+
+    await act(async () => {
+      await hook.openHeld(heldView(), '999');
+    });
+
+    expect(spies.open).toHaveBeenCalledWith({ boxItemId: '501', expectedVersion: 3 });
+  });
+
+  it("writes the open into the Inventory's own read and marks the event page's stale", async () => {
+    spies.open.mockResolvedValue(opened('502'));
+
+    await act(async () => {
+      await hook.openHeld(heldView(), '502');
+    });
+
+    expect(spies.setHeld).toHaveBeenCalledTimes(1);
+    const [key, update] = spies.setHeld.mock.calls[0];
+    expect(key).toBeUndefined();
+    const [after] = update([heldView()]) as HeldMysteryBox[];
+    expect(after.heldItems.map((i) => i.id)).toEqual(['501']);
+    expect(after.heldBoxItemIds).toEqual(['501']);
+    expect(after.contents.map((c) => c.left)).toEqual([true, false]);
+    // Written, never refetched: a lagging replica could answer with the box still unopened.
+    expect(spies.invalidateHeld).not.toHaveBeenCalled();
+    expect(spies.setData).not.toHaveBeenCalled();
+    expect(spies.invalidateBoxes).toHaveBeenCalledWith({ event: 'birthday2026' });
+    expect(spies.invalidateHats).toHaveBeenCalledWith({ event: 'birthday2026' });
+    expect(unopenedAfterUpdates(2)).toBe(1);
+  });
+
+  it('never takes the menu badge below zero', async () => {
+    spies.open.mockResolvedValue(opened('502'));
+
+    await act(async () => {
+      await hook.openHeld(heldView(), '502');
+    });
+
+    expect(unopenedAfterUpdates(0)).toBe(0);
+  });
+
+  it('touches no event read for a box with no event', async () => {
+    spies.open.mockResolvedValue(opened('501'));
+
+    await act(async () => {
+      await hook.openHeld(heldView({ event: null }));
+    });
+
+    expect(spies.invalidateBoxes).not.toHaveBeenCalled();
+    expect(spies.invalidateHats).not.toHaveBeenCalled();
+    expect(spies.setHeld).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads the Inventory, not an event page, when the open fails', async () => {
+    spies.open.mockRejectedValue(new Error('This box could not be opened. Please try again.'));
+
+    await act(async () => {
+      await hook.openHeld(heldView(), '502');
+    });
+
+    expect(spies.invalidateHeld).toHaveBeenCalled();
+    expect(spies.invalidateBoxes).not.toHaveBeenCalled();
+    expect(unopenedAfterUpdates(2)).toBe(2);
   });
 });

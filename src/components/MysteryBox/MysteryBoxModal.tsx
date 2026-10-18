@@ -24,9 +24,10 @@ import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
 import { MysteryBoxArt } from '~/components/MysteryBox/MysteryBoxArt';
 import { MysteryBoxOddsBar } from '~/components/MysteryBox/MysteryBoxOddsBar';
-import type { MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
+import type { MysteryBoxSource, MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   boxActions,
+  boxEventOf,
   shelfPricesByCosmetic,
   collectedCount,
   formatChance,
@@ -36,7 +37,7 @@ import {
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
 import type { OpenPhase } from '~/components/MysteryBox/useMysteryBoxOpen';
-import { useMysteryBoxOpen } from '~/components/MysteryBox/useMysteryBoxOpen';
+import { useMysteryBoxOpen, useMysteryBoxViews } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
@@ -54,26 +55,33 @@ const PHASE_MESSAGE: Partial<Record<OpenPhase, string>> = {
  * shared rule the draw uses, over what is left for the viewer, so they move as the viewer collects.
  */
 export default function MysteryBoxModal({
-  event,
+  source,
   boxDefinitionId,
   color,
   start,
+  boxItemId,
 }: {
-  event: string;
+  source: MysteryBoxSource;
   boxDefinitionId: number;
   color: string;
   /** Start buying or opening as soon as it shows. */
   start?: 'buy' | 'open';
+  /** The held box to open, when the viewer picked one. */
+  boxItemId?: string;
 }) {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const utils = trpc.useUtils();
   const [buzzType] = useAvailableBuzz();
-  const { data: views, isLoading } = trpc.mysteryBox.getForEvent.useQuery({ event });
+  const { views, isLoading } = useMysteryBoxViews(source);
   const view = views?.find((v) => v.boxDefinitionId === boxDefinitionId);
-  const opener = useMysteryBoxOpen(event);
+  const event = boxEventOf(source, view);
+  const opener = useMysteryBoxOpen(source);
   // The shelf's own query, to say when a reward is also sold there.
-  const { data: shelf } = trpc.cosmeticShop.getShop.useQuery({ event });
+  const { data: shelf } = trpc.cosmeticShop.getShop.useQuery(
+    { event: event ?? '' },
+    { enabled: !!event }
+  );
   const shelfPrices = useMemo(() => shelfPricesByCosmetic(shelf), [shelf]);
 
   const started = useRef(false);
@@ -81,8 +89,8 @@ export default function MysteryBoxModal({
     if (started.current || !view || !start) return;
     started.current = true;
     if (start === 'buy') void opener.buyAndOpen(view);
-    else void opener.openHeld(view);
-  }, [view, start, opener]);
+    else void opener.openHeld(view, boxItemId);
+  }, [view, start, opener, boxItemId]);
 
   const tiers = useMemo(() => (view ? tierSummaries(view) : []), [view]);
   const actions = view && (
@@ -97,7 +105,7 @@ export default function MysteryBoxModal({
 
   const placeReward = async () => {
     const result = opener.result;
-    if (!result?.cosmeticId) return dialog.onClose();
+    if (!result?.cosmeticId || !event) return dialog.onClose();
     await utils.event.getMyHats.invalidate({ event });
     const myHats = await utils.event.getMyHats.fetch({ event }, { staleTime: 0 });
     const hat = myHats.find(
@@ -151,7 +159,7 @@ export default function MysteryBoxModal({
               result={opener.result}
               shelfPrices={shelfPrices}
               busy={opener.busy}
-              onPlace={placeReward}
+              onPlace={event ? placeReward : undefined}
               onAgain={() => opener.buyAndOpen(view)}
               onDone={opener.reset}
             />
@@ -362,7 +370,8 @@ function OpenStage({
   result: ReturnType<typeof useMysteryBoxOpen>['result'];
   shelfPrices: Record<number, number>;
   busy: boolean;
-  onPlace: () => void;
+  /** Absent for a reward with no event: only event hats are placed on posts. */
+  onPlace?: () => void;
   onAgain: () => void;
   onDone: () => void;
 }) {
@@ -433,9 +442,11 @@ function OpenStage({
               : 'Only in the Mystery Box'}
           </Text>
           <Group gap="xs" justify="center">
-            <Button onClick={onPlace} data-testid="box-place">
-              Put it on a post
-            </Button>
+            {onPlace && (
+              <Button onClick={onPlace} data-testid="box-place">
+                Put it on a post
+              </Button>
+            )}
             {actions.canBuy && view.listing && (
               <Button color="yellow" onClick={onAgain} loading={busy} data-testid="box-again">
                 Open another · {numberWithCommas(view.listing.unitAmount)}

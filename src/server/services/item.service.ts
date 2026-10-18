@@ -43,6 +43,38 @@ export async function countHeldItems(
   return _sum.quantity ?? 0;
 }
 
+/**
+ * How many items a user holds of each definition matching `definition`, by definition id. Counts
+ * rows: one row is one item to open, as `listHeldItems` lists them.
+ */
+export async function countHeldItemsByDefinition(
+  client: Prisma.TransactionClient,
+  { userId, definition }: { userId: number; definition: Prisma.ItemDefinitionWhereInput }
+) {
+  const rows = await client.item.groupBy({
+    by: ['itemDefinitionId'],
+    where: { holderType: USER_HOLDER, holderId: userId, itemDefinition: definition },
+    _count: { _all: true },
+  });
+  return new Map(rows.map((row) => [row.itemDefinitionId, row._count._all]));
+}
+
+/** The items a user holds of these definitions, oldest first. */
+export function listHeldItems(
+  client: Prisma.TransactionClient,
+  { userId, itemDefinitionIds }: { userId: number; itemDefinitionIds: number[] }
+) {
+  return client.item.findMany({
+    where: {
+      holderType: USER_HOLDER,
+      holderId: userId,
+      itemDefinitionId: { in: itemDefinitionIds },
+    },
+    select: { id: true, itemDefinitionId: true, createdAt: true },
+    orderBy: { id: 'asc' },
+  });
+}
+
 /** One held item, with its definition's params, if this user holds it. */
 export function findHeldItemById(
   client: Prisma.TransactionClient,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as MysteryBoxService from '~/server/services/mystery-box.service';
 import type * as MysteryBoxOddsPageService from '~/server/services/mystery-box-odds-page.service';
+import type * as MysteryBoxInventoryService from '~/server/services/mystery-box-inventory.service';
 
 /**
  * The kill switch and region block reach the open here: the router reads the `mysteryBox` flag and
@@ -8,10 +9,12 @@ import type * as MysteryBoxOddsPageService from '~/server/services/mystery-box-o
  * the real procedure builds the arguments.
  */
 
-const { mockOpen, mockRead, mockOddsPage } = vi.hoisted(() => ({
+const { mockOpen, mockRead, mockOddsPage, mockHeld, mockOpenings } = vi.hoisted(() => ({
   mockOpen: vi.fn(async () => ({ replayed: false })),
   mockRead: vi.fn(async () => []),
   mockOddsPage: vi.fn(async () => null),
+  mockHeld: vi.fn(async () => []),
+  mockOpenings: vi.fn(async () => ({ items: [], nextCursor: undefined })),
 }));
 
 vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
@@ -23,6 +26,12 @@ vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
 vi.mock('~/server/services/mystery-box-odds-page.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxOddsPageService>()),
   getMysteryBoxOddsPage: mockOddsPage,
+}));
+
+vi.mock('~/server/services/mystery-box-inventory.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof MysteryBoxInventoryService>()),
+  getHeldMysteryBoxes: mockHeld,
+  getMysteryBoxOpenings: mockOpenings,
 }));
 
 import { mysteryBoxRouter } from '../mystery-box.router';
@@ -236,5 +245,62 @@ describe('mysteryBox.getOddsPage hands the service the flag, the country and the
       'BAD_REQUEST'
     );
     expect(mockOddsPage).not.toHaveBeenCalled();
+  });
+});
+
+describe('the Inventory reads hand the service the flag, the country and the viewer', () => {
+  beforeEach(() => {
+    mockHeld.mockClear();
+    mockOpenings.mockClear();
+  });
+
+  it('getHeld passes the flag, the country, the viewer and their moderator bit', async () => {
+    await caller({ mysteryBox: true }, { 'cf-ipcountry': 'BE' }).getHeld();
+    await caller({ mysteryBox: false }, {}, { user: { ...holder, isModerator: true } }).getHeld();
+    expect(mockHeld.mock.calls.map(([arg]) => arg)).toEqual([
+      { userId: holder.id, isModerator: false, mysteryBoxEnabled: true, countryCode: 'BE' },
+      { userId: holder.id, isModerator: true, mysteryBoxEnabled: false, countryCode: undefined },
+    ]);
+  });
+
+  it('getOpenings passes the same, with the page asked for', async () => {
+    await caller({ mysteryBox: true }, { 'cf-ipcountry': 'BE' }).getOpenings({
+      limit: 5,
+      cursor: '33',
+    });
+    await caller({ mysteryBox: false }).getOpenings({});
+    expect(mockOpenings.mock.calls.map(([arg]) => arg)).toEqual([
+      {
+        limit: 5,
+        cursor: '33',
+        userId: holder.id,
+        isModerator: false,
+        mysteryBoxEnabled: true,
+        countryCode: 'BE',
+      },
+      {
+        limit: 20,
+        userId: holder.id,
+        isModerator: false,
+        mysteryBoxEnabled: false,
+        countryCode: undefined,
+      },
+    ]);
+  });
+
+  it.each([['9223372036854775808'], ['0'], ['abc']])(
+    'getOpenings refuses cursor %s as a bad request, before the service',
+    async (cursor) => {
+      await rejectsWithCode(caller({ mysteryBox: true }).getOpenings({ cursor }), 'BAD_REQUEST');
+      expect(mockOpenings).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses a signed-out caller', async () => {
+    const signedOut = caller({ mysteryBox: true }, {}, { user: null });
+    await rejectsWithCode(signedOut.getHeld(), 'UNAUTHORIZED');
+    await rejectsWithCode(signedOut.getOpenings({}), 'UNAUTHORIZED');
+    expect(mockHeld).not.toHaveBeenCalled();
+    expect(mockOpenings).not.toHaveBeenCalled();
   });
 });
