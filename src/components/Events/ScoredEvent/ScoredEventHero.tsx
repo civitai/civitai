@@ -251,8 +251,14 @@ export function ScoredEventHero({
             </Group>
             <Group gap="lg" wrap="nowrap">
               {!!rank && <Figure label="Rank" value={`#${rank}`} />}
-              <Figure label="Team points" value={<AnimatedCount value={teamPoints ?? 0} />} />
-              <Figure label="Your hats" value={<AnimatedCount value={points ?? 0} />} />
+              <Figure
+                label="Team points"
+                value={<AnimatedCount value={teamPoints ?? 0} abbreviate={false} />}
+              />
+              <Figure
+                label="Your hats"
+                value={<AnimatedCount value={points ?? 0} abbreviate={false} />}
+              />
             </Group>
             {rosterSwitch && <div className="basis-full">{rosterSwitch}</div>}
           </Group>
