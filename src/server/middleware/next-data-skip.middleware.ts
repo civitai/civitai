@@ -17,6 +17,7 @@ type RoutesManifest = {
   staticRoutes?: ManifestRoute[];
   dataRoutes?: ManifestRoute[];
   rewrites?: ManifestRoute[] | { beforeFiles?: unknown[] };
+  i18n?: unknown;
 };
 
 // Next leaves `/_app`, `/_document` and `/_error` out of `staticRoutes`, but lists static API routes.
@@ -33,6 +34,7 @@ function disabled(manifestPath: string, reason: string) {
  * getServerSideProps or getStaticProps. Never throws; any doubt returns an empty set, so every
  * request renders as before. An empty `dataRoutes` is doubt: only a build fills it, and this app has
  * such pages. A `beforeFiles` rewrite runs after the proxy and could send a static path elsewhere.
+ * Without `i18n` the proxy cannot tell another build's data request from this one's (see below).
  */
 function readPropslessStaticPages(manifestPath: string): Set<string> {
   let manifest: RoutesManifest;
@@ -43,6 +45,7 @@ function readPropslessStaticPages(manifestPath: string): Set<string> {
   }
   const dataPages = new Set((manifest.dataRoutes ?? []).map((route) => route.page));
   if (dataPages.size === 0) return disabled(manifestPath, 'no data routes');
+  if (!manifest.i18n) return disabled(manifestPath, 'no i18n config');
   const rewrites = manifest.rewrites;
   if (rewrites && !Array.isArray(rewrites) && (rewrites.beforeFiles?.length ?? 0) > 0) {
     return disabled(manifestPath, 'beforeFiles rewrites present');
@@ -64,9 +67,11 @@ function isPropslessPage(pathname: string) {
 }
 
 // Next's server sets `x-nextjs-data` on every `/_next/data/<any build>/…json` request and strips a
-// client-sent value. It strips the build id from the URL only when it is this server's, so a
-// `nextUrl.buildId` means a tab from another build: its 404 is what makes that tab reload, and this
-// build's manifest says nothing about that tab's pages.
+// client-sent value. A `nextUrl.buildId` means a tab from another build: its 404 is what makes that
+// tab reload, and this build's manifest says nothing about that tab's pages. That id reaches the
+// proxy ONLY with `i18n` configured: Next 16 strips this server's own id, and for any other id the
+// adapter clears it too, but the locale prefix Next adds to the proxy URL makes it re-parse back.
+// Without `i18n` both look identical, hence the `i18n` check in readPropslessStaticPages.
 function isPropslessDataRequest(request: NextRequest) {
   return (
     request.headers.has('x-nextjs-data') &&

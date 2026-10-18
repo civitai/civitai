@@ -23,6 +23,7 @@ type Manifest = {
   staticRoutes?: { page: string; regex: string }[];
   dataRoutes?: { page: string; dataRouteRegex: string }[];
   rewrites?: unknown;
+  i18n?: unknown;
 };
 
 function manifest(overrides: Partial<Manifest> = {}): Manifest {
@@ -33,6 +34,7 @@ function manifest(overrides: Partial<Manifest> = {}): Manifest {
       dataRouteRegex: `^/_next/data/${BUILD_ID}${page}\\.json$`,
     })),
     rewrites: { beforeFiles: [], afterFiles: [], fallback: [] },
+    i18n: { locales: ['en'], defaultLocale: 'en' },
     ...overrides,
   };
 }
@@ -156,6 +158,13 @@ describe('proxy: client-navigation data requests', () => {
   it('is off, warning, when the manifest lists no data routes (Next did not compute them)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { runMiddlewares } = await loadProxy(manifest({ dataRoutes: [] }));
+    expect(isPassthrough(await runMiddlewares(dataRequest('/models')))).toBe(true);
+    expect(warn.mock.calls.filter(([m]) => String(m).includes('[next-data-skip]'))).toHaveLength(1);
+  });
+
+  it('is off, warning, without i18n, where another build’s data request looks like this one’s', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { runMiddlewares } = await loadProxy(manifest({ i18n: undefined }));
     expect(isPassthrough(await runMiddlewares(dataRequest('/models')))).toBe(true);
     expect(warn.mock.calls.filter(([m]) => String(m).includes('[next-data-skip]'))).toHaveLength(1);
   });
