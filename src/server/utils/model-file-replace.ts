@@ -39,11 +39,14 @@ export function assertVersionAcceptsNewUpload(
 }
 
 /**
- * On a trained version, the dataset rules (and the dataset's domain stamp) key on a file being
- * training data, so there a file never becomes, or stops being, training data after it was created.
- * An uploaded model's training data is an ordinary attachment its owner may relabel. A training
- * status counts as trained too: the owner can rewrite `uploadType`, but cannot clear a status a
- * moderator set (Paused, Denied), which is what the dataset delete lock relies on.
+ * Training data is stamped with its provenance when it is uploaded, and a training submit reads that
+ * stamp, so on every version a file only becomes training data by being uploaded as it.
+ *
+ * On a trained version the dataset rules key on a file being training data, so there it never stops
+ * being training data either. An uploaded model's training data is an ordinary attachment its owner
+ * may relabel as something else. A training status counts as trained too: the owner can rewrite
+ * `uploadType`, but cannot clear a status a moderator set (Paused, Denied), which is what the
+ * dataset delete lock relies on.
  */
 export function assertFileTypeChangeAllowed(
   file: {
@@ -52,12 +55,15 @@ export function assertFileTypeChangeAllowed(
   },
   nextType: string | undefined
 ) {
+  if (!nextType || nextType === file.type) return;
+  if (nextType === 'Training Data')
+    throw throwBadRequestError(
+      "A file can't be changed to training data. Upload the dataset as training data instead."
+    );
   if (
+    file.type === 'Training Data' &&
     (file.modelVersion.uploadType === ModelUploadType.Trained ||
-      file.modelVersion.trainingStatus != null) &&
-    nextType &&
-    nextType !== file.type &&
-    (nextType === 'Training Data' || file.type === 'Training Data')
+      file.modelVersion.trainingStatus != null)
   )
     throw throwBadRequestError("A file can't be changed to or from training data.");
 }

@@ -456,12 +456,16 @@ describe('training data once training has started', () => {
 // The dataset rules key on a file being training data, so that can never change after creation.
 describe('a file type change to or from training data on a trained version', () => {
   const REFUSED = "A file can't be changed to or from training data.";
+  const REFUSED_INTO =
+    "A file can't be changed to training data. Upload the dataset as training data instead.";
 
   it('refuses turning a file into training data, with or without a new upload', async () => {
-    await expect(updateFile({ id: 1, type: 'Training Data', userId: 7 })).rejects.toThrow(REFUSED);
+    await expect(updateFile({ id: 1, type: 'Training Data', userId: 7 })).rejects.toThrow(
+      REFUSED_INTO
+    );
     await expect(
       updateFile({ id: 1, url: NEW_URL, type: 'Training Data', userId: 7 })
-    ).rejects.toThrow(REFUSED);
+    ).rejects.toThrow(REFUSED_INTO);
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(tx.modelFile.create).not.toHaveBeenCalled();
   });
@@ -493,14 +497,21 @@ describe('a file type change to or from training data on a trained version', () 
     }
   );
 
-  // The Files tab offers 'Training Data' as an attachment type on uploaded models.
-  it("lets an uploaded model's owner relabel an attachment as training data, and back", async () => {
-    withFile({ uploadType: 'Created' });
-    await expect(updateFile({ id: 1, type: 'Training Data', userId: 7 })).resolves.toMatchObject({
-      id: 1,
-    });
+  // Decision (2026-10-18): a dataset is stamped only when it is uploaded as training data, and the
+  // training submit reads that stamp, so on an uploaded model too a file becomes training data by
+  // upload, never by relabel. Ask before relaxing this for the Files tab.
+  it("refuses relabeling an uploaded model's attachment as training data", async () => {
+    withFile({ uploadType: 'Created', trainingStatus: null });
 
-    withFile({ type: 'Training Data', uploadType: 'Created' });
+    await expect(updateFile({ id: 1, type: 'Training Data', userId: 7 })).rejects.toThrow(
+      REFUSED_INTO
+    );
+    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets an uploaded model's owner relabel training data as another type", async () => {
+    withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus: null });
+
     await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).resolves.toMatchObject({ id: 1 });
   });
 });
