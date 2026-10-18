@@ -37,6 +37,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 
 import { openMysteryBox } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
+import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -113,21 +114,7 @@ const p2002 = () =>
     clientVersion: 'test',
   });
 
-const pgError = (code: string) =>
-  new Prisma.PrismaClientKnownRequestError('Raw query failed', {
-    code: 'P2010',
-    clientVersion: 'test',
-    meta: { code },
-  });
-const lockTimeout = () => pgError('55P03');
-// A model query carries no code: the engine names the Postgres error in its message, as on a dev
-// database for a findMany cancelled by lock_timeout.
-const modelQueryError = (code: string) =>
-  new Prisma.PrismaClientUnknownRequestError(
-    `Error occurred during query execution:
-ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-    { clientVersion: 'test' }
-  );
+const lockTimeout = () => rawQueryError('55P03');
 
 const definition = (id: number) => {
   if (id === world.box.id) return { ...world.box, cosmeticId: null };
@@ -711,7 +698,7 @@ describe('refusals keep the box', () => {
 
   it('another database error under the lock is not answered as busy', async () => {
     world.onLock = () => {
-      throw pgError('40P01');
+      throw rawQueryError('40P01');
     };
     const error = await open().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);

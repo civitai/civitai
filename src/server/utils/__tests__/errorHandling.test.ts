@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { describe, it, expect } from 'vitest';
 import { isClientAbortError, isPrismaLockTimeout } from '~/server/utils/errorHandling';
 import { FETCH_DOCUMENTS_TIMEOUT_MESSAGE } from '~/server/meilisearch/client';
+import { LOCK_TIMEOUT_SHAPES_OBSERVED_ON, modelQueryError } from '~/test-utils/prismaLockTimeout';
 
 describe('isClientAbortError', () => {
   it('classifies a bare client AbortError (REST/Meili fetch path)', () => {
@@ -85,27 +86,26 @@ describe('isPrismaLockTimeout', () => {
       meta,
     });
 
-  // The engine's message for a findMany cancelled by lock_timeout on a dev database.
-  const unknown = (code: string) =>
-    new Prisma.PrismaClientUnknownRequestError(
-      `Error occurred during query execution:
-ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-      { clientVersion: 'test' }
-    );
-
   it('matches a raw query cancelled with 55P03', () => {
     expect(isPrismaLockTimeout(known('P2010', { code: '55P03' }))).toBe(true);
   });
 
+  // Upgrading Prisma? Cancel a model query and a raw query with lock_timeout on a dev database,
+  // compare the errors with ~/test-utils/prismaLockTimeout, fix isPrismaLockTimeout if they moved,
+  // then update the version there. A mismatch fails silently: busy buyers get a 500 again.
+  it('was matched against the lock timeout shapes of the Prisma version installed', () => {
+    expect(Prisma.prismaVersion.client).toBe(LOCK_TIMEOUT_SHAPES_OBSERVED_ON);
+  });
+
   it('matches a model query cancelled with 55P03', () => {
-    expect(isPrismaLockTimeout(unknown('55P03'))).toBe(true);
+    expect(isPrismaLockTimeout(modelQueryError('55P03'))).toBe(true);
   });
 
   it.each([
     ['another Postgres code on a raw query', known('P2010', { code: '40P01' })],
     ['a raw query failure with no Postgres code', known('P2010')],
     ['another Prisma code carrying 55P03', known('P2002', { code: '55P03' })],
-    ['a model query failing with another Postgres code', unknown('40P01')],
+    ['a model query failing with another Postgres code', modelQueryError('40P01')],
     [
       'a plain error with the driver code',
       Object.assign(new Error('lock timeout'), { code: '55P03' }),

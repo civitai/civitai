@@ -59,6 +59,7 @@ import {
   MYSTERY_BOX_BLOCKED_REGIONS_KEY,
 } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
+import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
 import { PURCHASE_ALREADY_COMPLETED_MESSAGE } from '~/shared/constants/cosmetic-shop.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -150,21 +151,7 @@ const p2002 = () =>
     clientVersion: 'test',
   });
 
-const pgError = (code: string) =>
-  new Prisma.PrismaClientKnownRequestError('Raw query failed', {
-    code: 'P2010',
-    clientVersion: 'test',
-    meta: { code },
-  });
-const lockTimeout = () => pgError('55P03');
-// A model query carries no code: the engine names the Postgres error in its message, as on a dev
-// database for a findMany cancelled by lock_timeout.
-const modelQueryError = (code: string) =>
-  new Prisma.PrismaClientUnknownRequestError(
-    `Error occurred during query execution:
-ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-    { clientVersion: 'test' }
-  );
+const lockTimeout = () => rawQueryError('55P03');
 
 type ContentWhere = {
   boxDefinitionId: number;
