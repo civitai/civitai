@@ -13,6 +13,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { newAppListingScreenshotId } from '~/server/utils/app-block-ids';
+import { isWithinSfwImageCeiling } from '~/server/services/blocks/block-image-upload.logic';
 import {
   MAX_LISTING_SCREENSHOTS,
   validateListingImage,
@@ -1760,8 +1761,11 @@ export type BackfillCandidate = {
   appBlockId: string | null;
   /** The backing AppBlock's stored screenshots (bundle MinIO records), if any. */
   appBlockScreenshots: unknown;
-  /** Existing AppListingScreenshot rows (imageId + order). */
-  screenshots: { imageId: number | null; order: number }[];
+  /**
+   * Existing AppListingScreenshot rows (imageId + order), with each backing Image's current
+   * `nsfwLevel` (null when the Image is gone) — the cover pick reads it.
+   */
+  screenshots: { imageId: number | null; order: number; nsfwLevel?: number | null }[];
 };
 
 export type ScreenshotSourcePlan =
@@ -1810,6 +1814,20 @@ export function chooseScreenshotSource(candidate: BackfillCandidate): Screenshot
     if (bundle.length > 0) return { mode: 'migrate', count: bundle.length };
   }
   return { mode: 'none' };
+}
+
+/**
+ * The backfill's cover pick from EXISTING screenshots: the first whose Image is SFW-eligible
+ * (`isWithinSfwImageCeiling`: unrated or PG/PG-13), never simply the first. `null` ⇒ no cover is set and the card keeps its
+ * placeholder.
+ */
+export function firstSfwEligibleScreenshotId(
+  screenshots: BackfillCandidate['screenshots']
+): number | null {
+  return (
+    screenshots.find((s) => s.imageId != null && isWithinSfwImageCeiling(s.nsfwLevel ?? 0))
+      ?.imageId ?? null
+  );
 }
 
 /**
@@ -1887,13 +1905,17 @@ export async function backfillListingAssets(
       coverId: true,
       appBlockId: true,
       appBlock: { select: { screenshots: true } },
-      screenshots: { select: { imageId: true, order: true }, orderBy: { order: 'asc' } },
+      screenshots: {
+        select: { imageId: true, order: true, image: { select: { nsfwLevel: true } } },
+        orderBy: { order: 'asc' },
+      },
     },
     orderBy: { createdAt: 'desc' },
     ...(typeof limit === 'number' ? { take: limit } : {}),
   })) as unknown as Array<
-    Omit<BackfillCandidate, 'appBlockScreenshots'> & {
+    Omit<BackfillCandidate, 'appBlockScreenshots' | 'screenshots'> & {
       appBlock: { screenshots: unknown } | null;
+      screenshots: { imageId: number | null; order: number; image: { nsfwLevel: number } | null }[];
     }
   >;
 
@@ -1922,7 +1944,11 @@ export async function backfillListingAssets(
       coverId: row.coverId,
       appBlockId: row.appBlockId,
       appBlockScreenshots: row.appBlock?.screenshots ?? null,
-      screenshots: row.screenshots,
+      screenshots: row.screenshots.map((s) => ({
+        imageId: s.imageId,
+        order: s.order,
+        nsfwLevel: s.image?.nsfwLevel ?? null,
+      })),
     };
 
     // A screenshot row whose Image was deleted (imageId → null) does NOT count
@@ -1945,10 +1971,15 @@ export async function backfillListingAssets(
         result.bySource.migrated += plan.count;
         willChange = true;
       }
-      // Cover is derived from the first screenshot; only settable when a
-      // screenshot exists ('existing') or will be migrated ('migrate'). Under
-      // plan 'none' the cover stays null → the card's category-glyph placeholder.
-      if (candidate.coverId == null && plan.mode !== 'none') {
+      // Cover is derived from the first SFW-eligible screenshot; only settable when
+      // one exists ('existing') or will be migrated at an SFW level ('migrate').
+      // Otherwise the cover stays null → the card's category-glyph placeholder.
+      const coverWillBeSet =
+        plan.mode === 'existing'
+          ? firstSfwEligibleScreenshotId(candidate.screenshots) !== null
+          : plan.mode === 'migrate' &&
+            isWithinSfwImageCeiling(nsfwLevelFromContentRating(candidate.contentRating));
+      if (candidate.coverId == null && coverWillBeSet) {
         result.coversSet += 1;
         willChange = true;
       }
@@ -1969,8 +2000,15 @@ export async function backfillListingAssets(
       const derivedNsfwLevel = nsfwLevelFromContentRating(candidate.contentRating);
 
       // 1) Ensure at least one screenshot exists.
+      // The COVER candidate: the first SFW-eligible screenshot, never simply the first one.
+      // Why it matters even though the store gates every image at render: the listing's OWN card
+      // and detail fall back from a hidden cover to the first screenshot the viewer may see
+      // (`gatedListingCoverUrl`), so a mature cover there costs nothing. A sub-listing card's
+      // parent-cover fallback does NOT — it gates the stored cover with no screenshot fallback
+      // (`projectSubListingCard`) — so a mature stored cover would leave those cards coverless for
+      // every viewer who may not see it, where a SFW screenshot was available.
       let firstScreenshotImageId: number | null = hasScreenshots
-        ? candidate.screenshots.find((s) => s.imageId != null)?.imageId ?? null
+        ? firstSfwEligibleScreenshotId(candidate.screenshots)
         : null;
       if (!hasScreenshots) {
         const plan = chooseScreenshotSource(candidate);
@@ -2003,12 +2041,16 @@ export async function backfillListingAssets(
             })),
           });
           result.screenshotsCreated += imageIds.length;
-          firstScreenshotImageId = imageIds[0] ?? null;
+          // Migrated screenshots are all stamped `derivedNsfwLevel`, so either the first one is
+          // SFW-eligible or none is.
+          firstScreenshotImageId = isWithinSfwImageCeiling(derivedNsfwLevel)
+            ? imageIds[0] ?? null
+            : null;
           changed = true;
         }
       }
 
-      // 2) Cover = the first screenshot's Image (mirrors #2838 coverUrl pattern).
+      // 2) Cover = the first SFW-eligible screenshot's Image.
       if (candidate.coverId == null && firstScreenshotImageId != null) {
         await dbWrite.appListing.update({
           where: { id: candidate.id },

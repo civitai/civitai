@@ -164,6 +164,32 @@ describe('coerce — the untrusted-input validation layer', () => {
   });
 });
 
+// 🔴 A listing icon is gated per viewer, per host and at render time on the server; a stored
+// icon url would render later with no gate in front of it (and entries written before that gate
+// hold raw urls). So the store never reads one back and never writes one.
+describe('🔴 a stored icon url is never rendered', () => {
+  it('drops an icon url already sitting in localStorage (written before the media gate)', () => {
+    seedOwned([
+      { id: 'a', blockId: 'gen', slug: 'gen', kind: 'onsite', name: 'Gen', iconUrl: 'raw-r.png' },
+    ]);
+    const [entry] = getRecentlyOpenedApps(OWNER);
+    expect(entry, 'the entry itself must survive — only the icon goes').toEqual({
+      id: 'a',
+      blockId: 'gen',
+      slug: 'gen',
+      kind: 'onsite',
+      name: 'Gen',
+    });
+    expect(resolveRecentApp(entry)).not.toHaveProperty('iconUrl');
+  });
+
+  it('does not persist an icon url handed to the write path', () => {
+    recordRecentlyOpenedApp({ id: 'b', blockId: 'b', name: 'B', iconUrl: 'gated-now.png' }, OWNER);
+    expect(storage.getItem(RECENTLY_OPENED_APPS_KEY)).not.toContain('gated-now.png');
+    expect(getRecentlyOpenedApps(OWNER)).toEqual([{ id: 'b', blockId: 'b', name: 'B' }]);
+  });
+});
+
 describe('🔴 the write gate and the read gate are the SAME gate', () => {
   // The bug this pins: `coerce` accepted `{id, blockId, kind:'offsite'}`, but
   // `resolveRecentApp` requires a `slug` for an off-site entry — so the value

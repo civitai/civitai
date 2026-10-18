@@ -113,13 +113,10 @@ vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
 vi.mock('~/components/Apps/recentlyOpenedAppsStore', () => ({
   recordRecentlyOpenedApp: mockRecordRecent,
 }));
-// Both fail open to their "absent" value on the public path, so a stub that simply
-// resolves is faithful rather than convenient.
+// It fails open to "not beta" on the public path, so a stub that simply resolves is
+// faithful rather than convenient.
 vi.mock('~/server/services/blocks/app-listing-beta.service', () => ({
   readListingBetaBySlugForRender: async () => ({ isBeta: false, betaMessage: null }),
-}));
-vi.mock('~/server/services/blocks/app-listing-icon.service', () => ({
-  readListingIconBySlugForRender: async () => null,
 }));
 // Real-ish host gate: mature (r/x) requires civitai.red.
 vi.mock('~/server/utils/server-domain', () => ({
@@ -560,7 +557,7 @@ describe('the audience-keyed client decisions [REG]', () => {
     // it. `recentsEntryFor` returns the entry or `null`, so the call site has no `!` to
     // invert and the inverted form does not type-check.
     const { recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
-    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool', iconUrl: null };
+    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool' };
     expect(recentsEntryFor({ ...args, audience: 'moderator' })).toBeNull();
     expect(recentsEntryFor({ ...args, audience: 'owner' })).toBeNull();
     expect(recentsEntryFor({ ...args, audience: 'editor' })).toBeNull();
@@ -572,15 +569,12 @@ describe('the audience-keyed client decisions [REG]', () => {
     expect(pub).toMatchObject({ id: 'apb_x', blockId: 'cool-app', kind: 'onsite', hasPage: true });
   });
 
-  it('the recents entry carries the listing icon only when there is one', async () => {
-    // `RecentApp.iconUrl` is OPTIONAL and the store keeps the key only when truthy, so an
-    // absent icon must leave the key OFF rather than write `undefined`.
+  it('the recents entry carries no icon — the store never persists one', async () => {
     const { recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
     const args = { audience: null, appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool' };
-    expect(recentsEntryFor({ ...args, iconUrl: 'https://cdn/i.png' })).toMatchObject({
-      iconUrl: 'https://cdn/i.png',
-    });
-    expect(Object.keys(recentsEntryFor({ ...args, iconUrl: null })!)).not.toContain('iconUrl');
+    const entry = recentsEntryFor(args);
+    expect(entry, 'a public run must still get an entry').not.toBeNull();
+    expect(Object.keys(entry!)).not.toContain('iconUrl');
   });
 
   it('🔴 the two decisions are EXACT COMPLEMENTS across the audience domain', async () => {
@@ -589,7 +583,7 @@ describe('the audience-keyed client decisions [REG]', () => {
     // recents. Enumerated over the audience tuple rather than a hand-written list, so a
     // FOURTH audience added to `PRIVATE_RUN_AUDIENCES` lands here with no coverage gap.
     const { hostSurfaceFor, recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
-    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool', iconUrl: null };
+    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool' };
     const { PRIVATE_RUN_AUDIENCES } = await import('~/shared/constants/block-scope.constants');
     expect(PRIVATE_RUN_AUDIENCES.length).toBeGreaterThan(0);
     for (const a of PRIVATE_RUN_AUDIENCES) {

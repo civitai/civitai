@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 
-import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
@@ -38,12 +37,18 @@ import type {
   ListingCreatorChip,
   ListingDetail,
   ListingDetailKindData,
-  ListingGalleryScreenshot,
   ListingKind,
   ListingRecommendRollup,
   ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import {
+  listingMediaImageSelect,
+  MODERATOR_REVIEW_MEDIA,
+  projectListingMedia,
+  SFW_PUBLIC_MEDIA,
+  type ListingMediaView,
+} from '~/server/services/blocks/listing-media-audience';
 import {
   hydrateSubListingCards,
   PARENT_LINK_TEMPLATE_SQL,
@@ -213,14 +218,11 @@ function safeExternalUrl(url: string | null | undefined): string | null {
 }
 
 /**
- * Build a CDN icon URL from an icon Image row (or null).
- *
- * Thin alias over the shared projection in `listing-media-url.ts` — the author-facing
- * `listMine` read needs the same hop, and two copies is two places to drift a width.
+ * RAW icon / cover URL builders, for the moderator review-queue facts ONLY
+ * ({@link listingQueueFacts}), which must show what is attached. Public card and detail media go
+ * through `projectListingMedia`, which gates each image for the viewer.
  */
 const iconUrl = listingIconUrl;
-
-/** Cover URL = the cover Image, else the first screenshot's Image, else null. */
 const coverUrl = listingCoverUrl;
 
 function creatorChip(
@@ -283,8 +285,10 @@ export const listingHydrateSelect = {
   // The column IS applied in production (verified directly against `public.app_listings`);
   // that is a fact about prod, not about every environment.
   appBlockId: true,
-  icon: { select: { url: true } },
-  cover: { select: { url: true } },
+  // The image columns the per-image visibility decision reads (`listing-media-audience`). They
+  // are consumed server-side by `projectListingMedia`; no DTO field carries a level or a flag.
+  icon: { select: listingMediaImageSelect },
+  cover: { select: listingMediaImageSelect },
   user: { select: { id: true, username: true, image: true } },
   // Projected into the DETAIL DTO only (the header's "Updated: <date>" meta line).
   // Harmless extra column for the card projection, which doesn't surface it.
@@ -316,19 +320,11 @@ export const listingHydrateSelect = {
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
     // would otherwise sort nondeterministically across requests.
     orderBy: [{ order: 'asc' }, { id: 'asc' }],
-    select: { caption: true, image: { select: { url: true } } },
+    select: { caption: true, image: { select: listingMediaImageSelect } },
   },
 } satisfies Prisma.AppListingSelect;
 
 export type HydratedListing = Prisma.AppListingGetPayload<{ select: typeof listingHydrateSelect }>;
-
-/** First screenshot's CDN URL (used as the cover fallback), or null. */
-function firstScreenshotUrl(row: HydratedListing): string | null {
-  for (const s of row.screenshots) {
-    if (s.image?.url) return getEdgeUrl(s.image.url, { width: 1200 });
-  }
-  return null;
-}
 
 function cardKindData(row: HydratedListing): ListingCardKindData {
   if (row.kind === 'offsite') {
@@ -482,13 +478,21 @@ export function listingQueueFacts(listing: ListingQueueFactsSource): ListingQueu
  * `restrictedAudience` is passed IN for the same manual-apply reason AND because it is
  * VIEWER-SCOPED: the caller derives it with `restrictedAudienceForViewer`. It defaults to
  * `null`, so a caller that forgets it discloses nothing.
+ *
+ * 🔴 `media` decides which images reach the card, per image and per request — see
+ * `listing-media-audience.ts`. It defaults to {@link SFW_PUBLIC_MEDIA}, the narrowest public
+ * view, so a caller that forgets it shows LESS, never more.
  */
 export function projectListingCard(
   row: HydratedListing,
   beta: ListingBetaRead = BETA_NOT_SET,
-  restrictedAudience: RestrictedListingAudience | null = null
+  restrictedAudience: RestrictedListingAudience | null = null,
+  media: ListingMediaView = SFW_PUBLIC_MEDIA
 ): ListingCard {
   const recommend = recommendRollup(row.metric);
+  const { iconUrl: cardIconUrl, coverUrl: cardCoverUrl } = projectListingMedia(row, media, {
+    gallery: false,
+  });
   return {
     // Author-declared beta label — resolved by the caller through the manual-apply guard,
     // never selected on `row`. `false` covers BOTH "not in beta" and "the columns are not
@@ -501,8 +505,8 @@ export function projectListingCard(
     tagline: row.tagline ?? null,
     category: row.category ?? null,
     contentRating: row.contentRating ?? null,
-    iconUrl: iconUrl(row.icon),
-    coverUrl: coverUrl(row.cover, firstScreenshotUrl(row)),
+    iconUrl: cardIconUrl,
+    coverUrl: cardCoverUrl,
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
@@ -562,19 +566,6 @@ export function detailKindData(row: DetailKindDataSource): ListingDetailKindData
     // projection (onsiteLiveUrl) so list + detail can never drift.
     liveUrl: onsiteLiveUrl(row.slug),
   };
-}
-
-/** Ordered gallery — screenshots whose backing Image still exists. */
-function galleryScreenshots(row: HydratedListing): ListingGalleryScreenshot[] {
-  const out: ListingGalleryScreenshot[] = [];
-  for (const s of row.screenshots) {
-    // A row whose Image was deleted (imageId → null via onDelete: SetNull) must
-    // NOT render as a blank tile. The select already filters imageId != null, but
-    // guard defensively so a null-image row can never reach the wire.
-    if (!s.image?.url) continue;
-    out.push({ url: getEdgeUrl(s.image.url, { width: 1200 }), caption: s.caption ?? null });
-  }
-  return out;
 }
 
 /**
@@ -655,14 +646,17 @@ export async function getListingPreviewForReview(args: {
     isModerator: true,
   });
   return {
-    card: projectListingCard(row, beta, restrictedAudience),
+    // 🔴 MODERATOR_REVIEW_MEDIA: the reviewer sees what is attached — including media the
+    // public gate would hide (still scanning, flagged, above the rating) — so it can be rejected.
+    card: projectListingCard(row, beta, restrictedAudience, MODERATOR_REVIEW_MEDIA),
     detail: projectListingDetail(
       row,
       [],
       sourceRepo.value,
       beta,
       row.connectRequestedScopes,
-      restrictedAudience
+      restrictedAudience,
+      MODERATOR_REVIEW_MEDIA
     ),
   };
 }
@@ -712,9 +706,12 @@ export function projectListingDetail(
    */
   connectRequestedScopes: number | null = null,
   /** Viewer-scoped — see `projectListingCard`. `null` by default: discloses nothing. */
-  restrictedAudience: RestrictedListingAudience | null = null
+  restrictedAudience: RestrictedListingAudience | null = null,
+  /** Per-image media gate — see `projectListingCard`. Defaults to the narrowest public view. */
+  media: ListingMediaView = SFW_PUBLIC_MEDIA
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
+  const gallery = projectListingMedia(row, media);
   return {
     restrictedAudience,
     // Author-declared beta label + note. Passed IN for the SAME manual-apply reason as
@@ -739,8 +736,8 @@ export function projectListingDetail(
     description: row.description ?? null,
     category: row.category ?? null,
     contentRating: row.contentRating ?? null,
-    iconUrl: iconUrl(row.icon),
-    coverUrl: coverUrl(row.cover, firstScreenshotUrl(row)),
+    iconUrl: gallery.iconUrl,
+    coverUrl: gallery.coverUrl,
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
@@ -755,7 +752,7 @@ export function projectListingDetail(
     // (`validateRepositoryUrl`), so what reaches the wire is always
     // `https://<allowlisted-host>/<owner>/<repo>`.
     sourceRepoUrl: sourceRepoUrl ?? null,
-    screenshots: galleryScreenshots(row),
+    screenshots: gallery.screenshots,
     kindData: detailKindData(row),
     // Pre-launch permission disclosure. IDENTICAL projection to the one
     // `BlockRegistry.getAppDetail` already ships for the same purpose — the
@@ -1564,6 +1561,13 @@ export async function listAvailableListings(
   // and the read could never reach the response (the anonymous `/apps` grid and every public
   // REST page). A signed-in viewer on the same floor still needs it — they may OWN a row.
   const viewer = opts.viewer ?? ANONYMOUS_LISTING_VIEWER;
+  // Per-image media gate for every card on this page — see `listing-media-audience.ts`. Built
+  // from the same `redCapable` that keys the id cache above, and applied BELOW it, to the live
+  // hydration: the cache never holds media, so it cannot serve one host's media to the other.
+  const media: ListingMediaView = {
+    kind: 'public',
+    audience: { redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel },
+  };
   const levelCanDisclose = viewer.userId !== null || viewer.isModerator || floor !== 'public';
   const [hydrated, betaById, subListingById, visibilityById] = await Promise.all([
     listingIds.length
@@ -1605,7 +1609,8 @@ export async function listAvailableListings(
             visibilityById.get(row.id)?.visibility ?? null,
             floor,
             viewer
-          )
+          ),
+          media
         )
       );
     }
@@ -1630,6 +1635,8 @@ export async function getListingDetail(
     floor?: ListingAudienceFloor;
     /** The viewer, for `restrictedAudience` only. Defaults to anonymous. */
     viewer?: ListingViewer;
+    /** The viewer's browsing level, for the per-image media gate on a red-capable host. */
+    viewerBrowsingLevel?: number | null;
   } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
@@ -1724,7 +1731,8 @@ export async function getListingDetail(
     // re-applies that same predicate rather than relying on it — so if this gate is ever
     // widened (say, to let an owner open their own restricted listing), who is TOLD the level
     // still stays the owner, moderators and the cohort the level admits.
-    restrictedAudienceForRow(row, level.visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER)
+    restrictedAudienceForRow(row, level.visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER),
+    { kind: 'public', audience: { redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel } }
   );
 }
 

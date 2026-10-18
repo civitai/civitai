@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Anchor, Avatar, Box, Group, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Box, Group, Text } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import {
   IconApps,
@@ -28,6 +28,7 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
 import { resolveAppFeedbackRequest } from './appFeedbackChrome';
@@ -682,8 +683,14 @@ export function AppBlockChrome({
           after mount so SSR + first client render match). Excludes the app
           currently being viewed and the whole label+section is omitted when
           there's nothing else to show (a first-time / single-app viewer).
-          Each item shows the app icon (persisted `iconUrl`, else a generic
-          app icon) + name, linking to the full-page run route. */}
+          Each item shows the app's icon + name, linking to the full-page run
+          route. 🔴 THE ICON IS READ LIVE, NEVER FROM THE STORE: the recents
+          store never persists an icon url (`recentlyOpenedAppsStore.ts`) and
+          `selectChromeRecentApps` strips one, so `ChromeRecentAppIcon` gets
+          only the slug and draws the `iconUrl` the server's listing-media gate
+          returned for THIS host and viewer (`appListings.getAppDetail`) — the
+          generic glyph while that loads, on any error, and whenever the gate
+          hides the icon. */}
       {recentApps.length > 0 && (
         <ChromeSurfaceGroup data-testid="app-recently-run">
           <ChromeSurfaceLabel>Recently run</ChromeSurfaceLabel>
@@ -699,13 +706,8 @@ export function AppBlockChrome({
               // note in `ChromeSurface.tsx` for why it is opt-in rather than
               // universal.
               clamp
-              leftSection={
-                r.iconUrl ? (
-                  <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
-                ) : (
-                  <IconApps size={14} stroke={1.5} />
-                )
-              }
+              // `blockId` is the listing slug for an on-site app (`app-listing-mapper.ts`).
+              leftSection={<ChromeRecentAppIcon slug={r.blockId} />}
             >
               {/* The persisted `name` is the SAME publisher-controlled string
                   the trust label above laundered through localStorage — so

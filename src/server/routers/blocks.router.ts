@@ -199,7 +199,7 @@ import {
 // The ONE spelling of "which moderation actions can explain a removal". Value import:
 // it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
 import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
-import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
+import { getRequestDomainColor, isRedCapableHost } from '~/server/utils/server-domain';
 import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
@@ -1866,14 +1866,13 @@ function assertLaunchSlotForCaller(
  * NSFW-APP-RED-ONLY: true when the request is on a red-capable host
  * (civitai.red or a red alias). Drives whether mature (r/x) apps appear in the
  * marketplace listing / featured rail / detail / model-slot reads. Uses
- * `isHostForColor(host, 'red')` (NOT `getRequestDomainColor`, which returns
+ * `isRedCapableHost` — `isHostForColor(host, 'red')` (NOT `getRequestDomainColor`, which returns
  * `blue` for civitai.red). Maturity is a HOST property — independent of
  * moderator status — so even a mod on civitai.com does not see mature apps in
  * these viewer-facing surfaces. Fail-closed: a missing host → false (SFW only).
  */
 function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): boolean {
-  const host = ctx.req?.headers?.host ?? '';
-  return host !== '' && isHostForColor(host, 'red');
+  return isRedCapableHost(ctx.req?.headers?.host);
 }
 
 /**

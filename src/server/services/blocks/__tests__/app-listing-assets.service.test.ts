@@ -1567,6 +1567,94 @@ describe('backfillListingAssets', () => {
     expect(res.processed).toBe(1); // the second row still processed
   });
 
+  // The cover is the one image every host shows first, so the backfill picks the first
+  // SFW-ELIGIBLE screenshot rather than the first one. Levels PG = 1, R = 4; ids 711/712.
+  describe('cover pick', () => {
+    const shot = (imageId: number, order: number, nsfwLevel: number) => ({
+      imageId,
+      order,
+      image: { nsfwLevel },
+    });
+
+    it('skips a mature first screenshot and takes the first SFW one', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ iconId: 900, screenshots: [shot(711, 0, 4), shot(712, 1, 1)] }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({}, makeDeps());
+      expect(res.coversSet).toBe(1);
+      expect(mockDb.appListing.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { coverId: 712 } })
+      );
+    });
+
+    it('sets NO cover when every existing screenshot is mature', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ iconId: 900, screenshots: [shot(711, 0, 4), shot(712, 1, 4)] }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({}, makeDeps());
+      expect(res.coversSet).toBe(0);
+      expect(mockDb.appListing.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ coverId: expect.anything() }) })
+      );
+    });
+
+    it('does not make a migrated screenshot the cover when its stamped level is mature', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ contentRating: 'r', appBlock: { screenshots: [{ key: 'k1' }] } }),
+      ]);
+      const deps = makeDeps();
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({}, deps);
+      // Positive control: the screenshots WERE migrated, so the missing cover is the pick.
+      expect(res.screenshotsCreated).toBe(2);
+      expect(res.coversSet).toBe(0);
+    });
+
+    it('the dry run does not count a cover for a mature migration', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ contentRating: 'r', appBlock: { screenshots: [{ key: 'k1' }] } }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({ dryRun: true }, makeDeps());
+      // Positive control: the dry run did count the migration itself.
+      expect(res.screenshotsCreated).toBe(1);
+      expect(res.coversSet).toBe(0);
+    });
+
+    // An unrated screenshot is eligible for the pick (the same rule as the block upload SFW
+    // ceiling); if it is still unrated at render time the store gate hides it and falls back to
+    // the next visible screenshot, so the pick can never surface it early.
+    it('picks an unrated first screenshot (level 0 or absent) as the cover', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({
+          iconId: 900,
+          screenshots: [{ imageId: 715, order: 0, image: null }, shot(716, 1, 1)],
+        }),
+        row({ id: 'apl_z', iconId: 902, screenshots: [shot(717, 0, 0), shot(718, 1, 1)] }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      await backfillListingAssets({}, makeDeps());
+      expect(mockDb.appListing.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { coverId: 715 } })
+      );
+      expect(mockDb.appListing.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { coverId: 717 } })
+      );
+    });
+
+    it('the dry run counts the same pick', async () => {
+      mockDb.appListing.findMany.mockResolvedValue([
+        row({ iconId: 900, screenshots: [shot(711, 0, 4)] }),
+        row({ id: 'apl_y', iconId: 901, screenshots: [shot(713, 0, 4), shot(714, 1, 1)] }),
+      ]);
+      const { backfillListingAssets } = await import('../app-listing-assets.service');
+      const res = await backfillListingAssets({ dryRun: true }, makeDeps());
+      expect(res.coversSet).toBe(1);
+    });
+  });
+
   it('forwards limit as take to findMany', async () => {
     mockDb.appListing.findMany.mockResolvedValue([]);
     const { backfillListingAssets } = await import('../app-listing-assets.service');

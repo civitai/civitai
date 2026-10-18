@@ -21,7 +21,10 @@ vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };
 });
-vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }));
+vi.mock('~/server/utils/server-domain', () => ({
+  isHostForColor: () => false,
+  isRedCapableHost: () => false,
+}));
 
 import { appListingsRouter } from '../app-listings.router';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
