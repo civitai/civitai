@@ -112,6 +112,7 @@ describe('mysteryBox.open hands the service the flag, the country and the holder
       boxItemId: '501',
       expectedVersion: 3,
       userId: holder.id,
+      isModerator: false,
       mysteryBoxEnabled: true,
       countryCode: 'BE',
     });
