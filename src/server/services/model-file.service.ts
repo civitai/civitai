@@ -30,7 +30,7 @@ import {
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
-import { prepareFile } from '~/utils/file-helpers';
+import { prepareFile, unscannedFile } from '~/utils/file-helpers';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -205,6 +205,9 @@ export async function updateFile({
     data: {
       ...inputData,
       metadata,
+      // New bytes behind the row: the old scan results describe the old object, so put the file
+      // back in the scan fallback job's queue as if it were a fresh upload.
+      ...(oldUrl && { ...unscannedFile, rawScanResult: Prisma.JsonNull, exists: null }),
     },
   });
 
