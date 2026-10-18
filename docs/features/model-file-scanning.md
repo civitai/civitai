@@ -209,7 +209,7 @@ On `'transient'`, the fallback job resets `scanRequestedAt = null` so the next 5
 Its submissions share the scanner pool with new uploads, so each call is bounded:
 
 - Only files whose `virusScanResult` is still `Pending` are selected; pass `force=true` to re-scan settled files.
-- At most 500 files per call, in id order. A capped response carries `capped: true` and `nextAfterId`; pass that back as `afterId` for the next page.
+- At most 500 files per call, in id order. A capped response carries `capped: true` and `nextAfterId`; pass that back as `afterId` for the next page. Page with `wait=false`: a `wait=true` call holds the response until all 500 submissions finish, which can outlast a proxy timeout and lose the cursor. Each call runs its own 5-way loop, so fetch the next page only once the previous one has drained.
 - Submissions run 5 at a time.
 - `all=true` with no other filter selects every non-Training-Data file, still subject to the rules above.
 
