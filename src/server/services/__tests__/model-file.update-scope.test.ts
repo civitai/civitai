@@ -14,6 +14,17 @@ vi.mock('~/server/services/model-version.service', () => ({
 // A url change deletes the old object in the background; keep that off any real bucket.
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: vi.fn(() => Promise.resolve()) }));
 
+const { mockResourceDataBust, mockBustOrchestrator } = vi.hoisted(() => ({
+  mockResourceDataBust: vi.fn(() => Promise.resolve()),
+  mockBustOrchestrator: vi.fn(() => Promise.resolve()),
+}));
+vi.mock('~/server/redis/resource-data.redis', () => ({
+  resourceDataCache: { bust: mockResourceDataBust },
+}));
+vi.mock('~/server/services/orchestrator/models', () => ({
+  bustOrchestratorModelCache: mockBustOrchestrator,
+}));
+
 import { updateFile } from '~/server/services/model-file.service';
 
 const FILE = {
@@ -70,6 +81,29 @@ describe('updateFile', () => {
     await updateFile({ id: 1, url: FILE.url, overrideName: 'renamed', userId: 7 });
 
     expect(writtenData()).toEqual({ url: FILE.url, overrideName: 'renamed', metadata: undefined });
+  });
+
+  // Generation resolves the version by AIR from these caches, which otherwise keep describing the
+  // old object for up to their TTL after the swap.
+  it("busts the version's resource caches when the url changes, and only then", async () => {
+    mockResourceDataBust.mockClear();
+    mockBustOrchestrator.mockClear();
+    await updateFile({ id: 1, url: 'https://example.test/b.safetensors', userId: 7 });
+    expect(mockResourceDataBust).toHaveBeenCalledWith([10]);
+    expect(mockBustOrchestrator).toHaveBeenCalledWith(10);
+
+    mockResourceDataBust.mockClear();
+    mockBustOrchestrator.mockClear();
+    await updateFile({ id: 1, url: FILE.url, overrideName: 'renamed', userId: 7 });
+    expect(mockResourceDataBust).not.toHaveBeenCalled();
+    expect(mockBustOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it('still succeeds when a cache bust fails', async () => {
+    mockResourceDataBust.mockRejectedValueOnce(new Error('redis down'));
+    await expect(
+      updateFile({ id: 1, url: 'https://example.test/c.safetensors', userId: 7 })
+    ).resolves.toMatchObject({ id: 1 });
   });
 
   it('scopes the lookup to the caller unless they are a moderator', async () => {
