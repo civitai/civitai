@@ -238,16 +238,43 @@ describe('buildStorylineLaneList', () => {
     ]);
   });
 
-  it('keeps canon chapters past the end of a capped graph, after it', () => {
+  it('lists the whole canon path, in order, when a capped graph cut some of it', () => {
     const capped = buildStorylineLaneMap({
       rootChapterId: 1,
-      chapters: [1, 2].map(visible),
-      edges: [{ chapterId: 2, parentChapterId: 1, canon: true }],
+      chapters: [1, 2, 9].map(visible),
+      edges: [
+        { chapterId: 2, parentChapterId: 1, canon: true },
+        { chapterId: 9, parentChapterId: 1, canon: false },
+      ],
       truncated: true,
     })!;
     const canon = buildCanonLane([1, 2, 3, 4].map((id, depth) => ({ ...visible(id), depth })));
-    const { rows } = buildStorylineLaneList(capped as never, canon);
+    const { rows, lanes } = buildStorylineLaneList(capped as never, canon);
     expect(rows.map((r) => r.canon?.chapterId)).toEqual([1, 2, 3, 4]);
+    expect(lanes).toBe(1);
+  });
+
+  it('names the branch that joins a chapter moved off lane 0, not the canon end it follows', () => {
+    // Canon ends at 2; branch chapter 3 joins 2's own way on, 5, which the layout puts in lane 0.
+    const joinOff = buildStorylineLaneMap({
+      rootChapterId: 1,
+      chapters: [1, 2, 3, 5].map((id) =>
+        id === 3
+          ? { ...visible(id), post: { ...visible(id).post, username: 'civchan' } }
+          : visible(id)
+      ),
+      edges: [
+        { chapterId: 2, parentChapterId: 1, canon: true },
+        { chapterId: 3, parentChapterId: 1, canon: false },
+        { chapterId: 5, parentChapterId: 2, canon: false },
+        { chapterId: 5, parentChapterId: 3, canon: false },
+      ],
+      truncated: false,
+    })!;
+    expect(joinOff.nodes.find((n) => n.chapterId === 5)?.lane).toBe(0);
+    const { rows } = buildStorylineLaneList(joinOff, canonOf(joinOff, [1, 2]));
+    const join = rows.flatMap((r) => r.bands).find((b) => b.kind === 'rejoin');
+    expect(join).toMatchObject({ chapterId: 5, joining: 1, authors: ['civchan'] });
   });
 
   it('marks the canon forks from the canon path alone while there is no graph', () => {

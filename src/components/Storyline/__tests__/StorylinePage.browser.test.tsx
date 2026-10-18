@@ -529,14 +529,14 @@ describe('StorylinePage', () => {
     renderWithProviders(<StorylinePage id={2} />);
 
     const branch = page.getByRole('list', { name: 'Chapters on other paths' }).getByRole('link', {
-      name: 'Rest in pieces',
+      name: 'Rest in pieces, 29% of readers',
     });
     await expect.element(branch).toHaveAttribute('href', '/images/5600?storylineChapter=160');
     // Each way on from the fork carries its own share of readers: canon chapter 3 its 62%.
     expect(stops()).toEqual([
       '1Chapter 1The cat patchSillycat83',
       '2Chapter 2tehalex86Endorsed',
-      '362%Chapter 3Sillycat83',
+      '362%Chapter 3, 62% of readersSillycat83',
       '4Chapter 4Framedtehalex86Endorsed',
     ]);
     expect(branch.element().textContent).toBe('29%');

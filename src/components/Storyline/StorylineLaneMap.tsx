@@ -253,6 +253,7 @@ function CanonStop({
 }) {
   const post = canon?.post ?? node.chapter.post;
   const link = node.href ? { href: node.href, read: node.read } : null;
+  const share = useForkShare(forkId, node.chapterId);
   return (
     <li
       className="absolute inset-x-0 flex gap-3.5 pl-9"
@@ -285,7 +286,7 @@ function CanonStop({
               fluid
               className="rounded-lg"
             >
-              <ForkShare forkId={forkId} chapterId={node.chapterId} />
+              <ShareChip percent={share} />
             </StorylineThumb>
           </Link>
           <div className="min-w-0 flex-1 pt-0.5">
@@ -304,6 +305,7 @@ function CanonStop({
               className="text-[15px] hover:underline sm:text-[17px]"
             >
               {node.title}
+              {share !== null && <span className="sr-only">, {share}% of readers</span>}
             </Text>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {canon?.post ? (
@@ -350,6 +352,7 @@ function BranchStop({
 }) {
   const { post } = node.chapter;
   const tile = { width: size.branch, height: size.branch * RATIO };
+  const share = useForkShare(forkId, node.chapterId);
   return (
     <li
       className="absolute flex flex-col items-center"
@@ -363,7 +366,7 @@ function BranchStop({
       {node.href ? (
         <Link
           {...storylineChapterLinkProps({ href: node.href, read: node.read })}
-          aria-label={node.name}
+          aria-label={share === null ? node.name : `${node.name}, ${share}% of readers`}
           title={compact ? node.name : undefined}
           className="group flex flex-col items-center text-inherit no-underline"
         >
@@ -372,7 +375,7 @@ function BranchStop({
             style={{ ...tile, borderColor: laneColor(node.lane) }}
           >
             <StorylineThumb image={node.chapter.firstImage} width={size.branch} ratio="4/5">
-              <ForkShare forkId={forkId} chapterId={node.chapterId} />
+              <ShareChip percent={share} />
             </StorylineThumb>
           </span>
           {!compact && (
@@ -465,9 +468,12 @@ function LaneBand({
 }
 
 /** A way on's share of readers at its fork, once enough readers have chosen. */
-function ForkShare({ forkId, chapterId }: { forkId: number | undefined; chapterId: number }) {
+function useForkShare(forkId: number | undefined, chapterId: number) {
   const { data: shares } = useStorylineForkShares(forkId);
-  const share = forkId ? getForkShare(shares, chapterId) : null;
-  if (!share) return null;
-  return <StorylineShareChip percent={share.percent} className="absolute bottom-1 right-1" />;
+  return forkId ? getForkShare(shares, chapterId)?.percent ?? null : null;
+}
+
+function ShareChip({ percent }: { percent: number | null }) {
+  if (percent === null) return null;
+  return <StorylineShareChip percent={percent} className="absolute bottom-1 right-1" />;
 }
