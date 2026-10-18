@@ -9,7 +9,7 @@ const metaObject = Prisma.sql`CASE WHEN jsonb_typeof("meta") = 'object' THEN "me
  * would overwrite concurrent changes to the row. Call it on the grant transaction, after
  * `lockItemHolder`: a write on `dbWrite` takes a second pooled connection while the buyer's lock is held.
  */
-export async function countShopItemSale(tx: RawWriter, shopItemId: number) {
+export async function countShopItemSale(tx: Prisma.TransactionClient, shopItemId: number) {
   await tx.$executeRaw`
     UPDATE "CosmeticShopItem"
     SET "meta" = jsonb_set(

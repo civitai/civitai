@@ -256,23 +256,23 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   });
 
   it('a sold-out refusal corrects only the sale count, not the rest of meta', async () => {
-    // meta has no purchases key, so it disagrees with the one counted purchase.
+    // Oversold, so the counted total (3) differs from the quantity, the id and the buyer; meta has
+    // no purchases key, so it disagrees with the count.
     mocks.shopItemFindUnique.mockResolvedValue({
       ...row,
-      availableQuantity: 1,
-      _count: { purchases: 1 },
+      availableQuantity: 2,
+      _count: { purchases: 3 },
     });
     dbMock.dbWrite.$executeRaw.mockClear();
 
     await expect(purchase()).rejects.toThrow('This cosmetic is out of stock');
 
-    const corrected = dbMock.dbWrite.$executeRaw.mock.calls.filter(
-      ([strings, ...values]: unknown[]) =>
-        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"') &&
-        values.includes(SHOP_ITEM_ID) &&
-        values.includes(1)
-    );
-    expect(corrected).toHaveLength(1);
+    const corrected = dbMock.dbWrite.$executeRaw.mock.calls
+      .filter(([strings]: unknown[]) =>
+        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"')
+      )
+      .map((call: unknown[]) => Prisma.sql(...(call as Parameters<typeof Prisma.sql>)).values);
+    expect(corrected).toEqual([[3, SHOP_ITEM_ID]]);
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
