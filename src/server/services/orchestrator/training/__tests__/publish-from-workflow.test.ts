@@ -330,6 +330,23 @@ describe('createDraftModelFromWorkflow', () => {
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
   });
 
+  // The placeholder's url is an orchestrator blob the scanner can't resolve; left exists=null,
+  // the scan fallback job submits it and only tombstones it after a failed pre-flight. Stamping
+  // virusScanResult Success instead would be a fake scan result, so the fix is exists=false.
+  it('takes the Training Data placeholder out of the scan queue without faking a scan', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+    });
+
+    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 300 },
+      data: { exists: false },
+    });
+  });
+
   it("carries the run's LoRA type as the category tag and trainingDetails.type", async () => {
     await createDraftModelFromWorkflow({
       user: USER,
