@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeApplyProblems,
   isEmptyPlan,
   planPresetApply,
+  presetTitleFor,
 } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import {
   MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
@@ -145,6 +147,40 @@ describe('planPresetApply resources', () => {
   });
 });
 
+describe('planPresetApply limit reporting and preset duplicates', () => {
+  it('reports the first limit hit when images hit different limits', () => {
+    const atTotal = image(
+      1,
+      Array.from({ length: MAX_MANUAL_RESOURCES_PER_IMAGE }, (_, i) => helper(100 + i))
+    );
+    const atCheckpoints = image(
+      2,
+      Array.from({ length: MAX_MANUAL_CHECKPOINTS_PER_IMAGE }, (_, i) =>
+        helper(200 + i, { modelType: ModelType.Checkpoint })
+      )
+    );
+    const plan = planPresetApply(
+      post(),
+      [atTotal, atCheckpoints, image(3)],
+      preset({ resources: [resource(7, ModelType.Checkpoint)] }),
+      NOW
+    );
+    expect(plan.resources).toEqual([{ modelVersionId: 7, imageIds: [3] }]);
+    expect(plan.limitError).toBe(manualResourceLimitMessages.total);
+  });
+
+  it('sends a tag or resource listed twice in the preset only once', () => {
+    const plan = planPresetApply(
+      post(),
+      [image(1)],
+      preset({ tags: ['Cat', 'cat'], resources: [resource(7), resource(7)] }),
+      NOW
+    );
+    expect(plan.tags).toEqual(['Cat']);
+    expect(plan.resources).toEqual([{ modelVersionId: 7, imageIds: [1] }]);
+  });
+});
+
 describe('planPresetApply tags, tools and techniques', () => {
   it('adds only the tags the post lacks, case-insensitively', () => {
     const plan = planPresetApply(
@@ -284,5 +320,45 @@ describe('isEmptyPlan', () => {
       NOW
     );
     expect(isEmptyPlan(plan)).toBe(true);
+  });
+});
+
+describe('presetTitleFor', () => {
+  it('keeps a title the form already shows, saved or not', () => {
+    expect(presetTitleFor('Typed', 'Preset')).toBeNull();
+  });
+
+  it('takes the preset title when the field is empty or blank', () => {
+    expect(presetTitleFor('', 'Preset')).toBe('Preset');
+    expect(presetTitleFor('  ', 'Preset')).toBe('Preset');
+    expect(presetTitleFor(null, 'Preset')).toBe('Preset');
+  });
+});
+
+describe('describeApplyProblems', () => {
+  it('is empty when everything applied', () => {
+    expect(
+      describeApplyProblems({ optionsFailed: false, resourceErrors: [], limitError: null })
+    ).toEqual([]);
+  });
+
+  it('lists each kind of failure, with the first server message for resources', () => {
+    expect(
+      describeApplyProblems({
+        optionsFailed: true,
+        resourceErrors: ['Model not found', 'Other'],
+        limitError: manualResourceLimitMessages.checkpoints,
+      })
+    ).toEqual([
+      'Some tags, tools or techniques could not be added.',
+      '2 resources could not be added: Model not found',
+      `Some images skipped resources: ${manualResourceLimitMessages.checkpoints}`,
+    ]);
+  });
+
+  it('names a single failed resource in the singular', () => {
+    expect(
+      describeApplyProblems({ optionsFailed: false, resourceErrors: ['Nope'], limitError: null })
+    ).toEqual(['1 resource could not be added: Nope']);
   });
 });

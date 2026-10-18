@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
-import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -25,7 +24,7 @@ import {
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import type { ImageMetaProps, ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
+import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -108,7 +107,10 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
-import { getManualResourceLimitError } from '~/utils/manual-image-resources';
+import {
+  canAddManualResources,
+  getManualResourceLimitError,
+} from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import { CacheTTL } from '../common/constants';
@@ -1636,9 +1638,7 @@ export const addResourceToPostImage = async ({
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (
-    images.some((i) => i.type !== MediaType.video && isImageMetaOnSite(i.meta as ImageMetaProps))
-  ) {
+  if (images.some((image) => !canAddManualResources(image))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 

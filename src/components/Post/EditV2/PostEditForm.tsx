@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
+import { presetTitleFor } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import {
   usePendingSave,
   usePostEditParams,
@@ -88,8 +89,8 @@ export function PostEditForm() {
   ]);
   useEffect(() => {
     if (!presetTitle) return;
-    if (!form.getValues('title')?.trim())
-      form.setValue('title', presetTitle, { shouldDirty: true });
+    const title = presetTitleFor(form.getValues('title'), presetTitle);
+    if (title) form.setValue('title', title, { shouldDirty: true });
     setPresetTitle(null);
   }, [presetTitle]); // eslint-disable-line
 

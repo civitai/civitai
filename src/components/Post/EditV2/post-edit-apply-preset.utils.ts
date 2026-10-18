@@ -1,3 +1,4 @@
+import { uniqBy } from 'lodash-es';
 import { expandTitleTemplate } from '~/components/Post/Batch/batch-composer.utils';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import type { PostPresetData } from '~/server/schema/post-preset.schema';
@@ -37,7 +38,7 @@ export function planPresetApply(
   data: PostPresetData,
   now = new Date()
 ): PresetApplyPlan {
-  const tags = data.tags
+  const tags = uniqBy(data.tags, (name) => name.toLowerCase())
     .filter((name) => !post.tags.some((tag) => tag.name.toLowerCase() === name.toLowerCase()))
     .slice(0, Math.max(0, POST_TAG_LIMIT - post.tags.length));
   const tools = images.flatMap((image) =>
@@ -51,10 +52,11 @@ export function planPresetApply(
       .map((technique) => ({ imageId: image.id, techniqueId: technique.id }))
   );
 
+  const presetResources = uniqBy(data.resources, (resource) => resource.id);
   const imageIdsByVersion = new Map<number, number[]>();
   let limitError: string | null = null;
   for (const image of images.filter(canAddManualResources)) {
-    const missing = data.resources
+    const missing = presetResources
       .filter((resource) => !image.resourceHelper.some((r) => r.modelVersionId === resource.id))
       .map((resource) => ({ modelVersionId: resource.id, modelType: resource.model.type }));
     const { accepted, error } = pickAddableResources(image.resourceHelper, missing);
@@ -65,7 +67,7 @@ export function planPresetApply(
         image.id,
       ]);
   }
-  const resources = data.resources.flatMap(({ id }) => {
+  const resources = presetResources.flatMap(({ id }) => {
     const imageIds = imageIdsByVersion.get(id);
     return imageIds ? [{ modelVersionId: id, imageIds }] : [];
   });
@@ -84,6 +86,33 @@ export function planPresetApply(
   }
 
   return { tags, tools, techniques, resources, limitError, title };
+}
+
+/** The post form keeps any title it already shows, saved or not; otherwise it takes the preset's. */
+export function presetTitleFor(current: string | null | undefined, presetTitle: string) {
+  return current?.trim() ? null : presetTitle;
+}
+
+/** What did not apply, for the "Preset partly applied" notification; empty when everything did. */
+export function describeApplyProblems({
+  optionsFailed,
+  resourceErrors,
+  limitError,
+}: {
+  optionsFailed: boolean;
+  resourceErrors: string[];
+  limitError: string | null;
+}) {
+  const problems: string[] = [];
+  if (optionsFailed) problems.push('Some tags, tools or techniques could not be added.');
+  if (resourceErrors.length)
+    problems.push(
+      `${resourceErrors.length} resource${
+        resourceErrors.length > 1 ? 's' : ''
+      } could not be added: ${resourceErrors[0]}`
+    );
+  if (limitError) problems.push(`Some images skipped resources: ${limitError}`);
+  return problems;
 }
 
 export function isEmptyPlan(plan: PresetApplyPlan) {

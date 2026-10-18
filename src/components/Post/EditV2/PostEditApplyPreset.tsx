@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { rememberManuallyAddedModels } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import {
+  describeApplyProblems,
   isEmptyPlan,
   planPresetApply,
 } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
@@ -109,17 +110,14 @@ export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
     const resourceErrors = resourceResults.flatMap((result) =>
       result.error ? [result.error] : []
     );
-    const problems = [
-      (tagResults.some((result) => result.status === 'rejected') ||
+    const problems = describeApplyProblems({
+      optionsFailed:
+        tagResults.some((result) => result.status === 'rejected') ||
         !toolResult ||
-        !techniqueResult) &&
-        'Some tags, tools or techniques could not be added.',
-      resourceErrors.length &&
-        `${resourceErrors.length} resource${
-          resourceErrors.length > 1 ? 's' : ''
-        } could not be added: ${resourceErrors[0]}`,
-      plan.limitError && `Some images skipped resources: ${plan.limitError}`,
-    ].filter(Boolean);
+        !techniqueResult,
+      resourceErrors,
+      limitError: plan.limitError,
+    });
     if (problems.length)
       showErrorNotification({
         title: 'Preset partly applied',
