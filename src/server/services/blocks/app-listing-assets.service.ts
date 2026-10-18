@@ -5,6 +5,8 @@ import { randomUUID } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
+import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -940,7 +942,8 @@ export async function assertListingAssetsScanCleanInTx(
  * Go-live RATING FLOOR for a listing whose media was attached while it was directly
  * asset-editable (a pre-approval `draft` / reset `pending` listing). Re-derives the
  * rating from the current assets' max `nsfwLevel` and returns `declaredRating` RAISED
- * to the derived value when the media is more mature — never lowered.
+ * to the derived value when the media is more mature — never lowered. With `mediaSplit`
+ * the derive reads only the civitai.com-eligible assets (`ratingFloorAssets`).
  *
  * 🔴 The on-site counterpart of the off-site approve's `resolveApprovalContentRating`
  * floor. It upholds the invariant stated at {@link reDeriveContentRatingForModLiveEdit}:
@@ -961,7 +964,8 @@ export async function assertListingAssetsScanCleanInTx(
 export async function resolveListingRatingFloorInTx(
   db: Prisma.TransactionClient,
   appListingId: string,
-  declaredRating: string | null
+  declaredRating: string | null,
+  mediaSplit: boolean
 ): Promise<string | null> {
   const listing = await db.appListing.findUnique({
     where: { id: appListingId },
@@ -980,7 +984,12 @@ export async function resolveListingRatingFloorInTx(
     where: { id: { in: imageIds } },
     select: { nsfwLevel: true },
   });
-  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  const derived = deriveContentRatingFromAssets(
+    ratingFloorAssets(
+      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+      mediaSplit
+    )
+  );
   // Floor: only raise. `nsfwLevelFromContentRating` maps null → the SFW floor, so a null
   // declared rating is raised by any mature asset.
   return nsfwLevelFromContentRating(derived) > nsfwLevelFromContentRating(declaredRating)
@@ -1063,7 +1072,11 @@ export async function getAssetScanStatuses(
  * `kind` reuses the SCHEMA's `ListingAssetKind` (already imported above for the per-kind
  * size caps) rather than restating the union — one slot vocabulary, one declaration.
  */
-export type ListingAssetScanEntry = { kind: ListingAssetKind; status: AssetScanStatus };
+export type ListingAssetScanEntry = {
+  kind: ListingAssetKind;
+  status: AssetScanStatus;
+  nsfwLevel?: number | null;
+};
 
 /** The per-listing asset ids a batched scan read starts from. */
 export type ListingScanSubject = { id: string; iconId: number | null; coverId: number | null };
@@ -1079,8 +1092,8 @@ type ListingScanBatchReader = {
   image: {
     findMany: (args: {
       where: { id: { in: number[] } };
-      select: { id: true; ingestion: true };
-    }) => Promise<{ id: number; ingestion: string | null }[]>;
+      select: { id: true; ingestion: true; nsfwLevel: true };
+    }) => Promise<{ id: number; ingestion: string | null; nsfwLevel: number | null }[]>;
   };
 };
 
@@ -1142,16 +1155,17 @@ export async function loadListingAssetScansBatch(
 
   const images = await db.image.findMany({
     where: { id: { in: [...new Set(tagged.map((t) => t.imageId))] } },
-    select: { id: true, ingestion: true },
+    select: { id: true, ingestion: true, nsfwLevel: true },
   });
-  const ingestionById = new Map(images.map((i) => [i.id, i.ingestion]));
+  const imageById = new Map(images.map((i) => [i.id, i]));
 
   for (const { listingId, kind, imageId } of tagged) {
     // Absent Image row ⇒ no entry (see the doc above), NOT a `pending` invented out of a
     // deleted row — that would make `scanning-media` latch forever on a dead FK.
-    const status = assetScanStatusFromIngestion(ingestionById.get(imageId));
+    const image = imageById.get(imageId);
+    const status = assetScanStatusFromIngestion(image?.ingestion);
     if (status == null) continue;
-    byListing.get(listingId)?.push({ kind, status });
+    byListing.get(listingId)?.push({ kind, status, nsfwLevel: image?.nsfwLevel ?? null });
   }
   return byListing;
 }
@@ -1215,7 +1229,12 @@ async function reDeriveContentRatingForModLiveEdit(
   const images = imageIds.length
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
-  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  const derived = deriveContentRatingFromAssets(
+    ratingFloorAssets(
+      images.map((i) => ({ nsfwLevel: i.nsfwLevel })),
+      await readListingMediaSplit(tx, listing.id)
+    )
+  );
   // RAISE-ONLY floor: bump the stored rating up to `derived` only if derived's
   // ceiling is strictly higher (never auto-lower). `nsfwLevelFromContentRating`
   // maps null → the SFW floor, so a null stored rating is raised by any mature asset.
@@ -1651,6 +1670,8 @@ export type ListingAssetsView = {
   /** True when at least one attached asset is still `pending` a scan — approve is
    *  refused until it lands (surfaced so the mod knows WHY approve is blocked). */
   hasPendingScan: boolean;
+  /** A moderator has granted the live listing (a shadow's parent) a media split. */
+  mediaSplitApproved: boolean;
 };
 
 /**
@@ -1720,6 +1741,11 @@ export async function getListingAssets(
     }),
     hasBlockedAsset: allScans.some((s) => s === 'blocked'),
     hasPendingScan: allScans.some((s) => s === 'pending'),
+    // Display only, so an unreadable decision shows as "not split" rather than failing the read.
+    mediaSplitApproved: await readListingMediaSplit(
+      dbRead,
+      listing.revisionOfId ?? listing.id
+    ).catch(() => false),
   };
 }
 

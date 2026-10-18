@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
+import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -210,6 +211,7 @@ export type ListVersionHistoryInput = z.infer<typeof listVersionHistorySchema>;
 export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
+  mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
 });
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;

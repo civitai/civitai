@@ -40,6 +40,7 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import type { ListingMediaSplitDecision } from '~/shared/utils/listing-media-split';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -2461,6 +2462,8 @@ export type ApproveRequestParams = {
   publishRequestId: string;
   reviewerUserId: number;
   approvalNotes?: string;
+  /** The moderator's media-split decision for the listing this approve publishes; omitted means `rate-mature`. */
+  mediaSplit?: ListingMediaSplitDecision | null;
 };
 
 export type ApproveRequestResult = {
@@ -2660,6 +2663,31 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
         `Details: ${validation.errors.slice(0, 5).join('; ')}`
     );
+  }
+
+  // The listing writes below log and continue on failure, so a split that cannot be granted
+  // is refused here, before anything is written or built.
+  if (params.mediaSplit === 'split') {
+    const target =
+      (await dbWrite.appListing.findFirst({
+        where: draftTransitionWhere({
+          slug: request.slug,
+          submittedByUserId: request.submittedByUserId,
+        }),
+        select: { iconId: true, coverId: true },
+      })) ??
+      (existingAppBlock
+        ? await dbWrite.appListing.findFirst({
+            where: resetRestoreWhere(existingAppBlock.id),
+            select: { iconId: true, coverId: true },
+          })
+        : null);
+    if (!target)
+      throw new Error(
+        'Cannot approve with a media split: this approve publishes no store listing.'
+      );
+    const { assertListingMediaSplitGrantable } = await import('./listing-media-split.service');
+    await assertListingMediaSplitGrantable(dbWrite, target);
   }
 
   let appBlockId: string;
@@ -2949,7 +2977,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         slug: request.slug,
         submittedByUserId: request.submittedByUserId,
       }),
-      select: { id: true },
+      select: { id: true, iconId: true, coverId: true },
     });
     if (draftListing) {
       // A draft existed → this app's listing is handled here; NEVER fall through to
@@ -2983,10 +3011,17 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         // deliberately higher declaration is never lowered). Same floor the off-site
         // approve applies via `resolveApprovalContentRating`; upholds the
         // "draft/pending listings are rated at approve" invariant.
+        const { applyListingMediaSplitDecision } = await import('./listing-media-split.service');
         const flooredRating = await resolveListingRatingFloorInTx(
           dbWrite,
           draftListing.id,
-          abForTransition.contentRating
+          abForTransition.contentRating,
+          await applyListingMediaSplitDecision(dbWrite, {
+            appListingId: draftListing.id,
+            face: draftListing,
+            decision: params.mediaSplit,
+            actorUserId: params.reviewerUserId,
+          })
         );
         const transitioned = await dbWrite.appListing.updateMany({
           // Status-guarded (draft): a re-approve after a mid-flight failure finds the
@@ -3237,7 +3272,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     const resetListingWhere = resetRestoreWhere(appBlockId);
     const resetListing = await dbWrite.appListing.findFirst({
       where: resetListingWhere,
-      select: { id: true, contentRating: true },
+      select: { id: true, contentRating: true, iconId: true, coverId: true },
     });
     // 🔴 RATING FLOOR (go-live) — this restore is a PUBLISH, and it had no floor.
     //
@@ -3261,10 +3296,17 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         '~/server/services/blocks/app-listing-assets.service'
       );
       await assertListingAssetsScanCleanInTx(dbWrite, resetListing.id);
+      const { applyListingMediaSplitDecision } = await import('./listing-media-split.service');
       flooredRating = await resolveListingRatingFloorInTx(
         dbWrite,
         resetListing.id,
-        resetListing.contentRating
+        resetListing.contentRating,
+        await applyListingMediaSplitDecision(dbWrite, {
+          appListingId: resetListing.id,
+          face: resetListing,
+          decision: params.mediaSplit,
+          actorUserId: params.reviewerUserId,
+        })
       );
     }
     const restored = await dbWrite.appListing.updateMany({

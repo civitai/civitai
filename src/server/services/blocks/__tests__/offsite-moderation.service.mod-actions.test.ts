@@ -30,6 +30,8 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
+  $executeRaw: ReturnType<typeof vi.fn>;
   appListing: {
     updateMany: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
@@ -79,6 +81,8 @@ type ReadMock = {
 const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       deleteMany: vi.fn(async () => ({ count: 1 })),
@@ -2348,6 +2352,20 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     });
     await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+  });
+
+  it('🔴 a split a moderator granted is kept: the mature screenshot does not floor the republish', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_X },
+    });
+    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('to_regclass') ? [{ present: true }] : [{ split: true }]
+    );
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
+    mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
   });
 
   it('[INVARIANT GUARD — green at origin/main] 🔴 a BLOCKED asset still refuses via the PRE-EXISTING scan gate (the floor did not displace it)', async () => {

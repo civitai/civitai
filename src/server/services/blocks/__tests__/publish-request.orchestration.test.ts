@@ -158,6 +158,8 @@ const {
       // post-hoist (below) to run its callback against this same write mock.
       appListingModerationEvent: { create: vi.fn<DelegateMock>(async () => ({})) },
       $transaction: vi.fn(),
+      $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+      $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     },
     mockS3Send: vi.fn(),
     mockBundleBuffer: { current: null as Buffer | null },

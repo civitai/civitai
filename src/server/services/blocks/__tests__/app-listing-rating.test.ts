@@ -27,6 +27,7 @@ describe('resolveReDerivedListingRating', () => {
     reratedImageId: 3,
     previousNsfwLevel: NsfwLevel.R,
     reviewedRating: null as string | null,
+    mediaSplit: false,
   };
 
   it('lowers to max(declared, derived) when the re-rated image explains the stored rating', () => {
@@ -225,6 +226,21 @@ describe('the rating-change event', () => {
         after: { contentRating: 'r' },
       },
     });
+  });
+
+  it('after commit: on a split listing the cause is judged by the civitai.com media only', async () => {
+    // Icon PG, cover PG-13, screenshot R. Split, the media floor is pg13, so g → pg13 is the
+    // media's doing; unsplit it is r, so the same move reads as a review decision.
+    const splitAnswer = (split: boolean) =>
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+        strings.join('').includes('to_regclass') ? [{ present: true }] : [{ split }]) as never);
+
+    splitAnswer(true);
+    await recordListingRatingChangeAfterCommit({ ...change, after: 'pg13' });
+    splitAnswer(false);
+    await recordListingRatingChangeAfterCommit({ ...change, after: 'pg13' });
+
+    expect(create.mock.calls.map((c) => c[0].data.detail)).toEqual(['store-media', 'review']);
   });
 
   it.each([

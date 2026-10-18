@@ -10,6 +10,8 @@ import {
   offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
+import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
 
 export const RATING_CHANGE_ACTION =
   'rating-change' satisfies (typeof APP_LISTING_MODERATION_ACTIONS)[number];
@@ -143,7 +145,10 @@ export async function recordListingRatingChangeAfterCommit(args: {
 }): Promise<void> {
   if (args.before === args.after) return;
   try {
-    const assets = await loadListingRatingAssets(dbWrite, args.appListingId);
+    const assets = ratingFloorAssets(
+      await loadListingRatingAssets(dbWrite, args.appListingId),
+      await readListingMediaSplit(dbWrite, args.appListingId)
+    );
     // A raise that lands exactly on what the media derives to is the media's doing; any
     // other move (a lowering, an override above the media) was the review's.
     const afterLevel = nsfwLevelFromContentRating(args.after);
@@ -172,7 +177,9 @@ const isSettled = (asset: ListingRatingAsset) =>
  * The rating a listing should carry after a moderator re-rated one of its images, or `null`
  * to leave it alone.
  *
- * The target is `max(declared, derived from the current assets)`. RAISING to it is
+ * The target is `max(declared, derived from the current assets)`, where a split listing's
+ * assets are only its civitai.com-eligible ones, judged by each image's level on the side of
+ * the re-rate being compared (`ratingFloorAssets`). RAISING to it is
  * unconditional. LOWERING to it is the dangerous direction on a maturity gate, so it needs
  * all of:
  *   - a declared rating to floor at (see the `declared` parameter).
@@ -199,8 +206,10 @@ export function resolveReDerivedListingRating(args: {
   previousNsfwLevel: number | null;
   /** The `after` of the listing's newest `review` rating-change event, if any. */
   reviewedRating: string | null;
+  mediaSplit: boolean;
 }): string | null {
-  const { stored, assets } = args;
+  const { stored } = args;
+  const assets = ratingFloorAssets(args.assets, args.mediaSplit);
   const storedLevel = nsfwLevelFromContentRating(stored);
   // A declared value outside the ladder is no floor at all: it is never written back, and
   // it must not be read as the lowest rung, which would let a rating drop to it.
@@ -217,8 +226,11 @@ export function resolveReDerivedListingRating(args: {
   if (!floor) return null;
   if (!assets.every(isSettled)) return null;
   const derivedBefore = deriveContentRatingFromAssets(
-    assets.map((a) =>
-      a.imageId === args.reratedImageId ? { nsfwLevel: args.previousNsfwLevel } : a
+    ratingFloorAssets(
+      args.assets.map((a) =>
+        a.imageId === args.reratedImageId ? { nsfwLevel: args.previousNsfwLevel } : a
+      ),
+      args.mediaSplit
     )
   );
   if (Math.max(nsfwLevelFromContentRating(derivedBefore), floorLevel) !== storedLevel) return null;
