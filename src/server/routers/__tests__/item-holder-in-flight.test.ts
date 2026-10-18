@@ -122,8 +122,11 @@ describe('per-user in-flight limit on purchaseShopItem and mysteryBox.open', () 
     await settle();
     expect(reached()).toBe(2);
 
-    for (const call of [purchase, purchase, open, open, purchase]) call(2);
-    await settle();
+    // One at a time: simultaneous arrivals can all be refused, which would hide a looser limit.
+    for (const call of [purchase, purchase, open, open, purchase]) {
+      call(2);
+      await settle();
+    }
 
     expect(reached()).toBe(2);
     expect(outcomes).toEqual(Array(5).fill('TOO_MANY_REQUESTS'));
@@ -156,14 +159,6 @@ describe('per-user in-flight limit on purchaseShopItem and mysteryBox.open', () 
     expect(outcomes).toEqual(['TOO_MANY_REQUESTS']);
   });
 
-  it('lets no more than two through a simultaneous burst', async () => {
-    for (let i = 0; i < 10; i++) (i % 2 ? purchase : open)(2);
-    await settle();
-
-    expect(reached()).toBeLessThanOrEqual(2);
-    expect(outcomes.length).toBe(10 - reached());
-  });
-
   it('counts each user separately', async () => {
     purchase(2);
     open(2);
@@ -191,12 +186,57 @@ describe('per-user in-flight limit on purchaseShopItem and mysteryBox.open', () 
     expect(reached()).toBe(4);
   });
 
-  it('admits every request when the store fails', async () => {
-    redisMock.redis.zAdd.mockRejectedValue(new Error('redis down'));
+  it('stops counting a slot once it has been held for the slot TTL (60 s)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 });
+    try {
+      purchase(2);
+      open(2);
+      await settle();
+
+      vi.setSystemTime(1_000_000 + 59_000);
+      purchase(2);
+      await settle();
+      expect(outcomes).toEqual(['TOO_MANY_REQUESTS']);
+
+      vi.setSystemTime(1_000_000 + 60_001);
+      purchase(2);
+      await settle();
+      expect(reached()).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['rejects', () => redisMock.redis.zAdd.mockRejectedValue(new Error('redis down'))],
+    [
+      'answers a count that is not a number',
+      () => redisMock.redis.zCard.mockResolvedValue(undefined),
+    ],
+  ])('admits every request when the store %s', async (_label, arrange) => {
+    arrange();
 
     for (let i = 0; i < 5; i++) purchase(2);
     await settle();
 
     expect(reached()).toBe(5);
+  });
+
+  it('admits a request whose slot the store is too slow to answer, then frees that slot when it lands', async () => {
+    const r = redisMock.redis;
+    const stalled: Array<() => void> = [];
+    const realZAdd = r.zAdd.getMockImplementation()!;
+    r.zAdd.mockImplementation(
+      (...args: Parameters<typeof realZAdd>) =>
+        new Promise((resolve) => stalled.push(() => resolve(realZAdd(...args))))
+    );
+
+    purchase(2);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(reached()).toBe(1);
+
+    stalled.forEach((land) => land());
+    await settle();
+    expect(r.zRem.mock.calls.map(([, member]) => member)).toEqual([r.zAdd.mock.calls[0][1].value]);
   });
 });

@@ -12,7 +12,8 @@ import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
 import { resolveClientIp } from '~/server/utils/client-ip';
-import { acquireConcurrencySlot } from '~/server/utils/concurrency-slots';
+import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -281,18 +282,31 @@ export type InFlightLimit = {
   limit: number;
   /** Longest a slot is held; a request running longer frees its slot early. */
   ttlMs: number;
+  /** A store slower than this is treated as failed, so a stalled Redis cannot stall the request. */
+  acquireTimeoutMs: number;
   errorMessage: string;
 };
+const ACQUIRE_TIMED_OUT: ConcurrencySlot = { acquired: false, reason: 'unavailable' };
 /**
  * Caps how many of a user's requests run at once; `rateLimit` bounds rate, not concurrency. Admits
  * when the store fails.
  */
-export function inFlightLimit({ bucket, limit, ttlMs, errorMessage }: InFlightLimit) {
+export function inFlightLimit({
+  bucket,
+  limit,
+  ttlMs,
+  acquireTimeoutMs,
+  errorMessage,
+}: InFlightLimit) {
   return middleware(async ({ ctx, next }) => {
     if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
     const key = `${REDIS_KEYS.TRPC.IN_FLIGHT}:${bucket}:${ctx.user.id}`;
-    const slot = await acquireConcurrencySlot(key, limit, ttlMs);
+    const acquiring = acquireConcurrencySlot(key, limit, ttlMs);
+    const slot = await withTimeoutFallback(acquiring, acquireTimeoutMs, ACQUIRE_TIMED_OUT, () => {
+      // A slot granted after we stopped waiting would otherwise count until its TTL.
+      void acquiring.then((late) => (late.acquired ? late.release() : undefined));
+    });
     if (!slot.acquired) {
       if (slot.reason === 'full')
         throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: errorMessage });
@@ -306,7 +320,8 @@ export function inFlightLimit({ bucket, limit, ttlMs, errorMessage }: InFlightLi
     try {
       return await next();
     } finally {
-      await slot.release();
+      // Not awaited: the work is done, and a stalled store must not hold the response.
+      void slot.release();
     }
   });
 }
@@ -319,6 +334,7 @@ export const itemHolderInFlightLimit = inFlightLimit({
   bucket: 'item-holder',
   limit: 2,
   ttlMs: 60_000,
+  acquireTimeoutMs: 500,
   errorMessage: 'Your last purchase or box opening is still processing. Try again in a moment.',
 });
 
