@@ -199,9 +199,12 @@ export async function updateFile({
 
   // On a trained version, the dataset rules (and the dataset's domain stamp) key on a file being
   // training data, so there a file never becomes, or stops being, training data after it was created.
-  // An uploaded model's training data is an ordinary attachment its owner may relabel.
+  // An uploaded model's training data is an ordinary attachment its owner may relabel. A training
+  // status counts as trained too: the owner can rewrite `uploadType`, but cannot clear a status a
+  // moderator set (Paused, Denied), which is what the dataset delete lock relies on.
   if (
-    modelFile.modelVersion.uploadType === ModelUploadType.Trained &&
+    (modelFile.modelVersion.uploadType === ModelUploadType.Trained ||
+      modelFile.modelVersion.trainingStatus != null) &&
     inputData.type &&
     inputData.type !== modelFile.type &&
     (inputData.type === 'Training Data' || modelFile.type === 'Training Data')

@@ -482,6 +482,17 @@ describe('a file type change to or from training data on a trained version', () 
     ).resolves.toMatchObject({ id: 1 });
   });
 
+  // `uploadType` is owner-writable; a moderator-set status is not, and the delete lock keys on it.
+  it.each(['Denied', 'Paused'])(
+    'refuses it on a %s run even when the version claims to be uploaded',
+    async (trainingStatus) => {
+      withFile({ type: 'Training Data', uploadType: 'Created', trainingStatus });
+
+      await expect(updateFile({ id: 1, type: 'Other', userId: 7 })).rejects.toThrow(REFUSED);
+      expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    }
+  );
+
   // The Files tab offers 'Training Data' as an attachment type on uploaded models.
   it("lets an uploaded model's owner relabel an attachment as training data, and back", async () => {
     withFile({ uploadType: 'Created' });
