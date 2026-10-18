@@ -111,9 +111,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   try {
     // Coverage is resolved INSIDE the service: in add-on mode on the cache-miss
-    // path only (a Flipt eval on every hit would be waste), except that the v1
-    // shadow resolves its own while its flag is on; in checkpoint mode before
-    // the cache read, because it is a term of that mode's cache key.
+    // path only (a Flipt eval on every hit would be waste); in checkpoint mode
+    // before the cache read, because it is a term of that mode's cache key. The
+    // v1 shadow resolves its own in either mode.
     const result = await getResourceIntent(intentInput, {
       browsingLevel,
       poolMerge: !!features.resourceIntentPoolMerge,

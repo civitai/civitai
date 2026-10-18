@@ -9,7 +9,8 @@
 -- Still one row per request. A served v1_tags row has `arm = 'v1_tags'`; a row on any other arm
 -- whose request ran the shadow carries the v1_tags list it would have served in the shadow* columns.
 --
---   shadowArm            'v1_tags' when the shadow ran on this row, else ''.
+--   shadowArm            'v1_tags' when the shadow was attempted on this row (see shadowReason for
+--                        'skipped'), else ''.
 --   shadowDegraded       1 when the shadow threw.
 --   shadowReason         why the shadow arm would have fallen back (as v1FallbackReason), 'error'
 --                        on shadowDegraded, 'skipped' when the pod already had its maximum of

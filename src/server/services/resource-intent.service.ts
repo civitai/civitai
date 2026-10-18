@@ -490,7 +490,7 @@ function v1TagColumns(
   };
 }
 
-/** Shadows running at once on this pod; past it a request's shadow is skipped, not queued. */
+/** Per pod. Skipped rather than queued so slow index queries cannot pile up behind responses already sent. */
 const V1_SHADOW_MAX_IN_FLIGHT = 4;
 let v1ShadowsInFlight = 0;
 
@@ -545,12 +545,11 @@ async function v1TagsShadow(
 export const JUDGE_SAMPLE_TABLE = 'p2m_restricted.routeJudgeSample';
 
 /**
- * One judge-capture row (`2026-10-17-resource-intent-route-judge-sample.sql`). Carries nothing that
- * identifies the caller, and its time is the hour only, so it cannot be lined up with a request's
- * own logs. Never logged anywhere else: with no ClickHouse client the row is dropped.
+ * One judge-capture row (`2026-10-17-resource-intent-route-judge-sample.sql`). Carries no caller
+ * field, but joins its request's shadow row by `promptHash`, so who may read that table is the
+ * control. Never logged anywhere else: with no ClickHouse client the row is dropped.
  */
 async function writeJudgeSample(row: {
-  /** UTC, truncated to the hour. */
   time: string;
   promptHash: string;
   prompt: string;
@@ -691,7 +690,7 @@ export async function getResourceIntent(
         browsingLevel: ctx.browsingLevel,
         cap,
         snapshot: tagServing.snapshot?.payloadSha256 ?? COOC_FALLBACK_SNAPSHOT_KEY,
-        // The holder serves only snapshots built under RESOURCE_INTENT_TAGS_SPEC_HASH.
+        // The snapshot's own hash, not an import of spec.ts, which fingerprints fixtures on load.
         tagsSpecHash: tagServing.snapshot?.specHash ?? '',
       })
     : resourceIntentCacheKey({
@@ -754,7 +753,7 @@ export async function getResourceIntent(
 
   if (!response) {
     const baseModel = input.baseModel ?? null;
-    // Resolved only on a cache miss here; the v1 shadow resolves its own.
+    // Resolved on a cache miss only: a Flipt eval on every hit would be waste.
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     try {
       const stage1 = await askJev(buildResourceIntentStage1Request(input.prompt, baseModel), {
@@ -928,8 +927,7 @@ export async function getResourceIntent(
   }
 
   // Taken now: the row describes the response, not the shadow work that runs after it.
-  const at = (ctx.now ?? (() => new Date()))();
-  const time = clickhouseDateTime64(at);
+  const time = clickhouseDateTime64((ctx.now ?? (() => new Date()))());
   const latencyMs = Date.now() - startedAt;
   const promptHash = createHash('sha256').update(input.prompt).digest('hex');
   const shadowV1 = !!ctx.v1Shadow && arm !== 'v1_tags';
@@ -937,7 +935,7 @@ export async function getResourceIntent(
     if (shadowV1 || ctx.judgeCapture) await afterResponse();
     if (ctx.judgeCapture)
       void writeJudgeSample({
-        time: `${at.toISOString().slice(0, 13).replace('T', ' ')}:00:00`,
+        time,
         promptHash,
         prompt: input.prompt,
         browsingLevel: ctx.browsingLevel,

@@ -352,9 +352,9 @@ export const resourceIntentResponseSchema = z.strictObject({
   checkpointArm: z.enum(CHECKPOINT_ARMS).optional(),
   /**
    * The v1_tags arm only (absent on every other arm). `v1Fallback`: the arm could not rank this
-   * prompt (no servable tag index, no kept tag, no resolvable ecosystem, an ecosystem the index never saw,
-   * or nothing passed the gates), so the
-   * list is the POOL_MERGE arm's, with its own `coocFallback`. `ecosystems`: the top tag-derived
+   * prompt (no servable tag index, no kept tag, no resolvable ecosystem, an ecosystem the index
+   * never saw, or nothing survived the gates and hydration), so the list is the POOL_MERGE arm's,
+   * with its own `coocFallback`. `ecosystems`: the top tag-derived
    * ecosystems, best first, when the caller gave no `baseModel` and the list is v1's own; the list
    * is restricted to the first.
    *

@@ -699,31 +699,74 @@ describe('🔴 the shadow beside another arm', () => {
     let release!: (v: unknown) => void;
     mockTagResolve.mockReturnValue(new Promise((r) => (release = r)));
     mockStage1();
-    const result = await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
-    expect(ids(result)).toEqual(POOL_IDS);
-    expect(mockTagResolve).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(1));
-    // Its row waits on the shadow.
-    expect(inserts('resourceIntentShadow')).toHaveLength(0);
-    release(tagFallback('loading'));
+    try {
+      const result = await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
+      expect(ids(result)).toEqual(POOL_IDS);
+      expect(mockTagResolve).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(1));
+      // Its row waits on the shadow.
+      expect(inserts('resourceIntentShadow')).toHaveLength(0);
+    } finally {
+      release?.(tagFallback('loading'));
+    }
     await flush();
   });
 
-  it('past the per-pod limit, a shadow is skipped rather than queued', async () => {
-    const releases: ((v: unknown) => void)[] = [];
-    mockTagResolve.mockImplementation(() => new Promise((r) => releases.push(r)));
-    for (let i = 0; i < 4; i++) {
+  it.each([
+    ['settle', (r: { res: (v: unknown) => void }) => r.res(tagFallback('loading'))],
+    ['throw', (r: { rej: (e: unknown) => void }) => r.rej(new Error('boom'))],
+  ] as const)(
+    'past the per-pod limit a shadow is skipped, not queued, and running ones that %s give their slot back',
+    async (_, finish) => {
+      const pending: { res: (v: unknown) => void; rej: (e: unknown) => void }[] = [];
+      mockTagResolve.mockImplementation(
+        () => new Promise((res, rej) => pending.push({ res, rej }))
+      );
+      try {
+        for (let i = 0; i < 4; i++) {
+          mockStage1();
+          await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
+        }
+        await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(4));
+        mockStage1();
+        await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
+        await flush();
+        expect(shadowRow()).toMatchObject({ shadowArm: 'v1_tags', shadowReason: 'skipped' });
+        expect(mockTagResolve).toHaveBeenCalledTimes(4);
+      } finally {
+        for (const p of pending) finish(p as never);
+      }
+      await vi.waitFor(() => expect(inserts('resourceIntentShadow')).toHaveLength(5));
+      mockInsert.mockClear();
+      mockTagResolve.mockResolvedValue(held());
       mockStage1();
       await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
+      await flush();
+      expect(shadowRow()).toMatchObject({ shadowReason: '', shadowSuggestionIds: V1_IDS });
     }
-    await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(4));
-    mockStage1();
-    await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
+  );
+
+  it("without the caller's coverage (as the route calls it), a shadow on a cache hit looks the audience up", async () => {
+    const { coverageAudience } = await import('~/server/services/generation/coverage-source');
+    vi.mocked(coverageAudience).mockClear();
+    redisMock.redis.packed.get.mockResolvedValue({
+      degraded: false,
+      insightFallback: false,
+      coocFallback: false,
+      intent: null,
+      criteria: null,
+      suggestions: [{ versionId: 21 }],
+      noneProbability: null,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2,
+    });
+    const { coverage: _c, ...noCoverage } = SHADOW;
+    await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, noCoverage);
     await flush();
-    expect(shadowRow()).toMatchObject({ shadowArm: 'v1_tags', shadowReason: 'skipped' });
-    expect(mockTagResolve).toHaveBeenCalledTimes(4);
-    for (const release of releases) release(tagFallback('loading'));
-    await vi.waitFor(() => expect(inserts('resourceIntentShadow')).toHaveLength(5));
+    expect(coverageAudience).toHaveBeenCalledTimes(1);
+    expect(mockV1Candidates.mock.calls[0][0]).toMatchObject({
+      coverage: { next: false, member: false },
+    });
   });
 
   it('beside HYBRID_10 too', async () => {
@@ -808,7 +851,7 @@ describe('🔴 judge capture', () => {
     const promptHash = createHash('sha256').update(PROMPT).digest('hex');
     expect(inserts(JUDGE_SAMPLE_TABLE)[0].values).toEqual([
       {
-        time: '2026-10-17 01:00:00',
+        time: '2026-10-17 01:02:03.456',
         promptHash,
         prompt: PROMPT,
         browsingLevel: 3,

@@ -7,8 +7,7 @@ import {
 
 /**
  * Counters of the resource-intent v1_tags arm: the served arm's fallbacks, the shadow computation's
- * outcomes, and the judge-capture writes. A prom-client leaf, imported by the service only, so the
- * series are absent until first counted.
+ * outcomes, and the judge-capture writes. A prom-client leaf, imported only by the service.
  */
 
 const M = PROM_PREFIX + 'resource_intent_';
