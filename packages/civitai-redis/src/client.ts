@@ -24,6 +24,12 @@ import {
 } from './cluster-inflight';
 import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from './sys-inflight';
 import {
+  countSysTimeoutsWithoutSuccess,
+  recordSysCommandSuccess,
+  recordSysCommandTimeout,
+  resetSysTimeouts,
+} from './sys-timeouts';
+import {
   countClusterDeadlineHits,
   recordClusterCommandSettle,
   resetClusterDeadlineHits,
@@ -792,46 +798,78 @@ export async function forceSysReconnect(
   }
 }
 
+/** The config fields the sys self-heal watchdog reads. */
+export type SysSelfHealSettings = Pick<
+  RedisConfig,
+  | 'sysSelfHealEnabled'
+  | 'sysSelfHealInflightThreshold'
+  | 'sysSelfHealSustainedMs'
+  | 'sysSelfHealCooldownMs'
+  | 'sysSelfHealReconnectJitterMs'
+  | 'sysSelfHealTimeoutThreshold'
+  | 'sysSelfHealTimeoutWindowMs'
+>;
+
 /**
- * Start the sys (sysRedis / Sentinel) self-heal watchdog — the mirror of startClusterSelfHeal for
+ * Build the sys (sysRedis / Sentinel) self-heal watchdog — the mirror of startClusterSelfHeal for
  * the OTHER node-redis client. REUSES the generic ClusterSelfHealWatchdog (it's client-agnostic:
- * a config + injected getInflight/reconnect/onReconnect). The DEADLINE-hit trigger is left OFF
- * (deadlineHitThreshold 0, no getDeadlineHits dep) — the incident wedge climbs inflight
- * monotonically, so the sustained-inflight path is the only trigger. 🔴 That only holds while the
- * sys per-command backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) is LONGER than the sustained window and
- * the in-flight cap is ABOVE the inflight threshold: a shorter deadline drains inflight into a
- * sawtooth before the window fills (exactly how the cluster watchdog went blind), and a lower cap
- * keeps inflight under the threshold. env.ts refuses both configurations.
- * REDIS_SYS_SELFHEAL_ENABLED=false disables it entirely. Started once per process (guarded by
- * sysSelfHealInterval).
+ * a config + injected getInflight/getDeadlineHits/reconnect/onReconnect), so both triggers share
+ * one cooldown, one single-flight guard, one jitter and one reconnect path (forceSysReconnect).
+ *
+ * TWO TRIGGERS:
+ *  - SUSTAINED INFLIGHT (incident 2026-07-03): the wedge climbs inflight monotonically. 🔴 That
+ *    only holds while the sys per-command backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) is LONGER than
+ *    the sustained window and the in-flight cap is ABOVE the inflight threshold: a shorter deadline
+ *    drains inflight into a sawtooth before the window fills (exactly how the cluster watchdog went
+ *    blind), and a lower cap keeps inflight under the threshold. env.ts refuses both.
+ *  - TIMEOUT RATE (2026-10-18), via the watchdog's deadline-hit slot: at least
+ *    REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD backstop timeouts within
+ *    REDIS_SYS_SELFHEAL_TIMEOUT_WINDOW_MS with NO successful sys command in that window
+ *    (./sys-timeouts). The backstop releases each caller after 30 s, so a wedged low-traffic app
+ *    never gets near the in-flight threshold; this is what heals it. Reported as trigger="deadline".
+ *
+ * Exported (with the settings injected) so the wiring can be unit-tested against fake clients
+ * without booting the factory; startSysSelfHeal passes the module config.
  */
-function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
-  const watchdog = new ClusterSelfHealWatchdog(
+export function createSysSelfHealWatchdog(
+  sysClients: any[],
+  settings: SysSelfHealSettings
+): ClusterSelfHealWatchdog {
+  return new ClusterSelfHealWatchdog(
     {
-      enabled: config.sysSelfHealEnabled,
-      inflightThreshold: config.sysSelfHealInflightThreshold,
-      sustainedMs: config.sysSelfHealSustainedMs,
-      cooldownMs: config.sysSelfHealCooldownMs,
-      // No slow-settle recording on sys (see instrumentCommands) → no deadline-hit path.
-      deadlineHitThreshold: 0,
-      deadlineHitWindowMs: 0,
-      reconnectJitterMs: config.sysSelfHealReconnectJitterMs,
+      enabled: settings.sysSelfHealEnabled,
+      inflightThreshold: settings.sysSelfHealInflightThreshold,
+      sustainedMs: settings.sysSelfHealSustainedMs,
+      cooldownMs: settings.sysSelfHealCooldownMs,
+      deadlineHitThreshold: settings.sysSelfHealTimeoutThreshold,
+      deadlineHitWindowMs: settings.sysSelfHealTimeoutWindowMs,
+      reconnectJitterMs: settings.sysSelfHealReconnectJitterMs,
       label: 'Sys',
     },
     {
       getInflight: () => getSysInflight(),
-      // getDeadlineHits intentionally omitted (deadline-hit trigger inert for the sys client).
+      getDeadlineHits: (windowMs: number) => countSysTimeoutsWithoutSuccess(windowMs),
+      resetDeadlineHits: () => resetSysTimeouts(),
       reconnect: () => forceSysReconnect(sysClients),
       log,
       onReconnect: (inflightAtTrigger: number, trigger: ClusterSelfHealTrigger) => {
         // client="sys" label so a rising series confirms the SENTINEL client healed (vs cluster).
         getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger, client: 'sys' });
         log(
-          `Sys self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, clients=${sysClients.length}]`
+          `Sys self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${settings.sysSelfHealInflightThreshold}, sustainedMs=${settings.sysSelfHealSustainedMs}, timeoutThreshold=${settings.sysSelfHealTimeoutThreshold}, timeoutWindowMs=${settings.sysSelfHealTimeoutWindowMs}, clients=${sysClients.length}]`
         );
       },
     }
   );
+}
+
+/**
+ * Start the sys self-heal watchdog (createSysSelfHealWatchdog with the module config) on
+ * REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS. REDIS_SYS_SELFHEAL_ENABLED=false disables it entirely.
+ * Started once per process (guarded by sysSelfHealInterval).
+ */
+function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
+  const watchdog = createSysSelfHealWatchdog(sysClients, config);
 
   if (!config.sysSelfHealEnabled) {
     log('Sys self-heal watchdog DISABLED (REDIS_SYS_SELFHEAL_ENABLED=false)');
@@ -841,6 +879,11 @@ function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
   const interval = Math.max(250, config.sysSelfHealCheckIntervalMs);
   sysSelfHealInterval = setInterval(() => {
     try {
+      // Publish what the timeout-rate trigger SEES before ticking (as the cluster watchdog does).
+      getRedisMetrics()?.redisSelfHealDeadlineHitsWindow?.set(
+        { client: 'sys' },
+        countSysTimeoutsWithoutSuccess(config.sysSelfHealTimeoutWindowMs)
+      );
       watchdog.tick();
     } catch (err) {
       log(`Sys self-heal tick error: ${err instanceof Error ? err.message : String(err)}`);
@@ -849,7 +892,7 @@ function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
   // Don't keep the event loop alive for the watchdog on a graceful process exit.
   sysSelfHealInterval.unref?.();
   log(
-    `Sys self-heal watchdog ENABLED [inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, reconnectJitterMs=${config.sysSelfHealReconnectJitterMs}, cooldownMs=${config.sysSelfHealCooldownMs}, checkMs=${interval}, clients=${sysClients.length}]`
+    `Sys self-heal watchdog ENABLED [inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, timeoutThreshold=${config.sysSelfHealTimeoutThreshold}, timeoutWindowMs=${config.sysSelfHealTimeoutWindowMs}, reconnectJitterMs=${config.sysSelfHealReconnectJitterMs}, cooldownMs=${config.sysSelfHealCooldownMs}, checkMs=${interval}, clients=${sysClients.length}]`
   );
   return watchdog;
 }
@@ -926,7 +969,8 @@ export type RedisMetricsBridge = {
   // The watchdog's OWN observation: the in-process slow-settle count it samples each tick (the
   // deadline-hit window). Exposed so we can SEE what the watchdog sees, distinct from the
   // redis_command_duration histogram — diagnosing the 2026-07-06 wedge was hard precisely because
-  // this was invisible. Set each watchdog tick (client="cluster").
+  // this was invisible. Set each watchdog tick (client="cluster"; client="sys" carries the sys
+  // timeout-rate trigger's count).
   redisSelfHealDeadlineHitsWindow?: { set: (labels: { client: string }, value: number) => void };
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
@@ -1311,10 +1355,24 @@ export function instrumentCommands(
     // LONGER sourced from this deadline's reap (onTimeout) — done() records it from the observed
     // settle duration instead (see the recordClusterCommandSettle call above), so the trigger
     // fires whether or not the deadline actually reaps the command (2026-07-06 fix).
+    // Sys self-heal TIMEOUT-RATE signal (./sys-timeouts): the backstop records each timeout it
+    // fires, and every command whose underlying call fulfils — even after its caller was released —
+    // records a success, which holds the trigger off. The extra handler is on a branch of
+    // `executed`, so it changes nothing the caller sees.
+    if (clientLabel === 'sys')
+      executed.then(
+        () => recordSysCommandSuccess(),
+        () => undefined
+      );
     const settled = wrapWithDeadline
       ? withCommandDeadline(executed, deadlineMs)
       : sysDeadlineMs > 0
-      ? withTimeout(executed, sysDeadlineMs, `sysRedis command timed out after ${sysDeadlineMs}ms`)
+      ? withTimeout(
+          executed,
+          sysDeadlineMs,
+          `sysRedis command timed out after ${sysDeadlineMs}ms`,
+          () => recordSysCommandTimeout()
+        )
       : executed;
     return settled.finally(done);
   };

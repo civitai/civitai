@@ -630,7 +630,7 @@ export const redisSelfHealReconnectCounter = registerCounterWithLabels({
 // the 2026-07-06 fleet wedge, where the watchdog's own signal was invisible and the trigger 0-fired.
 export const redisSelfHealDeadlineHitsWindow = registerGaugeWithLabels({
   name: 'redis_selfheal_deadline_hits_window',
-  help: "The self-heal watchdog's in-process cluster slow-settle count over its sliding window, by client; the deadline-hit trigger fires when this crosses the threshold",
+  help: "The self-heal watchdog's in-process count over its sliding window, by client (cluster: slow settles; sys: command timeouts, 0 while any sys command succeeded in the window); the deadline-hit trigger fires when this crosses the threshold",
   labelNames: ['client'] as const,
 });
 
