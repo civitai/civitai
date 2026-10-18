@@ -3,6 +3,7 @@ import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.cons
 import {
   LISTING_ASSET_AUDIENCE_LABEL,
   listingAssetAudience,
+  resolveListingMediaSplitDecision,
   summarizeListingMediaSplit,
   type ListingMediaSplitDecision,
 } from '~/shared/utils/listing-media-split';
@@ -14,13 +15,14 @@ import {
   type ListingAssetLevels,
   type ListingRatingDisplayAsset,
 } from '~/shared/utils/listing-rating-display';
+import { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
 
 /**
  * The moderator's go-live choice for a listing whose media is partly above SFW: rate the listing
- * by all of its media (the default, and what an approve without a choice does), or split it — a
- * SFW listing on civitai.com whose mature media shows only on civitai.red. Renders nothing when
- * the choice would change nothing, unless the listing is already split.
+ * by all of its media, or split it — a SFW listing on civitai.com whose mature media shows only on
+ * civitai.red. `value` is the resolved decision (`resolveListingMediaSplitDecision`); renders
+ * nothing when that resolution says the choice is not shown.
  */
 export function ListingMediaSplitControl({
   assets,
@@ -36,7 +38,8 @@ export function ListingMediaSplitControl({
   disabled?: boolean;
 }) {
   const summary = summarizeListingMediaSplit(assets);
-  if (!summary.splitChangesFloor && !currentlySplit) return null;
+  if (!resolveListingMediaSplitDecision({ assets, currentlySplit, choice: value }).shown)
+    return null;
   const projected = value === 'split' ? summary.comMediaRating : summary.allMediaRating;
 
   return (
@@ -55,7 +58,7 @@ export function ListingMediaSplitControl({
       </Group>
       {currentlySplit && (
         <Text size="xs" c="dimmed" data-testid="apps-media-split-current">
-          This listing is currently split. Approving without choosing the split again ends it.
+          This listing is currently split. Choosing “Rate by all media” ends the split.
         </Text>
       )}
       <Radio.Group
@@ -79,7 +82,9 @@ export function ListingMediaSplitControl({
             description={
               summary.faceEligible
                 ? undefined
-                : `Unavailable: the icon or cover is rated above PG-13, so ${SFW_STORE_HOST} would show a placeholder.`
+                : `Unavailable: the icon or cover is rated above ${offsiteContentRatingLabel(
+                    'pg13'
+                  )}, so ${SFW_STORE_HOST} would show a placeholder.`
             }
             data-testid="apps-media-split-split"
           />
@@ -107,29 +112,38 @@ export function ListingMediaSplitControl({
   );
 }
 
-/** {@link ListingMediaSplitControl} for a listing read by id (the on-site approve bar). */
+/**
+ * {@link ListingMediaSplitControl} for a listing read by id (the on-site approve bar). Reports the
+ * resolved decision through `onResolved`, since the default depends on the listing it reads.
+ */
 export function ListingMediaSplitControlForListing({
   listingId,
-  value,
-  onChange,
+  choice,
+  onChoice,
+  onResolved,
   disabled,
 }: {
   listingId: string;
-  value: ListingMediaSplitDecision;
-  onChange: (value: ListingMediaSplitDecision) => void;
+  choice: ListingMediaSplitDecision | null;
+  onChoice: (value: ListingMediaSplitDecision) => void;
+  onResolved: (value: ListingMediaSplitDecision) => void;
   disabled?: boolean;
 }) {
   const { data } = trpc.appListings.getAssets.useQuery(
     { listingId },
     { staleTime: 0, refetchOnMount: 'always', retry: false }
   );
+  const assets = data ? listingRatingAssetsFromView(data as Partial<ListingAssetLevels>) : [];
+  const currentlySplit = data?.mediaSplitApproved ?? false;
+  const resolved = resolveListingMediaSplitDecision({ assets, currentlySplit, choice });
+  useEffect(() => onResolved(resolved.value), [resolved.value, onResolved]);
   if (!data) return null;
   return (
     <ListingMediaSplitControl
-      assets={listingRatingAssetsFromView(data as Partial<ListingAssetLevels>)}
-      currentlySplit={data.mediaSplitApproved}
-      value={value}
-      onChange={onChange}
+      assets={assets}
+      currentlySplit={currentlySplit}
+      value={resolved.value}
+      onChange={onChoice}
       disabled={disabled}
     />
   );

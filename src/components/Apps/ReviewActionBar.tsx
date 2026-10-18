@@ -37,8 +37,8 @@ import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal'
  *  - `onStatusChange` — lets the page drive its `aria-live` status region and its
  *                 route-leave navigation guard off the mutation lifecycle.
  *
- * SERVER-GRAPH-FREE (only pure constant/zod imports), so it stays browser-testable
- * and never drags the tRPC server graph into the client bundle.
+ * Imports no server infrastructure (pure constants, zod schemas and pure rating helpers),
+ * so it stays browser-testable and never drags the tRPC server graph into the client bundle.
  */
 
 export type ReviewActionStatus = 'idle' | 'submitting' | 'approved' | 'rejected' | 'error';
@@ -71,6 +71,7 @@ export function ReviewActionBar({
   const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
+  const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
   const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitDecision>('rate-mature');
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
@@ -173,8 +174,9 @@ export function ReviewActionBar({
         {request.approveRating && (
           <ListingMediaSplitControlForListing
             listingId={request.approveRating.listingId}
-            value={mediaSplit}
-            onChange={setMediaSplit}
+            choice={mediaSplitChoice}
+            onChoice={setMediaSplitChoice}
+            onResolved={setMediaSplit}
             disabled={busy}
           />
         )}

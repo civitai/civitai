@@ -1123,6 +1123,28 @@ describe('screenshot CRUD', () => {
     expect(res.screenshots).toHaveLength(1);
   });
 
+  it('🔴 getAssets on a revision shadow reports the LIVE parent’s media split', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_shadow',
+      revisionOfId: 'apl_parent',
+    });
+    const asked: unknown[] = [];
+    mockDb.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...v: unknown[]) => {
+      if (strings.join('').includes('to_regclass')) return [{ present: true }];
+      asked.push(v[0]);
+      return [{ split: v[0] === 'apl_parent' }];
+    });
+    try {
+      const { getListingAssets } = await import('../app-listing-assets.service');
+      const res = await getListingAssets({ listingId: 'apl_shadow' }, mod);
+      expect(res.mediaSplitApproved).toBe(true);
+      expect(asked).toEqual(['apl_parent']);
+    } finally {
+      mockDb.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
   it("getAssets includes each asset's nsfwLevel (icon + cover + screenshots) for the review derive", async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, iconId: 1, coverId: 2 });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([
@@ -1221,12 +1243,15 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
     mockDb.appListingScreenshot.count.mockResolvedValue(1);
     mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
-    mockDb.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
-      strings.join('').includes('to_regclass') ? [{ present: true }] : [{ split: true }]
+    mockDb.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...v: unknown[]) =>
+      strings.join('').includes('to_regclass')
+        ? [{ present: true }]
+        : [{ split: v[0] === 'apl_live' }]
     );
     try {
       const { addListingScreenshot } = await import('../app-listing-assets.service');
-      await addListingScreenshot({ listingId: 'apl_live', imageId: 500 }, mod);
+      const res = await addListingScreenshot({ listingId: 'apl_live', imageId: 500 }, mod);
+      expect(res).toMatchObject({ status: 'attached' });
       expect(mockDb.appListing.update).not.toHaveBeenCalled();
     } finally {
       mockDb.$queryRaw.mockReset().mockImplementation(async () => []);

@@ -2216,6 +2216,29 @@ describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
     ]);
   });
 
+  it('🔴 each asset carries its own level into the civitai.com media problems', async () => {
+    const levels: Record<number, number> = { 41: 4, 53: 1, 61: 8, 62: 2 };
+    mockRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          ingestion: 'Scanned',
+          nsfwLevel: levels[id],
+        }))
+    );
+    const row = requestRow('r_media', 'approved', 'pg13');
+    row.appListing.screenshots = [{ imageId: 61 }, { imageId: 62 }] as never;
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([row])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    // Icon R → the icon problem (not the PG cover's); screenshot X counted, the PG-13 one not.
+    expect(res.items[0].problems.map((p) => [p.code, p.label.slice(0, 20)])).toEqual([
+      ['sfw-slot-mature', 'Your icon is rated R'],
+      ['red-only-screenshots', '1 screenshot is rate'],
+    ]);
+  });
+
   it('an ON-SITE row is compared against its app’s declared rating; the off-site row beside it is not', async () => {
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([

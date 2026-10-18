@@ -4,6 +4,7 @@ import {
   isComEligibleLevel,
   listingAssetAudience,
   ratingFloorAssets,
+  resolveListingMediaSplitDecision,
   summarizeListingMediaSplit,
 } from '~/shared/utils/listing-media-split';
 
@@ -56,6 +57,8 @@ describe('listingAssetAudience', () => {
     [NsfwLevel.XXX, 'g', 'red-only'],
     // A mature-rated listing is not on civitai.com at all.
     [NsfwLevel.PG, 'r', 'red-only'],
+    // A composite reads as the public gate reads it: any bit inside the ceiling shows it.
+    [NsfwLevel.PG | NsfwLevel.R, 'g', 'com-and-red'],
     [0, 'g', 'unrated'],
     [null, 'r', 'unrated'],
   ] as const)('level %s on a %s listing → %s', (level, rating, audience) => {
@@ -99,6 +102,44 @@ describe('summarizeListingMediaSplit', () => {
       comMediaRating: 'pg13',
       splitChangesFloor: false,
       faceEligible: true,
+    });
+  });
+});
+
+describe('resolveListingMediaSplitDecision — what an approve sends', () => {
+  const mature = [
+    { kind: 'icon' as const, nsfwLevel: NsfwLevel.PG },
+    { kind: 'screenshot' as const, position: 1, nsfwLevel: NsfwLevel.R },
+  ];
+  const sfw = [{ kind: 'icon' as const, nsfwLevel: NsfwLevel.PG }];
+  const matureFace = [{ kind: 'cover' as const, nsfwLevel: NsfwLevel.X }];
+
+  it.each([
+    ['never split, no choice: default-closed', mature, false, null, true, 'rate-mature'],
+    ['already split, no choice: keeps the split', mature, true, null, true, 'split'],
+    ['already split, mature face: cannot keep it', matureFace, true, null, true, 'rate-mature'],
+    ['an explicit choice wins', mature, true, 'rate-mature', true, 'rate-mature'],
+    [
+      'a split choice with a mature face is not sent',
+      matureFace,
+      false,
+      'split',
+      true,
+      'rate-mature',
+    ],
+    [
+      '🔴 all-SFW and never split: hidden, so a stale split choice is not sent',
+      sfw,
+      false,
+      'split',
+      false,
+      'rate-mature',
+    ],
+    ['all-SFW but already split: still shown', sfw, true, null, true, 'split'],
+  ] as const)('%s', (_l, assets, currentlySplit, choice, shown, value) => {
+    expect(resolveListingMediaSplitDecision({ assets, currentlySplit, choice })).toEqual({
+      shown,
+      value,
     });
   });
 });

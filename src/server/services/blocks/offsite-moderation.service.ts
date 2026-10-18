@@ -24,7 +24,7 @@ import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.servi
 import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
-import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
+import { readListingMediaSplitForGoLive } from '~/server/services/blocks/listing-media-split.service';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -2012,12 +2012,21 @@ export async function republishOwnListing(opts: {
     // the derived ceiling is strictly higher — so writing the result UNCONDITIONALLY is
     // safe: tame media can never lower a deliberately higher declaration, and an
     // unchanged rating writes its own value back. Same shape as `approveRequest`'s.
-    // An owner republish never grants a split; it keeps one a moderator granted.
+    // An owner republish never grants a split; it keeps one a moderator granted, while the
+    // icon and cover going back live are still civitai.com-eligible.
+    const face = await tx.appListing.findUnique({
+      where: { id: input.appListingId },
+      select: { iconId: true, coverId: true },
+    });
     const flooredRating = await resolveListingRatingFloorInTx(
       tx,
       input.appListingId,
       listing.contentRating,
-      await readListingMediaSplit(tx, input.appListingId)
+      await readListingMediaSplitForGoLive(
+        tx,
+        input.appListingId,
+        face ?? { iconId: null, coverId: null }
+      )
     );
     const ratingChange = {
       slug: listing.slug,

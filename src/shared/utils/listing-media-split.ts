@@ -1,4 +1,5 @@
 import {
+  isLevelWithinCeiling,
   listingMediaCeiling,
   SFW_LISTING_MEDIA_AUDIENCE,
 } from '~/server/services/blocks/listing-media-audience';
@@ -9,6 +10,7 @@ import {
   sfwBrowsingLevelsFlag,
   type OffsiteRatingValue,
 } from '~/shared/constants/browsingLevel.constants';
+import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
 import type { ListingRatingDisplayAsset } from '~/shared/utils/listing-rating-display';
 
 export {
@@ -22,8 +24,8 @@ export {
  * `content_rating` is floored by its civitai.com-eligible media alone; without it, by all of its
  * media (the default, and the only behaviour before the split existed).
  *
- * Pure and client-safe: the approve-time floors, the image re-rate re-derive and the moderator
- * review UI all decide "which assets floor the rating" here.
+ * Pure (no database, no server infrastructure), so the approve-time floors, the image re-rate
+ * re-derive and the moderator review UI all decide "which assets floor the rating" here.
  */
 
 /**
@@ -47,9 +49,10 @@ export function ratingFloorAssets<T extends { nsfwLevel?: number | null }>(
 export type ListingAssetAudience = 'com-and-red' | 'red-only' | 'unrated';
 
 /**
- * The audience of one SFW-slot image under a listing rating, by level alone: a flagged or
- * blocked image is hidden everywhere, which the scan badges report separately. A mature-rated
- * listing is not on civitai.com at all, so every rated image of one is `red-only`.
+ * The audience of one SFW-slot image under a listing rating, by level alone and by the gate's own
+ * level comparison: a flagged or blocked image is hidden everywhere, which the scan badges report
+ * separately. A mature-rated listing is not on civitai.com at all, so every rated image of one is
+ * `red-only`.
  */
 export function listingAssetAudience(
   nsfwLevel: number | null | undefined,
@@ -58,7 +61,7 @@ export function listingAssetAudience(
   if (!nsfwLevel) return 'unrated';
   if (isMatureContentRating(contentRating ?? null)) return 'red-only';
   const comCeiling = listingMediaCeiling(SFW_LISTING_MEDIA_AUDIENCE, contentRating);
-  return (nsfwLevel & ~comCeiling) === 0 ? 'com-and-red' : 'red-only';
+  return isLevelWithinCeiling(nsfwLevel, comCeiling) ? 'com-and-red' : 'red-only';
 }
 
 export const LISTING_ASSET_AUDIENCE_LABEL: Record<ListingAssetAudience, string> = {
@@ -89,5 +92,28 @@ export function summarizeListingMediaSplit(
     faceEligible: assets
       .filter((a) => a.kind === 'icon' || a.kind === 'cover')
       .every((a) => isComEligibleLevel(a.nsfwLevel)),
+  };
+}
+
+/**
+ * What a moderator's approve sends, and whether the choice is shown at all. The choice is shown
+ * when it would change the floor or the listing is already split. Without an explicit choice it
+ * keeps the listing's current state where that is still grantable (so approving an unrelated
+ * revision does not silently end a moderator's split); a listing never split stays default-closed.
+ * A choice that is not shown is never sent as a split.
+ */
+export function resolveListingMediaSplitDecision(args: {
+  assets: readonly ListingRatingDisplayAsset[];
+  currentlySplit: boolean;
+  choice: ListingMediaSplitDecision | null;
+}): { shown: boolean; value: ListingMediaSplitDecision } {
+  const summary = summarizeListingMediaSplit(args.assets);
+  const shown = summary.splitChangesFloor || args.currentlySplit;
+  if (!shown) return { shown, value: 'rate-mature' };
+  if (args.choice === 'split' && !summary.faceEligible) return { shown, value: 'rate-mature' };
+  if (args.choice) return { shown, value: args.choice };
+  return {
+    shown,
+    value: args.currentlySplit && summary.faceEligible ? 'split' : 'rate-mature',
   };
 }

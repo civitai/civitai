@@ -35,6 +35,10 @@
 --   2. Run it off-peak.
 --   3. On `canceling statement due to lock timeout`, nothing was applied (one transaction);
 --      wait and re-run.
+--   4. The app's database role must be able to SELECT, INSERT and UPDATE the new table. The
+--      probe only covers the table being ABSENT; a present table the app cannot read fails every
+--      approve, owner republish and image re-rate. Grant it here if new tables are not
+--      automatically owned by or granted to that role in this environment.
 --
 -- ROLLBACK (discards every split decision; every listing then reads as unsplit, and the code
 -- does not need rolling back). Dropping the table drops its foreign keys, which locks the same

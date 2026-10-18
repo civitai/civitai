@@ -263,6 +263,20 @@ describe.each([
   });
 });
 
+describe('approveRequest — the go-live re-checks the face the up-front check saw', () => {
+  it('🔴 a cover swapped to R after the up-front check is refused at the go-live, not split', async () => {
+    wire('draft');
+    const first = { id: DRAFT, iconId: ICON, coverId: COVER, contentRating: 'g' };
+    const swapped = { ...first, coverId: R_COVER };
+    db.write.appListing.findFirst
+      .mockResolvedValueOnce(first as never)
+      .mockResolvedValueOnce(swapped as never);
+    await approve('split');
+    expect(await split.stamp(DRAFT)).toBeNull();
+    expect(stampedRating('draft')).toBeUndefined();
+  });
+});
+
 describe('approveRequest with no store listing to publish', () => {
   it('refuses a split, since there is nothing to split', async () => {
     db.write.appListing.findFirst.mockResolvedValue(null);

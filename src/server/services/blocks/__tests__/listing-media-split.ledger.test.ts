@@ -49,16 +49,20 @@ describe('app_listing_red_media — the one module that names it', () => {
 
   it('every statement in it names the table only after the probe, in the same function', () => {
     const code = PRODUCTION.find((f) => f.rel === SERVICE)!.code;
-    const functions = code.split(/\nexport async function /).slice(1);
+    // Every top-level declaration, exported or not, so a helper cannot hide inside its neighbour.
+    const functions = code
+      .split(/\n(?=(?:export )?(?:async )?function |(?:export )?const \w+ = )/)
+      .map((chunk) => chunk.replace(/^(?:export )?(?:async )?(?:function |const )/, ''));
     const touching = functions.filter((fn) => /\bapp_listing_red_media\b(?!')/.test(fn));
     expect(touching.map((fn) => fn.slice(0, fn.indexOf('('))).sort()).toEqual([
       'applyListingMediaSplitDecision',
       'readListingMediaSplit',
     ]);
-    for (const fn of touching)
-      expect(fn.indexOf('isListingMediaSplitTableAvailable(')).toBeLessThan(
-        fn.search(/\bapp_listing_red_media\b(?!')/)
-      );
+    for (const fn of touching) {
+      const probe = fn.indexOf('isListingMediaSplitTableAvailable(');
+      expect(probe).toBeGreaterThan(-1);
+      expect(probe).toBeLessThan(fn.search(/\bapp_listing_red_media\b(?!')/));
+    }
   });
 
   it('writes no listing rating', () => {

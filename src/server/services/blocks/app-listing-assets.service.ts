@@ -1173,7 +1173,8 @@ export async function loadListingAssetScansBatch(
 /**
  * After a MODERATOR directly mutates a LIVE approved listing's asset SET (the only
  * path that bypasses the shadow-revision flow — see {@link assertOwnerAssetEditable}),
- * re-derive `contentRating` from the current assets' max nsfwLevel and FLOOR the
+ * re-derive `contentRating` from the current assets' max nsfwLevel (only the
+ * civitai.com-eligible ones on a listing a moderator split) and FLOOR the
  * stored rating at the derived value (RAISE-ONLY — never auto-lower). Without this a
  * mod adding a more-mature icon/cover/screenshot to a live listing leaves it
  * UNDER-rated: the approve path re-derives, but a direct live-asset edit never runs
@@ -1741,11 +1742,9 @@ export async function getListingAssets(
     }),
     hasBlockedAsset: allScans.some((s) => s === 'blocked'),
     hasPendingScan: allScans.some((s) => s === 'pending'),
-    // Display only, so an unreadable decision shows as "not split" rather than failing the read.
-    mediaSplitApproved: await readListingMediaSplit(
-      dbRead,
-      listing.revisionOfId ?? listing.id
-    ).catch(() => false),
+    // A missing table already reads as false; any other failure surfaces rather than showing a
+    // split listing as unsplit to the moderator about to approve it.
+    mediaSplitApproved: await readListingMediaSplit(dbRead, listing.revisionOfId ?? listing.id),
   };
 }
 

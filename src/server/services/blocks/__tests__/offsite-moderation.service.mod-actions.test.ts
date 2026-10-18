@@ -2170,6 +2170,22 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     );
   }
 
+  /** `APP_ID` is split; the face read answers `faceLevels` by image id. */
+  function splitFake(faceLevels: Record<number, number> = {}) {
+    mockWrite.$queryRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...v: unknown[]) => {
+        const text = strings.join('?');
+        if (text.includes('to_regclass')) return [{ present: true }];
+        if (text.includes('FROM app_listing_red_media')) return [{ split: v[0] === APP_ID }];
+        if (text.includes('FROM "Image"')) {
+          const ids = (v[0] as { values: number[] }).values;
+          return ids.map((id) => ({ nsfwLevel: faceLevels[id] ?? 0 }));
+        }
+        return [];
+      }
+    );
+  }
+
   /** The `data` payload of the listing status flip. */
   function flipData() {
     const call = mockWrite.appListing.updateMany.mock.calls.find(
@@ -2360,12 +2376,28 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
       contentRating: 'g',
       levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_X },
     });
-    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
-      strings.join('').includes('to_regclass') ? [{ present: true }] : [{ split: true }]
-    );
-    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
-    expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
-    mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
+    splitFake();
+    try {
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
+    } finally {
+      mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
+  it('🔴 …but not once its icon is above SFW: the republish floors by all media', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_R, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_PG },
+    });
+    splitFake({ [ICON_ID]: LVL_R, [COVER_ID]: LVL_PG13 });
+    try {
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'r' });
+    } finally {
+      mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
   });
 
   it('[INVARIANT GUARD — green at origin/main] 🔴 a BLOCKED asset still refuses via the PRE-EXISTING scan gate (the floor did not displace it)', async () => {

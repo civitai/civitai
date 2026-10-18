@@ -81,6 +81,7 @@ import { RatingMismatchAlert } from '~/components/Apps/ListingRatingNotices';
 import { ListingMediaSplitControl } from '~/components/Apps/ListingMediaSplitControl';
 import {
   ratingFloorAssets,
+  resolveListingMediaSplitDecision,
   type ListingMediaSplitDecision,
 } from '~/shared/utils/listing-media-split';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
@@ -432,7 +433,7 @@ export function OffsiteReviewModalBody({
   // Select shows the derived rating as its default); a non-null value is an explicit
   // override. The server FLOORS an under-rating override at the derived value.
   const [ratingOverride, setRatingOverride] = useState<OffsiteContentRating | null>(null);
-  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitDecision>('rate-mature');
+  const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
 
   // Asset presence for the content checklist (author/mod-gated; a mod passes the
   // author floor). Only enabled once a row with a draft listing is open.
@@ -473,7 +474,7 @@ export function OffsiteReviewModalBody({
     setApprovalNotes('');
     setActionMode('view');
     setRatingOverride(null);
-    setMediaSplit('rate-mature');
+    setMediaSplitChoice(null);
     onClose();
   }
 
@@ -494,6 +495,11 @@ export function OffsiteReviewModalBody({
   // A split floors the rating by the civitai.com-eligible images only, so the default below
   // follows the moderator's split choice rather than offering a value that would undo it.
   const ratingAssets = listingRatingAssetsFromView(assetsQuery.data ?? {});
+  const mediaSplit = resolveListingMediaSplitDecision({
+    assets: ratingAssets,
+    currentlySplit: assetsQuery.data?.mediaSplitApproved ?? false,
+    choice: mediaSplitChoice,
+  }).value;
   const ratingSummary = summarizeListingRating({
     declaredRating: request.appListing?.contentRating,
     assets: ratingFloorAssets(ratingAssets, mediaSplit === 'split'),
@@ -896,7 +902,7 @@ export function OffsiteReviewModalBody({
                 currentlySplit={assetsQuery.data.mediaSplitApproved}
                 value={mediaSplit}
                 onChange={(v) => {
-                  setMediaSplit(v);
+                  setMediaSplitChoice(v);
                   setRatingOverride(null);
                 }}
                 disabled={busy}

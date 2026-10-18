@@ -619,6 +619,7 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
 
   test('🔴 choosing the split re-defaults the rating to the civitai.com media, and approve sends both', async () => {
     await openApprove();
+    await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
     await page.getByTestId('apps-media-split-split').click();
     const ratingInput = page
       .getByTestId('apps-offsite-approve-rating')
@@ -662,9 +663,31 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
   });
 
-  test('a listing that is already split is named as such', async () => {
+  test('🔴 a listing that is already split keeps it by default, and says how to end it', async () => {
     mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: true };
     await openApprove();
     await expect.element(page.getByTestId('apps-media-split-current')).toBeInTheDocument();
+    await expect.element(page.getByRole('radio', { name: /^Split:/ })).toBeChecked();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ contentRating: 'g', mediaSplit: 'split' })
+    );
+  });
+
+  test('🔴 a split chosen while the choice was shown is not sent once it is hidden', async () => {
+    await openApprove();
+    await page.getByTestId('apps-media-split-split').click();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    // The author's media is now all SFW: the choice no longer applies and is not shown.
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      screenshots: [{ imageId: 12, nsfwLevel: 2, scanStatus: 'scanned' as const }],
+    };
+    await page.getByTestId('apps-offsite-approve-open').click();
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaSplit: 'rate-mature' })
+    );
   });
 });

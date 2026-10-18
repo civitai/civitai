@@ -51,24 +51,48 @@ export async function readListingMediaSplit(
   return Array.isArray(rows) && rows[0]?.split === true;
 }
 
+type ListingFace = { iconId: number | null; coverId: number | null };
+
+/** Whether the icon and cover are civitai.com-eligible, which a split requires. */
+async function isListingFaceComEligible(
+  db: Pick<RawClient, '$queryRaw'>,
+  face: ListingFace
+): Promise<boolean> {
+  const faceIds = [face.iconId, face.coverId].filter((v): v is number => v != null);
+  if (faceIds.length === 0) return true;
+  const levels = await db.$queryRaw<{ nsfwLevel: number | null }[]>`
+    SELECT "nsfwLevel" FROM "Image" WHERE id IN (${Prisma.join(faceIds)})
+  `;
+  return Array.isArray(levels) && levels.every((l) => isComEligibleLevel(l.nsfwLevel));
+}
+
 /**
  * Throws the error a `split` decision would fail with, without writing anything — so a caller
  * whose go-live write cannot surface an error (on-site `approveRequest`) can refuse up front.
  */
 export async function assertListingMediaSplitGrantable(
   db: Pick<RawClient, '$queryRaw'>,
-  face: { iconId: number | null; coverId: number | null },
+  face: ListingFace,
   available?: boolean
 ): Promise<void> {
   if (!(available ?? (await isListingMediaSplitTableAvailable(db))))
     throw new TRPCError({ code: 'BAD_REQUEST', message: MEDIA_SPLIT_UNAVAILABLE_MESSAGE });
-  const faceIds = [face.iconId, face.coverId].filter((v): v is number => v != null);
-  if (faceIds.length === 0) return;
-  const levels = await db.$queryRaw<{ nsfwLevel: number | null }[]>`
-    SELECT "nsfwLevel" FROM "Image" WHERE id IN (${Prisma.join(faceIds)})
-  `;
-  if (!Array.isArray(levels) || !levels.every((l) => isComEligibleLevel(l.nsfwLevel)))
+  if (!(await isListingFaceComEligible(db, face)))
     throw new TRPCError({ code: 'BAD_REQUEST', message: MEDIA_SPLIT_FACE_NOT_SFW_MESSAGE });
+}
+
+/**
+ * A granted split, for a go-live no moderator decides (owner republish): honoured only while the
+ * icon and cover going live are still civitai.com-eligible, the same condition a moderator's
+ * grant is refused on. Otherwise the listing is floored by all of its media.
+ */
+export async function readListingMediaSplitForGoLive(
+  db: Pick<RawClient, '$queryRaw'>,
+  appListingId: string,
+  face: ListingFace
+): Promise<boolean> {
+  if (!(await readListingMediaSplit(db, appListingId))) return false;
+  return isListingFaceComEligible(db, face);
 }
 
 /**
@@ -84,7 +108,7 @@ export async function applyListingMediaSplitDecision(
   db: RawClient,
   args: {
     appListingId: string;
-    face: { iconId: number | null; coverId: number | null };
+    face: ListingFace;
     decision: ListingMediaSplitDecision | null | undefined;
     actorUserId: number;
   }
