@@ -25,7 +25,7 @@ import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
+import { DEFAULT_MAX_WORKERS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -92,7 +92,7 @@ function loadSkillConfig() {
     prewarmTimeout: 300000,
     testConcurrency: 1,
     typecheckConcurrency: 1,
-    testMaxWorkers: null,
+    testMaxWorkers: DEFAULT_MAX_WORKERS,
     testCacheMode: 'off',
     prodGroups: [],
   };
@@ -191,11 +191,15 @@ function loadSkillConfig() {
         case 'TEST_MAX_WORKERS': {
           // Same reasoning as TEST_CONCURRENCY above — this feeds a constructor that throws, and
           // the queue is built at module scope, so a typo would stop the daemon binding at all.
-          // An empty value means "no cap", which is the default and not an error.
+          // An empty value keeps the default; `none` is the only way to uncap.
           if (!value) break;
+          if (value === 'none') {
+            config.testMaxWorkers = null;
+            break;
+          }
           const parsed = parseInt(value, 10);
           if (Number.isInteger(parsed) && parsed >= 1) config.testMaxWorkers = parsed;
-          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1)`);
+          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1 or 'none')`);
           break;
         }
         case 'DEVSERVER_PROD_GROUPS':

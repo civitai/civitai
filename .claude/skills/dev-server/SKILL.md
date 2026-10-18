@@ -346,6 +346,10 @@ runtime with `test config <n>`. `0` is legal and means *paused* — nothing star
 A caller that queues behind a paused queue is told so explicitly rather than being handed a position
 and left waiting.
 
+**Vitest workers are capped at 4 per queued run** (`DEFAULT_MAX_WORKERS`), so a daemon restart cannot
+bring back an unclamped suite. Change it with `TEST_MAX_WORKERS` in the skill's `.env` or at runtime
+with `test config --max-workers <n>`; `none` removes the cap. A caller's own `--max-workers` wins.
+
 **Each kind of check is its own lane with its own limit**, because they are not the same load: a
 unit run saturates every core, while `tsc` is single-threaded and spends its budget on heap. The
 lanes are `unit` (`test:unit:run`), `typecheck` (`typecheck`) and `typecheckApps`
