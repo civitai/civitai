@@ -554,7 +554,7 @@ async function gateRankedCandidates(
 /**
  * A ranked list of model ids through `gateRankedCandidates` under the seed's `modelTypes`/`baseModel`
  * filter, first `min(cap, maxModels)` models. Shared by checkpoint mode's `attach_bm` arm and the
- * v1_tags arm, whose index admits only listed models at build time; these gates are what hold at
+ * v1_tags arm. A build-time index may hold models since unlisted; these gates are what hold at
  * request time.
  */
 export async function findRankedCandidates(opts: {

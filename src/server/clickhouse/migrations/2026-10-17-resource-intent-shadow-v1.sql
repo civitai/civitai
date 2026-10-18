@@ -34,7 +34,7 @@
 --                        was chosen.
 --   ecosystemTop3        the tag-derived ecosystems, best first; [] when the caller gave one.
 -- On a served row replayed from the cache the per-prompt columns (literalTagCount through
--- ecosystemTop3) are empty: the tags were not computed.
+-- ecosystemTop3) hold their defaults (0, '' or []): the tags were not computed.
 
 ALTER TABLE default.resourceIntentShadow
   ADD COLUMN IF NOT EXISTS shadowArm LowCardinality(String) DEFAULT '',

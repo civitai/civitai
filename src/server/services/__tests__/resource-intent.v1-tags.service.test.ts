@@ -950,22 +950,31 @@ describe('🔴 rows write only columns the shadow migrations declare', () => {
 
   it('with every v1 flag off, HYBRID_10, POOL_MERGE and checkpoint rows write only pre-v1 columns', async () => {
     expect(v1Columns).toContain('literalTagCount');
+    // Each run's arm is checked first, so a run silently served by another arm cannot pass.
     const runs: [
       Parameters<typeof getResourceIntent>[0],
-      Parameters<typeof getResourceIntent>[1]
+      Parameters<typeof getResourceIntent>[1],
+      Record<string, unknown> | null
     ][] = [
-      [{ prompt: PROMPT, baseModel: 'SDXL 1.0' }, CTX],
+      [{ prompt: PROMPT, baseModel: 'SDXL 1.0' }, CTX, null],
       [
         { prompt: PROMPT, baseModel: 'SDXL 1.0' },
         { ...CTX, poolMerge: true },
+        { arm: 'pool_merge' },
       ],
-      [{ prompt: PROMPT, baseModel: 'SDXL 1.0', kind: 'checkpoint' }, CTX],
+      [
+        { prompt: PROMPT, baseModel: 'SDXL 1.0', kind: 'checkpoint' },
+        CTX,
+        { kind: 'checkpoint', arm: 'attach_bm' },
+      ],
     ];
-    for (const [input, ctx] of runs) {
+    for (const [input, ctx, arm] of runs) {
       mockInsert.mockClear();
       mockStage1();
       await getResourceIntent(input, ctx);
       await flush();
+      if (arm) expect(shadowRow()).toMatchObject(arm);
+      else expect(shadowRow()).not.toHaveProperty('arm');
       expect(
         Object.keys(shadowRow()).filter((k) => !preV1.has(k)),
         JSON.stringify(ctx)

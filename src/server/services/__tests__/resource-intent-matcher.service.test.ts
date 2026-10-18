@@ -1059,10 +1059,13 @@ describe('🔴 findRankedCandidates — the request-time gates on a ranked list 
     ]);
   });
 
-  it('is at most min(cap, 50) models wide, and makes no query without candidates', async () => {
+  it('is at most min(cap, maxModels) models wide, and makes no query without candidates', async () => {
     const ids = Array.from({ length: 70 }, (_, i) => 1000 + i);
     searchWithSignal.mockResolvedValue({ hits: ids.map((id) => doc(id, [{ id: id * 10 }])) });
     expect(await findRankedCandidates({ ...opts, modelIds: ids, cap: 255 })).toHaveLength(50);
+    expect(
+      await findRankedCandidates({ ...opts, modelIds: ids, cap: 255, maxModels: 20 })
+    ).toHaveLength(20);
     expect(await findRankedCandidates({ ...opts, modelIds: ids, cap: 7 })).toHaveLength(7);
     searchWithSignal.mockClear();
     expect(await findRankedCandidates({ ...opts, modelIds: [] })).toEqual([]);
