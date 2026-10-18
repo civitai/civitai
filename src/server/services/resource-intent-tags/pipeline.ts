@@ -10,7 +10,7 @@ import {
   TagIndexAccumulator,
   type TagBuildStats,
 } from './build';
-import { s3TagIndexObjects } from './objects';
+import { s3TagIndexObjects, TAG_INDEX_STORE_ENV } from './objects';
 import { encodeTagIndexCooperative, TAG_INDEX_MAX_PAYLOAD_BYTES } from './payload';
 import { promptExcludedByAuditor } from './prompt-exclusion';
 import {
@@ -80,6 +80,7 @@ export function loopYielder(sliceMs: number, now: () => number = () => performan
 export type TagBuildEnv = Partial<
   Record<
     | 'RESOURCE_INTENT_TAG_INDEX_BUCKET'
+    | (typeof TAG_INDEX_STORE_ENV)[number]
     | 'P2M_CLICKHOUSE_URL'
     | 'P2M_CLICKHOUSE_USER'
     | 'P2M_CLICKHOUSE_PASSWORD'
@@ -96,12 +97,14 @@ export type TagBuildConfig = {
 
 /**
  * The build's configuration, or one error naming every missing variable. A production build needs
- * the snapshot bucket; a dry run stores nothing and does not. The hash key must be hex and carry the
- * fingerprint the observations were written under.
+ * the snapshot bucket and its credentials (`TAG_INDEX_STORE_ENV`); a dry run stores nothing and
+ * does not. The hash key must be hex and carry the fingerprint the observations were written under.
  */
 export function tagBuildConfig(e: TagBuildEnv, opts: { requireBucket: boolean }): TagBuildConfig {
   const required = [
-    ...(opts.requireBucket ? (['RESOURCE_INTENT_TAG_INDEX_BUCKET'] as const) : []),
+    ...(opts.requireBucket
+      ? (['RESOURCE_INTENT_TAG_INDEX_BUCKET', ...TAG_INDEX_STORE_ENV] as const)
+      : []),
     'P2M_CLICKHOUSE_URL',
     'P2M_CLICKHOUSE_USER',
     'P2M_CLICKHOUSE_PASSWORD',

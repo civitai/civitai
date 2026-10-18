@@ -221,7 +221,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // snapshot (about 780 MiB per pod decoded at full coverage, October 2026, and about twice that
   // while reloading; docs/resource-intent-primitive.md, "Holder"), so turn it
   // on only once a ready snapshot exists and the pods that will serve it have
-  // RESOURCE_INTENT_TAG_INDEX_BUCKET and the memory. Boolean only.
+  // RESOURCE_INTENT_TAG_INDEX_BUCKET, its RESOURCE_INTENT_TAG_INDEX_B2_* credentials and the memory.
+  // Boolean only.
   RESOURCE_INTENT_TAG_INDEX_HOLDER = 'resource-intent-tag-index-holder',
 
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
