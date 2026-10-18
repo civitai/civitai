@@ -92,6 +92,7 @@ describe('getEventBoxCatalogAccess', () => {
     expect(await getEventBoxCatalogAccess('birthday2026', undefined)).toEqual({
       title: "Civitai's 4th Birthday",
       teams: ['Pink', 'Blue'],
+      playable: true,
     });
     expect(mocks.access).toHaveBeenCalledTimes(1);
     expect(mocks.access).toHaveBeenCalledWith(
@@ -110,9 +111,13 @@ describe('getEventBoxCatalogAccess', () => {
     );
   });
 
-  it.each(['preview', 'open', 'ended'])('opens the catalog of an event in %s', async (access) => {
+  it.each([
+    ['preview', true],
+    ['open', true],
+    ['ended', false],
+  ])('opens the catalog of an event in %s, playable: %s', async (access, playable) => {
     mocks.access.mockResolvedValue(access);
-    expect(await getEventBoxCatalogAccess('birthday2026', undefined)).not.toBeNull();
+    expect((await getEventBoxCatalogAccess('birthday2026', undefined))?.playable).toBe(playable);
   });
 
   it('keeps the catalog of a closed event, or one whose access cannot be read', async () => {

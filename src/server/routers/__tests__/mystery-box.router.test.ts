@@ -9,18 +9,22 @@ import type * as MysteryBoxInventoryService from '~/server/services/mystery-box-
  * the real procedure builds the arguments.
  */
 
-const { mockOpen, mockRead, mockOddsPage, mockHeld, mockOpenings } = vi.hoisted(() => ({
-  mockOpen: vi.fn(async () => ({ replayed: false })),
-  mockRead: vi.fn(async () => []),
-  mockOddsPage: vi.fn(async () => null),
-  mockHeld: vi.fn(async () => []),
-  mockOpenings: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-}));
+const { mockOpen, mockRead, mockCatalog, mockOddsPage, mockHeld, mockOpenings } = vi.hoisted(
+  () => ({
+    mockOpen: vi.fn(async () => ({ replayed: false })),
+    mockRead: vi.fn(async () => []),
+    mockCatalog: vi.fn(async () => []),
+    mockOddsPage: vi.fn(async () => null),
+    mockHeld: vi.fn(async () => []),
+    mockOpenings: vi.fn(async () => ({ items: [], nextCursor: undefined })),
+  })
+);
 
 vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxService>()),
   openMysteryBox: mockOpen,
   getMysteryBoxesForEvent: mockRead,
+  getMysteryBoxCatalogForEvent: mockCatalog,
 }));
 
 vi.mock('~/server/services/mystery-box-odds-page.service', async (importOriginal) => ({
@@ -207,6 +211,64 @@ describe('mysteryBox.getForEvent hands the service the flag, the country and the
       'UNAUTHORIZED'
     );
     expect(mockRead).not.toHaveBeenCalled();
+  });
+});
+
+describe('mysteryBox.getCatalogForEvent hands the service the flag, the country and the viewer', () => {
+  beforeEach(() => mockCatalog.mockClear());
+
+  it('serves a signed-out visitor as no viewer, and a signed-in one with their moderator bit', async () => {
+    await caller({ mysteryBox: true }, { 'cf-ipcountry': 'BE' }, { user: null }).getCatalogForEvent(
+      { event: 'birthday2026' }
+    );
+    await caller(
+      { mysteryBox: false },
+      {},
+      { user: { ...holder, isModerator: true } }
+    ).getCatalogForEvent({ event: 'birthday2026' });
+    expect(mockCatalog.mock.calls.map(([arg]) => arg)).toEqual([
+      { event: 'birthday2026', viewer: undefined, mysteryBoxEnabled: true, countryCode: 'BE' },
+      {
+        event: 'birthday2026',
+        viewer: { id: holder.id, isModerator: true },
+        mysteryBoxEnabled: false,
+        countryCode: undefined,
+      },
+    ]);
+  });
+});
+
+// A signed-out request is edge-cached for a minute by default, keyed by URL alone; these answers
+// depend on the visitor's country and flags.
+describe('the public box reads are never edge-cached', () => {
+  it.each([
+    [
+      'getCatalogForEvent',
+      (c: ReturnType<typeof mysteryBoxRouter.createCaller>) =>
+        c.getCatalogForEvent({ event: 'birthday2026' }),
+    ],
+    [
+      'getOddsPage',
+      (c: ReturnType<typeof mysteryBoxRouter.createCaller>) =>
+        c.getOddsPage({ boxDefinitionId: 9 }),
+    ],
+  ])('%s zeroes the signed-out edge and browser cache', async (_, call) => {
+    const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, canCache: true };
+    const signedOut = mysteryBoxRouter.createCaller({
+      acceptableOrigin: true,
+      user: null,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} } as never,
+      res: { setHeader: () => undefined } as never,
+      cache,
+      features: { mysteryBox: true } as never,
+      track: undefined,
+    } as never);
+
+    await call(signedOut);
+
+    expect(cache).toMatchObject({ edgeTTL: 0, browserTTL: 0 });
   });
 });
 

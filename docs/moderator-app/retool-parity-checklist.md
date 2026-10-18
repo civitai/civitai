@@ -164,13 +164,12 @@ Open, with the evidence each audit produced:
       planting sentinel values on all four Redis keys and confirming the action cleared every one.
 - [x] **"Remove Badges" (`RemoveCosmetics`) ported** (2026-08-11 — a Remove control per row on the
       Cosmetics panel). Done **locally** rather than via `retool/cosmetic → unassign`, which the audit
-      suggested: that endpoint refreshes the sticker cache alone, leaving the profile-level caches stale
-      for a day, and attributes to the shared API key's owner instead of the acting moderator. Scoped to
-      the exact `(cosmeticId, claimKey)` row clicked, so a cosmetic held twice loses only the claim on
-      screen — the endpoint deletes every claim. `user-account.service.ts` carried a comment saying this
-      was *deliberately* unported because "the main app's equivalent also refreshes entity caches and
-      search indexes"; `unassignCosmetic` does neither, so the stated reason was false and the comment
-      is gone.
+      suggested: that endpoint deletes every claim of the cosmetic, where this is scoped to the exact
+      `(cosmeticId, claimKey)` row clicked, so a cosmetic held twice loses only the claim on screen. (At
+      the time it also refreshed the sticker cache alone and attributed to the shared API key's owner;
+      since the take-back refresh work, `unassignCosmetic` runs the full post-delete cleanup, and
+      `removeCosmetic` reaches the same cleanup for the rows it deleted through
+      `/api/mod/cosmetic/holdings-removed`.)
 - [x] **Every `retool/*` call attributes to the API key's owner** — **RESOLVED 2026-08-19** by session
       forwarding instead of minted keys: the spoke relays the acting moderator's own cookie to
       `/api/mod/*`, so the audit row, the `privileged` check and the rate-limit bucket are all per

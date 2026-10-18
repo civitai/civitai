@@ -552,12 +552,15 @@ function writeThroughRemovedEventHats(
       ? [{ userId, entityType: equippedToType, entityId: equippedToId }]
       : []
   );
-  if (hats.length) void syncOwnersEventHats(hats);
-  if (hats.length)
-    void syncEventRosterMembers(
+  if (!hats.length) return Promise.resolve();
+  // Both catch and log their own failures, so a caller may leave this unawaited.
+  return Promise.all([
+    syncOwnersEventHats(hats),
+    syncEventRosterMembers(
       hats.map((h) => h.userId),
       { onlyIfListed: true }
-    );
+    ),
+  ]).then(() => undefined);
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
@@ -707,10 +710,23 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
     },
   });
-  writeThroughRemovedEventHats(equipped);
+  await afterHoldingsRemoved(uniqueUserIds, equipped);
 
-  await userCosmeticCache.refresh(uniqueUserIds);
-  await refreshOwnedStickerCache(uniqueUserIds);
+  return { revoked: count };
+}
+
+type RemovedEquippedHolding = {
+  userId: number;
+  equippedToId: number | null;
+  equippedToType: CosmeticEntity | null;
+  cosmetic?: { data: unknown } | null;
+};
+
+async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquippedHolding[]) {
+  const hatSync = writeThroughRemovedEventHats(equipped);
+
+  await userCosmeticCache.refresh(userIds);
+  await refreshOwnedStickerCache(userIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();
   for (const { equippedToId, equippedToType } of equipped) {
@@ -733,8 +749,37 @@ export async function revokeCosmeticsFromUsers({
         ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
   }
+  return { hatSync };
+}
 
-  return { revoked: count };
+/**
+ * The cleanup `revokeCosmeticsFromUsers` runs, for holdings the moderator app already deleted.
+ * `removed` only names the owners and entities to re-derive, never what to take off, so a wrong or
+ * stale entry refreshes what is there.
+ */
+export async function refreshAfterHoldingsRemoved(
+  removed: {
+    userId: number;
+    cosmeticId: number;
+    equippedToId: number;
+    equippedToType: CosmeticEntity;
+  }[]
+) {
+  const cosmetics = await dbWrite.cosmetic.findMany({
+    where: { id: { in: [...new Set(removed.map((r) => r.cosmeticId))] } },
+    select: { id: true, data: true },
+  });
+  const dataById = new Map(cosmetics.map((c) => [c.id, c.data]));
+  const { hatSync } = await afterHoldingsRemoved(
+    [...new Set(removed.map((r) => r.userId))],
+    removed.map(({ cosmeticId, ...row }) => ({
+      ...row,
+      cosmetic: { data: dataById.get(cosmeticId) ?? null },
+    }))
+  );
+  // Awaited here, unlike the revoke, so the hat is off the map when the moderator's request returns.
+  // The sync logs its own failures and the hourly reconcile settles them: a 200 does not prove it.
+  await hatSync;
 }
 
 /**
@@ -818,8 +863,7 @@ export async function unassignCosmetic({
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
-  writeThroughRemovedEventHats(equipped);
-  await refreshOwnedStickerCache(userIds);
+  await afterHoldingsRemoved(userIds, equipped);
   return { count: result.count };
 }
 

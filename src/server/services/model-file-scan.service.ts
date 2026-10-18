@@ -130,6 +130,19 @@ export function examinePickleImports({
 // Keeping all DB writes here guarantees zero behavioral drift between paths.
 // -----------------------------------------------------------------------------
 
+// Postgres rejects U+0000 in both text and jsonb (22P05), and safetensors headers can carry it,
+// so one NUL in a trainer's metadata would fail the whole update and leave the file Pending.
+function stripNul<T>(value: T): T {
+  if (typeof value === 'string') return value.replace(/\u0000/g, '') as T;
+  if (Array.isArray(value)) return value.map(stripNul) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k.replace(/\u0000/g, ''), stripNul(v)])
+    ) as T;
+  }
+  return value;
+}
+
 export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   const { fileId } = outcome;
 
@@ -197,20 +210,22 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   if (outcome.virusScan) {
     data.virusScanResult = outcome.virusScan.result;
-    data.virusScanMessage = outcome.virusScan.message;
+    data.virusScanMessage = stripNul(outcome.virusScan.message);
   }
 
   if (outcome.pickleScan) {
     data.pickleScanResult = outcome.pickleScan.result;
-    data.pickleScanMessage = outcome.pickleScan.message;
+    data.pickleScanMessage = stripNul(outcome.pickleScan.message);
   }
 
-  if (outcome.headerData !== undefined) {
-    data.headerData = outcome.headerData as Prisma.InputJsonValue;
+  // Stripped once: SSHS_12 below is derived from this header and lands in a text column too.
+  const headerData = stripNul(outcome.headerData);
+  if (headerData !== undefined) {
+    data.headerData = headerData as Prisma.InputJsonValue;
   }
 
   if (outcome.rawScanResult !== undefined) {
-    data.rawScanResult = outcome.rawScanResult as Prisma.InputJsonValue;
+    data.rawScanResult = stripNul(outcome.rawScanResult) as Prisma.InputJsonValue;
   }
 
   await dbWrite.modelFile.update({ where: { id: fileId }, data });
@@ -221,7 +236,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       Object.entries(
         // outcome.headerData is absent on a hash-only rescan, and this rebuild deletes every row
         // for the file — so the stored column is what keeps SSHS_12 from being dropped.
-        normalizeScanHashes(outcome.hashes, outcome.headerData ?? file.headerData)
+        normalizeScanHashes(outcome.hashes, headerData ?? file.headerData)
       ) as Array<[ModelHashType, string]>
     )
       .filter(([, hash]) => Boolean(hash))
@@ -380,8 +395,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
   // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
-  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the callback's dedupe key
-  // is already taken, so a 500 here drops the redelivery.
+  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
+  // already written, and a throw would make the orchestrator redeliver the whole workflow.
   if (ranScan && LOADABLE_FILE_TYPES.includes(file.type))
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
@@ -633,8 +648,32 @@ export async function processModelFileScanResult(req: NextApiRequest) {
       ).catch();
       return;
     }
+
+    // A throw becomes a 500 and the orchestrator redelivers, but the key taken above would
+    // suppress that redelivery as a duplicate and the result would be lost for good.
+    try {
+      await handleScanWorkflow(event);
+    } catch (error) {
+      await sysRedis.del(dedupeKey).catch((e) =>
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'model-file-scan-result',
+            message: `Failed to release dedupe key: ${String(e)}`,
+            workflowId: event.workflowId,
+          },
+          'webhooks'
+        ).catch(() => undefined)
+      );
+      throw error;
+    }
+    return;
   }
 
+  await handleScanWorkflow(event);
+}
+
+async function handleScanWorkflow(event: WorkflowEvent) {
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,
     path: { workflowId: event.workflowId },

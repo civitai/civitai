@@ -142,13 +142,18 @@ export async function getEventBoxViewer(
 }
 
 /**
- * The event's title and teams for a viewer who may read its boxes, signed in or not. Null when the
- * event is closed to them, unregistered or unloadable.
+ * The event's title and teams for a viewer who may read its boxes, signed in or not, and whether
+ * the event is playable for them (boxes on sale can be bought). Null when the event is closed to
+ * them, unregistered or unloadable.
  */
 export async function getEventBoxCatalogAccess(eventName: string, viewer: EventViewer) {
   const readable = await readableBoxEvent(eventName, viewer);
   if (!readable) return null;
-  return { title: readable.event.title, teams: readable.event.teams };
+  return {
+    title: readable.event.title,
+    teams: readable.event.teams,
+    playable: canPlayEvent(readable.access),
+  };
 }
 
 async function readableBoxEvent(eventName: string, viewer: EventViewer) {

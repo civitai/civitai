@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
+import { lockItemHolder } from './item-holder-lock';
 import type { CosmeticType } from '$lib/cosmetics';
 
 export type CosmeticRow = {
@@ -81,14 +82,18 @@ export async function grantCosmeticsToUsers({
     .executeTakeFirst();
   const alreadyOwned = Number(owned?.count ?? 0);
 
+  // One transaction per user, so each holds a single user's lock.
   for (const userId of uniqueUserIds) {
-    await sql`
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
-      SELECT ${userId}, c.id, 'claimed'
-      FROM "Cosmetic" c
-      WHERE c.id IN (${sql.join(uniqueCosmeticIds)})
-      ON CONFLICT DO NOTHING
-    `.execute(dbWrite);
+    await dbWrite.transaction().execute(async (trx) => {
+      await lockItemHolder(trx, userId);
+      await sql`
+        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
+        SELECT ${userId}, c.id, 'claimed'
+        FROM "Cosmetic" c
+        WHERE c.id IN (${sql.join(uniqueCosmeticIds)})
+        ON CONFLICT DO NOTHING
+      `.execute(trx);
+    });
   }
 
   const totalPairs = uniqueUserIds.length * uniqueCosmeticIds.length;

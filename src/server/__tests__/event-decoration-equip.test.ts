@@ -793,4 +793,15 @@ describe('a hat placement change writes through to the live hat map', () => {
       db.userCosmetic.deleteMany.mock.invocationCallOrder[0]
     );
   });
+
+  it('a moderator unassign also refreshes the content it was equipped to, frames included', async () => {
+    db.userCosmetic.findMany.mockResolvedValue(heldHats);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 3 });
+    await unassignCosmetic({ cosmeticId: 1, userIds: [OWNER, 8] });
+    expect(caches.frame.Image.refresh).toHaveBeenCalledWith([IMAGE, 10]);
+    expect(caches.event.Image.refresh).toHaveBeenCalledWith([IMAGE, 10]);
+    expect(caches.event.Model.refresh).toHaveBeenCalledWith([9]);
+    const { userCosmeticCache } = await import('~/server/redis/caches');
+    expect(userCosmeticCache.refresh).toHaveBeenCalledWith([OWNER, 8]);
+  });
 });

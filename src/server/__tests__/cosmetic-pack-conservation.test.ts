@@ -12,11 +12,22 @@ import {
 } from '~/test-utils/shopPurchaseClaimFake';
 
 let claims = shopPurchaseClaimFake();
-dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-  claims.rollbackOnThrow(() =>
+let txSeq = 0;
+let committed: number[] = [];
+const lockedOn: number[] = [];
+dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+  const tx = ++txSeq;
+  const result = await claims.rollbackOnThrow(() =>
     fn({
       cosmeticShopPurchaseClaim: claims.txDelegate,
-      $executeRaw: (...a: unknown[]) => (isHolderLock(a) ? holderLock(...a) : executeRaw(...a)),
+      $executeRaw: (...a: unknown[]) => {
+        if (isHolderLock(a)) {
+          lockedOn.push(tx);
+          return holderLock(...a);
+        }
+        if (isSaleCount(a)) return saleCount({ tx, committed: [...committed] }, ...a);
+        return executeRaw(...a);
+      },
       userCosmetic: {
         findMany: (...a: unknown[]) => ownedFindMany(...a),
         createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
@@ -27,8 +38,10 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
       },
       cosmeticShopItem: { update: vi.fn() },
     })
-  )
-);
+  );
+  committed.push(tx);
+  return result;
+});
 
 /**
  * A conservation property over the whole pack purchase, table-driven rather than
@@ -50,6 +63,11 @@ const executeRaw = vi.fn();
 const holderLock = vi.fn();
 const isHolderLock = (a: unknown[]) =>
   (a[0] as readonly string[]).join('').includes('pg_advisory_xact_lock');
+// The listing's sale counter and its lock timeout (cosmetic-shop-sale-count.ts), kept apart from the
+// grants; called with `{ tx, committed }` first.
+const saleCount = vi.fn();
+const isSaleCount = (a: unknown[]) =>
+  /UPDATE "CosmeticShopItem"|set_config\('lock_timeout'/.test((a[0] as readonly string[]).join(''));
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 const createManyComponents = vi.fn();
 const createManyUserCosmetic = vi.fn();
@@ -351,6 +369,10 @@ const SHAPES: Shape[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  txSeq = 0;
+  committed = [];
+  lockedOn.length = 0;
+  saleCount.mockReset();
   claims = installShopPurchaseClaimFake();
   ownedFindMany.mockResolvedValue([]);
   // Distinct per call, as the real service returns: a takedown reverses payouts
@@ -799,6 +821,50 @@ describe('purchaseCosmeticPack — what a purchase records as sold', () => {
   });
 });
 
+// Deliberately NOT on the grant transaction (see countShopItemSaleAfterGrant): a queue on the
+// listing row there holds each buyer's lock and pushes paid grants toward a refund.
+describe('purchaseCosmeticPack — counting the sale', () => {
+  const members = [mkMember()];
+  const buy = () =>
+    purchaseCosmeticPack({
+      userId: BUYER,
+      shopItem: shopItem(6300, members.length),
+      members,
+      stickersEnabled: true,
+    });
+  const isUpdate = (call: unknown[]) =>
+    ((call[1] as readonly string[]) ?? []).join('').includes('UPDATE "CosmeticShopItem"');
+
+  it('counts the sale once the grant has committed and the creators are paid', async () => {
+    await buy();
+
+    const countAt = saleCount.mock.calls.flatMap((c, i) => (isUpdate(c) ? [i] : []));
+    expect(countAt).toHaveLength(1);
+    const [{ tx, committed: before }] = saleCount.mock.calls[countAt[0]] as [
+      { tx: number; committed: number[] }
+    ];
+    expect(lockedOn).toHaveLength(1);
+    expect(tx).not.toBe(lockedOn[0]);
+    expect(before).toContain(lockedOn[0]);
+    expect(pay).toHaveBeenCalled();
+    expect(saleCount.mock.invocationCallOrder[countAt[0]]).toBeGreaterThan(
+      Math.max(...pay.mock.invocationCallOrder)
+    );
+  });
+
+  it('completes the purchase when the sale cannot be counted', async () => {
+    saleCount.mockImplementation(async (...call: unknown[]) => {
+      if (isUpdate(call)) throw new Error('canceling statement due to lock timeout');
+      return 1;
+    });
+
+    await expect(buy()).resolves.toBeDefined();
+
+    expect(createManyUserCosmetic).toHaveBeenCalledTimes(1);
+    expect(pay).toHaveBeenCalled();
+  });
+});
+
 // The failure path, which every property above assumes never runs. Round one's
 // review found this shape unguarded: a refund that throws used to discard the
 // grant error, surface its own, and record nothing.
@@ -849,6 +915,8 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(refund).toHaveBeenCalledTimes(1);
     expect(pay).not.toHaveBeenCalled();
+    // A refunded purchase is no sale.
+    expect(saleCount).not.toHaveBeenCalled();
   });
 
   it('refuses without granting when the buyer could not be charged', async () => {

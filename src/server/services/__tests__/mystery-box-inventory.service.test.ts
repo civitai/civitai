@@ -58,6 +58,7 @@ type Opening = {
   tierId: number;
   rewardDefinitionId: number;
   rewardType: string;
+  rewardStatus: string;
   userId: number;
   createdAt: Date;
 };
@@ -251,7 +252,8 @@ function installWorld() {
       (o) =>
         (where.userId === undefined || o.userId === where.userId) &&
         (where.boxDefinitionId === undefined || o.boxDefinitionId === where.boxDefinitionId) &&
-        (where.rewardType === undefined || o.rewardType === where.rewardType)
+        (where.rewardType === undefined || o.rewardType === where.rewardType) &&
+        (where.rewardStatus === undefined || o.rewardStatus === where.rewardStatus)
     );
     return paged(ordered(rows, args.orderBy), args).map((row) => project(row, args.select));
   });
@@ -309,6 +311,7 @@ const opening = (boxItemId: number, at: string, overrides: Partial<Opening> = {}
   tierId: RARE,
   rewardDefinitionId: 101,
   rewardType: 'cosmetic',
+  rewardStatus: 'granted',
   userId: VIEWER,
   createdAt: new Date(at),
   ...overrides,
@@ -580,6 +583,14 @@ describe('getMysteryBoxOpenings', () => {
       reward: { name: 'Hat 2', url: 'hat-2.png', cosmeticType: 'ContentDecoration' },
     });
     expect(items[1].box).toEqual({ id: PLAIN_BOX, name: `Box ${PLAIN_BOX}` });
+  });
+
+  it('leaves out an open a moderator refunded: its reward was taken back', async () => {
+    world.openings.push(opening(35, '2026-11-05T00:00:00Z', { rewardStatus: 'refunded' }));
+
+    const { items } = await getMysteryBoxOpenings({ ...viewer(), limit: 10 });
+
+    expect(items.map((o) => o.boxItemId)).toEqual(['32', '33', '31']);
   });
 
   it('pages through every open once', async () => {

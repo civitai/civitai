@@ -16,13 +16,26 @@ const BASE = 'https://sandbox.example';
 
 const m = vi.hoisted(() => ({
   tools: null as null | Record<string, ChatTool>,
+  beforeToolCall: null as null | ((name: string, input: unknown, context: unknown) => unknown),
   list: [] as Sandbox[],
   state: 'running' as Sandbox['state'],
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
-  AppAssistantChat: (props: { tools: Record<string, ChatTool> }) => {
+  AppAssistantChat: (props: {
+    tools: Record<string, ChatTool>;
+    beforeToolCall: NonNullable<typeof m.beforeToolCall>;
+    chatRef: { current: unknown };
+  }) => {
     m.tools = props.tools;
+    m.beforeToolCall = props.beforeToolCall;
+    // A chat that takes no message, with something typed in its box: a Build it it cannot send comes back
+    // as a "not sent" notice.
+    const composer = document.createElement('civitai-chat-composer');
+    Object.assign(composer, { draft: 'my words' });
+    const renderRoot = document.createElement('div');
+    renderRoot.append(composer);
+    props.chatRef.current = { send: vi.fn(), compose: vi.fn(), renderRoot };
     return <div data-testid="chat" className="h-full" />;
   },
 }));
@@ -155,8 +168,49 @@ function expectPanesOnScreen(viewport: { height: number }) {
   }
 }
 
+/** A "not sent" notice, from Build it pressed when the chat could not take it. */
+async function notSentNotice() {
+  const input = { items: [{ label: 'Ask questions' }] };
+  m.beforeToolCall!('set_checklist', input, { conversationId: 'c', reply: 1 });
+  const output = await m.tools!.set_checklist.execute(input, ctx);
+  const card = m.tools!.set_checklist.render!({
+    name: 'set_checklist',
+    input,
+    state: 'done',
+    output,
+  }) as HTMLElement;
+  document.body.append(card);
+  [...card.querySelectorAll('button')].find((b) => b.textContent === 'Build it')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')).not.toBeNull());
+  await nextLayout();
+  card.remove();
+  return document.querySelector<HTMLElement>('[role="alert"]')!;
+}
+
+describe.each([...NARROW, ...WIDE])('App Assistant "not sent" notice at $width px', (viewport) => {
+  test('keeps the message on the left and Put it back beside Dismiss on the right, on 44 px targets', async () => {
+    await mount(viewport);
+    await createApp();
+    const notice = await notSentNotice();
+    const message = [...notice.querySelectorAll('p')].find((p) =>
+      p.textContent?.startsWith('This message was not sent')
+    )!;
+    const putBack = buttonStartingWith('Put it back')!;
+    const dismiss = notice.querySelector<HTMLElement>('[aria-label="Dismiss"]')!;
+    expect(box(message).right).toBeLessThanOrEqual(box(putBack).left);
+    expect(box(dismiss).left - box(putBack).right).toBeGreaterThanOrEqual(0);
+    expect(box(dismiss).left - box(putBack).right).toBeLessThan(16);
+    expect(box(notice).right - box(dismiss).right).toBeLessThan(32);
+    expect(box(putBack).top).toBeLessThan(box(dismiss).bottom);
+    expect(box(dismiss).top).toBeLessThan(box(putBack).bottom);
+    expect(box(notice).right).toBeLessThanOrEqual(viewport.width);
+    expectTapTargets([putBack, dismiss], 2);
+  });
+});
+
 beforeEach(() => {
   m.tools = null;
+  m.beforeToolCall = null;
   m.list = [];
   m.state = 'running';
 });

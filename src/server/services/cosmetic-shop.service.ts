@@ -34,7 +34,11 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
+import {
+  computeCreatorShopSplit,
+  PACK_FILTER_VALUE,
+  PACK_SHOP_ITEM_WHERE,
+} from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import {
@@ -82,6 +86,10 @@ import {
   resumeShopPurchase,
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
+import {
+  countShopItemSaleAfterGrant,
+  setShopItemSaleCount,
+} from '~/server/services/cosmetic-shop-sale-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { purchaseMysteryBox } from '~/server/services/mystery-box.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -543,6 +551,12 @@ export const upsertCosmeticShopSection = async ({
   // resale — a creator who never marked their item sellable-by-others hasn't
   // consented to official-shop placement.
   if (items?.length) {
+    // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
+    const boxes = await dbWrite.cosmeticShopItem.count({
+      where: { id: { in: items }, itemDefinitionId: { not: null } },
+    });
+    if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
+
     const ineligible = await dbWrite.cosmeticShopItem.findMany({
       where: {
         id: { in: items },
@@ -737,7 +751,9 @@ export const getShopSectionsWithItems = async ({
               ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
                 ? [
                     {
-                      cosmeticId: null,
+                      // Not a mystery box listing: those are sold only through their own surface,
+                      // which applies the box's flag, region and event checks.
+                      ...PACK_SHOP_ITEM_WHERE,
                       ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
                     },
                   ]
@@ -1108,18 +1124,8 @@ export const purchaseCosmeticShopItem = async ({
       shopItem.availableQuantity !== null &&
       shopItem._count.purchases >= shopItem.availableQuantity
     ) {
-      if (shopItemMeta.purchases !== shopItem._count.purchases) {
-        // Update meta with new amount:
-        await dbWrite.cosmeticShopItem.update({
-          where: { id: shopItemId },
-          data: {
-            meta: {
-              ...shopItemMeta,
-              purchases: shopItem._count.purchases,
-            },
-          },
-        });
-      }
+      if (shopItemMeta.purchases !== shopItem._count.purchases)
+        await setShopItemSaleCount(dbWrite, shopItemId, shopItem._count.purchases);
       throw throwBadRequestError(`This ${noun} is out of stock`);
     }
 
@@ -1322,17 +1328,6 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
 
-      // Update the cosmetic with the new amount:
-      await dbWrite.cosmeticShopItem.update({
-        where: { id: shopItemId },
-        data: {
-          meta: {
-            ...(shopItemMeta ?? {}),
-            purchases: (shopItemMeta?.purchases ?? 0) + 1,
-          },
-        },
-      });
-
       return userCosmetic;
     });
 
@@ -1480,6 +1475,9 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
     }
+
+    // After the payouts: a wait on the listing row must not delay paying the creators.
+    await countShopItemSaleAfterGrant(shopItemId);
 
     return data;
   } catch (error) {

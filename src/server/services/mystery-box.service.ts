@@ -3,8 +3,10 @@ import { computeBoxOdds, drawFromOdds } from '@civitai/shared/box-odds';
 import { randomInt } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
+import type { EventViewer } from '~/server/events/event-access';
 import {
   assertEventShopItemPurchasable,
+  getEventBoxCatalogAccess,
   getEventBuyerTeam,
   getEventBoxViewer,
   isEventShopItemData,
@@ -46,7 +48,12 @@ import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/er
 import { createKeyedTtlMemo, createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
+import {
+  BOX_OPENING_REWARD_STATUS,
+  boxOpenClaimKey,
+  cosmeticTeamOf,
+  isForTeam,
+} from '@civitai/shared/mystery-box';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
@@ -154,7 +161,6 @@ export async function getBoxCatalog(
   return contents.flatMap((content) => {
     const { cosmeticId, cosmetic, type } = content.reward;
     if (type !== ITEM_TYPE.cosmetic || cosmeticId == null) return [];
-    const cosmeticTeam = (cosmetic?.data as { team?: unknown } | null)?.team;
     return [
       {
         contentId: content.id,
@@ -164,15 +170,11 @@ export async function getBoxCatalog(
         cosmeticName: cosmetic?.name ?? null,
         cosmeticData: cosmetic?.data ?? null,
         cosmeticType: cosmetic?.type ?? null,
-        team: typeof cosmeticTeam === 'string' ? cosmeticTeam : undefined,
+        team: cosmeticTeamOf(cosmetic?.data),
       },
     ];
   });
 }
-
-// A cosmetic made for a team goes only to that team's members; a buyer with no team gets none.
-const isForTeam = (cosmeticTeam: string | undefined, team: string | undefined) =>
-  cosmeticTeam === undefined || cosmeticTeam === team;
 
 /**
  * Marks each entry whether it is still `left` for the user. Owned from any source, or already drawn
@@ -477,6 +479,113 @@ export async function buildMysteryBoxView(
 }
 
 /**
+ * The published listings of these boxes, and which of a box's is on sale now (stock, then its sale
+ * window).
+ */
+export async function readBoxListings(boxIds: number[]) {
+  const listings = await dbRead.cosmeticShopItem.findMany({
+    where: { itemDefinitionId: { in: boxIds }, status: CosmeticShopItemStatus.Published },
+    select: {
+      id: true,
+      itemDefinitionId: true,
+      title: true,
+      unitAmount: true,
+      availableQuantity: true,
+      availableFrom: true,
+      availableTo: true,
+    },
+    orderBy: { id: 'asc' },
+  });
+  // Only a listing with a quantity needs its sold count, read for those ids alone.
+  const sold = await getSoldCounts(
+    listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
+  );
+  const now = new Date();
+  const onSale = (boxId: number) =>
+    listings.find(
+      (l) => l.itemDefinitionId === boxId && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
+    );
+  return { listings, onSale };
+}
+
+/** An event's boxes in these statuses, in id order. */
+function readEventBoxes(event: string, statuses: string[]) {
+  return dbRead.itemDefinition.findMany({
+    where: {
+      type: ITEM_TYPE.box,
+      status: { in: statuses },
+      params: { path: ['event'], equals: event },
+    },
+    select: BOX_DEFINITION_SELECT,
+    orderBy: { id: 'asc' },
+  });
+}
+
+export type MysteryBoxCatalogEntry = {
+  boxDefinitionId: number;
+  name: string;
+  description: string | null;
+  /** The price of the listing on sale now. */
+  unitAmount: number;
+  tiers: MysteryBoxView['tiers'];
+  /** Every enabled content with the team it is for; each team draws only from its own. */
+  contents: { contentId: number; tierId: number; team: string | null }[];
+  /** The event's teams, including any with nothing of its own in the box. */
+  teams: string[];
+};
+
+/**
+ * An event's mystery boxes on sale now, for a viewer not on a team (signed out, or not joined): the
+ * box and its contents by tier, for base odds. It reads no team, so it places no one and shows no
+ * pool of anyone's; the odds page's gates apply (flag, country, the event open to them), and the
+ * event must be playable, as it must for a team member to be offered the box.
+ */
+export async function getMysteryBoxCatalogForEvent({
+  event,
+  viewer,
+  mysteryBoxEnabled,
+  countryCode,
+}: {
+  event: string;
+  viewer: EventViewer;
+  mysteryBoxEnabled: boolean | undefined;
+  countryCode: string | null | undefined;
+}): Promise<MysteryBoxCatalogEntry[]> {
+  if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
+  const access = await getEventBoxCatalogAccess(event, viewer);
+  if (!access?.playable) return [];
+
+  const boxes = await readEventBoxes(event, [ITEM_DEFINITION_STATUS.published]);
+  if (!boxes.length) return [];
+  const boxIds = boxes.map((box) => box.id);
+  const [{ onSale }, tiers] = await Promise.all([readBoxListings(boxIds), getBoxTiers(boxIds)]);
+
+  const views = await Promise.all(
+    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
+      const listing = onSale(box.id);
+      if (!listing) return null;
+      const catalog = await getBoxCatalogForDisplay(box);
+      return {
+        boxDefinitionId: box.id,
+        name: box.name,
+        description: box.description,
+        unitAmount: listing.unitAmount,
+        tiers: tiers
+          .filter((tier) => tier.boxDefinitionId === box.id)
+          .map(({ boxDefinitionId: _box, ...tier }) => tier),
+        contents: catalog.map(({ contentId, tierId, team }) => ({
+          contentId,
+          tierId,
+          team: team ?? null,
+        })),
+        teams: [...access.teams],
+      };
+    })
+  );
+  return views.filter((view): view is MysteryBoxCatalogEntry => view !== null);
+}
+
+/**
  * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
  * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
  * the event is closed to them; once it ends, only the boxes they hold.
@@ -500,49 +609,20 @@ export async function getMysteryBoxesForEvent({
   if (!viewer) return [];
   const { team, playable } = viewer;
 
-  const boxes = await dbRead.itemDefinition.findMany({
-    where: {
-      type: ITEM_TYPE.box,
-      status: { in: SHOWN_BOX_STATUSES },
-      params: { path: ['event'], equals: event },
-    },
-    select: BOX_DEFINITION_SELECT,
-    orderBy: { id: 'asc' },
-  });
+  const boxes = await readEventBoxes(event, SHOWN_BOX_STATUSES);
   if (!boxes.length) return [];
   const boxIds = boxes.map((box) => box.id);
 
-  const [listings, held, tiers] = await Promise.all([
-    dbRead.cosmeticShopItem.findMany({
-      where: { itemDefinitionId: { in: boxIds }, status: CosmeticShopItemStatus.Published },
-      select: {
-        id: true,
-        itemDefinitionId: true,
-        title: true,
-        unitAmount: true,
-        availableQuantity: true,
-        availableFrom: true,
-        availableTo: true,
-      },
-      orderBy: { id: 'asc' },
-    }),
+  const [{ onSale }, held, tiers] = await Promise.all([
+    readBoxListings(boxIds),
     listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
     getBoxTiers(boxIds),
   ]);
 
-  // Only a listing with a quantity needs its sold count, read for those ids alone.
-  const sold = await getSoldCounts(
-    listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
-  );
-  const now = new Date();
   const views = await Promise.all(
     boxes.map(async (box): Promise<MysteryBoxView | null> => {
       const listing =
-        playable && box.status === ITEM_DEFINITION_STATUS.published
-          ? listings.find(
-              (l) => l.itemDefinitionId === box.id && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
-            )
-          : undefined;
+        playable && box.status === ITEM_DEFINITION_STATUS.published ? onSale(box.id) : undefined;
       const heldBoxItemIds = held
         .filter((item) => item.itemDefinitionId === box.id)
         .map((item) => item.id.toString());
@@ -809,8 +889,6 @@ export async function purchaseMysteryBox({
   }
 }
 
-export const BOX_OPENING_REWARD_STATUS = { granted: 'granted' } as const;
-
 export type MysteryBoxOpenResult = {
   /** The opened box's `Item.id`, as a string: it is a BIGINT. */
   boxItemId: string;
@@ -868,6 +946,9 @@ const NOT_YOUR_BOX = 'This box is not yours to open';
 async function replayOpening(client: Prisma.TransactionClient, boxItemId: bigint, userId: number) {
   const opening = await client.boxOpening.findUnique({ where: { boxItemId } });
   if (!opening || opening.userId !== userId) throw throwBadRequestError(NOT_YOUR_BOX);
+  // Its reward was taken back: answering the reveal again would show a hat they no longer hold.
+  if (opening.rewardStatus !== BOX_OPENING_REWARD_STATUS.granted)
+    throw throwBadRequestError('This box was refunded');
   const reward = await client.itemDefinition.findUnique({
     where: { id: opening.rewardDefinitionId },
     select: { cosmeticId: true },
@@ -927,10 +1008,14 @@ export async function openMysteryBox({
       if (!item)
         return { kind: 'replay' as const, result: await replayOpening(tx, boxItemId, userId) };
 
-      const box = await tx.itemDefinition.findUnique({
-        where: { id: item.itemDefinitionId },
-        select: { id: true, type: true, version: true },
-      });
+      // FOR SHARE holds the version until commit: a builder save locks this row FOR NO KEY UPDATE
+      // and waits for opens in flight, so this open cannot pass the check at one version and draw
+      // from the next one's tiers and contents. After the Item lock, never before it.
+      const [box] = await tx.$queryRaw<{ id: number; type: string; version: number }[]>`
+        SELECT "id", "type", "version" FROM "ItemDefinition"
+        WHERE "id" = ${item.itemDefinitionId}
+        FOR SHARE
+      `;
       if (!box || box.type !== ITEM_TYPE.box)
         throw throwBadRequestError('This box cannot be opened');
       // The holder was shown this version's contents and odds.

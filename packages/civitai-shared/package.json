@@ -24,6 +24,9 @@
     "./rating-review": "./src/rating-review.ts",
     "./crucible": "./src/crucible.ts",
     "./box-odds": "./src/box-odds.ts",
+    "./box-odds-snapshot": "./src/box-odds-snapshot.ts",
+    "./item-holder-lock": "./src/item-holder-lock.ts",
+    "./mystery-box": "./src/mystery-box.ts",
     "./json-ld": "./src/json-ld.ts",
     "./resolution-reasons": "./src/resolution-reasons.ts",
     "./site-appeal": "./src/site-appeal.ts",
@@ -39,7 +42,8 @@
   },
   "dependencies": {
     "@civitai/db-schema": "workspace:*",
-    "semver": "^7.6.0"
+    "semver": "^7.6.0",
+    "zod": "^4.0.17"
   },
   "devDependencies": {
     "@types/semver": "^7.7.1",

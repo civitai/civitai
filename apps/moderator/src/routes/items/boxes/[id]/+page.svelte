@@ -1,0 +1,31 @@
+<script lang="ts">
+  import BoxEditor from './BoxEditor.svelte';
+  import ListingPanel from './ListingPanel.svelte';
+  import StatusPanel from './StatusPanel.svelte';
+  import { LINK_CLASS } from '$lib/format';
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
+  let dirty = $state(false);
+</script>
+
+<header class="page-header">
+  <h1>#{data.box.id} {data.draft.name}</h1>
+  <a class="text-sm {LINK_CLASS}" href="/items/boxes/{data.box.id}/openings">Openings</a>
+</header>
+
+<StatusPanel box={data.box} snapshots={data.snapshots} civitaiUrl={data.civitaiUrl} {dirty} />
+
+<!-- Remounts on every write to the box (each stamps updatedAt), so the working copy restarts from the
+     rows the server wrote, with their new ids. -->
+{#key `${data.box.version}:${data.box.updatedAt}`}
+  <BoxEditor
+    box={data.box}
+    initial={data.draft}
+    initialRewards={data.rewards}
+    events={data.events}
+    bind:dirty
+  />
+{/key}
+
+<ListingPanel boxStatus={data.box.status} listings={data.listings} />

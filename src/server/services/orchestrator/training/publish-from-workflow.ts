@@ -409,7 +409,7 @@ export async function createDraftModelFromWorkflow({
 
   // Not a dataset (the studio uploads blobs, never a zip): this row only carries the run's results
   // for the epoch picker and training readers. Private keeps it off the public files list.
-  await createFile({
+  const placeholder = await createFile({
     name: `${modelVersion.id}_training_data.zip`,
     url: selectedEpoch.modelUrl,
     sizeKB: 0,
@@ -423,6 +423,10 @@ export async function createDraftModelFromWorkflow({
     userId: user.id,
     select: { id: true },
   });
+  // Its url is an orchestrator blob the scanner can't fetch, so the scan fallback job would submit
+  // it, fail the pre-flight and tombstone it exists=false minutes later anyway. Born in that state,
+  // the job never picks it up. Its scan status stays Pending: nothing scanned it.
+  await dbWrite.modelFile.update({ where: { id: placeholder.id }, data: { exists: false } });
 
   return { modelId: model.id, modelVersionId: modelVersion.id, selectedEpoch };
 }

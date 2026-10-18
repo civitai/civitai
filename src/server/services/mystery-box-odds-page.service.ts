@@ -1,20 +1,24 @@
-import * as z from 'zod';
+import type { BoxOddsSnapshotData } from '@civitai/shared/box-odds-snapshot';
+import {
+  boxOddsSnapshotSchema,
+  snapshotOfLiveBox,
+  snapshotsMatch,
+} from '@civitai/shared/box-odds-snapshot';
 import { dbRead } from '~/server/db/client';
 import type { EventViewer } from '~/server/events/event-access';
 import { getEventBoxCatalogAccess, isEventShopItemData } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup } from '~/server/logging/devalue-fallback-log';
 import { ITEM_DEFINITION_STATUS, ITEM_TYPE } from '~/server/services/item.service';
-import type { BoxCatalogEntry, BoxDisplayEntry } from '~/server/services/mystery-box.service';
+import type { BoxDisplayEntry } from '~/server/services/mystery-box.service';
 import {
   BOX_TIER_ORDER,
   BOX_TIER_SELECT,
-  boxSaleRefusal,
   getBoxCatalogForDisplay,
   mysteryBoxesHiddenIn,
+  readBoxListings,
 } from '~/server/services/mystery-box.service';
-import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
-import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 
 /**
  * A box's public odds page. Odds and contents come from the live tiers and the contents of the
@@ -23,13 +27,6 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
  * `BoxOddsSnapshot` (one row per version, written outside this service); a current version whose
  * snapshot is missing or differs from the live box is logged so the history can be repaired.
  */
-
-const boxOddsSnapshotSchema = z.object({
-  tiers: z.array(z.object({ key: z.string(), name: z.string(), weight: z.number().int() })),
-  contents: z.array(z.object({ tier: z.string(), cosmeticId: z.number().int() })),
-});
-
-export type BoxOddsSnapshotData = z.infer<typeof boxOddsSnapshotSchema>;
 
 export type BoxOddsHistoryEntry = { version: number; createdAt: Date; changes: string[] };
 
@@ -76,33 +73,6 @@ export function describeSnapshotChange(
   for (const [line, n] of counts) changes.push(`${plural(n, noun)} ${line}.`);
 
   return changes.length ? changes : ['No change to the odds or contents.'];
-}
-
-/** The live box in snapshot form, to compare with the snapshot of its current version. */
-export function snapshotOfLiveBox(
-  tiers: { id: number; key: string; name: string; weight: number; sortOrder: number }[],
-  contents: Pick<BoxCatalogEntry, 'tierId' | 'cosmeticId'>[]
-): BoxOddsSnapshotData {
-  const ordered = [...tiers].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
-  const keyOf = new Map(ordered.map((tier) => [tier.id, tier.key]));
-  const rank = new Map(ordered.map((tier, i) => [tier.key, i]));
-  return {
-    tiers: ordered.map(({ key, name, weight }) => ({ key, name, weight })),
-    contents: contents
-      .map((content) => ({ tier: keyOf.get(content.tierId) ?? '', cosmeticId: content.cosmeticId }))
-      .sort((a, b) => rank.get(a.tier)! - rank.get(b.tier)! || a.cosmeticId - b.cosmeticId),
-  };
-}
-
-/** Same tiers and weights in the same order, and the same cosmetics in the same tiers. */
-export function snapshotsMatch(a: BoxOddsSnapshotData, b: BoxOddsSnapshotData) {
-  const tiersOf = (s: BoxOddsSnapshotData) => s.tiers.map((t) => `${t.key}:${t.name}:${t.weight}`);
-  const contentsOf = (s: BoxOddsSnapshotData) =>
-    s.contents.map((c) => `${c.tier}:${c.cosmeticId}`).sort();
-  return (
-    tiersOf(a).join('|') === tiersOf(b).join('|') &&
-    contentsOf(a).join('|') === contentsOf(b).join('|')
-  );
 }
 
 /** "hat" when everything in the box is a hat (an event decoration), else "item". */
@@ -169,23 +139,13 @@ export async function getMysteryBoxOddsPage({
   if (event === null) return null;
 
   const now = new Date();
-  const listings = await dbRead.cosmeticShopItem.findMany({
-    where: { itemDefinitionId: box.id, status: CosmeticShopItemStatus.Published },
-    orderBy: { id: 'asc' },
-    select: {
-      id: true,
-      unitAmount: true,
-      availableQuantity: true,
-      availableFrom: true,
-      availableTo: true,
-    },
-  });
+  const { listings, onSale: listingOnSale } = await readBoxListings([box.id]);
   const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
   // A held or opened box went on sale when it was bought: purchase is the only grant of a box today.
   // A grant path that skips the sale (a prize, a mod grant) must make this check ask for a sale.
   if (!started && !viewer?.isModerator && !(await boxEverHeld(box.id))) return null;
 
-  const [tiers, contents, snapshots, sold] = await Promise.all([
+  const [tiers, contents, snapshots] = await Promise.all([
     dbRead.boxTier.findMany({
       where: { boxDefinitionId: box.id },
       orderBy: BOX_TIER_ORDER,
@@ -197,12 +157,9 @@ export async function getMysteryBoxOddsPage({
       orderBy: { version: 'asc' },
       select: { version: true, snapshot: true, createdAt: true },
     }),
-    getSoldCounts(listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)),
   ]);
   const onSale =
-    box.status === ITEM_DEFINITION_STATUS.published
-      ? listings.find((l) => !boxSaleRefusal(l, sold.get(l.id) ?? 0, now))
-      : undefined;
+    box.status === ITEM_DEFINITION_STATUS.published ? listingOnSale(box.id) : undefined;
 
   const noun = rewardNoun(contents);
   const history: BoxOddsHistoryEntry[] = [];

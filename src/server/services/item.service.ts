@@ -1,15 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
-/** `ItemDefinition.type` values. Text + CHECK in the database; a new type is a migration and a grant handler. */
-export const ITEM_TYPE = { cosmetic: 'cosmetic', box: 'box' } as const;
-export type ItemType = (typeof ITEM_TYPE)[keyof typeof ITEM_TYPE];
-
-/** `ItemDefinition.status` values. */
-export const ITEM_DEFINITION_STATUS = {
-  draft: 'draft',
-  published: 'published',
-  archived: 'archived',
-} as const;
+export { ITEM_DEFINITION_STATUS, ITEM_TYPE, type ItemType } from '@civitai/shared/mystery-box';
 
 const USER_HOLDER = 'user';
 

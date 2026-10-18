@@ -24,7 +24,11 @@ import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
 import { MysteryBoxArt } from '~/components/MysteryBox/MysteryBoxArt';
 import { MysteryBoxOddsBar } from '~/components/MysteryBox/MysteryBoxOddsBar';
-import type { MysteryBoxSource, MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
+import type {
+  MysteryBoxSource,
+  MysteryBoxView,
+  TierSummary,
+} from '~/components/MysteryBox/mystery-box.utils';
 import {
   boxActions,
   boxEventOf,
@@ -39,7 +43,7 @@ import {
 import type { OpenPhase } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useMysteryBoxOpen, useMysteryBoxViews } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
+import { boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -177,7 +181,7 @@ function BoxSummary({
   children,
 }: {
   view: MysteryBoxView;
-  tiers: ReturnType<typeof tierSummaries>;
+  tiers: TierSummary[];
   color: string;
   onClose: () => void;
   /** The buy and open buttons, where the layout puts them. */
@@ -298,7 +302,7 @@ function BoxContents({
   color,
 }: {
   view: MysteryBoxView;
-  tiers: ReturnType<typeof tierSummaries>;
+  tiers: TierSummary[];
   color: string;
 }) {
   return (
