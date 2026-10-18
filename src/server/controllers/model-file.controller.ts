@@ -315,14 +315,12 @@ export const updateFileHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { backend, s3Path, ...updateInput } = input;
+    const { backend, s3Path: _s3Path, ...updateInput } = input;
 
-    // Provenance is server-owned (see createFileHandler). A content re-upload re-stamps the current
-    // domain; a metadata-only update must not let the client change it, so we drop any client value
-    // and let updateFile's merge preserve the stored one.
-    if (updateInput.type === 'Training Data' && updateInput.url) {
-      updateInput.metadata = { ...updateInput.metadata, uploadDomain: ctx.domain };
-    } else if (updateInput.metadata?.uploadDomain != null) {
+    // Provenance is server-owned (see createFileHandler): any client value is dropped. A new
+    // training-data upload is stamped with this request's domain by updateFile; a metadata-only
+    // update keeps the stored one through updateFile's merge.
+    if (updateInput.metadata?.uploadDomain != null) {
       const nextMetadata = { ...updateInput.metadata };
       delete nextMetadata.uploadDomain;
       updateInput.metadata = nextMetadata;
@@ -332,23 +330,27 @@ export const updateFileHandler = async ({
       ...updateInput,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      uploadDomain: ctx.domain,
     });
 
     const { replacedFileId } = result;
 
-    // A re-upload is a new file record (`result.id`), registered with storage-resolver so
-    // downloads resolve to the new path. Registered before the scan below can resolve it.
-    const resolved = resolveRegistration({ backend, s3Path, url: updateInput.url });
+    // Only a new upload is registered with storage-resolver, as a new file record (`result.id`),
+    // before the scan below resolves it. The location comes from the record's own url, never a
+    // client-supplied path, so what downloads resolve to is what gets scanned.
+    const resolved = replacedFileId
+      ? resolveRegistration({ backend, s3Path: undefined, url: result.url })
+      : null;
     if (resolved) {
       await safeRegisterFileLocation({
-        op: replacedFileId ? 'create' : 'update',
+        op: 'create',
         userId: ctx.user.id,
         fileId: result.id,
         modelVersionId: result.modelVersionId,
         modelId: result.modelVersion.modelId,
         backend: resolved.backend,
         s3Path: resolved.s3Path,
-        sizeKb: updateInput.sizeKB ?? result.sizeKB ?? 0,
+        sizeKb: result.sizeKB,
       });
     }
 
@@ -379,7 +381,9 @@ export const updateFileHandler = async ({
         )
         .catch(handleLogError);
 
-      await submitInlineScan({
+      // Not awaited: the epoch picker and dataset upload wait on this response, and a failed or slow
+      // submit loses nothing, since scanFilesFallbackJob picks up the unscanned record within minutes.
+      void submitInlineScan({
         fileId: result.id,
         modelVersionId: result.modelVersionId,
         modelId: result.modelVersion.modelId,

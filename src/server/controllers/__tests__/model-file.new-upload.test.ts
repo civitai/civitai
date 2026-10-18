@@ -57,13 +57,15 @@ const NEW_ID = 502;
 const VERSION_ID = 4242;
 const MODEL_ID = 31;
 const OWNER_ID = 7;
-const NEW_URL = 'https://bucket.example/modelVersion/4242/epoch_8.safetensors';
+const MOD_ID = 99;
+const NEW_KEY = 'modelVersion/4242/epoch_8.safetensors';
+const NEW_URL = `https://s3.us-west-004.backblazeb2.com/model-bucket/${NEW_KEY}`;
 
-const storedFile = (status: string) => ({
+const storedFile = (status: string, overrides: Record<string, unknown> = {}) => ({
   id: OLD_ID,
   name: 'epoch_5.safetensors',
   overrideName: null,
-  url: 'https://bucket.example/modelVersion/4242/epoch_5.safetensors',
+  url: 'https://s3.us-west-004.backblazeb2.com/model-bucket/modelVersion/4242/epoch_5.safetensors',
   type: 'Model',
   visibility: 'Public',
   metadata: { format: 'SafeTensor', selectedEpochUrl: 'https://orch.example/epoch_5' },
@@ -76,9 +78,21 @@ const storedFile = (status: string) => ({
     trainingStatus: 'Approved',
     model: { type: 'LORA', userId: OWNER_ID },
   },
+  ...overrides,
 });
 
-// The payload TrainingSelectFile sends after moveAsset copies the picked epoch.
+function givenStored(file: ReturnType<typeof storedFile>) {
+  dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(file);
+  // The version row the swap locks and re-checks.
+  dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+    strings.join('?').includes('FOR UPDATE')
+      ? [{ status: file.modelVersion.status, trainingStatus: file.modelVersion.trainingStatus }]
+      : []
+  );
+}
+
+// The payload TrainingSelectFile sends after moveAsset copies the picked epoch. The s3Path names
+// another object on purpose: the registered location must come from the record's url.
 const epochPick = {
   id: OLD_ID,
   url: NEW_URL,
@@ -88,7 +102,7 @@ const epochPick = {
   type: 'Model' as const,
   metadata: { format: 'SafeTensor' as const, selectedEpochUrl: 'https://orch.example/epoch_8' },
   backend: 'b2',
-  s3Path: 'modelVersion/4242/epoch_8.safetensors',
+  s3Path: 'someone-else/other.safetensors',
 };
 
 const track = {
@@ -96,12 +110,17 @@ const track = {
   entityChanges: vi.fn(() => Promise.resolve()),
 };
 const ctx = (isModerator = false) =>
-  ({ user: { id: isModerator ? 99 : OWNER_ID, isModerator }, track, domain: 'green' } as never);
+  ({
+    user: { id: isModerator ? MOD_ID : OWNER_ID, isModerator },
+    track,
+    domain: 'green',
+  } as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.modelFile.deleteMany.mockResolvedValue({ count: 1 });
   dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: NEW_ID });
+  dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe('a new upload through modelFile.upsert', () => {
@@ -112,7 +131,7 @@ describe('a new upload through modelFile.upsert', () => {
   ])(
     'refuses the epoch pick on a $status version (moderator: $isModerator)',
     async ({ status, isModerator }) => {
-      dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(storedFile(status));
+      givenStored(storedFile(status));
 
       await expect(upsertFileHandler({ input: epochPick, ctx: ctx(isModerator) })).rejects.toThrow(
         'This version has been published. Upload the new file as a new version.'
@@ -123,32 +142,53 @@ describe('a new upload through modelFile.upsert', () => {
     }
   );
 
-  it('on a draft, registers and scans the NEW record, not the old one', async () => {
-    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(storedFile('Draft'));
+  it('on a draft, registers and scans the NEW record, at the location its url names', async () => {
+    givenStored(storedFile('Draft'));
 
     const result = await upsertFileHandler({ input: epochPick, ctx: ctx() });
 
     expect(result).toMatchObject({ id: NEW_ID });
-    expect(mockRegister).toHaveBeenCalledWith(
-      expect.objectContaining({ fileId: NEW_ID, path: epochPick.s3Path })
-    );
-    expect(mockScan).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fileId: NEW_ID,
-        modelVersionId: VERSION_ID,
-        modelId: MODEL_ID,
-        modelType: 'LORA',
-        baseModel: 'SDXL 1.0',
-        url: NEW_URL,
-      })
+    expect(mockRegister).toHaveBeenCalledTimes(1);
+    expect(mockRegister).toHaveBeenCalledWith({
+      fileId: NEW_ID,
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+      backend: 'backblaze',
+      path: NEW_KEY,
+      sizeKb: 2000,
+    });
+    expect(mockScan).toHaveBeenCalledTimes(1);
+    expect(mockScan).toHaveBeenCalledWith({
+      fileId: NEW_ID,
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+      modelType: 'LORA',
+      baseModel: 'SDXL 1.0',
+      url: NEW_URL,
+      preflight: false,
+    });
+    expect(mockRegister.mock.invocationCallOrder[0]).toBeLessThan(
+      mockScan.mock.invocationCallOrder[0]
     );
     expect(mockDeregister).toHaveBeenCalledWith([OLD_ID]);
   });
 
-  it('records that the old record was replaced by the new one', async () => {
-    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(storedFile('Draft'));
+  it('still answers when the scan submit fails; the fallback job retries it', async () => {
+    givenStored(storedFile('Draft'));
+    mockScan.mockRejectedValueOnce(new Error('orchestrator down'));
 
-    await upsertFileHandler({ input: epochPick, ctx: ctx() });
+    await expect(upsertFileHandler({ input: epochPick, ctx: ctx() })).resolves.toMatchObject({
+      id: NEW_ID,
+    });
+  });
+
+  it.each([
+    { who: 'the owner', isModerator: false, actorRole: 'owner' },
+    { who: 'a moderator', isModerator: true, actorRole: 'moderator' },
+  ])('records that $who replaced the old record with the new one', async (row) => {
+    givenStored(storedFile('Draft'));
+
+    await upsertFileHandler({ input: epochPick, ctx: ctx(row.isModerator) });
 
     expect(track.entityChanges).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -156,18 +196,52 @@ describe('a new upload through modelFile.upsert', () => {
         entityId: OLD_ID,
         ownerId: OWNER_ID,
         field: 'replacedBy',
+        oldValue: 'null',
         newValue: String(NEW_ID),
-        actorRole: 'owner',
+        actorRole: row.actorRole,
+        reason: 'new-upload',
       }),
     ]);
   });
 
-  it('leaves registration and scanning alone for a metadata-only edit', async () => {
-    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(storedFile('Published'));
-    dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
+  it("stamps a training-data upload with the request's domain, not the client's", async () => {
+    givenStored(
+      storedFile('Draft', {
+        type: 'Training Data',
+        name: 'data.zip',
+        metadata: { uploadDomain: 'red', numImages: 4 },
+      })
+    );
+
+    // The dataset re-upload, sent without a type.
+    await upsertFileHandler({
+      input: {
+        id: OLD_ID,
+        url: `https://s3.us-west-004.backblazeb2.com/model-bucket/training/new.zip`,
+        sizeKB: 5,
+        metadata: { uploadDomain: 'blue' },
+      },
+      ctx: ctx(),
+    });
+
+    const created = dbMock.dbWrite.modelFile.create.mock.calls.at(-1)?.[0] as {
+      data: { metadata: Record<string, unknown> };
+    };
+    expect(created.data.metadata).toMatchObject({ uploadDomain: 'green', numImages: 4 });
+  });
+});
+
+describe('a metadata-only edit through modelFile.upsert', () => {
+  it('keeps the record and its registration, whatever storage path the client sends', async () => {
+    givenStored(storedFile('Published'));
 
     const result = await upsertFileHandler({
-      input: { id: OLD_ID, overrideName: 'renamed' },
+      input: {
+        id: OLD_ID,
+        overrideName: 'renamed',
+        backend: 'b2',
+        s3Path: 'someone-else/other.safetensors',
+      },
       ctx: ctx(),
     });
 

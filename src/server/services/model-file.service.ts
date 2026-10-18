@@ -8,6 +8,7 @@ import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   ModelFileCreateInput,
   ModelFileMetadata,
@@ -181,8 +182,14 @@ export async function updateFile({
   // upsert callers send the file's existing version, so dropping it changes nothing for them; the
   // create branch still takes it from `modelFileCreateSchema`.
   modelVersionId: _modelVersionId,
+  uploadDomain,
   ...inputData
-}: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
+}: ModelFileUpdateInput & {
+  userId: number;
+  isModerator?: boolean;
+  /** The request's domain, stamped onto a new training-data upload. Never the client's value. */
+  uploadDomain?: ColorDomain | null;
+}) {
   const modelFile = await dbWrite.modelFile.findUnique({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
     select: replaceableFileSelect,
@@ -197,9 +204,15 @@ export async function updateFile({
       input: { ...inputData, url: inputData.url, metadata },
       userId,
       isModerator,
+      uploadDomain: uploadDomain ?? null,
     });
 
-  await dbWrite.modelFile.updateMany({ where: { id }, data: { ...inputData, metadata } });
+  const { count } = await dbWrite.modelFile.updateMany({
+    where: { id },
+    data: { ...inputData, metadata },
+  });
+  // Replaced or deleted since the lookup above: nothing was written.
+  if (count === 0) throw throwNotFoundError();
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
   // Merge committed updates back into the snapshot so the returned record
@@ -248,6 +261,24 @@ const runningTrainingStatuses: TrainingStatus[] = [
   TrainingStatus.Paused,
 ];
 
+function assertContentReplaceable(
+  version: { status: ModelStatus; trainingStatus: TrainingStatus | null },
+  fileType: string
+) {
+  if (!contentEditableVersionStatuses.includes(version.status))
+    throw throwBadRequestError(
+      'This version has been published. Upload the new file as a new version.'
+    );
+  if (
+    fileType === 'Training Data' &&
+    version.trainingStatus &&
+    runningTrainingStatuses.includes(version.trainingStatus)
+  )
+    throw throwBadRequestError(
+      'Training is still running. Wait for it to finish before replacing the training data.'
+    );
+}
+
 /**
  * A new upload behind an existing file becomes a new file record: the old row (and its hashes) is
  * deleted and a new one created in its place, unscanned, so nothing recorded about the old object
@@ -258,6 +289,7 @@ async function replaceFileContent({
   input,
   userId,
   isModerator,
+  uploadDomain,
 }: {
   file: ReplaceableFile;
   input: Omit<ModelFileUpdateInput, 'id' | 'modelVersionId' | 'backend' | 's3Path'> & {
@@ -265,39 +297,41 @@ async function replaceFileContent({
   };
   userId: number;
   isModerator?: boolean;
+  uploadDomain: ColorDomain | null;
 }) {
-  if (!contentEditableVersionStatuses.includes(file.modelVersion.status))
-    throw throwBadRequestError(
-      'This version has been published. Upload the new file as a new version.'
-    );
-  if (
-    file.type === 'Training Data' &&
-    file.modelVersion.trainingStatus &&
-    runningTrainingStatuses.includes(file.modelVersion.trainingStatus)
-  )
-    throw throwBadRequestError(
-      'Training is still running. Wait for it to finish before replacing the training data.'
-    );
+  // Fails fast on the snapshot; the transaction below re-checks against the locked version row.
+  assertContentReplaceable(file.modelVersion, file.type);
 
   const { overrideName, ...fields } = input;
+  const type = (fields.type ?? file.type) as ModelFileType;
+  const metadata = { ...((fields.metadata ?? file.metadata ?? {}) as ModelFileMetadata) };
+  // Provenance is server-owned: a training-data upload carries the domain of the request that
+  // uploaded it, whatever the request said its type was.
+  delete metadata.uploadDomain;
+  if (type === 'Training Data' && uploadDomain) metadata.uploadDomain = uploadDomain;
   const prepared = prepareFile({
     name: fields.name ?? file.name,
     url: fields.url,
     sizeKB: fields.sizeKB ?? file.sizeKB,
-    type: (fields.type ?? file.type) as ModelFileType,
+    type,
     visibility: fields.visibility ?? file.visibility,
-    metadata: (fields.metadata ?? file.metadata ?? {}) as ModelFileMetadata,
+    metadata,
   });
-
-  // Other versions can link this file as a component (settings.fileId); without a repoint they
-  // would lose it. Only a file that could be a component can be linked, which keeps the unindexed
-  // RecommendedResource scan off LoRA epochs and training data.
-  const linkable =
-    (componentTypeFromModelType(file.modelVersion.model.type) ??
-      accessoryComponentType(file.type)) != null;
   const fileName = prepared.name;
 
   const created = await dbWrite.$transaction(async (tx) => {
+    // Lock the version so a training submit or a publish cannot interleave with the swap: both
+    // write this row, so they either finish first (and the re-check refuses) or wait for us.
+    const [version] = await tx.$queryRaw<
+      { status: ModelStatus; trainingStatus: TrainingStatus | null }[]
+    >`
+      SELECT status, "trainingStatus" FROM "ModelVersion"
+      WHERE id = ${file.modelVersionId}::int
+      FOR UPDATE
+    `;
+    if (!version) throw throwNotFoundError();
+    assertContentReplaceable(version, file.type);
+
     const removed = await tx.modelFile.deleteMany({
       where: {
         id: file.id,
@@ -319,28 +353,38 @@ async function replaceFileContent({
       select: { id: true },
     });
 
-    const linkedFrom = linkable
-      ? await tx.$queryRaw<{ sourceId: number | null }[]>`
-          UPDATE "RecommendedResource"
-          SET settings = settings || jsonb_build_object(
-            'fileId', ${row.id}::int,
-            'fileName', ${fileName}::text
-          )
-          WHERE "resourceId" = ${file.modelVersionId}::int
-            AND settings->>'isLinkedComponent' = 'true'
-            AND settings->>'fileId' = ${String(file.id)}
-          RETURNING "sourceId"
-        `
-      : [];
+    // Other versions can link this file as a component (settings.fileId) and would lose it
+    // without a repoint. Any file type can be linked, so this always runs; "resourceId" is
+    // unindexed, so it is a scan of RecommendedResource.
+    const linkedFrom = await tx.$queryRaw<{ sourceId: number | null }[]>`
+      UPDATE "RecommendedResource"
+      SET settings = settings || jsonb_build_object(
+        'fileId', ${row.id}::int,
+        'fileName', ${fileName}::text
+      )
+      WHERE "resourceId" = ${file.modelVersionId}::int
+        AND settings->>'isLinkedComponent' = 'true'
+        AND settings->>'fileId' = ${String(file.id)}
+      RETURNING "sourceId"
+    `;
 
     return { id: row.id, linkedSourceIds: linkedFrom.flatMap((r) => r.sourceId ?? []) };
   });
 
-  await deleteFilesForModelVersionCache(file.modelVersionId);
+  // Logged, not thrown, from here on: the replacement has landed, and an error now would send the
+  // caller back to retry against the old id, which no longer exists.
+  await deleteFilesForModelVersionCache(file.modelVersionId).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-url-change',
+      message: `Failed to bust the file list for file ${file.id}`,
+      error,
+    }).catch(() => undefined)
+  );
 
   // The orchestrator resolves a version's files by AIR and caches what it resolved, and
   // resourceDataCache holds the version's coverage (and linked components) for an hour; all of it
-  // still describes the old file. Logged, not thrown: the replacement has landed.
+  // still describes the old file.
   await Promise.all([
     resourceDataCache.bust([file.modelVersionId, ...created.linkedSourceIds]),
     bustOrchestratorModelCache(file.modelVersionId),

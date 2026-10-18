@@ -517,6 +517,20 @@ export const createTrainingWorkflow = async ({
   });
   if (claimed === 0) throw throwBadRequestError('This model was already submitted for training.');
 
+  // A new dataset upload replaces the training-data record (a new id) and is refused once the claim
+  // above lands. One that landed between the read above and the claim would leave this run
+  // reporting to a record that no longer exists, so confirm it is still there before paying.
+  const datasetUnchanged = await dbWrite.modelFile.count({
+    where: { id: modelFileId, url: modelVersion.trainingUrl },
+  });
+  if (!datasetUnchanged) {
+    await dbWrite.modelVersion.updateMany({
+      where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+      data: { trainingStatus: TrainingStatus.Pending },
+    });
+    throw throwBadRequestError('Your training data changed while submitting. Please try again.');
+  }
+
   let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
   try {
     workflow = await submitWorkflow({

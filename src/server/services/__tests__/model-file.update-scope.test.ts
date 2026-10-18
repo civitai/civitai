@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as StorageResolver from '~/utils/storage-resolver';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -12,14 +13,19 @@ vi.mock('~/server/services/model-version.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(() => Promise.resolve()),
 }));
 
-const { mockResourceDataBust, mockBustOrchestrator, mockDeleteObject, mockDeregister } = vi.hoisted(
-  () => ({
-    mockResourceDataBust: vi.fn(() => Promise.resolve()),
-    mockBustOrchestrator: vi.fn(() => Promise.resolve()),
-    mockDeleteObject: vi.fn(() => Promise.resolve()),
-    mockDeregister: vi.fn(() => Promise.resolve()),
-  })
-);
+const {
+  mockResourceDataBust,
+  mockBustOrchestrator,
+  mockDeleteObject,
+  mockDeregister,
+  mockFileListBust,
+} = vi.hoisted(() => ({
+  mockResourceDataBust: vi.fn(() => Promise.resolve()),
+  mockBustOrchestrator: vi.fn(() => Promise.resolve()),
+  mockDeleteObject: vi.fn(() => Promise.resolve()),
+  mockDeregister: vi.fn(() => Promise.resolve()),
+  mockFileListBust: vi.fn(() => Promise.resolve()),
+}));
 // A new upload deletes the old object in the background; keep that off any real bucket.
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteObject }));
 vi.mock('~/utils/storage-resolver', async (importOriginal) => ({
@@ -32,6 +38,11 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: mockBustOrchestrator,
 }));
+// The version's file list (the only createCachedObject in the service).
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
+  createCachedObject: () => ({ bust: mockFileListBust, fetch: vi.fn() }),
+}));
 
 import { updateFile } from '~/server/services/model-file.service';
 
@@ -39,14 +50,19 @@ const OLD_URL = 'https://example.test/a.safetensors';
 const NEW_URL = 'https://example.test/b.safetensors';
 const NEW_ID = 77;
 
+// Every carried field differs from its column default ('Model', Public), so a fallback that
+// drops the old value reads as a diff rather than passing by coincidence.
 const FILE = {
   id: 1,
   name: 'a.safetensors',
   overrideName: 'my-lora',
   url: OLD_URL,
-  type: 'Model',
-  visibility: 'Public',
-  metadata: { fp: 'fp16', selectedEpochUrl: 'https://orch.test/epoch-1' },
+  type: 'Pruned Model',
+  visibility: 'Private',
+  metadata: { fp: 'fp16', selectedEpochUrl: 'https://orch.test/epoch-1' } as Record<
+    string,
+    unknown
+  >,
   modelVersionId: 10,
   sizeKB: 1,
   modelVersion: {
@@ -58,46 +74,65 @@ const FILE = {
   },
 };
 
-function withFile(overrides: {
-  type?: string;
-  status?: string;
-  trainingStatus?: string | null;
-  modelType?: string;
-}) {
+type VersionState = { status: string; trainingStatus: string | null };
+
+/**
+ * The transaction runs on its own client, so a statement that escapes it (on `dbWrite`) is visible.
+ * `locked` is the version row the transaction reads under FOR UPDATE; it defaults to the snapshot.
+ */
+const tx = {
+  modelFile: { deleteMany: vi.fn(), create: vi.fn() },
+  $queryRaw: vi.fn(),
+};
+let locked: VersionState;
+let linkedRows: { sourceId: number | null }[];
+
+const sqlOf = (call: unknown[]) =>
+  (call[0] as TemplateStringsArray).join('?').replace(/\s+/g, ' ').trim();
+
+function withFile(
+  overrides: Partial<VersionState> & {
+    type?: string;
+    metadata?: Record<string, unknown>;
+    lockedAs?: Partial<VersionState>;
+  } = {}
+) {
+  const status = overrides.status ?? FILE.modelVersion.status;
+  const trainingStatus =
+    overrides.trainingStatus !== undefined
+      ? overrides.trainingStatus
+      : FILE.modelVersion.trainingStatus;
   dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
     ...FILE,
     type: overrides.type ?? FILE.type,
-    modelVersion: {
-      ...FILE.modelVersion,
-      status: overrides.status ?? FILE.modelVersion.status,
-      trainingStatus:
-        overrides.trainingStatus !== undefined
-          ? overrides.trainingStatus
-          : FILE.modelVersion.trainingStatus,
-      model: { ...FILE.modelVersion.model, type: overrides.modelType ?? 'LORA' },
-    },
+    metadata: overrides.metadata ?? FILE.metadata,
+    modelVersion: { ...FILE.modelVersion, status, trainingStatus },
   });
+  locked = { status, trainingStatus, ...overrides.lockedAs };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(FILE);
+  withFile();
+  linkedRows = [];
   dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
-  dbMock.dbWrite.modelFile.deleteMany.mockResolvedValue({ count: 1 });
-  dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: NEW_ID });
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+  dbMock.dbWrite.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) =>
+    fn(tx)
+  );
+  tx.modelFile.deleteMany.mockResolvedValue({ count: 1 });
+  tx.modelFile.create.mockResolvedValue({ id: NEW_ID });
+  tx.$queryRaw.mockImplementation(async (...call: unknown[]) =>
+    sqlOf(call).includes('FOR UPDATE') ? [locked] : linkedRows
+  );
 });
 
 const writtenData = () =>
   (dbMock.dbWrite.modelFile.updateMany.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> })
     .data;
 const createdData = () =>
-  (dbMock.dbWrite.modelFile.create.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> })
-    .data;
+  (tx.modelFile.create.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> }).data;
 const repointCalls = () =>
-  dbMock.dbWrite.$queryRaw.mock.calls.filter((call) =>
-    (call[0] as TemplateStringsArray).join('?').includes('UPDATE "RecommendedResource"')
-  );
+  tx.$queryRaw.mock.calls.filter((call) => sqlOf(call).includes('UPDATE "RecommendedResource"'));
 
 describe('updateFile', () => {
   it('never writes modelVersionId, so a file cannot be moved onto another version', async () => {
@@ -116,9 +151,16 @@ describe('updateFile', () => {
     const result = await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
 
     expect(writtenData()).toEqual({ url: OLD_URL, overrideName: 'renamed', metadata: undefined });
-    expect(dbMock.dbWrite.modelFile.deleteMany).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: 1, replacedFileId: undefined });
+  });
+
+  it('reports a file replaced since the lookup as not found, rather than a silent success', async () => {
+    dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(updateFile({ id: 1, overrideName: 'renamed', userId: 7 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 
   it('scopes the lookup to the caller unless they are a moderator', async () => {
@@ -149,18 +191,19 @@ describe('a new upload creates a new file record', () => {
   it('deletes the old record and creates an unscanned one with the new id', async () => {
     const result = await updateFile({ id: 1, url: NEW_URL, sizeKB: 2048, userId: 7 });
 
-    expect(dbMock.dbWrite.modelFile.deleteMany).toHaveBeenCalledWith({
+    expect(tx.modelFile.deleteMany).toHaveBeenCalledWith({
       where: { id: 1, url: OLD_URL, modelVersion: { model: { userId: 7 } } },
     });
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
-    // The whole row, so a scan field or old header that leaks across is a diff here.
+    // The whole row, so a scan field or old header that leaks across is a diff here, and the
+    // omitted name/type/visibility/overrideName must come from the old record.
     expect(createdData()).toEqual({
       name: 'a.safetensors',
       overrideName: 'my-lora',
       url: NEW_URL,
       sizeKB: 2048,
-      type: 'Model',
-      visibility: 'Public',
+      type: 'Pruned Model',
+      visibility: 'Private',
       metadata: {
         fp: 'fp16',
         selectedEpochUrl: 'https://orch.test/epoch-1',
@@ -178,12 +221,19 @@ describe('a new upload creates a new file record', () => {
     expect(result).toMatchObject({ id: NEW_ID, replacedFileId: 1, url: NEW_URL, sizeKB: 2048 });
   });
 
+  it('keeps the old size when the upload does not send one', async () => {
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+
+    expect(createdData()).toMatchObject({ sizeKB: 1 });
+  });
+
   it('takes name, type, visibility and metadata from the upload over the old record', async () => {
     await updateFile({
       id: 1,
       url: 'https://example.test/epoch-4.safetensors',
       name: 'epoch-4.safetensors',
-      visibility: 'Private',
+      type: 'Model',
+      visibility: 'Public',
       overrideName: null,
       metadata: { selectedEpochUrl: 'https://orch.test/epoch-4' },
       userId: 7,
@@ -191,8 +241,9 @@ describe('a new upload creates a new file record', () => {
 
     expect(createdData()).toMatchObject({
       name: 'epoch-4.safetensors',
+      type: 'Model',
       overrideName: null,
-      visibility: 'Private',
+      visibility: 'Public',
       metadata: { fp: 'fp16', selectedEpochUrl: 'https://orch.test/epoch-4' },
     });
   });
@@ -200,20 +251,30 @@ describe('a new upload creates a new file record', () => {
   it('scopes the delete to the caller unless they are a moderator', async () => {
     await updateFile({ id: 1, url: NEW_URL, userId: 7, isModerator: true });
 
-    expect(dbMock.dbWrite.modelFile.deleteMany).toHaveBeenCalledWith({
+    expect(tx.modelFile.deleteMany).toHaveBeenCalledWith({
       where: { id: 1, url: OLD_URL, modelVersion: { model: undefined } },
     });
   });
 
   it('creates nothing when the record was replaced or removed since it was read', async () => {
-    dbMock.dbWrite.modelFile.deleteMany.mockResolvedValue({ count: 0 });
+    tx.modelFile.deleteMany.mockResolvedValue({ count: 0 });
 
     await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
       'modified concurrently'
     );
-    expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
+    expect(tx.modelFile.create).not.toHaveBeenCalled();
     expect(mockDeleteObject).not.toHaveBeenCalled();
     expect(mockDeregister).not.toHaveBeenCalled();
+  });
+
+  it("leaves the old record's object, registration and caches alone when the swap fails", async () => {
+    tx.modelFile.create.mockRejectedValue(new Error('insert failed'));
+
+    await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow('insert failed');
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(mockDeregister).not.toHaveBeenCalled();
+    expect(mockFileListBust).not.toHaveBeenCalled();
+    expect(mockResourceDataBust).not.toHaveBeenCalled();
   });
 
   it("removes the old record's object and storage registration after the swap", async () => {
@@ -221,6 +282,12 @@ describe('a new upload creates a new file record', () => {
 
     expect(mockDeleteObject).toHaveBeenCalledWith(OLD_URL);
     expect(mockDeregister).toHaveBeenCalledWith([1]);
+  });
+
+  it("refreshes the version's file list, which would otherwise keep listing the old id", async () => {
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+
+    expect(mockFileListBust).toHaveBeenCalledWith(10);
   });
 
   // Generation resolves the version by AIR from these caches, which otherwise keep describing the
@@ -237,8 +304,10 @@ describe('a new upload creates a new file record', () => {
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
   });
 
-  it('still succeeds when a cache bust fails', async () => {
+  it('still succeeds when a cache bust fails after the swap', async () => {
     mockResourceDataBust.mockRejectedValueOnce(new Error('redis down'));
+    mockFileListBust.mockRejectedValueOnce(new Error('redis down'));
+
     await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).resolves.toMatchObject({
       id: NEW_ID,
     });
@@ -258,8 +327,8 @@ describe('a published version keeps its files', () => {
       await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
         'This version has been published. Upload the new file as a new version.'
       );
-      expect(dbMock.dbWrite.modelFile.deleteMany).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
+      expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
+      expect(tx.modelFile.create).not.toHaveBeenCalled();
     }
   );
 
@@ -269,6 +338,16 @@ describe('a published version keeps its files', () => {
     await expect(
       updateFile({ id: 1, url: NEW_URL, userId: 99, isModerator: true })
     ).rejects.toThrow('This version has been published');
+  });
+
+  // The lookup is a snapshot; a publish can land between it and the swap.
+  it('refuses when the version was published after the lookup', async () => {
+    withFile({ status: 'Draft', lockedAs: { status: 'Published' } });
+
+    await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
+      'This version has been published'
+    );
+    expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
   });
 
   it.each(['Draft', 'Training'])('allows a new upload on a %s version', async (status) => {
@@ -298,9 +377,38 @@ describe('training data while a run is in flight', () => {
       await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
         'Training is still running'
       );
-      expect(dbMock.dbWrite.modelFile.deleteMany).not.toHaveBeenCalled();
+      expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
     }
   );
+
+  // A submit claims the version (Submitted) after reading the dataset; the lock serialises them.
+  it('refuses when a training submit claimed the version after the lookup', async () => {
+    withFile({
+      type: 'Training Data',
+      trainingStatus: 'Pending',
+      lockedAs: { trainingStatus: 'Submitted' },
+    });
+
+    await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
+      'Training is still running'
+    );
+    expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('locks the version row before deleting anything', async () => {
+    withFile({ type: 'Training Data', trainingStatus: 'Pending' });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+
+    const lock = tx.$queryRaw.mock.calls.find((call) => sqlOf(call).includes('FOR UPDATE'));
+    expect(lock && sqlOf(lock)).toBe(
+      'SELECT status, "trainingStatus" FROM "ModelVersion" WHERE id = ?::int FOR UPDATE'
+    );
+    expect(lock?.slice(1)).toEqual([10]);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.modelFile.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
 
   it.each([null, 'Pending', 'Failed', 'InReview'])(
     'allows a new dataset when training is %s',
@@ -312,31 +420,67 @@ describe('training data while a run is in flight', () => {
       });
     }
   );
+
+  it('does not hold other file types to the training guard', async () => {
+    withFile({ type: 'Model', trainingStatus: 'Processing' });
+
+    await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).resolves.toMatchObject({
+      id: NEW_ID,
+    });
+  });
+});
+
+// The domain stamp gates which domain a paid training submit may run under; it is the server's.
+describe('the upload domain on a new dataset', () => {
+  it("stamps the request's domain on training data even when the request omits the type", async () => {
+    withFile({ type: 'Training Data', metadata: { uploadDomain: 'red', numImages: 3 } });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7, uploadDomain: 'green' });
+
+    expect(createdData()).toMatchObject({
+      type: 'Training Data',
+      metadata: { uploadDomain: 'green', numImages: 3 },
+    });
+  });
+
+  it('never carries a domain onto a file that is not training data', async () => {
+    await updateFile({
+      id: 1,
+      url: NEW_URL,
+      metadata: { uploadDomain: 'red' },
+      userId: 7,
+      uploadDomain: 'green',
+    });
+
+    expect(createdData().metadata).not.toHaveProperty('uploadDomain');
+  });
 });
 
 // Other versions can link a file as a component by its id; they follow it to the new record.
 describe('linked components', () => {
-  it('repoints links to a component file at the new record', async () => {
-    withFile({ type: 'Model', modelType: 'VAE' });
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ sourceId: 300 }, { sourceId: 301 }]);
+  it('repoints links to the old record at the new one, and only those', async () => {
+    linkedRows = [{ sourceId: 300 }, { sourceId: 301 }, { sourceId: null }];
 
     await updateFile({ id: 1, url: NEW_URL, userId: 7 });
 
     const [call] = repointCalls();
-    expect(call).toBeDefined();
+    expect(sqlOf(call)).toBe(
+      'UPDATE "RecommendedResource" SET settings = settings || jsonb_build_object( ' +
+        "'fileId', ?::int, 'fileName', ?::text ) " +
+        "WHERE \"resourceId\" = ?::int AND settings->>'isLinkedComponent' = 'true' " +
+        'AND settings->>\'fileId\' = ? RETURNING "sourceId"'
+    );
     // Values bind in order: new id, new name, the linked version, the old id.
     expect(call.slice(1)).toEqual([NEW_ID, 'a.safetensors', 10, '1']);
     expect(mockResourceDataBust).toHaveBeenCalledWith([10, 300, 301]);
   });
 
-  it.each([
-    { type: 'Model', modelType: 'LORA' },
-    { type: 'Training Data', modelType: 'LORA' },
-  ])('skips the link scan for a $modelType $type file', async (file) => {
-    withFile(file);
+  // Linked components in use point at checkpoints, archives and training data too.
+  it.each(['Model', 'Training Data', 'Archive'])('repoints for a %s file', async (type) => {
+    withFile({ type });
 
     await updateFile({ id: 1, url: NEW_URL, userId: 7 });
 
-    expect(repointCalls()).toHaveLength(0);
+    expect(repointCalls()).toHaveLength(1);
   });
 });
