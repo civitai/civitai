@@ -620,9 +620,10 @@ describe('withdrawing an item ends its resale listings', () => {
       ownedItem({ cosmeticId: null, cosmetic: null, itemDefinitionId: 9 })
     );
 
-    await expect(
-      setCreatorShopItemListed({ id: SHOP_ITEM_ID, userId: 1, isModerator: true, listed: true })
-    ).rejects.toThrow('Mystery box listings stay unlisted');
+    for (const listed of [true, false])
+      await expect(
+        setCreatorShopItemListed({ id: SHOP_ITEM_ID, userId: 1, isModerator: true, listed })
+      ).rejects.toThrow('Mystery box listings stay unlisted');
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 

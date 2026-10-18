@@ -1004,6 +1004,7 @@ type RefundTarget = { userId: number; buzzTransactionId: string };
 /**
  * The cosmetics a shelf purchase granted, all under its transaction id as `claimKey`: its one cosmetic,
  * or a pack's components. A pack member the buyer already owned was never granted, so has no such row.
+ * Correct only while nothing else grants under a purchase's id.
  */
 async function takeBackCosmetics(
   trx: Transaction<DB>,
