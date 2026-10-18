@@ -407,7 +407,7 @@ function MyApp(props: CustomAppProps) {
 //     ...appProps,
 //   };
 // };
-MyApp.getInitialProps = async (appContext: AppContext) => {
+const getAppInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
   if (!request) return initialProps;
@@ -680,6 +680,21 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     },
     ...appProps,
   };
+};
+
+MyApp.getInitialProps = async (appContext: AppContext) => {
+  // Server-only module (telemetry, fs): keep this exact `typeof window` block form; see the
+  // bootstrap import.
+  if (typeof window === 'undefined') {
+    const { req } = appContext.ctx;
+    if (req) {
+      const { measureSsrCpu, ssrRequestKind } = await import('~/server/prom/ssr-cpu.metrics');
+      return measureSsrCpu(appContext.ctx.pathname, 'app', ssrRequestKind(req.url), () =>
+        getAppInitialProps(appContext)
+      );
+    }
+  }
+  return getAppInitialProps(appContext);
 };
 
 export default trpc.withTRPC(MyApp);

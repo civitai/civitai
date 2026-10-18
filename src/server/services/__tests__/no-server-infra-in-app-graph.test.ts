@@ -131,6 +131,12 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
     reason:
       'the per-render settings bootstrap, read in-process instead of over an HTTP request to our own `/api/user/settings`.',
   },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/prom/ssr-cpu.metrics',
+    reason:
+      'main-thread CPU of `getInitialProps` by page route; pulls @civitai/telemetry and `fs`.',
+  },
 ];
 
 /**
