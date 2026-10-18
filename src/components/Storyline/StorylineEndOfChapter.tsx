@@ -72,7 +72,7 @@ export function StorylineEndOfChapter({
 }: {
   chapterId: number;
   storylineId: number;
-  /** Depth of the chapter that ends here on the reader's route (chapter 1 is depth 0). */
+  /** Depth of the chapter that ends here (chapter 1 is depth 0); its children are numbered from it. */
   chapterDepth: number;
   chapterTombstone?: Parameters<typeof getStorylineTombstoneLabel>[0] | null;
   onContinue: (child: StorylineChild) => void;
