@@ -114,6 +114,35 @@ describe('the chrome reads the listing from one place', () => {
     }
   });
 
+  it('the "Recently run" menu renders each row icon through the gated ChromeRecentAppIcon, keyed by blockId', () => {
+    // 🔴 THE ONLY EXECUTED PIN OF THE MENU WIRING. The behavioural proof lives in
+    // `AppBlockChrome.browser.test.tsx`, in a tier CI does not run, so without this a row
+    // reverted to the generic glyph, or keyed by the AppBlock `id` instead of the listing
+    // slug (`blockId`) — no icon ever, and a 404 per row per open — passes every executed
+    // test. It also forbids reading `.iconUrl` anywhere in the host: that url is the
+    // un-gated stored one this menu must never render.
+    const usages = (src: string) => src.match(/<ChromeRecentAppIcon\b[^>]*\/>/g) ?? [];
+    const BLOCK_ID_USAGE = /^<ChromeRecentAppIcon\s+slug=\{\s*\w+\.blockId\s*\}\s*\/>$/;
+
+    // Positive controls: the matcher sees a usage, the shape test separates the two
+    // keyings, and comment-stripping keeps prose from satisfying it.
+    expect(usages('x = <ChromeRecentAppIcon slug={r.blockId} />')).toHaveLength(1);
+    expect(BLOCK_ID_USAGE.test('<ChromeRecentAppIcon slug={r.blockId} />')).toBe(true);
+    expect(BLOCK_ID_USAGE.test('<ChromeRecentAppIcon slug={r.id} />')).toBe(false);
+    expect(usages(code('{/* <ChromeRecentAppIcon slug={r.blockId} /> */}'))).toHaveLength(0);
+
+    const host = code(read('src/components/AppBlocks/IframeHost.tsx'));
+    const found = usages(host);
+    expect(found, 'IframeHost no longer renders ChromeRecentAppIcon exactly once').toHaveLength(1);
+    expect(
+      found[0],
+      'the recents row must key the gated icon by the listing slug (blockId)'
+    ).toMatch(BLOCK_ID_USAGE);
+    expect(host, 'IframeHost must never read a stored (un-gated) iconUrl').not.toMatch(
+      /\.iconUrl\b/
+    );
+  });
+
   it('the hook passes `retry: false`, matching the store-preview page it mirrors', () => {
     // A listing that is missing, unapproved or scope-gated 404s server-side. Retrying
     // it three times is three requests for an answer that cannot change, on a surface
