@@ -69,6 +69,7 @@ function loadSkillConfig() {
     distCacheKeep: 4,
     distCacheMaxGb: 40,
     perBranchDistDir: false,
+    worktreeDevFsCache: false,
     killOnBranchSwitch: false,
     autoInstall: true,
     // NOT empty by default. `_app` SSR-fetches /api/user/settings on every page render and gives
@@ -149,6 +150,9 @@ function loadSkillConfig() {
           break;
         case 'PER_BRANCH_DIST_DIR':
           config.perBranchDistDir = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'WORKTREE_DEV_FS_CACHE':
+          config.worktreeDevFsCache = /^(true|1|yes|on)$/i.test(value);
           break;
         case 'KILL_ON_BRANCH_SWITCH':
           config.killOnBranchSwitch = /^(true|1|yes|on)$/i.test(value);
@@ -755,6 +759,11 @@ class DevSession {
     // Set PORT in environment
     envVars.PORT = String(this.port);
     envVars.NEXT_DIST_DIR = this.distDir;
+    applyDevFsCacheDefault(envVars, {
+      worktree: this.worktree,
+      primary: primaryCheckout,
+      worktreeOptIn: skillConfig.worktreeDevFsCache,
+    });
 
     // Merge with current process env (for PATH, etc.)
     const env = { ...process.env, ...envVars };
@@ -765,6 +774,10 @@ class DevSession {
     this.addLog('info', `Env: ${this.envPaths.join(' <- ')}`);
     this.addLog('info', `Env modes: ${this.modeSummary}`);
     this.addLog('info', `Build dir: ${this.distDir}`);
+    this.addLog(
+      'info',
+      `Turbopack dev FS cache: ${envVars.NEXT_DEV_FS_CACHE === 'false' ? 'off' : 'on'}`
+    );
 
     if (skillConfig.perBranchDistDir) {
       pruneDistDirs(
@@ -1891,6 +1904,17 @@ class AppSession extends AuthHub {
       dbHost: this.dbHost ?? null,
     };
   }
+}
+
+// Turbopack's dev filesystem cache (`.next/dev/cache`, read by next.config.mjs as NEXT_DEV_FS_CACHE)
+// is several GB per checkout, so across many worktrees it fills the disk. Off for worktrees unless
+// the skill .env opts back in; a NEXT_DEV_FS_CACHE from the session's own .env chain wins either
+// way. The primary checkout keeps it.
+function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
+  if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeOptIn && !samePath(worktree, primary)) {
+    envVars.NEXT_DEV_FS_CACHE = 'false';
+  }
+  return envVars;
 }
 
 // Host only, never the credential. A DATABASE_URL is `postgres://user:pass@host:port/db`, so the
@@ -3231,6 +3255,7 @@ export {
   inheritablePort,
   releaseIfOurs,
   describeDatabaseHost,
+  applyDevFsCacheDefault,
   appReservedPorts,
   appSessions,
   checkPath,
