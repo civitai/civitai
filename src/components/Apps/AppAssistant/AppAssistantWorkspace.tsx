@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Center,
+  CloseButton,
   Group,
   Loader,
   Paper,
@@ -32,7 +33,7 @@ import {
   AssistantTokenError,
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
-import { messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
+import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -111,12 +112,15 @@ export interface Release {
  * chat put in the box is the user's once they change it: nothing more is sent. An untouched copy is
  * cleared once the message went. Resolves false when the message neither went nor reached the box —
  * the user sent something else first, the chat or app changed, or the tries ran out — so it would
- * otherwise be lost without a word.
+ * otherwise be lost without a word. While the user dictates, the box is hidden and a copy in it would be
+ * joined to what they said: nothing is sent while it is empty (a send could plant one), and a copy still
+ * there when the tries run out is cleared and the message reported unsent.
  */
 export async function releaseHeld(
   chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
   replaying: { current: Release | null },
   box: () => string,
+  dictating: () => boolean,
   text: string,
   interval = RELEASE_INTERVAL_MS
 ): Promise<boolean> {
@@ -126,13 +130,19 @@ export async function releaseHeld(
   let parked = false;
   for (let i = 0; i < RELEASE_TRIES && live(); i++) {
     if (parked && box() !== text) break;
-    const empty = !box();
-    await chatRef.current?.send(text);
-    if (!live()) break;
-    if (empty && box() === text) parked = true;
+    if (parked || box() || !dictating()) {
+      const empty = !box();
+      await chatRef.current?.send(text);
+      if (!live()) break;
+      if (empty && box() === text) parked = true;
+    }
     await sleep(interval);
   }
   if (replaying.current === release) replaying.current = null;
+  if (!release.went && parked && box() === text && dictating()) {
+    await chatRef.current?.compose('');
+    return false;
+  }
   if (release.went && parked && box() === text) await chatRef.current?.compose('');
   return release.went || parked || box() === text;
 }
@@ -203,10 +213,18 @@ export function AppAssistantWorkspace({
   // app was seen starting.
   type Held = { text: string; app: string; chatId: string | null; started: boolean };
   const [held, setHeld] = useState<Held | null>(null);
-  // A message of the user's that did not go and could not go back into the message box unasked.
-  const [unsent, setUnsent] = useState<string | null>(null);
+  // Messages of the user's that did not go and could not go back into the message box unasked.
+  const [unsent, setUnsent] = useState<{ id: number; text: string }[]>([]);
+  const unsentIds = useRef(0);
+  const unsentId = useId();
+  const offerBack = useCallback(
+    (text: string) => setUnsent((list) => [...list, { id: ++unsentIds.current, text }]),
+    []
+  );
+  const dismissUnsent = (id: number) => setUnsent((list) => list.filter((u) => u.id !== id));
   const replaying = useRef<Release | null>(null);
   const boxText = useCallback(() => messageBoxText(chatRef.current), []);
+  const dictating = useCallback(() => isDictating(chatRef.current), []);
   const [chatId, setChatId] = useState<string | null>(null);
   const chatIdRef = useRef(chatId);
   const previewShown = useRef(false);
@@ -350,23 +368,27 @@ export function AppAssistantWorkspace({
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
-  // A message that did not go comes back to the user, never over what they have in the box.
+  // A message that did not go comes back to the user, never over what they have in the box or are
+  // dictating into it.
   const giveBack = useCallback(
     (text: string) => {
       const box = boxText();
       if (box === text) return;
-      if (box.trim()) setUnsent(text);
+      if (box.trim() || dictating()) offerBack(text);
       else void chatRef.current?.compose(text);
     },
-    [boxText]
+    [boxText, dictating, offerBack]
   );
   // Build it: a send the chat could not take now (a reply still ending, or a hold) comes back to the
   // user to send instead, so it is never pressed twice.
   const buildWent = useRef(false);
   const buildRef = useRef(async () => {
     buildWent.current = false;
+    const empty = !boxText();
     await chatRef.current?.send(BUILD_IT_MESSAGE);
     if (buildWent.current) return;
+    // A copy the chat put in a box hidden by dictation would be joined to what the user says.
+    if (empty && dictating() && boxText() === BUILD_IT_MESSAGE) await chatRef.current?.compose('');
     giveBack(BUILD_IT_MESSAGE);
     gate.answered();
   });
@@ -379,7 +401,7 @@ export function AppAssistantWorkspace({
   const onBeforeSend = useCallback(
     (text: string) => {
       gate.answered();
-      setUnsent(null);
+      setUnsent((list) => list.filter((u) => u.text !== text));
       if (text === BUILD_IT_MESSAGE) buildWent.current = true;
       const release = replaying.current;
       if (release?.text === text) release.went = true;
@@ -436,10 +458,10 @@ export function AppAssistantWorkspace({
     if (!mcpServers.length) return giveBackHeld();
     heldRef.current = null;
     setHeld(null);
-    void releaseHeld(chatRef, replaying, boxText, held.text).then((kept) => {
-      if (!kept) setUnsent(held.text);
+    void releaseHeld(chatRef, replaying, boxText, dictating, held.text).then((kept) => {
+      if (!kept) offerBack(held.text);
     });
-  }, [held, active, chatId, mcpServers, giveBackHeld, boxText]);
+  }, [held, active, chatId, mcpServers, giveBackHeld, boxText, dictating, offerBack]);
   const holding = !!held;
   useEffect(() => {
     if (!holding) return;
@@ -568,32 +590,35 @@ export function AppAssistantWorkspace({
         </Popover>
       )}
       {!switcherOpen && <AppError error={appsError(sandboxes)} />}
-      {unsent && (
-        <Alert
-          color="yellow"
-          variant="light"
-          className="shrink-0"
-          withCloseButton
-          onClose={() => setUnsent(null)}
-        >
+      {unsent.map(({ id, text }) => (
+        <Alert key={id} color="yellow" variant="light" className="shrink-0">
           <Group justify="space-between" wrap="nowrap" gap="sm">
-            <Text size="sm" className="min-w-0">
-              This message was not sent: “{unsent}”
+            <Text id={`${unsentId}-${id}`} size="sm" className="min-w-0">
+              This message was not sent: “{text}”
             </Text>
-            <Button
-              size="compact-sm"
-              variant="light"
-              className="min-h-11 shrink-0"
-              onClick={() => {
-                void chatRef.current?.compose(putBack(unsent, boxText()));
-                setUnsent(null);
-              }}
-            >
-              Put it back
-            </Button>
+            <Group wrap="nowrap" gap="xs" className="shrink-0">
+              <Button
+                size="compact-sm"
+                variant="light"
+                className="min-h-11"
+                aria-describedby={`${unsentId}-${id}`}
+                onClick={() => {
+                  void chatRef.current?.compose(putBack(text, boxText()));
+                  dismissUnsent(id);
+                }}
+              >
+                Put it back
+              </Button>
+              <CloseButton
+                className="min-h-11 min-w-11"
+                aria-label="Dismiss"
+                aria-describedby={`${unsentId}-${id}`}
+                onClick={() => dismissUnsent(id)}
+              />
+            </Group>
           </Group>
         </Alert>
-      )}
+      ))}
 
       {session && (
         <SegmentedControl
