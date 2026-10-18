@@ -53,6 +53,7 @@ import type {
 import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
+  CardDecorationCosmetic,
   ContentDecorationCosmetic,
   StickerCosmetic,
   NamePlateCosmetic,
@@ -1293,6 +1294,8 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
+type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean };
+
 export const getUserCosmeticsHandler = async ({
   input,
   ctx,
@@ -1323,6 +1326,7 @@ export const getUserCosmeticsHandler = async ({
         acc,
         {
           obtainedAt,
+          equippedAt,
           equippedToId,
           equippedToType,
           claimKey,
@@ -1339,6 +1343,8 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
+          // Also set while a content decoration is placed (that is `inUse`).
+          equipped: !!equippedAt,
           equippedToId,
           equippedToType,
           entityImage: coverImages.find(
@@ -1374,16 +1380,19 @@ export const getUserCosmeticsHandler = async ({
           });
         else if (type === CosmeticType.Sticker)
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
+        else if (type === CosmeticType.CardDecoration)
+          acc.cardDecorations.push({ ...sharedData, data: data as CardDecorationCosmetic['data'] });
 
         return acc;
       },
       {
-        badges: [] as WithClaimKey<BadgeCosmetic>[],
-        nameplates: [] as WithClaimKey<NamePlateCosmetic>[],
-        profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
-        contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        sticker: [] as WithClaimKey<StickerCosmetic>[],
+        badges: [] as OwnedCosmetic<BadgeCosmetic>[],
+        nameplates: [] as OwnedCosmetic<NamePlateCosmetic>[],
+        profileDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        profileBackground: [] as OwnedCosmetic<ProfileBackgroundCosmetic>[],
+        contentDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        sticker: [] as OwnedCosmetic<StickerCosmetic>[],
+        cardDecorations: [] as OwnedCosmetic<CardDecorationCosmetic>[],
       }
     );
 
