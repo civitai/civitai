@@ -34,7 +34,21 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
 
   // Upload keys are `<type>/<userId>/<name>` (buildUploadKey): a caller may fetch their own uploads
   // here; anything else goes through the download route for its record. Moderators may fetch any key.
-  const allowed = !!session.user?.isModerator || keyParts[1] === String(userId);
+  //
+  // The prefix match reads segment 1, but the whole joined key is handed to the delivery worker,
+  // whose normalization we don't control. Require each segment to be a plain name first — non-empty,
+  // not `.`/`..`, and no separator surviving a single decode — so `model/<me>/../../model/<other>/x`
+  // or an encoded separator can't resolve past the prefix the match approved.
+  const safeSegments = keyParts.every((seg) => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(seg);
+    } catch {
+      return false;
+    }
+    return seg !== '' && decoded !== '.' && decoded !== '..' && !/[/\\%]/.test(decoded);
+  });
+  const allowed = safeSegments && (!!session.user?.isModerator || keyParts[1] === String(userId));
   logToAxiom({ type: 'info', name: 'download-key-route', userId, key, allowed }).catch(
     () => undefined
   );

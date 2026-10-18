@@ -564,11 +564,8 @@ async function copyToQuarantine(args: {
  * delete would succeed.
  */
 /**
- * A url with a query string or fragment is not a plain object location. The refcount guard compares
- * the url string exactly, but the delete parses out only the pathname's bucket/key — so `<victim
- * url>?x` passes the refcount (it matches no live row) yet resolves to the victim's object. Refusing
- * these here keeps that mismatch from ever reaching a delete; the cost is an object that nothing
- * references is left rather than removed, which a later by-key sweep can reclaim.
+ * Only a plain object url is deleted. A url carrying a query string or fragment is left in place
+ * rather than removed; a later by-key sweep can reclaim an object that nothing references.
  */
 function urlHasExtraComponents(url: string): boolean {
   try {
@@ -740,8 +737,8 @@ export async function deleteModelFileObjects(urls: string[]) {
   const groups = new Map<string, { backend: 'b2' | 'r2'; bucket: string; keys: string[] }>();
 
   for (const url of safe) {
-    // A url carrying a query string or fragment is a mismatch between the exact-string refcount
-    // above and the pathname-only parse below — the same hijack guarded in deleteModelFileObject.
+    // Only a plain object url is deleted here, as in deleteModelFileObject; a url with a query
+    // string or fragment is left for a by-key sweep.
     if (urlHasExtraComponents(url)) {
       logToAxiom({
         type: 'warn',

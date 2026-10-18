@@ -56,7 +56,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 // Default to a key under the authed user's own `<type>/<userId>/` prefix so the branch tests below
-// pass the ownership gate (added for the key-scope hijack) and still reach the delivery worker. The
+// pass the ownership gate (added below) and still reach the delivery worker. The
 // gate itself is covered by its own describe block at the end.
 function createMocks({
   key = ['model', '42', 'file.safetensors'],
@@ -323,10 +323,8 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
 /**
  * Ownership scope: a signed-in caller may resolve only keys under their own `<type>/<userId>/`
- * prefix (buildUploadKey), plus moderators. Any other key — another user's upload, or a
- * version-prefixed key nothing in the app links here — is 404, so the response never confirms the
- * object exists and the delivery worker is never asked to resolve it. Before this, any signed-in
- * user could fetch any key.
+ * prefix (buildUploadKey), plus moderators. Any other key is 404, so the response does not confirm
+ * whether the object exists and the delivery worker is never asked to resolve it.
  */
 describe('/api/download/[...key] — ownership scope', () => {
   beforeEach(() => {
@@ -349,8 +347,8 @@ describe('/api/download/[...key] — ownership scope', () => {
   });
 
   it.each([
-    ["another user's upload key", ['model', '99', 'victim.safetensors']],
-    ['a version-prefixed key', ['modelVersion', '123', 'victim.safetensors']],
+    ["another user's upload key", ['model', '99', 'other-user.safetensors']],
+    ['a version-prefixed key', ['modelVersion', '123', 'other-user.safetensors']],
   ])('refuses %s with 404 and never resolves it', async (_label, key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
     const { req, res } = createMocks({ key });
@@ -359,6 +357,35 @@ describe('/api/download/[...key] — ownership scope', () => {
 
     expect(res._getStatusCode()).toBe(404);
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a .. traversal segment past the owned prefix',
+      ['model', '42', '..', '..', 'model', '99', 'f.safetensors'],
+    ],
+    [
+      'an encoded separator inside a segment',
+      ['model', '42', '..%2f..%2fmodel%2f99%2ff.safetensors'],
+    ],
+  ])('refuses %s with 404, even though segment 1 is the caller', async (_label, key) => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses a .. traversal even for a moderator', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
+    const { req, res } = createMocks({ key: ['model', '42', '..', 'secrets', 'f.bin'] });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
   });
 

@@ -318,9 +318,8 @@ describe('resolveModelFileDeleteTarget — the LOCAL half of the decision', () =
     expect(resolveModelFileDeleteTarget('')).toEqual({ ok: false, reason: 'empty-url' });
   });
 
-  // 🔴 THE DELETE HIJACK. The refcount guard compares the url string exactly, but this resolver
-  // parses only the pathname. So `<victim url>?x` matches no live row (passes the refcount) yet
-  // resolves to the victim's object. A query string or fragment is refused here, before any parse.
+  // Only a plain object url resolves to a delete target; a query string or fragment is refused here,
+  // before any bucket parse, so the delete can only ever target the object the url plainly names.
   it.each([
     ['a query string', 'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles-b2/k.bin?x=1'],
     ['a fragment', 'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k/f.bin#frag'],
@@ -435,10 +434,10 @@ describe('deleteModelFileObject — the OUTCOME it reports', () => {
   });
 
   it('reports non-canonical-url for a url with a query string, deleting nothing', async () => {
-    // The plant: `<victim url>?x`. The refcount query would find no row (it stores the bare url),
-    // so without this guard the parsed bucket/key — the victim's object — would be deleted.
+    // A url that carries a query string is refused and nothing is deleted, even for an allowlisted
+    // bucket — only a plain object url reaches the delete.
     const outcome = await deleteModelFileObject(
-      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/victim/f.bin?x=1'
+      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k/f.bin?x=1'
     );
     expect(outcome).toEqual({ deleted: false, reason: 'non-canonical-url' });
     expect(mocks.deleteObjectCalls).toHaveLength(0);
