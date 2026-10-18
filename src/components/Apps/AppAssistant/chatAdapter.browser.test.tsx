@@ -178,8 +178,9 @@ test('a message released into the real chat waits out its hold in the box, sends
     () => messageBoxText(chat),
     () => isDictating(chat),
     'Add a dark mode',
-    // Short, so an event that never comes fails here by assertion rather than by the test's timeout.
-    5_000
+    // Shorter than the test's own timeout, so an event that never comes fails here by assertion, with
+    // room for a slow runner before the hold lifts.
+    10_000
   );
   // The chat holds, so the message waits in its box for the user to see.
   await expect.element(box).toHaveValue('Add a dark mode');
@@ -204,6 +205,9 @@ test('a message the real chat keeps back on a refused grant while the user dicta
   expect(isDictating(chat)).toBe(true);
   // Nothing holds the chat: the refusal comes only once the message is sent.
   expect(chat.canSend).toBe(true);
+  const fired = vi.fn();
+  chat.addEventListener('before-send', fired);
+  const compose = vi.spyOn(chat, 'compose');
   const replaying: { current: Release | null } = { current: null };
   const kept = await releaseHeld(
     { current: chat },
@@ -213,6 +217,9 @@ test('a message the real chat keeps back on a refused grant while the user dicta
     'Add a dark mode',
     5_000
   );
+  // The refused grant stopped it before before-send, and the copy it left was taken out.
+  expect(fired).not.toHaveBeenCalled();
+  expect(compose.mock.calls).toEqual([['']]);
   expect(kept).toBe(false);
   expect(messageBoxText(chat)).toBe('');
   expect(isDictating(chat)).toBe(true);
