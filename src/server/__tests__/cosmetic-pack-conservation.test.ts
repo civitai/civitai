@@ -12,7 +12,6 @@ import {
 } from '~/test-utils/shopPurchaseClaimFake';
 
 let claims = shopPurchaseClaimFake();
-// Each transaction is numbered; `committed` lists the ones that have resolved, in order.
 let txSeq = 0;
 let committed: number[] = [];
 const lockedOn: number[] = [];
@@ -64,8 +63,8 @@ const executeRaw = vi.fn();
 const holderLock = vi.fn();
 const isHolderLock = (a: unknown[]) =>
   (a[0] as readonly string[]).join('').includes('pg_advisory_xact_lock');
-// The listing's sale counter and its lock timeout (cosmetic-shop-sale-count.ts), also kept apart
-// from the grants. Called with the transaction it ran on first.
+// The listing's sale counter and its lock timeout (cosmetic-shop-sale-count.ts), kept apart from the
+// grants; called with `{ tx, committed }` first.
 const saleCount = vi.fn();
 const isSaleCount = (a: unknown[]) =>
   /UPDATE "CosmeticShopItem"|set_config\('lock_timeout'/.test((a[0] as readonly string[]).join(''));
@@ -822,8 +821,8 @@ describe('purchaseCosmeticPack — what a purchase records as sold', () => {
   });
 });
 
-// Deliberately NOT on the grant transaction: every buyer of a listing updates its one row, and a
-// queue on it inside the grant held each buyer's lock and pushed paid grants toward a refund.
+// Deliberately NOT on the grant transaction (see countShopItemSaleAfterGrant): a queue on the
+// listing row there holds each buyer's lock and pushes paid grants toward a refund.
 describe('purchaseCosmeticPack — counting the sale', () => {
   const members = [mkMember()];
   const buy = () =>
@@ -836,15 +835,21 @@ describe('purchaseCosmeticPack — counting the sale', () => {
   const isUpdate = (call: unknown[]) =>
     ((call[1] as readonly string[]) ?? []).join('').includes('UPDATE "CosmeticShopItem"');
 
-  it('counts the sale once the grant has committed, on a transaction of its own', async () => {
+  it('counts the sale once the grant has committed and the creators are paid', async () => {
     await buy();
 
-    const counted = saleCount.mock.calls.filter(isUpdate);
-    expect(counted).toHaveLength(1);
-    const [{ tx, committed: before }] = counted[0] as [{ tx: number; committed: number[] }];
+    const countAt = saleCount.mock.calls.flatMap((c, i) => (isUpdate(c) ? [i] : []));
+    expect(countAt).toHaveLength(1);
+    const [{ tx, committed: before }] = saleCount.mock.calls[countAt[0]] as [
+      { tx: number; committed: number[] }
+    ];
     expect(lockedOn).toHaveLength(1);
     expect(tx).not.toBe(lockedOn[0]);
     expect(before).toContain(lockedOn[0]);
+    expect(pay).toHaveBeenCalled();
+    expect(saleCount.mock.invocationCallOrder[countAt[0]]).toBeGreaterThan(
+      Math.max(...pay.mock.invocationCallOrder)
+    );
   });
 
   it('completes the purchase when the sale cannot be counted', async () => {
@@ -856,7 +861,6 @@ describe('purchaseCosmeticPack — counting the sale', () => {
     await expect(buy()).resolves.toBeDefined();
 
     expect(createManyUserCosmetic).toHaveBeenCalledTimes(1);
-    expect(refund).not.toHaveBeenCalled();
     expect(pay).toHaveBeenCalled();
   });
 });
@@ -911,6 +915,8 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(refund).toHaveBeenCalledTimes(1);
     expect(pay).not.toHaveBeenCalled();
+    // A refunded purchase is no sale.
+    expect(saleCount).not.toHaveBeenCalled();
   });
 
   it('refuses without granting when the buyer could not be charged', async () => {

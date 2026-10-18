@@ -739,7 +739,6 @@ export const purchaseCosmeticPack = async ({
 
   // Outside the try: the money moved and the grant committed, so a cache refresh
   // failing here is not grounds for refunding someone who kept their cosmetics.
-  await countShopItemSaleAfterGrant(shopItem.id);
   await refreshOwnedStickerCache([userId]);
 
   try {
@@ -829,6 +828,9 @@ export const purchaseCosmeticPack = async ({
       data: { shopItemId: shopItem.id, userId, transactionId, error: e },
     });
   }
+
+  // After the payouts: a wait on the listing row must not delay paying the creators.
+  await countShopItemSaleAfterGrant(shopItem.id);
 
   return {
     transactionId,

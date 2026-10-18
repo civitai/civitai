@@ -6,7 +6,6 @@ type RawWriter = Pick<Prisma.TransactionClient, '$executeRaw'>;
 
 const metaObject = Prisma.sql`CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END`;
 
-// How long a sale waits for a listing's row before it gives up on counting.
 const SALE_COUNT_LOCK_TIMEOUT = '2s';
 
 /**
@@ -31,11 +30,10 @@ export async function countShopItemSale(tx: Prisma.TransactionClient, shopItemId
 }
 
 /**
- * Counts a sale once its grant has committed. Every buyer of one listing updates the same row, so
- * inside the grant transaction they queued on it while holding their `lockItemHolder`, and a long
- * enough queue pushed paid grants toward the transaction timeout and a refund. Stock is decided on
- * the purchase rows, never this counter, so a sale that cannot be counted is logged and the purchase
- * still succeeds.
+ * Counts a sale after its grant commits, never inside it: every buyer of a listing updates the same
+ * row, and queuing on it under `lockItemHolder` pushed paid grants into the transaction timeout and a
+ * refund. Waits at most `SALE_COUNT_LOCK_TIMEOUT`; a failure is logged, not thrown, because stock
+ * reads the purchase rows, not this counter.
  */
 export async function countShopItemSaleAfterGrant(
   shopItemId: number,

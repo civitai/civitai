@@ -1331,7 +1331,6 @@ export const purchaseCosmeticShopItem = async ({
       return userCosmetic;
     });
 
-    await countShopItemSaleAfterGrant(shopItemId);
     await refreshOwnedStickerCache([userId]);
     // An event hat counts on its owner's team roster, if they are listed.
     const hatEvent = (singleCosmetic.data as { event?: unknown } | null)?.event;
@@ -1476,6 +1475,9 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
     }
+
+    // After the payouts: a wait on the listing row must not delay paying the creators.
+    await countShopItemSaleAfterGrant(shopItemId);
 
     return data;
   } catch (error) {

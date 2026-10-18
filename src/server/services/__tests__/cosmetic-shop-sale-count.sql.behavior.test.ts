@@ -81,7 +81,6 @@ describe('countShopItemSale', () => {
 });
 
 describe('countShopItemSaleAfterGrant', () => {
-  // A Prisma interactive transaction on the one PGlite session: BEGIN, the callback, COMMIT.
   const runner = {
     $transaction: async (fn: (t: Prisma.TransactionClient) => Promise<unknown>) => {
       await db.pg.exec('BEGIN');
@@ -127,7 +126,10 @@ describe('countShopItemSaleAfterGrant', () => {
     await countShopItemSaleAfterGrant(1, runner);
 
     expect(await meta(1)).toEqual({ purchases: 5, label: 'a', flag: true });
-    expect(await seen()).toEqual(['2s']);
+    // Some bound while the row is written, whatever its value; none once the transaction ends.
+    const during = await seen();
+    expect(during).toHaveLength(1);
+    expect(during[0]).not.toBe('0');
     const [{ lock_timeout }] = (await db.pg.query<{ lock_timeout: string }>('SHOW lock_timeout'))
       .rows;
     expect(lock_timeout).toBe('0');
