@@ -801,6 +801,13 @@ const featureFlags = createFeatureFlags({
   // Admits `kind: 'checkpoint'` (ATTACH_BM checkpoint lists). Read only behind
   // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
   resourceIntentCheckpoint: { availability: [], fliptKey: 'resource-intent-checkpoint' },
+  // The v1 content-tag arm (docs/resource-intent-primitive.md, "The v1_tags arm"). Read only behind
+  // `resourceIntentJev`, dark like it. `resourceIntentV1` serves it for add-ons over
+  // `resourceIntentPoolMerge`; `…V1Shadow` only records it; `…JudgeCapture` records route prompt
+  // text while a judged sample is drawn.
+  resourceIntentV1: { availability: [], fliptKey: 'resource-intent-v1' },
+  resourceIntentV1Shadow: { availability: [], fliptKey: 'resource-intent-v1-shadow' },
+  resourceIntentJudgeCapture: { availability: [], fliptKey: 'resource-intent-judge-capture' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

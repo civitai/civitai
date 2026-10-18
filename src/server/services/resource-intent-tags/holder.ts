@@ -22,8 +22,8 @@ import {
 } from './store';
 
 /**
- * In-process holder of the v1 tag index the request path will serve (design phase P9 wires it in;
- * nothing calls it yet).
+ * In-process holder of the v1 tag index the request path serves and shadows (`resource-intent.service.ts`,
+ * the v1_tags arm, reached only behind its own flags).
  *
  * 🔴 Behind the default-off Flipt flag `resource-intent-tag-index-holder`. While it is off (or
  * unknown, or Flipt is unreachable), `resolve()` answers `disabled` and touches nothing: no
@@ -308,7 +308,7 @@ export class TagIndexSnapshotHolder {
 let holder: TagIndexSnapshotHolder | undefined;
 
 /**
- * The process's holder: the accessor P9's request path calls
+ * The process's holder: the accessor the request path calls
  * (`await tagIndexSnapshotHolder().resolve()`). Constructing it allocates nothing of the index, and
  * the spec hash (computed over fixtures when `./spec` loads) and the decode worker's source are
  * imported only by a check, which runs only with the flag on.
