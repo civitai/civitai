@@ -394,7 +394,7 @@ type ShadowEvent = {
   Partial<V1ServedShadow> &
   Partial<V1ShadowColumns>;
 
-/** Sent on POOL_MERGE and checkpoint rows only; a HYBRID_10 row reads the columns' defaults. */
+/** Sent on POOL_MERGE, checkpoint and served v1_tags rows; a HYBRID_10 row reads the columns' defaults. */
 type PoolMergeShadow = {
   arm: ResourceIntentArm | CheckpointArm;
   coocSnapshotHash: string;
@@ -443,24 +443,8 @@ export type V1FallbackReason =
   | Exclude<TagScoreResult['status'], 'ok'>
   | 'no_candidates';
 
-// Loaded only once a snapshot is held, as the holder loads it: the module fingerprints fixtures on load.
-const loadTagsSpecHash = async () =>
-  (await import('~/server/services/resource-intent-tags/spec')).RESOURCE_INTENT_TAGS_SPEC_HASH;
-
 /** Resolves after the current turn's microtasks, i.e. after the route has written the response. */
 const afterResponse = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-function scoreV1Tags(
-  snapshot: ServedTagIndex,
-  req: { prompt: string; baseModel?: string; kind: TagKind; browsingLevel: number }
-): TagScoreResult {
-  return scoreTagRequest(snapshot.index, {
-    prompt: req.prompt,
-    kind: req.kind,
-    browsingLevel: req.browsingLevel,
-    baseModel: req.baseModel,
-  });
-}
 
 /** The scored candidates through the gates and hydration; `fallbackReason` null when v1 has a list. */
 async function listV1Tags(
@@ -471,7 +455,6 @@ async function listV1Tags(
   suggestions: ResourceIntentSuggestion[];
   fallbackReason: V1FallbackReason | null;
 }> {
-  // An 'ok' result always names its ecosystem; without one there is no ecosystem gate to apply.
   if (score.status !== 'ok' || !score.ecosystem)
     return {
       entries: [],
@@ -492,14 +475,13 @@ async function listV1Tags(
 
 function v1TagColumns(
   snapshot: ServedTagIndex,
-  tagsSpecHash: string,
   score: TagScoreResult | null,
   baseModel: string | undefined
 ): V1TagColumns {
   return {
     tagSnapshotHash: snapshot.payloadSha256,
     vocabVersion: snapshot.vocabVersion,
-    tagsSpecHash,
+    tagsSpecHash: snapshot.specHash,
     literalTagIds: score?.foundTagIds ?? [],
     keptTagIds: score ? [...score.weights.keys()] : [],
     explicitTagsRemoved: score ? score.foundTagIds.length - score.weights.size : 0,
@@ -507,6 +489,10 @@ function v1TagColumns(
     ecosystemTop3: score?.ecosystems ?? [],
   };
 }
+
+/** Shadows running at once on this pod; past it a request's shadow is skipped, not queued. */
+const V1_SHADOW_MAX_IN_FLIGHT = 4;
+let v1ShadowsInFlight = 0;
 
 /**
  * The v1_tags list this request would have been served, for the shadow columns of its row. Makes no
@@ -531,17 +517,18 @@ async function v1TagsShadow(
       shadowLatencyMs: Date.now() - startedAt,
     };
   };
+  if (v1ShadowsInFlight >= V1_SHADOW_MAX_IN_FLIGHT) return columns({ shadowReason: 'skipped' });
+  v1ShadowsInFlight++;
   try {
     const serving = await tagIndexSnapshotHolder().resolve();
     if (!serving.snapshot) return columns({ shadowReason: serving.fallbackReason });
-    const req = {
+    const req = { kind, browsingLevel: ctx.browsingLevel };
+    const score = scoreTagRequest(serving.snapshot.index, {
+      ...req,
       prompt: input.prompt,
       baseModel: input.baseModel,
-      kind,
-      browsingLevel: ctx.browsingLevel,
-    };
-    const score = scoreV1Tags(serving.snapshot, req);
-    tags = v1TagColumns(serving.snapshot, await loadTagsSpecHash(), score, input.baseModel);
+    });
+    tags = v1TagColumns(serving.snapshot, score, input.baseModel);
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     const listed = await listV1Tags(score, { ...req, coverage, cap });
     return columns({
@@ -550,6 +537,8 @@ async function v1TagsShadow(
     });
   } catch {
     return columns({ shadowReason: 'error', shadowDegraded: 1 });
+  } finally {
+    v1ShadowsInFlight--;
   }
 }
 
@@ -557,9 +546,11 @@ export const JUDGE_SAMPLE_TABLE = 'p2m_restricted.routeJudgeSample';
 
 /**
  * One judge-capture row (`2026-10-17-resource-intent-route-judge-sample.sql`). Carries nothing that
- * identifies the caller. Never logged anywhere else: with no ClickHouse client the row is dropped.
+ * identifies the caller, and its time is the hour only, so it cannot be lined up with a request's
+ * own logs. Never logged anywhere else: with no ClickHouse client the row is dropped.
  */
 async function writeJudgeSample(row: {
+  /** UTC, truncated to the hour. */
   time: string;
   promptHash: string;
   prompt: string;
@@ -676,7 +667,6 @@ export async function getResourceIntent(
   let studyFailure: { error: unknown } | null = null;
   // Likewise the tag index for v1_tags. That arm reads the co-occurrence snapshot only on a fallback.
   let tagServing: TagIndexServing | null = null;
-  let tagsSpecHash = '';
   if (study) {
     try {
       cooc = await coocStudySnapshots().get(ctx.coocSnapshotId!, (ctx.now ?? (() => new Date()))());
@@ -688,7 +678,6 @@ export async function getResourceIntent(
     cooc = coocServing.snapshot;
   } else if (arm === 'v1_tags') {
     tagServing = await tagIndexSnapshotHolder().resolve();
-    if (tagServing.snapshot) tagsSpecHash = await loadTagsSpecHash();
   }
   let coocFallback = arm === 'pool_merge' && !study && !cooc;
   let tagScore: TagScoreResult | null = null;
@@ -702,7 +691,8 @@ export async function getResourceIntent(
         browsingLevel: ctx.browsingLevel,
         cap,
         snapshot: tagServing.snapshot?.payloadSha256 ?? COOC_FALLBACK_SNAPSHOT_KEY,
-        tagsSpecHash,
+        // The holder serves only snapshots built under RESOURCE_INTENT_TAGS_SPEC_HASH.
+        tagsSpecHash: tagServing.snapshot?.specHash ?? '',
       })
     : resourceIntentCacheKey({
         prompt: input.prompt,
@@ -764,7 +754,7 @@ export async function getResourceIntent(
 
   if (!response) {
     const baseModel = input.baseModel ?? null;
-    // Resolved only on a cache miss — the matcher is the sole consumer.
+    // Resolved only on a cache miss here; the v1 shadow resolves its own.
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     try {
       const stage1 = await askJev(buildResourceIntentStage1Request(input.prompt, baseModel), {
@@ -805,7 +795,7 @@ export async function getResourceIntent(
       if (arm === 'v1_tags') {
         // Role-free: stage 1 runs only for `intent`/`criteria` (and the fallback's role filter).
         if (tagServing?.snapshot) {
-          tagScore = scoreV1Tags(tagServing.snapshot, {
+          tagScore = scoreTagRequest(tagServing.snapshot.index, {
             prompt: input.prompt,
             baseModel: input.baseModel,
             kind: 'addon',
@@ -938,7 +928,8 @@ export async function getResourceIntent(
   }
 
   // Taken now: the row describes the response, not the shadow work that runs after it.
-  const time = clickhouseDateTime64((ctx.now ?? (() => new Date()))());
+  const at = (ctx.now ?? (() => new Date()))();
+  const time = clickhouseDateTime64(at);
   const latencyMs = Date.now() - startedAt;
   const promptHash = createHash('sha256').update(input.prompt).digest('hex');
   const shadowV1 = !!ctx.v1Shadow && arm !== 'v1_tags';
@@ -946,7 +937,7 @@ export async function getResourceIntent(
     if (shadowV1 || ctx.judgeCapture) await afterResponse();
     if (ctx.judgeCapture)
       void writeJudgeSample({
-        time,
+        time: `${at.toISOString().slice(0, 13).replace('T', ' ')}:00:00`,
         promptHash,
         prompt: input.prompt,
         browsingLevel: ctx.browsingLevel,
@@ -1000,8 +991,7 @@ export async function getResourceIntent(
         coocFallbackReason: coocServing?.fallbackReason ?? '',
         v1Fallback: response.v1Fallback ? 1 : 0,
         v1FallbackReason: v1FallbackReason ?? '',
-        ...(tagServing?.snapshot &&
-          v1TagColumns(tagServing.snapshot, tagsSpecHash, tagScore, input.baseModel)),
+        ...(tagServing?.snapshot && v1TagColumns(tagServing.snapshot, tagScore, input.baseModel)),
       }),
       ...shadow,
     });
@@ -1201,7 +1191,7 @@ async function getCheckpointIntent(
   const final = response;
   const time = clickhouseDateTime64(now());
   const latencyMs = Date.now() - startedAt;
-  // D4: checkpoints stay on this mode's arms; v1_tags is only shadowed here.
+  // Checkpoints stay on this mode's arms; v1_tags is only shadowed here.
   const shadowV1 = !!ctx.v1Shadow;
   void (async () => {
     if (shadowV1) await afterResponse();

@@ -580,10 +580,9 @@ export async function findCheckpointCandidates(opts: {
 export const V1_TAGS_LIST_MODELS = 50;
 
 /**
- * The v1_tags arm's list: the tag scorer's ranked model ids (best first, at most 300) through
- * `gateRankedCandidates` under the seed's filter for `modelTypes` and `baseModel` (the caller's,
- * else the tag-derived ecosystem), first `min(cap, 50)` models. The index admits only listed models
- * at build time; these gates are what hold at request time.
+ * The v1_tags arm's list: the tag scorer's ranked model ids through `gateRankedCandidates` under the
+ * seed's `modelTypes`/`baseModel` filter. The index admits only listed models at build time; these
+ * gates are what hold at request time.
  */
 export async function findV1TagsCandidates(opts: {
   modelIds: readonly number[];

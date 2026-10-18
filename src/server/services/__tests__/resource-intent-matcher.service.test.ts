@@ -996,20 +996,27 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
 });
 
 describe('🔴 findV1TagsCandidates — the request-time gates on the tag index', () => {
+  // Not the anonymous default, so a gate that ignored the request's coverage would show.
+  const coverage = { next: true, member: true };
   const opts = {
     modelTypes: ['LORA', 'DoRA'] as const,
     baseModel: 'SDXL 1.0',
     browsingLevel: 3,
-    coverage: COVERAGE,
+    coverage,
     cap: 50,
   };
-  const doc = (id: number, versions: { id: number; baseModel?: string; canGenerate?: boolean }[]) =>
+  const doc = (
+    id: number,
+    versions: { id: number; baseModel?: string; canGenerate?: boolean; canGenerateNext?: boolean }[]
+  ) =>
     shortlistHit({
       id,
       versions: versions.map((v) => ({
         name: 'v',
         baseModel: v.baseModel ?? 'SDXL 1.0',
         canGenerate: v.canGenerate ?? true,
+        // What `versionGeneratableFor` reads under this block's coverage.
+        canGenerateNext: v.canGenerateNext ?? v.canGenerate ?? true,
         ...v,
       })),
     });
@@ -1023,7 +1030,7 @@ describe('🔴 findV1TagsCandidates — the request-time gates on the tag index'
           modelTypes: ['LORA', 'DoRA'],
           baseModels: ['SDXL 1.0'],
           browsingLevel: 3,
-          coverage: COVERAGE,
+          coverage,
         }),
         inArray('id', [7, 3, 9])
       ),
@@ -1034,7 +1041,8 @@ describe('🔴 findV1TagsCandidates — the request-time gates on the tag index'
   it('keeps candidate rank, drops what the index filtered out, and takes one gate-passing version per model', async () => {
     searchWithSignal.mockResolvedValue({
       hits: [
-        doc(9, [{ id: 91 }]),
+        // Generatable only for this block's audience.
+        doc(9, [{ id: 91, canGenerate: false, canGenerateNext: true }]),
         doc(7, [
           { id: 71, baseModel: 'Pony' },
           { id: 72, canGenerate: false },

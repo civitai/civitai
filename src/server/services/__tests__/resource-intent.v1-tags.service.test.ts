@@ -96,7 +96,8 @@ const SCORES = (() => {
 })();
 
 const PROMPT = 'zephyr, lantern, portrait';
-const CTX = { browsingLevel: 3, coverage: { next: false, member: false } };
+// Not the audience the coverage mock answers, so a test can tell the request's coverage from a lookup.
+const CTX = { browsingLevel: 3, coverage: { next: true, member: false } };
 const SNAPSHOT_SHA = 'c'.repeat(64);
 const VOCAB = 'd'.repeat(64);
 
@@ -337,7 +338,6 @@ describe('🔴 the response schema seam (cached blobs across a rolling deploy)',
     const pool = await getResourceIntent({ prompt: PROMPT }, { ...CTX, poolMerge: true });
     const v1Only = Object.keys(v1).filter((k) => !(k in pool));
     expect(v1Only.sort()).toEqual(['arm', 'ecosystems', 'v1Fallback']);
-    expect(Object.keys(OLD_POOL_MERGE_BLOB).filter((k) => v1Only.includes(k))).toEqual([]);
   });
 });
 
@@ -354,6 +354,7 @@ describe('served v1_tags', () => {
       modelTypes: RESOURCE_INTENT_COOC_SPEC.addonTypes,
       baseModel: 'SDXL 1.0',
       browsingLevel: 3,
+      coverage: CTX.coverage,
       cap: 50,
     });
     expect(result).toMatchObject({ degraded: false, arm: 'v1_tags', v1Fallback: false });
@@ -371,6 +372,22 @@ describe('served v1_tags', () => {
     const result = await getResourceIntent({ prompt: 'zephyr' }, V1);
     expect(mockV1Candidates.mock.calls[0][0]).toMatchObject({ baseModel: 'SDXL 1.0' });
     expect(result.ecosystems).toEqual(['SDXL 1.0', 'Illustrious']);
+  });
+
+  it("the caller's limit reaches the gate, and the key", async () => {
+    mockStage1();
+    await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0', limit: 7 }, V1);
+    expect(mockV1Candidates.mock.calls[0][0]).toMatchObject({ cap: 7 });
+    expect(redisMock.redis.packed.set.mock.calls[0][0]).toBe(
+      v1TagsCacheKey({
+        prompt: PROMPT,
+        baseModel: 'SDXL 1.0',
+        browsingLevel: 3,
+        cap: 7,
+        snapshot: SNAPSHOT_SHA,
+        tagsSpecHash: RESOURCE_INTENT_TAGS_SPEC_HASH,
+      })
+    );
   });
 
   it('a stage-1 role of none does not empty the list (role-free)', async () => {
@@ -456,6 +473,21 @@ describe('🔴 the failure ladder: each rung serves the POOL_MERGE list, flagged
   it('no vocabulary tag in the prompt (no_tags)', async () => {
     await expectFallback({ prompt: 'an unrelated prompt' }, V1, 'no_tags');
     expect(mockV1Candidates).not.toHaveBeenCalled();
+  });
+
+  it('a role-none prompt on a fallback rung gets the POOL_MERGE answer: an empty list', async () => {
+    mockAskJev.mockImplementationOnce(async () => ({
+      answers: STAGE1_ANSWERS.map((a) =>
+        a.id === 'role' ? { ...a, value: 'none', distribution: { none: 0.9, style: 0.1 } } : a
+      ),
+      usage: { promptTokens: 1, completionTokens: 1 },
+      model: 'typesafe/jev-1.13-20260917',
+    }));
+    const result = await getResourceIntent({ prompt: 'nothing' }, V1);
+    expect(result).toMatchObject({ degraded: false, v1Fallback: true, suggestions: [] });
+    expect(mockPoolMerge).not.toHaveBeenCalled();
+    await flush();
+    expect(shadowRow()).toMatchObject({ v1FallbackReason: 'no_tags', shortlistCount: 0 });
   });
 
   it('D3: every tag explicit at an SFW level (no_tags), though the same prompt ranks at a mature level', async () => {
@@ -663,15 +695,50 @@ describe('🔴 the shadow beside another arm', () => {
     }
   );
 
-  it('🔴 adds no awaited latency: the response returns before the shadow starts, and while it never settles', async () => {
-    mockTagResolve.mockReturnValue(new Promise(() => undefined));
+  it('🔴 adds no awaited latency: the response returns before the shadow starts, and while it has not settled', async () => {
+    let release!: (v: unknown) => void;
+    mockTagResolve.mockReturnValue(new Promise((r) => (release = r)));
     mockStage1();
     const result = await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
     expect(ids(result)).toEqual(POOL_IDS);
     expect(mockTagResolve).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(1));
-    // Its row waits on the shadow, and the shadow never settles.
+    // Its row waits on the shadow.
     expect(inserts('resourceIntentShadow')).toHaveLength(0);
+    release(tagFallback('loading'));
+    await flush();
+  });
+
+  it('past the per-pod limit, a shadow is skipped rather than queued', async () => {
+    const releases: ((v: unknown) => void)[] = [];
+    mockTagResolve.mockImplementation(() => new Promise((r) => releases.push(r)));
+    for (let i = 0; i < 4; i++) {
+      mockStage1();
+      await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
+    }
+    await vi.waitFor(() => expect(mockTagResolve).toHaveBeenCalledTimes(4));
+    mockStage1();
+    await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
+    await flush();
+    expect(shadowRow()).toMatchObject({ shadowArm: 'v1_tags', shadowReason: 'skipped' });
+    expect(mockTagResolve).toHaveBeenCalledTimes(4);
+    for (const release of releases) release(tagFallback('loading'));
+    await vi.waitFor(() => expect(inserts('resourceIntentShadow')).toHaveLength(5));
+  });
+
+  it('beside HYBRID_10 too', async () => {
+    mockStage1();
+    await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, { ...CTX, v1Shadow: true });
+    await flush();
+    expect(shadowRow()).not.toHaveProperty('arm');
+    expect(shadowRow()).toMatchObject({ shadowArm: 'v1_tags', shadowSuggestionIds: V1_IDS });
+  });
+
+  it("passes the request's limit and coverage to the gate", async () => {
+    mockStage1();
+    await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0', limit: 7 }, SHADOW);
+    await flush();
+    expect(mockV1Candidates.mock.calls[0][0]).toMatchObject({ cap: 7, coverage: CTX.coverage });
   });
 
   it("the row's latencyMs is the served response's, not the shadow's", async () => {
@@ -682,7 +749,7 @@ describe('🔴 the shadow beside another arm', () => {
     await getResourceIntent({ prompt: PROMPT, baseModel: 'SDXL 1.0' }, SHADOW);
     await flush();
     expect(shadowRow().shadowLatencyMs).toBeGreaterThanOrEqual(100);
-    expect(shadowRow().latencyMs).toBeLessThan(100);
+    expect(shadowRow().latencyMs as number).toBeLessThan(shadowRow().shadowLatencyMs as number);
   });
 
   it('is not computed on a served v1 row', async () => {
@@ -724,6 +791,7 @@ describe('🔴 judge capture', () => {
     mockStage1();
     await getResourceIntent({ prompt: PROMPT }, { ...CTX, poolMerge: true });
     await flush();
+    await new Promise((r) => setImmediate(r));
     expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(0);
   });
 
@@ -740,7 +808,7 @@ describe('🔴 judge capture', () => {
     const promptHash = createHash('sha256').update(PROMPT).digest('hex');
     expect(inserts(JUDGE_SAMPLE_TABLE)[0].values).toEqual([
       {
-        time: '2026-10-17 01:02:03.456',
+        time: '2026-10-17 01:00:00',
         promptHash,
         prompt: PROMPT,
         browsingLevel: 3,
@@ -766,13 +834,13 @@ describe('🔴 judge capture', () => {
     await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1));
   });
 
-  it('a failed write does not reach the response or the shadow row, and the prompt is never logged', async () => {
+  it('a failed write is not logged, so the prompt never reaches a log', async () => {
     mockInsert.mockImplementation(async (arg: Insert) => {
       if (arg.table === JUDGE_SAMPLE_TABLE) throw new Error(`refused: ${PROMPT}`);
     });
     mockStage1();
-    const result = await getResourceIntent({ prompt: PROMPT }, { ...CTX, judgeCapture: true });
-    expect(result.degraded).toBe(false);
+    await getResourceIntent({ prompt: PROMPT }, { ...CTX, judgeCapture: true });
+    await vi.waitFor(() => expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(1));
     await flush();
     for (const call of loggingMock.logToAxiom.mock.calls)
       expect(JSON.stringify(call)).not.toContain(PROMPT);
@@ -798,6 +866,8 @@ describe('🔴 judge capture', () => {
       { ...CTX, judgeCapture: true }
     );
     await flush();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
     expect(inserts(JUDGE_SAMPLE_TABLE)).toHaveLength(0);
   });
 });

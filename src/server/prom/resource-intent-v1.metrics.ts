@@ -7,8 +7,8 @@ import {
 
 /**
  * Counters of the resource-intent v1_tags arm: the served arm's fallbacks, the shadow computation's
- * outcomes, and the judge-capture writes. A prom-client leaf, imported by the service and the metrics
- * route.
+ * outcomes, and the judge-capture writes. A prom-client leaf, imported by the service only, so the
+ * series are absent until first counted.
  */
 
 const M = PROM_PREFIX + 'resource_intent_';
@@ -34,7 +34,7 @@ const shadow = registerInstrumentationMetric(
   () =>
     new client.Counter({
       name: RESOURCE_INTENT_V1_METRICS.shadow,
-      help: 'v1_tags shadow computations on this pod, by kind and outcome: ok, error (the gate or hydration threw), or the reason the arm would have fallen back.',
+      help: 'v1_tags shadow computations on this pod, by kind and outcome: ok, error (the shadow threw), skipped (too many already running on this pod), or the reason the arm would have fallen back.',
       labelNames: ['kind', 'outcome'],
       registers: [instrumentationRegistry],
     })

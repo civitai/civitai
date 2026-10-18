@@ -5,13 +5,14 @@
 -- it; reading it is for the judged comparison only.
 --
 -- While the flag is on, every add-on request (cache hits included) writes one row. Nothing here
--- identifies the caller, the token or the block instance. `promptHash` is the shadow row's
--- (sha256 hex of the prompt), so a sample joins its served and shadow lists there. Rows expire
--- after 30 days; turn the flag off once the sample is complete.
+-- identifies the caller, the token or the block instance, and `time` is the hour only, so a row
+-- cannot be lined up with a request's own logs. `promptHash` is the shadow row's (sha256 hex of the
+-- prompt), so a sample joins its served and shadow lists there. Turn the flag off once the sample
+-- is complete.
 
 CREATE TABLE IF NOT EXISTS p2m_restricted.routeJudgeSample
 (
-  time DateTime64(3),
+  time DateTime,
   promptHash String,
   prompt String,
   browsingLevel UInt16,
