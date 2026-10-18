@@ -322,10 +322,14 @@ export async function saveBox({
 
 async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
   const [tiers, contents] = await Promise.all([
-    trx.selectFrom('BoxTier').select(['id', 'key']).where('boxDefinitionId', '=', boxId).execute(),
+    trx
+      .selectFrom('BoxTier')
+      .select(['id', 'key', 'name', 'weight', 'color', 'sortOrder'])
+      .where('boxDefinitionId', '=', boxId)
+      .execute(),
     trx
       .selectFrom('BoxContent')
-      .select(['id', 'rewardDefinitionId'])
+      .select(['id', 'rewardDefinitionId', 'tierId', 'enabled'])
       .where('boxDefinitionId', '=', boxId)
       .execute(),
   ]);
@@ -346,9 +350,16 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
     if (existing.key !== tier.key)
       throw new BoxRefusal(`Tier "${existing.key}" can't change its key once saved.`);
   }
-  for (const content of draft.contents)
-    if (content.id !== null && !contentById.has(content.id))
+  const contentIds = new Set<number>();
+  for (const content of draft.contents) {
+    if (content.id === null) continue;
+    if (!contentById.has(content.id))
       throw new BoxRefusal(`Content #${content.id} isn't in this box.`);
+    // One UPDATE … FROM VALUES applies one of two rows for the same id, chosen by the planner.
+    if (contentIds.has(content.id))
+      throw new BoxRefusal(`Content #${content.id} is in the box twice.`);
+    contentIds.add(content.id);
+  }
 
   // Contents first: removed contents free the (box, reward) slot a re-added reward needs, and let a
   // removed tier go (BoxContent.tierId is RESTRICT).
@@ -359,51 +370,81 @@ async function writeTiersAndContents(trx: Trx, boxId: number, draft: BoxDraft) {
     .$if(keptContentIds.length > 0, (qb) => qb.where('id', 'not in', keptContentIds))
     .execute();
 
+  // A save runs under the box lock that every open waits on, so it writes only the rows it changes,
+  // one statement per kind of write.
   const tierIdByKey = new Map<string, number>();
+  const newTiers = [];
+  const changedTiers = [];
   for (const [sortOrder, tier] of draft.tiers.entries()) {
     const values = { name: tier.name.trim(), weight: tier.weight, color: tier.color, sortOrder };
     if (tier.id === null) {
-      const row = await trx
-        .insertInto('BoxTier')
-        .values({ boxDefinitionId: boxId, key: tier.key, ...values })
-        .returning('id')
-        .executeTakeFirstOrThrow();
-      tierIdByKey.set(tier.key, row.id);
-    } else {
-      await trx
-        .updateTable('BoxTier')
-        .set(values)
-        .where('id', '=', tier.id)
-        .where('boxDefinitionId', '=', boxId)
-        .execute();
-      tierIdByKey.set(tier.key, tier.id);
+      newTiers.push({ boxDefinitionId: boxId, key: tier.key, ...values });
+      continue;
     }
+    tierIdByKey.set(tier.key, tier.id);
+    const existing = tierById.get(tier.id)!;
+    if (
+      existing.name !== values.name ||
+      existing.weight !== values.weight ||
+      existing.color !== values.color ||
+      existing.sortOrder !== values.sortOrder
+    )
+      changedTiers.push({ id: tier.id, ...values });
   }
+  if (newTiers.length)
+    for (const row of await trx
+      .insertInto('BoxTier')
+      .values(newTiers)
+      .returning(['id', 'key'])
+      .execute())
+      tierIdByKey.set(row.key, row.id);
+  if (changedTiers.length)
+    await sql`
+      UPDATE "BoxTier" AS t
+      SET "name" = v."name", "weight" = v."weight", "color" = v."color", "sortOrder" = v."sortOrder"
+      FROM (VALUES ${sql.join(
+        changedTiers.map(
+          (tier) =>
+            sql`(${tier.id}::int, ${tier.name}::text, ${tier.weight}::int, ${tier.color}::text, ${tier.sortOrder}::int)`
+        )
+      )}) AS v("id", "name", "weight", "color", "sortOrder")
+      WHERE t."id" = v."id" AND t."boxDefinitionId" = ${boxId}
+    `.execute(trx);
 
+  const newContents = [];
+  const changedContents = [];
   for (const content of draft.contents) {
     const tierId = tierIdByKey.get(content.tierKey);
     if (tierId === undefined)
       throw new BoxRefusal(
         `Reward #${content.rewardDefinitionId} is in a tier the box doesn't have.`
       );
-    if (content.id === null)
-      await trx
-        .insertInto('BoxContent')
-        .values({
-          boxDefinitionId: boxId,
-          tierId,
-          rewardDefinitionId: content.rewardDefinitionId,
-          enabled: content.enabled,
-        })
-        .execute();
-    else
-      await trx
-        .updateTable('BoxContent')
-        .set({ tierId, enabled: content.enabled })
-        .where('id', '=', content.id)
-        .where('boxDefinitionId', '=', boxId)
-        .execute();
+    if (content.id === null) {
+      newContents.push({
+        boxDefinitionId: boxId,
+        tierId,
+        rewardDefinitionId: content.rewardDefinitionId,
+        enabled: content.enabled,
+      });
+      continue;
+    }
+    const existing = contentById.get(content.id)!;
+    if (existing.tierId !== tierId || existing.enabled !== content.enabled)
+      changedContents.push({ id: content.id, tierId, enabled: content.enabled });
   }
+  if (newContents.length) await trx.insertInto('BoxContent').values(newContents).execute();
+  if (changedContents.length)
+    await sql`
+      UPDATE "BoxContent" AS c
+      SET "tierId" = v."tierId", "enabled" = v."enabled"
+      FROM (VALUES ${sql.join(
+        changedContents.map(
+          (content) =>
+            sql`(${content.id}::int, ${content.tierId}::int, ${content.enabled}::boolean)`
+        )
+      )}) AS v("id", "tierId", "enabled")
+      WHERE c."id" = v."id" AND c."boxDefinitionId" = ${boxId}
+    `.execute(trx);
 
   const keptTierIds = [...tierIdByKey.values()];
   await trx

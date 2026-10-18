@@ -431,6 +431,114 @@ describe('editing a published box', () => {
   });
 });
 
+// Every open waits on the box lock a save holds, and the birthday box has ~480 contents: a save that
+// rewrote every row held opens for ~480 round trips. Keep a save to the rows it changes.
+describe('a save writes only the tier and content rows it changes', () => {
+  const countWrites = async () => {
+    await db.exec(`
+      CREATE TABLE "RowWrite" ("table" TEXT NOT NULL, "op" TEXT NOT NULL);
+      CREATE FUNCTION record_row_write() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN INSERT INTO "RowWrite" VALUES (TG_TABLE_NAME, TG_OP); RETURN NULL; END $$;
+      CREATE TRIGGER box_tier_row_write AFTER INSERT OR UPDATE OR DELETE ON "BoxTier"
+        FOR EACH ROW EXECUTE FUNCTION record_row_write();
+      CREATE TRIGGER box_content_row_write AFTER INSERT OR UPDATE OR DELETE ON "BoxContent"
+        FOR EACH ROW EXECUTE FUNCTION record_row_write();
+    `);
+    return () =>
+      rows<{ table: string; op: string; n: number }>(
+        `SELECT "table", op, count(*)::int AS n FROM "RowWrite" GROUP BY 1, 2 ORDER BY 1, 2`
+      );
+  };
+
+  it('an unchanged save writes none', async () => {
+    const { boxId, draft } = await publishedBox();
+    const writes = await countWrites();
+
+    await saveAt({ boxId, expectedVersion: 2, draft, publish: false, userId: MOD });
+
+    expect(await writes()).toEqual([]);
+  });
+
+  it('a weight edit writes one tier row', async () => {
+    const { boxId, draft } = await publishedBox();
+    const writes = await countWrites();
+    const edited = {
+      ...draft,
+      tiers: draft.tiers.map((t) => (t.key === 'rare' ? { ...t, weight: 2 } : t)),
+    };
+
+    await saveAt({ boxId, expectedVersion: 2, draft: edited, publish: false, userId: MOD });
+
+    expect(await writes()).toEqual([{ table: 'BoxTier', op: 'UPDATE', n: 1 }]);
+    expect((await liveBox(boxId)).tiers).toContainEqual({ key: 'rare', name: 'Rare', weight: 2 });
+  });
+
+  it('moving one content to another tier writes that content row', async () => {
+    // A draft: the published checklist would refuse a tier left with nothing for one team.
+    const boxId = await createBox({ name: 'Party Box', userId: MOD });
+    const base = await partyDraft();
+    await saveAt({ boxId, expectedVersion: 1, draft: base, publish: false, userId: MOD });
+    const draft = await savedDraft(boxId, base);
+    const writes = await countWrites();
+    const moved = draft.contents[0].rewardDefinitionId;
+    const edited = {
+      ...draft,
+      contents: draft.contents.map((c) =>
+        c.rewardDefinitionId === moved ? { ...c, tierKey: 'rare' } : c
+      ),
+    };
+
+    await saveAt({ boxId, expectedVersion: 2, draft: edited, publish: false, userId: MOD });
+
+    expect(await writes()).toEqual([{ table: 'BoxContent', op: 'UPDATE', n: 1 }]);
+    const [{ key }] = await rows<{ key: string }>(
+      `SELECT t.key FROM "BoxContent" c JOIN "BoxTier" t ON t.id = c."tierId"
+       WHERE c."rewardDefinitionId" = $1`,
+      [moved]
+    );
+    expect(key).toBe('rare');
+  });
+
+  it('adds new tiers and contents in one save, beside rows it leaves alone', async () => {
+    const { boxId, draft } = await publishedBox();
+    const writes = await countWrites();
+    const edited: BoxDraft = {
+      ...draft,
+      tiers: [...draft.tiers, { id: null, key: 'epic', name: 'Epic', weight: 1, color: null }],
+      contents: [
+        ...draft.contents,
+        { id: null, rewardDefinitionId: await defOf(5), tierKey: 'epic', enabled: true },
+      ],
+    };
+
+    await saveAt({ boxId, expectedVersion: 2, draft: edited, publish: false, userId: MOD });
+
+    expect(await writes()).toEqual([
+      { table: 'BoxContent', op: 'INSERT', n: 1 },
+      { table: 'BoxTier', op: 'INSERT', n: 1 },
+    ]);
+    expect((await liveBox(boxId)).contents).toContainEqual({ tier: 'epic', cosmeticId: 5 });
+  });
+
+  it('refuses a draft that lists one content twice', async () => {
+    const { boxId, draft } = await publishedBox();
+    const twice = draft.contents[0];
+
+    await expect(
+      saveAt({
+        boxId,
+        expectedVersion: 2,
+        draft: {
+          ...draft,
+          contents: [...draft.contents, { ...twice, enabled: !twice.enabled }],
+        },
+        publish: false,
+        userId: MOD,
+      })
+    ).rejects.toThrow(`Content #${twice.id} is in the box twice.`);
+  });
+});
+
 describe('a draft', () => {
   it('bumps on an odds change but writes no snapshot: nothing shows a draft', async () => {
     const boxId = await createBox({ name: 'Party Box', userId: MOD });
