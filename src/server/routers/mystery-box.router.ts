@@ -1,3 +1,4 @@
+import { itemHolderInFlightLimit } from '~/server/middleware.trpc';
 import {
   getEventMysteryBoxesInput,
   getMysteryBoxOddsPageInput,
@@ -41,6 +42,7 @@ export const mysteryBoxRouter = router({
   open: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite, blockApiKeys: true })
     .input(openMysteryBoxInput)
+    .use(itemHolderInFlightLimit)
     .mutation(({ input, ctx }) => openMysteryBox({ ...input, ...mysteryBoxViewer(ctx) })),
   getHeld: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })

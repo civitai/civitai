@@ -3007,6 +3007,8 @@ const REDIS_KEYS_UNPREFIXED = {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
     },
+    // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
+    IN_FLIGHT: 'trpc:in-flight',
   },
   MODEL: {
     GALLERY_SETTINGS: 'model:gallery-settings',

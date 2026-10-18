@@ -16,6 +16,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     shopItemFindUnique: vi.fn(),
     shopItemUpdate: vi.fn(),
+    txShopItemUpdate: vi.fn(),
     userCosmeticFindFirst: vi.fn(),
     purchasesCreate: vi.fn(),
     purchasesUpdate: vi.fn(),
@@ -84,6 +85,8 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
   claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      // Unused by the code; here so a regression back to a Prisma update is caught, not a TypeError.
+      cosmeticShopItem: { update: mocks.txShopItemUpdate },
       userCosmetic: { create: mocks.userCosmeticCreate, findFirst: mocks.txUserCosmeticFindFirst },
       cosmeticShopPurchaseClaim: claims.txDelegate,
       $executeRaw: mocks.executeRaw,
@@ -236,6 +239,43 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
+  // Counting on dbWrite instead of tx would need a second pooled connection under the buyer's lock.
+  it("counts the sale on the grant's own transaction, from the row as it is then", async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+
+    await purchase();
+
+    const counted = mocks.executeRaw.mock.calls.filter(
+      ([strings, ...values]) =>
+        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"') &&
+        values.includes(SHOP_ITEM_ID)
+    );
+    expect(counted).toHaveLength(1);
+    expect(mocks.txShopItemUpdate).not.toHaveBeenCalled();
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a sold-out refusal corrects only the sale count, not the rest of meta', async () => {
+    // Oversold, so the counted total (3) differs from the quantity, the id and the buyer; meta has
+    // no purchases key, so it disagrees with the count.
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      availableQuantity: 2,
+      _count: { purchases: 3 },
+    });
+    dbMock.dbWrite.$executeRaw.mockClear();
+
+    await expect(purchase()).rejects.toThrow('This cosmetic is out of stock');
+
+    const corrected = dbMock.dbWrite.$executeRaw.mock.calls
+      .filter(([strings]: unknown[]) =>
+        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"')
+      )
+      .map((call: unknown[]) => Prisma.sql(...(call as Parameters<typeof Prisma.sql>)).values);
+    expect(corrected).toEqual([[3, SHOP_ITEM_ID]]);
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+
   // A mystery box open decides "not owned" from a read under this lock; a grant that skips it
   // can land between that read and the box's grant (item-holder-lock.ts).
   // The pre-charge ownership check runs outside the lock; a box open can grant the cosmetic while
@@ -279,7 +319,11 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await purchase();
 
-    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    // The sale counter also goes through executeRaw, so count only the lock.
+    const locks = mocks.executeRaw.mock.calls.filter(([strings]) =>
+      (strings as string[]).join('').includes('pg_advisory_xact_lock')
+    );
+    expect(locks).toHaveLength(1);
     const [sql, lockClass, lockedUser] = mocks.executeRaw.mock.calls[0] as [
       readonly string[],
       number,
