@@ -206,6 +206,13 @@ On `'transient'`, the fallback job resets `scanRequestedAt = null` so the next 5
 - During processing, `virusScanResult` / `pickleScanResult` may transition through Pending before settling
 - If the file's content hasn't changed, results should land the same; differences indicate scanner-rule changes (which is what you'd want to know about anyway)
 
+Its submissions share the scanner pool with new uploads, so each call is bounded:
+
+- Only files whose `virusScanResult` is still `Pending` are selected; pass `force=true` to re-scan settled files.
+- At most 500 files per call, in id order. A capped response carries `capped: true` and `nextAfterId`; pass that back as `afterId` for the next page.
+- Submissions run 5 at a time.
+- `all=true` with no other filter selects every non-Training-Data file, still subject to the rules above.
+
 The legacy HTTP scanner accepted per-task gating (`['Hash', 'ParseMetadata']` only); the orchestrator does not. If a metadata-only refresh path is ever needed, it would require extending `createModelFileScanRequest` with optional step selection.
 
 ### Hash Blocking

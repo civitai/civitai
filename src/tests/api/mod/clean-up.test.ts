@@ -57,4 +57,98 @@ describe('mod/clean-up', () => {
     });
     expect(res.status).toHaveBeenCalledWith(200);
   });
+
+  // One call used to submit every match: `after=<old date>` re-queued every file since then,
+  // settled ones included, at 20-way concurrency into the pool new uploads share.
+  describe('bounded re-queue', () => {
+    const run = (query: Record<string, string>) => {
+      const { req, res } = createMocks({ wait: 'true', ...query });
+      return (handler as (req: NextApiRequest, res: NextApiResponse) => Promise<void>)(
+        req,
+        res
+      ).then(() => res);
+    };
+    const where = () => dbMock.dbRead.modelFile.findMany.mock.calls[0][0].where;
+    const fileRows = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: i + 1,
+        url: `s3://k${i + 1}`,
+        modelVersion: { id: 10, baseModel: 'SDXL', model: { id: 100, type: 'LORA' } },
+      }));
+
+    beforeEach(() => {
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
+      mockCreateModelFileScanRequest.mockResolvedValue(undefined);
+    });
+
+    it('selects only Pending files unless force=true', async () => {
+      await run({ after: '2026-01-01' });
+      expect(where().virusScanResult).toBe('Pending');
+
+      vi.clearAllMocks();
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
+      await run({ after: '2026-01-01', force: 'true' });
+      expect(where()).not.toHaveProperty('virusScanResult');
+    });
+
+    it('submits at most 500 files and returns a cursor for the next page', async () => {
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue(fileRows(501));
+
+      const res = await run({ after: '2026-01-01' });
+
+      expect(dbMock.dbRead.modelFile.findMany.mock.calls[0][0]).toMatchObject({
+        take: 501,
+        orderBy: { id: 'asc' },
+      });
+      expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(500);
+      expect(res.json).toHaveBeenCalledWith({
+        files: 500,
+        capped: true,
+        nextAfterId: 500,
+        failed: 0,
+      });
+    });
+
+    it('reports an uncapped page with no cursor', async () => {
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue(fileRows(3));
+
+      const res = await run({ after: '2026-01-01' });
+
+      expect(res.json).toHaveBeenCalledWith({
+        files: 3,
+        capped: false,
+        nextAfterId: null,
+        failed: 0,
+      });
+    });
+
+    it('resumes after the cursor', async () => {
+      await run({ after: '2026-01-01', afterId: '500' });
+      expect(where().id).toEqual({ gt: 500 });
+    });
+
+    // Prisma matches nothing for `OR: []`, so passing the empty list made `all` a silent no-op.
+    it('all=true selects without an OR filter', async () => {
+      await run({ all: 'true' });
+      expect(where()).not.toHaveProperty('OR');
+      expect(where().virusScanResult).toBe('Pending');
+    });
+
+    it('never has more than 5 submissions in flight', async () => {
+      dbMock.dbRead.modelFile.findMany.mockResolvedValue(fileRows(20));
+      let inFlight = 0;
+      let peak = 0;
+      mockCreateModelFileScanRequest.mockImplementation(async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 1));
+        inFlight--;
+      });
+
+      await run({ after: '2026-01-01' });
+
+      expect(mockCreateModelFileScanRequest).toHaveBeenCalledTimes(20);
+      expect(peak).toBe(5);
+    });
+  });
 });
