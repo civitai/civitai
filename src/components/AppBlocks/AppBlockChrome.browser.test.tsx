@@ -386,7 +386,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
   }
 
-  test('renders recents (icon + name), EXCLUDES the current app, links to /apps/run/<blockId>', async () => {
+  test('renders recents (generic icon + name), EXCLUDES the current app, links to /apps/run/<blockId>', async () => {
     // Seed newest-last so the resulting order is [other, noicon, current].
     recordRecentlyOpenedApp(
       { id: 'current', blockId: 'current-block', name: 'Current App' },
@@ -420,12 +420,12 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     // Section label present.
     await expect.element(page.getByText('Recently run', { exact: true })).toBeInTheDocument();
 
-    // Rich entry: icon (Avatar <img>) + name, links to the run route.
+    // An entry RECORDED with an icon url still renders the generic glyph: the recents store never
+    // persists an icon (it would render with no per-viewer media gate), so this menu has none.
     const other = page.getByRole('menuitem', { name: 'Other App' }).element() as HTMLElement;
     expect(other.getAttribute('href')).toBe('/apps/run/other-block');
-    const otherImg = other.querySelector('img');
-    expect(otherImg).not.toBeNull();
-    expect(otherImg?.getAttribute('src')).toBe(LOADABLE_IMAGE_DATA_URI);
+    expect(other.querySelector('img')).toBeNull();
+    expect(other.querySelector('svg')).not.toBeNull();
 
     // Icon-less entry falls back to a generic app icon (an <svg>, no <img>).
     const noicon = page.getByRole('menuitem', { name: 'No Icon App' }).element() as HTMLElement;

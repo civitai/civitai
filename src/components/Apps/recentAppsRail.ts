@@ -301,7 +301,9 @@ export type RecentReconcileCard = Pick<
  *
  * Built by delegating to `toRecentAppFromListing`, so a reconciled entry is
  * byte-identical to what a fresh open of that card would persist — one rule, one
- * place. Two properties follow and are pinned by tests: `id` is preserved (it is
+ * place. That includes the ICON: the card's gated `iconUrl` wins even when it is
+ * `null`, so an icon the server now hides from this viewer never comes back from
+ * the stored entry. Two properties follow and are pinned by tests: `id` is preserved (it is
  * the de-dup key and the rail's ordering handle, so reconciliation must not churn
  * it), and the function is IDEMPOTENT — reconciling a reconciled list is a no-op.
  *
@@ -443,11 +445,11 @@ function matchRecentCard(
 }
 
 function upgradeRecentFromCard(entry: RecentApp, card: RecentReconcileCard): RecentApp {
-  const upgraded: RecentApp = { ...toRecentAppFromListing(card), id: entry.id };
-  // The card's `iconUrl` is nullable; a previously-recorded icon is better than
-  // none, so it is the one field the entry can still contribute.
-  if (!upgraded.iconUrl && entry.iconUrl) upgraded.iconUrl = entry.iconUrl;
-  return upgraded;
+  // 🔴 THE CARD'S ICON WINS, INCLUDING `null`. A card's `iconUrl` is gated per image, per
+  // viewer, per host on the server (`listing-media-audience.ts`), so a `null` there is often
+  // the server HIDING the icon from this viewer — not "no icon". Falling back to an icon the
+  // entry carried would put that hidden icon back on screen. Only `id` survives from the entry.
+  return { ...toRecentAppFromListing(card), id: entry.id };
 }
 
 export type RecentRailTarget = {

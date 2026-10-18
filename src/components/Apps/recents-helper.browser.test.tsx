@@ -91,8 +91,9 @@ describe('recentlyOpenedApps helper', () => {
     expect(getRecentlyOpenedApps(OWNER)).toEqual([{ id: 'ok', blockId: 'b-ok' }]);
   });
 
-  // Display-enrichment fields (name/iconUrl) — round-trip + backward-compat.
-  test('name + iconUrl are persisted and round-tripped', () => {
+  // Display-enrichment field (name) — round-trip + backward-compat. `iconUrl` is deliberately
+  // NOT persisted (a stored icon would render with no per-viewer media gate in front of it).
+  test('name is persisted and round-tripped; iconUrl is not persisted', () => {
     recordRecentlyOpenedApp(
       {
         id: 'rich',
@@ -107,7 +108,6 @@ describe('recentlyOpenedApps helper', () => {
         id: 'rich',
         blockId: 'block-rich',
         name: 'Background Remover',
-        iconUrl: 'https://cdn.example/icon.png',
       },
     ]);
   });
@@ -136,7 +136,7 @@ describe('recentlyOpenedApps helper', () => {
     );
     const list = getRecentlyOpenedApps(OWNER);
     expect(list).toHaveLength(1);
-    expect(list[0]).toEqual({ id: 'up', blockId: 'block-up', name: 'Upgraded', iconUrl: 'i.png' });
+    expect(list[0]).toEqual({ id: 'up', blockId: 'block-up', name: 'Upgraded' });
   });
 
   // ── v3 shape: slug / kind / hasPage / externalUrl ───────────────────────────

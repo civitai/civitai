@@ -507,16 +507,11 @@ function AppPage(props: PageProps) {
   //  - `kind`/`hasPage` — reaching THIS page means the app declares a full-page
   //    surface, so `hasPage` is true by construction; the rail uses it to decide
   //    between re-opening the run route and the detail page.
-  //  - `iconUrl` — the store listing's moderator-approved icon, resolved in
-  //    `getServerSideProps`. 🔴 THIS USED TO BE OMITTED, AND ITS ABSENCE WAS THE
-  //    DEFECT, not a default: this is the ONE writer that means "the viewer actually
-  //    RAN this app", so the apps a viewer uses most were precisely the ones whose
-  //    chrome entry fell back to a generic glyph, while apps merely OPENED from the
-  //    store (via `toRecentAppFromListing`, which has always carried an icon) showed
-  //    the real one. `undefined` when the listing has no icon or the read failed —
-  //    `recordRecentlyOpenedApp` stores the field only when truthy, so a null must not
-  //    be passed through as one; consumers keep their generic-icon fallback for that
-  //    case exactly as before.
+  //  - `iconUrl` — handed to the entry, but the recents store does NOT persist it
+  //    (`recentlyOpenedAppsStore.ts`): a listing icon is gated per viewer, per host and at
+  //    render time, and a stored url would later render with no gate in front of it. The
+  //    chrome menu draws a generic glyph; the `/apps` rail takes the icon from its live,
+  //    gated card.
   // Fires once per mount; the store dedups, so revisiting just moves the entry to the
   // front.
   //
@@ -538,14 +533,6 @@ function AppPage(props: PageProps) {
     // (`if (!entry) record(entry, …)`) does not type-check. An audit inverted the boolean
     // guard this replaced and watched 151 tests across 8 files stay green; that shape is
     // gone rather than guarded.
-    //
-    // ⚠️ The icon residual that used to be documented at the (now-moved) spread is
-    // unchanged and still real: `recordRecentlyOpenedApp` REPLACES the entry wholesale
-    // with no icon ratchet, so a run while the icon read is degraded drops an icon a store
-    // visit had recorded, until the next successful run or reconcile. It is a residual,
-    // not a regression — before the icon was sent at all, EVERY run cleared it — and it is
-    // not fixed here because a ratchet would change that function's semantics for all five
-    // of its callers.
     const entry = recentsEntryFor({ audience, appBlockId, blockId, appName, iconUrl });
     if (entry) recordRecentlyOpenedApp(entry, recentsOwnerId);
   }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId, audience]);
