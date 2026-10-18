@@ -202,6 +202,12 @@ export class DockerRedisCluster {
     docker(['stop', '-t', '1', this.containers[i]]);
   }
 
+  /** Start node `i` again after `stop(i)` (same address); resolves once the cluster is healthy. */
+  async restart(i: number): Promise<void> {
+    docker(['start', this.containers[i]]);
+    await this.waitHealthy();
+  }
+
   private async waitHealthy(): Promise<void> {
     await this.waitFor(
       () =>

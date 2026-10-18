@@ -133,7 +133,7 @@ type ClusterLike = {
 type NodeClientLike = {
   sendCommand(
     args: string[],
-    options?: { typeMapping?: Record<number, unknown> }
+    options?: { typeMapping?: Record<number, unknown>; timeout?: number }
   ): Promise<unknown>;
 };
 
@@ -187,8 +187,12 @@ export function createClusterPipelinedGet(opts: {
       // await before this line.
       const master = masters.get(node);
       const client = (await cluster.nodeClient(master)) as NodeClientLike;
-      // Issued in one tick: node-redis writes them to the socket together.
-      return Promise.allSettled(keys.map((k) => client.sendCommand(['GET', k], { typeMapping })));
+      // Issued in one tick: node-redis writes them to the socket together. `timeout: undefined`:
+      // a node connection's own default is node-redis 6's 5 s command timeout (the cluster's
+      // commandOptions reach only routed commands), and `track` holds the deadline.
+      return Promise.allSettled(
+        keys.map((k) => client.sendCommand(['GET', k], { typeMapping, timeout: undefined }))
+      );
     },
     track: opts.track,
     isValue: (v): v is Buffer => Buffer.isBuffer(v),

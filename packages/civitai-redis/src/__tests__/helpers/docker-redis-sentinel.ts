@@ -158,6 +158,18 @@ export class DockerRedisSentinel {
     return Date.now();
   }
 
+  /** Stop the master, keeping its container and address (startMaster() brings it back). */
+  stopMaster(): void {
+    docker(['stop', '-t', '1', this.master]);
+  }
+
+  /** Start the master stopped by stopMaster(); resolves once it answers PING (returns Date.now()). */
+  async startMaster(): Promise<number> {
+    docker(['start', this.master]);
+    await this.waitFor(() => this.cli(this.master, ['ping']) === 'PONG', 30_000, 'master back');
+    return Date.now();
+  }
+
   /** Resolves once the Sentinel names the replica as master; returns that instant (Date.now()). */
   async waitForFailover(timeoutMs = 30_000): Promise<number> {
     await this.waitFor(() => this.currentMaster() === this.replicaIp, timeoutMs, 'failover');

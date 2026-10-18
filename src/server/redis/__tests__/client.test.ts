@@ -47,7 +47,8 @@ import { attachSysSentinelListeners } from '~/server/redis/client';
 /**
  * Round-3 audit fix coverage:
  *  - Listener wiring: attachSysSentinelListeners attaches both topology-change
- *    and client-error handlers to the underlying client.
+ *    and error handlers to the underlying client (RedisSentinel forwards its
+ *    connections' errors as `error`, with passthroughClientErrorEvents).
  *  - Log shape: the destructured event.node.{host,port} fields appear in the
  *    log string as bracketed key=value pairs so Loki regex can extract them.
  *  - Counter increments: each event fires exactly one .inc() against the
@@ -120,22 +121,26 @@ describe('attachSysSentinelListeners', () => {
       expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(1);
     });
 
-    it('handles an event with no node (client-error)', () => {
+    it('counts a forwarded Sentinel connection error with its node', () => {
       const sentinel = makeFakeSentinel();
       const ctx = makeCtx();
       attachSysSentinelListeners(sentinel.client, ctx);
 
+      // The shape @redis/client 6.3.0 forwards (sentinel/index.js transform).
       expect(() =>
-        sentinel.emit('client-error', { type: 'sentinel', error: new Error('boom') })
+        sentinel.emit(
+          'error',
+          new Error('Sentinel Client (h1:26379): boom', { cause: new Error('boom') })
+        )
       ).not.toThrow();
 
       const msg = ctx.log.mock.calls[0]?.[0] as string;
-      expect(msg).toContain('host=?');
-      expect(msg).toContain('port=?');
+      expect(msg).toContain('host=h1');
+      expect(msg).toContain('port=26379');
 
       expect(ctx.errorCounter.labels).toHaveBeenCalledWith({
-        type: 'sentinel',
-        host: '?',
+        type: 'SENTINEL',
+        host: 'h1',
         deployment: expect.any(String),
       });
       expect(ctx.errorCounter.inc).toHaveBeenCalledTimes(1);
@@ -147,18 +152,16 @@ describe('attachSysSentinelListeners', () => {
       attachSysSentinelListeners(sentinel.client, ctx);
 
       expect(() => sentinel.emit('topology-change', {})).not.toThrow();
-      expect(() => sentinel.emit('client-error', {})).not.toThrow();
+      expect(() => sentinel.emit('error', {})).not.toThrow();
 
-      // Both counters still fire so we don't silently lose error events to
-      // null-pointer guards.
+      // The topology counter still fires so we don't silently lose events to
+      // null-pointer guards. An `error` that is not a forwarded connection error
+      // is not counted (getBaseClient's generic listener logs it).
       expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(1);
-      expect(ctx.errorCounter.inc).toHaveBeenCalledTimes(1);
+      expect(ctx.errorCounter.inc).not.toHaveBeenCalled();
 
       // The "unknown" type fallback IS the cardinality-budget escape valve.
       expect(ctx.topologyCounter.labels).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'unknown', host: '?' })
-      );
-      expect(ctx.errorCounter.labels).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'unknown', host: '?' })
       );
     });
@@ -169,9 +172,9 @@ describe('attachSysSentinelListeners', () => {
       attachSysSentinelListeners(sentinel.client, ctx);
 
       expect(() => sentinel.emit('topology-change', null)).not.toThrow();
-      expect(() => sentinel.emit('client-error', null)).not.toThrow();
+      expect(() => sentinel.emit('error', null)).not.toThrow();
       expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(1);
-      expect(ctx.errorCounter.inc).toHaveBeenCalledTimes(1);
+      expect(ctx.errorCounter.inc).not.toHaveBeenCalled();
     });
   });
 });
