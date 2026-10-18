@@ -103,12 +103,15 @@ describe('listingMediaCeiling', () => {
     ['pg13', PG | PG13],
     ['x', PG | PG13],
     [null, PG],
-  ])('on a red host with no viewer level, a %s listing gets the non-red ceiling', (rating, want) => {
-    expect(listingMediaCeiling({ redCapable: true }, rating)).toBe(want);
-    // A nonsense 0 is "no level" too, not "hide everything".
-    expect(listingMediaCeiling({ redCapable: true, viewerBrowsingLevel: 0 }, rating)).toBe(want);
-    expect(listingMediaCeiling({ redCapable: false }, rating)).toBe(want);
-  });
+  ])(
+    'on a red host with no viewer level, a %s listing gets the non-red ceiling',
+    (rating, want) => {
+      expect(listingMediaCeiling({ redCapable: true }, rating)).toBe(want);
+      // A nonsense 0 is "no level" too, not "hide everything".
+      expect(listingMediaCeiling({ redCapable: true, viewerBrowsingLevel: 0 }, rating)).toBe(want);
+      expect(listingMediaCeiling({ redCapable: false }, rating)).toBe(want);
+    }
+  );
 });
 
 describe('isListingImageVisible — fail-closed on every uncertain state', () => {
