@@ -490,7 +490,10 @@ function v1TagColumns(
   };
 }
 
-/** Per pod. Skipped rather than queued so slow index queries cannot pile up behind responses already sent. */
+/**
+ * Per pod. Skipped rather than queued so slow index queries cannot pile up behind responses already
+ * sent.
+ */
 const V1_SHADOW_MAX_IN_FLIGHT = 4;
 let v1ShadowsInFlight = 0;
 
@@ -546,7 +549,7 @@ export const JUDGE_SAMPLE_TABLE = 'p2m_restricted.routeJudgeSample';
 
 /**
  * One judge-capture row (`2026-10-17-resource-intent-route-judge-sample.sql`). Carries no caller
- * field, but joins its request's shadow row by `promptHash`, so who may read that table is the
+ * field, but joins its request's shadow row by `promptHash`, so read access to this table is the
  * control. Never logged anywhere else: with no ClickHouse client the row is dropped.
  */
 async function writeJudgeSample(row: {
@@ -753,7 +756,7 @@ export async function getResourceIntent(
 
   if (!response) {
     const baseModel = input.baseModel ?? null;
-    // Resolved on a cache miss only: a Flipt eval on every hit would be waste.
+    // Resolved on a cache miss only (see the route's comment).
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     try {
       const stage1 = await askJev(buildResourceIntentStage1Request(input.prompt, baseModel), {
