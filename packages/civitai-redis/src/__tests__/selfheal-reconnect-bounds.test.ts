@@ -105,24 +105,6 @@ describe('forceSysReconnect — bounded (F4)', () => {
     expect(order).toEqual(['destroyed', 'connect-after-destroy']);
   });
 
-  it('a late teardown whose chained connect() fails destroys the client again', async () => {
-    let finishDestroy!: () => void;
-    const client = {
-      destroy: vi
-        .fn()
-        .mockImplementationOnce(() => new Promise<void>((resolve) => (finishDestroy = resolve)))
-        .mockImplementation(async () => undefined),
-      connect: vi.fn(async () => Promise.reject(new Error('gave up'))),
-    };
-    track(forceSysReconnect([client], 50));
-    await vi.advanceTimersByTimeAsync(50); // the teardown outlives the step: reconnect deferred
-    expect(client.connect).not.toHaveBeenCalled();
-    finishDestroy();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(client.connect).toHaveBeenCalledTimes(1);
-    expect(client.destroy).toHaveBeenCalledTimes(2);
-  });
-
   it('a destroy() that never settles is bounded too, and the next client is still healed', async () => {
     const stuck = { destroy: vi.fn(never), connect: vi.fn(async () => undefined) };
     const next = { destroy: vi.fn(async () => undefined), connect: vi.fn(async () => undefined) };

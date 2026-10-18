@@ -48,6 +48,22 @@ export function docker(args: string[], opts: { allowFail?: boolean } = {}): stri
   }
 }
 
+/**
+ * `docker rm -f` each named container, then re-check and retry: a `docker run` killed by
+ * DOCKER_CALL_TIMEOUT_MS can still be created by the daemon after the first `rm -f`, and a
+ * timed-out `rm` is swallowed by allowFail.
+ */
+export function removeContainers(names: readonly string[]): void {
+  for (const c of names) docker(['rm', '-f', c], { allowFail: true });
+  for (let recheck = 0; recheck < 2; recheck++) {
+    const left = names.filter(
+      (c) => docker(['ps', '-aq', '--filter', `name=^${c}$`], { allowFail: true }).trim() !== ''
+    );
+    if (left.length === 0) return;
+    for (const c of left) docker(['rm', '-f', c], { allowFail: true });
+  }
+}
+
 /** `name` with this run's suffix, so concurrent runs never share a container or network name. */
 export function runScopedName(name: string): string {
   return `${name}-${RUN_ID}`;
@@ -141,7 +157,7 @@ export class DockerRedisCluster {
   }
 
   teardown(): void {
-    for (const c of this.containers) docker(['rm', '-f', c], { allowFail: true });
+    removeContainers(this.containers);
     docker(['network', 'rm', this.name], { allowFail: true });
   }
 
@@ -200,6 +216,12 @@ export class DockerRedisCluster {
 
   stop(i: number): void {
     docker(['stop', '-t', '1', this.containers[i]]);
+  }
+
+  /** Start node `i` again after `stop(i)` (same address); resolves once the cluster is healthy. */
+  async restart(i: number): Promise<void> {
+    docker(['start', this.containers[i]]);
+    await this.waitHealthy();
   }
 
   private async waitHealthy(): Promise<void> {

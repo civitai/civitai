@@ -61,6 +61,8 @@
  * existing redis metrics, read off globalThis in client.ts) so it is unit-testable in isolation.
  */
 
+import { ClientOfflineError } from 'redis';
+
 /** Tiny error-shape probe that tolerates non-Error throws (string, plain object) without
  *  assuming `.message`/`.name`/`.constructor` exist. */
 function errText(err: unknown): string {
@@ -96,6 +98,9 @@ function errText(err: unknown): string {
  *    BEFORE the dispatch try/catch — provably pre-dispatch, so retrying is write-safe exactly like
  *    the getSlotRandomNode shape; without this the wave's keyless-command/empty-topology 500s slip
  *    through.
+ *  - node-redis 6's `ClientOfflineError` (matched by class, not text): the cluster rejects commands
+ *    with it while its slot map is not ready, i.e. during the same rediscovery windows. Thrown
+ *    before the command is queued, so it is write-safe like the shapes above.
  *
  * Deliberately does NOT match (any of these re-throws so the caller sees today's behavior):
  *  - WRONGTYPE, NOAUTH/auth, CROSSSLOT (a real key-distribution bug, not a transient), MOVED/ASK
@@ -140,6 +145,13 @@ export function isTransientClusterRoutingError(err: unknown): boolean {
   if (/\bNoSlot\b/i.test(text) || /no slot|slot not served|slot is not served/i.test(text)) {
     return true;
   }
+
+  // node-redis 6: while the cluster is (re)discovering its slot map — boot, and every
+  // destroy-then-connect self-heal — commands are rejected by `#assertReady` with
+  // ClientOfflineError (cluster-slots.js) instead of the 5.x undefined-read TypeErrors above. Both
+  // 6.3.0 throw sites (`#assertReady`, and `sendCommand` under disableOfflineQueue) reject BEFORE
+  // the command is queued, so it was never sent: write-safe, like the shapes above.
+  if (err instanceof ClientOfflineError) return true;
 
   return false;
 }

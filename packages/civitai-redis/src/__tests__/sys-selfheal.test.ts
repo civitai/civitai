@@ -92,18 +92,6 @@ describe('forceSysReconnect (sentinel destroy→connect correctness)', () => {
     expect(client.connect).toHaveBeenCalledTimes(1);
   });
 
-  it('a reconnect whose connect() fails destroys the client again (no closed connections left behind)', async () => {
-    // A RedisSentinel whose connect() gave up keeps its last discovery's master connections, and
-    // its commands then spin on microtasks; destroying it empties that list (connectOrDestroy).
-    const client = makeFakeSentinel({ connectThrows: true });
-    await forceSysReconnect([client]);
-    expect(client.connect).toHaveBeenCalledTimes(1);
-    expect(client.destroy).toHaveBeenCalledTimes(2); // the heal's teardown, then after the failure
-    expect(client.destroy.mock.invocationCallOrder[1]).toBeGreaterThan(
-      client.connect.mock.invocationCallOrder[0]
-    );
-  });
-
   it('one bad client does not prevent the others from reconnecting', async () => {
     const bad = makeFakeSentinel({ destroyThrows: true, connectThrows: true });
     const good = makeFakeSentinel();

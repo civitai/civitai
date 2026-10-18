@@ -8,7 +8,13 @@
  * Linux only: the test process connects to the containers' bridge addresses directly. Names and
  * the /24 are per run (see docker-redis-cluster.ts); `teardown()` removes only this run's own.
  */
-import { IMAGE, createRunNetwork, docker, runScopedName } from './docker-redis-cluster';
+import {
+  IMAGE,
+  createRunNetwork,
+  docker,
+  removeContainers,
+  runScopedName,
+} from './docker-redis-cluster';
 
 const PORT = 6379;
 const SENTINEL_PORT = 26379;
@@ -158,6 +164,18 @@ export class DockerRedisSentinel {
     return Date.now();
   }
 
+  /** Stop the master, keeping its container and address (startMaster() brings it back). */
+  stopMaster(): void {
+    docker(['stop', '-t', '1', this.master]);
+  }
+
+  /** Start the master stopped by stopMaster(); resolves once it answers PING (returns Date.now()). */
+  async startMaster(): Promise<number> {
+    docker(['start', this.master]);
+    await this.waitFor(() => this.cli(this.master, ['ping']) === 'PONG', 30_000, 'master back');
+    return Date.now();
+  }
+
   /** Resolves once the Sentinel names the replica as master; returns that instant (Date.now()). */
   async waitForFailover(timeoutMs = 30_000): Promise<number> {
     await this.waitFor(() => this.currentMaster() === this.replicaIp, timeoutMs, 'failover');
@@ -165,9 +183,7 @@ export class DockerRedisSentinel {
   }
 
   teardown(): void {
-    for (const c of [this.master, this.replica, this.sentinel]) {
-      docker(['rm', '-f', c], { allowFail: true });
-    }
+    removeContainers([this.master, this.replica, this.sentinel]);
     docker(['network', 'rm', this.name], { allowFail: true });
   }
 
