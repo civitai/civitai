@@ -59,6 +59,7 @@ import {
   MYSTERY_BOX_BLOCKED_REGIONS_KEY,
 } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
+import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
 import { PURCHASE_ALREADY_COMPLETED_MESSAGE } from '~/shared/constants/cosmetic-shop.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -150,13 +151,7 @@ const p2002 = () =>
     clientVersion: 'test',
   });
 
-const pgError = (code: string) =>
-  new Prisma.PrismaClientKnownRequestError('Raw query failed', {
-    code: 'P2010',
-    clientVersion: 'test',
-    meta: { code },
-  });
-const lockTimeout = () => pgError('55P03');
+const lockTimeout = () => rawQueryError('55P03');
 
 type ContentWhere = {
   boxDefinitionId: number;
@@ -856,6 +851,35 @@ describe('buying a mystery box', () => {
       code: 'TOO_MANY_REQUESTS',
       message: ITEM_HOLDER_BUSY_MESSAGE,
     });
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'times out answers busy',
+      '55P03',
+      { code: 'TOO_MANY_REQUESTS', message: ITEM_HOLDER_BUSY_MESSAGE },
+    ],
+    [
+      'fails with another Postgres code is not answered as busy',
+      '40P01',
+      { name: 'PrismaClientUnknownRequestError' },
+    ],
+  ])('a model query in the claim that %s, charging nothing', async (_label, code, expected) => {
+    const tx = makeTx(async () => undefined);
+    dbMock.dbWrite.$transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
+      claims.rollbackOnThrow(() =>
+        fn({
+          ...tx,
+          cosmeticShopItem: {
+            findMany: async () => {
+              throw modelQueryError(code);
+            },
+          },
+        })
+      )
+    );
+    await expect(buy()).rejects.toMatchObject(expected);
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 

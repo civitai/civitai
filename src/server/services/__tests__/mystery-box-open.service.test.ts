@@ -37,6 +37,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 
 import { openMysteryBox } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
+import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -113,13 +114,7 @@ const p2002 = () =>
     clientVersion: 'test',
   });
 
-const pgError = (code: string) =>
-  new Prisma.PrismaClientKnownRequestError('Raw query failed', {
-    code: 'P2010',
-    clientVersion: 'test',
-    meta: { code },
-  });
-const lockTimeout = () => pgError('55P03');
+const lockTimeout = () => rawQueryError('55P03');
 
 const definition = (id: number) => {
   if (id === world.box.id) return { ...world.box, cosmeticId: null };
@@ -703,10 +698,39 @@ describe('refusals keep the box', () => {
 
   it('another database error under the lock is not answered as busy', async () => {
     world.onLock = () => {
-      throw pgError('40P01');
+      throw rawQueryError('40P01');
     };
     const error = await open().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+  });
+
+  it.each([
+    [
+      'times out answers busy',
+      '55P03',
+      { code: 'TOO_MANY_REQUESTS', message: ITEM_HOLDER_BUSY_MESSAGE },
+    ],
+    [
+      'fails with another Postgres code is not answered as busy',
+      '40P01',
+      { name: 'PrismaClientUnknownRequestError' },
+    ],
+  ])('a model query under the lock that %s', async (_label, code, expected) => {
+    const realTx = dbMock.dbWrite.$transaction.getMockImplementation()!;
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
+      realTx(async (tx: ReturnType<typeof makeTx>) =>
+        fn({
+          ...tx,
+          boxTier: {
+            findMany: async () => {
+              throw modelQueryError(code);
+            },
+          },
+        })
+      )
+    );
+    await expect(open()).rejects.toMatchObject(expected);
+    nothingOpened();
   });
 
   it('a box with nothing left for the holder stays held', async () => {

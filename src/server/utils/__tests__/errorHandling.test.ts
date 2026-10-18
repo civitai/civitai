@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { describe, it, expect } from 'vitest';
 import { isClientAbortError, isPrismaLockTimeout } from '~/server/utils/errorHandling';
 import { FETCH_DOCUMENTS_TIMEOUT_MESSAGE } from '~/server/meilisearch/client';
+import { modelQueryError } from '~/test-utils/prismaLockTimeout';
 
 describe('isClientAbortError', () => {
   it('classifies a bare client AbortError (REST/Meili fetch path)', () => {
@@ -89,10 +90,15 @@ describe('isPrismaLockTimeout', () => {
     expect(isPrismaLockTimeout(known('P2010', { code: '55P03' }))).toBe(true);
   });
 
+  it('matches a model query cancelled with 55P03', () => {
+    expect(isPrismaLockTimeout(modelQueryError('55P03'))).toBe(true);
+  });
+
   it.each([
     ['another Postgres code on a raw query', known('P2010', { code: '40P01' })],
     ['a raw query failure with no Postgres code', known('P2010')],
     ['another Prisma code carrying 55P03', known('P2002', { code: '55P03' })],
+    ['a model query failing with another Postgres code', modelQueryError('40P01')],
     [
       'a plain error with the driver code',
       Object.assign(new Error('lock timeout'), { code: '55P03' }),
