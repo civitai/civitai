@@ -9,6 +9,7 @@
   import ListCard from './ListCard.svelte';
   import { denied } from '$lib/permissions';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
 
   let {
     account,
@@ -32,6 +33,9 @@
 
 {#if form.error}
   <ErrorAlert class="mb-4" message={form.error} />
+{/if}
+{#if form.warning}
+  <WarningAlert class="mb-4" message={form.warning} />
 {/if}
 
 {#await account}
