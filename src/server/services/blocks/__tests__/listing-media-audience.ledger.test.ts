@@ -97,7 +97,7 @@ for (const { rel, full } of PRODUCTION) {
 /** Modules that project listing media, and how. */
 const EXPECTED_PROJECTORS: Record<
   string,
-  'gated' | 'gate' | 'raw: author' | 'gated + raw: moderator'
+  'gated' | 'gate' | 'raw: author' | 'gated + raw: moderator' | 'ceiling only: labels'
 > = {
   // The rule itself.
   'server/services/blocks/listing-media-audience.ts': 'gate',
@@ -110,6 +110,8 @@ const EXPECTED_PROJECTORS: Record<
   'server/services/blocks/post-app-chip.logic.ts': 'gated',
   // The owner's own "My apps" row: shows exactly what is attached.
   'server/services/blocks/app-access.service.ts': 'raw: author',
+  // Author/moderator audience labels: reads the civitai.com ceiling, builds no url.
+  'shared/utils/listing-media-split.ts': 'ceiling only: labels',
 };
 
 /** Modules that read a listing image url without the gate's columns — none of them public. */
