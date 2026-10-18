@@ -1,7 +1,7 @@
 import {
   getStorylineChapterName,
   routeVia,
-  storylineReadHref,
+  storylineChapterLink,
 } from '~/components/Storyline/storyline-mode.utils';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 import type { StorylineLaneEdge } from '~/shared/utils/storyline-lanes';
@@ -47,20 +47,13 @@ export function buildStorylineLaneMap<T extends LaneMapChapter>(graph: {
       chapterId,
       parentCount: parentCount.get(chapterId),
     }));
-    const { post, firstImage } = chapter;
+    const link = storylineChapterLink(chapter, routeVia(route));
     return {
       ...node,
       chapter,
       name: getStorylineChapterName({ ...chapter, depth: route.length - 1 }, { withAuthor: true }),
-      href: !post
-        ? null
-        : firstImage
-        ? storylineReadHref({
-            imageId: firstImage.id,
-            chapterId: node.chapterId,
-            via: routeVia(route),
-          })
-        : `/posts/${post.id}`,
+      href: link?.href ?? null,
+      read: link?.read ?? null,
     };
   });
   return { layout, nodes, truncated: graph.truncated };

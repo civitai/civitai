@@ -58,6 +58,22 @@ export function storylineReadHref({
   return `/images/${imageId}?${query.toString().replace(/%2C/g, ',')}`;
 }
 
+export type StorylineReadTarget = { imageId: number; chapterId: number; via: number[] };
+
+/**
+ * Where a chapter link goes: storyline mode at its first image on the route `via` names, or its
+ * post when this reader sees none of its images. Null for a chapter this reader may not see.
+ */
+export function storylineChapterLink(
+  chapter: { chapterId: number; post: { id: number } | null; firstImage: { id: number } | null },
+  via: number[]
+): { href: string; read: StorylineReadTarget | null } | null {
+  if (!chapter.post) return null;
+  if (!chapter.firstImage) return { href: `/posts/${chapter.post.id}`, read: null };
+  const read = { imageId: chapter.firstImage.id, chapterId: chapter.chapterId, via };
+  return { href: storylineReadHref(read), read };
+}
+
 /** Path order first, then each post's own image order: the image query itself orders by recency. */
 export function orderPathImages<
   T extends { id: number; postId: number | null; index: number | null }

@@ -36,7 +36,10 @@ import {
   getForkShare,
   getStorylineChapterName,
   getStorylineTombstoneLabel,
+  routeVia,
+  storylineChapterLink,
 } from '~/components/Storyline/storyline-mode.utils';
+import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
 import {
   useStorylineChildren,
   useStorylineContinueTerms,
@@ -51,6 +54,7 @@ import { trpc } from '~/utils/trpc';
 type Storyline = RouterOutput['storyline']['getById'];
 type PathChapter = Storyline['mainPath'][number];
 type ContinueTerms = ReturnType<typeof useStorylineContinueTerms>;
+type ChapterLink = NonNullable<ReturnType<typeof storylineChapterLink>>;
 
 export function StorylinePage({ id }: { id: number }) {
   const storylineQuery = trpc.storyline.getById.useQuery({ id });
@@ -60,6 +64,7 @@ export function StorylinePage({ id }: { id: number }) {
   // Cover, thread and Start reading come from the reading path, which tombstones chapter 1 where
   // this reader may not see it; `rootPostId` does not.
   const rootPost = mainPath[0]?.post ?? null;
+  const startLink = mainPath[0] ? storylineChapterLink(mainPath[0], []) : null;
   // Continue adds the next chapter after the end of the main path. When that chapter is hidden
   // from this reader, Continue is not offered: continuing an earlier one would make a side branch.
   const lastPost = mainPath.at(-1)?.post ?? null;
@@ -89,7 +94,7 @@ export function StorylinePage({ id }: { id: number }) {
       <Container size="lg" className="relative mt-[-70px] flex flex-col gap-5 sm:mt-[-120px]">
         <StorylineHeader
           storyline={storyline}
-          rootPostId={rootPost?.id ?? null}
+          startLink={startLink}
           lastPostId={lastPost?.id ?? null}
           terms={shownTerms}
         />
@@ -127,12 +132,12 @@ export function StorylinePage({ id }: { id: number }) {
 
 function StorylineHeader({
   storyline,
-  rootPostId,
+  startLink,
   lastPostId,
   terms,
 }: {
   storyline: Storyline;
-  rootPostId: number | null;
+  startLink: ChapterLink | null;
   lastPostId: number | null;
   terms: ContinueTerms;
 }) {
@@ -190,10 +195,10 @@ function StorylineHeader({
           />
         </div>
         <div className="flex flex-wrap gap-2">
-          {rootPostId && (
+          {startLink && (
             <Button
               component={Link}
-              href={`/posts/${rootPostId}`}
+              {...storylineChapterLinkProps(startLink)}
               size="lg"
               className="grow basis-[140px] sm:grow-0 sm:basis-auto"
               leftSection={<IconPlayerPlayFilled size={18} />}
@@ -296,10 +301,11 @@ function StorylineChapters({ storyline }: { storyline: Storyline }) {
           aria-hidden
           className="absolute bottom-6 left-[11px] top-3 w-0.5 bg-[var(--mantine-color-blue-6)] opacity-45"
         />
-        {storyline.mainPath.map((chapter) => (
+        {storyline.mainPath.map((chapter, i) => (
           <ChapterStop
             key={chapter.chapterId}
             chapter={chapter}
+            route={storyline.mainPath.slice(0, i + 1)}
             endorsed={!!chapter.post && collaboratorIds.has(chapter.post.userId)}
           />
         ))}
@@ -328,9 +334,19 @@ function StorylineMapSection({ storyline }: { storyline: Storyline }) {
   );
 }
 
-function ChapterStop({ chapter, endorsed }: { chapter: PathChapter; endorsed: boolean }) {
+function ChapterStop({
+  chapter,
+  route,
+  endorsed,
+}: {
+  chapter: PathChapter;
+  /** The canon path up to and including this chapter. */
+  route: PathChapter[];
+  endorsed: boolean;
+}) {
   const number = chapter.depth + 1;
   const { post } = chapter;
+  const link = storylineChapterLink(chapter, routeVia(route));
   return (
     <li className="relative pb-[18px] pl-9" data-testid="storyline-chapter">
       <span
@@ -342,11 +358,11 @@ function ChapterStop({ chapter, endorsed }: { chapter: PathChapter; endorsed: bo
       >
         {number}
       </span>
-      {post ? (
+      {post && link ? (
         <div className="flex gap-3.5">
           {/* The name below is the link; the picture repeats it for the pointer only. */}
           <Link
-            href={`/posts/${post.id}`}
+            {...storylineChapterLinkProps(link)}
             tabIndex={-1}
             aria-hidden
             className="w-[84px] shrink-0 sm:w-[112px]"
@@ -368,7 +384,7 @@ function ChapterStop({ chapter, endorsed }: { chapter: PathChapter; endorsed: bo
             )}
             <Text
               component={Link}
-              href={`/posts/${post.id}`}
+              {...storylineChapterLinkProps(link)}
               fw={700}
               lh={1.25}
               className="text-[15px] hover:underline sm:text-[17px]"
@@ -386,15 +402,14 @@ function ChapterStop({ chapter, endorsed }: { chapter: PathChapter; endorsed: bo
           {getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted')}
         </Text>
       )}
-      {chapter.childCount > 1 && (
-        <StorylineForkPaths chapterId={chapter.chapterId} count={chapter.childCount} />
-      )}
+      {chapter.childCount > 1 && <StorylineForkPaths route={route} count={chapter.childCount} />}
     </li>
   );
 }
 
 /** Where the story forks: each way on, as the end of the chapter ranks it, with its reader share. */
-function StorylineForkPaths({ chapterId, count }: { chapterId: number; count: number }) {
+function StorylineForkPaths({ route, count }: { route: PathChapter[]; count: number }) {
+  const chapterId = route[route.length - 1].chapterId;
   const { data: children } = useStorylineChildren(chapterId);
   const { data: shares } = useStorylineForkShares(chapterId);
   return (
@@ -411,15 +426,16 @@ function StorylineForkPaths({ chapterId, count }: { chapterId: number; count: nu
           {children.map((child) => {
             const share = getForkShare(shares, child.chapterId);
             const name = getStorylineChapterName(child);
+            const link = storylineChapterLink(child, routeVia([...route, child]));
             return (
               <li
                 key={child.chapterId}
                 className="w-[120px] shrink-0 sm:w-[140px]"
                 data-testid="storyline-fork-path"
               >
-                {child.post ? (
+                {child.post && link ? (
                   <>
-                    <Link href={`/posts/${child.post.id}`} className="group block">
+                    <Link {...storylineChapterLinkProps(link)} className="group block">
                       <StorylineThumb
                         image={child.firstImage}
                         width={140}
