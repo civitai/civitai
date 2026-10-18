@@ -25,28 +25,20 @@ export function listenChatChange(
 }
 
 /**
- * What is in the chat's message box now; `''` before the chat has drawn it. Read from the box itself:
- * the chat's other fields (model search, settings, chat rename) fire `input` too, and the chat fills
- * and empties the box with no `input` at all.
+ * What is in the chat's message box now, from the chat's `draft`: what the user typed, or what
+ * `compose()` put there; `''` with no chat, or before the chat has drawn its box. Read on demand: the
+ * chat fills and empties the box with no `input` event, and its other fields fire `input` too.
  */
-export function messageBoxText(chat: Pick<CivitaiChat, 'renderRoot'> | null): string {
-  const draft = composer(chat)?.draft;
-  return typeof draft === 'string' ? draft : '';
+export function messageBoxText(chat: Pick<CivitaiChat, 'draft'> | null): string {
+  return chat?.draft ?? '';
 }
 
 /**
- * Whether the user is dictating: the message box is hidden under the recording or transcribing bar,
- * and what they said goes into it when dictation ends, joined to whatever it holds by then.
+ * Whether the user is dictating, from the chat's `dictating`: true from the moment they start talking
+ * until what they said has been joined to the end of `draft` (or sent, or thrown away), including the
+ * moment between recording and transcribing. Meanwhile `draft` is what the box held before. `false`
+ * with no chat.
  */
-export function isDictating(chat: Pick<CivitaiChat, 'renderRoot'> | null): boolean {
-  const box = composer(chat);
-  return box?.recording === true || box?.transcribing === true;
-}
-
-function composer(chat: Pick<CivitaiChat, 'renderRoot'> | null) {
-  return chat?.renderRoot?.querySelector('civitai-chat-composer') as {
-    draft?: unknown;
-    recording?: unknown;
-    transcribing?: unknown;
-  } | null;
+export function isDictating(chat: Pick<CivitaiChat, 'dictating'> | null): boolean {
+  return chat?.dictating === true;
 }
