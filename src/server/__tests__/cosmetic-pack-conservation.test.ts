@@ -12,12 +12,23 @@ import {
 } from '~/test-utils/shopPurchaseClaimFake';
 
 let claims = shopPurchaseClaimFake();
-dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-  claims.rollbackOnThrow(() =>
+// Each transaction is numbered; `committed` lists the ones that have resolved, in order.
+let txSeq = 0;
+let committed: number[] = [];
+const lockedOn: number[] = [];
+dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+  const tx = ++txSeq;
+  const result = await claims.rollbackOnThrow(() =>
     fn({
       cosmeticShopPurchaseClaim: claims.txDelegate,
-      $executeRaw: (...a: unknown[]) =>
-        isHolderLock(a) ? holderLock(...a) : isSaleCount(a) ? saleCount(...a) : executeRaw(...a),
+      $executeRaw: (...a: unknown[]) => {
+        if (isHolderLock(a)) {
+          lockedOn.push(tx);
+          return holderLock(...a);
+        }
+        if (isSaleCount(a)) return saleCount({ tx, committed: [...committed] }, ...a);
+        return executeRaw(...a);
+      },
       userCosmetic: {
         findMany: (...a: unknown[]) => ownedFindMany(...a),
         createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
@@ -28,8 +39,10 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
       },
       cosmeticShopItem: { update: vi.fn() },
     })
-  )
-);
+  );
+  committed.push(tx);
+  return result;
+});
 
 /**
  * A conservation property over the whole pack purchase, table-driven rather than
@@ -51,10 +64,11 @@ const executeRaw = vi.fn();
 const holderLock = vi.fn();
 const isHolderLock = (a: unknown[]) =>
   (a[0] as readonly string[]).join('').includes('pg_advisory_xact_lock');
-// The listing's sale counter (cosmetic-shop-sale-count.ts), also kept apart from the grants.
+// The listing's sale counter and its lock timeout (cosmetic-shop-sale-count.ts), also kept apart
+// from the grants. Called with the transaction it ran on first.
 const saleCount = vi.fn();
 const isSaleCount = (a: unknown[]) =>
-  (a[0] as readonly string[]).join('').includes('UPDATE "CosmeticShopItem"');
+  /UPDATE "CosmeticShopItem"|set_config\('lock_timeout'/.test((a[0] as readonly string[]).join(''));
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 const createManyComponents = vi.fn();
 const createManyUserCosmetic = vi.fn();
@@ -356,6 +370,10 @@ const SHAPES: Shape[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  txSeq = 0;
+  committed = [];
+  lockedOn.length = 0;
+  saleCount.mockReset();
   claims = installShopPurchaseClaimFake();
   ownedFindMany.mockResolvedValue([]);
   // Distinct per call, as the real service returns: a takedown reverses payouts
@@ -801,6 +819,45 @@ describe('purchaseCosmeticPack — what a purchase records as sold', () => {
     // recording nothing at all would satisfy the first on its own.
     expect(recorded).not.toContain(SELF_AUTHORED);
     expect(recorded).toEqual([1001]);
+  });
+});
+
+// Deliberately NOT on the grant transaction: every buyer of a listing updates its one row, and a
+// queue on it inside the grant held each buyer's lock and pushed paid grants toward a refund.
+describe('purchaseCosmeticPack — counting the sale', () => {
+  const members = [mkMember()];
+  const buy = () =>
+    purchaseCosmeticPack({
+      userId: BUYER,
+      shopItem: shopItem(6300, members.length),
+      members,
+      stickersEnabled: true,
+    });
+  const isUpdate = (call: unknown[]) =>
+    ((call[1] as readonly string[]) ?? []).join('').includes('UPDATE "CosmeticShopItem"');
+
+  it('counts the sale once the grant has committed, on a transaction of its own', async () => {
+    await buy();
+
+    const counted = saleCount.mock.calls.filter(isUpdate);
+    expect(counted).toHaveLength(1);
+    const [{ tx, committed: before }] = counted[0] as [{ tx: number; committed: number[] }];
+    expect(lockedOn).toHaveLength(1);
+    expect(tx).not.toBe(lockedOn[0]);
+    expect(before).toContain(lockedOn[0]);
+  });
+
+  it('completes the purchase when the sale cannot be counted', async () => {
+    saleCount.mockImplementation(async (...call: unknown[]) => {
+      if (isUpdate(call)) throw new Error('canceling statement due to lock timeout');
+      return 1;
+    });
+
+    await expect(buy()).resolves.toBeDefined();
+
+    expect(createManyUserCosmetic).toHaveBeenCalledTimes(1);
+    expect(refund).not.toHaveBeenCalled();
+    expect(pay).toHaveBeenCalled();
   });
 });
 

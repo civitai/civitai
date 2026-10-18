@@ -81,23 +81,42 @@ dbMock.dbWrite.cosmeticShopItem.update.mockImplementation(fwd(mocks.shopItemUpda
 dbMock.dbWrite.userCosmetic.findFirst.mockImplementation(fwd(mocks.userCosmeticFindFirst));
 dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation(fwd(mocks.purchasesUpdate));
 let claims = shopPurchaseClaimFake();
-dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
-  claims.rollbackOnThrow(() =>
+// Each transaction is numbered. Every raw statement records the transaction it ran on and which
+// transactions had committed by then, at the same index as its `mocks.executeRaw` call.
+let txSeq = 0;
+let committed: number[] = [];
+let rawOn: { tx: number; committed: number[] }[] = [];
+dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+  const tx = ++txSeq;
+  const result = await claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
       // Unused by the code; here so a regression back to a Prisma update is caught, not a TypeError.
       cosmeticShopItem: { update: mocks.txShopItemUpdate },
       userCosmetic: { create: mocks.userCosmeticCreate, findFirst: mocks.txUserCosmeticFindFirst },
       cosmeticShopPurchaseClaim: claims.txDelegate,
-      $executeRaw: mocks.executeRaw,
+      $executeRaw: (...a: unknown[]) => {
+        rawOn.push({ tx, committed: [...committed] });
+        return mocks.executeRaw(...a);
+      },
     })
-  )
-);
+  );
+  committed.push(tx);
+  return result;
+});
+const isRaw = (call: unknown[], text: string) => (call[0] as string[]).join('?').includes(text);
 
 // The shape the real buzz client hands back: buzz.service's mapError wraps the
 // ledger's status in a TRPCError and keeps the BuzzApiError as `cause`.
 const ledgerError = (status: number, code: 'BAD_REQUEST' | 'INTERNAL_SERVER_ERROR') =>
   new TRPCError({ code, message: 'ledger', cause: new BuzzApiError(status, 'ledger') });
+// What Prisma throws for a raw statement Postgres cancelled on `lock_timeout`.
+const lockTimeout = () =>
+  new Prisma.PrismaClientKnownRequestError('canceling statement due to lock timeout', {
+    code: 'P2010',
+    clientVersion: 'test',
+    meta: { code: '55P03' },
+  });
 const stateUnknownLogs = () =>
   loggingMock.logToAxiom.mock.calls
     .map(([arg]) => arg as Record<string, unknown>)
@@ -215,6 +234,9 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
     loggingMock.logToAxiom.mockReset();
+    txSeq = 0;
+    committed = [];
+    rawOn = [];
     mocks.shopItemFindUnique.mockResolvedValue(row);
     mocks.userCosmeticFindFirst.mockResolvedValue(null);
     claims = installShopPurchaseClaimFake();
@@ -239,20 +261,52 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
-  // Counting on dbWrite instead of tx would need a second pooled connection under the buyer's lock.
-  it("counts the sale on the grant's own transaction, from the row as it is then", async () => {
+  // Deliberately NOT on the grant transaction: every buyer of a listing updates its one row, and a
+  // queue on it inside the grant held each buyer's lock and pushed paid grants toward a refund.
+  it('counts the sale once the grant has committed, on a transaction of its own', async () => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
 
     await purchase();
 
-    const counted = mocks.executeRaw.mock.calls.filter(
-      ([strings, ...values]) =>
-        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"') &&
-        values.includes(SHOP_ITEM_ID)
+    const calls = mocks.executeRaw.mock.calls;
+    const grantTx = rawOn[calls.findIndex((c) => isRaw(c, 'pg_advisory_xact_lock'))].tx;
+    const counted = calls.flatMap((c, i) =>
+      isRaw(c, 'UPDATE "CosmeticShopItem"') && c.includes(SHOP_ITEM_ID) ? [rawOn[i]] : []
     );
     expect(counted).toHaveLength(1);
+    expect(counted[0].tx).not.toBe(grantTx);
+    expect(counted[0].committed).toContain(grantTx);
     expect(mocks.txShopItemUpdate).not.toHaveBeenCalled();
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+
+  it('completes the purchase when the sale cannot be counted', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.executeRaw.mockImplementation(async (...a: unknown[]) => {
+      if (isRaw(a, 'UPDATE "CosmeticShopItem"')) throw lockTimeout();
+      return 1;
+    });
+
+    await purchase();
+
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+    expect(claims.rows.get(TX)?.status).toBe('paid');
+    expect(mocks.createBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  // The stored counter can lag the rows: a sale counted after its grant is lost if counting fails.
+  // Stock is the purchase rows, so a lagging counter must never sell past the quantity.
+  it('refuses as sold out on the purchase rows when the stored counter lags them', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      availableQuantity: 2,
+      meta: { ...row.meta, purchases: 1 },
+      _count: { purchases: 2 },
+    });
+
+    await expect(purchase()).rejects.toThrow('This cosmetic is out of stock');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
   it('a sold-out refusal corrects only the sale count, not the rest of meta', async () => {

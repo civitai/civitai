@@ -87,7 +87,7 @@ import {
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
 import {
-  countShopItemSale,
+  countShopItemSaleAfterGrant,
   setShopItemSaleCount,
 } from '~/server/services/cosmetic-shop-sale-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
@@ -1328,11 +1328,10 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
 
-      await countShopItemSale(tx, shopItemId);
-
       return userCosmetic;
     });
 
+    await countShopItemSaleAfterGrant(shopItemId);
     await refreshOwnedStickerCache([userId]);
     // An event hat counts on its owner's team roster, if they are listed.
     const hatEvent = (singleCosmetic.data as { event?: unknown } | null)?.event;
