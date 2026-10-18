@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { forceSysReconnect } from '../client';
-import {
-  decSysInflight,
-  getSysInflight,
-  incSysInflight,
-  resetSysInflight,
-} from '../sys-inflight';
+import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from '../sys-inflight';
 import { ClusterSelfHealWatchdog } from '../cluster-selfheal';
 import type { ClusterSelfHealConfig, ClusterSelfHealDeps } from '../cluster-selfheal';
 

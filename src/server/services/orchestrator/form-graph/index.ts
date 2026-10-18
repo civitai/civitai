@@ -17,10 +17,10 @@ import { createFlux2Input } from './flux2.handler';
 import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
 import { createFlux3KleinInput } from './flux3-klein.handler';
+import { createMossImageInput } from './moss-image.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createKrea3Input } from './krea3.handler';
-import { createImagen4Input } from './imagen4.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
 import { createMingInput } from './ming.handler';
@@ -74,10 +74,10 @@ export { createFlux2Input } from './flux2.handler';
 export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
 export { createFlux3KleinInput } from './flux3-klein.handler';
+export { createMossImageInput } from './moss-image.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createKrea3Input } from './krea3.handler';
-export { createImagen4Input } from './imagen4.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
 export { createMingInput } from './ming.handler';
@@ -184,6 +184,10 @@ function createStep(
     case 'Flux3Klein_base':
       return createFlux3KleinInput(data, handlerCtx);
 
+    case 'MossImage':
+    case 'MossImage_base':
+      return createMossImageInput(data, handlerCtx);
+
     case 'Boogu':
       return createBooguInput(data, handlerCtx);
 
@@ -191,9 +195,6 @@ function createStep(
       return createKrea2Input(data, handlerCtx);
     case 'Krea3':
       return createKrea3Input(data, handlerCtx);
-
-    case 'Imagen4':
-      return createImagen4Input(data, handlerCtx);
 
     case 'PonyV7':
       return createPonyV7Input(data, handlerCtx);

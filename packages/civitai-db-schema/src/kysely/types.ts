@@ -101,6 +101,7 @@ import type {
   ToolType,
   TechniqueType,
   AppealStatus,
+  AppealCategory,
   AuctionType,
   ModerationRuleAction,
   ChangelogType,
@@ -429,6 +430,11 @@ export type Appeal = {
   internalNotes: string | null;
   buzzTransactionId: string | null;
   entityRemovedAt: Timestamp | null;
+  category: AppealCategory | null;
+  /**
+   * What the form collected beyond the message (`SiteAppealContext`).
+   */
+  context: unknown | null;
 };
 export type AppealDecisionRecord = {
   id: Generated<string>;
@@ -1811,6 +1817,53 @@ export type BountyStat = {
   commentCountYear: number;
   commentCountAllTime: number;
 };
+export type BoxContent = {
+  id: Generated<number>;
+  boxDefinitionId: number;
+  tierId: number;
+  rewardDefinitionId: number;
+  enabled: Generated<boolean>;
+};
+export type BoxOddsSnapshot = {
+  boxDefinitionId: number;
+  version: number;
+  snapshot: unknown;
+  createdById: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type BoxOpening = {
+  boxItemId: string;
+  boxDefinitionId: number;
+  boxVersion: number;
+  userId: number;
+  boxSourceKey: string;
+  tierId: number;
+  contentId: number;
+  rewardDefinitionId: number;
+  rewardType: string;
+  tierWeight: number;
+  eligibleWeight: number;
+  tierRoll: number;
+  tierPoolSize: number;
+  itemRoll: number;
+  /**
+   * granted | refunded (text + CHECK)
+   */
+  rewardStatus: string;
+  createdAt: Generated<Timestamp>;
+};
+export type BoxTier = {
+  id: Generated<number>;
+  boxDefinitionId: number;
+  key: string;
+  name: string;
+  /**
+   * The tier's odds: weight / sum of the weights of tiers with anything left for the buyer.
+   */
+  weight: number;
+  color: string | null;
+  sortOrder: Generated<number>;
+};
 export type Bug = {
   id: Generated<number>;
   title: string;
@@ -2547,6 +2600,7 @@ export type CosmeticShopItem = {
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
   listed: Generated<boolean>;
+  itemDefinitionId: number | null;
 };
 export type CosmeticShopItemCosmetic = {
   shopItemId: number;
@@ -3245,6 +3299,67 @@ export type Import = {
   data: unknown | null;
   parentId: number | null;
   importId: number | null;
+};
+export type Item = {
+  id: Generated<string>;
+  itemDefinitionId: number;
+  /**
+   * user (text + CHECK; factions add their own holder types)
+   */
+  holderType: string;
+  holderId: number;
+  quantity: Generated<number>;
+  expiresAt: Timestamp | null;
+  data: Generated<unknown>;
+  /**
+   * What granted it (a purchase claim's transactionId, a prize key). Unique, so a retried grant cannot make a second row.
+   */
+  sourceKey: string;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type ItemDefinition = {
+  id: Generated<number>;
+  /**
+   * cosmetic | box
+   */
+  type: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  /**
+   * Type settings. box: { event?: string, emptyRule: 'keep' }.
+   */
+  params: Generated<unknown>;
+  /**
+   * A cosmetic definition's cosmetic. A column rather than params so the FK keeps a box's contents grantable.
+   */
+  cosmeticId: number | null;
+  rarity: string | null;
+  /**
+   * Buzz value, for balancing and the average-value line. Never a price.
+   */
+  value: number | null;
+  /**
+   * Bitwise `ItemFlag`. TRADABLE is read by no code path; turning it on needs Legal and counsel.
+   */
+  flags: Generated<number>;
+  /**
+   * NULL = unlimited.
+   */
+  quantityAvailable: number | null;
+  /**
+   * Bumped on any change to a box's tiers, weights or contents. A purchase and an open must name the version they were shown.
+   */
+  version: Generated<number>;
+  /**
+   * draft | published | archived
+   */
+  status: Generated<string>;
+  createdById: number | null;
+  updatedById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
 };
 export type JobQueue = {
   type: JobQueueType;
@@ -4482,6 +4597,18 @@ export type ResourceIntentCoocSnapshot = {
   payload: Buffer | null;
   trainImageIds: Buffer | null;
 };
+export type ResourceIntentTagIndexSnapshot = {
+  id: string;
+  status: Generated<string>;
+  vocabVersion: string;
+  specHash: string;
+  payloadSha256: string;
+  payloadBytes: number;
+  objectKey: string;
+  buildStats: unknown;
+  createdAt: Generated<Timestamp>;
+  retiredAt: Timestamp | null;
+};
 export type ResourceIntentVocabulary = {
   id: string;
   vocabVersion: string;
@@ -4951,8 +5078,9 @@ export type StorylineChapter = {
    */
   userId: number;
   /**
-   * Distance from the first chapter, which is 0. A storyline has exactly one chapter
-   * at depth 0 (enforced by a partial unique index in the migration).
+   * Distance from the first chapter, which is 0, through the chapter's first parent. A
+   * rejoined chapter's number on a reader's route can differ. A storyline has exactly one
+   * chapter at depth 0 (enforced by a partial unique index in the migration).
    */
   depth: number;
   /**
@@ -5724,6 +5852,10 @@ export type DB = {
   BountyRank: BountyRank;
   BountyReport: BountyReport;
   BountyStat: BountyStat;
+  BoxContent: BoxContent;
+  BoxOddsSnapshot: BoxOddsSnapshot;
+  BoxOpening: BoxOpening;
+  BoxTier: BoxTier;
   Bug: Bug;
   BuildGuide: BuildGuide;
   BuzzClaim: BuzzClaim;
@@ -5845,6 +5977,8 @@ export type DB = {
   ImageTechnique: ImageTechnique;
   ImageTool: ImageTool;
   Import: Import;
+  Item: Item;
+  ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
   Leaderboard: Leaderboard;
@@ -5935,6 +6069,7 @@ export type DB = {
   ReportAutomated: ReportAutomated;
   ResourceInsight: ResourceInsight;
   ResourceIntentCoocSnapshot: ResourceIntentCoocSnapshot;
+  ResourceIntentTagIndexSnapshot: ResourceIntentTagIndexSnapshot;
   ResourceIntentVocabulary: ResourceIntentVocabulary;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;

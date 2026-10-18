@@ -16,5 +16,7 @@ export type ReportListItem = {
   reportedByEmail: string | null;
   alsoReportedByCount: number | null;
   createdAt: Date;
+  /** Moderators' own notes on the report (`ReportNotes`). */
+  internalNotes?: string | null;
   additionalReporters?: AdditionalReporter[];
 };

@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
+import { presetTitleFor } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import {
   usePendingSave,
   usePostEditParams,
@@ -79,6 +80,19 @@ export function PostEditForm() {
       subscription.unsubscribe();
     };
   }, []); // eslint-disable-line
+
+  // Apply preset hands its title here rather than saving it, so the field's current value decides
+  // (a prefilled or still-unsaved title wins) and the autosave above is the only writer.
+  const [presetTitle, setPresetTitle] = usePostEditStore((state) => [
+    state.presetTitle,
+    state.setPresetTitle,
+  ]);
+  useEffect(() => {
+    if (!presetTitle) return;
+    const title = presetTitleFor(form.getValues('title'), presetTitle);
+    if (title) form.setValue('title', title, { shouldDirty: true });
+    setPresetTitle(null);
+  }, [presetTitle]); // eslint-disable-line
 
   usePendingSave('post-detail', debounce);
 

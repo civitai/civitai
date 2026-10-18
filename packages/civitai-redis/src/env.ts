@@ -224,7 +224,9 @@ export const redisEnvSchema = z
 function buildEnv() {
   const parsed = redisEnvSchema.safeParse(process.env);
   if (!parsed.success) {
-    throw new Error('[@civitai/redis] Invalid environment variables:\n' + z.prettifyError(parsed.error));
+    throw new Error(
+      '[@civitai/redis] Invalid environment variables:\n' + z.prettifyError(parsed.error)
+    );
   }
   return {
     url: parsed.data.REDIS_URL,

@@ -131,8 +131,10 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
 const uploads = new Map<string, Buffer>();
 let uploadFailure: Error | undefined;
 
-vi.mock('@aws-sdk/lib-storage', () => ({
-  Upload: class {
+// Both AWS mocks carry `default`: the packages are pre-bundled for CJS interop, so consumers
+// resolve through `default`, and an `importOriginal` spread would hand them the real client there.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {
     private readonly body: NodeJS.ReadableStream;
     private readonly key: string;
     constructor({ params }: { params: { Body: NodeJS.ReadableStream; Key: string } }) {
@@ -149,20 +151,24 @@ vi.mock('@aws-sdk/lib-storage', () => ({
       uploads.set(this.key.slice(this.key.indexOf('_') + 1), Buffer.concat(chunks));
       return {};
     }
-  },
-}));
+  };
+  return { Upload, default: { Upload } };
+});
 
-vi.mock('@aws-sdk/client-s3', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  S3Client: class {
-    send() {
-      return Promise.resolve({});
-    }
-    destroy() {
-      return undefined;
-    }
-  },
-}));
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const mocked = {
+    ...(await importOriginal<Record<string, unknown>>()),
+    S3Client: class {
+      send() {
+        return Promise.resolve({});
+      }
+      destroy() {
+        return undefined;
+      }
+    },
+  };
+  return { ...mocked, default: mocked };
+});
 
 vi.mock('~/server/http/orchestrator/flagged-consumers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

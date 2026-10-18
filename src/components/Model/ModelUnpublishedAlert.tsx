@@ -7,11 +7,12 @@ import { getUnpublishReason } from '~/server/common/moderation-helpers';
 export function ModelUnpublishedAlert({
   reason,
   customMessage,
-  showAppeal,
+  appealHref,
 }: {
   reason?: string | null;
   customMessage?: string | null;
-  showAppeal?: boolean;
+  /** Where to appeal; no appeal link without one. */
+  appealHref?: string;
 }) {
   const reasonKey = reason ?? 'other';
   const detail = getUnpublishReason(reasonKey);
@@ -58,11 +59,11 @@ export function ModelUnpublishedAlert({
           ) : (
             'Once you have addressed this, you can request a review from one of our moderators.'
           )}
-          {showAppeal && (
+          {appealHref && (
             <>
               {' '}
               If you believe this was done in error, you can{' '}
-              <Anchor href="/content/content-appeal" target="_blank" inherit>
+              <Anchor href={appealHref} target="_blank" inherit>
                 submit an appeal
               </Anchor>
               .

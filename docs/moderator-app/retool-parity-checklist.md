@@ -164,13 +164,12 @@ Open, with the evidence each audit produced:
       planting sentinel values on all four Redis keys and confirming the action cleared every one.
 - [x] **"Remove Badges" (`RemoveCosmetics`) ported** (2026-08-11 — a Remove control per row on the
       Cosmetics panel). Done **locally** rather than via `retool/cosmetic → unassign`, which the audit
-      suggested: that endpoint refreshes the sticker cache alone, leaving the profile-level caches stale
-      for a day, and attributes to the shared API key's owner instead of the acting moderator. Scoped to
-      the exact `(cosmeticId, claimKey)` row clicked, so a cosmetic held twice loses only the claim on
-      screen — the endpoint deletes every claim. `user-account.service.ts` carried a comment saying this
-      was *deliberately* unported because "the main app's equivalent also refreshes entity caches and
-      search indexes"; `unassignCosmetic` does neither, so the stated reason was false and the comment
-      is gone.
+      suggested: that endpoint deletes every claim of the cosmetic, where this is scoped to the exact
+      `(cosmeticId, claimKey)` row clicked, so a cosmetic held twice loses only the claim on screen. (At
+      the time it also refreshed the sticker cache alone and attributed to the shared API key's owner;
+      since the take-back refresh work, `unassignCosmetic` runs the full post-delete cleanup, and
+      `removeCosmetic` reaches the same cleanup for the rows it deleted through
+      `/api/mod/cosmetic/holdings-removed`.)
 - [x] **Every `retool/*` call attributes to the API key's owner** — **RESOLVED 2026-08-19** by session
       forwarding instead of minted keys: the spoke relays the acting moderator's own cookie to
       `/api/mod/*`, so the audit row, the `privileged` check and the rate-limit bucket are all per
@@ -471,8 +470,8 @@ browser as user 1290051, not by reading the code.
 - [x] 🎥 **Strike the user as part of the TOS action** (2026-08-12). *"TOS, affect the reason, also
       strike the user."* Retool's `strikeCheckbox` is now on the remove form in the shared
       `ImageActionBar`, so it is on **both** pages. Owners are resolved **server-side** from the image
-      ids (`strikeBatchOwners`), not from the grid: a selection outlives the page in front of the
-      moderator, and on Bulk Image Manager it can span accounts — every distinct owner is struck once.
+      ids (`strikeBatchOwners`), not from the grid: a hand-built POST can carry any ids, and on Bulk
+      Image Manager a selection can span accounts — every distinct owner is struck once.
       The strike is the main app's (`issueStrike` → `retool/strike`), and its description is the canned
       message, which is what makes one gesture out of two: the same wording the removal was filed under
       is what the account is told.
@@ -515,11 +514,12 @@ browser as user 1290051, not by reading the code.
       Changing it is a new batch — `removed` is part of `batchKey` — so it resets paging and clears the
       selection; a new search does not carry it over. Two consequences handled: `Select all`
       counts the **filtered** set and says so — "**Select all N on screen**" — which is the point of
-      filtering to ToS'd before acting; and the bar says "**N selected but not on screen**" whenever the
-      selection outlives the screen, which it can do two ways: a rating/prompt filter hides an image, or
-      the moderator pages past it (selections deliberately survive paging on the suspect grid — the batch
-      key is the non-paging part of the query string). The removal posts ids, not what is on screen, so
-      without it, filtering or paging after selecting is a way to remove 40 images while looking at 12.
+      filtering to ToS'd before acting. **2026-10-16:** a selection holds only what is on screen —
+      `ImageActionBar` drops whatever a filter hides or a page turn moves off, everywhere (the owner's
+      rule: "The user should only ever be able to select what is visually on the screen"). It replaced
+      the "**N selected but not on screen**" warning and the cross-page selection (mod-studio-feedback
+      2026-08-21, "Turning the page threw the selection away"; 2026-08-24, 566b09c08f); a range is
+      shift-click, page by page.
 - [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared
       `ImageActionBar` that Bulk Image Manager and User Reports both use).
 - [x] `negativePrompt` is selected and rendered nowhere (2026-08-12 — on the card under the prompt, and

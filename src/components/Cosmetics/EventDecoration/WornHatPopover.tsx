@@ -66,7 +66,13 @@ export function WornHatPopover({
     >
       <Popover.Target>{children}</Popover.Target>
       {/* Portalled, but React still bubbles its clicks to the card underneath. */}
-      <Popover.Dropdown onClick={(e) => e.stopPropagation()} data-testid="worn-hat-popover">
+      <Popover.Dropdown
+        onClick={(e) => e.stopPropagation()}
+        data-testid="worn-hat-popover"
+        // A click inside focuses the dropdown; a Mantine Modal around the hat would then close on
+        // Escape along with the popover.
+        data-mantine-stop-propagation
+      >
         {/* While open, the hat's total follows the live points. */}
         {opened && data?.topicId && (
           <WornHatLivePoints event={event} {...wornOn} topicId={data.topicId} />

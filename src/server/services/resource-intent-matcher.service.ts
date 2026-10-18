@@ -552,10 +552,31 @@ async function gateRankedCandidates(
 }
 
 /**
+ * A ranked list of model ids through `gateRankedCandidates` under the seed's `modelTypes`/`baseModel`
+ * filter, first `min(cap, maxModels)` models. Shared by checkpoint mode's `attach_bm` arm and the
+ * v1_tags arm. A build-time index may hold models since unlisted; these gates are what hold at
+ * request time.
+ */
+export async function findRankedCandidates(opts: {
+  modelIds: readonly number[];
+  modelTypes: readonly ModelType[];
+  baseModel: string;
+  browsingLevel: number;
+  coverage: ResourceIntentCoverage;
+  cap: number;
+  maxModels: number;
+}): Promise<ResourceIntentShortlistEntry[]> {
+  const width = Math.min(clampResourceIntentCap(opts.cap), opts.maxModels);
+  const seed = seedFilter({ modelTypes: [...opts.modelTypes], baseModel: opts.baseModel }, opts);
+  const gated = await gateRankedCandidates(opts.modelIds, seed, opts.coverage);
+  return gated.slice(0, width);
+}
+
+/**
  * Checkpoint mode's list for one arm (see `resource-intent-checkpoint.ts`), `min(cap, 50)` models
  * under the checkpoint gate for `baseModel`:
  * - `attach_bm`: `attachCandidates` (the snapshot's ranked attachment counts) through
- *   `gateRankedCandidates`;
+ *   `findRankedCandidates`;
  * - `base_bm`, and `attach_bm` with no snapshot (`attachCandidates: null`): `seedBasePool`'s
  *   popularity page.
  */
@@ -567,14 +588,21 @@ export async function findCheckpointCandidates(opts: {
   coverage: ResourceIntentCoverage;
   cap: number;
 }): Promise<ResourceIntentShortlistEntry[]> {
+  if (opts.arm === 'attach_bm' && opts.attachCandidates) {
+    return findRankedCandidates({
+      ...opts,
+      modelIds: opts.attachCandidates,
+      modelTypes: ['Checkpoint'],
+      maxModels: CHECKPOINT_LIST_MODELS,
+    });
+  }
   const width = Math.min(clampResourceIntentCap(opts.cap), CHECKPOINT_LIST_MODELS);
   const seed = seedFilter({ modelTypes: ['Checkpoint'], baseModel: opts.baseModel }, opts);
-  if (opts.arm === 'attach_bm' && opts.attachCandidates) {
-    const gated = await gateRankedCandidates(opts.attachCandidates, seed, opts.coverage);
-    return gated.slice(0, width);
-  }
   return seedBasePool(seed, opts.coverage, width);
 }
+
+/** The widest v1_tags list, as the judged screens measured it. */
+export const V1_TAGS_LIST_MODELS = 50;
 
 /**
  * The POOL_MERGE arm's list, exactly as the co-occurrence screen gated and merged it when a

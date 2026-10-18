@@ -120,6 +120,7 @@ import type { UserOnboardingSchema } from '~/server/schema/user.schema';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { userCreatorEdgeTag } from '~/server/services/user-creator.service';
 
 export const userRouter = router({
   getCreator: publicProcedure
@@ -130,8 +131,8 @@ export const userRouter = router({
         ttl: CacheTTL.sm,
         tags: (input) =>
           [
-            input?.id ? `user-creator-${input.id}` : undefined,
-            input?.username ? `user-creator-${input.username}` : undefined,
+            input?.id ? userCreatorEdgeTag(input.id) : undefined,
+            input?.username ? userCreatorEdgeTag(input.username) : undefined,
           ].filter(Boolean) as string[],
       })
     )

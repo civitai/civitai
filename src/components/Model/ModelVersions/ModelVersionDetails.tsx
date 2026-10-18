@@ -80,6 +80,7 @@ import { CollectionShowcase } from '~/components/Model/CollectionShowcase/Collec
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -89,10 +90,7 @@ import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
 import { ModelModerationCard } from '~/components/Model/ModelVersions/ModelModerationCard';
 import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
-import {
-  LoadedCornerBadge,
-  ResourceResidencyStatus,
-} from '~/components/ResourceLoad/ResourceResidency';
+import { LoadedCornerBadge } from '~/components/ResourceLoad/ResourceResidency';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -153,6 +151,7 @@ import {
   resolveActiveFile,
 } from '~/server/utils/model-helpers';
 import {
+  AppealCategory,
   Availability,
   CollectionType,
   ModelEngagementType,
@@ -1081,7 +1080,18 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             <ModelUnpublishedAlert
               reason={version.meta?.unpublishedReason}
               customMessage={version.meta?.customMessage}
-              showAppeal
+              // Moderators see this alert too, and only the owner can appeal. The form's Model appeal
+              // is for a removed model; a version removed on its own is Other.
+              appealHref={
+                isOwner
+                  ? siteAppealHref(
+                      features.siteAppealForm,
+                      model.status === ModelStatus.UnpublishedViolation
+                        ? { category: AppealCategory.Model, id: model.id }
+                        : { category: AppealCategory.Other }
+                    )
+                  : undefined
+              }
             />
           )}
           {isPrivateModel && isOwnerOrMod && (
@@ -1504,15 +1514,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                     </Group>
                   </div>
-                  {canGenerate && features.imageGeneration && (
-                    <div className={classes.detailRow}>
-                      <span className={classes.detailLabel}>Generation</span>
-                      <ResourceResidencyStatus
-                        modelVersionId={version.id}
-                        readiness={generatorReadiness(version)}
-                      />
-                    </div>
-                  )}
                   {/* Generation License Fee */}
                   {Number(version.licensingFee ?? 0) > 0 && (
                     <div className={classes.detailRow}>

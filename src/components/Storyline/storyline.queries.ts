@@ -38,11 +38,11 @@ export function useHiddenUserIds() {
 /** The drawer reads forks for the stops nearest the end only, so a long path is not N reads. */
 export const STORYLINE_DRAWER_FORK_STOPS = 10;
 
-export function useStorylinePath(chapterId: number | undefined) {
+export function useStorylinePath(chapterId: number | undefined, via: number[] = []) {
   const enabled = useStorylinesEnabled();
   const browsingLevel = useViewerBrowsingLevelDebounced();
   return trpc.storyline.getPath.useQuery(
-    { chapterId: chapterId as number, browsingLevel },
+    { chapterId: chapterId as number, browsingLevel, ...(via.length ? { via } : {}) },
     { enabled: enabled && !!chapterId, placeholderData: keepPreviousData }
   );
 }
@@ -94,6 +94,23 @@ export function useStorylineCanonAhead(
     () => ({ ahead, childrenByChapterId, isLoading }),
     [ahead, childrenByChapterId, isLoading]
   );
+}
+
+/** Every chapter and link of a storyline, for the Story page's map. */
+export function useStorylineGraph(id: number, options: { enabled: boolean }) {
+  const enabled = useStorylinesEnabled() && options.enabled;
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const hiddenUserIds = useHiddenUserIds();
+  const query = trpc.storyline.getGraph.useQuery({ id, browsingLevel }, { enabled });
+  const data = useMemo(
+    () =>
+      query.data && {
+        ...query.data,
+        chapters: hideHiddenUsersChapters(query.data.chapters, hiddenUserIds),
+      },
+    [query.data, hiddenUserIds]
+  );
+  return { data, isLoading: enabled && query.isLoading };
 }
 
 /** One children read per chapter on the path, for the forks the drawer draws beside it. */

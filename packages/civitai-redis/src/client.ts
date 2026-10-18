@@ -37,6 +37,29 @@ export type RedisLogFn = (message: string, ...args: unknown[]) => void;
 /** Resolves whether enhanced cluster failover is enabled — injected app policy (Flipt). */
 export type RedisFailoverResolver = (context: Record<string, string>) => Promise<boolean>;
 
+/**
+ * node-redis 6 changed three client defaults that this package depends on. Every client it builds
+ * pins the 5.x behaviour back for these three. What the pins do NOT restore: object-like replies
+ * (`hGetAll`, `xRange` message objects, `CONFIG GET`, …) are plain `{}` objects, not
+ * `Object.create(null)`, so a hash field named `__proto__` is dropped and a lookup of an absent
+ * `constructor`/`toString` returns the inherited function:
+ *  - RESP: 6.0 defaults to RESP3, which changes reply shapes (hGetAll, xRange, multi().exec(), Lua
+ *    replies, Buffer type mapping) and, through `maintNotifications: 'auto'`, relaxes socket and
+ *    command timeouts during server maintenance pushes. RESP3 is a separate change.
+ *  - command timeout: 6.0 rejects any command still UNWRITTEN after 5000 ms (the timer is cleared
+ *    once the command is written, so a slow reply is never cut). Our own deadlines must
+ *    fire first and alone: the cluster deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS) and the sys
+ *    backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) feed the self-heal watchdogs, which a 5 s rejection of a
+ *    different error class would starve. @redis/client 6.3.0 builds its defaults as
+ *    `{ timeout: 5000, ...options.commandOptions }` and arms a timer only `if (timeout)`
+ *    (client/commands-queue.js), so an explicit `timeout: undefined` restores "none".
+ *  - TCP keepalive: 6.0 waits 30 s before the first probe (5 s in 5.x), which slows the detection of
+ *    a silently dead peer.
+ */
+export const REDIS_RESP_VERSION = 2 as const;
+export const REDIS_NO_COMMAND_TIMEOUT = { timeout: undefined };
+export const REDIS_KEEPALIVE_INITIAL_DELAY_MS = 5000;
+
 // inlined — was slugit from ~/utils/string-helpers
 const slugit = (value: string) => slugify(value, { lower: true, strict: true });
 
@@ -576,6 +599,57 @@ function startClusterSelfHeal(
 /** Sys clients whose reconnect is waiting on a teardown that outlived the step timeout. */
 const lateSysReconnects = new WeakSet<object>();
 
+/** Sys clients with a connect() retry pending (see connectSysClient). */
+const sysConnectRetries = new WeakSet<object>();
+
+/**
+ * `client.connect()` for a sys base client and, while it rejects and leaves the client CLOSED,
+ * connect() again in the background with backoff until one succeeds.
+ *
+ * WHY (node-redis 6): RedisSentinel's connect() gives up after `maxCommandRediscovers` failed
+ * discovery passes (each pass fails on a master connection's first error since 6.2.0) and then
+ * destroys the client (@redis/client 6.3.0 sentinel/index.js, RedisSentinelInternal.connect).
+ * Nothing reopens it: every command then fails at once, so the sys watchdog, which triggers on
+ * commands piling up, never fires again and the client stays down until the process restarts. A
+ * connect() overlapping a master outage with no failover (the Sentinel still naming the master)
+ * longer than those passes ends that way: at startup, or in a self-heal's reconnect.
+ *
+ * Settles with the FIRST attempt, so callers that bound it behave as before. One retry is pending
+ * per client at a time, and retrying stops once the client is open again (someone else connected
+ * it). Exported (with an injectable backoff) for tests.
+ */
+export function connectSysClient(
+  client: { connect: () => unknown; isOpen?: boolean },
+  delayMs: (attempt: number) => number = reconnectDelayMs
+): Promise<unknown> {
+  const attempt = (n: number): Promise<unknown> => {
+    const p = Promise.resolve().then(() => client.connect());
+    p.catch((err: unknown) => {
+      if (n > 0) {
+        log(
+          `Redis sys connect() retry ${n} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+      if (client.isOpen !== false || sysConnectRetries.has(client)) return;
+      sysConnectRetries.add(client);
+      const timer = setTimeout(() => {
+        sysConnectRetries.delete(client);
+        if (client.isOpen !== false) return;
+        attempt(n + 1).then(
+          // A destroy() racing the attempt (a self-heal) also resolves it, with the client closed.
+          () => client.isOpen !== false && log(`Redis sys client connected on retry ${n + 1}`),
+          () => undefined
+        );
+      }, delayMs(n + 1));
+      timer.unref?.();
+    });
+    return p;
+  };
+  return attempt(0);
+}
+
 /**
  * Force a FULL reconnect of the sysRedis client(s) — the mirror of forceClusterReconnect for
  * the OTHER node-redis client (incident 2026-07-03). A sentinel flap orphaned in-flight commands
@@ -682,11 +756,12 @@ export async function forceSysReconnect(
       // after connect(). RedisSentinel (5.8.3, reserveClient) takes a reserved lease from a pool of
       // masterPoolSize (2) on every connect() and destroy() never returns it, so from a client's
       // second reconnect on, connect() can wait forever on that pool even though the client works;
-      // holding the guard across connect() would skip this client in every later heal.
+      // holding the guard across connect() would skip this client in every later heal. (6.3.0's
+      // destroy() returns the reserved lease, but a connect() can still outlast the step.)
       void pending
         .catch(() => undefined)
         .finally(() => lateSysReconnects.delete(client))
-        .then(() => client.connect())
+        .then(() => connectSysClient(client))
         .then(
           () => log('Sys self-heal: reconnected after a late teardown'),
           (err: unknown) =>
@@ -700,13 +775,14 @@ export async function forceSysReconnect(
     }
     try {
       await withTimeout(
-        Promise.resolve(client.connect()),
+        connectSysClient(client),
         stepTimeoutMs,
         `connect() did not settle within ${stepTimeoutMs}ms`
       );
     } catch (err) {
-      // Non-fatal: node-redis keeps retrying the connection in the background via its
-      // reconnectStrategy, and the watchdog re-arms after the cooldown.
+      // Non-fatal: a connect() that timed out keeps running, and one that failed and left the
+      // client closed is retried in the background (connectSysClient). The watchdog re-arms after
+      // the cooldown.
       log(
         `Sys self-heal: reconnect() threw (background retry continues): ${
           err instanceof Error ? err.message : String(err)
@@ -992,24 +1068,39 @@ export function attachSysSentinelListeners(
       })
       .inc();
   });
-  client.on('client-error', (event: any) => {
-    const { type: eventType, node, error } = event ?? {};
-    const host = node?.host ?? '?';
-    const port = node?.port ?? '?';
+  // Sub-client errors arrive as `error` (passthroughClientErrorEvents: true). RedisSentinel never
+  // re-emits its internal `client-error` event, so a `client-error` listener here would see nothing.
+  client.on('error', (err: unknown) => {
+    const sub = sentinelSubClientError(err);
+    if (!sub) return; // any other error is logged by getBaseClient's generic listener
     ctx.log(
-      `Redis sentinel sub-client error [type=${
-        eventType ?? 'unknown'
-      }, host=${host}, port=${port}]`,
-      error ?? event
+      `Redis sentinel sub-client error [type=${sub.type}, host=${sub.host}, port=${sub.port}]`,
+      sub.error
     );
-    ctx.errorCounter
-      .labels({
-        type: String(eventType ?? 'unknown'),
-        host: String(host),
-        deployment: ctx.deployment,
-      })
-      .inc();
+    ctx.errorCounter.labels({ type: sub.type, host: sub.host, deployment: ctx.deployment }).inc();
   });
+}
+
+/**
+ * The error of one of a RedisSentinel's own connections (master, replica or Sentinel), as it
+ * forwards it with `passthroughClientErrorEvents: true`. @redis/client 6.3.0 (sentinel/index.js
+ * `transform`) wraps it as `new Error(`${Kind} Client (${host}:${port}): ${message}`, { cause })`
+ * with Kind one of Master, Replica, Sentinel. Returns undefined for any other error.
+ */
+export function sentinelSubClientError(
+  err: unknown
+):
+  | { type: 'MASTER' | 'REPLICA' | 'SENTINEL'; host: string; port: string; error: unknown }
+  | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const m = /^(Master|Replica|Sentinel) Client \((.+):(\d+)\): /.exec(err.message);
+  if (!m) return undefined;
+  return {
+    type: m[1].toUpperCase() as 'MASTER' | 'REPLICA' | 'SENTINEL',
+    host: m[2],
+    port: m[3],
+    error: err.cause ?? err,
+  };
 }
 
 /**
@@ -1290,6 +1381,8 @@ function getBaseClient(type: 'cache' | 'system') {
           return reconnectDelayMs(retries);
         },
     connectTimeout: config.timeout,
+    // node-redis 5.x default (6.x waits 30 s); see REDIS_KEEPALIVE_INITIAL_DELAY_MS.
+    keepAliveInitialDelay: REDIS_KEEPALIVE_INITIAL_DELAY_MS,
     // Socket-level inactivity guard (node-redis -> net.Socket.setTimeout): an IDLE timer reset
     // by any read/write. On a SILENT half-open the in-flight command is parked and blocks every
     // write incl. the keepalive PING, so the timer runs to completion and tears the dead socket
@@ -1324,7 +1417,16 @@ function getBaseClient(type: 'cache' | 'system') {
           const [host, port] = hp.trim().split(':');
           return { host, port: parseInt(port ?? '26379', 10) };
         }),
+        // Sentinel-level: RedisSentinel passes its RESP to the master/replica/Sentinel connections
+        // it opens, and its commandOptions to every command (6.x accepts neither inside
+        // nodeClientOptions/sentinelClientOptions).
+        RESP: REDIS_RESP_VERSION,
+        commandOptions: { ...REDIS_NO_COMMAND_TIMEOUT },
         nodeClientOptions: {
+          // RESP again for the pub/sub connection: RedisSentinel builds it from nodeClientOptions
+          // alone (sentinel/pub-sub-proxy.js), without the Sentinel-level RESP. The option type
+          // omits RESP here, hence the spread.
+          ...{ RESP: REDIS_RESP_VERSION },
           // Reuse the password already extracted from REDIS_SYS_URL.
           password: authConfig.password,
           socket: socketConfig,
@@ -1338,8 +1440,11 @@ function getBaseClient(type: 'cache' | 'system') {
         masterPoolSize: 2,
         replicaPoolSize: 0,
         scanInterval: 10_000,
-        // Keep sub-client errors local; we surface them via the client-error listener instead.
-        passthroughClientErrorEvents: false,
+        // Forward each master/replica/Sentinel connection's errors as an `error` on this client.
+        // RedisSentinel never re-emits its internal `client-error` event (6.3.0 forwards only
+        // error/connect/ready/reconnecting/end/topology-change), so this is the only way those
+        // errors reach us; attachSysSentinelListeners counts them (see sentinelSubClientError).
+        passthroughClientErrorEvents: true,
         // reserveClient: true pins ONE master lease at connect() (#reservedClientInfo) and routes
         // every master command through it, fully bypassing node-redis's racy shared-lease path:
         //   this.#masterClientInfo ??= await this.#internal.getClientLease();
@@ -1348,8 +1453,8 @@ function getBaseClient(type: 'cache' | 'system') {
         // call getClientLease(). Extra leases orphan (release guard uses `===`, so only the last
         // writer's lease is ever returned) and pin pool slots → with masterPoolSize:2 the pool
         // exhausts and any code needing a fresh master lease hangs (deadlock). This bug is present
-        // and UNFIXED upstream through at least node-redis 6.1.0 (verified byte-identical in
-        // 5.8.3 / 5.12.1 / 6.1.0) — it is version-independent, so pinning the reserved client is the
+        // and UNFIXED upstream through at least node-redis 6.3.0 (the same `??=` in 5.8.3 / 5.12.1 /
+        // 6.1.0 / 6.3.0 `_execute`) — it is version-independent, so pinning the reserved client is the
         // durable sidestep. The reserved lease is just an integer index into the master pool, which
         // transform() rebuilds IN PLACE (same ids) on a switch-master, so it repoints to the new
         // master on failover — no failover regression, and zero net connection delta (the pool still
@@ -1360,6 +1465,12 @@ function getBaseClient(type: 'cache' | 'system') {
     ? createCluster({
         // Use multiple root nodes for redundant topology discovery
         rootNodes: parseClusterNodes(connectionUrl),
+        // Cluster-level, not in `defaults`: RedisCluster hands its OWN `RESP` to every node
+        // connection, overriding `defaults` (cluster/cluster-slots.js #createClient), and passes
+        // its commandOptions with every routed command. A command sent on a node connection
+        // directly (cluster-pipelined-get) carries REDIS_NO_COMMAND_TIMEOUT itself.
+        RESP: REDIS_RESP_VERSION,
+        commandOptions: { ...REDIS_NO_COMMAND_TIMEOUT },
         defaults: {
           ...authConfig,
           socket: socketConfig,
@@ -1371,6 +1482,8 @@ function getBaseClient(type: 'cache' | 'system') {
       })
     : createClient({
         url: connectionUrl,
+        RESP: REDIS_RESP_VERSION,
+        commandOptions: { ...REDIS_NO_COMMAND_TIMEOUT },
         ...authConfig,
         socket: socketConfig,
         pingInterval,
@@ -1405,7 +1518,11 @@ function getBaseClient(type: 'cache' | 'system') {
   }
 
   // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
-  baseClient.on('error', (err: Error) => log(`Redis Error (${type})`, err));
+  baseClient.on('error', (err: Error) => {
+    // A Sentinel connection's own error is logged (and counted) by attachSysSentinelListeners.
+    if (isSysSentinel && sentinelSubClientError(err)) return;
+    log(`Redis Error (${type})`, err);
+  });
   baseClient.on('connect', () => log(`Redis connected (${type})`));
   baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
   baseClient.on('ready', () => log(`Redis ready! (${type})`));
@@ -1436,10 +1553,11 @@ function getBaseClient(type: 'cache' | 'system') {
       }`
     );
 
-    // Node-failure rediscovery. node-redis 5 emits no per-node events on the cluster client (the
-    // `node-error` / `node-disconnect` listeners that used to sit here never fired: node clients
-    // are created with their own `.on('error', console.error)`). The working hook is the
-    // per-node reconnect strategy in socketConfig above, which needs the client to rediscover on.
+    // Node-failure rediscovery. node-redis 5 emitted no per-node events on the cluster client (the
+    // `node-error` / `node-disconnect` listeners that used to sit here never fired). 6.x does emit
+    // them, with a frozen `{ host, port }` payload rather than the node object, but nothing listens:
+    // the working hook is the per-node reconnect strategy in socketConfig above, which needs the
+    // client to rediscover on.
     // NOT gated on the enhanced-failover flag: it only acts on node connection failures, is
     // throttled to one rediscover a second, and the flag-gated listeners it replaces were inert.
     // It has its own off switch, REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED.
@@ -1550,8 +1668,8 @@ function getBaseClient(type: 'cache' | 'system') {
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
   log(`Calling connect() for ${type} (single) client...`);
-  baseClient
-    .connect()
+  // sys: a connect() that gives up and closes the client (RedisSentinel on node-redis 6) is retried.
+  (isSystem ? connectSysClient(baseClient) : baseClient.connect())
     .then(() => {
       log(`${type} single client connected`);
     })
@@ -1594,8 +1712,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // cheap shared derivation — their `withTypeMapping` is side-effect-free, and a cluster client is
   // many sockets, so a second one would double them for no benefit.
   //
-  // TODO(upstream): file the RedisSentinel._commandOptionsProxy shared-`_self` mutation bug with
-  // node-redis — the correct behavior mirrors RedisClient (proxy-local `_commandOptions`).
+  // @redis/client 6.3.0 fixed the defect upstream: RedisSentinel._commandOptionsProxy now sets a
+  // proxy-local `_commandOptions` (sentinel-buffer-poisoning.test.ts pins it). The dedicated base
+  // is kept for now; with 6.x it is one extra sysRedis connection, not a correctness need.
   const isSysSentinel = type === 'system' && !!config.sysSentinels;
   let bufferClient: CustomRedisClient<K>;
   // Hoisted so the sys self-heal watchdog below can reconnect this dedicated Buffer-mode base
@@ -1864,7 +1983,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       const masters = await baseClient.masters;
       for (const master of masters) {
         const nodeClient = await baseClient.nodeClient(master);
-        yield* nodeClient.scanIterator(options);
+        // A node connection carries node-redis 6's 5 s command timeout (the cluster's
+        // commandOptions reach routed commands only); keep SCAN pages unbounded, as in 5.x.
+        yield* nodeClient.withCommandOptions({ ...REDIS_NO_COMMAND_TIMEOUT }).scanIterator(options);
       }
     } else {
       // Single node mode: use original native scanIterator
@@ -2430,6 +2551,14 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
     BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
+    // String, Buzz. The smallest two-way amount between a creator and one user that the
+    // counterparty review files. Ops-owned and deliberately without a default in code: the review
+    // skips, and logs that it skipped, until it is set.
+    COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
+    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
+    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
+    // and only new volume after that is filed again. No TTL.
+    COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -2876,6 +3005,17 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
+    // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
+    // session refresh. See user-creator.service.
+    USER_CREATOR: 'packed:caches:user-creator',
+    // Bearer-credential lookup: `<prefix>:<hash of the key>` -> the ApiKey row the bearer path
+    // reads. Personal and system keys only, positive results only, short TTL, tombstoned on
+    // revocation. See src/server/auth/api-key-principal-cache.ts.
+    API_KEY_PRINCIPAL: 'packed:caches:api-key-principal',
+    // `<prefix>:<apiKeyId>` — set-if-absent marker that lets one request per key per hour write
+    // `ApiKey.lastUsedAt`. Plain string value.
+    API_KEY_LAST_USED: 'caches:api-key-last-used',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
@@ -2903,6 +3043,8 @@ const REDIS_KEYS_UNPREFIXED = {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
     },
+    // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
+    IN_FLIGHT: 'trpc:in-flight',
   },
   MODEL: {
     GALLERY_SETTINGS: 'model:gallery-settings',

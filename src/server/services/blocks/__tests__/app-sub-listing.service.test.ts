@@ -149,6 +149,8 @@ beforeEach(() => {
   read.image.findUnique.mockResolvedValue({ userId: AUTHOR });
   // `getImage`'s anonymous read: a public image owned by the author.
   mockGetImage.mockResolvedValue({ id: 5, user: { id: AUTHOR } });
+  // `isImageInPublicPost`: the image is in a published, non-private post.
+  read.$queryRaw.mockResolvedValue([{ id: 5 }]);
   write.appSubListing.findUnique.mockResolvedValue(null);
   write.appSubListing.count.mockResolvedValue(0);
   write.appSubListing.create.mockImplementation(
@@ -315,15 +317,27 @@ describe('upsertSubListing — refusals', () => {
     await expect(upsert({ ...BODY, imageId: 5 })).resolves.toBeTruthy();
   });
 
-  // A card shows its image to every store visitor, so the image must already be public. The
-  // visibility rule is `getImage`'s anonymous read (published, non-private post, reviewed, not
-  // Blocked), which answers NOT_FOUND for anything else, including the owner's own unpublished
-  // image.
+  // A card shows its image to every store visitor, so the image must already be public:
+  // `getImage`'s anonymous read (reviewed, not Blocked, readable by anyone), which answers
+  // NOT_FOUND for anything else, including the owner's own unpublished image, and then the
+  // card's own rule that the image is in a published, non-private post (below).
   it("refuses the caller's own image when it is not public (e.g. an unpublished post)", async () => {
     mockGetImage.mockRejectedValueOnce(
       new TRPCError({ code: 'NOT_FOUND', message: 'No image with id 5' })
     );
     await expectError(upsert({ ...BODY, imageId: 5 }), 400, 'image_not_public');
+    expect(write.appSubListing.create).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  // `getImage` also serves a postless image to anyone when it is a published article's cover or
+  // on a public bounty. The card only shows an image in a published, non-private post, so such an
+  // image would be accepted here and then silently replaced by the parent's cover.
+  it('refuses a public image that is in no public post (an article cover or bounty image)', async () => {
+    read.$queryRaw.mockResolvedValueOnce([]);
+    await expectError(upsert({ ...BODY, imageId: 5 }), 400, 'image_not_public');
+    expect(mockGetImage).toHaveBeenCalledTimes(1);
+    expect(read.$queryRaw.mock.calls[0][0].values).toEqual([5]);
     expect(write.appSubListing.create).not.toHaveBeenCalled();
     expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });

@@ -9,6 +9,7 @@
   import ListCard from './ListCard.svelte';
   import { denied } from '$lib/permissions';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
 
   let {
     account,
@@ -33,6 +34,9 @@
 {#if form.error}
   <ErrorAlert class="mb-4" message={form.error} />
 {/if}
+{#if form.warning}
+  <WarningAlert class="mb-4" message={form.warning} />
+{/if}
 
 {#await account}
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -45,7 +49,7 @@
         title="Shop purchases"
         total={result.shopPurchases.items.length} capped={result.shopPurchases.truncated}
         shown={10}
-        hint="Refunding flags the purchase and removes the cosmetic. The Buzz is not returned automatically — use the Buzz section."
+        hint="Refunding flags the purchase and takes back what it granted: the cosmetic, a pack's cosmetics, or the box (its reward, once opened). The Buzz is not returned automatically — use the Buzz section."
       >
         {#snippet children(limit)}
           <ul class="space-y-1 text-sm">

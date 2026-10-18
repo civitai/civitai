@@ -16,6 +16,8 @@ import {
   getBankableAmount,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
+  RECEIVED_FROM_USER_SQL,
+  SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 
 const userId = 42;
@@ -34,11 +36,13 @@ function sqlOf(callIndex: number) {
 function mockLedger({
   snapshot,
   earned,
+  returned = 0,
   consumed,
   ingestSettled = true,
 }: {
   snapshot?: number;
   earned: number;
+  returned?: number;
   consumed: number;
   ingestSettled?: boolean;
 }) {
@@ -46,7 +50,7 @@ function mockLedger({
     const sql = parts.join('');
     if (sql.includes('AS balance')) return [{ balance: String(snapshot ?? 0) }];
     if (sql.includes('AS settled')) return ingestSettled ? [{ settled: 1 }] : [];
-    return [{ earned: String(earned), consumed: String(consumed) }];
+    return [{ earned: String(earned), returned: String(returned), consumed: String(consumed) }];
   });
 }
 
@@ -100,6 +104,40 @@ describe('getBankableAmount', () => {
       consumed: 30_000,
       remaining: 100_000,
     });
+  });
+
+  // Both arms on one fixture: the same 100k round trip counts in full when nothing went back, and
+  // counts nothing once the creator sent the same user 100k.
+  it('counts Buzz from a user only beyond what the creator sent that user', async () => {
+    mockLedger({ snapshot: 0, earned: 100_000, returned: 0, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(100_000);
+
+    mockLedger({ snapshot: 0, earned: 100_000, returned: 100_000, consumed: 0 });
+    expect(await getBankableAmount(userId, 0, afterSettle)).toEqual({
+      snapshot: 0,
+      earned: 0,
+      consumed: 0,
+      remaining: 0,
+    });
+  });
+
+  it('keeps the part of a payment that was not sent back', async () => {
+    mockLedger({ snapshot: 10_000, earned: 100_000, returned: 30_000, consumed: 0 });
+
+    const result = await getBankableAmount(userId, 0, afterSettle);
+
+    expect(result).toEqual({ snapshot: 10_000, earned: 70_000, consumed: 0, remaining: 80_000 });
+  });
+
+  // Sending Buzz back after banking it leaves a shortfall that later earnings fill first.
+  it('carries Buzz sent back after banking as a shortfall against later earnings', async () => {
+    mockLedger({ snapshot: 0, earned: 150_000, returned: 100_000, consumed: 100_000 });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
+
+    mockLedger({ snapshot: 0, earned: 230_000, returned: 100_000, consumed: 100_000 });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(30_000);
   });
 
   it('never reports a negative remaining amount', async () => {
@@ -226,6 +264,19 @@ describe('getBankableAmount', () => {
           WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
             AND date >= ${cutover}
             AND ${BANKABLE_EARNING_PREDICATE_SQL} ) AS earned,
+        ( SELECT sum(least(received.amount, sent.amount)) FROM (
+            SELECT fromAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
+            WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
+              AND date >= ${cutover}
+              AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+            GROUP BY counterparty
+          ) AS received
+          INNER JOIN (
+            SELECT toAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
+            WHERE fromAccountId = ${userId} AND ${SENT_TO_USER_SQL}
+              AND date >= ${cutover}
+            GROUP BY counterparty
+          ) AS sent ON sent.counterparty = received.counterparty ) AS returned,
         ( SELECT sumIf(amount, type = 'bank')
             + sumIf(amount, type = 'fee' AND description = 'Extraction fee')
           FROM buzzTransactions
@@ -321,6 +372,20 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
       .map((d) => `'${d}'`)
       .join(', ');
     expect(feeClause).toBe(expected);
+  });
+});
+
+describe('counterparty netting clauses', () => {
+  // A bank or system account is not a user who can be paid back, and bank account ids are month
+  // numbers that collide with user ids, so the account types are what make the pairing sound.
+  it('pairs only user Buzz accounts on both legs, Blue included', () => {
+    const userTypes = "'blue', 'green', 'yellow', 'red'";
+    expect(RECEIVED_FROM_USER_SQL).toBe(
+      `(fromAccountId > 0 AND fromAccountType IN (${userTypes}))`
+    );
+    expect(SENT_TO_USER_SQL).toBe(
+      `(fromAccountType IN (${userTypes}) AND toAccountId > 0 AND toAccountType IN (${userTypes}))`
+    );
   });
 });
 

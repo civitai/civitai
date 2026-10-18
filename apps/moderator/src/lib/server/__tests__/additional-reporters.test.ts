@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 /**
  * A report filed by several people is one row; the others ride in `details.additionalReports`, each
- * with its own words and a user id. The layout queues (user, model, post — `ReportList`) show every
+ * with its own words and a user id. The layout queues (user, model, post and the shared entity route — `ReportList`) show every
  * reporter's comment, so the folding has to
  * survive whatever shape the jsonb arrives in.
  */

@@ -602,9 +602,19 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
 export async function confirmMinorHashAutoFlag({
   modelId,
   userId,
+  reason,
+  note,
+  textHash,
+  recordTextScanRuling = true,
 }: {
   modelId: number;
   userId: number;
+  reason?: string;
+  note?: string;
+  /** Stamp the ruling only while the flag still carries the text the moderator saw. */
+  textHash?: string;
+  /** False when the caller has already recorded the ruling and only wants the sign-off. */
+  recordTextScanRuling?: boolean;
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -630,22 +640,73 @@ export async function confirmMinorHashAutoFlag({
     entityId: modelId,
     activity: 'setMinor',
   });
+
+  if (!recordTextScanRuling) return { hadVerdict: true, stamped: true };
+
+  // Affirming the flag is a ruling on the text-scan verdict too. A hash-only flag has no verdict to
+  // rule on, and the sign-off above has already happened, so a failed stamp is only logged.
+  let hadVerdict = false;
+  try {
+    const model = await dbWrite.model.findUnique({
+      where: { id: modelId },
+      select: { meta: true },
+    });
+    hadVerdict = hasTextScanVerdict(model?.meta, 'minor');
+    let stamped = hadVerdict;
+    if (hadVerdict) {
+      const changed = await stampModelTextScanAppeal({
+        modelId,
+        userId,
+        decision: 'appealUpheld',
+        labels: ['minor'],
+        via: 'moderator',
+        reason,
+        note,
+        expectTextHash: textHash,
+      });
+      if (textHash) stamped = changed > 0;
+    }
+    return { hadVerdict, stamped };
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'moderator minor ruling not recorded on confirm',
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return { hadVerdict, stamped: false };
+  }
 }
 
 export async function revertMinorHashAutoFlag({
   modelId,
   userId,
   recordTextScanRuling,
+  reason,
+  note,
+  textHash,
 }: {
   modelId: number;
   userId: number;
+  reason?: string;
+  note?: string;
   /** A moderator's direct revert; an appeal records its own grant instead. */
   recordTextScanRuling?: boolean;
+  /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
+  textHash?: string;
 }) {
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
   if (
     recordTextScanRuling &&
-    !(await stampModeratorTextScanRuling({ modelId, userId, label: 'minor' }))
+    !(await stampModeratorTextScanRuling({
+      modelId,
+      userId,
+      label: 'minor',
+      reason,
+      note,
+      textHash,
+    }))
   )
     logToAxiom({
       type: 'error',
@@ -724,7 +785,7 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE a."entityType" = 'Model'
+    WHERE a."entityType" = 'Model' AND a.category IS NULL
       -- Cast rather than parameterize the enum: Prisma sends the value as text and
       -- Postgres has no AppealStatus = text operator.
       AND a.status::text = ${AppealStatus.Pending}
@@ -1095,9 +1156,11 @@ export async function rollbackMinorHashAutoFlags({
 // The 30-day window hides an unreviewed flag from the queue; this makes that
 // durable. Kept as `source: 'auto'` on purpose — moderatorMinorSeedPredicate
 // excludes 'auto', so a flag no human ever looked at never becomes the seed for
-// further automated flags. No status filter on the Appeal check: any appeal at
-// all means a human already looked, so sweeping it up as "nobody objected"
-// would overwrite that decision with a presumption.
+// further automated flags. No status filter for an in-app appeal: any one at all
+// means a human already looked, so sweeping it up as "nobody objected" would
+// overwrite that decision with a presumption. A site-form appeal (category set) is
+// decided in a queue that rules on the unpublish, not the flag, so it holds the
+// sweep only while Pending.
 export async function acceptExpiredMinorAutoFlags({
   dryRun,
   limit,
@@ -1117,6 +1180,7 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
     `;
     return { accepted: row?.count ?? 0 };
@@ -1136,6 +1200,7 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
       ORDER BY m.id
       LIMIT ${limit}

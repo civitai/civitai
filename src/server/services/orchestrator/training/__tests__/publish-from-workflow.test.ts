@@ -330,6 +330,56 @@ describe('createDraftModelFromWorkflow', () => {
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
   });
 
+  // The placeholder's url is an orchestrator blob the scanner can't resolve; left exists=null,
+  // the scan fallback job submits it and only tombstones it after a failed pre-flight. Stamping
+  // virusScanResult Success instead would be a fake scan result, so the fix is exists=false.
+  it('takes the Training Data placeholder out of the scan queue without faking a scan', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+    });
+
+    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 300 },
+      data: { exists: false },
+    });
+  });
+
+  it("carries the run's LoRA type as the category tag and trainingDetails.type", async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'My Style', loraType: 'style' } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].tagsOnModels).toEqual([
+      { name: 'style', isCategory: true },
+    ]);
+    expect(mockUpsertModelVersion.mock.calls[0][0].trainingDetails.type).toBe('Style');
+  });
+
+  it.each([undefined, 'foo'])('leaves the category unset for LoRA type %s', async (loraType) => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'Run', loraType } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].tagsOnModels).toBeUndefined();
+    expect(mockUpsertModelVersion.mock.calls[0][0].trainingDetails.type).toBe('Character');
+  });
+
+  it('writes a published base model for an ACE-Step run', async () => {
+    const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
+    base.steps[0].input = { ...base.steps[0].input, ecosystem: 'ace_step_15' };
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: base as unknown as Workflow,
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('ACE Audio');
+  });
+
   it('falls back to the last available epoch when the selected number has no blob', async () => {
     await createDraftModelFromWorkflow({
       user: USER,

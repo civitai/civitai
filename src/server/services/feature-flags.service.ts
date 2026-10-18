@@ -218,6 +218,8 @@ const featureFlags = createFeatureFlags({
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
   // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
   ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
+  // The on-site appeal form (`/appeal`) and the appeal box on the banned screen.
+  siteAppealForm: { availability: ['mod'], fliptKey: 'site-appeal-form' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
@@ -238,6 +240,8 @@ const featureFlags = createFeatureFlags({
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   // Training Studio only — the old trainer has no Flux.3 Klein entry.
   flux3KleinTraining: { availability: ['mod'], fliptKey: 'flux3-klein-training' },
+  // Training Studio only.
+  mossImageTraining: { availability: ['mod'], fliptKey: 'moss-image-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   ltx25Training: { availability: ['public'], fliptKey: 'ltx25-training' },
@@ -462,6 +466,9 @@ const featureFlags = createFeatureFlags({
   // not strip cosmetics people paid for, only stop new packs being listed,
   // discovered or sold.
   cosmeticPacks: { availability: ['mod'], fliptKey: 'cosmetic-packs' },
+  // Mystery boxes: seeing, buying and opening one. Like `cosmeticPacks` it never takes back what a
+  // buyer already received.
+  mysteryBox: { availability: ['mod'], fliptKey: 'mystery-box' },
   // Perceptual near-match surfacing in creator-shop review. `availability: []` =
   // DARK and FAILS CLOSED, and it gates the LOOKUP as well as the panel: at the
   // current 64-bit hash width the two badges we know were imitations of official
@@ -794,6 +801,13 @@ const featureFlags = createFeatureFlags({
   // Admits `kind: 'checkpoint'` (ATTACH_BM checkpoint lists). Read only behind
   // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
   resourceIntentCheckpoint: { availability: [], fliptKey: 'resource-intent-checkpoint' },
+  // The v1 content-tag arm (docs/resource-intent-primitive.md, "The v1_tags arm"). Read only behind
+  // `resourceIntentJev`, dark like it. `resourceIntentV1` serves it for add-ons over
+  // `resourceIntentPoolMerge`; `…V1Shadow` only records it; `…JudgeCapture` records route prompt
+  // text while a judged sample is drawn.
+  resourceIntentV1: { availability: [], fliptKey: 'resource-intent-v1' },
+  resourceIntentV1Shadow: { availability: [], fliptKey: 'resource-intent-v1-shadow' },
+  resourceIntentJudgeCapture: { availability: [], fliptKey: 'resource-intent-judge-capture' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

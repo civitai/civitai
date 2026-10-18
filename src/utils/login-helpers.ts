@@ -45,6 +45,7 @@ export const loginRedirectReasons = {
   'view-content': 'You need to log in to view this content',
   'create-crucible': 'You need to be logged in to create a crucible',
   'judge-crucible': 'You need to be logged in to judge crucible entries',
+  'submit-appeal': 'You need to be logged in to submit an appeal',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

@@ -2,13 +2,14 @@ import { fail, type RequestEvent } from '@sveltejs/kit';
 import { setReportStatus } from '$lib/server/reports.service';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { reportModerationActions } from '$lib/server/report-actions';
-import { ReportStatus } from '$lib/reports';
+import { ReportEntity, ReportStatus, reportPath } from '$lib/reports';
 
 // The post queue's forms, taken by both pages that render a post — the bare queue and `[postId]`:
 // ruling on a report, the post's images, and a strike or notification for its owner (the shared report
-// actions, gated on `/users` as on the user queue), plus the queue's own sweep.
+// actions: the report on this page's path, the images and the owner on their action grants), plus the
+// queue's own sweep.
 export const postQueueActions = {
-  ...reportModerationActions('/users'),
+  ...reportModerationActions(reportPath(ReportEntity.Post)),
 
   /**
    * Retool's `ActionAllPostReports`. Post reports whose post is already entirely blocked are resolved

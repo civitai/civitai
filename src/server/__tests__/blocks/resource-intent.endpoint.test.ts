@@ -80,6 +80,14 @@ const CLAIMS = {
 };
 
 const VALID_BODY = { prompt: 'a photorealistic portrait of a knight', baseModel: 'SDXL 1.0' };
+/** What the service is handed with only `resourceIntentJev` on. */
+const FLAGS_OFF_CTX = {
+  browsingLevel: 31,
+  poolMerge: false,
+  v1: false,
+  v1Shadow: false,
+  judgeCapture: false,
+};
 
 const SERVICE_RESULT = {
   degraded: false,
@@ -192,6 +200,36 @@ describe('the auth/clamp mirror with generation-resources.ts', () => {
     expect(mockGetResourceIntent.mock.calls[1][1]).toMatchObject({ poolMerge: true });
   });
 
+  it('🔴 the v1 flags reach the service each as its own field; absent, each is false', async () => {
+    await call({});
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual(FLAGS_OFF_CTX);
+    const flags = {
+      resourceIntentV1: 'v1',
+      resourceIntentV1Shadow: 'v1Shadow',
+      resourceIntentJudgeCapture: 'judgeCapture',
+    } as const;
+    for (const [flag, field] of Object.entries(flags)) {
+      mockGetResourceIntent.mockClear();
+      mockGetFeatureFlags.mockReturnValue({ resourceIntentJev: true, [flag]: true });
+      await call({});
+      expect(mockGetResourceIntent.mock.calls[0][1], flag).toEqual({
+        ...FLAGS_OFF_CTX,
+        [field]: true,
+      });
+    }
+  });
+
+  it('the v1 flags alone do not open the route', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentV1: true,
+      resourceIntentV1Shadow: true,
+      resourceIntentJudgeCapture: true,
+    });
+    const { res } = await call({});
+    expect(res.statusCode).toBe(404);
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
   it('resourceIntentPoolMerge alone does not open the route', async () => {
     mockGetFeatureFlags.mockReturnValue({ resourceIntentPoolMerge: true });
     const { res } = await call({});
@@ -242,7 +280,7 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     await call({ body: { ...VALID_BODY, kind: 'addon' } });
     expect(mockGetResourceIntent).toHaveBeenCalledTimes(2);
     expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(VALID_BODY);
-    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual({ browsingLevel: 31, poolMerge: false });
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual(FLAGS_OFF_CTX);
     expect(mockGetResourceIntent.mock.calls[1][0]).toEqual({ ...VALID_BODY, kind: 'addon' });
   });
 
@@ -254,7 +292,7 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     const { res } = await call({ body: CHECKPOINT_BODY });
     expect(res.statusCode).toBe(200);
     expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(CHECKPOINT_BODY);
-    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual({ browsingLevel: 31, poolMerge: false });
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual(FLAGS_OFF_CTX);
   });
 
   it('🔴 checkpoint mode requires baseModel: 400 even with the flag on', async () => {
@@ -411,7 +449,7 @@ describe('needs → hostedModels', () => {
     const { res } = await call({ __claims: { ...CLAIMS, maxBrowsingLevel: 3 }, body });
     expect(mockGetResourceIntent.mock.calls[0][0]).toEqual({ ...VALID_BODY, kind: 'checkpoint' });
     const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
-    expect(hosted.map((h) => h.key)).toEqual(['Imagen4', 'MAI']);
+    expect(hosted.map((h) => h.key)).toEqual(['MAI']);
   });
 
   it('a degraded primitive response still carries the hosted list', async () => {

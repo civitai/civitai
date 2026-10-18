@@ -3,9 +3,9 @@
  *
  * Shared because the two files that set these numbers only make sense read
  * together. Both are page-context numbers on paper: what actually keeps them
- * off the app's own ladder (`shared/constants/app-layout.constants.ts`) is the
- * centring transform on `ImageStickerOverlay`'s surface div, which makes that
- * div a stacking context. Restyle it to flex centring and these escape.
+ * off the app's own ladder (`shared/constants/app-layout.constants.ts`) is
+ * `isolate` on `ImageStickerOverlay`'s surface div, which makes that div a
+ * stacking context. Drop it and these escape.
  */
 
 /** The owner's approve/decline, above every placed sticker; below the draft. */

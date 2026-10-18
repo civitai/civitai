@@ -41,6 +41,7 @@ import type {
 } from '~/shared/utils/storyline';
 import {
   STORYLINE_CHILDREN_LIMIT,
+  STORYLINE_GRAPH_LIMIT,
   STORYLINE_MAX_COLLABORATORS,
   STORYLINE_MAX_CONTRIBUTORS,
   STORYLINE_PATH_LIMIT,
@@ -57,6 +58,7 @@ import {
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
   allBrowsingLevelsFlag,
   getHighestBrowsingLevelBit,
@@ -297,6 +299,16 @@ async function assertPostCanBeChapter(
 const lockParentChapter = (db: Db, parentChapterId: number) =>
   db.$queryRaw`SELECT id FROM "StorylineChapter" WHERE id = ${parentChapterId} FOR NO KEY UPDATE`;
 
+/** Locks the parent so two concurrent adds cannot both take its canon slot; true when it has none. */
+async function takesCanonSlot(db: Db, parentChapterId: number) {
+  await lockParentChapter(db, parentChapterId);
+  const existingCanon = await db.storylineChapterEdge.findFirst({
+    where: { parentChapterId, canon: true },
+    select: { chapterId: true },
+  });
+  return !existingCanon;
+}
+
 /**
  * Inserts a chapter under a parent, and marks it canon when the storyline's owner wrote it and
  * the parent has no canon child yet. Edges always point at the parent CHAPTER, never its post,
@@ -329,15 +341,7 @@ async function insertChildChapter(
     select: { id: true },
   });
 
-  let canon = false;
-  if (authorId === ownerId) {
-    await lockParentChapter(db, parent.id);
-    const existingCanon = await db.storylineChapterEdge.findFirst({
-      where: { parentChapterId: parent.id, canon: true },
-      select: { chapterId: true },
-    });
-    canon = !existingCanon;
-  }
+  const canon = authorId === ownerId && (await takesCanonSlot(db, parent.id));
 
   await db.storylineChapterEdge.create({
     data: {
@@ -926,25 +930,39 @@ export async function addOwnerChapter({
   });
 }
 
-/** Makes one child the owner's main route out of its parent, replacing the previous one. */
+/**
+ * Makes one child the owner's main route out of its parent, replacing the previous one. A chapter
+ * with several parents needs `parentChapterId` to say which parent's route it becomes.
+ */
 export async function setCanonChapter({
   chapterId,
+  parentChapterId,
   userId,
   isModerator,
 }: {
   chapterId: number;
+  parentChapterId?: number;
   userId: number;
   isModerator?: boolean;
 }) {
-  const edge = await dbWrite.storylineChapterEdge.findFirst({
-    where: { chapterId },
+  const edges = await dbWrite.storylineChapterEdge.findMany({
+    where: { chapterId, parentChapterId },
     select: {
       parentChapterId: true,
       storylineId: true,
       chapter: { select: { removedAt: true } },
     },
+    take: 2,
   });
-  if (!edge) throw throwBadRequestError('The first chapter is always the main route');
+  const [edge] = edges;
+  if (!edge)
+    throw throwBadRequestError(
+      parentChapterId
+        ? 'That chapter does not continue from this one'
+        : 'The first chapter is always the main route'
+    );
+  if (edges.length > 1)
+    throw throwBadRequestError('This chapter continues several chapters: choose which one');
   await getOwnedStoryline({ storylineId: edge.storylineId, userId, isModerator });
   if (edge.chapter.removedAt)
     throw throwBadRequestError('A removed chapter cannot be the main route');
@@ -960,6 +978,141 @@ export async function setCanonChapter({
       data: { canon: true },
     });
   });
+}
+
+const storylineEdges = (db: Db | typeof dbRead, storylineId: number) =>
+  db.storylineChapterEdge.findMany({
+    where: { storylineId },
+    select: { chapterId: true, parentChapterId: true },
+  });
+
+/**
+ * The owner (or a moderator) offers an existing chapter as a way on from `parentChapterId`, so
+ * two branches rejoin at it. The chapter gains a parent and keeps its depth.
+ */
+export async function linkStorylineChapter({
+  parentChapterId,
+  chapterId,
+  userId,
+  isModerator,
+}: {
+  parentChapterId: number;
+  chapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  if (parentChapterId === chapterId) throw throwBadRequestError('A chapter cannot continue itself');
+  const parent = await dbWrite.storylineChapter.findUnique({
+    where: { id: parentChapterId },
+    select: { storylineId: true },
+  });
+  if (!parent) throw throwNotFoundError('Chapter not found');
+  const { storylineId } = parent;
+  await getOwnedStoryline({ storylineId, userId, isModerator });
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // The whole storyline, not the parent: two links judged at once could each pass the loop
+      // check alone and make a loop together.
+      await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE`;
+      const storyline = await tx.storyline.findUnique({
+        where: { id: storylineId },
+        select: { tosViolation: true },
+      });
+      if (storyline?.tosViolation) throw throwBadRequestError('This storyline was taken down');
+      const chapters = await tx.storylineChapter.findMany({
+        where: { id: { in: [parentChapterId, chapterId] }, storylineId },
+        select: { id: true, depth: true, removedAt: true },
+      });
+      const target = chapters.find((c) => c.id === chapterId);
+      if (chapters.length < 2 || !target) throw throwNotFoundError('Chapter not found');
+      if (chapters.some((c) => c.removedAt))
+        throw throwBadRequestError('A removed chapter cannot be joined');
+      if (target.depth === 0)
+        throw throwBadRequestError('The first chapter cannot continue another chapter');
+      const judge = createStorylineLinkJudge(
+        await storylineEdges(tx, storylineId),
+        parentChapterId
+      );
+      const refusal = judge(chapterId);
+      if (refusal) throw throwBadRequestError(STORYLINE_LINK_REFUSALS[refusal]);
+
+      await tx.storylineChapterEdge.create({
+        data: {
+          storylineId,
+          chapterId,
+          parentChapterId,
+          canon: await takesCanonSlot(tx, parentChapterId),
+        },
+      });
+    });
+  } catch (error) {
+    // Until the rejoin migration is applied, the old one-parent index refuses a second parent.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+      throw throwBadRequestError('Joining chapters is not available yet');
+    throw error;
+  }
+}
+
+const STORYLINE_LINK_TARGETS_LIMIT = 100;
+
+/**
+ * The chapters `linkStorylineChapter` would accept from `parentChapterId` (the first 100), for the
+ * owner's picker; chapters the owner is shown a tombstone for are left out.
+ */
+export async function getStorylineLinkTargets({
+  parentChapterId,
+  userId,
+  isModerator,
+}: {
+  parentChapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const parent = await dbRead.storylineChapter.findUnique({
+    where: { id: parentChapterId },
+    select: { storylineId: true, removedAt: true },
+  });
+  if (!parent) throw throwNotFoundError('Chapter not found');
+  if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be joined');
+  const storyline = await getOwnedStoryline({
+    storylineId: parent.storylineId,
+    userId,
+    isModerator,
+  });
+  const viewer = { id: userId, isModerator };
+  const [chapters, edges, blockedUserIds] = await Promise.all([
+    dbRead.storylineChapter.findMany({
+      where: { storylineId: storyline.id, removedAt: null, depth: { gt: 0 } },
+      select: { id: true, depth: true, post: { select: chapterPostSelect } },
+      orderBy: [{ depth: 'asc' }, { id: 'asc' }],
+    }),
+    storylineEdges(dbRead, storyline.id),
+    getViewerExcludedIds(viewer),
+  ]);
+  const judge = createStorylineLinkJudge(edges, parentChapterId);
+  const targets = chapters
+    .filter((chapter) => chapter.id !== parentChapterId && !judge(chapter.id))
+    .map((chapter) =>
+      toPathChapter(
+        chapter,
+        chapter.post,
+        getStorylineChapterTombstone({
+          post: chapter.post,
+          removed: false,
+          viewer,
+          maxNsfwLevel: storylineCeiling(storyline),
+          browsingLevel: allBrowsingLevelsFlag,
+          blockedUserIds,
+        })
+      )
+    )
+    .filter((chapter) => !chapter.tombstone)
+    .slice(0, STORYLINE_LINK_TARGETS_LIMIT);
+  return withFirstImages(
+    getStorylineImageGate(viewer, allBrowsingLevelsFlag, blockedUserIds),
+    targets
+  );
 }
 
 export async function addStorylineCollaborator({
@@ -1208,6 +1361,58 @@ export async function getStoryline({
   };
 }
 
+/** A route's row, with its parents oldest link first. */
+type RouteRow = {
+  id: number;
+  postId: number | null;
+  depth: number;
+  removedAt: Date | null;
+  parentIds: number[];
+};
+
+/** Where other branches join a route: each chapter's parents other than the chapter before it. */
+async function getRouteJoins(
+  rows: RouteRow[],
+  tombstoneOf: (
+    post: StorylineChapterPost | null,
+    removed: boolean
+  ) => StorylineTombstoneReason | null
+) {
+  const joinIds = new Map<number, number[]>();
+  rows.forEach((row, i) => {
+    const others = i > 0 ? row.parentIds.filter((id) => id !== rows[i - 1].id) : [];
+    if (others.length) joinIds.set(row.id, others);
+  });
+  const joins = new Map<number, StorylinePathChapter[]>();
+  const ids = [...new Set([...joinIds.values()].flat())];
+  if (!ids.length) return joins;
+
+  const parents = await dbRead.storylineChapter.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+  });
+  const byId = new Map(
+    parents.map((p) => [p.id, toPathChapter(p, p.post, tombstoneOf(p.post, !!p.removedAt))])
+  );
+  for (const [id, parentIds] of joinIds)
+    joins.set(
+      id,
+      parentIds.flatMap((parentId) => byId.get(parentId) ?? [])
+    );
+  return joins;
+}
+
+/**
+ * A route's chapters with their numbers on it: `depth` counts from the route's first row, so a
+ * chapter with several parents is numbered by the way the reader came, not by its first parent.
+ */
+const onRoute = <T extends { depth: number }>(rows: RouteRow[], chapters: T[]) =>
+  chapters.map((chapter, i) => ({
+    ...chapter,
+    depth: (rows[0]?.depth ?? 0) + i,
+    parentCount: rows[i].parentIds.length,
+  }));
+
 /**
  * The owner's main route from the first chapter: each chapter's canon child in turn, at most
  * `STORYLINE_PATH_LIMIT` chapters, with tombstones as in the reading path and how many ways on
@@ -1231,9 +1436,7 @@ async function getStorylineMainPath({
   /** A caller reading other images for the same reader passes its own. */
   gate?: StorylineImageGateSource;
 }) {
-  const rows = await dbRead.$queryRaw<
-    { id: number; postId: number | null; depth: number; removedAt: Date | null }[]
-  >`
+  const rows = await dbRead.$queryRaw<RouteRow[]>`
     WITH RECURSIVE main AS (
       SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
       FROM "StorylineChapter" c
@@ -1245,13 +1448,27 @@ async function getStorylineMainPath({
       JOIN "StorylineChapter" ch ON ch.id = e."chapterId"
       WHERE main.hops < ${STORYLINE_PATH_LIMIT - 1}
     )
-    SELECT id, "postId", depth, "removedAt" FROM main ORDER BY depth
+    SELECT main.id, main."postId", main.depth, main."removedAt",
+      ARRAY(
+        SELECT e."parentChapterId" FROM "StorylineChapterEdge" e
+        WHERE e."chapterId" = main.id ORDER BY e."createdAt", e."parentChapterId"
+      )::int[] AS "parentIds"
+    FROM main ORDER BY hops
   `;
   if (!rows.length) return [];
 
   const chapterIds = rows.map((r) => r.id);
   const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
-  const [posts, childCounts] = await Promise.all([
+  const tombstoneOf = (post: StorylineChapterPost | null, removed: boolean) =>
+    getStorylineChapterTombstone({
+      post,
+      removed,
+      viewer,
+      maxNsfwLevel: ceiling,
+      browsingLevel,
+      blockedUserIds,
+    });
+  const [posts, childCounts, joins] = await Promise.all([
     postIds.length
       ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: castChapterPostSelect })
       : [],
@@ -1260,29 +1477,23 @@ async function getStorylineMainPath({
       where: { parentChapterId: { in: chapterIds } },
       _count: { _all: true },
     }),
+    getRouteJoins(rows, tombstoneOf),
   ]);
   const postById = new Map(posts.map((p) => [p.id, p]));
   const childCountById = new Map(childCounts.map((c) => [c.parentChapterId, c._count._all]));
 
   const route = rows.map((row) => {
     const post = row.postId != null ? postById.get(row.postId) ?? null : null;
-    const tombstone = getStorylineChapterTombstone({
-      post,
-      removed: !!row.removedAt,
-      viewer,
-      maxNsfwLevel: ceiling,
-      browsingLevel,
-      blockedUserIds,
-    });
-    const chapter = toPathChapter(row, post, tombstone);
+    const chapter = toPathChapter(row, post, tombstoneOf(post, !!row.removedAt));
     return {
       ...chapter,
       // The author as the page's cast shows them, on a chapter the reader is shown.
       post: chapter.post && post ? { ...chapter.post, user: toCastUser(post.user) } : null,
       childCount: childCountById.get(row.id) ?? 0,
+      joins: joins.get(row.id) ?? [],
     };
   });
-  return withFirstImages(gate, route);
+  return withFirstImages(gate, onRoute(rows, route));
 }
 
 /**
@@ -1318,6 +1529,58 @@ export async function getStorylineCanonAhead({
   });
   // The route starts at the chapter asked about; the reader is already on it.
   return route.slice(1);
+}
+
+/**
+ * Every chapter of a storyline and every link between them, for the Story page's map, with
+ * tombstones as in the reading path. At most `STORYLINE_GRAPH_LIMIT` chapters, nearest chapter 1
+ * first, so each one returned has its first parent too; `truncated` says there are more. Links
+ * come oldest first, only between chapters returned.
+ */
+export async function getStorylineGraph({
+  id,
+  viewer,
+  browsingLevel,
+}: {
+  id: number;
+  viewer: Viewer;
+  browsingLevel: number;
+}) {
+  const { storyline, blockedUserIds } = await getStorylineForRead(id, viewer, browsingLevel);
+  const rows = await dbRead.storylineChapter.findMany({
+    where: { storylineId: id },
+    select: { id: true, depth: true, removedAt: true, post: { select: chapterPostSelect } },
+    orderBy: [{ depth: 'asc' }, { id: 'asc' }],
+    take: STORYLINE_GRAPH_LIMIT + 1,
+  });
+  const chapters = rows.slice(0, STORYLINE_GRAPH_LIMIT);
+  const ids = new Set(chapters.map((c) => c.id));
+  const edges = ids.size
+    ? await dbRead.storylineChapterEdge.findMany({
+        where: { storylineId: id, chapterId: { in: [...ids] } },
+        select: { chapterId: true, parentChapterId: true, canon: true },
+        orderBy: [{ createdAt: 'asc' }, { parentChapterId: 'asc' }],
+      })
+    : [];
+
+  const tombstoneOf = (post: StorylineChapterPost | null, removed: boolean) =>
+    getStorylineChapterTombstone({
+      post,
+      removed,
+      viewer,
+      maxNsfwLevel: storyline.maxNsfwLevel,
+      browsingLevel,
+      blockedUserIds,
+    });
+  return {
+    rootChapterId: chapters[0]?.depth === 0 ? chapters[0].id : null,
+    chapters: await withFirstImages(
+      getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
+      chapters.map((c) => toPathChapter(c, c.post, tombstoneOf(c.post, !!c.removedAt)))
+    ),
+    edges: edges.filter((e) => ids.has(e.parentChapterId)),
+    truncated: rows.length > STORYLINE_GRAPH_LIMIT,
+  };
 }
 
 /**
@@ -1517,24 +1780,30 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
 
 /**
  * The reading path ending at `chapterId`, in order. A chapter this reader may not see is a
- * tombstone carrying the reason, never an error, so the chapters after it stay reachable. v1
- * chapters have one parent, so the path is unique.
+ * tombstone carrying the reason, never an error, so the chapters after it stay reachable.
+ *
+ * A chapter where branches rejoin has several parents. The path takes the one in `via` (the way
+ * the reader came), else the oldest link, so a path is still one line; a `via` on no route to the
+ * chapter changes nothing. Each chapter's `joins` are the other parents, and `depth` is its place
+ * on this route.
  *
  * At most `STORYLINE_PATH_LIMIT` chapters, the ones nearest `chapterId`; `hasEarlier` says the
  * path starts further back, and the reader pages back by asking for the first chapter returned.
  */
 export async function getStorylinePath({
   chapterId,
+  via = [],
   viewer,
   browsingLevel,
 }: {
   chapterId: number;
+  via?: number[];
   viewer: Viewer;
   browsingLevel: number;
 }) {
   const target = await dbRead.storylineChapter.findUnique({
     where: { id: chapterId },
-    select: { storylineId: true, depth: true },
+    select: { storylineId: true },
   });
   if (!target) throw throwNotFoundError('Chapter not found');
   const { storyline, blockedUserIds } = await getStorylineForRead(
@@ -1543,50 +1812,65 @@ export async function getStorylinePath({
     browsingLevel
   );
 
-  // Bounded by the target's depth and the window, so a corrupt edge cannot loop forever.
-  const maxHops = Math.min(target.depth, STORYLINE_PATH_LIMIT - 1);
-  const rows = await dbRead.$queryRaw<
-    { id: number; postId: number | null; depth: number; removedAt: Date | null }[]
-  >`
+  // Not bounded by the target's depth: a route through a longer branch exceeds its first-parent
+  // distance. The window and `seen` bound the walk.
+  const rows = await dbRead.$queryRaw<RouteRow[]>`
     WITH RECURSIVE path AS (
-      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops
+      SELECT c.id, c."postId", c.depth, c."removedAt", 0 AS hops, ARRAY[c.id] AS seen
       FROM "StorylineChapter" c
       WHERE c.id = ${chapterId}
       UNION ALL
-      SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1
+      SELECT p.id, p."postId", p.depth, p."removedAt", path.hops + 1, path.seen || p.id
       FROM path
-      JOIN "StorylineChapterEdge" e ON e."chapterId" = path.id
-      JOIN "StorylineChapter" p ON p.id = e."parentChapterId"
-      WHERE path.hops < ${maxHops}
+      CROSS JOIN LATERAL (
+        SELECT e."parentChapterId" FROM "StorylineChapterEdge" e
+        WHERE e."chapterId" = path.id
+        ORDER BY e."parentChapterId" = ANY(${via}::int[]) DESC, e."createdAt", e."parentChapterId"
+        LIMIT 1
+      ) pick
+      JOIN "StorylineChapter" p ON p.id = pick."parentChapterId"
+      WHERE path.hops < ${STORYLINE_PATH_LIMIT - 1} AND p.id <> ALL(path.seen)
     )
-    SELECT id, "postId", depth, "removedAt" FROM path ORDER BY depth
+    SELECT path.id, path."postId", path.depth, path."removedAt",
+      ARRAY(
+        SELECT e."parentChapterId" FROM "StorylineChapterEdge" e
+        WHERE e."chapterId" = path.id ORDER BY e."createdAt", e."parentChapterId"
+      )::int[] AS "parentIds"
+    FROM path ORDER BY hops DESC
   `;
 
-  const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
-  const posts = postIds.length
-    ? await dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
-    : [];
-  const postById = new Map(posts.map((p) => [p.id, p]));
-
-  const chapters = rows.map((row) => {
-    const post = row.postId != null ? postById.get(row.postId) ?? null : null;
-    const tombstone = getStorylineChapterTombstone({
+  const tombstoneOf = (post: StorylineChapterPost | null, removed: boolean) =>
+    getStorylineChapterTombstone({
       post,
-      removed: !!row.removedAt,
+      removed,
       viewer,
       // Already the ceiling chapters are held to: `getStorylineForRead` applies it.
       maxNsfwLevel: storyline.maxNsfwLevel,
       browsingLevel,
       blockedUserIds,
     });
-    return toPathChapter(row, post, tombstone);
+  const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
+  const [posts, joins] = await Promise.all([
+    postIds.length
+      ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
+      : [],
+    getRouteJoins(rows, tombstoneOf),
+  ]);
+  const postById = new Map(posts.map((p) => [p.id, p]));
+
+  const chapters = rows.map((row) => {
+    const post = row.postId != null ? postById.get(row.postId) ?? null : null;
+    return {
+      ...toPathChapter(row, post, tombstoneOf(post, !!row.removedAt)),
+      joins: joins.get(row.id) ?? [],
+    };
   });
 
   return {
     storyline,
     chapters: await withFirstImages(
       getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      chapters
+      onRoute(rows, chapters)
     ),
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };
@@ -1602,6 +1886,7 @@ const childEdgeSelect = {
       createdAt: true,
       removedAt: true,
       post: { select: chapterPostSelect },
+      _count: { select: { parents: true } },
     },
   },
 } satisfies Prisma.StorylineChapterEdgeSelect;
@@ -1689,6 +1974,7 @@ export async function getStorylineChildren({
     });
     return {
       ...toPathChapter(chapter, chapter.post, tombstone),
+      parentCount: chapter._count.parents,
       rank,
       readers: readers.get(chapter.id) ?? 0,
       createdAt: chapter.createdAt,

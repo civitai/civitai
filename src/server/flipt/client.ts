@@ -207,6 +207,23 @@ export enum FLIPT_FEATURE_FLAGS {
   // Boolean only.
   RESOURCE_INTENT_COOC_CHECKPOINT_SECTION = 'resource-intent-cooc-checkpoint-section',
 
+  // Runs build-resource-intent-tag-index (the weekly v1 content-tag index build). DEFAULT-OFF. Turn
+  // it on only after the ResourceIntentVocabulary and ResourceIntentTagIndexSnapshot migrations, and
+  // 20261106120000_resource_intent_tag_index_snapshot_payload_cap (without it every production build
+  // refuses before reading anything), are applied in that environment, a vocabulary is frozen, and the
+  // build's env and grants are in place (docs/resource-intent-primitive.md, "v1 content tags").
+  // Boolean only.
+  RESOURCE_INTENT_TAG_INDEX_BUILD = 'resource-intent-tag-index-build',
+
+  // Lets a pod hold the v1 tag index in memory (resource-intent-tags/holder.ts). DEFAULT-OFF: off,
+  // an unknown flag or an unreachable Flipt holds nothing, reads no snapshot, and drops one already
+  // held. On, each pod whose request path asks for the index downloads and keeps the newest ready
+  // snapshot (about 780 MiB per pod decoded at full coverage, October 2026, and about twice that
+  // while reloading; docs/resource-intent-primitive.md, "Holder"), so turn it
+  // on only once a ready snapshot exists and the pods that will serve it have
+  // RESOURCE_INTENT_TAG_INDEX_BUCKET and the memory. Boolean only.
+  RESOURCE_INTENT_TAG_INDEX_HOLDER = 'resource-intent-tag-index-holder',
+
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
   // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).
   //

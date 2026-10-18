@@ -33,6 +33,8 @@ export const storylineCeiling = (storyline: { maxNsfwLevel: number; minorByScan:
 export const STORYLINE_CHILDREN_LIMIT = 200;
 /** Most chapters one path read returns, ending at the chapter asked for. */
 export const STORYLINE_PATH_LIMIT = 200;
+/** Most chapters the Story page's map reads, nearest chapter 1 first. */
+export const STORYLINE_GRAPH_LIMIT = 300;
 export const STORYLINE_MAX_COLLABORATORS = 50;
 /** Most chapter authors a storyline header lists besides its owner and collaborators. */
 export const STORYLINE_MAX_CONTRIBUTORS = 50;

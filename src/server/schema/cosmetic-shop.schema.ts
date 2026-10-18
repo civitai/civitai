@@ -247,6 +247,9 @@ export const purchaseCosmeticShopItemInput = z.object({
   // also moves with what the buyer owns.
   idempotencyKey: z.string().uuid().optional(),
   expectedUnitAmount: z.number().int().nonnegative().optional(),
+  // A mystery box listing only: the box version whose contents and odds the buyer was shown.
+  // Required there; a box edited since refuses rather than sells contents nobody saw.
+  expectedVersion: z.number().int().positive().optional(),
 });
 
 export type ToggleWishlistShopItemInput = z.infer<typeof toggleWishlistShopItemInput>;

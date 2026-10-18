@@ -970,6 +970,15 @@ export const AppealStatus = {
 
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
 
+export const AppealCategory = {
+  Account: 'Account',
+  Article: 'Article',
+  Model: 'Model',
+  Other: 'Other',
+} as const;
+
+export type AppealCategory = (typeof AppealCategory)[keyof typeof AppealCategory];
+
 export const AuctionType = {
   Model: 'Model',
   Image: 'Image',

@@ -411,6 +411,7 @@ Some Civitai actions are **only available to session-authenticated users**, rega
 - Tipping (`buzz.tipUser`)
 - Bounty creation (`bounty.upsert`)
 - Cosmetic shop purchases (`cosmeticShop.purchaseShopItem`, `purchasableReward.purchase`)
+- Mystery box opens (`mysteryBox.open`)
 - Comic chapter purchases (`comics.purchaseChapterAccess`)
 - Event donations (`event.donate`, `donationGoal.donate`)
 - Auction bids (`auction.createBid`)

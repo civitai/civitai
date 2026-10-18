@@ -1,5 +1,5 @@
 import {
-  trackActionSchema,
+  trackActionInputSchema,
   trackSearchSchema,
   trackShareSchema,
   addViewSchema,
@@ -77,7 +77,7 @@ export const trackRouter = router({
     .mutation(({ input, ctx }) => ctx.track.share(input)),
   addAction: publicProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
-    .input(trackActionSchema)
+    .input(trackActionInputSchema)
     .mutation(({ input, ctx }) => ctx.track.action(input)),
   trackSearch: publicProcedure
     .meta({ requiredScope: TokenScope.UserWrite })

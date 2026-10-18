@@ -1,19 +1,21 @@
 // Types, limits and the error class for the App Blocks document store
 // (`./doc-store.ts`). No SQL lives here; `doc-store.ts` is the only module that
 // touches the `appdata` tables.
+import { logToAxiom } from '~/server/logging/client';
 import type {
   AppStorageIndexType,
   DeclaredStorageCollection,
 } from '~/shared/constants/block-storage.constants';
 
 /**
- * One collection's declaration — the manifest parser's own type, so what the
- * validator accepted at review is exactly what the store enforces. The store
- * still refuses, itself, the parts the parser admits only behind
- * `APP_STORAGE_ENABLED_FEATURES` (`write: 'anyone'`, `kind: 'log'`,
- * `ttlSeconds`, `maxEntries`); `write: 'owner'` is accepted and means nobody
- * writes documents until owner writes exist. The parser requires `write` on a shared
- * collection; the store reads an absent one as `own`.
+ * One collection's declaration — the manifest parser's own type, so the store sees exactly
+ * what the validator accepted at review. The store never reads `showAuthor` or
+ * `ownedModelVersions`; the REST layer applies them (`doc-store-api.ts`,
+ * `doc-store-ownership.ts`). The store still refuses, itself, the parts the parser admits
+ * only behind `APP_STORAGE_ENABLED_FEATURES` (`write: 'anyone'`, `kind: 'log'`,
+ * `ttlSeconds`, `maxEntries`, `dailyWritesPerAuthor`); `write: 'owner'` is accepted and
+ * means nobody writes documents until owner writes exist. The parser requires `write` on a
+ * shared collection; the store reads an absent one as `own`.
  */
 export type DocCollectionConfig = DeclaredStorageCollection;
 
@@ -126,6 +128,7 @@ export type DocStoreErrorCode =
   | 'not_eligible'
   | 'not_author'
   | 'write_policy'
+  | 'resource_not_owned'
   | 'not_found'
   | 'collection_not_declared'
   | 'version_conflict'
@@ -186,6 +189,33 @@ export class DocStoreError extends Error {
     this.name = 'DocStoreError';
     this.code = code;
     this.details = details;
+  }
+}
+
+export const docStoreUnavailable = () =>
+  new DocStoreError('service_unavailable', 'storage is temporarily unavailable', {
+    retryAfter: 1,
+  });
+
+/**
+ * A read a storage gate depends on: a failure is retryable, never a refusal about the caller.
+ * The client sees only the 503, so the original error is logged here or not at all.
+ */
+export async function docStoreDependency<T>(read: Promise<T>): Promise<T> {
+  try {
+    return await read;
+  } catch (err) {
+    if (err instanceof DocStoreError) throw err;
+    logToAxiom(
+      {
+        name: 'app-blocks-doc-store-dependency-fault',
+        type: 'error',
+        error: err instanceof Error ? err.name : typeof err,
+        message: err instanceof Error ? err.message : String(err),
+      },
+      'app-blocks'
+    ).catch(() => undefined);
+    throw docStoreUnavailable();
   }
 }
 

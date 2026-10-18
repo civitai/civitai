@@ -1060,6 +1060,31 @@ export async function isAppBlocksPostCreationEnabled(opts?: {
 }
 
 /**
+ * Dedicated fail-closed flag for APP REACTIONS — `social:react:self` /
+ * `blocks.setReactionFromApp` / `blocks.getReactionsForApp` / `SET_ENTITY_REACTION`.
+ *
+ * Same posture as `app-blocks-post-creation`, and for the same reason: a reaction pays Buzz to
+ * the reactor and the content owner and moves public rankings, so it must not arm the day the
+ * runtime flag widens. It is also the per-capability kill switch named by the design
+ * (civitai-app-starters#669): flip it off and both procedures refuse at once, without touching
+ * any other block capability.
+ *
+ * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
+ * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, which `blocks.setReactionFromApp`
+ * has already proven is the signed-in session user.
+ *
+ * 🔴 SHIPS OFF. The flag does not exist in Flipt when this merges; it is created separately, as
+ * base `enabled: false` with the `moderators` segment, like `app-blocks-post-creation`.
+ */
+export const APP_BLOCKS_APP_REACTIONS_FLAG = 'app-blocks-app-reactions';
+
+export async function isAppBlocksAppReactionsEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_APP_REACTIONS_FLAG, String(opts.user.id), buildFliptContext(opts.user));
+}
+
+/**
  * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind —
  * `blocks.prepareTrainingDataset`, the training estimate/submit arm of
  * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's

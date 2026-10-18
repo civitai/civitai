@@ -8,6 +8,7 @@ import type {
   UseFormStateReturn,
 } from 'react-hook-form';
 import { Controller, useFormContext } from 'react-hook-form';
+import { useFormResetCount } from '~/libs/form/components/Form';
 
 export function withController<
   TComponentProps extends { onChange?: (...events: any[]) => void } & Record<string, any>, //eslint-disable-line
@@ -35,12 +36,19 @@ export function withController<
   const ControlledInput = forwardRef<HTMLElement, TComponentProps & { name: TName }>(
     ({ name, ...props }, ref) => {
       const { control, ...form } = useFormContext<TFieldValues>();
+      const resetCount = useFormResetCount();
       return (
         <Controller
           control={control}
           name={name}
           render={({ field, fieldState, formState }) => {
-            const mappedProps = mapper?.({ field, fieldState, formState, props: props as any, form }); //eslint-disable-line
+            const mappedProps = mapper?.({
+              field,
+              fieldState,
+              formState,
+              props: props as any,
+              form,
+            }); //eslint-disable-line
 
             const handleChange = (...values: any) => {
               //eslint-disable-line
@@ -77,7 +85,7 @@ export function withController<
                 }
                 {...(props as TComponentProps & { name: TName })}
                 {...mapped}
-                reset={(form as any).resetCount}
+                reset={resetCount}
                 name={name}
               />
             );

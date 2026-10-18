@@ -1,65 +1,76 @@
 import { Button, Menu } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';
+import { rememberManuallyAddedModels } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import {
+  describeApplyProblems,
+  isEmptyPlan,
+  planPresetApply,
+} from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import { usePostPresets } from '~/components/Post/post-presets.utils';
-import { POST_TAG_LIMIT } from '~/server/common/constants';
 import type { PostPreset } from '~/server/services/post-preset.service';
 import type { PostDetailEditable, PostEditImageDetail } from '~/server/services/post.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/** Applies a preset's tags, tools and techniques to the open post. Resources stay per image. */
+/** Applies a saved preset to the open post: tags, its title when empty, and resources, tools and
+ *  techniques on each image. */
 export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
   const { data: presets, isError, isLoading } = usePostPresets();
-  const [postTags, controlledImages, updatePost, updateImage] = usePostEditStore((state) => [
-    state.post?.tags,
-    state.images,
-    state.updatePost,
-    state.updateImage,
-  ]);
-  const tags = postTags ?? [];
+  const [storedPost, controlledImages, updatePost, updateImage, setPresetTitle] = usePostEditStore(
+    (state) => [state.post, state.images, state.updatePost, state.updateImage, state.setPresetTitle]
+  );
   const images = controlledImages.flatMap((image) => (image.type === 'added' ? [image.data] : []));
   const addTag = trpc.post.addTag.useMutation();
   const addTools = trpc.image.addTools.useMutation();
   const addTechniques = trpc.image.addTechniques.useMutation();
+  const addResource = trpc.post.addResourceToImage.useMutation();
   const [applying, setApplying] = useState(false);
 
   const apply = async (preset: PostPreset) => {
     const { data } = preset;
-    const newTags = data.tags
-      .filter((name) => !tags.some((tag) => tag.name.toLowerCase() === name.toLowerCase()))
-      .slice(0, Math.max(0, POST_TAG_LIMIT - tags.length));
-    const tools = images.flatMap((image) =>
-      data.tools
-        .filter((tool) => !image.tools.some((x) => x.id === tool.id))
-        .map((tool) => ({ imageId: image.id, toolId: tool.id }))
+    const plan = planPresetApply(
+      {
+        title: storedPost?.title ?? post.title,
+        modelVersionId: post.modelVersionId,
+        publishedAt: post.publishedAt,
+        tags: storedPost?.tags ?? [],
+      },
+      images,
+      data
     );
-    const techniques = images.flatMap((image) =>
-      data.techniques
-        .filter((technique) => !image.techniques.some((x) => x.id === technique.id))
-        .map((technique) => ({ imageId: image.id, techniqueId: technique.id }))
-    );
-    if (!newTags.length && !tools.length && !techniques.length) {
-      showSuccessNotification({ message: `"${preset.name}" is already applied` });
+    if (isEmptyPlan(plan)) {
+      if (plan.limitError)
+        showErrorNotification({ title: 'Preset not applied', error: new Error(plan.limitError) });
+      else showSuccessNotification({ message: `"${preset.name}" is already applied` });
       return;
     }
 
     setApplying(true);
-    const [tagResults, toolResult, techniqueResult] = await Promise.all([
-      Promise.allSettled(newTags.map((name) => addTag.mutateAsync({ id: post.id, name }))),
-      tools.length
-        ? addTools.mutateAsync({ data: tools }).then(
+    if (plan.title) setPresetTitle(plan.title);
+    const [tagResults, toolResult, techniqueResult, resourceResults] = await Promise.all([
+      Promise.allSettled(plan.tags.map((name) => addTag.mutateAsync({ id: post.id, name }))),
+      plan.tools.length
+        ? addTools.mutateAsync({ data: plan.tools }).then(
             () => true,
             () => false
           )
         : true,
-      techniques.length
-        ? addTechniques.mutateAsync({ data: techniques }).then(
+      plan.techniques.length
+        ? addTechniques.mutateAsync({ data: plan.techniques }).then(
             () => true,
             () => false
           )
         : true,
+      Promise.all(
+        plan.resources.map(({ modelVersionId, imageIds }) =>
+          addResource.mutateAsync({ id: imageIds, modelVersionId }).then(
+            (rows) => ({ rows, error: null }),
+            (error: Error) => ({ rows: [], error: error.message })
+          )
+        )
+      ),
     ]);
     setApplying(false);
 
@@ -86,13 +97,31 @@ export function PostEditApplyPreset({ post }: { post: PostDetailEditable }) {
             .map((technique) => ({ ...technique, notes: null }));
           draft.techniques = [...draft.techniques, ...(added as PostEditImageDetail['techniques'])];
         });
+    const addedResources = resourceResults.flatMap((result) => result.rows);
+    for (const image of images) {
+      const rows = addedResources.filter((row) => row.imageId === image.id);
+      if (rows.length)
+        updateImage(image.id, (draft) => {
+          draft.resourceHelper = draft.resourceHelper.concat(rows);
+        });
+    }
+    if (addedResources.length) rememberManuallyAddedModels(addedResources);
 
-    const failed =
-      tagResults.some((result) => result.status === 'rejected') || !toolResult || !techniqueResult;
-    if (failed)
+    const resourceErrors = resourceResults.flatMap((result) =>
+      result.error ? [result.error] : []
+    );
+    const problems = describeApplyProblems({
+      optionsFailed:
+        tagResults.some((result) => result.status === 'rejected') ||
+        !toolResult ||
+        !techniqueResult,
+      resourceErrors,
+      limitError: plan.limitError,
+    });
+    if (problems.length)
       showErrorNotification({
         title: 'Preset partly applied',
-        error: new Error('Some tags, tools or techniques could not be added. Try again.'),
+        error: new Error(problems.join(' ')),
       });
     else showSuccessNotification({ message: `Applied "${preset.name}"` });
   };

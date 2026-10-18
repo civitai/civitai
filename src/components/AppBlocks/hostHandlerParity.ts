@@ -58,8 +58,9 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
  * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
  *
- * As of the installed `@civitai/app-sdk@0.65.1` TWO keys are ahead: `RUN_CONFIRMED_STEP` and
- * `OPEN_IMAGE_PICKER`. The published union's 50 types are all inventory keys.
+ * As of the installed `@civitai/app-sdk@0.65.1` FIVE keys are ahead: `RUN_CONFIRMED_STEP`,
+ * `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD`. The
+ * published union's 50 types are all inventory keys.
  * The gate reads the INSTALLED
  * dist, so it is only as current as the `@civitai/app-sdk` range in
  * `package.json` — a caret on a 0.x version admits patch releases only, and
@@ -538,6 +539,19 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // An image, video or audio file uploaded as a PRIVATE generation input, picked in host chrome or
+  // sent as `bytes` — see `mediaUploadLogic.ts`. REQUEST-style; ahead of the published SDK dist
+  // union (the SDK pair lands in the SDK repo).
+  OPEN_MEDIA_UPLOAD: {
+    request: true,
+    reply: 'MEDIA_UPLOAD_RESULT',
+    replyKeys: ['selected?'],
+    errorKeys: ['error'],
+    IframeHost:
+      'media upload is a page-only affordance today; the shared dispatcher NACKs it with a MEDIA_UPLOAD_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   SET_USER_CHECKPOINT: {
     request: true,
     reply: 'USER_CHECKPOINT_SET',
@@ -784,6 +798,31 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── App reactions (image only, v1) ─────────────────────────────────────────
+  // A block sets or reads the VIEWER'S reaction on an image a block endpoint served it,
+  // through `blocks.setReactionFromApp` / `blocks.getReactionsForApp` (block token + session).
+  // No per-tap confirm: the consent is the consent-gated `social:react:self` grant. Shared
+  // decision layer: `reactionGate.ts`. BOTH real hosts, like SET_COLLECTION_FOLLOW: a model-slot
+  // block showing images has the same reason to offer a ♥ as a page block. Ahead of the
+  // published SDK dist union (the SDK pair ships after this deploys). REQUEST-style.
+  SET_ENTITY_REACTION: {
+    request: true,
+    reply: 'ENTITY_REACTION_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  GET_ENTITY_REACTIONS: {
+    request: true,
+    reply: 'ENTITY_REACTIONS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // ── Create a REAL Post from the app's own outputs (two-phase) ──────────────
   // The strictly-more-consequential SIBLING of PUBLISH_GENERATION_OUTPUTS: that
   // one makes a bare Image row (no post, no feed, no reward, no notification);
@@ -940,8 +979,9 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // graph (under `src`, not excluded; not a `*.test.ts` corner case).
 //
 // ONE-DIRECTIONAL by design: every PUBLISHED SDK type must be an INVENTORY key;
-// INVENTORY MAY carry extra ahead-of-published keys (`RUN_CONFIRMED_STEP` and
-// `OPEN_IMAGE_PICKER` as of app-sdk 0.65.1).
+// INVENTORY MAY carry extra ahead-of-published keys (`RUN_CONFIRMED_STEP`,
+// `OPEN_IMAGE_PICKER`, `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS`, `OPEN_MEDIA_UPLOAD` as of
+// app-sdk 0.65.1).
 // We do NOT assert the reverse — that would delete real forward coverage every
 // time the published dist lags.
 //

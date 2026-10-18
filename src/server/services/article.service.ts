@@ -1939,7 +1939,7 @@ export async function linkArticleContentImages({
  * @returns Object with scan progress counts, completion status, and detailed image lists
  */
 export type ArticleTextModerationStatus = {
-  // True when the article has text to moderate (title or HTML-stripped content).
+  // True when the article is public and has text to moderate (title or HTML-stripped content).
   // When false, the text pipeline is a no-op and textDone is implicitly true.
   required: boolean;
   // null when no EntityModeration row exists yet (either not required or
@@ -2018,7 +2018,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     }),
     dbRead.article.findUnique({
       where: { id },
-      select: { title: true, content: true, coverId: true },
+      select: { title: true, content: true, coverId: true, status: true, scheduledAt: true },
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
@@ -2060,7 +2060,14 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       i.ingestion === ImageIngestionStatus.Pending || i.ingestion === ImageIngestionStatus.Rescan
   );
 
-  const required = article ? articleHasText(article.title, article.content) : false;
+  // A draft's text is not scanned until the save that makes it public, so no verdict is coming.
+  // A blocked verdict still counts: it is what moved the article to UnpublishedViolation.
+  const textBlocked =
+    moderation?.status === EntityModerationStatus.Succeeded && !!moderation.blocked;
+  const required =
+    !!article &&
+    (isPublicArticle(article) || textBlocked) &&
+    articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
     EntityModerationStatus.Failed,

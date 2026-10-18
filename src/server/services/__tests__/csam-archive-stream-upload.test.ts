@@ -162,12 +162,17 @@ const { storedObjects, pendingUploads, FakeS3Client } = vi.hoisted(() => {
   return { storedObjects, pendingUploads, FakeS3Client };
 });
 
-vi.mock('@aws-sdk/client-s3', async (importOriginal) => ({
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   // Only the client is replaced. The command classes stay real, which is what lets the fake
   // dispatch on their constructor names and what keeps `Upload`'s own behaviour untouched.
-  ...(await importOriginal<Record<string, unknown>>()),
-  S3Client: FakeS3Client,
-}));
+  // `default` mirrors the rest: the package is pre-bundled for CJS interop, so consumers resolve
+  // through `default`, where the spread alone would hand them the real client.
+  const mocked = {
+    ...(await importOriginal<Record<string, unknown>>()),
+    S3Client: FakeS3Client,
+  };
+  return { ...mocked, default: mocked };
+});
 
 vi.mock('~/utils/file-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

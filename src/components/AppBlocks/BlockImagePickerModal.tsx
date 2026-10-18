@@ -90,11 +90,14 @@ const THUMB_WIDTH = 320;
 export default function BlockImagePickerModal({
   sources,
   max,
+  publicOnly = false,
   onResolved,
 }: {
   sources: BlockImagePickerSource[];
   /** `null` for a single pick, otherwise the most images the viewer may select. */
   max: number | null;
+  /** Posted images only from posts that are not Private: the app asked for `publicOnly`. */
+  publicOnly?: boolean;
   /** Called once, on confirm, before the modal closes. Not called on dismiss. */
   onResolved: (picked: BlockPickedImageInfo[]) => void;
 }) {
@@ -166,6 +169,7 @@ export default function BlockImagePickerModal({
     onToggle: toggle,
     browsingLevel,
     dropPostedPicks,
+    publicOnly,
     jumpTo: jumpTo[s],
     onJumpTo: (value: string) => setJumpTo((current) => ({ ...current, [s]: value })),
   });
@@ -208,6 +212,9 @@ export default function BlockImagePickerModal({
         <Stack gap="sm" className="min-h-0 flex-1">
           <Text size="xs" c="dimmed">
             Your images that your content settings allow and that have finished scanning.
+            {publicOnly && sources.includes('posted')
+              ? ' Posted images are limited to public posts.'
+              : ''}
           </Text>
 
           {sources.length > 1 ? (
@@ -332,16 +339,23 @@ type JumpTo = {
 function SourceGrid({
   source,
   dropPostedPicks,
+  publicOnly,
   jumpTo,
   onJumpTo,
   ...selection
-}: GridSelection & JumpTo & { source: BlockImagePickerSource; dropPostedPicks: () => void }) {
+}: GridSelection &
+  JumpTo & { source: BlockImagePickerSource; dropPostedPicks: () => void; publicOnly: boolean }) {
   const toDate = useMemo(() => jumpDateToBound(jumpTo) ?? undefined, [jumpTo]);
   return (
     <>
       <JumpToDate source={source} value={jumpTo} onChange={onJumpTo} />
       {source === 'posted' ? (
-        <PostedGrid dropPostedPicks={dropPostedPicks} toDate={toDate} {...selection} />
+        <PostedGrid
+          dropPostedPicks={dropPostedPicks}
+          toDate={toDate}
+          publicOnly={publicOnly}
+          {...selection}
+        />
       ) : (
         <GeneratedGrid toDate={toDate} {...selection} />
       )}
@@ -422,17 +436,22 @@ function JumpToDate({
 function PostedGrid({
   dropPostedPicks,
   toDate,
+  publicOnly,
   ...selection
-}: GridSelection & { dropPostedPicks: () => void; toDate: Date | undefined }) {
+}: GridSelection & { dropPostedPicks: () => void; toDate: Date | undefined; publicOnly: boolean }) {
   const { data, isLoading, isError, isFetching, hasNextPage, fetchNextPage, refetch } =
-    trpc.blockImagePicker.getPosted.useInfiniteQuery(toDate ? { toDate } : {}, {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      // The server filters by the viewer's browsing level, which is not part of the query key.
-      // The app caches queries forever by default, so without these a reopened picker would list
-      // what an earlier level allowed.
-      gcTime: 0,
-      staleTime: 0,
-    });
+    trpc.blockImagePicker.getPosted.useInfiniteQuery(
+      // Sent only when asked for, so a picker without it requests exactly what it did before.
+      { ...(toDate ? { toDate } : {}), ...(publicOnly ? { publicOnly: true } : {}) },
+      {
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+        // The server filters by the viewer's browsing level, which is not part of the query key.
+        // The app caches queries forever by default, so without these a reopened picker would list
+        // what an earlier level allowed.
+        gcTime: 0,
+        staleTime: 0,
+      }
+    );
 
   const images = useMemo(
     () =>

@@ -21,12 +21,14 @@ const ledgerLegs = vi.fn();
 const purchaseCreate = vi.fn();
 const createManyUserCosmetic = vi.fn();
 const createManyComponents = vi.fn();
+const txExecuteRaw = vi.fn();
+const txShopItemUpdate = vi.fn();
 let claims = shopPurchaseClaimFake();
 
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
   claims.rollbackOnThrow(() =>
     fn({
-      $executeRaw: vi.fn(),
+      $executeRaw: txExecuteRaw,
       userCosmetic: {
         findMany: vi.fn().mockResolvedValue([]),
         createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
@@ -35,7 +37,7 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
       userCosmeticShopPurchaseCosmetic: {
         createMany: (...a: unknown[]) => createManyComponents(...a),
       },
-      cosmeticShopItem: { update: vi.fn() },
+      cosmeticShopItem: { update: txShopItemUpdate },
       cosmeticShopPurchaseClaim: claims.txDelegate,
     })
   )
@@ -168,6 +170,8 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
       purchaseCreate,
       createManyUserCosmetic,
       createManyComponents,
+      txExecuteRaw,
+      txShopItemUpdate,
     ])
       fn.mockReset();
     loggingMock.logToAxiom.mockReset();
@@ -199,6 +203,20 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     // Positive control for the "pays nothing" assertions below.
     expect(createManyUserCosmetic).toHaveBeenCalled();
     expect(pay).toHaveBeenCalled();
+  });
+
+  it('counts the sale from the listing row as it is at grant time, not from the snapshot', async () => {
+    spend.mockResolvedValue(legs(false));
+
+    await buy(KEY);
+
+    const counted = txExecuteRaw.mock.calls.filter(
+      ([strings, ...values]) =>
+        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"') &&
+        values.includes(7001)
+    );
+    expect(counted).toHaveLength(1);
+    expect(txShopItemUpdate).not.toHaveBeenCalled();
   });
 
   it('refuses a replay of a key already paid, before any charge', async () => {

@@ -38,3 +38,16 @@ export function refreshableBlobId(url: string): string | undefined {
   const blobId = getConsumerBlobId(url);
   return blobId && shouldRefreshBlobUrl(url) ? blobId : undefined;
 }
+
+const JOB_ASSET_RE =
+  /\/v\d+\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>[^/?#\s]+)/i;
+
+/**
+ * A job-asset URL (`/v1/consumer/jobs/<jobId>/assets/<file>`): the format pre-workflow training
+ * jobs used, and that some workflow training runs (late Sep to mid Oct 2026) recorded for their
+ * epochs instead of a blob URL.
+ */
+export function parseJobAssetUrl(url: string): { jobId: string; assetName: string } | undefined {
+  const groups = url.match(JOB_ASSET_RE)?.groups;
+  return groups ? { jobId: groups.jobId.toLowerCase(), assetName: groups.assetName } : undefined;
+}

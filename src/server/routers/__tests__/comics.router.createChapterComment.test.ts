@@ -67,7 +67,6 @@ beforeEach(() => {
     content: 'x',
     createdAt: new Date(),
   });
-  dbMock.dbWrite.thread.update.mockResolvedValue({ id: 1 });
   dbMock.dbRead.comicProject.findUnique.mockResolvedValue({ userId: USER_ID, name: 'p' });
 });
 
@@ -80,6 +79,15 @@ describe('comics.createChapterComment - blocklist guard wiring', () => {
     expect(throwOnBlockedCommentContent).toHaveBeenCalledWith('<p>nice chapter</p>', {
       isModerator: false,
     });
+  });
+
+  // The comment_count_update trigger on CommentV2 already bumps Thread.commentCount; a second
+  // increment here left every comic chapter thread over-counted.
+  it('does not bump Thread.commentCount by hand', async () => {
+    const caller = comicsRouter.createCaller(fakeCtx() as never);
+    await caller.createChapterComment(input);
+
+    expect(dbMock.dbWrite.thread.update).not.toHaveBeenCalled();
   });
 
   it('forwards a moderator through to the guard rather than deciding locally', async () => {

@@ -76,6 +76,24 @@ const nativePoolPlugin = {
   },
 };
 
+// 🔴 The fs module cache key does not cover the dependency optimizer, yet a cached transform embeds
+// optimizer-versioned URLs (`…/index.js?v=<browserHash>`). Without this, switching between two
+// `deps.optimizer.ssr.include` lists serves the other list's transforms: 148 of 150 files failed
+// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/client` until the cache was deleted.
+const optimizerCacheKeyPlugin = {
+  name: 'civitai:fs-cache-optimizer-key',
+  configureVitest({
+    experimental_defineCacheKeyGenerator,
+  }: {
+    experimental_defineCacheKeyGenerator: any;
+  }) {
+    experimental_defineCacheKeyGenerator(({ environment }: { environment: any }) => {
+      const metadata = environment.depsOptimizer?.metadata;
+      return metadata ? `${metadata.hash}:${metadata.browserHash}` : undefined;
+    });
+  },
+};
+
 // Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
 // (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
 // node_modules) resolves them the same way the app build does. `@civitai/auth` is omitted —
@@ -224,21 +242,17 @@ const unitTestConfig = {
     // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
     // load into one chunk, paid once for the run.
     //
-    // 🔴 The list is confined to packages NOTHING mocks, and that is load-bearing rather than
-    // conservative. Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory
-    // that returns only named exports stops satisfying its consumers:
+    // 🔴 A MOCKED package needs `default` in every factory before it goes on this list.
+    // Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory that returns only
+    // named exports stops satisfying its consumers, and the file collects zero tests:
     //   Error: [vitest] No "default" export is defined on the "redis" mock.
-    // The `importOriginal` form does NOT protect against this — it guards a different failure
-    // (exports going missing as the graph grows). Measured: adding `redis` and `@aws-sdk/client-s3`
-    // here takes four mock-holding files from 92 tests passing to 7 collected.
+    // An `importOriginal` spread does NOT cover it: return `{ ...mocked, default: mocked }`, or the
+    // consumer reaches the REAL module through `default`. `redis` and the `@aws-sdk/*` packages
+    // below are mocked this way.
     //
-    // Before adding a package, check `vi.mock('<pkg>'` across `src`, `test`, `packages` and `apps`
-    // returns nothing — a subpath form (`vi.mock('pg/lib/x')`) counts. The four excluded on those
-    // grounds:
-    //   `redis`, `@aws-sdk/client-s3`, `@aws-sdk/lib-storage` (5 / 2 / 3 mocking files) — worth
-    //     ~275s, and need `default` added to six mock factories first.
-    //   `pg` (2 mocking files, both in `packages/civitai-db`) — dropped from this list for exactly
-    //     that reason, not because it is cheap.
+    // Before adding a package, find its `vi.mock('<pkg>'` callers across `src`, `scripts` and
+    // `test` — a subpath form (`vi.mock('pg/lib/x')`) counts. `packages/*` and `apps/*` run under
+    // their own configs, so their mocks (e.g. `pg` in packages/civitai-db) do not see this list.
     //
     // 🔴 A zero-mocker package can still be unsafe, for a SECOND reason: a package that loads a
     // non-JS SIDECAR at runtime breaks when it is relocated. `@electric-sql/pglite` passes the
@@ -249,6 +263,10 @@ const unitTestConfig = {
     // Measured: 7 `*.behavior.test.ts` files went from 87 passing to 0, reported as SKIPPED rather
     // than failed, so the suite total stayed at 22,636 while 87 fewer tests actually executed.
     // Compare the PASSED count, never the total, when changing this list.
+    // Two more fail in ways neither check above catches: `msgpackr`'s bundle does not load
+    // (`SyntaxError: Identifier 'createRequire' has already been declared`), and
+    // `@opentelemetry/api` bundles with `SpanStatusCode` undefined, so every caught error in
+    // packages/civitai-telemetry's span helpers becomes `reading 'ERROR'` (12 files red).
     // The three biggest fan-in packages measured over the test-reachable graph are blocked the same
     // way and are the follow-up this list is building toward:
     //   `@tabler/icons-react` 5,952 package files / 166 importers — 2 mocking files
@@ -289,6 +307,32 @@ const unitTestConfig = {
           'prom-client',
           '@tanstack/react-query',
           '@paddle/paddle-node-sdk',
+          // Resolvable from the root only because it is a root devDependency; otherwise the
+          // optimizer logs "Failed to resolve dependency" and the package stays native.
+          'kysely',
+          'kysely/helpers/postgres',
+          'remark-gfm',
+          'remark-parse',
+          'remark-rehype',
+          'rehype-stringify',
+          'unified',
+          'stripe',
+          'jose',
+          'pg',
+          'form-graph',
+          'form-graph/react',
+          'sanitize-html',
+          '@openrouter/sdk',
+          '@openrouter/sdk/models',
+          '@openrouter/sdk/models/errors',
+          'nodemailer',
+          'obscenity',
+          'superjson',
+          'htmlparser2',
+          '@discordjs/rest',
+          'redis',
+          '@aws-sdk/client-s3',
+          '@aws-sdk/lib-storage',
         ],
       },
     },
@@ -304,8 +348,8 @@ const unitTestConfig = {
   // Widening it is a follow-up with its own verification, not a freebie.
   //
   // Staleness is self-correcting rather than something to remember: the cache carries a format
-  // version, and `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
-  // when it moves, so a dependency bump can't leave a stale transform behind. It writes to
+  // version, `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
+  // when it moves, and `optimizerCacheKeyPlugin` keys entries on the optimizer's output. It writes to
   // `node_modules/.experimental-vitest-cache`, so it is gitignored with the rest of `node_modules`.
   experimental: { fsModuleCache: true },
 };
@@ -511,6 +555,7 @@ export default defineConfig({
       'apps/*/vitest.config.mts',
       {
         resolve: { alias },
+        plugins: [optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
           name: 'unit',
@@ -528,7 +573,7 @@ export default defineConfig({
       },
       {
         resolve: { alias },
-        plugins: [nativePoolPlugin],
+        plugins: [nativePoolPlugin, optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
           name: 'unit-native',

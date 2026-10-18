@@ -35,6 +35,8 @@ import {
   getBankableLedger,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
+  RECEIVED_FROM_USER_SQL,
+  SENT_TO_USER_SQL,
   withBankedThisMonth,
 } from '~/server/services/creator-program-bankable';
 import { createNotification } from '~/server/services/notification.service';
@@ -97,7 +99,7 @@ const createUserCapCache = () => {
     dontCacheFn: (data) => !data?.cap,
     cacheNotFound: false,
     staleWhileRevalidate: false,
-    debounceTime: 1, // 10s debounce is too long for this cache.
+    debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
@@ -127,18 +129,45 @@ const createUserCapCache = () => {
       const peakEarningPredicate = countsCompensation
         ? PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL
         : PEAK_EARNING_PREDICATE_SQL;
+      // A month counts what a user paid the creator only beyond everything the creator sent that
+      // user in the window up to now, so Buzz passed back and forth cannot raise the peak.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
-        SELECT
-          toAccountId as id,
-          toStartOfMonth(date) as month,
-          SUM(amount) as earned
-        FROM buzzTransactions
-        WHERE ${peakEarningPredicate}
-        AND toAccountType IN (${buzzBankTypesSql})
-        AND toAccountId IN (${ids})
-        AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
-        AND toStartOfMonth(date) < toStartOfMonth(now())
-        GROUP BY month, toAccountId
+        SELECT id, month, gross - returned AS earned
+        FROM (
+          SELECT
+            toAccountId as id,
+            toStartOfMonth(date) as month,
+            SUM(amount) as gross
+          FROM buzzTransactions
+          WHERE ${peakEarningPredicate}
+          AND toAccountType IN (${buzzBankTypesSql})
+          AND toAccountId IN (${ids})
+          AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+          AND toStartOfMonth(date) < toStartOfMonth(now())
+          GROUP BY month, toAccountId
+        ) AS earnings
+        LEFT JOIN (
+          SELECT received.id AS id, received.month AS month, SUM(least(received.amount, sent.amount)) AS returned
+          FROM (
+            SELECT toAccountId AS id, toStartOfMonth(date) AS month, fromAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${peakEarningPredicate} AND ${RECEIVED_FROM_USER_SQL}
+            AND toAccountType IN (${buzzBankTypesSql})
+            AND toAccountId IN (${ids})
+            AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+            AND toStartOfMonth(date) < toStartOfMonth(now())
+            GROUP BY id, month, counterparty
+          ) AS received
+          INNER JOIN (
+            SELECT fromAccountId AS id, toAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${SENT_TO_USER_SQL}
+            AND fromAccountId IN (${ids})
+            AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+            GROUP BY id, counterparty
+          ) AS sent ON sent.id = received.id AND sent.counterparty = received.counterparty
+          GROUP BY id, month
+        ) AS netted USING (id, month)
         ORDER BY earned DESC
         LIMIT 1 BY id;
       `;
@@ -668,7 +697,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CASH,
   idKey: 'id',
   staleWhileRevalidate: false,
-  debounceTime: 1, // 10s debounce is too long for this cache.
+  debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 

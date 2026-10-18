@@ -18,6 +18,15 @@ import {
 import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
+import {
+  findInlineMediaPath,
+  INLINE_MEDIA_MAX_VISITS,
+  INLINE_MEDIA_OVER_BYTE_LIMIT,
+  INLINE_MEDIA_TOO_MANY_VALUES,
+  inlineMediaMessage,
+} from '~/server/schema/blocks/inline-media';
+import type { InlineMediaPath } from '~/server/schema/blocks/inline-media';
+import { jsonLengthWithin, measureJsonLength } from '~/server/schema/blocks/json-length';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -487,7 +496,7 @@ export const blockInlineComfyBodySchema = z
     path: ['workflow'],
     message: `inline workflow may contain at most ${INLINE_GRAPH_NODES_MAX} nodes`,
   })
-  .refine((b) => JSON.stringify(b.workflow).length <= INLINE_GRAPH_BYTES_MAX, {
+  .refine((b) => jsonLengthWithin([b.workflow], INLINE_GRAPH_BYTES_MAX), {
     path: ['workflow'],
     message: `inline workflow exceeds the ${INLINE_GRAPH_BYTES_MAX}-byte limit`,
   });
@@ -638,9 +647,10 @@ const blockPassThroughStepShape = {
   // fine and then throws on the first parse, measured.
   step: z.undefined(),
   $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
-  // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server does not read,
-  // rewrite, merge or default any field in here — that is the whole point of the
-  // arm, and the submitted step's `input` is BYTE-IDENTICAL to this value.
+  // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server may refuse it,
+  // but never rewrites, merges or defaults any field in here — that is the
+  // whole point of the arm, and the submitted step's `input` is BYTE-IDENTICAL
+  // to this value.
   // (Not the SAME object: `z.record` rebuilds the top level, so the caller's own
   // object never reaches the orchestrator whatever the router does. An earlier
   // draft claimed identity here and in `blocks.router`; measured false.)
@@ -653,13 +663,63 @@ const blockPassThroughStepShape = {
   quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX).optional(),
 };
 
+/**
+ * Refuses at the first inline-media path under `fields`, or at `overflow` once the body's
+ * shared value budget runs out. `continue: false` suppresses the byte-cap issue, which an
+ * inline photo usually also trips; only this message names the fix.
+ *
+ * `byteLimit` is the byte cap checked after this, over the same `fields`. Once the strings
+ * already searched put the body over it, no further string is read and this adds no issue
+ * for that reason; the remaining fields are still walked for the value budget, and the cap
+ * refuses the body.
+ */
+function refuseInlineMedia<T extends Record<string, unknown>>(
+  fields: (body: T) => [InlineMediaPath, unknown][],
+  overflow: { path: InlineMediaPath; message: string },
+  byteLimit: number
+) {
+  return (body: T, ctx: z.RefinementCtx) => {
+    const budget = { visits: 0 };
+    for (const [prefix, value] of fields(body)) {
+      const hit = findInlineMediaPath(value, budget, byteLimit);
+      if (!hit || hit === INLINE_MEDIA_OVER_BYTE_LIMIT) continue;
+      const issue =
+        hit === INLINE_MEDIA_TOO_MANY_VALUES
+          ? overflow
+          : { path: [...prefix, ...hit], message: inlineMediaMessage([...prefix, ...hit]) };
+      ctx.addIssue({ code: 'custom', ...issue, continue: false });
+      return;
+    }
+  };
+}
+
+/** The value(s) of `fields` the byte cap measures; the inline-media search walks the same. */
+const fieldValues = (fields: [InlineMediaPath, unknown][]) => fields.map(([, value]) => value);
+
+const passThroughInputFields = (b: { input: unknown }): [InlineMediaPath, unknown][] => [
+  [['input'], b.input],
+];
+
 export const blockPassThroughStepBodySchema = z
   .object(blockPassThroughStepShape)
   .strict()
-  .refine((b) => JSON.stringify(b.input).length <= PASS_THROUGH_INPUT_BYTES_MAX, {
-    path: ['input'],
-    message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
-  });
+  .superRefine(
+    refuseInlineMedia(
+      passThroughInputFields,
+      {
+        path: ['input'],
+        message: `step input holds more than ${INLINE_MEDIA_MAX_VISITS} values`,
+      },
+      PASS_THROUGH_INPUT_BYTES_MAX
+    )
+  )
+  .refine(
+    (b) => jsonLengthWithin(fieldValues(passThroughInputFields(b)), PASS_THROUGH_INPUT_BYTES_MAX),
+    {
+      path: ['input'],
+      message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
+    }
+  );
 
 export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>;
 
@@ -672,8 +732,8 @@ export type PassThroughStepBody = z.infer<typeof blockPassThroughStepBodySchema>
 // 🔴 THERE IS NO `maxBuzz`. The ceiling is the token's per-generation budget
 // times the number of steps, computed by the server; the app declares nothing.
 //
-// 🔴 THIS SCHEMA CHECKS SHAPE AND SIZE ONLY. The step count, the step-name rules
-// and the reference graph are checked by `resolveBlockWorkflowGraph`, and the
+// 🔴 THIS SCHEMA CHECKS SHAPE, SIZE AND INLINE MEDIA ONLY. The step count, the
+// step-name rules and the reference graph are checked by `resolveBlockWorkflowGraph`, and the
 // step-type denylist by the router — both on the estimate and the submit, before
 // any orchestrator call. They are NOT here because a schema rejection is thrown
 // at the tRPC boundary, where it cannot carry the `errorCode` a block branches
@@ -687,6 +747,15 @@ export const WORKFLOW_INPUT_BYTES_MAX = PASS_THROUGH_INPUT_BYTES_MAX;
 
 /** Max characters of a step `name` on the wire; the name rules are tighter. */
 const WORKFLOW_STEP_NAME_WIRE_MAX = 64;
+
+/** Every step `input`, then `arguments` (absent counts nothing). */
+const workflowInputFields = (b: {
+  steps: { input: unknown }[];
+  arguments?: unknown;
+}): [InlineMediaPath, unknown][] => [
+  ...b.steps.map((step, i): [InlineMediaPath, unknown] => [['steps', i, 'input'], step.input]),
+  [['arguments'], b.arguments],
+];
 
 const blockMultiStepWorkflowStepSchema = z
   .object({
@@ -705,16 +774,21 @@ export const blockMultiStepWorkflowBodySchema = z
     arguments: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
-  .refine(
-    (b) =>
-      b.steps.reduce((bytes, step) => bytes + JSON.stringify(step.input).length, 0) +
-        (b.arguments ? JSON.stringify(b.arguments).length : 0) <=
-      WORKFLOW_INPUT_BYTES_MAX,
-    {
-      path: ['steps'],
-      message: `workflow step inputs and arguments exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,
-    }
-  );
+  // `arguments` too: a step input can `$ref` it, so it reaches the orchestrator the same way.
+  .superRefine(
+    refuseInlineMedia(
+      workflowInputFields,
+      {
+        path: ['steps'],
+        message: `step inputs and arguments hold more than ${INLINE_MEDIA_MAX_VISITS} values in total`,
+      },
+      WORKFLOW_INPUT_BYTES_MAX
+    )
+  )
+  .refine((b) => jsonLengthWithin(fieldValues(workflowInputFields(b)), WORKFLOW_INPUT_BYTES_MAX), {
+    path: ['steps'],
+    message: `workflow step inputs and arguments exceed the ${WORKFLOW_INPUT_BYTES_MAX}-byte limit`,
+  });
 
 export type BlockMultiStepWorkflowBody = z.infer<typeof blockMultiStepWorkflowBodySchema>;
 
@@ -839,6 +913,19 @@ export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 // `'recipe'` nor `'inline'`), which zod reports as a bare `Invalid input` at
 // `path:['mode']` — the discriminator's own value is the one thing that error
 // does not name. Same treatment as the two `.strict()` maps: enumerate the arms.
+/** The longest non-string `mode` value, in JSON characters, the error echoes. */
+const ECHOED_MODE_MAX_CHARS = 200;
+
+/**
+ * A non-string `mode` as JSON, measured before it is serialized so only a short one is built;
+ * a longer one is described instead. An unserializable value is left to JSON.stringify.
+ */
+function echoedModeValue(raw: unknown): string {
+  return measureJsonLength([raw], ECHOED_MODE_MAX_CHARS) === 'over'
+    ? `a value over ${ECHOED_MODE_MAX_CHARS} characters`
+    : JSON.stringify(raw);
+}
+
 const blockCustomComfyMemberSchema = z.discriminatedUnion(
   'mode',
   [blockCustomComfyBodySchema, blockInlineComfyBodySchema],
@@ -846,7 +933,7 @@ const blockCustomComfyMemberSchema = z.discriminatedUnion(
     error: (iss) => {
       if (iss.code !== 'invalid_union') return undefined;
       const raw = (iss.input as { mode?: unknown } | null | undefined)?.mode;
-      const named = typeof raw === 'string' ? `"${raw}"` : JSON.stringify(raw ?? null);
+      const named = typeof raw === 'string' ? `"${raw}"` : echoedModeValue(raw ?? null);
       return (
         `Invalid \`customComfy\` mode: ${named} — expected "recipe" or "inline".` +
         ` ${customComfyArmHelp('recipe')}. ${customComfyArmHelp('inline')}.`

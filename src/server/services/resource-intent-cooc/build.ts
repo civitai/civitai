@@ -15,13 +15,8 @@ import type { CoocModelText } from './tokenize';
  * what these functions produce.
  */
 
-/**
- * The conditions of the M3 registration's `GOLDSET_ELIGIBLE_IMAGE` after its rolling-window
- * line, byte for byte (compared by
- * `src/server/services/__tests__/resource-intent-cooc.eligibility.test.ts`). The draw replaces
- * that window with explicit `[trainStart, trainEnd)` bounds.
- */
-export const COOC_ELIGIBLE_REST = `  AND i."hideMeta" = false
+/** The image's own moderation conditions, the first part of `COOC_ELIGIBLE_REST`. */
+export const COOC_ELIGIBLE_IMAGE = `  AND i."hideMeta" = false
   AND length(i.meta->>'prompt') > 0
   AND i.ingestion = 'Scanned'
   AND i."tosViolation" = false
@@ -29,11 +24,17 @@ export const COOC_ELIGIBLE_REST = `  AND i."hideMeta" = false
   AND i."blockedFor" IS NULL
   AND i.minor = false
   AND i.poi = false
-  AND p."publishedAt" IS NOT NULL
+`;
+
+/** The post's conditions (`p` is the image's post), the middle part of `COOC_ELIGIBLE_REST`. */
+export const COOC_ELIGIBLE_POST = `  AND p."publishedAt" IS NOT NULL
   AND p."publishedAt" <= now()
   AND p.availability != 'Private'::"Availability"
   AND p.availability != 'Unsearchable'::"Availability"
-  AND NOT EXISTS (
+`;
+
+/** No attached model flagged POI or minor, the last part of `COOC_ELIGIBLE_REST`. */
+export const COOC_ELIGIBLE_ATTACHMENTS = `  AND NOT EXISTS (
     SELECT 1
     FROM "ImageResourceNew" fr
     JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId"
@@ -42,6 +43,15 @@ export const COOC_ELIGIBLE_REST = `  AND i."hideMeta" = false
       AND (fm.poi OR fm.minor)
   )
 `;
+
+/**
+ * The conditions of the M3 registration's `GOLDSET_ELIGIBLE_IMAGE` after its rolling-window
+ * line, byte for byte (compared by
+ * `src/server/services/__tests__/resource-intent-cooc.eligibility.test.ts`). The draw replaces
+ * that window with explicit `[trainStart, trainEnd)` bounds.
+ */
+export const COOC_ELIGIBLE_REST =
+  COOC_ELIGIBLE_IMAGE + COOC_ELIGIBLE_POST + COOC_ELIGIBLE_ATTACHMENTS;
 
 export function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -81,7 +91,7 @@ export function timedCoocQuery(run: CoocTxRunner, timeoutMs: number): CoocRawQue
 }
 
 /** The screen's retry, ported: 3 tries, waiting `delayMs` then twice that. */
-async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
+export async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {

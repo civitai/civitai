@@ -25,19 +25,23 @@ import {
 } from '~/shared/constants/crucible.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import {
-  mergeRestoredValues,
   readStoredFormValue,
+  resolveRestoredValues,
   serializeStoredFormValue,
 } from '~/hooks/useFormStorage';
 
 const HOUR = 60 * 60 * 1000;
 
-// The same round trip useFormStorage makes: JSON in localStorage, merged over the fresh form.
+// The same round trip useFormStorage makes: JSON in localStorage, resolved over the fresh form.
+// `success` is the whole draft schema passing, not the per-field fallback.
 function restore(draft: Record<string, unknown>) {
   const stored = readStoredFormValue(serializeStoredFormValue(draft));
-  return crucibleCreateDraftSchema.safeParse(
-    mergeRestoredValues({ current: { ...crucibleCreateDefaultValues }, stored: stored?.value })
-  );
+  const result = resolveRestoredValues({
+    schema: crucibleCreateDraftSchema,
+    current: { ...crucibleCreateDefaultValues } as Record<string, unknown>,
+    stored: stored?.value,
+  });
+  return { success: result?.partial === false, data: result?.values };
 }
 
 describe('crucible create draft restore', () => {

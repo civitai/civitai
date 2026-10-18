@@ -656,6 +656,146 @@ describe('model-file-scan.service', () => {
         expect.any(Number)
       );
       expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+      expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+    });
+
+    // A key held through a failed attempt turns the orchestrator's redelivery into a "duplicate",
+    // and the file stays Pending forever. The key store here is stateful so the second delivery
+    // sees exactly what the first one left behind.
+    it('lets the redelivery through when the first attempt throws', async () => {
+      const held = new Set<string>();
+      mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+        if (held.has(key)) return false;
+        held.add(key);
+        return true;
+      });
+      redisMock.sysRedis.del.mockImplementationOnce(async (key: string) => {
+        held.delete(key);
+        return 1;
+      });
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1, modelVersionId: 100 },
+          steps: [{ $type: 'modelClamScan', output: { exitCode: 0, output: '' } }],
+        },
+      });
+      mockDbWrite.modelFile.update.mockRejectedValueOnce(new Error('transient write failure'));
+
+      const req = makeReq({ workflowId: 'wf-retry', type: 'workflow', status: 'succeeded' });
+      await expect(processModelFileScanResult(req)).rejects.toThrow('transient write failure');
+      await processModelFileScanResult(req);
+
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      expect(mockDbWrite.modelFile.update.mock.calls[1][0].data.virusScanResult).toBe(
+        ScanResultCode.Success
+      );
+      // Released once, by the failure; the success keeps its key so later duplicates stay suppressed.
+      expect(redisMock.sysRedis.del).toHaveBeenCalledTimes(1);
+      expect(held.has('webhooks:model-file-scan:processed:wf-retry')).toBe(true);
+    });
+
+    it('lets the redelivery through when the failed-workflow write throws', async () => {
+      const held = new Set<string>();
+      mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+        if (held.has(key)) return false;
+        held.add(key);
+        return true;
+      });
+      redisMock.sysRedis.del.mockImplementationOnce(async (key: string) => {
+        held.delete(key);
+        return 1;
+      });
+      mockGetWorkflow.mockResolvedValue({ data: { metadata: { fileId: 1 }, steps: [] } });
+      mockDbWrite.modelFile.update.mockRejectedValueOnce(new Error('transient write failure'));
+
+      const req = makeReq({ workflowId: 'wf-failed-retry', type: 'workflow', status: 'failed' });
+      await expect(processModelFileScanResult(req)).rejects.toThrow('transient write failure');
+      await processModelFileScanResult(req);
+
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledTimes(2);
+      expect(mockDbWrite.modelFile.update.mock.calls[1][0].data).toEqual({
+        scanRequestedAt: expect.any(Date),
+      });
+    });
+
+    it('keeps the original error when releasing the dedupe key also fails', async () => {
+      redisMock.sysRedis.del.mockRejectedValueOnce(new Error('redis down'));
+      mockGetWorkflow.mockResolvedValue({ data: null });
+
+      await expect(
+        processModelFileScanResult(
+          makeReq({ workflowId: 'wf-both', type: 'workflow', status: 'succeeded' })
+        )
+      ).rejects.toThrow('could not find workflow: wf-both');
+      expect(redisMock.sysRedis.del).toHaveBeenCalledWith(
+        'webhooks:model-file-scan:processed:wf-both'
+      );
+    });
+
+    // Postgres rejects U+0000 in text and jsonb (22P05). Trainers do write it into safetensors
+    // metadata; before the strip, one such header failed the update and lost the scan.
+    it('strips NUL characters from everything it writes', async () => {
+      const NUL = String.fromCharCode(0);
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            { $type: 'modelClamScan', output: { exitCode: 1, output: `bad${NUL}file` } },
+            {
+              $type: 'modelPickleScan',
+              output: { exitCode: 1, dangerousImports: [`os${NUL}.system`], globalImports: [] },
+            },
+            {
+              $type: 'modelParseMetadata',
+              output: { metadata: JSON.stringify({ [`key${NUL}`]: `a${NUL}b`, list: [NUL] }) },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-nul', type: 'workflow', status: 'succeeded' })
+      );
+
+      const { data } = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(data.headerData).toEqual({ key: 'ab', list: [''] });
+      expect(data.virusScanMessage).toBe('badfile');
+      expect(data.pickleScanMessage).toContain('os.system');
+      const nulPaths: string[] = [];
+      const walk = (v: unknown, path: string) => {
+        if (typeof v === 'string' && v.includes(NUL)) nulPaths.push(path);
+        else if (v && typeof v === 'object')
+          for (const [k, child] of Object.entries(v)) {
+            if (k.includes(NUL)) nulPaths.push(`${path}.<key>`);
+            walk(child, `${path}.${k}`);
+          }
+      };
+      walk(data, 'data');
+      expect(nulPaths).toEqual([]);
+    });
+
+    // SSHS_12 is derived from the header, and the hash rows are written after the file is marked
+    // scanned — a NUL reaching them leaves a scanned file with no hashes at all.
+    it('derives SSHS_12 from the stripped header', async () => {
+      const NUL = String.fromCharCode(0);
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            { $type: 'modelHash', output: { sha256: SHA256_FIXTURE } },
+            {
+              $type: 'modelParseMetadata',
+              output: { metadata: JSON.stringify({ sshs_model_hash: `${NUL}abcdef123456` }) },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-sshs-nul', type: 'workflow', status: 'succeeded' })
+      );
+
+      expect(hashRowsWritten()).toContain(`1:${ModelHashType.SSHS_12}=abcdef123456`);
     });
 
     it('throws when the orchestrator returns no workflow data', async () => {
@@ -1200,7 +1340,7 @@ describe('model-file-scan.service', () => {
         modelType: 'Checkpoint',
         baseModel: 'SD 1.5',
         url: 's3://k1',
-        priority: 'low',
+        priority: 'normal',
       });
       expect(result).toEqual({ sent: 2, failed: 0 });
     });

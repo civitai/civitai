@@ -107,8 +107,8 @@ describe('storyline router: a story outside the reader’s level serves nothing 
     r.storyline.findUnique.mockResolvedValue(xStory as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 1 } as never);
     r.$queryRaw.mockResolvedValue([
-      { id: 1, postId: 101, depth: 0 },
-      { id: 2, postId: 102, depth: 1 },
+      { id: 1, postId: 101, depth: 0, parentIds: [] },
+      { id: 2, postId: 102, depth: 1, parentIds: [] },
     ] as never);
     r.post.findMany.mockResolvedValue([post(101, OWNER, NsfwLevel.X), post(102, OWNER)] as never);
     r.storylineChapter.findMany.mockResolvedValue([
@@ -160,8 +160,8 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
     } as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 1 } as never);
     r.$queryRaw.mockResolvedValue([
-      { id: 1, postId: 101, depth: 0 },
-      { id: 2, postId: 102, depth: 1 },
+      { id: 1, postId: 101, depth: 0, parentIds: [] },
+      { id: 2, postId: 102, depth: 1, parentIds: [] },
     ] as never);
     r.post.findMany.mockResolvedValue([post(101, OWNER), post(102, AUTHOR)] as never);
   });
@@ -259,8 +259,8 @@ describe('storyline router: canon ahead', () => {
       Promise.resolve(
         strings.join('?').includes('WITH RECURSIVE main')
           ? [
-              { id: 2, postId: 102, depth: 1 },
-              { id: 3, postId: 103, depth: 2 },
+              { id: 2, postId: 102, depth: 1, parentIds: [] },
+              { id: 3, postId: 103, depth: 2, parentIds: [] },
             ]
           : []
       )) as never);
@@ -290,6 +290,8 @@ describe('storyline router: canon ahead', () => {
           user: { username: `u${AUTHOR}` },
         },
         childCount: 0,
+        joins: [],
+        parentCount: 0,
         firstImage: null,
       },
     ]);

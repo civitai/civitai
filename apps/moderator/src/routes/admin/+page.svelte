@@ -5,6 +5,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { IconChevronDown, IconChevronRight } from '@tabler/icons-svelte';
+  import { permissionByKey } from '$lib/permissions';
   import type { AccessNode } from '$lib/server/access';
   import type { ActionData, PageData } from './$types';
 
@@ -204,7 +205,7 @@
   {/if}
 {/snippet}
 
-{#snippet row(node: AccessNode, depth: number)}
+{#snippet row(node: AccessNode, depth: number, keyColumn: boolean)}
   {@const open = isOpen(node)}
   <!-- Depth reaches assistive tech through the row header's text, not `aria-level`: that attribute is
        only honoured on rows inside a `treegrid`, so here it announced nothing at all. -->
@@ -216,6 +217,11 @@
       ? 'bg-dark-7'
       : 'odd:bg-dark-7/40'}"
   >
+    {#if keyColumn}
+      <td class="py-1.5 pr-4 pl-4 whitespace-nowrap">
+        <code class="text-xs text-dark-2">{permissionByKey(node.key)?.id ?? node.key}</code>
+      </td>
+    {/if}
     <th
       scope="row"
       class="py-1.5 pr-4 text-left font-normal"
@@ -256,16 +262,23 @@
   </tr>
   {#if open}
     {#each childrenOf(node) as child (child.key)}
-      {@render row(child, depth + 1)}
+      {@render row(child, depth + 1, keyColumn)}
     {/each}
   {/if}
 {/snippet}
 
-{#snippet matrix(nodes: AccessNode[], heading: string)}
+<!-- `keyColumn` leads each row with its grant key — the id call sites, grant rows and refusals all use —
+     and the action list arrives sorted on it (`pageAccessState`), so one key's actions sit together. -->
+{#snippet matrix(nodes: AccessNode[], heading: string, keyColumn = false)}
   <table class="w-full min-w-xl text-sm">
     <caption class="sr-only">Pages and actions each moderator role is granted</caption>
     <thead class="sticky top-0 z-10 bg-dark-6">
       <tr class="border-b border-dark-4">
+        {#if keyColumn}
+          <th scope="col" class="py-2 pr-4 pl-4 text-left text-xs tracking-wide text-dark-2 uppercase">
+            Grant key
+          </th>
+        {/if}
         <th scope="col" class="py-2 pl-4 text-left text-xs tracking-wide text-dark-2 uppercase">
           {heading}
         </th>
@@ -283,7 +296,7 @@
     </thead>
     <tbody>
       {#each nodes.filter(isVisible) as node (node.key)}
-        {@render row(node, 0)}
+        {@render row(node, 0, keyColumn)}
       {/each}
     </tbody>
   </table>
@@ -386,7 +399,7 @@
   {#if data.actions.filter(isVisible).length === 0}
     <p class="p-5 text-sm text-dark-2">No actions match <span class="text-dark-0">{search}</span>.</p>
   {:else}
-    {@render matrix(data.actions, 'Action')}
+    {@render matrix(data.actions, 'Action', true)}
   {/if}
 </div>
 

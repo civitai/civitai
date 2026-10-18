@@ -361,9 +361,9 @@ export function defaultStepsForRun(run: Run): number {
 }
 
 /** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
-export function defaultRunParams(run: Run): RunParams {
+export function defaultRunParams(run: Run, trigger = ''): RunParams {
   const d = paramsForVersion(runCard(run), run.versionKey);
-  const x = extraParamDefaults(runCard(run), run.versionKey);
+  const x = extraParamDefaults(runCard(run), run.versionKey, !!trigger.trim());
   return {
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
@@ -418,9 +418,10 @@ function paramEquals(a: NumericInput | boolean, b: NumericInput | boolean): bool
 export function paramDeviations(
   run: Run,
   params: RunParams,
-  labelMode: LabelType
+  labelMode: LabelType,
+  trigger = ''
 ): ParamDeviation[] {
-  const defaults = defaultRunParams(run);
+  const defaults = defaultRunParams(run, trigger);
   const caps = runExtraCapabilities(run, labelMode);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {

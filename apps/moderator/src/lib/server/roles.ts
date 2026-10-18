@@ -9,8 +9,18 @@ export const NO_ROLE_CATALOGUE =
 // column's position is the only thing telling one unlabelled checkbox from the next — ordering by id put
 // the newest role leftmost and inverted that, so "the last column" silently changed which role it meant.
 // This is NOT the role list: membership comes entirely from the hub, and anything absent here sorts after,
-// so a role created there still appears without a deploy.
-const COLUMN_ORDER = ['moderator:volunteer', 'moderator:staff', 'moderator:senior'];
+// so a role created there still appears without a deploy — after these, alphabetically, which is where
+// the single-purpose roles (membership codes, payroll, scan labels) belong.
+//
+// One ladder per team, each ascending. Stale until 2026-10-16: it named volunteer/staff/senior, which no
+// longer exist in the hub, so every column fell through to alphabetical and the two ladders interleaved
+// with the single-purpose roles. `grantableRoles` now logs a name here the hub does not have.
+// `cm-medium-access` is left out deliberately: it is being retired from the moderator roles.
+const COLUMN_ORDER: readonly Role[] = [
+  'moderator:mod-medium-access',
+  'moderator:mod-high-access',
+  'moderator:cm-high-access',
+];
 
 function byTrust(a: Role, b: Role): number {
   const rankA = COLUMN_ORDER.indexOf(a);
@@ -40,6 +50,9 @@ export async function grantableRoles(): Promise<Role[] | null> {
   try {
     const all = await listAppRoles(dbRead, APP);
     if (!all.includes(SUPER_ROLE)) return null;
+    const missing = COLUMN_ORDER.filter((role) => !all.includes(role));
+    if (missing.length)
+      console.warn(`[roles] COLUMN_ORDER names roles the hub does not have: ${missing.join(', ')}`);
     return all.filter(isStorableRole).sort(byTrust);
   } catch (e) {
     console.error('[roles] could not read the role catalogue from the auth hub', e);

@@ -15,6 +15,7 @@ import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -41,7 +42,20 @@ import {
 type TrainingStudioMeta = {
   name?: string;
   trigger?: string;
+  /** The Studio's LoRA type id (`character`/`style`/`concept`/`effect`). */
+  loraType?: string;
 };
+
+type TrainingModelType = (typeof constants.trainingModelTypes)[number];
+
+/** The Studio's lowercase LoRA type id as the trainer's `trainingModelTypes` value, or undefined for a
+ *  run that didn't record one (a foreign or pre-type run). */
+function mapLoraTypeToTrainingModelType(
+  loraType: string | undefined
+): TrainingModelType | undefined {
+  if (!loraType) return undefined;
+  return constants.trainingModelTypes.find((type) => type.toLowerCase() === loraType.toLowerCase());
+}
 
 /** The training step's input, read defensively — the client types `input` loosely and a foreign run may
  * carry only some of these. `model` is the AIR (imageResourceTraining path); `ecosystem`/`modelVariant`
@@ -332,8 +346,10 @@ export async function createDraftModelFromWorkflow({
     ? 'audio'
     : 'image';
 
+  const trainingModelType = mapLoraTypeToTrainingModelType(meta.loraType);
+
   const trainingDetails: TrainingDetailsObj = {
-    type: 'Character',
+    type: trainingModelType ?? 'Character',
     mediaType,
     baseModel: trainingKey,
     baseModelType: trainingBaseModelType,
@@ -369,6 +385,11 @@ export async function createDraftModelFromWorkflow({
     nsfw: false,
     poi: false,
     minor: false,
+    // The in-app trainer stamps the same category tag at creation; the publish form reads it back as
+    // the default category.
+    ...(trainingModelType && {
+      tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }],
+    }),
     // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
     // approval stamp records that this run passed the moderation check at materialization.
     serverMeta: { trainingStudioWorkflowId: workflow.id, trainingStudioModerationApproved: true },
@@ -388,7 +409,7 @@ export async function createDraftModelFromWorkflow({
 
   // Not a dataset (the studio uploads blobs, never a zip): this row only carries the run's results
   // for the epoch picker and training readers. Private keeps it off the public files list.
-  await createFile({
+  const placeholder = await createFile({
     name: `${modelVersion.id}_training_data.zip`,
     url: selectedEpoch.modelUrl,
     sizeKB: 0,
@@ -402,6 +423,10 @@ export async function createDraftModelFromWorkflow({
     userId: user.id,
     select: { id: true },
   });
+  // Its url is an orchestrator blob the scanner can't fetch, so the scan fallback job would submit
+  // it, fail the pre-flight and tombstone it exists=false minutes later anyway. Born in that state,
+  // the job never picks it up. Its scan status stays Pending: nothing scanned it.
+  await dbWrite.modelFile.update({ where: { id: placeholder.id }, data: { exists: false } });
 
   return { modelId: model.id, modelVersionId: modelVersion.id, selectedEpoch };
 }

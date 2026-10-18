@@ -54,6 +54,8 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'HuggingFaceImport',
   'Image',
   'ImageReaction',
+  'Item',
+  'ItemDefinition',
   'LicensingRoot',
   'MembershipGift',
   'Model',

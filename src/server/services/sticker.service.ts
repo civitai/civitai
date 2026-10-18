@@ -295,9 +295,9 @@ export async function getStickerOffers({
       meta: true,
       availableQuantity: true,
       addedById: true,
-      // The purchase counts rows, not `meta.purchases` — that counter is written
-      // from a snapshot read and loses increments under concurrency, so a
-      // listing genuinely out of stock still reads as available through it.
+      // The purchase counts rows, not `meta.purchases` — that counter is bumped
+      // after the grant commits and a failed bump is only logged, so a listing
+      // genuinely out of stock can still read as available through it.
       _count: { select: { purchases: true } },
     },
   });
