@@ -1,5 +1,5 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { ModelStatus, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 
 // A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
 // new version. Unpublished counts, since publishing it again brings back what it had.
@@ -36,4 +36,28 @@ export function assertVersionAcceptsNewUpload(
     throw throwBadRequestError(
       "Training data can't be changed after training has started. Create a new version to train again."
     );
+}
+
+/**
+ * On a trained version, the dataset rules (and the dataset's domain stamp) key on a file being
+ * training data, so there a file never becomes, or stops being, training data after it was created.
+ * An uploaded model's training data is an ordinary attachment its owner may relabel. A training
+ * status counts as trained too: the owner can rewrite `uploadType`, but cannot clear a status a
+ * moderator set (Paused, Denied), which is what the dataset delete lock relies on.
+ */
+export function assertFileTypeChangeAllowed(
+  file: {
+    type: string;
+    modelVersion: { uploadType: ModelUploadType; trainingStatus: TrainingStatus | null };
+  },
+  nextType: string | undefined
+) {
+  if (
+    (file.modelVersion.uploadType === ModelUploadType.Trained ||
+      file.modelVersion.trainingStatus != null) &&
+    nextType &&
+    nextType !== file.type &&
+    (nextType === 'Training Data' || file.type === 'Training Data')
+  )
+    throw throwBadRequestError("A file can't be changed to or from training data.");
 }

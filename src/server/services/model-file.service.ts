@@ -36,7 +36,10 @@ import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
-import { assertVersionAcceptsNewUpload } from '~/server/utils/model-file-replace';
+import {
+  assertFileTypeChangeAllowed,
+  assertVersionAcceptsNewUpload,
+} from '~/server/utils/model-file-replace';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -197,19 +200,7 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
-  // On a trained version, the dataset rules (and the dataset's domain stamp) key on a file being
-  // training data, so there a file never becomes, or stops being, training data after it was created.
-  // An uploaded model's training data is an ordinary attachment its owner may relabel. A training
-  // status counts as trained too: the owner can rewrite `uploadType`, but cannot clear a status a
-  // moderator set (Paused, Denied), which is what the dataset delete lock relies on.
-  if (
-    (modelFile.modelVersion.uploadType === ModelUploadType.Trained ||
-      modelFile.modelVersion.trainingStatus != null) &&
-    inputData.type &&
-    inputData.type !== modelFile.type &&
-    (inputData.type === 'Training Data' || modelFile.type === 'Training Data')
-  )
-    throw throwBadRequestError("A file can't be changed to or from training data.");
+  assertFileTypeChangeAllowed(modelFile, inputData.type);
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
 
