@@ -138,7 +138,7 @@ export async function releaseHeld(
 }
 
 /** What "Put it back" leaves in the message box: the message, ahead of anything typed there since. */
-export function putBack(message: string, box: string): string {
+function putBack(message: string, box: string): string {
   return box.trim() ? `${message}\n\n${box}` : message;
 }
 

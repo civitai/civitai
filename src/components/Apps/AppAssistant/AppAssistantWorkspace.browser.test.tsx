@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
+import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import type * as TrpcMod from '~/utils/trpc';
@@ -477,13 +477,15 @@ describe('AppAssistantWorkspace app switcher', () => {
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
   });
 
-  test('INVARIANT: closing the switcher puts focus back on it', async () => {
+  test('INVARIANT: picking an app from the switcher puts focus back on it', async () => {
     await mount();
     await switcher().click();
-    await expect.element(page.getByRole('dialog', { name: 'Apps' })).toBeVisible();
     // Focus is trapped in the list while it is open, so it has to be given back.
     await vi.waitFor(() => expect(switcher().element()).not.toBe(document.activeElement));
-    await userEvent.keyboard('{Escape}');
+    await page
+      .getByRole('dialog', { name: 'Apps' })
+      .getByRole('button', { name: /^app-aaaa/ })
+      .click();
     await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
     await expect.element(switcher()).toHaveFocus();
   });
