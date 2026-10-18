@@ -91,20 +91,22 @@ export const FeatureFlagsProvider = ({
   );
 
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
-  // `~/utils/trpc`). Set during render, not in an effect: child effects run
-  // before parent effects and React Query starts a query's fetch from an
-  // effect, so an effect here would miss the first commit's queries.
-  // Browser only — on the server this module flag would be shared across
-  // concurrent requests.
-  if (typeof window !== 'undefined') {
+  // `~/utils/trpc`).
+  //
+  // With `trpcBatchingFirstCommit` on, it is written while rendering: child
+  // effects run before parent effects and React Query starts a query's fetch
+  // from an effect, so the effect below alone would miss the first commit's
+  // queries. Browser only — on the server this module flag would be shared
+  // across concurrent requests.
+  if (typeof window !== 'undefined' && featureFlags.trpcBatchingFirstCommit) {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
   }
-  // Safety net, not load-bearing: the render-time write above already carries
-  // every committed value. No dependency array, so it re-applies the committed
-  // value after every commit of this component.
+  // With `trpcBatchingFirstCommit` off, this effect is the only writer, so
+  // batching applies only to queries sent after the provider has mounted. With
+  // it on, this writes the value the render already wrote.
   useEffect(() => {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
-  });
+  }, [featureFlags.trpcBatching]);
 
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>

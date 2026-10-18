@@ -157,8 +157,9 @@ function httpLinkWithLargeQuerySupport({
 
 /**
  * Module-scoped, flag-driven batch toggle. Default OFF so batching is dark until the
- * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider` while it renders in
- * the browser (so before any query in that commit is sent), never on the server. Kept as a
+ * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider`, never on the server:
+ * in its mount/update effect, and — when `trpcBatchingFirstCommit` is on — also while it
+ * renders in the browser, so before any query in that commit is sent. Kept as a
  * mutable module flag (not React state) because the tRPC terminating link is built once at
  * module init and cannot read a hook; the `splitLink` condition re-reads this per operation,
  * so a later flip takes effect on subsequent queries without rebuilding the client.
@@ -273,9 +274,9 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
  * disable the other.
  *
  * HEAVY FEED procedures — `image.getInfinite`, `image.getImagesAsPostsInfinite`,
- * `model.getAll`, `user.getAll` — are served by a separate backend route keyed on the
- * procedure path in the request URL. A batched request names several procedures in one path,
- * which no longer reliably maps to that route, so they must not be batched.
+ * `model.getAll`, `user.getAll` — depend on being sent as their own request, under their own
+ * procedure path. A batched request names several procedures in one path, so they must not
+ * be batched.
  *
  * `event.getData` and `image.getGenerationData` are PENDING-CACHEABLE: their `edgeCacheIt` is
  * commented out in the router with the intent of restoring it. They must stay unbatched

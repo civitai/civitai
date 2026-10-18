@@ -7,9 +7,10 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
- * `FeatureFlagsProvider` applies `trpcBatching` to a MODULE-level flag while it renders. On the
- * server that module is shared by every concurrent request, so a server render must never
- * write it — one user's flag would leak into other requests.
+ * With `trpcBatchingFirstCommit` on, `FeatureFlagsProvider` applies `trpcBatching` to a
+ * MODULE-level flag while it renders. On the server that module is shared by every concurrent
+ * request, so a server render must never write it — one user's flag would leak into other
+ * requests. Both flags are on here so only the browser guard can keep the write out.
  */
 
 vi.mock('~/providers/SessionProvider', async (orig) => ({
@@ -25,7 +26,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({
     'user.getFeatureFlags': {
-      useQuery: () => ({ data: { trpcBatching: true }, isSuccess: true, isError: false }),
+      useQuery: () => ({
+        data: { trpcBatching: true, trpcBatchingFirstCommit: true },
+        isSuccess: true,
+        isError: false,
+      }),
     },
   }),
 }));
@@ -44,7 +49,9 @@ describe('FeatureFlagsProvider on the server', () => {
     const html = renderToString(
       createElement(
         FeatureFlagsProvider,
-        { flags: { trpcBatching: true } as unknown as FeatureAccess },
+        {
+          flags: { trpcBatching: true, trpcBatchingFirstCommit: true } as unknown as FeatureAccess,
+        },
         createElement('span', null, 'child')
       )
     );

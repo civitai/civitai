@@ -77,6 +77,13 @@ const featureFlags = createFeatureFlags({
   // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
   // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
   trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
+  // Rollout gate for WHEN `trpcBatching` takes effect in the browser. On: `FeatureFlagsProvider`
+  // applies it while rendering, so the first commit's queries can batch. Off: it is applied
+  // only from the provider's effect, after the first commit's queries have been sent (the
+  // previous behaviour). SEPARATE from `trpcBatching` so this timing change ramps on its own
+  // and can be turned off without turning batching off. Has no effect while `trpcBatching`
+  // is off. availability ['mod'] is the Flipt-down fallback (mirrors `trpcBatching`).
+  trpcBatchingFirstCommit: { availability: ['mod'], fliptKey: 'trpc-batching-first-commit' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse

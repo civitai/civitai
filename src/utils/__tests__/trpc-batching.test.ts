@@ -593,8 +593,8 @@ describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', ()
     clearWindow();
   });
 
-  // A literal pin, not a restatement: the four heavy feed names must match the separate
-  // backend route that serves them, which this repo cannot import or check.
+  // A literal pin, not a restatement: the four heavy feed names are fixed outside this repo,
+  // which it cannot import or check.
   it('pins the pending-cacheable and heavy feed procedures to the never-batch set', () => {
     expect([...NEVER_BATCH_PROCEDURES].sort()).toEqual([
       'event.getData',
