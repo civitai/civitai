@@ -55,10 +55,7 @@ vi.mock('~/server/services/block-registry.service', () => ({
  */
 const mockFindUnique = dbMock.dbRead.appListing.findUnique;
 
-vi.mock('~/server/utils/server-domain', () => ({
-  ratingAllowedOnHost: () => true,
-  isRedCapableHost: () => false,
-}));
+vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
 
 vi.mock('@mantine/core', () => ({
   Alert: () => null,

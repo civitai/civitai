@@ -176,7 +176,7 @@ export type ChromeRecentApp = RecentApp & { blockId: string };
  *     record. `toRecentAppFromListing` (the detail page's "Open live" CTA, the
  *     card's new-tab CTA) and the run page both write `kind` AND `hasPage`; the
  *     legacy `MarketplaceBody.recordRecent` writes only
- *     `{id, blockId, name, iconUrl}` — NEITHER field. Its entries are therefore
+ *     `{id, blockId, name}` — NEITHER field. Its entries are therefore
  *     admitted here by ABSENCE (`undefined !== 'offsite'` is true), carrying no
  *     page evidence at all, which makes them the strongest case for the gate
  *     rather than an exception to it.

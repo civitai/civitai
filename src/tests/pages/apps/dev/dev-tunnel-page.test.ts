@@ -68,10 +68,7 @@ vi.mock('~/server/services/blocks/dev-tunnel-dns.service', () => ({
 }));
 // Real dev-tunnel-session (pure) — signs a real token + validates the host.
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/utils/server-domain', () => ({
-  ratingAllowedOnHost: () => true,
-  isRedCapableHost: () => false,
-}));
+vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
 
 // Heavy component deps stubbed so importing the page modules doesn't pull a DOM.
 vi.mock('@mantine/core', () => ({

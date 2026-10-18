@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 /**
  * The listing-media gate in isolation. The surfaces that use it are driven through their own
  * entry points in `listing-media-audience.seam.test.ts` (store reads),
- * `listing-media-surfaces.test.ts` (run-page icon, post chip) and
+ * `listing-media-surfaces.test.ts` (post chip) and
  * `app-sub-listing-store.behavior.test.ts` (sub-listing cards).
  *
  * Levels used: PG = 1, PG-13 = 2, R = 4, XXX = 16 — and Blocked = 32 only where it is the point.

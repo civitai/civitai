@@ -53,8 +53,6 @@ vi.mock('~/server/utils/server-domain', () => ({
     if (!mature) return true;
     return host === 'civitai.red' || host === 'www.civitai.red';
   },
-  isRedCapableHost: (host: string | null | undefined) =>
-    host === 'civitai.red' || host === 'www.civitai.red',
 }));
 
 vi.mock('@mantine/core', () => ({ Box: () => null, useComputedColorScheme: () => 'dark' }));

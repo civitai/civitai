@@ -4,8 +4,7 @@
  * Deliberately THIN and deliberately SEPARATE from `post-app-chip.logic.ts`,
  * which holds the whole decision and is pure + I/O-injected. Keeping the two
  * apart is what lets the decision be tested in the node `unit` project without
- * pulling in `dbRead` or the Flipt client — the same split
- * `app-listing-icon.service.ts` uses against `listing-media-url.ts`.
+ * pulling in `dbRead` or the Flipt client.
  *
  * 🔴 THIN IS NOT UNTESTED, AND THIS FILE IS WHERE THE DISCLOSURE GATE ACTUALLY
  * LIVES. Every interesting property of the decision is pinned in the logic
@@ -43,7 +42,7 @@ import type { SessionUser } from '~/types/session';
 /**
  * `logToAxiom` returns a promise that can reject, so the `.catch` is required —
  * an unhandled rejection from a fail-open path would defeat the point of failing
- * open. Mirrors `noteDegradedIconRead` in `app-listing-icon.service.ts`.
+ * open.
  */
 function noteDegradedChipRead(err: unknown): void {
   logToAxiom({

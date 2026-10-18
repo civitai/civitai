@@ -106,8 +106,6 @@ const EXPECTED_PROJECTORS: Record<
   'server/services/blocks/app-listing.service.ts': 'gated + raw: moderator',
   // Sub-listing card: its own image and the parent cover/icon fallback.
   'server/services/blocks/app-sub-listing-store.service.ts': 'gated',
-  // Run-page chrome icon.
-  'server/services/blocks/app-listing-icon.service.ts': 'gated',
   // Post "Published with" chip icon.
   'server/services/blocks/post-app-chip.logic.ts': 'gated',
   // The owner's own "My apps" row: shows exactly what is attached.
@@ -195,7 +193,6 @@ describe('listing-media call-site ledger', () => {
       .map(([rel]) => rel);
     // Named rather than counted, so re-labelling an entry cannot empty this loop silently.
     expect(gated.sort()).toEqual([
-      'server/services/blocks/app-listing-icon.service.ts',
       'server/services/blocks/app-listing.service.ts',
       'server/services/blocks/app-sub-listing-store.service.ts',
       'server/services/blocks/post-app-chip.logic.ts',

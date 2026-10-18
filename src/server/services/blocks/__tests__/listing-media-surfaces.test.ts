@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 /**
- * T5 — the two single-image surfaces that render a listing icon outside the store reads: the
- * run-page chrome icon and the post "Published with" chip. Both go through the listing-media gate.
+ * T5 — the single-image surface that renders a listing icon outside the store reads: the post
+ * "Published with" chip. It goes through the listing-media gate.
  *
- * Imports only these surfaces' own entry points, so the file runs unchanged against code that
+ * Imports only this surface's own entry point, so the file runs unchanged against code that
  * predates the gate — which is how its cases were shown to fail before the change.
  *
  * Levels: PG = 1, R = 4. Urls are pairwise distinct.
@@ -20,10 +20,6 @@ vi.mock('~/client-utils/edge-url', () => ({
 }));
 
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  readListingIconBySlugForRender,
-  type ListingIconReadClient,
-} from '~/server/services/blocks/app-listing-icon.service';
 import { projectPostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 
 const { PG, R } = NsfwLevel;
@@ -44,41 +40,6 @@ function img(url: string, nsfwLevel: number, over: Record<string, unknown> = {})
     ...over,
   };
 }
-
-describe('T5 — the run-page chrome icon', () => {
-  const client = (icon: Img | null, contentRating = 'g'): ListingIconReadClient =>
-    ({
-      appListing: { findUnique: vi.fn(async () => ({ contentRating, icon })) },
-    } as unknown as ListingIconReadClient);
-
-  it('an R icon on a non-red host is null (the chrome falls back to its glyph)', async () => {
-    expect(await readListingIconBySlugForRender('app', client(img('run-r.png', R)))).toBeNull();
-    expect(
-      await readListingIconBySlugForRender('app', client(img('run-r.png', R)), {
-        redCapable: false,
-        viewerBrowsingLevel: PG | R,
-      })
-    ).toBeNull();
-  });
-
-  it('the same R icon on a red host shows for an R viewer, not for an anonymous one', async () => {
-    expect(
-      await readListingIconBySlugForRender('app', client(img('run-r.png', R)), {
-        redCapable: true,
-        viewerBrowsingLevel: PG | R,
-      })
-    ).toBe('edge:run-r.png@256');
-    expect(
-      await readListingIconBySlugForRender('app', client(img('run-r.png', R)), { redCapable: true })
-    ).toBeNull();
-  });
-
-  it('a PG icon shows on a non-red host (positive control)', async () => {
-    expect(await readListingIconBySlugForRender('app', client(img('run-pg.png', PG)))).toBe(
-      'edge:run-pg.png@256'
-    );
-  });
-});
 
 describe('T5 — the post "Published with" chip icon', () => {
   const chipRow = (icon: Img | null) => ({
@@ -148,23 +109,10 @@ describe('T5 — the post "Published with" chip icon', () => {
   });
 });
 
-// The LISTING RATING reaches both surfaces' ceilings. Fixtures vary it on purpose: a `g` listing
+// The LISTING RATING reaches the chip's ceiling. Fixtures vary it on purpose: a `g` listing
 // and a `pg13` listing with the same PG-13 icon must disagree off a red host.
 describe('T5 — the listing rating caps a single-image surface', () => {
   const PG13 = NsfwLevel.PG13;
-
-  it('run-page icon: PG-13 shows on a pg13 listing and not on a g one', async () => {
-    const client = (contentRating: string) =>
-      ({
-        appListing: {
-          findUnique: vi.fn(async () => ({ contentRating, icon: img('run-pg13.png', PG13) })),
-        },
-      } as unknown as ListingIconReadClient);
-    expect(await readListingIconBySlugForRender('app', client('pg13'))).toBe(
-      'edge:run-pg13.png@256'
-    );
-    expect(await readListingIconBySlugForRender('app', client('g'))).toBeNull();
-  });
 
   it('post chip: the same split, and a red host never shows less than a non-red one', () => {
     const chipFor = (contentRating: string, host: string) =>

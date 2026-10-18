@@ -44,8 +44,6 @@ vi.mock('~/server/utils/server-domain', () => ({
     if (!mature) return true;
     return host === 'civitai.red' || host === 'www.civitai.red';
   },
-  isRedCapableHost: (host: string | null | undefined) =>
-    host === 'civitai.red' || host === 'www.civitai.red',
 }));
 
 // The page imports React/Mantine component bits at module top; stub the heavy

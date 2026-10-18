@@ -15,13 +15,11 @@ import { IconEyeOff, IconFlask } from '@tabler/icons-react';
 import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
-import { readListingIconBySlugForRender } from '~/server/services/blocks/app-listing-icon.service';
 import { recordAppListingOpen } from '~/server/services/blocks/app-listing-open.service';
 import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag';
 import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { isRedCapableHost, ratingAllowedOnHost } from '~/server/utils/server-domain';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { Page } from '~/components/AppLayout/Page';
 import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
@@ -89,22 +87,6 @@ interface PageProps {
   isBeta: boolean;
   betaMessage: string | null;
   /**
-   * The store listing's icon, for the "recently opened apps" entry this page writes.
-   *
-   * 🔴 THE LISTING'S ICON, NOT THE MANIFEST'S — and that is a TRUST choice, not a
-   * convenience one. The chrome that renders this is the spoof-proof surface: it exists
-   * to tell a viewer which app they are actually inside, and it already launders the
-   * app NAME through `sanitizeAppChromeName` for exactly that reason. A manifest-supplied
-   * image is publisher-controlled with no review step, so putting one in the trust chrome
-   * would hand a publisher a picture next to a name we deliberately sanitize. The listing
-   * icon is a moderator-approved asset, and it is the same one `toRecentAppFromListing`
-   * already writes from the store — so both writers now agree.
-   *
-   * `null` for a listing with no icon, and for any read that failed — see
-   * `readListingIconBySlugForRender`, which fails open rather than 500ing the launch path.
-   */
-  iconUrl: string | null;
-  /**
    * PRIVATE RUN — non-null ONLY when this render came from the private-run fallback in
    * the resolver, i.e. the app is delisted/suspended and the viewer is its owner, an
    * accepted listing collaborator, or a moderator.
@@ -161,23 +143,13 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // names this call site as the reason it exists. A listing row that does not exist
     // resolves to `isBeta: false` the same way, and a degraded read is logged rather than
     // silently swallowed.
-    // 🔴 THE ICON READ JOINS THIS `Promise.all` RATHER THAN FOLLOWING IT, for the reason
-    // the beta read is already here: this is the app-LAUNCH critical path, so the page
-    // must wait for the SLOWEST of these, never their sum. It is keyed on the SLUG — the
-    // value we already hold — so like the beta read it depends on nothing the block
-    // resolve returns and can be issued in the same tick. Both `app_listings` reads fail
-    // open; see `readListingIconBySlugForRender` for why a rejection here must never
-    // become a 500 on the page that runs the app.
-    const [page, beta, iconUrl] = await Promise.all([
+    //
+    // No listing ICON is read here. The run page used to read one for its recents entry, but the
+    // recents store no longer persists an icon (`recentlyOpenedAppsStore.ts`), so nothing on this
+    // page rendered it.
+    const [page, beta] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
-      readListingIconBySlugForRender(slug, dbRead, {
-        redCapable: isRedCapableHost(ctx.req.headers.host),
-        viewerBrowsingLevel: getServerBrowsingLevel({
-          canViewNsfw: !!features.canViewNsfw,
-          user: session?.user,
-        }),
-      }),
     ]);
 
     // ── PRIVATE RUN — THE DELISTED/SUSPENDED FALLBACK ──────────────────────────
@@ -255,13 +227,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
           trustTier: block.trustTier,
           slug: block.blockId,
           scopes: block.scopes,
-          // A delisted app has no live store listing to read a beta note or icon from, and
-          // the concurrent reads above were keyed on a slug the store no longer surfaces.
-          // Both fail open to their own "absent" value on the public path too, so this is
-          // the same contract, not a private-run special case.
+          // A delisted app has no live store listing to read a beta note from, and the
+          // concurrent read above was keyed on a slug the store no longer surfaces. It fails
+          // open to "not beta" on the public path too, so this is the same contract, not a
+          // private-run special case.
           isBeta: false,
           betaMessage: null,
-          iconUrl: null,
           audience: access.audience,
           privateRunStatus: block.status,
         },
@@ -321,7 +292,6 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         // Only carried when the flag is set — the same rule every other projection of these
         // columns applies, so a stale note cannot reach a page through this one.
         betaMessage: beta.isBeta ? beta.betaMessage : null,
-        iconUrl,
         // 🔴 THE PUBLIC PATH IS ALWAYS `null` ON BOTH. This is reached only when the
         // approved-only resolver returned a block, so there is no audience to carry and no
         // non-approved status to disclose. Written explicitly rather than left off, so the
@@ -431,7 +401,6 @@ export function recentsEntryFor(args: {
   appBlockId: string;
   blockId: string;
   appName: string;
-  iconUrl: string | null;
 }): RecentApp | null {
   if (args.audience != null) return null;
   return {
@@ -441,9 +410,7 @@ export function recentsEntryFor(args: {
     kind: 'onsite',
     hasPage: true,
     name: args.appName,
-    // Spread-when-truthy, matching the shape the store's own writers use, so an absent
-    // icon leaves the key off the persisted object rather than writing `undefined`.
-    ...(args.iconUrl ? { iconUrl: args.iconUrl } : {}),
+    // No `iconUrl`: the recents store never persists one (`recentlyOpenedAppsStore.ts`).
   };
 }
 
@@ -484,7 +451,6 @@ function AppPage(props: PageProps) {
     scopes,
     isBeta,
     betaMessage,
-    iconUrl,
     audience,
     privateRunStatus,
   } = props;
@@ -507,7 +473,7 @@ function AppPage(props: PageProps) {
   //  - `kind`/`hasPage` — reaching THIS page means the app declares a full-page
   //    surface, so `hasPage` is true by construction; the rail uses it to decide
   //    between re-opening the run route and the detail page.
-  //  - `iconUrl` — handed to the entry, but the recents store does NOT persist it
+  //  - no `iconUrl` — the recents store does NOT persist one
   //    (`recentlyOpenedAppsStore.ts`): a listing icon is gated per viewer, per host and at
   //    render time, and a stored url would later render with no gate in front of it. The
   //    chrome menu draws a generic glyph; the `/apps` rail takes the icon from its live,
@@ -533,9 +499,9 @@ function AppPage(props: PageProps) {
     // (`if (!entry) record(entry, …)`) does not type-check. An audit inverted the boolean
     // guard this replaced and watched 151 tests across 8 files stay green; that shape is
     // gone rather than guarded.
-    const entry = recentsEntryFor({ audience, appBlockId, blockId, appName, iconUrl });
+    const entry = recentsEntryFor({ audience, appBlockId, blockId, appName });
     if (entry) recordRecentlyOpenedApp(entry, recentsOwnerId);
-  }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId, audience]);
+  }, [appBlockId, blockId, appName, recentsOwnerId, audience]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).

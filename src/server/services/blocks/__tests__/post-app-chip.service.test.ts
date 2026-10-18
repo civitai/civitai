@@ -16,8 +16,7 @@
  *
  * The builders being pinned says nothing about what is handed to Prisma, and the
  * gate's input is not part of the decision it gates. Those are relationships
- * between two modules, so only a test that loads both can see them. Precedent:
- * `app-listing-icon.service.test.ts`, the file this module's own split copies.
+ * between two modules, so only a test that loads both can see them.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
