@@ -102,7 +102,12 @@ let world: {
   }[];
   contents: Content[];
   owned: { userId: number; cosmeticId: number }[];
-  drawn: { userId: number; boxDefinitionId: number; rewardDefinitionId: number }[];
+  drawn: {
+    userId: number;
+    boxDefinitionId: number;
+    rewardDefinitionId: number;
+    rewardStatus?: string;
+  }[];
   items: { id: bigint; itemDefinitionId: number; holderType: string; holderId: number }[];
   blocked: unknown;
 };
@@ -204,9 +209,16 @@ function installWorld() {
   );
   db.boxOpening.findMany.mockReset();
   db.boxOpening.findMany.mockImplementation(
-    async ({ where }: { where: { userId: number; boxDefinitionId: number } }) =>
+    async ({
+      where,
+    }: {
+      where: { userId: number; boxDefinitionId: number; rewardStatus?: string };
+    }) =>
       world.drawn.filter(
-        (d) => d.userId === where.userId && d.boxDefinitionId === where.boxDefinitionId
+        (d) =>
+          d.userId === where.userId &&
+          d.boxDefinitionId === where.boxDefinitionId &&
+          (where.rewardStatus === undefined || (d.rewardStatus ?? 'granted') === where.rewardStatus)
       )
   );
 }
@@ -377,6 +389,19 @@ describe('getMysteryBoxesForEvent', () => {
       [1004, false],
       [1005, true],
     ]);
+  });
+
+  it('keeps a reward a moderator refunded as drawn: a refund cannot be used to redraw it', async () => {
+    world.drawn.push({
+      userId: VIEWER,
+      boxDefinitionId: BOX,
+      rewardDefinitionId: 104,
+      rewardStatus: 'refunded',
+    });
+
+    const [view] = await read();
+
+    expect(view.contents.find((c) => c.cosmeticId === 1004)?.left).toBe(false);
   });
 
   it('reads the contents once per box version; an edit that bumps the version shows at once', async () => {

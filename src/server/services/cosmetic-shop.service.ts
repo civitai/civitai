@@ -34,7 +34,11 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
+import {
+  computeCreatorShopSplit,
+  PACK_FILTER_VALUE,
+  PACK_SHOP_ITEM_WHERE,
+} from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import {
@@ -743,10 +747,9 @@ export const getShopSectionsWithItems = async ({
               ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
                 ? [
                     {
-                      cosmeticId: null,
-                      // A mystery box listing has no cosmetic either, and is sold only through its
-                      // own surface, which applies the box's flag, region and event checks.
-                      itemDefinitionId: null,
+                      // Not a mystery box listing: those are sold only through their own surface,
+                      // which applies the box's flag, region and event checks.
+                      ...PACK_SHOP_ITEM_WHERE,
                       ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
                     },
                   ]

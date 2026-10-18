@@ -94,7 +94,8 @@ beforeEach(async () => {
   await db.exec(migration('20261107120000_mystery_box_listing_unlisted_and_refunds'));
   await db.exec(`
     INSERT INTO "Cosmetic" ("id") VALUES (${HAT}), (${OTHER_HAT}), (600), (601), (700);
-    INSERT INTO "ItemDefinition" ("id", "type", "name", "status") VALUES (1, 'box', 'Box', 'published');
+    INSERT INTO "ItemDefinition" ("id", "type", "name", "status") VALUES
+      (1, 'box', 'Box', 'published'), (4, 'box', 'Another box', 'published');
     INSERT INTO "ItemDefinition" ("id", "type", "name", "cosmeticId") VALUES
       (2, 'cosmetic', 'Hat', ${HAT}), (3, 'cosmetic', 'Other hat', ${OTHER_HAT});
     INSERT INTO "CosmeticShopItem" ("id", "cosmeticId", "itemDefinitionId", "listed") VALUES
@@ -207,10 +208,15 @@ describe('refundShopPurchase: a mystery box', () => {
     await purchase('box-b', BOX_LISTING, null);
     await openedBox('box-a', 77, 2, HAT);
     await openedBox('box-b', 78, 3, OTHER_HAT);
+    // The same hat held another way stays theirs.
+    await grant(HAT, 'claimed');
+    await grant(HAT, 'box-open-99');
 
     await expect(refund('box-a')).resolves.toEqual({ ok: true });
 
     expect(await holdings()).toEqual([
+      { userId: BUYER, cosmeticId: HAT, claimKey: 'box-open-99' },
+      { userId: BUYER, cosmeticId: HAT, claimKey: 'claimed' },
       { userId: BUYER, cosmeticId: OTHER_HAT, claimKey: 'box-open-78' },
     ]);
     expect(await openingStatus(77)).toBe('refunded');
@@ -227,6 +233,25 @@ describe('refundShopPurchase: a mystery box', () => {
     });
     expect(await isRefunded('box-a')).toBe(false);
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('touches only the box this listing sells, under the same key', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await db.query(
+      `INSERT INTO "Item" ("itemDefinitionId", "holderType", "holderId", "sourceKey") VALUES (4, 'user', $1, 'box-a')`,
+      [BUYER]
+    );
+    await db.query(
+      `INSERT INTO "BoxOpening" ("boxItemId", "boxDefinitionId", "boxVersion", "userId", "boxSourceKey",
+         "tierId", "contentId", "rewardDefinitionId", "rewardType", "tierWeight", "eligibleWeight",
+         "tierRoll", "tierPoolSize", "itemRoll", "rewardStatus")
+       VALUES (90, 4, 1, $1, 'box-a', 1, 1, 2, 'cosmetic', 1, 1, 0, 1, 0, 'granted')`,
+      [BUYER]
+    );
+
+    await expect(refund('box-a')).resolves.toMatchObject({ ok: false });
+    expect(await heldBoxes()).toEqual(['box-a']);
+    expect(await openingStatus(90)).toBe('granted');
   });
 
   it('does not reach another user’s box under the same key', async () => {
@@ -321,6 +346,14 @@ describe('box listing CHECK', () => {
     await expect(list(BOX_LISTING)).rejects.toMatchObject({ code: '23514' });
     await expect(
       db.query(`INSERT INTO "CosmeticShopItem" ("id", "itemDefinitionId") VALUES (20, 1)`)
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('admits no reward status but granted and refunded', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await expect(openedBox('box-a', 77, 2, HAT)).resolves.toBeUndefined();
+    await expect(
+      db.query(`UPDATE "BoxOpening" SET "rewardStatus" = 'revoked' WHERE "boxItemId" = 77`)
     ).rejects.toMatchObject({ code: '23514' });
   });
 

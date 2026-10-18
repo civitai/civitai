@@ -216,6 +216,9 @@ export const isPackShopItem = (item: {
   itemDefinitionId: number | null;
 }): boolean => item.cosmeticId == null && item.itemDefinitionId == null;
 
+/** `isPackShopItem` as a `CosmeticShopItem` where clause. */
+export const PACK_SHOP_ITEM_WHERE = { cosmeticId: null, itemDefinitionId: null } as const;
+
 export type PackMemberPricing = {
   cosmeticId: number;
   type: CosmeticType;

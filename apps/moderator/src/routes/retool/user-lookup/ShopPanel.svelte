@@ -45,7 +45,7 @@
         title="Shop purchases"
         total={result.shopPurchases.items.length} capped={result.shopPurchases.truncated}
         shown={10}
-        hint="Refunding flags the purchase and removes the cosmetic. The Buzz is not returned automatically — use the Buzz section."
+        hint="Refunding flags the purchase and takes back what it granted: the cosmetic, a pack's cosmetics, or the box (its reward, once opened). The Buzz is not returned automatically — use the Buzz section."
       >
         {#snippet children(limit)}
           <ul class="space-y-1 text-sm">

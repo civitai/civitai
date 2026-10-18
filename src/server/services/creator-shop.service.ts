@@ -92,6 +92,7 @@ import {
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
   PACK_FILTER_VALUE,
+  PACK_SHOP_ITEM_WHERE,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
@@ -130,7 +131,7 @@ const hideStickers = (stickersEnabled?: boolean, packsEnabled?: boolean) =>
       : { cosmeticId: { not: null } }
     : {
         OR: [
-          ...(packsEnabled ? [{ cosmeticId: null, itemDefinitionId: null }] : []),
+          ...(packsEnabled ? [PACK_SHOP_ITEM_WHERE] : []),
           { cosmetic: { type: { not: CosmeticType.Sticker } } },
         ],
       };
@@ -1484,9 +1485,8 @@ export const getCommunityCosmetics = async ({
     // filter still excludes them: a pack has no type to match.
     OR: [
       // Packs show when nothing is filtered, or when the Pack chip is on.
-      // A mystery box listing has no cosmetic either, and is not a pack.
       ...(packsEnabled && (!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE))
-        ? [{ cosmeticId: null, itemDefinitionId: null }]
+        ? [PACK_SHOP_ITEM_WHERE]
         : []),
       ...(cosmeticTypes?.length && !realTypes.length
         ? []
@@ -1891,9 +1891,7 @@ export const getCreatorShopReviewQueue = async ({
       ...(packsWanted
         ? [
             {
-              cosmeticId: null,
-              // A mystery box listing has no cosmetic either, and is not a creator pack.
-              itemDefinitionId: null,
+              ...PACK_SHOP_ITEM_WHERE,
               addedById: userId ?? { not: null },
               ...(username
                 ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }

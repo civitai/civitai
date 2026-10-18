@@ -950,7 +950,7 @@ export async function refundShopPurchase(input: {
   const purchase = await dbWrite
     .selectFrom('UserCosmeticShopPurchases as p')
     .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
-    .select(['p.cosmeticId', 'p.refunded', 'csi.itemDefinitionId'])
+    .select(['p.refunded', 'csi.itemDefinitionId'])
     .where('p.buzzTransactionId', '=', input.buzzTransactionId)
     .where('p.userId', '=', input.userId)
     .executeTakeFirst();
@@ -960,8 +960,9 @@ export async function refundShopPurchase(input: {
 
   try {
     await dbWrite.transaction().execute(async (trx) => {
-      // First: every grant to this user takes the same lock first. A box open reads the held box and
-      // writes its opening under it, so without it this could find neither while the open commits.
+      // First, as the main app's shop and box grants take it first (`lockItemHolder`). A box open
+      // reads the held box and writes its opening under it, so without it this could find neither
+      // while the open commits. Both casts matter: there is no (int4, int8) overload.
       await sql`SELECT pg_advisory_xact_lock(${ITEM_HOLDER_LOCK_CLASS}::int, ${input.userId}::int)`.execute(
         trx
       );
@@ -977,8 +978,9 @@ export async function refundShopPurchase(input: {
         throw new RefundRefused('That purchase is already refunded.');
 
       // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
-      if (purchase.itemDefinitionId != null) await takeBackBox(trx, input);
-      else await takeBackCosmetics(trx, input, purchase.cosmeticId);
+      if (purchase.itemDefinitionId != null)
+        await takeBackBox(trx, { ...input, boxDefinitionId: purchase.itemDefinitionId });
+      else await takeBackCosmetics(trx, input);
     });
   } catch (error) {
     if (error instanceof RefundRefused) return { ok: false, error: error.message };
@@ -1005,23 +1007,12 @@ type RefundTarget = { userId: number; buzzTransactionId: string };
  */
 async function takeBackCosmetics(
   trx: Transaction<DB>,
-  { userId, buzzTransactionId }: RefundTarget,
-  cosmeticId: number | null
+  { userId, buzzTransactionId }: RefundTarget
 ) {
   await trx
     .deleteFrom('UserCosmetic')
     .where('userId', '=', userId)
     .where('claimKey', '=', buzzTransactionId)
-    .where(
-      'cosmeticId',
-      'in',
-      cosmeticId != null
-        ? [cosmeticId]
-        : trx
-            .selectFrom('UserCosmeticShopPurchaseCosmetic')
-            .select('cosmeticId')
-            .where('buzzTransactionId', '=', buzzTransactionId)
-    )
     .execute();
 }
 
@@ -1029,10 +1020,14 @@ async function takeBackCosmetics(
  * The held box, or once opened, its reward. The opening stays as the record of the draw, marked
  * refunded; it still counts as drawn, so the box cannot hand that reward to this user again.
  */
-async function takeBackBox(trx: Transaction<DB>, { userId, buzzTransactionId }: RefundTarget) {
+async function takeBackBox(
+  trx: Transaction<DB>,
+  { userId, buzzTransactionId, boxDefinitionId }: RefundTarget & { boxDefinitionId: number }
+) {
   const held = await trx
     .deleteFrom('Item')
     .where('sourceKey', '=', buzzTransactionId)
+    .where('itemDefinitionId', '=', boxDefinitionId)
     .where('holderType', '=', 'user')
     .where('holderId', '=', userId)
     .executeTakeFirst();
@@ -1042,6 +1037,7 @@ async function takeBackBox(trx: Transaction<DB>, { userId, buzzTransactionId }: 
     .updateTable('BoxOpening')
     .set({ rewardStatus: BOX_OPENING_REWARD_STATUS.refunded })
     .where('userId', '=', userId)
+    .where('boxDefinitionId', '=', boxDefinitionId)
     .where('boxSourceKey', '=', buzzTransactionId)
     .where('rewardStatus', '=', BOX_OPENING_REWARD_STATUS.granted)
     .returning('boxItemId')
