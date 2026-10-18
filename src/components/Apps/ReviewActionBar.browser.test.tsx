@@ -400,4 +400,33 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     expect(page.getByTestId('apps-onsite-rating-mismatch').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-onsite-rating-checking').elements()).toHaveLength(0);
   });
+
+  test('🔴 the media split: the warning follows the choice and approve sends it', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).toBeInTheDocument();
+    await page.getByTestId('apps-media-split-split').click();
+    // Split: only the civitai.com-eligible images floor the rating — the PG-13 cover now leads.
+    await expect
+      .element(page.getByTestId('apps-onsite-rating-mismatch'))
+      .toHaveTextContent('Approving raises the store listing to PG-13.');
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'split',
+    });
+  });
+
+  test('without a choice approve sends rate-mature', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-media-split')).toBeInTheDocument();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'rate-mature',
+    });
+  });
 });

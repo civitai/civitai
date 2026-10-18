@@ -78,6 +78,11 @@ import {
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { OFFSITE_CONTENT_RATING_OPTIONS } from '~/components/Apps/offsiteSubmitFormConfig';
 import { RatingMismatchAlert } from '~/components/Apps/ListingRatingNotices';
+import { ListingMediaSplitControl } from '~/components/Apps/ListingMediaSplitControl';
+import {
+  ratingFloorAssets,
+  type ListingMediaSplitDecision,
+} from '~/shared/utils/listing-media-split';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   nsfwLevelFromContentRating,
@@ -427,6 +432,7 @@ export function OffsiteReviewModalBody({
   // Select shows the derived rating as its default); a non-null value is an explicit
   // override. The server FLOORS an under-rating override at the derived value.
   const [ratingOverride, setRatingOverride] = useState<OffsiteContentRating | null>(null);
+  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitDecision>('rate-mature');
 
   // Asset presence for the content checklist (author/mod-gated; a mod passes the
   // author floor). Only enabled once a row with a draft listing is open.
@@ -467,6 +473,7 @@ export function OffsiteReviewModalBody({
     setApprovalNotes('');
     setActionMode('view');
     setRatingOverride(null);
+    setMediaSplit('rate-mature');
     onClose();
   }
 
@@ -484,9 +491,12 @@ export function OffsiteReviewModalBody({
   // screenshots), surface it ALONGSIDE the author-declared rating, and FLAG when the
   // assets are more mature than declared. The Select defaults to the derived value;
   // the mod may rate UP (an under-rating is floored server-side).
+  // A split floors the rating by the civitai.com-eligible images only, so the default below
+  // follows the moderator's split choice rather than offering a value that would undo it.
+  const ratingAssets = listingRatingAssetsFromView(assetsQuery.data ?? {});
   const ratingSummary = summarizeListingRating({
     declaredRating: request.appListing?.contentRating,
-    assets: listingRatingAssetsFromView(assetsQuery.data ?? {}),
+    assets: ratingFloorAssets(ratingAssets, mediaSplit === 'split'),
   });
   const derivedRating = ratingSummary.derived ?? 'g';
   // On-site listing-MEDIA revision: reviewed by this same shadow-asset + content
@@ -880,6 +890,18 @@ export function OffsiteReviewModalBody({
           </Stack>
         ) : actionMode === 'approve' ? (
           <Stack gap="xs">
+            {assetsQuery.data && (
+              <ListingMediaSplitControl
+                assets={ratingAssets}
+                currentlySplit={assetsQuery.data.mediaSplitApproved}
+                value={mediaSplit}
+                onChange={(v) => {
+                  setMediaSplit(v);
+                  setRatingOverride(null);
+                }}
+                disabled={busy}
+              />
+            )}
             <Select
               label="Final content rating"
               description={
@@ -924,6 +946,7 @@ export function OffsiteReviewModalBody({
                     publishRequestId: request.id,
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
+                    mediaSplit,
                   })
                 }
                 disabled={busy}

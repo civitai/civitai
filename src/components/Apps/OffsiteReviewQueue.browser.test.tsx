@@ -590,3 +590,81 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
     );
   });
 });
+
+describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
+  async function openApprove() {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-media-split')).toBeInTheDocument();
+  }
+
+  test('shows both ratings the decision chooses between', async () => {
+    await openApprove();
+    expect(page.getByTestId('apps-media-split-all-rating').element().textContent).toBe(
+      'Rating with all media: R'
+    );
+    expect(page.getByTestId('apps-media-split-com-rating').element().textContent).toBe(
+      'Rating with civitai.com media only: G'
+    );
+  });
+
+  test('🔴 by default approve sends rate-mature and the all-media rating', async () => {
+    await openApprove();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ contentRating: 'r', mediaSplit: 'rate-mature' })
+    );
+  });
+
+  test('🔴 choosing the split re-defaults the rating to the civitai.com media, and approve sends both', async () => {
+    await openApprove();
+    await page.getByTestId('apps-media-split-split').click();
+    const ratingInput = page
+      .getByTestId('apps-offsite-approve-rating')
+      .element() as HTMLInputElement;
+    await expect.poll(() => ratingInput.value).toBe('G');
+    // The R screenshot no longer floors the rating, so nothing is flagged as above it.
+    expect(page.getByTestId('apps-offsite-rating-mismatch').elements()).toHaveLength(0);
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ contentRating: 'g', mediaSplit: 'split' })
+    );
+  });
+
+  test('labels each image with where it will show under the chosen decision', async () => {
+    await openApprove();
+    const shot = page.getByTestId('apps-media-split-audience-screenshot-1');
+    const icon = page.getByTestId('apps-media-split-audience-icon-0');
+    // Rated by all media (R): the listing leaves civitai.com, so everything is .red-only.
+    expect(shot.element().textContent).toBe('civitai.red only');
+    expect(icon.element().textContent).toBe('civitai.red only');
+    await page.getByTestId('apps-media-split-split').click();
+    await expect.poll(() => icon.element().textContent).toBe('civitai.com + civitai.red');
+    expect(shot.element().textContent).toBe('civitai.red only');
+  });
+
+  test('a cover above SFW makes the split unavailable', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, coverNsfwLevel: 4 };
+    await openApprove();
+    await expect.element(page.getByTestId('apps-media-split-split')).toBeDisabled();
+  });
+
+  test('all-SFW media offers no choice', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      screenshots: [{ imageId: 12, nsfwLevel: 2, scanStatus: 'scanned' as const }],
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-offsite-approve-rating')).toBeInTheDocument();
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+  });
+
+  test('a listing that is already split is named as such', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: true };
+    await openApprove();
+    await expect.element(page.getByTestId('apps-media-split-current')).toBeInTheDocument();
+  });
+});

@@ -1,6 +1,7 @@
 import { Box, Button, Group, Stack, Textarea } from '@mantine/core';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { ListingMediaSplitControlForListing } from '~/components/Apps/ListingMediaSplitControl';
 import { OnsiteApproveRatingWarning } from '~/components/Apps/ListingRatingNotices';
 import {
   ReasonGatedField,
@@ -8,6 +9,7 @@ import {
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
@@ -69,6 +71,7 @@ export function ReviewActionBar({
   const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
+  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitDecision>('rate-mature');
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
@@ -164,6 +167,15 @@ export function ReviewActionBar({
           <OnsiteApproveRatingWarning
             listingId={request.approveRating.listingId}
             declaredRating={request.approveRating.declared}
+            mediaSplit={mediaSplit === 'split'}
+          />
+        )}
+        {request.approveRating && (
+          <ListingMediaSplitControlForListing
+            listingId={request.approveRating.listingId}
+            value={mediaSplit}
+            onChange={setMediaSplit}
+            disabled={busy}
           />
         )}
         <Textarea
@@ -193,6 +205,7 @@ export function ReviewActionBar({
               approveMut.mutate({
                 publishRequestId: request.id,
                 approvalNotes: approvalNotes.trim() || undefined,
+                mediaSplit: request.approveRating ? mediaSplit : undefined,
               })
             }
             disabled={busy}
