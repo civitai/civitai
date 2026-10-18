@@ -19,7 +19,7 @@ export type StorylineRailSegment<T extends RailChapter> = {
   leaves: boolean;
   /** Another path joins the line at this chapter. */
   joins: boolean;
-  /** The current chapter's images, as indexes into the walked images. Empty on the others. */
+  /** The current chapter's images, as indexes into the carousel's images. Empty on the others. */
   ticks: number[];
 };
 

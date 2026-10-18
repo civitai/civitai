@@ -73,6 +73,13 @@ describe('buildStorylineRail', () => {
     ]);
   });
 
+  it('ticks carousel positions, so an off-path image leading the carousel shifts them', () => {
+    // After a branch the carousel can lead with the image the reader was on, which is on no
+    // chapter of the new path; a tick must still land on the image it is drawn for.
+    const { segments } = rail(1, { imageChapterIds: [undefined, ...IMAGE_CHAPTERS] });
+    expect(segments.find((s) => s.current)?.ticks).toEqual([1, 2, 3, 4]);
+  });
+
   it('numbers the line from where the path starts, through the chapters ahead', () => {
     const path = [chapter(40, 5), chapter(41, 6)];
     const { segments } = rail(0, { path, imageChapterIds: [40], ahead: [chapter(42, 0)] });
