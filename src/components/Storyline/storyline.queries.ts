@@ -67,11 +67,11 @@ export function useStorylineChildren(
 
 /**
  * The canon line after a chapter, in one read, with the ways off it for the stops that have
- * any (at most `STORYLINE_DRAWER_FORK_STOPS`, nearest first).
+ * any (at most `STORYLINE_DRAWER_FORK_STOPS`, nearest first). `forks: false` skips those reads.
  */
 export function useStorylineCanonAhead(
   chapterId: number | undefined,
-  options: { enabled: boolean }
+  options: { enabled: boolean; forks?: boolean }
 ) {
   const enabled = useStorylinesEnabled() && options.enabled && !!chapterId;
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -88,11 +88,14 @@ export function useStorylineCanonAhead(
     () => canonAheadForkStops(query.data ?? [], STORYLINE_DRAWER_FORK_STOPS),
     [query.data]
   );
-  const childrenByChapterId = useStorylinePathChildren(forkStopIds, { enabled });
+  const childrenByChapterId = useStorylinePathChildren(forkStopIds, {
+    enabled: enabled && (options.forks ?? true),
+  });
   const isLoading = enabled && query.isLoading;
+  const isSuccess = enabled && query.isSuccess;
   return useMemo(
-    () => ({ ahead, childrenByChapterId, isLoading }),
-    [ahead, childrenByChapterId, isLoading]
+    () => ({ ahead, childrenByChapterId, isLoading, isSuccess }),
+    [ahead, childrenByChapterId, isLoading, isSuccess]
   );
 }
 

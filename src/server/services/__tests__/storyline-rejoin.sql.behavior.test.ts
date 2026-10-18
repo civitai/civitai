@@ -121,7 +121,25 @@ beforeAll(async () => {
       )
     ).rows.map((row) => ({ ...row, post: null }))) as never);
   r.post.findMany.mockResolvedValue([] as never);
-  r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
+  r.storylineChapterEdge.groupBy.mockImplementation((async ({
+    by,
+    where,
+    _count,
+  }: {
+    by: string[];
+    where: { parentChapterId: { in: number[] } };
+    _count: unknown;
+  }) => {
+    // Only the call shape this SQL answers: child counts per parent.
+    expect({ by, _count }).toEqual({ by: ['parentChapterId'], _count: { _all: true } });
+    return (
+      await db.pg.query<{ parentChapterId: number; n: number }>(
+        `SELECT "parentChapterId", count(*)::int AS n FROM "StorylineChapterEdge"
+         WHERE "parentChapterId" = ANY($1::int[]) GROUP BY 1`,
+        [where.parentChapterId.in]
+      )
+    ).rows.map(({ parentChapterId, n }) => ({ parentChapterId, _count: { _all: n } }));
+  }) as never);
   r.storyline.findUnique.mockResolvedValue({
     id: 1,
     userId: 1,
@@ -199,6 +217,22 @@ describe('getStorylinePath through a rejoin', () => {
     expect(joinsAt(chapters)).toEqual([[R, [12]]]);
     expect(hasEarlier).toBe(false);
     expect(chapters.find((c) => c.chapterId === R)?.parentCount).toBe(2);
+  });
+
+  it('counts the ways on from each chapter, so the rail can mark where other paths leave', async () => {
+    const { chapters } = await read(AFTER_R, [24]);
+    const childCounts = chapters.map((c) => [c.chapterId, c.childCount]);
+    expect(childCounts).toEqual([
+      [1, 1],
+      [2, 1],
+      [3, 2],
+      [21, 1],
+      [22, 1],
+      [23, 1],
+      [24, 1],
+      [R, 1],
+      [AFTER_R, 0],
+    ]);
   });
 
   it('ignores a way in that is on no route to the chapter', async () => {
