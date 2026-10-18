@@ -26,12 +26,28 @@
 
   // Called through, not captured: reading the prop inside the closure is what stops a re-passed
   // callback being ignored (svelte’s `state_referenced_locally`).
-  const form = new FormState({ onSuccess: () => onSuccess() });
+  // A take-back that committed but could not refresh the site's caches.
+  let warning = $state<string | null>(null);
+  const form = new FormState({
+    onSuccess: (data) => {
+      warning = typeof data?.warning === 'string' ? data.warning : null;
+      onSuccess();
+    },
+    onSubmit: () => (warning = null),
+  });
   let grantId = $state('');
 </script>
 
 {#if form.error}
   <ErrorAlert class="mb-4" message={form.error} />
+{/if}
+{#if warning}
+  <p
+    class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-sm text-amber-200"
+    role="status"
+  >
+    {warning}
+  </p>
 {/if}
 
 {#await account}

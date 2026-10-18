@@ -12,10 +12,11 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * Postgres with the mystery box migrations applied verbatim.
  */
 
-const { dbHandle, bustUserCosmeticCaches, recordModActivity } = vi.hoisted(() => ({
+const { dbHandle, bustUserCosmeticCaches, recordModActivity, logAxiomError } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   bustUserCosmeticCaches: vi.fn(async () => undefined),
   recordModActivity: vi.fn(async () => undefined),
+  logAxiomError: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db', () => ({
@@ -30,12 +31,19 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../cache', () => ({ bustUserCosmeticCaches }));
 vi.mock('../mod-activity', () => ({ recordModActivity, recordModActivityBatch: vi.fn() }));
-vi.mock('$env/dynamic/private', () => ({ env: {} }));
+vi.mock('../axiom', () => ({ logAxiomError }));
+vi.mock('$env/dynamic/private', () => ({ env: { CIVITAI_APP_URL: 'https://main.test' } }));
 vi.mock('$app/server', () => ({
-  getRequestEvent: () => ({ locals: {}, request: new Request('http://x') }),
+  getRequestEvent: () => ({
+    locals: {},
+    request: new Request('http://x', { headers: { cookie: 'civ-token=the-moderator' } }),
+  }),
 }));
 
-const { refundShopPurchase } = await import('../user-actions.service');
+const { grantCosmetic, refundShopPurchase, removeCosmetic } = await import(
+  '../user-actions.service'
+);
+const { grantCosmeticsToUsers } = await import('../cosmetics.service');
 
 const MIGRATIONS = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -69,8 +77,12 @@ CREATE TABLE "UserCosmetic" (
   "userId" INTEGER NOT NULL,
   "cosmeticId" INTEGER NOT NULL,
   "claimKey" TEXT NOT NULL DEFAULT 'claimed',
+  "obtainedAt" TIMESTAMP(3),
+  "equippedToId" INTEGER,
+  "equippedToType" TEXT,
   PRIMARY KEY ("userId", "cosmeticId", "claimKey")
 );
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY);
 `;
 
 const BUYER = 5150;
@@ -86,6 +98,9 @@ let db: PGlite;
 let statements: { sql: string; params: unknown[] }[];
 /** Runs once, straight after the service's first statement (its read of the purchase). */
 let afterFirstStatement: (() => Promise<unknown>) | null;
+/** Calls the service made to the main app, and how the main app answers them. */
+let mainApp: { url: string; body: unknown }[];
+let mainAppAnswers: () => Response;
 
 beforeEach(async () => {
   db = await PGlite.create();
@@ -117,9 +132,18 @@ beforeEach(async () => {
   dbHandle.current = new Kysely({ dialect: pgliteDialect(recording) });
   recordModActivity.mockClear();
   bustUserCosmeticCaches.mockClear();
+  logAxiomError.mockClear();
+
+  mainApp = [];
+  mainAppAnswers = () => new Response(JSON.stringify({ refreshed: 1 }), { status: 200 });
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    mainApp.push({ url: String(url), body: JSON.parse(String(init.body)) });
+    return mainAppAnswers();
+  });
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await db.close();
   dbHandle.current = null;
 });
@@ -150,12 +174,25 @@ const openedBox = async (
   );
   await grant(cosmeticId, `box-open-${boxItemId}`);
 };
-const grant = (cosmeticId: number, claimKey: string, userId = BUYER) =>
-  db.query(`INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES ($1, $2, $3)`, [
-    userId,
-    cosmeticId,
-    claimKey,
-  ]);
+const grant = (
+  cosmeticId: number,
+  claimKey: string,
+  userId = BUYER,
+  equippedTo?: { id: number; type: string }
+) =>
+  db.query(
+    `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "equippedToId", "equippedToType")
+     VALUES ($1, $2, $3, $4, $5)`,
+    [userId, cosmeticId, claimKey, equippedTo?.id ?? null, equippedTo?.type ?? null]
+  );
+const equip = (cosmeticId: number, claimKey: string, entity: { id: number; type: string }) =>
+  db.query(
+    `UPDATE "UserCosmetic" SET "equippedToId" = $1, "equippedToType" = $2
+     WHERE "userId" = $3 AND "cosmeticId" = $4 AND "claimKey" = $5`,
+    [entity.id, entity.type, BUYER, cosmeticId, claimKey]
+  );
+const IMAGE = { id: 9001, type: 'Image' };
+const REFRESH_URL = 'https://main.test/api/mod/cosmetic/holdings-removed';
 
 const refund = (buzzTransactionId: string, userId = BUYER) =>
   refundShopPurchase({ userId, buzzTransactionId, moderatorId: MOD });
@@ -359,5 +396,119 @@ describe('box listing CHECK', () => {
 
   it('still lists a pack (control)', async () => {
     await expect(list(PACK_LISTING)).resolves.toMatchObject({ affectedRows: 1 });
+  });
+});
+
+// The main app serves what is equipped on an entity, and the live event hat map, from its own caches.
+// A take-back here re-derives them through the main app once it has committed.
+describe('a take-back of something equipped refreshes the main app', () => {
+  it('refunding an opened box whose hat is equipped names that hat and where it was', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await openedBox('box-a', 77, 2, HAT);
+    await equip(HAT, 'box-open-77', IMAGE);
+
+    await expect(refund('box-a')).resolves.toEqual({ ok: true });
+
+    expect(mainApp).toEqual([
+      {
+        url: REFRESH_URL,
+        body: {
+          removed: [
+            { userId: BUYER, cosmeticId: HAT, equippedToId: IMAGE.id, equippedToType: 'Image' },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('names only what was equipped, from a pack', async () => {
+    await purchase('pack-a', PACK_LISTING, null);
+    await grant(600, 'pack-a', BUYER, IMAGE);
+    await grant(601, 'pack-a');
+
+    await refund('pack-a');
+
+    expect(mainApp.map((call) => call.body)).toEqual([
+      {
+        removed: [
+          { userId: BUYER, cosmeticId: 600, equippedToId: IMAGE.id, equippedToType: 'Image' },
+        ],
+      },
+    ]);
+  });
+
+  it('calls nothing when nothing taken back was equipped', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await openedBox('box-a', 77, 2, HAT);
+
+    await refund('box-a');
+    expect(mainApp).toEqual([]);
+  });
+
+  it('a refresh that fails still refunds, warns the moderator and logs the ids', async () => {
+    mainAppAnswers = () => new Response('down', { status: 503 });
+    await purchase('box-a', BOX_LISTING, null);
+    await openedBox('box-a', 77, 2, HAT);
+    await equip(HAT, 'box-open-77', IMAGE);
+
+    await expect(refund('box-a')).resolves.toEqual({
+      ok: true,
+      warning: "Refunded. The site's caches didn't refresh, so it may keep showing for a while.",
+    });
+    expect(await isRefunded('box-a')).toBe(true);
+    expect(await holdings()).toEqual([]);
+    expect(logAxiomError).toHaveBeenCalledWith(expect.any(Error), {
+      name: 'moderator-holdings-refresh',
+      userIds: [BUYER],
+      cosmeticIds: [HAT],
+    });
+  });
+
+  it('removing an equipped cosmetic names it; removing an unequipped one calls nothing', async () => {
+    await grant(700, 'claimed', BUYER, IMAGE);
+    await grant(600, 'claimed');
+
+    await expect(
+      removeCosmetic({ userId: BUYER, cosmeticId: 700, claimKey: 'claimed', moderatorId: MOD })
+    ).resolves.toEqual({ ok: true });
+    await removeCosmetic({ userId: BUYER, cosmeticId: 600, claimKey: 'claimed', moderatorId: MOD });
+
+    expect(mainApp.map((call) => call.body)).toEqual([
+      {
+        removed: [
+          { userId: BUYER, cosmeticId: 700, equippedToId: IMAGE.id, equippedToType: 'Image' },
+        ],
+      },
+    ]);
+  });
+});
+
+describe('moderator grants take the item holder lock', () => {
+  const lockedTransactions = () =>
+    statements.flatMap((s, i) => (s.sql === 'begin' ? [statements[i + 1]] : []));
+
+  it('a single grant locks the user before inserting', async () => {
+    await expect(
+      grantCosmetic({ userId: BUYER, cosmeticId: 700, moderatorId: MOD })
+    ).resolves.toEqual({ ok: true });
+    expect(lockedTransactions()).toEqual([
+      { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
+    ]);
+    expect(await holdings()).toEqual([{ userId: BUYER, cosmeticId: 700, claimKey: 'claimed' }]);
+  });
+
+  it('a bulk grant locks each user in their own transaction', async () => {
+    await db.exec(`INSERT INTO "User" ("id") VALUES (${BUYER}), (${OTHER})`);
+
+    await grantCosmeticsToUsers({ cosmeticIds: [700], userIds: [BUYER, OTHER] });
+
+    expect(lockedTransactions()).toEqual([
+      { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
+      { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, OTHER] },
+    ]);
+    expect(await holdings()).toEqual([
+      { userId: BUYER, cosmeticId: 700, claimKey: 'claimed' },
+      { userId: OTHER, cosmeticId: 700, claimKey: 'claimed' },
+    ]);
   });
 });

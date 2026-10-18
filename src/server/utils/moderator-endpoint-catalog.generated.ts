@@ -13,6 +13,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/cosmetic/assign-by-target': () => import('~/pages/api/mod/cosmetic/assign-by-target'),
   '/api/mod/cosmetic/create': () => import('~/pages/api/mod/cosmetic/create'),
   '/api/mod/cosmetic/delete': () => import('~/pages/api/mod/cosmetic/delete'),
+  '/api/mod/cosmetic/holdings-removed': () => import('~/pages/api/mod/cosmetic/holdings-removed'),
   '/api/mod/cosmetic/unassign': () => import('~/pages/api/mod/cosmetic/unassign'),
   '/api/mod/cosmetic/update': () => import('~/pages/api/mod/cosmetic/update'),
   '/api/mod/creator-services/deal-file-url': () =>

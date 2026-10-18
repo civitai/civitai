@@ -6,11 +6,12 @@ import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { ITEM_HOLDER_LOCK_CLASS } from '@civitai/shared/item-holder-lock';
 import { BOX_OPENING_REWARD_STATUS, boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustUserCosmeticCaches } from './cache';
+import { logAxiomError } from './axiom';
+import { lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
@@ -33,7 +34,7 @@ import type { HeldSummary } from './removal-hold';
 // endpoint's ClickHouse audit records. The ban endpoint records itself as
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult = { ok: true; warning?: string } | { ok: false; error: string };
 
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
  *  the client, so every one of these is called from a form action, never proxied. */
@@ -204,6 +205,7 @@ export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
+  | 'cosmetic/holdings-removed'
   | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
@@ -958,14 +960,12 @@ export async function refundShopPurchase(input: {
   if (!purchase) return { ok: false, error: 'That purchase does not belong to this user.' };
   if (purchase.refunded) return { ok: false, error: 'That purchase is already refunded.' };
 
+  let removed: RemovedHolding[];
   try {
-    await dbWrite.transaction().execute(async (trx) => {
-      // First, as the main app's shop and box grants take it first (`lockItemHolder`). A box open
-      // reads the held box and writes its opening under it, so without it this could find neither
-      // while the open commits. Both casts matter: there is no (int4, int8) overload.
-      await sql`SELECT pg_advisory_xact_lock(${ITEM_HOLDER_LOCK_CLASS}::int, ${input.userId}::int)`.execute(
-        trx
-      );
+    removed = await dbWrite.transaction().execute(async (trx) => {
+      // First. A box open reads the held box and writes its opening under it, so without it this
+      // could find neither while the open commits.
+      await lockItemHolder(trx, input.userId);
 
       const flagged = await trx
         .updateTable('UserCosmeticShopPurchases')
@@ -978,9 +978,9 @@ export async function refundShopPurchase(input: {
         throw new RefundRefused('That purchase is already refunded.');
 
       // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
-      if (purchase.itemDefinitionId != null)
-        await takeBackBox(trx, { ...input, boxDefinitionId: purchase.itemDefinitionId });
-      else await takeBackCosmetics(trx, input);
+      return purchase.itemDefinitionId != null
+        ? takeBackBox(trx, { ...input, boxDefinitionId: purchase.itemDefinitionId })
+        : takeBackCosmetics(trx, input);
     });
   } catch (error) {
     if (error instanceof RefundRefused) return { ok: false, error: error.message };
@@ -991,9 +991,10 @@ export async function refundShopPurchase(input: {
   // without this the refunded badge or frame keeps rendering on their profile, comments and images for
   // up to 24 hours after the panel says it is gone.
   await bustUserCosmeticCaches(input.userId);
+  const warning = await refreshRemovedHoldings(removed, 'Refunded');
 
   await logAction('shopRefund', input.userId, input.moderatorId);
-  return { ok: true };
+  return { ok: true, warning };
 }
 
 /** A refusal found inside the refund transaction; thrown to roll it back. */
@@ -1001,19 +1002,51 @@ class RefundRefused extends Error {}
 
 type RefundTarget = { userId: number; buzzTransactionId: string };
 
+const REMOVED_HOLDING = ['userId', 'cosmeticId', 'equippedToId', 'equippedToType'] as const;
+type RemovedHolding = {
+  userId: number;
+  cosmeticId: number;
+  equippedToId: number | null;
+  equippedToType: string | null;
+};
+
+/**
+ * After a take-back commits: what was equipped still shows from the main app's entity caches, and an
+ * event hat stays on the live hat map, until the main app re-derives them. Never a failure, since the
+ * take-back is already committed and a retry would only be refused; a warning the moderator sees, and
+ * an error in Axiom.
+ */
+async function refreshRemovedHoldings(removed: RemovedHolding[], done: string) {
+  const equipped = removed.flatMap(({ equippedToId, equippedToType, ...row }) =>
+    equippedToId != null && equippedToType != null ? [{ ...row, equippedToId, equippedToType }] : []
+  );
+  if (!equipped.length) return undefined;
+
+  const result = await callModEndpoint(
+    'cosmetic/holdings-removed',
+    { removed: equipped },
+    'Cosmetic refresh'
+  );
+  if (result.ok) return undefined;
+  void logAxiomError(new Error(result.error), {
+    name: 'moderator-holdings-refresh',
+    userIds: [...new Set(equipped.map((r) => r.userId))],
+    cosmeticIds: [...new Set(equipped.map((r) => r.cosmeticId))],
+  });
+  return `${done}. The site's caches didn't refresh, so it may keep showing for a while.`;
+}
+
 /**
  * The cosmetics a shelf purchase granted, all under its transaction id as `claimKey`: its one cosmetic,
  * or a pack's components. A pack member the buyer already owned was never granted, so has no such row.
  * Correct only while nothing else grants under a purchase's id.
  */
-async function takeBackCosmetics(
-  trx: Transaction<DB>,
-  { userId, buzzTransactionId }: RefundTarget
-) {
-  await trx
+function takeBackCosmetics(trx: Transaction<DB>, { userId, buzzTransactionId }: RefundTarget) {
+  return trx
     .deleteFrom('UserCosmetic')
     .where('userId', '=', userId)
     .where('claimKey', '=', buzzTransactionId)
+    .returning(REMOVED_HOLDING)
     .execute();
 }
 
@@ -1032,7 +1065,7 @@ async function takeBackBox(
     .where('holderType', '=', 'user')
     .where('holderId', '=', userId)
     .executeTakeFirst();
-  if (Number(held.numDeletedRows) > 0) return;
+  if (Number(held.numDeletedRows) > 0) return [];
 
   const opening = await trx
     .updateTable('BoxOpening')
@@ -1045,10 +1078,11 @@ async function takeBackBox(
     .executeTakeFirst();
   if (!opening) throw new RefundRefused('Neither the box nor what it gave is on this account.');
 
-  await trx
+  return trx
     .deleteFrom('UserCosmetic')
     .where('userId', '=', userId)
     .where('claimKey', '=', boxOpenClaimKey(opening.boxItemId))
+    .returning(REMOVED_HOLDING)
     .execute();
 }
 
@@ -1065,12 +1099,17 @@ export async function grantCosmetic(input: {
     .executeTakeFirst();
   if (!exists) return { ok: false, error: 'No such cosmetic.' };
 
-  // (userId, cosmeticId, claimKey) is the PK and Retool's plain INSERT threw on a repeat grant.
-  const result = await dbWrite
-    .insertInto('UserCosmetic')
-    .values({ userId: input.userId, cosmeticId: input.cosmeticId, obtainedAt: new Date() })
-    .onConflict((oc) => oc.columns(['userId', 'cosmeticId', 'claimKey']).doNothing())
-    .executeTakeFirst();
+  const result = await dbWrite.transaction().execute(async (trx) => {
+    // A box open decides what it may draw from what the user owns; a grant landing inside that
+    // window would hand them the same cosmetic twice.
+    await lockItemHolder(trx, input.userId);
+    // (userId, cosmeticId, claimKey) is the PK and Retool's plain INSERT threw on a repeat grant.
+    return trx
+      .insertInto('UserCosmetic')
+      .values({ userId: input.userId, cosmeticId: input.cosmeticId, obtainedAt: new Date() })
+      .onConflict((oc) => oc.columns(['userId', 'cosmeticId', 'claimKey']).doNothing())
+      .executeTakeFirst();
+  });
 
   if (Number(result.numInsertedOrUpdatedRows ?? 0) === 0)
     return { ok: false, error: 'This account already holds that cosmetic.' };
@@ -1094,20 +1133,21 @@ export async function removeCosmetic(input: {
   claimKey: string;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const result = await dbWrite
+  const removed = await dbWrite
     .deleteFrom('UserCosmetic')
     .where('userId', '=', input.userId)
     .where('cosmeticId', '=', input.cosmeticId)
     .where('claimKey', '=', input.claimKey)
-    .executeTakeFirst();
+    .returning(REMOVED_HOLDING)
+    .execute();
 
-  if (Number(result.numDeletedRows ?? 0) === 0)
-    return { ok: false, error: 'This account does not hold that cosmetic.' };
+  if (!removed.length) return { ok: false, error: 'This account does not hold that cosmetic.' };
 
   await bustUserCosmeticCaches(input.userId);
+  const warning = await refreshRemovedHoldings(removed, 'Removed');
 
   await logAction(`removeCosmetic:${input.cosmeticId}`, input.userId, input.moderatorId);
-  return { ok: true };
+  return { ok: true, warning };
 }
 
 // BULK IMAGE ACTIONS (Retool's RemoveImages / RemoveImages2 / RemoveArrayOfImages / RestoreImages /
