@@ -28,6 +28,7 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
 import { resolveAppFeedbackRequest } from './appFeedbackChrome';
@@ -682,11 +683,14 @@ export function AppBlockChrome({
           after mount so SSR + first client render match). Excludes the app
           currently being viewed and the whole label+section is omitted when
           there's nothing else to show (a first-time / single-app viewer).
-          Each item shows a generic app icon + name, linking to the full-page
-          run route. NOT the app's own icon: this menu has no live, server-gated
-          listing card to take one from, and the recents store deliberately
-          never persists an icon url (`recentlyOpenedAppsStore.ts`) — a stored
-          url would render with no per-viewer media gate in front of it. */}
+          Each item shows the app's icon + name, linking to the full-page run
+          route. 🔴 THE ICON IS READ LIVE, NEVER FROM THE STORE: the recents
+          store never persists an icon url (`recentlyOpenedAppsStore.ts`) and
+          `selectChromeRecentApps` strips one, so `ChromeRecentAppIcon` gets
+          only the slug and draws the `iconUrl` the server's listing-media gate
+          returned for THIS host and viewer (`appListings.getAppDetail`) — the
+          generic glyph while that loads, on any error, and whenever the gate
+          hides the icon. */}
       {recentApps.length > 0 && (
         <ChromeSurfaceGroup data-testid="app-recently-run">
           <ChromeSurfaceLabel>Recently run</ChromeSurfaceLabel>
@@ -702,7 +706,8 @@ export function AppBlockChrome({
               // note in `ChromeSurface.tsx` for why it is opt-in rather than
               // universal.
               clamp
-              leftSection={<IconApps size={14} stroke={1.5} />}
+              // `blockId` is the listing slug for an on-site app (`app-listing-mapper.ts`).
+              leftSection={<ChromeRecentAppIcon slug={r.blockId} />}
             >
               {/* The persisted `name` is the SAME publisher-controlled string
                   the trust label above laundered through localStorage — so

@@ -20,8 +20,9 @@ import {
  * that renders a listing's icon, cover or screenshots.
  *
  * 🔴 ONE RULE, ONE PLACE. The store card, the detail page and its gallery, the cover's
- * first-screenshot fallback, a sub-listing card's parent-cover/icon fallback, the run-page chrome
- * icon and the post "Published with" chip all decide here whether an `Image` may be shown. None
+ * first-screenshot fallback, a sub-listing card's parent-cover/icon fallback, the post "Published
+ * with" chip, and the app chrome's "Recently run" icons (which read the detail's `iconUrl`) all
+ * decide here whether an `Image` may be shown. None
  * of them reads `nsfwLevel` itself. `listing-media-audience.ledger.test.ts` pins the set of
  * modules that project listing media, so a new public surface cannot hydrate a listing image and
  * render it raw without being added to that list on purpose.

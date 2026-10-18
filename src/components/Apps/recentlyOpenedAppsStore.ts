@@ -149,10 +149,11 @@ export type RecentAppKind = 'onsite' | 'offsite';
  * and per host on the server, at render time (`listing-media-audience.ts`), so an
  * icon that was fine when an entry was written can be hidden now — re-rated,
  * flagged, or above a browsing level the viewer has since lowered — and entries
- * written before that gate existed hold raw, ungated urls. This store renders
- * without a live card (the app-chrome "Recently run" menu has none at all), so a
- * stored url would be shown with no gate in front of it. Every consumer already
- * draws a placeholder for an entry with no icon.
+ * written before that gate existed hold raw, ungated urls, so a stored url would
+ * be shown with no gate in front of it. Each consumer takes its icon from a live,
+ * server-gated read instead — the `/apps` rail from its card, the app-chrome
+ * "Recently run" menu from `appListings.getAppDetail` per slug
+ * (`ChromeRecentAppIcon`) — and draws a placeholder while it has none.
  */
 export type RecentApp = {
   id: string;

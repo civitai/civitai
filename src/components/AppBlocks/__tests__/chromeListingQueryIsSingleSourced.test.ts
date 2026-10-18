@@ -40,6 +40,7 @@ const CHROME_SOURCES = [
   'src/components/AppBlocks/IframeHost.tsx',
   'src/components/AppBlocks/AppNameCrumb.tsx',
   'src/components/AppBlocks/ChromeReviewEntry.tsx',
+  'src/components/AppBlocks/ChromeRecentAppIcon.tsx',
 ];
 
 function read(rel: string): string {
@@ -97,13 +98,14 @@ describe('the chrome reads the listing from one place', () => {
     ).toBe(1);
   });
 
-  it('both consumers reach the query through the shared hook', () => {
+  it('every consumer reaches the query through the shared hook', () => {
     // The count above would also be satisfied by a consumer that stopped reading the
     // listing altogether — which is a behaviour change, not a consolidation. Pin that
     // both surfaces still go through the hook.
     for (const rel of [
       'src/components/AppBlocks/AppNameCrumb.tsx',
       'src/components/AppBlocks/ChromeReviewEntry.tsx',
+      'src/components/AppBlocks/ChromeRecentAppIcon.tsx',
     ]) {
       const src = code(read(rel));
       expect(src, `${rel} no longer calls useChromeListingDetail`).toMatch(

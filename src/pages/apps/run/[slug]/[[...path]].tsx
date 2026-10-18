@@ -476,8 +476,8 @@ function AppPage(props: PageProps) {
   //  - no `iconUrl` — the recents store does NOT persist one
   //    (`recentlyOpenedAppsStore.ts`): a listing icon is gated per viewer, per host and at
   //    render time, and a stored url would later render with no gate in front of it. The
-  //    chrome menu draws a generic glyph; the `/apps` rail takes the icon from its live,
-  //    gated card.
+  //    chrome menu reads each icon live (`ChromeRecentAppIcon` → `appListings.getAppDetail`);
+  //    the `/apps` rail takes the icon from its live, gated card.
   // Fires once per mount; the store dedups, so revisiting just moves the entry to the
   // front.
   //

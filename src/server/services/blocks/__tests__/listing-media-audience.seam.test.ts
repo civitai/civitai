@@ -11,7 +11,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * reads — or was computed from the wrong host, or ignored the viewer — fails here.
  *
  * Fixture values are pairwise distinct and distinct from every constant the code names: image
- * ids 11/12/13, urls `a.png`/`b.png`/`c.png`, levels PG = 1, PG-13 = 2, R = 4.
+ * ids 11/12/13 (+ 15/16 in T7), urls `a.png`/`b.png`/`c.png` (+ `e.png`/`f.png`), levels PG = 1,
+ * PG-13 = 2, R = 4.
  */
 
 vi.mock('~/client-utils/edge-url', () => ({
@@ -96,8 +97,21 @@ function listingRow(opts: {
   iconId: number | null;
   coverId: number | null;
   screenshotIds: number[];
+  /** An on-site listing with a deployed AppBlock (what the in-app "Recently run" menu lists). */
+  onsite?: boolean;
 }) {
   const img = (id: number | null) => (id == null ? null : images.get(id) ?? null);
+  const onsite = opts.onsite
+    ? {
+        kind: 'onsite',
+        appBlockId: 'ab_media_seam',
+        appBlock: {
+          manifest: {},
+          currentVersionDeployedAt: new Date('2026-02-01T00:00:00.000Z'),
+          approvedScopes: [],
+        },
+      }
+    : {};
   return {
     id: LISTING_ID,
     serialId: 31,
@@ -120,6 +134,7 @@ function listingRow(opts: {
     icon: img(opts.iconId),
     cover: img(opts.coverId),
     screenshots: opts.screenshotIds.map((id, i) => ({ caption: `cap-${i}`, image: img(id) })),
+    ...onsite,
   };
 }
 
@@ -310,6 +325,50 @@ describe('T6 — a red host never shows less than a non-red host', () => {
     const d = await detail(false, PG_AND_R_VIEWER);
     expect(d.coverUrl).toBe('edge:c.png@1200');
     expect(d.screenshots).toEqual([]);
+  });
+});
+
+describe('T7 — the in-app "Recently run" menu icon: getListingDetail.iconUrl for an on-site app', () => {
+  // INVARIANT GUARDS for this PR's last change: the menu (`ChromeRecentAppIcon`) draws exactly
+  // this field, read through `appListings.getAppDetail`, and these were already true of the
+  // detail read before the menu used it. They pin what the menu now depends on.
+  beforeEach(() => {
+    images.set(15, { ...scanned(15, 'e.png', PG), blockedFor: 'moderated' });
+    images.set(16, { ...scanned(16, 'f.png', 0), ingestion: 'Pending' });
+  });
+
+  const icon = async (redCapable: boolean, viewerBrowsingLevel?: number) =>
+    (await detail(redCapable, viewerBrowsingLevel)).iconUrl;
+
+  it('positive control: a PG icon on a `g` listing shows on a non-red host', async () => {
+    shape = { contentRating: 'g', iconId: 11, coverId: null, screenshotIds: [], onsite: true };
+    expect(await icon(false, R_VIEWER_LEVEL)).toBe('edge:a.png@256');
+  });
+
+  it('non-red host: an R icon is null, even for a viewer who opted into R', async () => {
+    shape = { contentRating: 'g', iconId: 12, coverId: null, screenshotIds: [], onsite: true };
+    expect(await icon(false, R_VIEWER_LEVEL)).toBeNull();
+  });
+
+  it('non-red host: a blocked icon is null whatever its level', async () => {
+    shape = { contentRating: 'g', iconId: 15, coverId: null, screenshotIds: [], onsite: true };
+    expect(await icon(false, R_VIEWER_LEVEL)).toBeNull();
+  });
+
+  it('non-red host: an unrated icon is null', async () => {
+    shape = { contentRating: 'g', iconId: 16, coverId: null, screenshotIds: [], onsite: true };
+    expect(await icon(false, R_VIEWER_LEVEL)).toBeNull();
+  });
+
+  it("non-red host: an icon above the listing's own rating is null", async () => {
+    shape = { contentRating: 'g', iconId: 13, coverId: null, screenshotIds: [], onsite: true };
+    expect(await icon(false, R_VIEWER_LEVEL)).toBeNull();
+  });
+
+  it('red host: an R icon shows to a viewer who opted into R, and not to an anonymous one', async () => {
+    shape = { contentRating: 'r', iconId: 12, coverId: null, screenshotIds: [], onsite: true };
+    expect(await icon(true, R_VIEWER_LEVEL)).toBe('edge:b.png@256');
+    expect(await icon(true, undefined)).toBeNull();
   });
 });
 

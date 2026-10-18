@@ -148,8 +148,12 @@ export function selectRecentRailEntries(
 /**
  * A recents entry the app-chrome menu can safely render: on-site AND carrying
  * the `blockId` that builds `/apps/run/<blockId>`.
+ *
+ * 🔴 NO `iconUrl`. The menu's icon is read live and gated per request
+ * (`ChromeRecentAppIcon`), so the type gives a renderer no stored url to reach
+ * for, and `selectChromeRecentApps` drops one at runtime as well.
  */
-export type ChromeRecentApp = RecentApp & { blockId: string };
+export type ChromeRecentApp = Omit<RecentApp, 'iconUrl'> & { blockId: string };
 
 /**
  * The app-chrome ("Civitai Apps" ⋯ menu) "Recently run" list — see
@@ -214,6 +218,8 @@ export type ChromeRecentApp = RecentApp & { blockId: string };
  *     they would render `/apps/run/undefined`; an off-site entry carrying a
  *     stray `blockId` (hand-edited localStorage) would link to the WRONG app.
  *
+ * Every entry it returns has had any `iconUrl` removed — see `ChromeRecentApp`.
+ *
  * Pure + exported so the gate is covered by the node `unit` project.
  */
 export function selectChromeRecentApps(
@@ -221,12 +227,18 @@ export function selectChromeRecentApps(
   opts: { canOpenPage: boolean; currentAppBlockId?: string; limit: number }
 ): ChromeRecentApp[] {
   if (!opts.canOpenPage) return [];
-  return entries
-    .filter(
-      (r): r is ChromeRecentApp =>
-        r.id !== opts.currentAppBlockId && r.kind !== 'offsite' && !!r.blockId
-    )
-    .slice(0, opts.limit);
+  return (
+    entries
+      .filter(
+        (r): r is RecentApp & { blockId: string } =>
+          r.id !== opts.currentAppBlockId && r.kind !== 'offsite' && !!r.blockId
+      )
+      .slice(0, opts.limit)
+      // Strip any icon url. The store never returns one, but an in-memory entry (the `/apps`
+      // rail reconciles icons onto its own copies) could carry one, and this menu must only ever
+      // draw the live, gated icon.
+      .map(({ iconUrl, ...rest }) => rest)
+  );
 }
 
 /**
