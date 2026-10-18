@@ -58,7 +58,6 @@ export const mysteryBoxRouter = router({
         countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
       })
     ),
-  // The Inventory: every box the caller holds, event or not.
   getHeld: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .query(({ ctx }) => getHeldMysteryBoxes(inventoryViewer(ctx))),

@@ -66,7 +66,6 @@ export default function MysteryBoxModal({
   color: string;
   /** Start buying or opening as soon as it shows. */
   start?: 'buy' | 'open';
-  /** The held box to open, when the viewer picked one. */
   boxItemId?: string;
 }) {
   const dialog = useDialogContext();

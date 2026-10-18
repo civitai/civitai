@@ -91,8 +91,8 @@ export function isMysteryBoxBlockedIn(countryCode: string | null | undefined, bl
 }
 
 // For showing boxes only. Purchase and open read the list uncached, so a change refuses at once
-// even where a pod still shows a box. A list that can't be read is remembered as null too: the menu
-// badge reads this on every signed-in page load, so a bad row costs one read a minute, not one each.
+// even where a pod still shows a box. A list that can't be read is cached as null too, so a bad row
+// costs one read a minute, not one per menu-badge fetch.
 const blockedRegionsForDisplay = createTtlMemo(
   () => getMysteryBoxBlockedRegions().catch(() => null),
   60_000,

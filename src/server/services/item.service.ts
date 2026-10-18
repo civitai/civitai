@@ -46,10 +46,7 @@ export async function countHeldItems(
   return _sum.quantity ?? 0;
 }
 
-/**
- * How many items a user holds of each definition matching `definition`, by definition id. Counts
- * rows: one row is one item to open, as `listHeldItems` lists them.
- */
+/** Counts rows, not `quantity`: one row is one item to open, as `listHeldItems` lists them. */
 export async function countHeldItemsByDefinition(
   client: Prisma.TransactionClient,
   { userId, definition }: { userId: number; definition: Prisma.ItemDefinitionWhereInput }

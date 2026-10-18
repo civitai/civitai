@@ -30,7 +30,6 @@ const isBoxChangedError = (error: unknown) =>
 // How long each beat of the show lasts, in ms.
 const SHOW = { shaking: 1000, glowing: 500, lidOff: 450 } as const;
 
-/** The boxes a modal shows: an event page's, or every box the viewer holds. */
 export function useMysteryBoxViews(source: MysteryBoxSource) {
   const forEvent = trpc.mysteryBox.getForEvent.useQuery(
     { event: 'event' in source ? source.event : '' },
@@ -57,14 +56,12 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
   const busy = phase === 'buying' || phase === 'opening';
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  // The user menu's badge, carried on the once-a-session notification counts.
+  // checkNotifications is never refetched (staleTime: Infinity), so the menu badge is patched here.
   const addToUnopenedCount = (change: number) =>
     utils.user.checkNotifications.setData(
       undefined,
       (counts) => counts && { ...counts, unopenedBoxes: Math.max(0, counts.unopenedBoxes + change) }
     );
-  // The read this modal shows is written, not refetched: a lagging replica could answer with the box
-  // still unopened. The other page's read is only marked stale (a write would mark it fresh).
   const recordPurchase = (boxDefinitionId: number, boxItemId: string) => {
     if ('event' in source)
       utils.mysteryBox.getForEvent.setData({ event: source.event }, (views) =>
@@ -77,6 +74,8 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
     addToUnopenedCount(1);
     void utils.mysteryBox.getHeld.invalidate();
   };
+  // Write the modal's own read, don't refetch: a lagging replica could still answer "unopened". The
+  // other page's read is invalidated, not written, since a write marks it fresh.
   const recordOpen = (view: MysteryBoxView, opened: MysteryBoxOpenResult) => {
     const event = boxEventOf(source, view);
     const isThisBox = (other: MysteryBoxView) => other.boxDefinitionId === view.boxDefinitionId;
@@ -172,7 +171,6 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
     return open(view, boxItemId);
   };
 
-  /** Opens `preferred` when it is still held, else the first of this kind they hold. */
   const openHeld = async (view: MysteryBoxView, preferred?: string) => {
     const boxItemId =
       preferred && view.heldBoxItemIds.includes(preferred) ? preferred : view.heldBoxItemIds[0];

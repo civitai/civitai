@@ -8,12 +8,6 @@ import type * as Trpc from '~/utils/trpc';
 import type * as OpenHook from '../useMysteryBoxOpen';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
-/**
- * The box modal reads its boxes from where it was opened: an event page's read, or the Inventory's.
- * Opened from the Inventory it opens the box the viewer picked, and offers "Put it on a post" only
- * for an event's reward.
- */
-
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

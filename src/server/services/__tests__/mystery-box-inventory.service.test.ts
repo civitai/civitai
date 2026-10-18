@@ -2,10 +2,6 @@ import type * as EventShopItem from '~/server/events/event-shop-item';
 import { computeBoxOdds } from '@civitai/shared/box-odds';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The Inventory's reads: every box the viewer holds (event or not) built as the event page builds
-// it, how many there are for the menu badge, and what their opens gave. Each is hidden by the same
-// gates as the event page's boxes: the flag, the blocked-country list, and the event's own gate.
-
 const { mocks } = vi.hoisted(() => ({ mocks: { boxViewer: vi.fn() } }));
 
 vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
@@ -418,7 +414,6 @@ describe('getHeldMysteryBoxes', () => {
     expect(views[0].heldItems[0].acquiredAt).toEqual(
       world.items.find((i) => i.id === 1n)?.createdAt
     );
-    // The draw walks tiers by sortOrder; the view keeps that order.
     expect(views[0].tiers.map((t) => t.id)).toEqual([COMMON, RARE]);
   });
 
@@ -436,7 +431,6 @@ describe('getHeldMysteryBoxes', () => {
   });
 
   it('asks each event once, as the viewer, moderator bit included', async () => {
-    // A second kind of box in the same event.
     world.definitions.push(definition(14, { event: EVENT }));
     world.items.push(item(9, 14));
 

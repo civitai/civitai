@@ -305,7 +305,6 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
-    // The user menu's Inventory badge, read alongside the rest.
     const unopenedBoxes = countHeldMysteryBoxes({
       userId: id,
       isModerator: ctx.user.isModerator,

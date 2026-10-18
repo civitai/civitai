@@ -92,7 +92,6 @@ export type HeldMysteryBox = RouterOutput['mysteryBox']['getHeld'][number];
 /** Where a box modal reads its boxes: an event page's, or every box the viewer holds. */
 export type MysteryBoxSource = { event: string } | { inventory: true };
 
-/** The held view after an open, its row gone from the Inventory's list too. */
 export function afterHeldOpen(view: HeldMysteryBox, result: MysteryBoxOpenResult): HeldMysteryBox {
   return {
     ...afterOpen(view, result),
@@ -100,7 +99,6 @@ export function afterHeldOpen(view: HeldMysteryBox, result: MysteryBoxOpenResult
   };
 }
 
-/** The event a box belongs to, wherever it was read from. */
 export function boxEventOf(source: MysteryBoxSource, view?: MysteryBoxView | HeldMysteryBox) {
   if ('event' in source) return source.event;
   return view && 'event' in view ? view.event ?? undefined : undefined;

@@ -2,17 +2,18 @@ import { Badge, Container, Group, Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { INVENTORY_PAGES } from '~/components/Inventory/inventory-pages';
 import type { InventoryType } from '~/components/Inventory/inventory-types';
 import { enabledInventoryTypes } from '~/components/Inventory/inventory-types';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const inventoryUrl = (key: string) => `/user/inventory/${key}`;
 
-/** Everything the viewer owns, one page per kind, with the kinds listed beside it. */
 export function InventoryLayout({ typeKey }: { typeKey: string }) {
   const features = useOptionalFeatureFlags();
   const types = enabledInventoryTypes(features);
   const current = types.find((type) => type.key === typeKey);
+  const Page = current && INVENTORY_PAGES[current.key];
 
   return (
     <Container size="lg" py="lg">
@@ -30,8 +31,8 @@ export function InventoryLayout({ typeKey }: { typeKey: string }) {
           ))}
         </nav>
         <div className="min-w-0 flex-1">
-          {current ? (
-            <current.Page />
+          {Page ? (
+            <Page />
           ) : (
             <Stack align="center" py="xl">
               <Text c="dimmed">Nothing to show here.</Text>

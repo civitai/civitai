@@ -7,11 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
-/**
- * The Inventory: a page per kind of thing the viewer owns, listed only when the viewer can have it;
- * on Boxes, every unopened box with an Open for that box, and what earlier opens gave.
- */
-
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -115,10 +110,6 @@ const render = async (typeKey = 'boxes') => {
       React.createElement(MantineProvider, null, React.createElement(InventoryLayout, { typeKey }))
     )
   );
-  // Each type's page loads on its own.
-  await act(async () => {
-    await vi.dynamicImportSettled();
-  });
 };
 const all = (selector: string) => [...container.querySelectorAll(selector)];
 const openButtons = () =>

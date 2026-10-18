@@ -12,12 +12,11 @@ import { trpc } from '~/utils/trpc';
 
 const DEFAULT_BOX_COLOR = 'var(--mantine-color-blue-5)';
 
-/** The viewer's boxes: the unopened ones, each with Open, and what their recent opens gave. */
 export function InventoryBoxes() {
   const utils = trpc.useUtils();
   const { data: held, isLoading } = trpc.mysteryBox.getHeld.useQuery();
   const unopened = held?.reduce((total, view) => total + view.heldItems.length, 0);
-  // The menu's badge is read once per page load; the list is newer.
+  // The menu badge comes from checkNotifications, fetched once per page load; the list here is newer.
   useEffect(() => {
     if (unopened === undefined) return;
     utils.user.checkNotifications.setData(undefined, (counts) =>

@@ -4,10 +4,6 @@ import type * as PlacementService from '~/server/services/placement.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as MysteryBoxInventoryService from '~/server/services/mystery-box-inventory.service';
 
-// The once-a-session notification counts also carry the user menu's unopened box count. It gets
-// the same flag, country and viewer as the Inventory's own read, and a failure there must not take
-// the notification bell down with it.
-
 const { countBoxes } = vi.hoisted(() => ({ countBoxes: vi.fn() }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({

@@ -22,9 +22,9 @@ type Viewer = {
 };
 
 /**
- * The kinds of box the viewer holds and may see, how many of each, and the team each one's contents
- * are shown for. An event box passes its event's gate (`getEventBoxViewer`, read only) or is left
- * out; a box with no event has no team, as when it is opened.
+ * The held box kinds the viewer may see, with counts and the team each is shown for. An event box
+ * must pass its event's gate (`getEventBoxViewer`, read only); a box with no event has no team, as
+ * when it is opened.
  */
 async function readVisibleHeldKinds({
   userId,
@@ -74,8 +74,8 @@ export type HeldMysteryBox = MysteryBoxView & {
 };
 
 /**
- * The viewer's unopened boxes, one view per kind of box, built as the event page builds them so the
- * odds shown are the draw's. Nothing for sale here: `listing` is always null.
+ * The viewer's unopened boxes, one view per kind, built as the event page builds them so the odds
+ * shown are the draw's.
  */
 export async function getHeldMysteryBoxes(viewer: Viewer): Promise<HeldMysteryBox[]> {
   const kinds = await readVisibleHeldKinds(viewer);

@@ -102,7 +102,6 @@ function Harness() {
   return null;
 }
 
-/** The menu badge's count after every update the hook made to it. */
 const unopenedAfterUpdates = (start: number) =>
   spies.setCounts.mock.calls.reduce(
     (counts: { unopenedBoxes: number }, [, update]) => update(counts),
@@ -349,7 +348,6 @@ describe('useMysteryBoxOpen from the Inventory', () => {
     expect(after.heldItems.map((i) => i.id)).toEqual(['501']);
     expect(after.heldBoxItemIds).toEqual(['501']);
     expect(after.contents.map((c) => c.left)).toEqual([true, false]);
-    // Written, never refetched: a lagging replica could answer with the box still unopened.
     expect(spies.invalidateHeld).not.toHaveBeenCalled();
     expect(spies.setData).not.toHaveBeenCalled();
     expect(spies.invalidateBoxes).toHaveBeenCalledWith({ event: 'birthday2026' });

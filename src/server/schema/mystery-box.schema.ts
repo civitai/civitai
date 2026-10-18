@@ -30,7 +30,6 @@ export type GetMysteryBoxOddsPageInput = z.infer<typeof getMysteryBoxOddsPageInp
 
 export const getMysteryBoxOpeningsInput = z.object({
   limit: z.number().int().min(1).max(50).default(20),
-  /** The last `boxItemId` of the page before. */
   cursor: boxItemIdString.optional(),
 });
 
