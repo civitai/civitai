@@ -960,6 +960,13 @@ export type RedisMetricsBridge = {
   sysredisSentinelClientErrorsCounter: {
     labels: (labels: Record<string, string>) => { inc: () => void };
   };
+  // Sentinel client lifecycle (see attachSysSentinelLifecycleListeners).
+  sysredisSentinelLifecycleEventsCounter?: {
+    labels: (labels: Record<string, string>) => { inc: (value?: number) => void };
+  };
+  sysredisSentinelReadyGauge?: {
+    labels: (labels: Record<string, string>) => { set: (value: number) => void };
+  };
   // FIX #1 self-heal reconnect counter (labeled by `trigger`: 'deadline' | 'inflight'). Read via the
   // globalThis bridge so this client-bundle-reachable module avoids a static prom-client import (which
   // drags in fs/cluster). May be undefined until prom/client loads server-side; callers null-check.
@@ -1121,6 +1128,59 @@ export function attachSysSentinelListeners(
     );
     ctx.errorCounter.labels({ type: sub.type, host: sub.host, deployment: ctx.deployment }).inc();
   });
+}
+
+/** The lifecycle events RedisSentinel forwards from its internal client (@redis/client 6.3.0). */
+export const SYS_SENTINEL_LIFECYCLE_EVENTS = ['connect', 'ready', 'reconnecting', 'end'] as const;
+
+/**
+ * Publish a Sentinel client's readiness: `civitai_sysredis_sentinel_ready{client,deployment}`
+ * (1 after `ready`; 0 from wiring, and after `reconnecting` or `end`) and
+ * `civitai_sysredis_sentinel_lifecycle_events_total{event,client,deployment}`. `connect` leaves
+ * the gauge alone: the client is open but not yet ready.
+ *
+ * Every write re-seeds all four counter series and the gauge, because the handles are resolved
+ * from the app's bridge per call: a bridge published after wiring gets complete series on the
+ * next event.
+ *
+ * Metric writes never throw: these listeners run inside node-redis's connect/close paths, and the
+ * first write inside client construction.
+ */
+export function attachSysSentinelLifecycleListeners(
+  client: { on: (event: string, listener: () => void) => unknown },
+  ctx: {
+    client: 'serving' | 'buffer';
+    deployment: string;
+    log: (msg: string, ...rest: unknown[]) => void;
+    readyGauge: NonNullable<RedisMetricsBridge['sysredisSentinelReadyGauge']>;
+    lifecycleCounter: NonNullable<RedisMetricsBridge['sysredisSentinelLifecycleEventsCounter']>;
+  }
+) {
+  const labels = { client: ctx.client, deployment: ctx.deployment };
+  let ready = 0;
+  const publish = (event?: (typeof SYS_SENTINEL_LIFECYCLE_EVENTS)[number]) => {
+    try {
+      for (const e of SYS_SENTINEL_LIFECYCLE_EVENTS) {
+        ctx.lifecycleCounter.labels({ event: e, ...labels }).inc(e === event ? 1 : 0);
+      }
+      ctx.readyGauge.labels(labels).set(ready);
+    } catch (err) {
+      try {
+        ctx.log(`Redis sentinel lifecycle metrics write failed [client=${ctx.client}]`, err);
+      } catch {
+        // The logger is app code too; nothing left to report to.
+      }
+    }
+  };
+  publish();
+  for (const event of SYS_SENTINEL_LIFECYCLE_EVENTS) {
+    client.on(event, () => {
+      if (event === 'ready') ready = 1;
+      else if (event !== 'connect') ready = 0;
+      if (event === 'end') ctx.log(`Redis sentinel end [client=${ctx.client}]`);
+      publish(event);
+    });
+  }
 }
 
 /**
@@ -1377,7 +1437,8 @@ export function instrumentCommands(
   };
 }
 
-function getBaseClient(type: 'cache' | 'system') {
+// `sentinelClient` labels a Sentinel client's lifecycle metrics; unused for other client kinds.
+function getBaseClient(type: 'cache' | 'system', sentinelClient: 'serving' | 'buffer' = 'serving') {
   log(`Creating Redis client (${type})`);
 
   const REDIS_URL = type === 'system' ? config.sysUrl : config.url;
@@ -1548,7 +1609,8 @@ function getBaseClient(type: 'cache' | 'system') {
         ...(isSystem ? { disableOfflineQueue: true } : {}),
       });
 
-  // Sentinel observability — count topology changes + sub-client errors (PR #2331). Counters
+  // Sentinel observability — count topology changes + sub-client errors (PR #2331), and publish
+  // readiness + lifecycle events per client (serving|buffer). Counters
   // come from the app's prom bridge (noop until it loads); deployment = pod HOSTNAME.
   // The counter is resolved from the bridge at EVENT time, like every other Redis metric: the
   // sys client is a process-wide singleton shared by every bundler runtime, so the bag present
@@ -1570,6 +1632,21 @@ function getBaseClient(type: 'cache' | 'system') {
         log,
         topologyCounter: lateBound((m) => m?.sysredisSentinelTopologyChangesCounter),
         errorCounter: lateBound((m) => m?.sysredisSentinelClientErrorsCounter),
+      }
+    );
+    type Gauge = NonNullable<RedisMetricsBridge['sysredisSentinelReadyGauge']>;
+    const noopGauge: Gauge = { labels: () => ({ set: () => undefined }) };
+    attachSysSentinelLifecycleListeners(
+      baseClient as unknown as { on: (e: string, l: () => void) => unknown },
+      {
+        client: sentinelClient,
+        deployment: process.env.HOSTNAME ?? 'unknown',
+        log,
+        readyGauge: {
+          labels: (labels) =>
+            (getRedisMetrics()?.sysredisSentinelReadyGauge ?? noopGauge).labels(labels),
+        },
+        lifecycleCounter: lateBound((m) => m?.sysredisSentinelLifecycleEventsCounter),
       }
     );
   }
@@ -1778,7 +1855,7 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // connection alongside the serving one (both feed the aggregate sys inflight counter).
   let sysBufferBaseClient: CustomRedisClient<K> | undefined;
   if (isSysSentinel) {
-    const bufferBaseClient = getBaseClient(type) as unknown as CustomRedisClient<K>;
+    const bufferBaseClient = getBaseClient(type, 'buffer') as unknown as CustomRedisClient<K>;
     sysBufferBaseClient = bufferBaseClient;
     // This dedicated connection issues real reads (GET/SMEMBERS/HGET/…) to the SAME sysRedis
     // backend, so instrument it under the same 'sys' label — its in-flight + duration metrics

@@ -1,5 +1,6 @@
 import client from 'prom-client';
 import { describe, expect, it, vi } from 'vitest';
+import type { RedisMetricsBridge } from '@civitai/redis';
 import type * as PromClient from '~/server/prom/client';
 
 /**
@@ -68,6 +69,8 @@ const PUBLISHED_HANDLES = [
   'redisSelfHealDeadlineHitsWindow',
   'redisSelfHealReconnectCounter',
   'sysredisSentinelClientErrorsCounter',
+  'sysredisSentinelLifecycleEventsCounter',
+  'sysredisSentinelReadyGauge',
   'sysredisSentinelTopologyChangesCounter',
 ] as const;
 
@@ -129,6 +132,45 @@ describe('the redis metrics bridge this app publishes on globalThis', () => {
     );
     expect(after).toContain(
       `${CODEC_METRIC}_bucket{le="0.01",op="decompress",cache_name="${cacheName}"} 0`
+    );
+  });
+
+  it('the published Sentinel lifecycle handles reach the scraped gauge and seeded counter', async () => {
+    const bridge = (await loadBridge()) as unknown as Required<RedisMetricsBridge>;
+    const { attachSysSentinelLifecycleListeners } = await import('@civitai/redis/client');
+    const listeners: Record<string, () => void> = {};
+    // A `deployment` value nothing else in the suite can have produced.
+    const deployment = 'sentinel-lifecycle-seam-probe';
+    const before = await client.register.metrics();
+    expect(before, 'NEGATIVE CONTROL: no probe series yet').not.toContain(deployment);
+
+    attachSysSentinelLifecycleListeners(
+      { on: (event, listener) => (listeners[event] = listener) },
+      {
+        client: 'buffer',
+        deployment,
+        log: () => undefined,
+        readyGauge: bridge.sysredisSentinelReadyGauge,
+        lifecycleCounter: bridge.sysredisSentinelLifecycleEventsCounter,
+      }
+    );
+    const series = (text: string) => text.split('\n').filter((l) => l.includes(deployment));
+    const ready = 'civitai_sysredis_sentinel_ready';
+    const events = 'civitai_sysredis_sentinel_lifecycle_events_total';
+    const labels = `client="buffer",deployment="${deployment}"`;
+    expect(series(await client.register.metrics()).sort()).toEqual(
+      [
+        `${events}{event="connect",${labels}} 0`,
+        `${events}{event="end",${labels}} 0`,
+        `${events}{event="ready",${labels}} 0`,
+        `${events}{event="reconnecting",${labels}} 0`,
+        `${ready}{${labels}} 0`,
+      ].sort()
+    );
+
+    listeners.ready();
+    expect(series(await client.register.metrics())).toEqual(
+      expect.arrayContaining([`${events}{event="ready",${labels}} 1`, `${ready}{${labels}} 1`])
     );
   });
 });

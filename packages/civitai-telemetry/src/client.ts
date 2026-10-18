@@ -676,6 +676,26 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
   help: 'sysRedis sentinel sub-client errors (per-pod TCP/protocol errors against masters/replicas)',
   labelNames: ['type', 'host', 'deployment'] as const,
 });
+// Written by @civitai/redis attachSysSentinelLifecycleListeners, which seeds every `event` series
+// at 0 when it wires a client: an absent series means no Sentinel client was wired.
+export const sysredisSentinelLifecycleEventsCounter = registerSysredisCounter({
+  name: 'sentinel_lifecycle_events_total',
+  help: 'sysRedis Sentinel client lifecycle events (connect|ready|reconnecting|end) by client (serving|buffer); every event series is seeded at 0 when a client is wired',
+  labelNames: ['event', 'client', 'deployment'] as const,
+});
+export const sysredisSentinelReadyGauge = (() => {
+  const name = SYSREDIS_PREFIX + 'sentinel_ready';
+  // HMR-safe registration (see registerCounterWithLabels).
+  try {
+    return new client.Gauge({
+      name,
+      help: "1 while the sysRedis Sentinel client is ready, 0 from wiring until its first `ready` and after `reconnecting` (a topology reconfigure) or `end` (closed), by client (serving|buffer). Reflects node-redis's own readiness flag, which drops only when the client rediscovers its master: an idle client keeps 1 after its master goes until the Sentinel fails over",
+      labelNames: ['client', 'deployment'] as const,
+    });
+  } catch {
+    return client.register.getSingleMetric(name) as Gauge<'client' | 'deployment'>;
+  }
+})();
 
 // App Blocks KV datastore (op ∈ get|set|delete|list|getQuota; outcome ∈ ok|unauthorized|…).
 //
