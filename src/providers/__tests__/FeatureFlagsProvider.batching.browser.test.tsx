@@ -3,17 +3,14 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as SessionProviderModule from '~/providers/SessionProvider';
 import type * as TrpcMod from '~/utils/trpc';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
- * The `trpcBatching` flag must be live before the FIRST commit's queries go out.
- *
- * React Query starts a mounted query's fetch from that component's effect, and React runs child
- * effects before parent effects. When `FeatureFlagsProvider` applied the flag only in its own
- * effect, every query mounted in the first commit was routed with batching still off. The probe
- * below stands in for such a query: it reads the routing decision from its mount effect.
+ * `trpcBatching` must be live before the first commit's queries are routed. React Query starts
+ * a query's fetch from a mount effect, and child effects run before parent effects; the probe
+ * reads the routing decision from its own mount effect. The overlay is settled on frame 0, as
+ * when the server seeds the per-user flags.
  */
 
 const mocks = vi.hoisted(() => ({

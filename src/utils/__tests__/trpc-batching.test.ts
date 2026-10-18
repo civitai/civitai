@@ -36,18 +36,6 @@ const op = (over: Partial<Op> = {}): Op => ({
   ...over,
 });
 
-/**
- * The heavy feed procedures have a dedicated backend route matched on the procedure path in the
- * URL; a batched URL would not keep them on it. Listed LITERALLY (not iterated from the set), so
- * dropping one from `NEVER_BATCH_PROCEDURES` fails by name.
- */
-const HEAVY_FEED_PROCEDURES = [
-  'image.getInfinite',
-  'image.getImagesAsPostsInfinite',
-  'model.getAll',
-  'user.getAll',
-];
-
 const setWindowAuthed = (isAuthed: boolean | undefined) => {
   (globalThis as any).window = isAuthed === undefined ? {} : { isAuthed };
 };
@@ -93,7 +81,7 @@ describe('shouldBatch', () => {
     expect(shouldBatch(op())).toBe(false);
   });
 
-  it('does NOT batch when window.isAuthed is unknown/undefined (early hydration is safe)', () => {
+  it('does NOT batch when window.isAuthed is unknown/undefined (session not yet known)', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(undefined); // window exists but isAuthed not yet set
     expect(shouldBatch(op())).toBe(false);
@@ -585,7 +573,7 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
     expect(CACHEABLE_PROCEDURES.has('image.getResources')).toBe(true);
   });
 
-  it.each(HEAVY_FEED_PROCEDURES)('heavy feed procedure %s exists in its router', (path) => {
+  it.each([...NEVER_BATCH_PROCEDURES])('never-batch procedure %s exists in its router', (path) => {
     // A renamed procedure would leave its old name in NEVER_BATCH_PROCEDURES excluding nothing.
     const [key, procedure] = path.split('.');
     const file = Object.entries(buildFileToKey()).find(([, k]) => k === key)?.[0];
@@ -605,6 +593,8 @@ describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', ()
     clearWindow();
   });
 
+  // A literal pin, not a restatement: the four heavy feed names must match the separate
+  // backend route that serves them, which this repo cannot import or check.
   it('pins the pending-cacheable and heavy feed procedures to the never-batch set', () => {
     expect([...NEVER_BATCH_PROCEDURES].sort()).toEqual([
       'event.getData',
@@ -615,16 +605,6 @@ describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', ()
       'user.getAll',
     ]);
   });
-
-  it.each(HEAVY_FEED_PROCEDURES)(
-    'keeps heavy feed procedure %s unbatched with batching on in an authed browser',
-    (path) => {
-      // Positive control: an ordinary query with the same shape DOES batch, so the false below
-      // can only come from the path.
-      expect(shouldBatch(op({ path: 'model.getInfinite' }))).toBe(true);
-      expect(shouldBatch(op({ path }))).toBe(false);
-    }
-  );
 
   it.each([...NEVER_BATCH_PROCEDURES])(
     'keeps %s unbatched even with every other condition satisfied',
