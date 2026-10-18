@@ -47,7 +47,10 @@ export type GrantResult = {
   totalPairs: number;
   alreadyOwned: number;
   newlyGranted: number;
-  /** Skipped: their own purchase or box open held their lock. Granting them again is safe. */
+  /**
+   * Skipped: another purchase, box open or moderator action held their lock. Granting them again is
+   * safe.
+   */
   busyUserIds: number[];
 };
 

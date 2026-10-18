@@ -79,7 +79,7 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
 
 /**
  * Postgres `55P03` (lock_not_available, e.g. a `lock_timeout` expiry). A raw query surfaces it as
- * P2010 with the SQLSTATE in `meta.code`; a typed Prisma call does not, and is not matched.
+ * P2010 with the SQLSTATE in `meta.code`; that is the only shape matched.
  */
 export function isPrismaLockTimeout(error: unknown): boolean {
   return (

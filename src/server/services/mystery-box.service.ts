@@ -1089,7 +1089,8 @@ export async function openMysteryBox({
       // unreachable. Nothing committed, so the box is still held.
       if (isPrismaUniqueViolation(error))
         throw throwBadRequestError('This box could not be opened. Please try again.');
-      // Also the box row's FOR SHARE behind a builder save: the timeout outlives the holder lock.
+      // Also lands here: the box row's FOR SHARE waiting on a builder save, under the timeout
+      // lockItemHolder left set.
       if (isPrismaLockTimeout(error)) throw throwRateLimitError(ITEM_HOLDER_BUSY_MESSAGE, error);
       throw error;
     });

@@ -3,9 +3,10 @@ import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { ITEM_HOLDER_LOCK_CLASS, ITEM_HOLDER_LOCK_TIMEOUT } from '@civitai/shared/item-holder-lock';
 
-/** What a moderator sees when the user's own purchase or box open holds their lock. */
 export const ITEM_HOLDER_BUSY_MESSAGE =
-  'This user has a purchase or box opening in progress. Try again in a moment.';
+  'This user has a purchase, box opening or moderator change in progress. Try again in a moment.';
+
+const LOCK_NOT_AVAILABLE = '55P03';
 
 /**
  * The main app's `lockItemHolder`: serialises this user's cosmetic grants and take-backs with its shop
@@ -13,8 +14,7 @@ export const ITEM_HOLDER_BUSY_MESSAGE =
  * inside that window would hand them the same cosmetic twice. Call first inside the transaction; it is
  * released when that ends.
  *
- * Like the main app's, waits at most `ITEM_HOLDER_LOCK_TIMEOUT` (then `isItemHolderBusy`); the timeout
- * stays set for the rest of the transaction.
+ * The timeout stays set for the rest of the transaction.
  */
 export async function lockItemHolder(trx: Transaction<DB>, userId: number) {
   await sql`SELECT set_config('lock_timeout', ${ITEM_HOLDER_LOCK_TIMEOUT}, true)`.execute(trx);
@@ -24,7 +24,7 @@ export async function lockItemHolder(trx: Transaction<DB>, userId: number) {
   );
 }
 
-/** Postgres `55P03` (lock_not_available): a lock wait in a `lockItemHolder` transaction timed out. */
+/** A lock wait in a `lockItemHolder` transaction outlasted `ITEM_HOLDER_LOCK_TIMEOUT`. */
 export function isItemHolderBusy(error: unknown) {
-  return (error as { code?: unknown } | null)?.code === '55P03';
+  return (error as { code?: unknown } | null)?.code === LOCK_NOT_AVAILABLE;
 }

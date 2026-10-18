@@ -3,10 +3,7 @@ import { ITEM_HOLDER_LOCK_CLASS, ITEM_HOLDER_LOCK_TIMEOUT } from '@civitai/share
 
 export { ITEM_HOLDER_LOCK_CLASS };
 
-/**
- * The answer to a cancelled lock wait in a box claim or open: usually the buyer's own earlier request
- * holding their lock, or a later wait in the same transaction.
- */
+/** Shown when the buyer's own earlier purchase or box opening is still holding their lock. */
 export const ITEM_HOLDER_BUSY_MESSAGE =
   'Your last purchase or box opening is still processing. Try again in a moment.';
 
