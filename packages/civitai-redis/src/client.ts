@@ -12,6 +12,12 @@ import {
   reconnectDelayMs,
   createThrottle,
 } from './cluster-reconnect';
+import {
+  createNamedMasterQuery,
+  createNamedMasterSource,
+  createSentinelStaleMasterGuard,
+  type NamedMasterSource,
+} from './sentinel-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
 import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
@@ -630,7 +636,8 @@ export async function forceSysReconnect(
       // chained onto it. A second destroy() would wait on the same in-progress discovery and
       // only queue another connect() behind it. If that teardown never settles (the discovery
       // it waits on cannot finish), this client stays skipped — a second destroy() would hang
-      // on the same thing, so nothing is lost.
+      // on the same thing, so nothing is lost (./sentinel-reconnect's give-up ends such a discovery
+      // once the Sentinel names another node that answers as master).
       log('Sys self-heal: skipping a client whose previous teardown is still running');
       continue;
     }
@@ -686,7 +693,7 @@ export async function forceSysReconnect(
       void pending
         .catch(() => undefined)
         .finally(() => lateSysReconnects.delete(client))
-        .then(() => client.connect())
+        .then(() => connectOrDestroy(client))
         .then(
           () => log('Sys self-heal: reconnected after a late teardown'),
           (err: unknown) =>
@@ -700,15 +707,15 @@ export async function forceSysReconnect(
     }
     try {
       await withTimeout(
-        Promise.resolve(client.connect()),
+        connectOrDestroy(client),
         stepTimeoutMs,
         `connect() did not settle within ${stepTimeoutMs}ms`
       );
     } catch (err) {
-      // Non-fatal: node-redis keeps retrying the connection in the background via its
-      // reconnectStrategy, and the watchdog re-arms after the cooldown.
+      // Non-fatal: a connect() that timed out keeps retrying in the background; one that failed
+      // was destroyed (connectOrDestroy). The watchdog re-arms after the cooldown.
       log(
-        `Sys self-heal: reconnect() threw (background retry continues): ${
+        `Sys self-heal: reconnect() failed or timed out: ${
           err instanceof Error ? err.message : String(err)
         }`
       );
@@ -1229,6 +1236,73 @@ export function instrumentCommands(
   };
 }
 
+/**
+ * `client.connect()`, destroying the client if that connect fails, then rethrowing.
+ *
+ * WHY (node-redis @redis/client 5.8.3, sentinel/index.js): a RedisSentinel whose connect() gave up
+ * (more than `maxCommandRediscovers` failed discovery passes) keeps the master connections of its
+ * last pass and is never ready, and its `#reset()` returns at once while not ready. If that pass
+ * opened connections and they gave up, every later command loops `!isReady → #reset() → continue`
+ * on microtasks alone and starves the process. destroy() empties that list, so a command fails at
+ * once instead. The client then stays down until the process restarts, as a client whose first
+ * connect() fails does on the old code too.
+ *
+ * Only a connect THIS call started is torn down: if the client was already open, the rejection is
+ * node-redis refusing a second open, and the connection belongs to whoever opened it. A plain
+ * client whose connect() gave up is already closed; its destroy() throws, which is ignored.
+ */
+export function connectOrDestroy<T>(client: {
+  connect: () => Promise<T> | T;
+  destroy?: () => unknown;
+  isOpen?: boolean;
+}): Promise<T> {
+  const wasOpen = client.isOpen === true;
+  let connecting: Promise<T>;
+  try {
+    connecting = Promise.resolve(client.connect());
+  } catch (err) {
+    connecting = Promise.reject(err);
+  }
+  return connecting.catch((err: unknown) => {
+    if (!wasOpen) {
+      try {
+        void Promise.resolve(client.destroy?.()).catch(() => undefined);
+      } catch {
+        // already closed
+      }
+    }
+    throw err;
+  });
+}
+
+/**
+ * One Sentinel "which master?" source per Sentinel set and master name, shared by the sys base
+ * clients that use it (serving + Buffer-mode dial the same master), so an outage costs one query a
+ * second per process rather than one per connection.
+ */
+const namedMasterSources = new Map<string, NamedMasterSource>();
+function namedMasterSourceFor(
+  sentinels: { host: string; port: number }[],
+  nodePassword: string | undefined
+): NamedMasterSource {
+  const key = `${sentinels.map((n) => `${n.host}:${n.port}`).join(',')}|${config.sysSentinelName}`;
+  let source = namedMasterSources.get(key);
+  if (!source) {
+    source = createNamedMasterSource(
+      createNamedMasterQuery({
+        sentinels,
+        name: config.sysSentinelName!,
+        password: config.sysSentinelPassword,
+        nodePassword,
+        // A Sentinel that never replies must not hold the query open, so never unbounded.
+        timeoutMs: config.timeout && config.timeout > 0 ? config.timeout : 5000,
+      })
+    );
+    namedMasterSources.set(key, source);
+  }
+  return source;
+}
+
 function getBaseClient(type: 'cache' | 'system') {
   log(`Creating Redis client (${type})`);
 
@@ -1316,18 +1390,31 @@ function getBaseClient(type: 'cache' | 'system') {
     `Redis ping interval (${type}) = ${pingInterval}ms (REDIS_PING_INTERVAL_MS=${config.pingIntervalMs}, socketTimeout=${socketTimeoutMs}ms)`
   );
 
+  const sentinelRootNodes = isSysSentinel
+    ? config.sysSentinels!.split(',').map((hp) => {
+        const [host, port] = hp.trim().split(':');
+        return { host, port: parseInt(port ?? '26379', 10) };
+      })
+    : [];
+  let sentinelForGuard: { getMasterNode?: () => unknown } | undefined;
+  const staleMasterGuard = isSysSentinel
+    ? createSentinelStaleMasterGuard({
+        enabled: config.sysSentinelStaleMasterGiveUpEnabled,
+        source: namedMasterSourceFor(sentinelRootNodes, authConfig.password),
+        isMasterConnectionReady: () => sentinelForGuard?.getMasterNode?.() !== undefined,
+        log,
+      })
+    : undefined;
+
   const baseClient = isSysSentinel
     ? createSentinel({
         // superRefine guarantees the name is set when sentinels are configured.
         name: config.sysSentinelName!,
-        sentinelRootNodes: config.sysSentinels!.split(',').map((hp) => {
-          const [host, port] = hp.trim().split(':');
-          return { host, port: parseInt(port ?? '26379', 10) };
-        }),
+        sentinelRootNodes,
         nodeClientOptions: {
           // Reuse the password already extracted from REDIS_SYS_URL.
           password: authConfig.password,
-          socket: socketConfig,
+          socket: { ...socketConfig, reconnectStrategy: staleMasterGuard!.reconnectStrategy },
           pingInterval,
         },
         sentinelClientOptions: config.sysSentinelPassword
@@ -1393,6 +1480,11 @@ function getBaseClient(type: 'cache' | 'system') {
       labels: (labels: Record<string, string>) =>
         (pick(getRedisMetrics()) ?? noopCounter).labels(labels),
     });
+    sentinelForGuard = baseClient as unknown as { getMasterNode?: () => unknown };
+    (baseClient as unknown as { on: (e: string, l: (e: any) => void) => unknown }).on(
+      'topology-change',
+      staleMasterGuard!.onTopologyChange
+    );
     attachSysSentinelListeners(
       baseClient as unknown as { on: (e: string, l: (e: any) => void) => unknown },
       {
@@ -1550,8 +1642,7 @@ function getBaseClient(type: 'cache' | 'system') {
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
   log(`Calling connect() for ${type} (single) client...`);
-  baseClient
-    .connect()
+  connectOrDestroy(baseClient)
     .then(() => {
       log(`${type} single client connected`);
     })
