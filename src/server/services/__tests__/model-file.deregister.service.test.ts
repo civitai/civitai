@@ -54,10 +54,16 @@ function stubDeletableFile({
   type = 'Model',
   modelStatus = ModelStatus.Published,
   rows = [{ modelVersionId: VERSION_ID, modelId: MODEL_ID, url: FILE_URL }],
-}: { type?: string; modelStatus?: ModelStatus; rows?: unknown[] } = {}) {
+  trainingStatus = null,
+}: {
+  type?: string;
+  modelStatus?: ModelStatus;
+  rows?: unknown[];
+  trainingStatus?: string | null;
+} = {}) {
   mockDbWrite.modelFile.findFirst.mockResolvedValue({
     type,
-    modelVersion: { model: { status: modelStatus } },
+    modelVersion: { trainingStatus, model: { status: modelStatus } },
   });
   mockDbWrite.$queryRaw.mockResolvedValue(rows);
 }
@@ -177,5 +183,37 @@ describe('deleteFile — file_locations deregistration', () => {
 
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mockDeregisterFileLocationsByFile).not.toHaveBeenCalled();
+  });
+});
+
+// Decision (2026-10-18): a denied dataset stays on record; only a moderator may remove it.
+describe('deleteFile — a denied dataset', () => {
+  it('refuses the owner, and deletes nothing', async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'Denied' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
+      "Training data for a denied training run can't be deleted."
+    );
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator remove it', async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'Denied' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID, isModerator: true })).resolves.toEqual({
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+    });
+    expect(mockDeleteModelFileObject).toHaveBeenCalledWith(FILE_URL);
+  });
+
+  it('still lets the owner delete training data of a run that was not denied', async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'Failed' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).resolves.toEqual({
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+    });
   });
 });

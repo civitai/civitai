@@ -36,6 +36,7 @@ import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import { assertVersionAcceptsNewUpload } from '~/server/utils/model-file-replace';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -249,36 +250,6 @@ const replaceableFileSelect = {
 
 type ReplaceableFile = Prisma.ModelFileGetPayload<{ select: typeof replaceableFileSelect }>;
 
-// A version that has been out in the world (or is about to be) keeps its files; new bytes go in a
-// new version. Unpublished counts, since publishing it again brings back what it had.
-const contentEditableVersionStatuses: ModelStatus[] = [ModelStatus.Draft, ModelStatus.Training];
-
-// A running training workflow writes its results back to the training-data row by id, so that
-// row must still exist when the run reports in.
-const runningTrainingStatuses: TrainingStatus[] = [
-  TrainingStatus.Submitted,
-  TrainingStatus.Processing,
-  TrainingStatus.Paused,
-];
-
-function assertContentReplaceable(
-  version: { status: ModelStatus; trainingStatus: TrainingStatus | null },
-  fileType: string
-) {
-  if (!contentEditableVersionStatuses.includes(version.status))
-    throw throwBadRequestError(
-      'This version has been published. Upload the new file as a new version.'
-    );
-  if (
-    fileType === 'Training Data' &&
-    version.trainingStatus &&
-    runningTrainingStatuses.includes(version.trainingStatus)
-  )
-    throw throwBadRequestError(
-      'Training is still running. Wait for it to finish before replacing the training data.'
-    );
-}
-
 /**
  * A new upload behind an existing file becomes a new file record: the old row (and its hashes) is
  * deleted and a new one created in its place, unscanned, so nothing recorded about the old object
@@ -300,7 +271,7 @@ async function replaceFileContent({
   uploadDomain: ColorDomain | null;
 }) {
   // Fails fast on the snapshot; the transaction below re-checks against the locked version row.
-  assertContentReplaceable(file.modelVersion, file.type);
+  assertVersionAcceptsNewUpload(file.modelVersion, file.type);
 
   const { overrideName, ...fields } = input;
   const type = (fields.type ?? file.type) as ModelFileType;
@@ -330,7 +301,7 @@ async function replaceFileContent({
       FOR UPDATE
     `;
     if (!version) throw throwNotFoundError();
-    assertContentReplaceable(version, file.type);
+    assertVersionAcceptsNewUpload(version, file.type);
 
     const removed = await tx.modelFile.deleteMany({
       where: {
@@ -449,6 +420,7 @@ export async function deleteFile({
       type: true,
       modelVersion: {
         select: {
+          trainingStatus: true,
           model: {
             select: { status: true },
           },
@@ -458,6 +430,14 @@ export async function deleteFile({
   });
 
   if (!file) throw throwNotFoundError();
+
+  // A denied dataset stays on record for moderators; only they may remove it.
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus === TrainingStatus.Denied &&
+    !isModerator
+  )
+    throw throwBadRequestError("Training data for a denied training run can't be deleted.");
 
   const modelStatus = file.modelVersion.model.status;
   const isTrainingFile = file.type === 'Training Data';

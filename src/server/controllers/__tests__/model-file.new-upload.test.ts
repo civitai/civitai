@@ -210,6 +210,8 @@ describe('a new upload through modelFile.upsert', () => {
         type: 'Training Data',
         name: 'data.zip',
         metadata: { uploadDomain: 'red', numImages: 4 },
+        // A dataset is replaceable before the first run.
+        modelVersion: { ...storedFile('Draft').modelVersion, trainingStatus: null },
       })
     );
 
@@ -249,5 +251,26 @@ describe('a metadata-only edit through modelFile.upsert', () => {
     expect(mockRegister).not.toHaveBeenCalled();
     expect(mockScan).not.toHaveBeenCalled();
     expect(track.entityChanges).not.toHaveBeenCalled();
+  });
+
+  // An unstamped dataset is let through as legacy by the paid submit, so a client must not be able
+  // to clear the stored stamp by sending an empty one.
+  it("keeps a dataset's stored domain when the client sends an empty one", async () => {
+    givenStored(
+      storedFile('Draft', {
+        type: 'Training Data',
+        metadata: { uploadDomain: 'red', numImages: 4 },
+      })
+    );
+
+    await upsertFileHandler({
+      input: { id: OLD_ID, metadata: { uploadDomain: null, numImages: 5 } },
+      ctx: ctx(),
+    });
+
+    const written = dbMock.dbWrite.modelFile.updateMany.mock.calls.at(-1)?.[0] as {
+      data: { metadata: Record<string, unknown> };
+    };
+    expect(written.data.metadata).toEqual({ uploadDomain: 'red', numImages: 5 });
   });
 });

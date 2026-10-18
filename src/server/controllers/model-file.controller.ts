@@ -320,7 +320,7 @@ export const updateFileHandler = async ({
     // Provenance is server-owned (see createFileHandler): any client value is dropped. A new
     // training-data upload is stamped with this request's domain by updateFile; a metadata-only
     // update keeps the stored one through updateFile's merge.
-    if (updateInput.metadata?.uploadDomain != null) {
+    if (updateInput.metadata && 'uploadDomain' in updateInput.metadata) {
       const nextMetadata = { ...updateInput.metadata };
       delete nextMetadata.uploadDomain;
       updateInput.metadata = nextMetadata;

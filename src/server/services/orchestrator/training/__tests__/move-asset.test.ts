@@ -77,9 +77,12 @@ function dbVersion({
   ownerId = OWNER,
   trainingResults = { version: 2, workflowId: WORKFLOW_ID } as unknown,
   meta = null as unknown,
+  status = 'Draft',
 } = {}) {
   return {
     meta,
+    status,
+    trainingStatus: 'InReview',
     model: { userId: ownerId },
     files: [{ metadata: trainingResults ? { trainingResults } : {} }],
   };
@@ -162,6 +165,15 @@ const legacyResults = {
 
 const fetchMock = vi.fn();
 
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The storage url a copy lands at: the asset name with a unique token before its extension. */
+const copiedTo = (base: string, tail: string) =>
+  new RegExp(
+    `^${escape(`https://storage.example/modelVersion/${VERSION_ID}/${base}.`)}[^./?]{8}${escape(
+      tail
+    )}$`
+  );
+
 function expectNothingCopied() {
   expect(fetchMock).not.toHaveBeenCalled();
   expect(mockGetPutUrl).not.toHaveBeenCalled();
@@ -199,13 +211,15 @@ beforeEach(() => {
 describe('training.moveAsset — approved checkpoint of an owned run', () => {
   it('copies the run’s own URL for an approved epoch checkpoint of the version owner’s run', async () => {
     await expect(move()).resolves.toEqual({
-      newUrl: `https://storage.example/modelVersion/${VERSION_ID}/${EPOCH_2}.safetensors`,
+      newUrl: expect.stringMatching(copiedTo(`${EPOCH_2}`, '.safetensors')),
       fileSize: 7,
     });
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { id: VERSION_ID },
       select: {
         meta: true,
+        status: true,
+        trainingStatus: true,
         model: { select: { userId: true } },
         files: { where: { type: 'Training Data' }, select: { metadata: true } },
       },
@@ -266,6 +280,43 @@ describe('training.moveAsset — target version', () => {
     mockFindUnique.mockResolvedValue(null as never);
     await expect(move()).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expectNothingCopied();
+  });
+});
+
+/**
+ * Decision (2026-10-18): a published version keeps its files, and a checkpoint copy is what an epoch
+ * pick writes first. The refusal must come before the copy, or the copy lands even though the file
+ * update after it is refused.
+ */
+describe('training.moveAsset — a published version keeps its files', () => {
+  it.each(['Published', 'Unpublished'])('copies nothing into a %s version', async (status) => {
+    mockFindUnique.mockResolvedValue(dbVersion({ status }) as never);
+    await expect(move()).rejects.toThrow('This version has been published');
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expectNothingCopied();
+  });
+
+  it('refuses a moderator too', async () => {
+    mockFindUnique.mockResolvedValue(dbVersion({ status: 'Published' }) as never);
+    await expect(move({ userId: MODERATOR, isModerator: true })).rejects.toThrow(
+      'This version has been published'
+    );
+    expectNothingCopied();
+  });
+});
+
+// The same asset name comes back (picking an epoch again, a later run's `run_000001`), and a copy
+// that reused its key would overwrite the object behind an existing file record.
+describe('training.moveAsset — unique asset key', () => {
+  it('copies the same checkpoint twice to two distinct keys', async () => {
+    const first = await move();
+    const second = await move();
+
+    expect(first.newUrl).toMatch(copiedTo(EPOCH_2, '.safetensors'));
+    expect(second.newUrl).toMatch(copiedTo(EPOCH_2, '.safetensors'));
+    expect(second.newUrl).not.toBe(first.newUrl);
+    const keys = mockGetPutUrl.mock.calls.map(([key]) => key);
+    expect(new Set(keys).size).toBe(2);
   });
 });
 
@@ -336,7 +387,7 @@ describe('training.moveAsset — workflow run whose epochs are job asset URLs', 
       await expect(
         move({ url: runJobUrl('run_000001.safetensors'), userId, isModerator: mod })
       ).resolves.toEqual({
-        newUrl: `https://storage.example/modelVersion/${VERSION_ID}/run_000001.safetensors`,
+        newUrl: expect.stringMatching(copiedTo('run_000001', '.safetensors')),
         fileSize: 9,
       });
       expect(mockGetToken).toHaveBeenCalledWith(OWNER, undefined, { bypassCache: mod });
@@ -345,7 +396,7 @@ describe('training.moveAsset — workflow run whose epochs are job asset URLs', 
         payload: {
           jobId: RUN_JOB,
           assetName: 'run_000001.safetensors',
-          destinationUri: `https://storage.example/modelVersion/${VERSION_ID}/run_000001.safetensors?signed=1`,
+          destinationUri: expect.stringMatching(copiedTo('run_000001', '.safetensors?signed=1')),
         },
         queryParams: { wait: true },
       });

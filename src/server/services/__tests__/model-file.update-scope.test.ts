@@ -371,19 +371,33 @@ describe('a published version keeps its files', () => {
   });
 });
 
-// A running training workflow writes its results back to the training-data record by id.
-describe('training data while a run is in flight', () => {
-  it.each(['Submitted', 'Processing', 'Paused'])(
-    'refuses a new dataset while training is %s',
+/**
+ * Decision (2026-10-18): a dataset is fixed once training has started, so the run's results and its
+ * review describe the bytes on record (a running run also writes back to the record by id). A
+ * retry after a failed or expired run may upload a new one; a denied dataset is never replaced.
+ */
+describe('training data once training has started', () => {
+  const LOCKED = "Training data can't be changed after training has started";
+
+  it.each(['Submitted', 'Processing', 'Paused', 'InReview', 'Approved', 'Denied'])(
+    'refuses a new dataset when training is %s',
     async (trainingStatus) => {
       withFile({ type: 'Training Data', trainingStatus });
 
-      await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
-        'Training is still running'
-      );
+      await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(LOCKED);
       expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
+      expect(mockDeleteObject).not.toHaveBeenCalled();
     }
   );
+
+  it('refuses a moderator a new dataset on a denied run too', async () => {
+    withFile({ type: 'Training Data', trainingStatus: 'Denied' });
+
+    await expect(
+      updateFile({ id: 1, url: NEW_URL, userId: 99, isModerator: true })
+    ).rejects.toThrow(LOCKED);
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
 
   // A submit claims the version (Submitted) after reading the dataset; the lock serialises them.
   it('refuses when a training submit claimed the version after the lookup', async () => {
@@ -393,9 +407,7 @@ describe('training data while a run is in flight', () => {
       lockedAs: { trainingStatus: 'Submitted' },
     });
 
-    await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(
-      'Training is still running'
-    );
+    await expect(updateFile({ id: 1, url: NEW_URL, userId: 7 })).rejects.toThrow(LOCKED);
     expect(tx.modelFile.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -414,7 +426,7 @@ describe('training data while a run is in flight', () => {
     );
   });
 
-  it.each([null, 'Pending', 'Failed', 'InReview'])(
+  it.each([null, 'Pending', 'Failed', 'Expired'])(
     'allows a new dataset when training is %s',
     async (trainingStatus) => {
       withFile({ type: 'Training Data', trainingStatus });

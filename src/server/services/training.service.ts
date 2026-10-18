@@ -1,3 +1,4 @@
+import { extname } from 'node:path';
 import { Upload } from '@aws-sdk/lib-storage';
 import type {
   AudioCaptioningStepTemplate,
@@ -56,6 +57,7 @@ import {
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
+import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
@@ -72,6 +74,16 @@ export type TrainingRequest = {
 };
 
 const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
+
+/**
+ * Where a training checkpoint is copied to. A unique asset key per copy: the same asset name can
+ * come back (a later pick, another run), and a copy must never land on an existing object.
+ */
+export function uniqueAssetKey(modelVersionId: number, assetName: string) {
+  const ext = extname(assetName);
+  const base = assetName.slice(0, assetName.length - ext.length);
+  return `modelVersion/${modelVersionId}/${base}.${generateToken(8)}${ext}`;
+}
 
 export async function moveAssetFromBlob({
   url,
@@ -95,7 +107,7 @@ export async function moveAssetFromBlob({
     url: destinationUri,
     bucket,
     key,
-  } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
+  } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
   console.log('[moveAssetFromBlob] Got put URL', { bucket, key });
 
   // Download the blob
@@ -164,7 +176,7 @@ export async function moveAssetFromJob({
   modelVersionId: number;
   submittedAt?: Date;
 }) {
-  const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
+  const { url: destinationUri } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
 
   const response = await getOrchestratorCaller(submittedAt).copyAsset({
     payload: { jobId, assetName, destinationUri },

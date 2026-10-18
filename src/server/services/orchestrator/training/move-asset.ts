@@ -3,6 +3,7 @@ import type { MoveAssetInput } from '~/server/schema/training.schema';
 import { resolveOwnedApprovedTrainingCheckpoint } from '~/server/services/orchestrator/training/approved-checkpoint';
 import { resolveTrainingWorkflowId } from '~/server/services/orchestrator/training/training-state';
 import { moveAssetFromBlob, moveAssetFromJob } from '~/server/services/training.service';
+import { assertVersionAcceptsNewUpload } from '~/server/utils/model-file-replace';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -31,6 +32,8 @@ export async function moveAsset({
     where: { id: modelVersionId },
     select: {
       meta: true,
+      status: true,
+      trainingStatus: true,
       model: { select: { userId: true } },
       files: { where: { type: 'Training Data' }, select: { metadata: true } },
     },
@@ -38,6 +41,9 @@ export async function moveAsset({
   if (!version) throw throwNotFoundError(`No model version with id ${modelVersionId}`);
   const ownerId = version.model.userId;
   if (ownerId !== userId && !isModerator) throw throwAuthorizationError();
+  // Before any copy: the checkpoint becomes the version's model file, which a published version no
+  // longer takes.
+  assertVersionAcceptsNewUpload(version, 'Model');
 
   const { stored, workflowId } = resolveTrainingWorkflowId(version);
   if (!isConsumerBlobUrl(url) && !(workflowId && parseJobAssetUrl(url)))
