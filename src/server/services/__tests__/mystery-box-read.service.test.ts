@@ -375,16 +375,21 @@ describe('getMysteryBoxesForEvent', () => {
     const [view] = await read();
     expect(view.version).toBe(4);
     expect(view.contents.map((c) => c.contentId)).toEqual([1, 2, 4, 5, 8]);
+
+    // The replaced version is dropped, not kept: a read of it again goes to the database.
+    world.boxes[0].version = 3;
+    await read();
+    expect(dbMock.dbRead.boxContent.findMany).toHaveBeenCalledTimes(3);
   });
 
-  it('shows a change made without a version bump after five minutes', async () => {
+  it('shows a change made without a version bump after a minute', async () => {
     await read();
-    (world.contents[0].reward.cosmetic!.data as Record<string, unknown>).url = 'hat-1-v2.png';
+    (world.contents[0].reward.cosmetic!.data as Record<string, unknown>).team = 'Blue';
 
-    vi.setSystemTime(Date.now() + 4 * 60_000);
-    expect((await read())[0].contents[0].url).toBe('hat-1.png');
-    vi.setSystemTime(Date.now() + 61_000);
-    expect((await read())[0].contents[0].url).toBe('hat-1-v2.png');
+    vi.setSystemTime(Date.now() + 59_000);
+    expect((await read())[0].contents.map((c) => c.contentId)).toEqual([1, 2, 4, 5]);
+    vi.setSystemTime(Date.now() + 2_000);
+    expect((await read())[0].contents.map((c) => c.contentId)).toEqual([2, 4, 5]);
   });
 
   it('marks what the viewer collected since the contents were cached as not left', async () => {

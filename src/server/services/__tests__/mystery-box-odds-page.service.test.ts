@@ -480,6 +480,16 @@ describe('what the odds page shows', () => {
     expect(page?.contents.map((c) => c.contentId)).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it("reads the contents once per box version, and a bump shows the new version's", async () => {
+    await read();
+    world.contents.push(hat(6, RARE, 'Pink'));
+    expect((await read())?.contents.map((c) => c.contentId)).toEqual([1, 2, 3, 4, 5]);
+    expect(dbMock.dbRead.boxContent.findMany).toHaveBeenCalledTimes(1);
+
+    world.boxes[0].version = 2;
+    expect((await read())?.contents.map((c) => c.contentId)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
   it('calls the contents items when any is not a hat', async () => {
     world.contents[0].reward.cosmetic.type = 'Badge';
     expect((await read())?.noun).toBe('item');

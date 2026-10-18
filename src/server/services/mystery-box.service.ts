@@ -316,9 +316,10 @@ export type BoxDisplayEntry = ReturnType<typeof boxContentDisplay> & {
   event: string | undefined;
 };
 
-// Keyed by version, which every tier or content edit bumps, so an edit shows at once. A change made
-// without a bump (a cosmetic's own art) shows within the TTL. One slot per version a pod has served.
-const BOX_CATALOG_DISPLAY_TTL_MS = 5 * 60_000;
+// Keyed by version, which every change to a box's tiers or contents, or to a content cosmetic's team,
+// must bump in the same transaction, so the change shows at once. Anything changed without a bump
+// shows within the TTL: until then the odds shown can differ from the draw's.
+const BOX_CATALOG_DISPLAY_TTL_MS = 60_000;
 const displayCatalogs = createKeyedTtlMemo(
   async (key): Promise<BoxDisplayEntry[]> =>
     (await getBoxCatalog(dbRead, Number(key.split(':')[0]))).map((entry) =>
@@ -334,16 +335,24 @@ const displayCatalogs = createKeyedTtlMemo(
   () => Date.now(),
   { freeze: true }
 );
+const servedVersions = new Map<number, number>();
 
 /**
  * A box's enabled contents for every team, for showing only (the event page, Inventory, the odds
  * page), cached per box version. Purchase and open read `getBoxCatalog` live, under the lock.
  */
 export function getBoxCatalogForDisplay(box: { id: number; version: number }) {
+  // One version per box: the memo keeps a slot per key, so drop the one a bump replaced.
+  const served = servedVersions.get(box.id);
+  if (served !== undefined && served !== box.version) displayCatalogs.clear(`${box.id}:${served}`);
+  servedVersions.set(box.id, box.version);
   return displayCatalogs(`${box.id}:${box.version}`);
 }
 
-export const clearBoxCatalogDisplayCache = () => displayCatalogs.clear();
+export const clearBoxCatalogDisplayCache = () => {
+  displayCatalogs.clear();
+  servedVersions.clear();
+};
 
 export type MysteryBoxView = {
   boxDefinitionId: number;
