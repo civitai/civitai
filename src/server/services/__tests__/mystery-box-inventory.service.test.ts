@@ -14,7 +14,11 @@ import {
   getHeldMysteryBoxes,
   getMysteryBoxOpenings,
 } from '../mystery-box-inventory.service';
-import { getBoxPoolForUser, getMysteryBoxesForEvent } from '../mystery-box.service';
+import {
+  clearBoxCatalogDisplayCache,
+  getBoxPoolForUser,
+  getMysteryBoxesForEvent,
+} from '../mystery-box.service';
 import { boxOddsFor } from '~/components/MysteryBox/mystery-box.utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -325,6 +329,7 @@ let step = 0;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(base + step++ * 5 * 60_000);
+  clearBoxCatalogDisplayCache();
   world = {
     // Out of id order throughout: the reads must sort, not inherit the order rows were written in.
     definitions: [

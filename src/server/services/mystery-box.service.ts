@@ -43,7 +43,7 @@ import {
   shopPurchaseTransactionId,
 } from '~/server/services/shop-purchase-charge';
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
-import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { createKeyedTtlMemo, createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { boxOpenClaimKey } from '~/shared/utils/mystery-box';
@@ -170,25 +170,24 @@ export async function getBoxCatalog(
   });
 }
 
+// A cosmetic made for a team goes only to that team's members; a buyer with no team gets none.
+const isForTeam = (cosmeticTeam: string | undefined, team: string | undefined) =>
+  cosmeticTeam === undefined || cosmeticTeam === team;
+
 /**
- * Everything this box holds for this user: its enabled contents, less any cosmetic made for another
- * team than `team`, each marked whether it is still `left` for them. Owned from any source, or
- * already drawn from this box (a reward removed from them since stays drawn: `BoxOpening` allows each
- * once), is not left.
+ * Marks each entry whether it is still `left` for the user. Owned from any source, or already drawn
+ * from this box (a reward removed from them since stays drawn: `BoxOpening` allows each once), is
+ * not left.
  */
-export async function getBoxContentsForUser(
+async function markLeftForUser<T extends { cosmeticId: number; rewardDefinitionId: number }>(
   client: Prisma.TransactionClient,
-  { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
-): Promise<BoxContentForUser[]> {
-  // A cosmetic made for a team goes only to that team's members; a buyer with no team gets none.
-  const forTeam = (await getBoxCatalog(client, boxDefinitionId)).flatMap(
-    ({ team: cosmeticTeam, ...entry }) =>
-      cosmeticTeam === undefined || cosmeticTeam === team ? [entry] : []
-  );
-  if (!forTeam.length) return [];
+  { boxDefinitionId, userId }: { boxDefinitionId: number; userId: number },
+  entries: T[]
+): Promise<(T & { left: boolean })[]> {
+  if (!entries.length) return [];
 
   const owned = await client.userCosmetic.findMany({
-    where: { userId, cosmeticId: { in: forTeam.map((entry) => entry.cosmeticId) } },
+    where: { userId, cosmeticId: { in: entries.map((entry) => entry.cosmeticId) } },
     select: { cosmeticId: true },
   });
   const drawn = await client.boxOpening.findMany({
@@ -197,10 +196,24 @@ export async function getBoxContentsForUser(
   });
   const ownedIds = new Set(owned.map((row) => row.cosmeticId));
   const drawnIds = new Set(drawn.map((row) => row.rewardDefinitionId));
-  return forTeam.map((entry) => ({
+  return entries.map((entry) => ({
     ...entry,
     left: !ownedIds.has(entry.cosmeticId) && !drawnIds.has(entry.rewardDefinitionId),
   }));
+}
+
+/**
+ * Everything this box holds for this user, read live: its enabled contents for their `team`, each
+ * marked whether it is still `left` for them.
+ */
+export async function getBoxContentsForUser(
+  client: Prisma.TransactionClient,
+  { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
+): Promise<BoxContentForUser[]> {
+  const forTeam = (await getBoxCatalog(client, boxDefinitionId)).flatMap(
+    ({ team: cosmeticTeam, ...entry }) => (isForTeam(cosmeticTeam, team) ? [entry] : [])
+  );
+  return markLeftForUser(client, { boxDefinitionId, userId }, forTeam);
 }
 
 /**
@@ -275,7 +288,7 @@ function boxArtFor(params: BoxParams, team: string | undefined): BoxArt | null {
   };
 }
 
-export function boxContentDisplay(entry: BoxPoolEntry) {
+function boxContentDisplay(entry: BoxPoolEntry) {
   const data = (entry.cosmeticData ?? {}) as {
     url?: unknown;
     fit?: { bounds?: unknown; canvas?: unknown } | null;
@@ -290,6 +303,56 @@ export function boxContentDisplay(entry: BoxPoolEntry) {
     fit: data.fit ? { bounds: data.fit.bounds, canvas: data.fit.canvas } : null,
   };
 }
+
+/**
+ * A box content as the display reads show it. It carries no `cosmeticData`, so it can't stand in for
+ * the live catalog a grant reads.
+ */
+export type BoxDisplayEntry = ReturnType<typeof boxContentDisplay> & {
+  rewardDefinitionId: number;
+  cosmeticType: CosmeticType | null;
+  team: string | undefined;
+  /** The event the cosmetic belongs to (`data.event`), if any. */
+  event: string | undefined;
+};
+
+// Keyed by version, which every change to a box's tiers or contents, or to a content cosmetic's team,
+// must bump in the same transaction, so the change shows at once. Anything changed without a bump
+// shows within the TTL: until then the odds shown can differ from the draw's.
+const BOX_CATALOG_DISPLAY_TTL_MS = 60_000;
+const displayCatalogs = createKeyedTtlMemo(
+  async (key): Promise<BoxDisplayEntry[]> =>
+    (await getBoxCatalog(dbRead, Number(key.split(':')[0]))).map((entry) =>
+      Object.freeze({
+        ...boxContentDisplay(entry),
+        rewardDefinitionId: entry.rewardDefinitionId,
+        cosmeticType: entry.cosmeticType,
+        team: entry.team,
+        event: isEventShopItemData(entry.cosmeticData) ? entry.cosmeticData.event : undefined,
+      })
+    ),
+  BOX_CATALOG_DISPLAY_TTL_MS,
+  () => Date.now(),
+  { freeze: true }
+);
+const servedVersions = new Map<number, number>();
+
+/**
+ * A box's enabled contents for every team, for showing only (the event page, Inventory, the odds
+ * page), cached per box version. Purchase and open read `getBoxCatalog` live, under the lock.
+ */
+export function getBoxCatalogForDisplay(box: { id: number; version: number }) {
+  // One version per box: the memo keeps a slot per key, so drop the one a bump replaced.
+  const served = servedVersions.get(box.id);
+  if (served !== undefined && served !== box.version) displayCatalogs.clear(`${box.id}:${served}`);
+  servedVersions.set(box.id, box.version);
+  return displayCatalogs(`${box.id}:${box.version}`);
+}
+
+export const clearBoxCatalogDisplayCache = () => {
+  displayCatalogs.clear();
+  servedVersions.clear();
+};
 
 export type MysteryBoxView = {
   boxDefinitionId: number;
@@ -383,7 +446,12 @@ export async function buildMysteryBoxView(
     heldBoxItemIds: string[];
   }
 ): Promise<MysteryBoxView> {
-  const contents = await getBoxContentsForUser(dbRead, { boxDefinitionId: box.id, userId, team });
+  const catalog = await getBoxCatalogForDisplay(box);
+  const contents = await markLeftForUser(
+    dbRead,
+    { boxDefinitionId: box.id, userId },
+    catalog.filter((entry) => isForTeam(entry.team, team))
+  );
   return {
     boxDefinitionId: box.id,
     name: box.name,
@@ -395,7 +463,15 @@ export async function buildMysteryBoxView(
     tiers: tiers
       .filter((tier) => tier.boxDefinitionId === box.id)
       .map(({ boxDefinitionId: _box, ...tier }) => tier),
-    contents: contents.map((entry) => ({ ...boxContentDisplay(entry), left: entry.left })),
+    contents: contents.map(({ contentId, tierId, cosmeticId, name, url, fit, left }) => ({
+      contentId,
+      tierId,
+      cosmeticId,
+      name,
+      url,
+      fit,
+      left,
+    })),
     heldBoxItemIds,
   };
 }

@@ -19,7 +19,7 @@ import {
   snapshotOfLiveBox,
   snapshotsMatch,
 } from '../mystery-box-odds-page.service';
-import { getBoxPoolForUser } from '../mystery-box.service';
+import { clearBoxCatalogDisplayCache, getBoxPoolForUser } from '../mystery-box.service';
 import { baseOddsView, tierSummaries } from '~/components/MysteryBox/mystery-box.utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -255,6 +255,7 @@ let step = 0;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(base + step++ * 5 * 60_000);
+  clearBoxCatalogDisplayCache();
   world = {
     boxes: [
       {
@@ -477,6 +478,16 @@ describe('what the odds page shows', () => {
     world.contents.push(hat(6, RARE, 'Pink', false));
     const page = await read();
     expect(page?.contents.map((c) => c.contentId)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("reads the contents once per box version, and a bump shows the new version's", async () => {
+    await read();
+    world.contents.push(hat(6, RARE, 'Pink'));
+    expect((await read())?.contents.map((c) => c.contentId)).toEqual([1, 2, 3, 4, 5]);
+    expect(dbMock.dbRead.boxContent.findMany).toHaveBeenCalledTimes(1);
+
+    world.boxes[0].version = 2;
+    expect((await read())?.contents.map((c) => c.contentId)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('calls the contents items when any is not a hat', async () => {
