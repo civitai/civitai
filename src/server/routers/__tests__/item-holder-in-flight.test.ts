@@ -4,10 +4,8 @@ import type * as CosmeticShopService from '~/server/services/cosmetic-shop.servi
 import type * as MysteryBoxService from '~/server/services/mystery-box.service';
 
 /**
- * A shop purchase and a box open each wait on the buyer's `lockItemHolder` holding a pooled
- * connection, so at most two of one user's run at once, across both procedures. Driven through
- * `createCaller` so the real middleware chain runs; the services stand in for the lock and block
- * until a test lets them go.
+ * Driven through `createCaller` so the real middleware chain runs; the services stand in for the
+ * lock and block until a test releases them.
  */
 
 const { mockPurchase, mockOpen, gate } = vi.hoisted(() => {
@@ -65,7 +63,6 @@ const ctx = (userId: number) =>
     track: undefined,
   } as never);
 
-/** Each call's outcome, recorded as it settles so a test can read it without awaiting it. */
 const outcomes: string[] = [];
 const track = (call: Promise<unknown>) =>
   call.then(
@@ -81,7 +78,6 @@ const reached = () => mockPurchase.mock.calls.length + mockOpen.mock.calls.lengt
 /** Long enough for every mocked store call and the procedure behind an admitted one to run. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 
-/** In-memory sorted sets behind the commands the slot helper issues. */
 function installSortedSets() {
   const sets = new Map<string, Map<string, number>>();
   const set = (key: string) => sets.get(key) ?? sets.set(key, new Map()).get(key)!;
@@ -113,7 +109,7 @@ beforeEach(() => {
   outcomes.length = 0;
   installSortedSets();
 });
-// Lets every released request finish, so its slot release cannot land in the next test.
+// Finish every pending request so none outlives its test.
 afterEach(async () => {
   gate.releaseAll();
   await settle();
@@ -190,7 +186,7 @@ describe('per-user in-flight limit on purchaseShopItem and mysteryBox.open', () 
     expect(reached()).toBe(4);
   });
 
-  it('stops counting a slot once it has been held for the slot TTL (60 s)', async () => {
+  it('stops counting a slot once it has been held for the slot TTL', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 });
     try {
       purchase(2);

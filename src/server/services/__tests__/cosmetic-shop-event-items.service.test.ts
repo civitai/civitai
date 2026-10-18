@@ -106,7 +106,6 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
   claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-      cosmeticShopItem: { update: mocks.shopItemUpdate },
       userCosmetic: { create: mocks.userCosmeticCreate },
       cosmeticShopPurchaseClaim: claims.txDelegate,
       $executeRaw: vi.fn(),

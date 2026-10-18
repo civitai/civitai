@@ -205,7 +205,6 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     expect(pay).toHaveBeenCalled();
   });
 
-  // A write of the meta the purchase loaded would replace the row's meta wholesale.
   it('counts the sale from the listing row as it is at grant time, not from the snapshot', async () => {
     spend.mockResolvedValue(legs(false));
 

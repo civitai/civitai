@@ -2,7 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import { countShopItemSale } from '~/server/services/cosmetic-shop-sale-count';
+import {
+  countShopItemSale,
+  setShopItemSaleCount,
+} from '~/server/services/cosmetic-shop-sale-count';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -56,6 +59,8 @@ describe('countShopItemSale', () => {
     ['no purchases key', { label: 'a' }, { label: 'a', purchases: 1 }],
     ['an empty meta', {}, { purchases: 1 }],
     ['a meta that is not an object', null, { purchases: 1 }],
+    ['a null purchases', { purchases: null }, { purchases: 1 }],
+    ['a purchases that is not a number', { purchases: '3' }, { purchases: 1 }],
   ])('starts the count at one on %s', async (_label, start, expected) => {
     await setMeta(1, start);
 
@@ -68,6 +73,24 @@ describe('countShopItemSale', () => {
     await setMeta(2, { purchases: 9 });
 
     await countShopItemSale(tx(), 1);
+
+    expect(await meta(2)).toEqual({ purchases: 9 });
+  });
+});
+
+describe('setShopItemSaleCount', () => {
+  it('sets the counted total and keeps the other meta keys as the row has them', async () => {
+    await setMeta(1, { purchases: 2, label: 'b', flag: false });
+
+    await setShopItemSaleCount(tx(), 1, 7);
+
+    expect(await meta(1)).toEqual({ purchases: 7, label: 'b', flag: false });
+  });
+
+  it('touches only the listing it names', async () => {
+    await setMeta(2, { purchases: 9 });
+
+    await setShopItemSaleCount(tx(), 1, 7);
 
     expect(await meta(2)).toEqual({ purchases: 9 });
   });

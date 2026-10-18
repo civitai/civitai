@@ -6,14 +6,14 @@ export type ConcurrencySlot =
   | { acquired: false; reason: 'full' | 'unavailable'; error?: unknown };
 
 /**
- * Take one of `limit` concurrent slots under `key`. Each slot lives at most `ttlMs`, so one held
- * past that (or by a process that died) stops counting and the key can briefly admit more.
+ * Take one of `limit` concurrent slots under `key`. A slot counts for at most `ttlMs`, so a request
+ * still running past that, or whose process died, stops counting.
  *
  * A sorted set whose scores are each slot's own expiry, not a counter: a counter's leaked increment
  * from a dead process lives until the whole key goes idle, which a busy key never does, while an
  * expired entry is dropped on the next acquire. The steps are not atomic; two racing acquirers at
  * the limit can both see the other and both be refused, so a race over-refuses but never admits
- * more than `limit`.
+ * more than `limit` (TTL expiry aside).
  *
  * `unavailable` means the store failed and no slot is held; what that means is the caller's call.
  */

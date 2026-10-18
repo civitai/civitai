@@ -85,6 +85,7 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
   claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      // Unused by the code; here so a regression back to a Prisma update is caught, not a TypeError.
       cosmeticShopItem: { update: mocks.txShopItemUpdate },
       userCosmetic: { create: mocks.userCosmeticCreate, findFirst: mocks.txUserCosmeticFindFirst },
       cosmeticShopPurchaseClaim: claims.txDelegate,
@@ -238,9 +239,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
-  // On dbWrite, the grant needs a second pooled connection while it holds the buyer's lock: once the
-  // pool is full of waiters it never gets one, and the grant fails after the charge. A write of the
-  // meta the purchase loaded would replace the row's meta wholesale.
+  // Counting on dbWrite instead of tx would need a second pooled connection under the buyer's lock.
   it("counts the sale on the grant's own transaction, from the row as it is then", async () => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
 
@@ -253,6 +252,27 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     );
     expect(counted).toHaveLength(1);
     expect(mocks.txShopItemUpdate).not.toHaveBeenCalled();
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a sold-out refusal corrects only the sale count, not the rest of meta', async () => {
+    // meta has no purchases key, so it disagrees with the one counted purchase.
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      availableQuantity: 1,
+      _count: { purchases: 1 },
+    });
+    dbMock.dbWrite.$executeRaw.mockClear();
+
+    await expect(purchase()).rejects.toThrow('This cosmetic is out of stock');
+
+    const corrected = dbMock.dbWrite.$executeRaw.mock.calls.filter(
+      ([strings, ...values]: unknown[]) =>
+        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"') &&
+        values.includes(SHOP_ITEM_ID) &&
+        values.includes(1)
+    );
+    expect(corrected).toHaveLength(1);
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
@@ -299,7 +319,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await purchase();
 
-    // The sale counter is the other raw statement; the lock comes first and only once.
+    // The sale counter also goes through executeRaw, so count only the lock.
     const locks = mocks.executeRaw.mock.calls.filter(([strings]) =>
       (strings as string[]).join('').includes('pg_advisory_xact_lock')
     );

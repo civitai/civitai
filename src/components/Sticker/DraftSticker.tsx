@@ -216,9 +216,9 @@ export function DraftSticker({
         message: 'Place it whenever you like — it stays where you put it.',
       });
     } catch (error) {
-      // 🔴 ONLY WHERE THE SERVER DECLINED. A 4xx is the end of the attempt, so
-      // the next press is a new intent and needs a new key. A 5xx or a timeout
-      // is NOT: the charge may well have gone through, and minting a fresh key
+      // 🔴 ONLY WHERE THE SERVER DECLINED. A 4xx other than 408 and 429 is the end
+      // of the attempt, so the next press is a new intent and needs a new key. A
+      // 5xx, a timeout or a 429 (another purchase still in flight) is NOT: the charge may well have gone through, and minting a fresh key
       // for the retry is how one purchase becomes two. Holding it wrongly costs
       // a refusal on the next press; releasing it wrongly costs someone's Buzz.
       if (purchaseCanBeRetriedFresh(error)) clearPackPurchaseKey(draft.cosmeticId);

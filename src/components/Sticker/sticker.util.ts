@@ -438,8 +438,8 @@ export function allocateDraftEntitlements({
  * four others the list never had. A miss locks the placer out of that sticker
  * until they reload, which is the bug releasing the key was meant to fix.
  *
- * A 4xx (bar the two below) is the server declining: nothing was charged, so the next press is a new
- * intent and needs a new key. Anything else — a 5xx, a timeout, no response at
+ * A 4xx other than 408 and 429 is the server declining: nothing was charged, so
+ * the next press is a new intent and needs a new key. Anything else — a 5xx, a timeout, no response at
  * all — might have gone through, and reissuing the key there is how one purchase
  * becomes two. Unknown holds the key, always.
  *
@@ -450,10 +450,8 @@ export function allocateDraftEntitlements({
 export function purchaseCanBeRetriedFresh(error: unknown): boolean {
   const status = (error as { data?: { httpStatus?: number } } | null)?.data?.httpStatus;
 
-  // Two 4xx do not mean "nothing happened". 408: a request timed out at an edge
-  // or proxy may still have been forwarded and processed. 429: refused because
-  // another of the buyer's purchases is in flight, which may be this same intent
-  // still charging under this key.
+  // 408: an edge or proxy can time out a request it already forwarded. 429:
+  // another of the buyer's purchases is in flight, possibly this same intent.
   return (
     typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429
   );

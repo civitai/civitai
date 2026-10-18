@@ -86,7 +86,10 @@ import {
   resumeShopPurchase,
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
-import { countShopItemSale } from '~/server/services/cosmetic-shop-sale-count';
+import {
+  countShopItemSale,
+  setShopItemSaleCount,
+} from '~/server/services/cosmetic-shop-sale-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { purchaseMysteryBox } from '~/server/services/mystery-box.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -1121,18 +1124,8 @@ export const purchaseCosmeticShopItem = async ({
       shopItem.availableQuantity !== null &&
       shopItem._count.purchases >= shopItem.availableQuantity
     ) {
-      if (shopItemMeta.purchases !== shopItem._count.purchases) {
-        // Update meta with new amount:
-        await dbWrite.cosmeticShopItem.update({
-          where: { id: shopItemId },
-          data: {
-            meta: {
-              ...shopItemMeta,
-              purchases: shopItem._count.purchases,
-            },
-          },
-        });
-      }
+      if (shopItemMeta.purchases !== shopItem._count.purchases)
+        await setShopItemSaleCount(dbWrite, shopItemId, shopItem._count.purchases);
       throw throwBadRequestError(`This ${noun} is out of stock`);
     }
 

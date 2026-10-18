@@ -280,7 +280,7 @@ export type InFlightLimit = {
   /** Procedures given the same bucket share one per-user limit. */
   bucket: string;
   limit: number;
-  /** Longest a slot is held; a request running longer frees its slot early. */
+  /** A request still running after this stops counting against the limit. */
   ttlMs: number;
   /** A store slower than this is treated as failed, so a stalled Redis cannot stall the request. */
   acquireTimeoutMs: number;
@@ -288,8 +288,8 @@ export type InFlightLimit = {
 };
 const ACQUIRE_TIMED_OUT: ConcurrencySlot = { acquired: false, reason: 'unavailable' };
 /**
- * Caps how many of a user's requests run at once; `rateLimit` bounds rate, not concurrency. Admits
- * when the store fails.
+ * Caps a user's concurrent requests (`rateLimit` caps rate). Admits when the store fails or takes
+ * longer than `acquireTimeoutMs`.
  */
 export function inFlightLimit({
   bucket,
@@ -327,8 +327,8 @@ export function inFlightLimit({
 }
 
 /**
- * Shop purchases and box opens all wait on the buyer's `lockItemHolder`, each holding a pooled
- * connection while it waits, so they share one bucket.
+ * Purchases and box opens each hold a pooled connection while waiting on the buyer's
+ * `lockItemHolder`, so they share one bucket.
  */
 export const itemHolderInFlightLimit = inFlightLimit({
   bucket: 'item-holder',
