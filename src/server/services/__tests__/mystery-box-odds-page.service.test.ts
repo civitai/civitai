@@ -12,13 +12,9 @@ vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
   getEventBoxCatalogAccess: mocks.catalogAccess,
 }));
 
-import type { BoxOddsSnapshotData } from '../mystery-box-odds-page.service';
-import {
-  describeSnapshotChange,
-  getMysteryBoxOddsPage,
-  snapshotOfLiveBox,
-  snapshotsMatch,
-} from '../mystery-box-odds-page.service';
+import type { BoxOddsSnapshotData } from '@civitai/shared/box-odds-snapshot';
+import { snapshotOfLiveBox, snapshotsMatch } from '@civitai/shared/box-odds-snapshot';
+import { describeSnapshotChange, getMysteryBoxOddsPage } from '../mystery-box-odds-page.service';
 import { clearBoxCatalogDisplayCache, getBoxPoolForUser } from '../mystery-box.service';
 import { baseOddsView, tierSummaries } from '~/components/MysteryBox/mystery-box.utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';

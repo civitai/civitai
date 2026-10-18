@@ -1,11 +1,16 @@
-import * as z from 'zod';
+import type { BoxOddsSnapshotData } from '@civitai/shared/box-odds-snapshot';
+import {
+  boxOddsSnapshotSchema,
+  snapshotOfLiveBox,
+  snapshotsMatch,
+} from '@civitai/shared/box-odds-snapshot';
 import { dbRead } from '~/server/db/client';
 import type { EventViewer } from '~/server/events/event-access';
 import { getEventBoxCatalogAccess, isEventShopItemData } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup } from '~/server/logging/devalue-fallback-log';
 import { ITEM_DEFINITION_STATUS, ITEM_TYPE } from '~/server/services/item.service';
-import type { BoxCatalogEntry, BoxDisplayEntry } from '~/server/services/mystery-box.service';
+import type { BoxDisplayEntry } from '~/server/services/mystery-box.service';
 import {
   BOX_TIER_ORDER,
   BOX_TIER_SELECT,
@@ -22,13 +27,6 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
  * `BoxOddsSnapshot` (one row per version, written outside this service); a current version whose
  * snapshot is missing or differs from the live box is logged so the history can be repaired.
  */
-
-const boxOddsSnapshotSchema = z.object({
-  tiers: z.array(z.object({ key: z.string(), name: z.string(), weight: z.number().int() })),
-  contents: z.array(z.object({ tier: z.string(), cosmeticId: z.number().int() })),
-});
-
-export type BoxOddsSnapshotData = z.infer<typeof boxOddsSnapshotSchema>;
 
 export type BoxOddsHistoryEntry = { version: number; createdAt: Date; changes: string[] };
 
@@ -75,33 +73,6 @@ export function describeSnapshotChange(
   for (const [line, n] of counts) changes.push(`${plural(n, noun)} ${line}.`);
 
   return changes.length ? changes : ['No change to the odds or contents.'];
-}
-
-/** The live box in snapshot form, to compare with the snapshot of its current version. */
-export function snapshotOfLiveBox(
-  tiers: { id: number; key: string; name: string; weight: number; sortOrder: number }[],
-  contents: Pick<BoxCatalogEntry, 'tierId' | 'cosmeticId'>[]
-): BoxOddsSnapshotData {
-  const ordered = [...tiers].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
-  const keyOf = new Map(ordered.map((tier) => [tier.id, tier.key]));
-  const rank = new Map(ordered.map((tier, i) => [tier.key, i]));
-  return {
-    tiers: ordered.map(({ key, name, weight }) => ({ key, name, weight })),
-    contents: contents
-      .map((content) => ({ tier: keyOf.get(content.tierId) ?? '', cosmeticId: content.cosmeticId }))
-      .sort((a, b) => rank.get(a.tier)! - rank.get(b.tier)! || a.cosmeticId - b.cosmeticId),
-  };
-}
-
-/** Same tiers and weights in the same order, and the same cosmetics in the same tiers. */
-export function snapshotsMatch(a: BoxOddsSnapshotData, b: BoxOddsSnapshotData) {
-  const tiersOf = (s: BoxOddsSnapshotData) => s.tiers.map((t) => `${t.key}:${t.name}:${t.weight}`);
-  const contentsOf = (s: BoxOddsSnapshotData) =>
-    s.contents.map((c) => `${c.tier}:${c.cosmeticId}`).sort();
-  return (
-    tiersOf(a).join('|') === tiersOf(b).join('|') &&
-    contentsOf(a).join('|') === contentsOf(b).join('|')
-  );
 }
 
 /** "hat" when everything in the box is a hat (an event decoration), else "item". */

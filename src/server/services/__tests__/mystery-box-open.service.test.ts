@@ -143,6 +143,13 @@ const makeTx = (onLock: () => Promise<void>) => ({
   },
   $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
+    if (sql.includes('"ItemDefinition"') && sql.includes('FOR SHARE')) {
+      world.log.push('select:definition:share');
+      const row = definition(values[0] as number);
+      return row
+        ? [{ id: row.id, type: row.type, version: (row as { version?: number }).version }]
+        : [];
+    }
     if (!sql.includes('"Item"') || !sql.includes('FOR UPDATE'))
       throw new Error(`unexpected ${sql}`);
     world.log.push('select:item');
@@ -396,6 +403,17 @@ describe('opening a mystery box', () => {
     const inTx = world.log.slice(world.log.indexOf('begin') + 1);
     expect(inTx.slice(0, 2)).toEqual([`lock:${ITEM_HOLDER_LOCK_CLASS},${HOLDER}`, 'select:item']);
     expect(world.log.filter((l) => l.startsWith('lock:'))).toHaveLength(1);
+  });
+
+  it('reads the box version FOR SHARE, after the Item lock, so a builder save waits for it', async () => {
+    // Without FOR SHARE a builder save can commit between this open's version check and its draw.
+    await open();
+    const inTx = world.log.slice(world.log.indexOf('begin') + 1);
+    expect(inTx.slice(0, 3)).toEqual([
+      `lock:${ITEM_HOLDER_LOCK_CLASS},${HOLDER}`,
+      'select:item',
+      'select:definition:share',
+    ]);
   });
 
   it('records odds the holder could have been shown: the audit fields recompute them', async () => {

@@ -26,6 +26,14 @@ export const parseIdList = (value: string, max = 5000): number[] =>
     .filter((n) => Number.isInteger(n) && n > 0 && n <= MAX_INT4)
     .slice(0, max);
 
+/** Free-text ids (commas, spaces, newlines), deduplicated. Over `max` returns a message instead of
+ *  truncating, unlike `parseIdList`. */
+export const parseIdPaste = (raw: string, max: number): number[] | string => {
+  const ids = [...new Set(parseIdList(raw.replace(/[\s,]+/g, ','), Number.MAX_SAFE_INTEGER))];
+  if (!ids.length) return 'Paste at least one id.';
+  return ids.length > max ? `Paste at most ${max} ids at a time.` : ids;
+};
+
 /** `parseIdList` truncates SILENTLY, which on a destructive action means the screen reports a count it
  *  did not act on. Use this where the overflow must be told to the operator instead of dropped. */
 export const parseIdListStrict = (value: string, max: number): number[] | string => {

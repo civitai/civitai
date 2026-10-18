@@ -48,7 +48,12 @@ import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/er
 import { createKeyedTtlMemo, createTtlMemo } from '~/server/utils/ttl-memoize';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { BOX_OPENING_REWARD_STATUS, boxOpenClaimKey } from '@civitai/shared/mystery-box';
+import {
+  BOX_OPENING_REWARD_STATUS,
+  boxOpenClaimKey,
+  cosmeticTeamOf,
+  isForTeam,
+} from '@civitai/shared/mystery-box';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 
@@ -156,7 +161,6 @@ export async function getBoxCatalog(
   return contents.flatMap((content) => {
     const { cosmeticId, cosmetic, type } = content.reward;
     if (type !== ITEM_TYPE.cosmetic || cosmeticId == null) return [];
-    const cosmeticTeam = (cosmetic?.data as { team?: unknown } | null)?.team;
     return [
       {
         contentId: content.id,
@@ -166,15 +170,11 @@ export async function getBoxCatalog(
         cosmeticName: cosmetic?.name ?? null,
         cosmeticData: cosmetic?.data ?? null,
         cosmeticType: cosmetic?.type ?? null,
-        team: typeof cosmeticTeam === 'string' ? cosmeticTeam : undefined,
+        team: cosmeticTeamOf(cosmetic?.data),
       },
     ];
   });
 }
-
-// A cosmetic made for a team goes only to that team's members; a buyer with no team gets none.
-const isForTeam = (cosmeticTeam: string | undefined, team: string | undefined) =>
-  cosmeticTeam === undefined || cosmeticTeam === team;
 
 /**
  * Marks each entry whether it is still `left` for the user. Owned from any source, or already drawn
@@ -1008,10 +1008,14 @@ export async function openMysteryBox({
       if (!item)
         return { kind: 'replay' as const, result: await replayOpening(tx, boxItemId, userId) };
 
-      const box = await tx.itemDefinition.findUnique({
-        where: { id: item.itemDefinitionId },
-        select: { id: true, type: true, version: true },
-      });
+      // FOR SHARE holds the version until commit: a builder save locks this row FOR NO KEY UPDATE
+      // and waits for opens in flight, so this open cannot pass the check at one version and draw
+      // from the next one's tiers and contents. After the Item lock, never before it.
+      const [box] = await tx.$queryRaw<{ id: number; type: string; version: number }[]>`
+        SELECT "id", "type", "version" FROM "ItemDefinition"
+        WHERE "id" = ${item.itemDefinitionId}
+        FOR SHARE
+      `;
       if (!box || box.type !== ITEM_TYPE.box)
         throw throwBadRequestError('This box cannot be opened');
       // The holder was shown this version's contents and odds.
