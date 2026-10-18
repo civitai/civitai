@@ -919,6 +919,37 @@ describe('AppAssistantWorkspace auto-resume', () => {
     expect(document.body.textContent).not.toMatch(/was not sent/);
   });
 
+  test('🟡 a released copy the chat still holds when the tries run out mid-dictation is cleared from the box and offered back', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    m.listing = true;
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    m.recording = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(m.box).toBe(''));
+    await expect
+      .element(page.getByText('This message was not sent: “Add a dark mode”'))
+      .toBeVisible();
+    endDictation('and a timer');
+    expect(m.box).toBe('and a timer');
+    expect(m.delivered).toEqual([]);
+  });
+
+  test('🟡 a release goes out while the user dictates over text of their own, which no copy can join', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    type('my words');
+    m.recording = true;
+    runsB(screen);
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
+    expect(m.box).toBe('my words');
+    await settle(100);
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+  });
+
   test('NEGATIVE CONTROL: a held message given back when the user is not dictating goes into the empty box', async () => {
     await openPaused();
     m.deferOpen = true;

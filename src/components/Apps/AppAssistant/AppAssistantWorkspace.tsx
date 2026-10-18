@@ -112,9 +112,9 @@ export interface Release {
  * chat put in the box is the user's once they change it: nothing more is sent. An untouched copy is
  * cleared once the message went. Resolves false when the message neither went nor reached the box —
  * the user sent something else first, the chat or app changed, or the tries ran out — so it would
- * otherwise be lost without a word. While the user dictates, nothing is sent until a copy is in the box:
- * the box is hidden then, and a copy the chat put in it would be joined to what they said. The tries
- * are not stretched for dictation, so one that outlasts them leaves the message unsent.
+ * otherwise be lost without a word. While the user dictates, the box is hidden and a copy in it would be
+ * joined to what they said: nothing is sent while it is empty (a send could plant one), and a copy still
+ * there when the tries run out is cleared and the message reported unsent.
  */
 export async function releaseHeld(
   chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
@@ -130,7 +130,7 @@ export async function releaseHeld(
   let parked = false;
   for (let i = 0; i < RELEASE_TRIES && live(); i++) {
     if (parked && box() !== text) break;
-    if (parked || !dictating()) {
+    if (parked || box() || !dictating()) {
       const empty = !box();
       await chatRef.current?.send(text);
       if (!live()) break;
@@ -139,6 +139,10 @@ export async function releaseHeld(
     await sleep(interval);
   }
   if (replaying.current === release) replaying.current = null;
+  if (!release.went && parked && box() === text && dictating()) {
+    await chatRef.current?.compose('');
+    return false;
+  }
   if (release.went && parked && box() === text) await chatRef.current?.compose('');
   return release.went || parked || box() === text;
 }
@@ -592,24 +596,26 @@ export function AppAssistantWorkspace({
             <Text id={`${unsentId}-${id}`} size="sm" className="min-w-0">
               This message was not sent: “{text}”
             </Text>
-            <Button
-              size="compact-sm"
-              variant="light"
-              className="min-h-11 shrink-0"
-              aria-describedby={`${unsentId}-${id}`}
-              onClick={() => {
-                void chatRef.current?.compose(putBack(text, boxText()));
-                dismissUnsent(id);
-              }}
-            >
-              Put it back
-            </Button>
-            <CloseButton
-              className="min-h-11 min-w-11 shrink-0"
-              aria-label="Dismiss"
-              aria-describedby={`${unsentId}-${id}`}
-              onClick={() => dismissUnsent(id)}
-            />
+            <Group wrap="nowrap" gap="xs" className="shrink-0">
+              <Button
+                size="compact-sm"
+                variant="light"
+                className="min-h-11"
+                aria-describedby={`${unsentId}-${id}`}
+                onClick={() => {
+                  void chatRef.current?.compose(putBack(text, boxText()));
+                  dismissUnsent(id);
+                }}
+              >
+                Put it back
+              </Button>
+              <CloseButton
+                className="min-h-11 min-w-11"
+                aria-label="Dismiss"
+                aria-describedby={`${unsentId}-${id}`}
+                onClick={() => dismissUnsent(id)}
+              />
+            </Group>
           </Group>
         </Alert>
       ))}
