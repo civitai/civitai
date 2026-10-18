@@ -119,6 +119,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -208,10 +209,22 @@ const creatorGalleryHiddenUsersRateLimit = rateLimit(
   { sharedKey: 'creator-gallery-hidden-users' }
 );
 
+const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getModelHandler>>>({
+  ownerId: ({ data }) => data.user.id,
+  strip: (data) => ({
+    ...data,
+    modelVersions: data.modelVersions.map((version) => ({
+      ...version,
+      files: withoutFileUrls(version.files) as typeof version.files,
+    })),
+  }),
+});
+
 export const modelRouter = router({
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelByIdSchema)
+    .use(modelFileUrlsForOwner)
     .query(getModelHandler),
   getOwner: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
