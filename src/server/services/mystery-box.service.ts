@@ -23,6 +23,7 @@ import {
   grantItem,
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
+  listHeldItems,
 } from '~/server/services/item.service';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
@@ -90,14 +91,17 @@ export function isMysteryBoxBlockedIn(countryCode: string | null | undefined, bl
 }
 
 // For showing boxes only. Purchase and open read the list uncached, so a change refuses at once
-// even where a pod still shows a box.
-const blockedRegionsForDisplay = createTtlMemo(getMysteryBoxBlockedRegions, 60_000, () =>
-  Date.now()
+// even where a pod still shows a box. A list that can't be read is cached as null too, so a bad row
+// costs one read a minute, not one per menu-badge fetch.
+const blockedRegionsForDisplay = createTtlMemo(
+  () => getMysteryBoxBlockedRegions().catch(() => null),
+  60_000,
+  () => Date.now()
 );
 
 /** Whether to show mystery boxes in this country. A list that can't be read hides them. */
 export async function mysteryBoxesHiddenIn(countryCode: string | null | undefined) {
-  const blocked = await blockedRegionsForDisplay().catch(() => null);
+  const blocked = await blockedRegionsForDisplay();
   return !blocked || isMysteryBoxBlockedIn(countryCode, blocked);
 }
 
@@ -328,6 +332,74 @@ export type MysteryBoxView = {
   heldBoxItemIds: string[];
 };
 
+// Archived boxes too: one still held still opens.
+export const SHOWN_BOX_STATUSES = [
+  ITEM_DEFINITION_STATUS.published,
+  ITEM_DEFINITION_STATUS.archived,
+];
+
+export const BOX_DEFINITION_SELECT = {
+  id: true,
+  name: true,
+  description: true,
+  version: true,
+  status: true,
+  params: true,
+} as const;
+
+type BoxDefinitionRow = {
+  id: number;
+  name: string;
+  description: string | null;
+  version: number;
+  status: string;
+  params: Prisma.JsonValue;
+};
+
+type BoxTierRow = MysteryBoxView['tiers'][number] & { boxDefinitionId: number };
+
+export function getBoxTiers(boxIds: number[]): Promise<BoxTierRow[]> {
+  return dbRead.boxTier.findMany({
+    where: { boxDefinitionId: { in: boxIds } },
+    orderBy: BOX_TIER_ORDER,
+    select: { boxDefinitionId: true, ...BOX_TIER_SELECT },
+  });
+}
+
+/** One box as a viewer sees it: its tiers, and what it holds for `team` with what is left for them. */
+export async function buildMysteryBoxView(
+  box: BoxDefinitionRow,
+  {
+    userId,
+    team,
+    tiers,
+    listing,
+    heldBoxItemIds,
+  }: {
+    userId: number;
+    team: string | undefined;
+    tiers: BoxTierRow[];
+    listing: MysteryBoxView['listing'];
+    heldBoxItemIds: string[];
+  }
+): Promise<MysteryBoxView> {
+  const contents = await getBoxContentsForUser(dbRead, { boxDefinitionId: box.id, userId, team });
+  return {
+    boxDefinitionId: box.id,
+    name: box.name,
+    description: box.description,
+    version: box.version,
+    team,
+    art: boxArtFor((box.params ?? {}) as BoxParams, team),
+    listing,
+    tiers: tiers
+      .filter((tier) => tier.boxDefinitionId === box.id)
+      .map(({ boxDefinitionId: _box, ...tier }) => tier),
+    contents: contents.map((entry) => ({ ...boxContentDisplay(entry), left: entry.left })),
+    heldBoxItemIds,
+  };
+}
+
 /**
  * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
  * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
@@ -352,14 +424,13 @@ export async function getMysteryBoxesForEvent({
   if (!viewer) return [];
   const { team, playable } = viewer;
 
-  // Archived boxes too: one still held still opens.
   const boxes = await dbRead.itemDefinition.findMany({
     where: {
       type: ITEM_TYPE.box,
-      status: { in: [ITEM_DEFINITION_STATUS.published, ITEM_DEFINITION_STATUS.archived] },
+      status: { in: SHOWN_BOX_STATUSES },
       params: { path: ['event'], equals: event },
     },
-    select: { id: true, name: true, description: true, version: true, status: true, params: true },
+    select: BOX_DEFINITION_SELECT,
     orderBy: { id: 'asc' },
   });
   if (!boxes.length) return [];
@@ -379,16 +450,8 @@ export async function getMysteryBoxesForEvent({
       },
       orderBy: { id: 'asc' },
     }),
-    dbRead.item.findMany({
-      where: { holderType: 'user', holderId: userId, itemDefinitionId: { in: boxIds } },
-      select: { id: true, itemDefinitionId: true },
-      orderBy: { id: 'asc' },
-    }),
-    dbRead.boxTier.findMany({
-      where: { boxDefinitionId: { in: boxIds } },
-      orderBy: BOX_TIER_ORDER,
-      select: { boxDefinitionId: true, ...BOX_TIER_SELECT },
-    }),
+    listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
+    getBoxTiers(boxIds),
   ]);
 
   // Only a listing with a quantity needs its sold count, read for those ids alone.
@@ -409,18 +472,11 @@ export async function getMysteryBoxesForEvent({
         .map((item) => item.id.toString());
       if (!listing && !heldBoxItemIds.length) return null;
 
-      const contents = await getBoxContentsForUser(dbRead, {
-        boxDefinitionId: box.id,
+      return buildMysteryBoxView(box, {
         userId,
         team,
-      });
-      return {
-        boxDefinitionId: box.id,
-        name: box.name,
-        description: box.description,
-        version: box.version,
-        team,
-        art: boxArtFor((box.params ?? {}) as BoxParams, team),
+        tiers,
+        heldBoxItemIds,
         listing: listing
           ? {
               shopItemId: listing.id,
@@ -429,12 +485,7 @@ export async function getMysteryBoxesForEvent({
               availableTo: listing.availableTo,
             }
           : null,
-        tiers: tiers
-          .filter((tier) => tier.boxDefinitionId === box.id)
-          .map(({ boxDefinitionId: _box, ...tier }) => tier),
-        contents: contents.map((entry) => ({ ...boxContentDisplay(entry), left: entry.left })),
-        heldBoxItemIds,
-      };
+      });
     })
   );
   return views.filter((view): view is MysteryBoxView => view !== null);

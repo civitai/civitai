@@ -77,7 +77,7 @@ export function revealChance(odds: MysteryBoxOpenResult['odds']) {
 }
 
 /** The view after an open: the drawn reward is no longer left, and the box is no longer held. */
-export function afterOpen(view: MysteryBoxView, result: MysteryBoxOpenResult): MysteryBoxView {
+export function afterOpen<T extends MysteryBoxView>(view: T, result: MysteryBoxOpenResult): T {
   return {
     ...view,
     contents: view.contents.map((c) =>
@@ -85,6 +85,23 @@ export function afterOpen(view: MysteryBoxView, result: MysteryBoxOpenResult): M
     ),
     heldBoxItemIds: view.heldBoxItemIds.filter((id) => id !== result.boxItemId),
   };
+}
+
+export type HeldMysteryBox = RouterOutput['mysteryBox']['getHeld'][number];
+
+/** Where a box modal reads its boxes: an event page's, or every box the viewer holds. */
+export type MysteryBoxSource = { event: string } | { inventory: true };
+
+export function afterHeldOpen(view: HeldMysteryBox, result: MysteryBoxOpenResult): HeldMysteryBox {
+  return {
+    ...afterOpen(view, result),
+    heldItems: view.heldItems.filter((item) => item.id !== result.boxItemId),
+  };
+}
+
+export function boxEventOf(source: MysteryBoxSource, view?: MysteryBoxView | HeldMysteryBox) {
+  if ('event' in source) return source.event;
+  return view && 'event' in view ? view.event ?? undefined : undefined;
 }
 
 /** Shelf prices by cosmetic id, from the shop's sections. */

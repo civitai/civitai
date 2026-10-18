@@ -63,6 +63,8 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
+import { getRegion } from '~/server/utils/region-blocking';
+import { countHeldMysteryBoxes } from '~/server/services/mystery-box-inventory.service';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
@@ -303,6 +305,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
+    const unopenedBoxes = countHeldMysteryBoxes({
+      userId: id,
+      isModerator: ctx.user.isModerator,
+      mysteryBoxEnabled: ctx.features.mysteryBox,
+      countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
+    }).catch(() => 0);
     // Concurrent, not serial: these hit two different backends — the
     // notifications service over HTTP (with its own retries) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
@@ -346,6 +354,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // NON_CATEGORY_COUNT_KEYS the blanket branch would assign 0 OVER the map
       // rather than merely zero a count.
       pendingCollectionReviews: collectionReviewCounts.total,
+      unopenedBoxes: await unopenedBoxes,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

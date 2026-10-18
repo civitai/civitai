@@ -29,7 +29,7 @@ export function MysteryBoxCard({
   const show = (start?: 'buy' | 'open') =>
     dialogStore.trigger({
       component: MysteryBoxModal,
-      props: { event, boxDefinitionId: view.boxDefinitionId, color, start },
+      props: { source: { event }, boxDefinitionId: view.boxDefinitionId, color, start },
     });
 
   return (

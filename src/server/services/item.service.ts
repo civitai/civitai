@@ -31,7 +31,10 @@ export function grantItem(
   });
 }
 
-/** How many of one definition a user holds. */
+/**
+ * How many of one definition a user holds, summing `quantity`. The Inventory counts rows instead
+ * (`countHeldItemsByDefinition`); the two agree while every grant makes one row of 1.
+ */
 export async function countHeldItems(
   client: Prisma.TransactionClient,
   { itemDefinitionId, userId }: { itemDefinitionId: number; userId: number }
@@ -41,6 +44,38 @@ export async function countHeldItems(
     _sum: { quantity: true },
   });
   return _sum.quantity ?? 0;
+}
+
+/** Counts rows, not `quantity`: one row is one item to open, as `listHeldItems` lists them. */
+export async function countHeldItemsByDefinition(
+  client: Prisma.TransactionClient,
+  { userId, definition }: { userId: number; definition: Prisma.ItemDefinitionWhereInput }
+) {
+  const rows = await client.item.groupBy({
+    by: ['itemDefinitionId'],
+    where: { holderType: USER_HOLDER, holderId: userId, itemDefinition: definition },
+    _count: { _all: true },
+  });
+  return new Map(rows.map((row) => [row.itemDefinitionId, row._count._all]));
+}
+
+/**
+ * The items a user holds of these definitions, oldest first. It filters by holder only: pass
+ * definition ids already checked for type and status.
+ */
+export function listHeldItems(
+  client: Prisma.TransactionClient,
+  { userId, itemDefinitionIds }: { userId: number; itemDefinitionIds: number[] }
+) {
+  return client.item.findMany({
+    where: {
+      holderType: USER_HOLDER,
+      holderId: userId,
+      itemDefinitionId: { in: itemDefinitionIds },
+    },
+    select: { id: true, itemDefinitionId: true, createdAt: true },
+    orderBy: { id: 'asc' },
+  });
 }
 
 /** One held item, with its definition's params, if this user holds it. */
