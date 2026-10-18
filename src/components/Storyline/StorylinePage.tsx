@@ -1,9 +1,6 @@
 import { ActionIcon, Alert, Button, Container, Skeleton, Text, Title } from '@mantine/core';
 import {
   IconBook2,
-  IconEyeOff,
-  IconGitFork,
-  IconGitMerge,
   IconPlayerPlayFilled,
   IconPlus,
   IconSettings,
@@ -21,30 +18,17 @@ import {
   StorylineCeilingChip,
   StorylineClosedChip,
   StorylinePriceChip,
-  StorylineRankChip,
   StorylineRoleChip,
-  StorylineShareChip,
   StorylineStat,
   StorylineStatusChip,
   storylineCardClass,
 } from '~/components/Storyline/StorylineChips';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
-import { StorylineLaneMap, useStorylineLaneMap } from '~/components/Storyline/StorylineLaneMap';
-import { storylineMayBranch } from '~/components/Storyline/storyline-lane-map.utils';
-import {
-  getForkShare,
-  getStorylineChapterName,
-  getStorylineTombstoneLabel,
-  routeVia,
-  storylineChapterLink,
-} from '~/components/Storyline/storyline-mode.utils';
+import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
+import { storylineChapterLink } from '~/components/Storyline/storyline-mode.utils';
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
-import {
-  useStorylineChildren,
-  useStorylineContinueTerms,
-  useStorylineForkShares,
-} from '~/components/Storyline/storyline.queries';
+import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { RouterOutput } from '~/types/router';
@@ -52,7 +36,6 @@ import { EntityType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 type Storyline = RouterOutput['storyline']['getById'];
-type PathChapter = Storyline['mainPath'][number];
 type ContinueTerms = ReturnType<typeof useStorylineContinueTerms>;
 type ChapterLink = NonNullable<ReturnType<typeof storylineChapterLink>>;
 
@@ -111,7 +94,6 @@ export function StorylinePage({ id }: { id: number }) {
         <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-[minmax(0,1fr)_320px]">
           <div className="flex min-w-0 flex-col gap-5">
             <StorylineChapters storyline={storyline} />
-            <StorylineMapSection storyline={storyline} />
           </div>
           {/* Spans both rows on desktop; on a phone it comes before the discussion. */}
           <div className="flex flex-col gap-5 md:col-start-2 md:row-span-2 md:row-start-1">
@@ -282,212 +264,12 @@ function Section({
   );
 }
 
-/** The canon path as a reading line: one stop per chapter, the forks noted where they happen. */
+/** Every chapter: the canon path down the left, the other paths in lanes, forks and joins labelled. */
 function StorylineChapters({ storyline }: { storyline: Storyline }) {
-  const collaboratorIds = new Set(storyline.collaborators.map((c) => c.id));
   return (
-    <Section
-      icon={<IconBook2 size={20} />}
-      title="Chapters"
-      id="storyline-chapters"
-      aside={
-        <Text size="sm" c="dimmed">
-          Canon path
-        </Text>
-      }
-    >
-      <ol className="relative m-0 list-none p-0">
-        <span
-          aria-hidden
-          className="absolute bottom-6 left-[11px] top-3 w-0.5 bg-[var(--mantine-color-blue-6)] opacity-45"
-        />
-        {storyline.mainPath.map((chapter, i) => (
-          <ChapterStop
-            key={chapter.chapterId}
-            chapter={chapter}
-            route={storyline.mainPath.slice(0, i + 1)}
-            endorsed={!!chapter.post && collaboratorIds.has(chapter.post.userId)}
-          />
-        ))}
-      </ol>
+    <Section icon={<IconBook2 size={20} />} title="Chapters" id="storyline-chapters">
+      <StorylineChapterLanes storyline={storyline} />
     </Section>
-  );
-}
-
-/** Every branch, where it forks off and where it rejoins. */
-function StorylineMapSection({ storyline }: { storyline: Storyline }) {
-  const { map } = useStorylineLaneMap(storyline.id, { enabled: storylineMayBranch(storyline) });
-  if (!map) return null;
-  return (
-    <Section
-      icon={<IconGitMerge size={20} />}
-      title="Story map"
-      id="storyline-map"
-      aside={
-        <Text size="sm" c="dimmed">
-          Every branch
-        </Text>
-      }
-    >
-      <StorylineLaneMap map={map} />
-    </Section>
-  );
-}
-
-function ChapterStop({
-  chapter,
-  route,
-  endorsed,
-}: {
-  chapter: PathChapter;
-  route: PathChapter[];
-  endorsed: boolean;
-}) {
-  const number = chapter.depth + 1;
-  const { post } = chapter;
-  const link = storylineChapterLink(chapter, routeVia(route));
-  return (
-    <li className="relative pb-[18px] pl-9" data-testid="storyline-chapter">
-      <span
-        aria-hidden
-        className={clsx(
-          'absolute left-0 top-0.5 flex size-6 items-center justify-center rounded-full text-xs font-extrabold text-white shadow-[0_0_0_4px_var(--mantine-color-gray-0)] dark:shadow-[0_0_0_4px_var(--mantine-color-dark-6)]',
-          post ? 'bg-[var(--mantine-color-blue-6)]' : 'bg-gray-5 dark:bg-dark-3'
-        )}
-      >
-        {number}
-      </span>
-      {post && link ? (
-        <div className="flex gap-3.5">
-          {/* The name below is the link; the picture repeats it for the pointer only. */}
-          <Link
-            {...storylineChapterLinkProps(link)}
-            tabIndex={-1}
-            aria-hidden
-            className="w-[84px] shrink-0 sm:w-[112px]"
-          >
-            <StorylineThumb
-              image={chapter.firstImage}
-              width={112}
-              ratio="4/5"
-              fluid
-              className="rounded-lg"
-            />
-          </Link>
-          <div className="min-w-0 flex-1 pt-0.5">
-            {/* An untitled chapter is named by its number, so the eyebrow would only repeat it. */}
-            {post.title && (
-              <Text size="xs" fw={700} c="dimmed">
-                Chapter {number}
-              </Text>
-            )}
-            <Text
-              component={Link}
-              {...storylineChapterLinkProps(link)}
-              fw={700}
-              lh={1.25}
-              className="text-[15px] hover:underline sm:text-[17px]"
-            >
-              {post.title || `Chapter ${number}`}
-            </Text>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              <UserAvatar user={post.user} withUsername linkToProfile size="xs" />
-              {endorsed && <StorylineRoleChip role="endorsed" />}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <Text size="sm" c="dimmed" className="pt-0.5">
-          {getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted')}
-        </Text>
-      )}
-      {chapter.childCount > 1 && <StorylineForkPaths route={route} count={chapter.childCount} />}
-    </li>
-  );
-}
-
-/** Where the story forks: each way on, as the end of the chapter ranks it, with its reader share. */
-function StorylineForkPaths({ route, count }: { route: PathChapter[]; count: number }) {
-  const chapterId = route[route.length - 1].chapterId;
-  const { data: children } = useStorylineChildren(chapterId);
-  const { data: shares } = useStorylineForkShares(chapterId);
-  return (
-    <div
-      className="mt-2.5 rounded-lg bg-gray-1 px-3 py-2.5 dark:bg-dark-5"
-      data-testid="storyline-fork"
-    >
-      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-gray-6 dark:text-dark-1">
-        <IconGitFork size={14} aria-hidden />
-        The story forks here · {count} paths
-      </div>
-      {children && (
-        <ul className="m-0 mt-2.5 flex list-none gap-2.5 overflow-x-auto p-0 pb-1">
-          {children.map((child) => {
-            const share = getForkShare(shares, child.chapterId);
-            // Numbered on the route its link opens, as the reader will number it.
-            const name = getStorylineChapterName({ ...child, depth: route.length });
-            const link = storylineChapterLink(child, routeVia([...route, child]));
-            return (
-              <li
-                key={child.chapterId}
-                className="w-[120px] shrink-0 sm:w-[140px]"
-                data-testid="storyline-fork-path"
-              >
-                {child.post && link ? (
-                  <>
-                    <Link {...storylineChapterLinkProps(link)} className="group block">
-                      <StorylineThumb
-                        image={child.firstImage}
-                        width={140}
-                        fluid
-                        className="rounded-lg"
-                      >
-                        <span className="absolute left-1.5 top-1.5">
-                          <StorylineRankChip rank={child.rank} onImage />
-                        </span>
-                        {share && (
-                          <StorylineShareChip
-                            percent={share.percent}
-                            className="absolute bottom-1.5 right-1.5"
-                          />
-                        )}
-                      </StorylineThumb>
-                      <Text
-                        size="sm"
-                        fw={700}
-                        lh={1.2}
-                        mt={6}
-                        lineClamp={2}
-                        className="group-hover:underline"
-                      >
-                        {name}
-                      </Text>
-                    </Link>
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {child.post.username}
-                    </Text>
-                  </>
-                ) : (
-                  // A way on this reader may not see keeps its place and share, with no link.
-                  <div className="relative flex aspect-[3/4] flex-col items-center justify-center gap-1.5 rounded-lg border-[1.5px] border-dashed border-gray-4 p-2 text-center dark:border-dark-3">
-                    <IconEyeOff size={22} className="text-gray-6 dark:text-dark-2" aria-hidden />
-                    <Text size="xs" c="dimmed" lh={1.25}>
-                      {name}
-                    </Text>
-                    {share && (
-                      <StorylineShareChip
-                        percent={share.percent}
-                        className="absolute bottom-1.5 right-1.5"
-                      />
-                    )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
   );
 }
 
