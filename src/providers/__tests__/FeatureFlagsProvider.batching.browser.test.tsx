@@ -9,8 +9,10 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 /**
  * When `trpcBatching` reaches the tRPC link, relative to the first commit's queries. React Query
  * starts a query's fetch from a mount effect, and child effects run before parent effects; the
- * probe reads the routing decision from its own mount effect. The overlay is settled on frame 0,
- * as when the server seeds the per-user flags.
+ * probe reads the routing decision from its own mount effect.
+ *
+ * Both flags are non-toggleable, so they arrive in the host `flags` prop (computed per user on
+ * the server), not in the per-user toggleable overlay — the tests pass them the same way.
  *
  * `trpcBatchingFirstCommit` on: the provider writes `trpcBatching` while rendering, so the
  * probe's first effect already sees it. Off: only the provider's effect writes it, so the probe's
@@ -18,7 +20,8 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
  */
 
 const mocks = vi.hoisted(() => ({
-  // The per-user overlay — where a ramped flag actually arrives (host flags have it off).
+  // The per-user toggleable overlay, settled on frame 0 as when the server seeds it. Empty in
+  // the production-path tests: neither batching flag is toggleable.
   userFlags: {} as Record<string, boolean>,
 }));
 
@@ -60,15 +63,14 @@ function MountProbe({
   return null;
 }
 
-const hostFlags = {
-  trpcBatching: false,
-  trpcBatchingFirstCommit: false,
-} as unknown as FeatureAccess;
+function hostFlags(trpcBatching: boolean, trpcBatchingFirstCommit: boolean) {
+  return { trpcBatching, trpcBatchingFirstCommit } as unknown as FeatureAccess;
+}
 
-async function renderProbe() {
+async function renderProbe(flags: FeatureAccess) {
   const seen = vi.fn();
   const screen = await renderWithProviders(
-    <FeatureFlagsProvider flags={hostFlags}>
+    <FeatureFlagsProvider flags={flags}>
       <MountProbe onMount={seen} />
     </FeatureFlagsProvider>
   );
@@ -80,7 +82,7 @@ describe('FeatureFlagsProvider applies trpcBatching to the tRPC link', () => {
     setTrpcBatchingEnabled(false);
     // Signed-in browser, as `CivitaiSessionProvider` sets it while rendering.
     window.isAuthed = true;
-    mocks.userFlags = { trpcBatching: true, trpcBatchingFirstCommit: true };
+    mocks.userFlags = {};
   });
   afterEach(() => {
     setTrpcBatchingEnabled(false);
@@ -88,15 +90,14 @@ describe('FeatureFlagsProvider applies trpcBatching to the tRPC link', () => {
   });
 
   test('first-commit flag on: a child mount effect already sees batching on', async () => {
-    const { seen } = await renderProbe();
+    const { seen } = await renderProbe(hostFlags(true, true));
     expect(seen).toHaveBeenCalledTimes(1);
     expect(seen).toHaveBeenCalledWith({ enabled: true, batch: true });
   });
 
   test('first-commit flag off: a child mount effect sees batching off, then it is on', async () => {
     // The previous path: only the provider's effect writes the flag, and it runs after the child's.
-    mocks.userFlags = { trpcBatching: true, trpcBatchingFirstCommit: false };
-    const { seen } = await renderProbe();
+    const { seen } = await renderProbe(hostFlags(true, false));
     expect(seen).toHaveBeenCalledTimes(1);
     expect(seen).toHaveBeenCalledWith({ enabled: false, batch: false });
     expect(getTrpcBatchingEnabled()).toBe(true);
@@ -104,31 +105,33 @@ describe('FeatureFlagsProvider applies trpcBatching to the tRPC link', () => {
   });
 
   test('trpcBatching off: batching stays off with the first-commit flag on', async () => {
-    mocks.userFlags = { trpcBatching: false, trpcBatchingFirstCommit: true };
     // Start from `true` so only the render-time write can produce the `false` the child sees.
     setTrpcBatchingEnabled(true);
-    const { seen } = await renderProbe();
+    const { seen } = await renderProbe(hostFlags(false, true));
     expect(seen).toHaveBeenCalledWith({ enabled: false, batch: false });
     expect(getTrpcBatchingEnabled()).toBe(false);
   });
 
   test('trpcBatching off: batching ends off with the first-commit flag off', async () => {
-    mocks.userFlags = { trpcBatching: false, trpcBatchingFirstCommit: false };
     // Start from `true` so only the provider's effect can produce the final `false`.
     setTrpcBatchingEnabled(true);
-    await renderProbe();
+    await renderProbe(hostFlags(false, false));
     expect(getTrpcBatchingEnabled()).toBe(false);
   });
 
+  // INVARIANT GUARD, not a production path: in production both flags are frozen for the SPA
+  // session (the provider keeps its host `flags` in `useState`, and neither flag is in the
+  // toggleable overlay). This pins that the provider's writers follow a changed
+  // `trpcBatching` — i.e. the effect's dependency — by changing it through the overlay, the
+  // only input the provider re-reads.
   test.each([true, false])(
-    'a later trpcBatching change still applies (first-commit flag %s)',
+    'invariant guard: a changed trpcBatching is re-applied (first-commit flag %s)',
     async (firstCommit) => {
-      mocks.userFlags = { trpcBatching: true, trpcBatchingFirstCommit: firstCommit };
-      const { seen, screen } = await renderProbe();
+      const { seen, screen } = await renderProbe(hostFlags(true, firstCommit));
       expect(getTrpcBatchingEnabled()).toBe(true);
-      mocks.userFlags = { trpcBatching: false, trpcBatchingFirstCommit: firstCommit };
+      mocks.userFlags = { trpcBatching: false };
       await screen.rerender(
-        <FeatureFlagsProvider flags={hostFlags}>
+        <FeatureFlagsProvider flags={hostFlags(true, firstCommit)}>
           <MountProbe onMount={seen} />
         </FeatureFlagsProvider>
       );
