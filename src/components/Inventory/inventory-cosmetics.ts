@@ -39,7 +39,10 @@ export function uniqueCosmetics<T extends { id: number }>(items: T[]) {
 type EquippableItem = UserCosmetics[(typeof EQUIPPABLE_KINDS)[EquippableKind]['group']][number];
 
 export function equippableOf(data: UserCosmetics | undefined, kind: EquippableKind) {
-  return uniqueCosmetics<EquippableItem>(data?.[EQUIPPABLE_KINDS[kind].group] ?? []);
+  const items: EquippableItem[] = data?.[EQUIPPABLE_KINDS[kind].group] ?? [];
+  // Equipping stamps every copy held then; one got later is not, and may be the copy listed.
+  const worn = new Set(items.filter((item) => item.equipped).map((item) => item.id));
+  return uniqueCosmetics(items).map((item) => ({ ...item, equipped: worn.has(item.id) }));
 }
 
 /** Hats are event decorations; every other content decoration is a frame. */
@@ -49,11 +52,6 @@ export function hatsOf(data: UserCosmetics | undefined) {
 
 export function framesOf(data: UserCosmetics | undefined) {
   return (data?.contentDecorations ?? []).filter((c) => !isEventDecorationData(c.data));
-}
-
-/** The events the viewer holds hats in, in the order first held. */
-export function hatEventsOf(data: UserCosmetics | undefined) {
-  return [...new Set(hatsOf(data).map((c) => (c.data as { event: string }).event))];
 }
 
 export function stickersOf(data: UserCosmetics | undefined) {

@@ -37,6 +37,7 @@ function useEquipSlot(kind: EquippableKind) {
       Promise.all([
         utils.user.getCosmetics.invalidate(),
         utils.userProfile.get.invalidate(),
+        currentUser && utils.user.getCreator.invalidate({ id: currentUser.id }),
         currentUser?.refresh(),
       ]),
     onError: (error) =>
@@ -86,7 +87,7 @@ function CosmeticGrid({
   );
 }
 
-function CosmeticCard({
+export function CosmeticCard({
   item,
   footer,
   testId,

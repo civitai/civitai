@@ -1299,6 +1299,9 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
+// `equipped` is read by the Inventory's equip pages.
+type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean };
+
 export const getUserCosmeticsHandler = async ({
   input,
   ctx,
@@ -1346,7 +1349,7 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
-          // Worn by the user (a profile slot); `inUse` is placed on content.
+          // Set while worn in a profile slot, and while a content decoration is placed (as `inUse`).
           equipped: !!equippedAt,
           equippedToId,
           equippedToType,
@@ -1389,13 +1392,13 @@ export const getUserCosmeticsHandler = async ({
         return acc;
       },
       {
-        badges: [] as WithClaimKey<BadgeCosmetic>[],
-        nameplates: [] as WithClaimKey<NamePlateCosmetic>[],
-        profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
-        contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        sticker: [] as WithClaimKey<StickerCosmetic>[],
-        cardDecorations: [] as WithClaimKey<CardDecorationCosmetic>[],
+        badges: [] as OwnedCosmetic<BadgeCosmetic>[],
+        nameplates: [] as OwnedCosmetic<NamePlateCosmetic>[],
+        profileDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        profileBackground: [] as OwnedCosmetic<ProfileBackgroundCosmetic>[],
+        contentDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        sticker: [] as OwnedCosmetic<StickerCosmetic>[],
+        cardDecorations: [] as OwnedCosmetic<CardDecorationCosmetic>[],
       }
     );
 

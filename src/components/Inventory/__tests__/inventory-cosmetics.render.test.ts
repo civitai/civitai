@@ -19,28 +19,50 @@ const { state } = vi.hoisted(() => ({
     hats: {} as Record<string, unknown[] | 'error'>,
     hatReads: [] as string[],
     update: vi.fn(),
+    updateOptions: undefined as undefined | { onSuccess: () => Promise<unknown> },
+    invalidateCosmetics: vi.fn(),
+    invalidateProfile: vi.fn(),
+    invalidateCreator: vi.fn(),
     trigger: vi.fn(),
   },
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: makeTrpcProxy({
-    'user.getCosmetics': { useQuery: () => ({ data: state.cosmetics, isLoading: false }) },
-    'cosmetic.getStickerBalances': { useQuery: () => ({ data: state.balances }) },
-    'event.getMyHats': {
-      useQuery: ({ event }: { event: string }) => {
-        state.hatReads.push(event);
-        const hats = state.hats[event];
-        return hats === 'error'
-          ? { data: undefined, isLoading: false, isError: true, dataUpdatedAt: 0 }
-          : { data: hats, isLoading: false, isError: false, dataUpdatedAt: Date.now() };
+  trpc: makeTrpcProxy(
+    {
+      'user.getCosmetics': { useQuery: () => ({ data: state.cosmetics, isLoading: false }) },
+      'cosmetic.getStickerBalances': { useQuery: () => ({ data: state.balances }) },
+      'event.getMyHats': {
+        useQuery: ({ event }: { event: string }) => {
+          state.hatReads.push(event);
+          const hats = state.hats[event];
+          return hats === 'error'
+            ? { data: undefined, isLoading: false, isError: true, dataUpdatedAt: 0 }
+            : { data: hats, isLoading: false, isError: false, dataUpdatedAt: Date.now() };
+        },
+      },
+      'user.update': {
+        useMutation: (options: { onSuccess: () => Promise<unknown> }) => {
+          state.updateOptions = options;
+          return { mutate: state.update, isPending: false, variables: undefined };
+        },
       },
     },
-    'user.update': {
-      useMutation: () => ({ mutate: state.update, isPending: false, variables: undefined }),
-    },
-  }),
+    {
+      useUtils: () => ({
+        user: {
+          getCosmetics: { invalidate: state.invalidateCosmetics },
+          getCreator: { invalidate: state.invalidateCreator },
+        },
+        userProfile: { get: { invalidate: state.invalidateProfile } },
+      }),
+    }
+  ),
+}));
+vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useTeamColor: () => (team: string) => team === 'Pink' ? '#f06595' : undefined,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: VIEWER, refresh: vi.fn() }),
@@ -60,10 +82,20 @@ vi.mock('~/components/Events/ScoredEvent/PlaceHatModal', () => ({
   },
 }));
 vi.mock('~/components/Events/ScoredEvent/MyHatCard', () => ({
-  MyHatCard: ({ hat, onPlace }: { hat: { name: string }; onPlace?: () => void }) =>
+  MyHatCard: ({
+    hat,
+    color,
+    minutesLeft,
+    onPlace,
+  }: {
+    hat: { name: string };
+    color: string;
+    minutesLeft: number;
+    onPlace?: () => void;
+  }) =>
     React.createElement(
       'div',
-      { 'data-testid': 'my-hat' },
+      { 'data-testid': 'my-hat', 'data-color': color, 'data-minutes-left': minutesLeft },
       hat.name,
       onPlace && React.createElement('button', { onClick: onPlace }, 'Place it')
     ),
@@ -127,6 +159,10 @@ beforeEach(() => {
   state.hats = {};
   state.hatReads = [];
   state.update.mockReset();
+  state.updateOptions = undefined;
+  state.invalidateCosmetics.mockReset();
+  state.invalidateProfile.mockReset();
+  state.invalidateCreator.mockReset();
   state.trigger.mockReset();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -208,6 +244,34 @@ describe('Inventory equip pages', () => {
 
     expect(container.textContent).toContain("You don't have any card glows yet.");
   });
+
+  // Equipping stamps every copy held at the time; a copy got afterwards is not stamped, and the
+  // page lists one card per cosmetic, so the worn state must come from any copy.
+  it('shows a cosmetic as equipped when a later, unstamped copy is listed first', async () => {
+    state.cosmetics = cosmetics({
+      badges: [
+        item({ id: 1, name: 'Worn', claimKey: 'later' }),
+        item({ id: 1, name: 'Worn', claimKey: 'first', equipped: true }),
+      ],
+    });
+    await render('badges');
+
+    expect(all('[data-testid="inventory-equippable"]').map((c) => c.textContent)).toEqual([
+      'WornEquippedUnequip',
+    ]);
+  });
+
+  it('refreshes the cosmetics, the profile and the creator card once an equip lands', async () => {
+    state.cosmetics = cosmetics({ badges: [item({ id: 2, name: 'Spare' })] });
+    await render('badges');
+    await act(async () => {
+      await state.updateOptions?.onSuccess();
+    });
+
+    expect(state.invalidateCosmetics).toHaveBeenCalledTimes(1);
+    expect(state.invalidateProfile).toHaveBeenCalledTimes(1);
+    expect(state.invalidateCreator).toHaveBeenCalledWith({ id: VIEWER });
+  });
 });
 
 describe('Inventory frames', () => {
@@ -262,15 +326,21 @@ describe('Inventory stickers', () => {
 });
 
 describe('Inventory hats', () => {
-  const myHat = (name: string) => ({
+  const myHat = (name: string, { team = 'Pink', cooldownMs = 0 } = {}) => ({
     name,
     cosmeticId: 1,
     claimKey: name,
-    data: { team: 'Pink' },
-    moveCooldownLeftMs: 0,
+    data: { team },
+    moveCooldownLeftMs: cooldownMs,
   });
+  const hatCards = () =>
+    all('[data-testid="my-hat"]').map((c) => ({
+      text: c.textContent,
+      color: c.getAttribute('data-color'),
+      minutesLeft: c.getAttribute('data-minutes-left'),
+    }));
 
-  it('reads hats once per event and places one with that event and its hats', async () => {
+  it('reads each event once and places a hat with that event and its hats', async () => {
     state.cosmetics = cosmetics({
       contentDecorations: [hat(1, 'birthday2026', 'a'), hat(2, 'birthday2026', 'b')],
     });
@@ -278,10 +348,7 @@ describe('Inventory hats', () => {
     await render('hats');
 
     expect([...new Set(state.hatReads)]).toEqual(['birthday2026']);
-    expect(all('[data-testid="my-hat"]').map((c) => c.textContent)).toEqual([
-      'FirstPlace it',
-      'SecondPlace it',
-    ]);
+    expect(hatCards().map((c) => c.text)).toEqual(['FirstPlace it', 'SecondPlace it']);
     await act(async () => buttons('Place it')[1].click());
     const { props } = state.trigger.mock.calls[0][0] as { props: Record<string, unknown> };
     expect(props).toEqual({
@@ -291,9 +358,23 @@ describe('Inventory hats', () => {
     });
   });
 
+  it("gives each hat its team's colour and the server's remaining move cooldown", async () => {
+    state.cosmetics = cosmetics({ contentDecorations: [hat(1, 'birthday2026')] });
+    state.hats = {
+      birthday2026: [myHat('Pink', { cooldownMs: 5 * 60_000 }), myHat('Teamless', { team: '' })],
+    };
+    await render('hats');
+
+    expect(hatCards().map(({ color, minutesLeft }) => ({ color, minutesLeft }))).toEqual([
+      { color: '#f06595', minutesLeft: '5' },
+      { color: 'var(--mantine-color-blue-5)', minutesLeft: '0' },
+    ]);
+  });
+
   // The server places a hat only for an event it has a definition for, and refuses the read for an
-  // event the viewer can no longer see: neither may offer an action that would fail.
-  it('offers no placement where the server would refuse it', async () => {
+  // event the viewer can no longer see: neither may offer an action that would fail, and the hats
+  // are still theirs, so both are listed.
+  it('lists hats it cannot place, with no action', async () => {
     state.cosmetics = cosmetics({
       contentDecorations: [hat(1, 'retired2024'), hat(2, 'hidden2026')],
     });
@@ -302,7 +383,17 @@ describe('Inventory hats', () => {
 
     expect(
       all('[data-testid="inventory-event-hats"]').map((s) => s.getAttribute('data-event'))
-    ).toEqual(['retired2024']);
-    expect(all('[data-testid="my-hat"]').map((c) => c.textContent)).toEqual(['Old']);
+    ).toEqual(['retired2024', 'hidden2026']);
+    expect(hatCards().map((c) => c.text)).toEqual(['Old']);
+    expect(all('[data-testid="inventory-unplaceable-hat"]').map((c) => c.textContent)).toEqual([
+      'Hat 2',
+    ]);
+    expect(buttons('Place it')).toEqual([]);
+    // Its event page would refuse them too.
+    expect(
+      all('[data-testid="inventory-event-hats"]').map(
+        (s) => s.querySelector('a')?.getAttribute('href') ?? null
+      )
+    ).toEqual(['/events/retired2024', null]);
   });
 });

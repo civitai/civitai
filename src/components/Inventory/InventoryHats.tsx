@@ -5,7 +5,9 @@ import { useTeamColor } from '~/components/Events/events.utils';
 import { MyHatCard } from '~/components/Events/ScoredEvent/MyHatCard';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
 import { minutesUntilMovable } from '~/components/Events/ScoredEvent/scored-event.utils';
-import { hatEventsOf, useInventoryCosmetics } from '~/components/Inventory/inventory-cosmetics';
+import type { UserCosmetics } from '~/components/Inventory/inventory-cosmetics';
+import { hatsOf, useInventoryCosmetics } from '~/components/Inventory/inventory-cosmetics';
+import { CosmeticCard } from '~/components/Inventory/InventoryCosmetics';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import { trpc } from '~/utils/trpc';
@@ -14,7 +16,7 @@ const DEFAULT_HAT_COLOR = 'var(--mantine-color-blue-5)';
 
 export function InventoryHats() {
   const { data, isLoading } = useInventoryCosmetics();
-  const events = hatEventsOf(data);
+  const byEvent = groupByEvent(hatsOf(data));
 
   if (isLoading)
     return (
@@ -22,7 +24,7 @@ export function InventoryHats() {
         <Loader />
       </Center>
     );
-  if (!events.length)
+  if (!byEvent.size)
     return (
       <Text c="dimmed" py="xl" ta="center">
         Hats you get at events land here.
@@ -31,15 +33,26 @@ export function InventoryHats() {
 
   return (
     <Stack gap="xl">
-      {events.map((event) => (
-        <EventHats key={event} event={event} />
+      {[...byEvent].map(([event, owned]) => (
+        <EventHats key={event} event={event} owned={owned} />
       ))}
     </Stack>
   );
 }
 
+type OwnedHat = UserCosmetics['contentDecorations'][number];
+
+function groupByEvent(hats: OwnedHat[]) {
+  const byEvent = new Map<string, OwnedHat[]>();
+  for (const hat of hats) {
+    const { event } = hat.data as { event: string };
+    byEvent.set(event, [...(byEvent.get(event) ?? []), hat]);
+  }
+  return byEvent;
+}
+
 /** One event's hats, from the same read and with the same Place it / Move as its event page. */
-function EventHats({ event }: { event: string }) {
+function EventHats({ event, owned }: { event: string; owned: OwnedHat[] }) {
   const {
     data: hats,
     isLoading,
@@ -55,20 +68,32 @@ function EventHats({ event }: { event: string }) {
     return () => clearInterval(timer);
   }, []);
 
-  // An event this viewer can no longer read refuses the read and every placement: leave it out.
-  if (isError) return null;
-
   return (
     <Stack gap="sm" data-testid="inventory-event-hats" data-event={event}>
       <Group justify="space-between" align="baseline">
         <Title order={3} size="h4">
           {definition?.eventTitle ?? event}
         </Title>
-        <Anchor component={NextLink} href={`/events/${event}`} size="sm">
-          {definition?.eventLinkLabel ?? 'See the event'}
-        </Anchor>
+        {!isError && (
+          <Anchor component={NextLink} href={`/events/${event}`} size="sm">
+            {definition?.eventLinkLabel ?? 'See the event'}
+          </Anchor>
+        )}
       </Group>
-      {isLoading || !hats ? (
+      {isError ? (
+        // An event this viewer can no longer read refuses the read and every placement, so its hats
+        // are listed from what they own, with nothing to do.
+        <SimpleGrid cols={{ base: 2, md: 3 }} spacing="md">
+          {owned.map((hat) => (
+            <CosmeticCard
+              key={`${hat.id}:${hat.claimKey}`}
+              item={hat}
+              testId="inventory-unplaceable-hat"
+              footer={null}
+            />
+          ))}
+        </SimpleGrid>
+      ) : isLoading || !hats ? (
         <Center p="md">
           <Loader size="sm" />
         </Center>
