@@ -37,6 +37,7 @@ const {
   buildResourceIntentFilter,
   expandShortlist,
   findResourceIntentCandidates,
+  findV1TagsCandidates,
 } = await import('~/server/services/resource-intent-matcher.service');
 // The two floors live in the leaf, not in the module under test, and are imported from
 // there rather than through a re-export — see that module's header for why there is one
@@ -991,5 +992,71 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
     });
     expect(result.insightFallback).toBe(true);
     expect(result.basePool.map((e) => e.versionId)).toEqual([11]);
+  });
+});
+
+describe('🔴 findV1TagsCandidates — the request-time gates on the tag index', () => {
+  const opts = {
+    modelTypes: ['LORA', 'DoRA'] as const,
+    baseModel: 'SDXL 1.0',
+    browsingLevel: 3,
+    coverage: COVERAGE,
+    cap: 50,
+  };
+  const doc = (id: number, versions: { id: number; baseModel?: string; canGenerate?: boolean }[]) =>
+    shortlistHit({
+      id,
+      versions: versions.map((v) => ({
+        name: 'v',
+        baseModel: v.baseModel ?? 'SDXL 1.0',
+        canGenerate: v.canGenerate ?? true,
+        ...v,
+      })),
+    });
+
+  it("asks the index for the candidates under the matcher's own filter, unsorted, as wide as the list", async () => {
+    const { and, inArray } = await import('~/shared/utils/meili-filter');
+    await findV1TagsCandidates({ ...opts, modelIds: [7, 3, 9] });
+    expect(meiliArgsOf()).toEqual({
+      filter: and(
+        buildResourceIntentFilter({
+          modelTypes: ['LORA', 'DoRA'],
+          baseModels: ['SDXL 1.0'],
+          browsingLevel: 3,
+          coverage: COVERAGE,
+        }),
+        inArray('id', [7, 3, 9])
+      ),
+      limit: 3,
+    });
+  });
+
+  it('keeps candidate rank, drops what the index filtered out, and takes one gate-passing version per model', async () => {
+    searchWithSignal.mockResolvedValue({
+      hits: [
+        doc(9, [{ id: 91 }]),
+        doc(7, [
+          { id: 71, baseModel: 'Pony' },
+          { id: 72, canGenerate: false },
+          { id: 73 },
+          { id: 74 },
+        ]),
+      ],
+    });
+    const entries = await findV1TagsCandidates({ ...opts, modelIds: [7, 3, 9] });
+    expect(entries.map((e) => [e.modelId, e.versionId])).toEqual([
+      [7, 73],
+      [9, 91],
+    ]);
+  });
+
+  it('is at most min(cap, 50) models wide, and makes no query without candidates', async () => {
+    const ids = Array.from({ length: 70 }, (_, i) => 1000 + i);
+    searchWithSignal.mockResolvedValue({ hits: ids.map((id) => doc(id, [{ id: id * 10 }])) });
+    expect(await findV1TagsCandidates({ ...opts, modelIds: ids, cap: 255 })).toHaveLength(50);
+    expect(await findV1TagsCandidates({ ...opts, modelIds: ids, cap: 7 })).toHaveLength(7);
+    searchWithSignal.mockClear();
+    expect(await findV1TagsCandidates({ ...opts, modelIds: [] })).toEqual([]);
+    expect(searchWithSignal).not.toHaveBeenCalled();
   });
 });

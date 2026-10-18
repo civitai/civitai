@@ -350,6 +350,19 @@ export const resourceIntentResponseSchema = z.strictObject({
    */
   kind: z.literal('checkpoint').optional(),
   checkpointArm: z.enum(CHECKPOINT_ARMS).optional(),
+  /**
+   * The v1_tags arm only (absent on every other arm). `v1Fallback`: the arm could not rank this
+   * prompt (no servable tag index, no kept tag, no ecosystem, nothing passed the gates), so the
+   * list is the POOL_MERGE arm's, with its own `coocFallback`. `ecosystems`: the top tag-derived
+   * ecosystems, best first, when the caller gave no `baseModel` and the list is v1's own; the list
+   * is restricted to the first.
+   *
+   * 🔴 Optional, not required: a required field would make every older cached blob fail to parse,
+   * and these keys are written only under v1 cache keys, which older pods never compute.
+   */
+  arm: z.literal('v1_tags').optional(),
+  v1Fallback: z.boolean().optional(),
+  ecosystems: z.array(z.string()).optional(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),

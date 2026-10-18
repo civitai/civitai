@@ -576,6 +576,29 @@ export async function findCheckpointCandidates(opts: {
   return seedBasePool(seed, opts.coverage, width);
 }
 
+/** The widest v1_tags list, as the judged screens measured it. */
+export const V1_TAGS_LIST_MODELS = 50;
+
+/**
+ * The v1_tags arm's list: the tag scorer's ranked model ids (best first, at most 300) through
+ * `gateRankedCandidates` under the seed's filter for `modelTypes` and `baseModel` (the caller's,
+ * else the tag-derived ecosystem), first `min(cap, 50)` models. The index admits only listed models
+ * at build time; these gates are what hold at request time.
+ */
+export async function findV1TagsCandidates(opts: {
+  modelIds: readonly number[];
+  modelTypes: readonly ModelType[];
+  baseModel: string;
+  browsingLevel: number;
+  coverage: ResourceIntentCoverage;
+  cap: number;
+}): Promise<ResourceIntentShortlistEntry[]> {
+  const width = Math.min(clampResourceIntentCap(opts.cap), V1_TAGS_LIST_MODELS);
+  const seed = seedFilter({ modelTypes: [...opts.modelTypes], baseModel: opts.baseModel }, opts);
+  const gated = await gateRankedCandidates(opts.modelIds, seed, opts.coverage);
+  return gated.slice(0, width);
+}
+
 /**
  * The POOL_MERGE arm's list, exactly as the co-occurrence screen gated and merged it when a
  * baseModel is given (the screen always had one).
