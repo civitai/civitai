@@ -49,7 +49,6 @@ import {
   YourAppsList,
 } from '~/components/Apps/AppAssistant/YourApps';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
-import { sleep } from '~/utils/errorHandling';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
@@ -95,48 +94,93 @@ function EnableCard({
   );
 }
 
-const RELEASE_TRIES = 40;
-const RELEASE_INTERVAL_MS = 500;
-/** A held message comes back to the user if its app has not run by then. */
+/**
+ * A held message comes back to the user if its app has not run by then, and a released one the chat
+ * has not taken by then is reported unsent.
+ */
 export const HELD_TIMEOUT_MS = 3 * 60_000;
 
-/** A message the page is sending as the user's; `went` once the chat let it through. */
+/**
+ * A message the page is sending as the user's; `went` once the chat let it through. `wake` makes the
+ * release look again at once (`stopRelease` calls it).
+ */
 export interface Release {
   text: string;
   went: boolean;
+  wake: () => void;
 }
 
+/** Ends the message the page is sending, if any; unless it already went, it is reported unsent. */
+export function stopRelease(replaying: { current: Release | null }): void {
+  const release = replaying.current;
+  replaying.current = null;
+  release?.wake();
+}
+
+type ReleaseChat = Pick<
+  CivitaiChat,
+  'send' | 'compose' | 'canSend' | 'addEventListener' | 'removeEventListener'
+>;
+
 /**
- * Sends `text` as the user's. The chat holds silently while it lists a just-added app's tools, and a
- * send while it holds only fills an EMPTY message box, so it is sent again until it goes. A copy the
- * chat put in the box is the user's once they change it: nothing more is sent. An untouched copy is
- * cleared once the message went. Resolves false when the message neither went nor reached the box —
- * the user sent something else first, the chat or app changed, or the tries ran out — so it would
- * otherwise be lost without a word. While the user dictates, the box is hidden and a copy in it would be
- * joined to what they said: nothing is sent while it is empty (a send could plant one), and a copy still
- * there when the tries run out is cleared and the message reported unsent.
+ * Sends `text` as the user's, once the chat can take it. While the chat holds (it lists a just-added
+ * app's tools) or a reply runs, a send goes nowhere; the chat's `can-send-change` says when that ends,
+ * and the message is sent then, once. While the chat holds, one send puts it in an EMPTY message box,
+ * so the user sees it waiting. A copy in the box is the user's once they change it: nothing more is
+ * sent. An untouched copy is cleared once the message went. Resolves false when the message neither
+ * went nor is in the box — the user sent something else first, the chat or app changed, or the chat
+ * could not take it within `timeoutMs` — so it would otherwise be lost without a word. While the user
+ * dictates, the box is hidden and a copy in it would be joined to what they said: none is put in an
+ * empty box then, and a copy still there when the wait runs out is cleared and the message reported
+ * unsent.
  */
 export async function releaseHeld(
-  chatRef: { current: Pick<CivitaiChat, 'send' | 'compose'> | null },
+  chatRef: { current: ReleaseChat | null },
   replaying: { current: Release | null },
   box: () => string,
   dictating: () => boolean,
   text: string,
-  interval = RELEASE_INTERVAL_MS
+  timeoutMs = HELD_TIMEOUT_MS
 ): Promise<boolean> {
-  const release: Release = { text, went: false };
+  const chat = chatRef.current;
+  // Set by every reason to look again, so one that comes while a send is out is not missed.
+  let woken = false;
+  let resume: (() => void) | undefined;
+  const wake = () => {
+    woken = true;
+    resume?.();
+  };
+  const release: Release = { text, went: false, wake };
   replaying.current = release;
   const live = () => replaying.current === release && !release.went;
   let parked = false;
-  for (let i = 0; i < RELEASE_TRIES && live(); i++) {
-    if (parked && box() !== text) break;
-    if (parked || box() || !dictating()) {
-      const empty = !box();
-      await chatRef.current?.send(text);
-      if (!live()) break;
-      if (empty && box() === text) parked = true;
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    wake();
+  }, timeoutMs);
+  chat?.addEventListener('can-send-change', wake);
+  try {
+    while (chat && live() && !expired) {
+      woken = false;
+      if (parked && box() !== text) break;
+      if (chat.canSend) {
+        // It goes now, or the chat took it and still kept it back (the page's before-send, a refused
+        // grant): either way there is nothing more to wait for.
+        await chat.send(text);
+        break;
+      }
+      if (!parked && !box() && !dictating()) {
+        await chat.send(text);
+        if (!live()) break;
+        if (box() === text) parked = true;
+      }
+      if (!woken) await new Promise<void>((resolve) => (resume = resolve));
+      resume = undefined;
     }
-    await sleep(interval);
+  } finally {
+    clearTimeout(timer);
+    chat?.removeEventListener('can-send-change', wake);
   }
   if (replaying.current === release) replaying.current = null;
   if (!release.went && parked && box() === text && dictating()) {
@@ -406,7 +450,7 @@ export function AppAssistantWorkspace({
       const release = replaying.current;
       if (release?.text === text) release.went = true;
       // The user sent something else: stop sending the page's message (the release reports it unsent).
-      else if (release) replaying.current = null;
+      else stopRelease(replaying);
       const app = live.current.active;
       // While a message is held the chat holds too, so nothing else reaches here then.
       if (app?.state !== 'suspended' || heldRef.current) return false;
@@ -430,14 +474,9 @@ export function AppAssistantWorkspace({
   );
   // A message on its way out belongs to the chat and app it was written in, and to this page.
   useEffect(() => {
-    replaying.current = null;
+    stopRelease(replaying);
   }, [activeName, chatId]);
-  useEffect(
-    () => () => {
-      replaying.current = null;
-    },
-    []
-  );
+  useEffect(() => () => stopRelease(replaying), []);
   useEffect(() => {
     if (!held) return;
     // The app was closed, another opened, or another chat opened meanwhile.

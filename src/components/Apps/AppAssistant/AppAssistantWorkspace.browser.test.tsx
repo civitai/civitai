@@ -5,6 +5,7 @@ import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
+import type { Release } from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -64,6 +65,21 @@ const m = vi.hoisted(() => ({
   dictating: false,
   /** What the chat actually sent to the assistant. */
   delivered: [] as string[],
+  /** The chat element as the page holds it (`chatRef.current`). */
+  element: null as null | EventTarget,
+  /** What the chat's `can-send-change` last said. */
+  announced: false,
+  /**
+   * The element's `canSend` as 0.13.0 has it: a send would go now (no reply running, nothing holding),
+   * and its `can-send-change`, fired once each time that changes.
+   */
+  canSend: () => !m.running && !m.chat?.holdReason && !m.listing,
+  announce: () => {
+    const canSend = m.canSend();
+    if (canSend === m.announced) return;
+    m.announced = canSend;
+    m.element?.dispatchEvent(new CustomEvent('can-send-change', { detail: { canSend } }));
+  },
   /**
    * The element's own send, as 0.11.0 has it: nothing while a reply runs; while it holds, the text
    * fills an EMPTY box and nothing fires; otherwise `before-send`, and it goes unless the page cancels
@@ -101,20 +117,21 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
     AppAssistantChat: (props: NonNullable<typeof m.chat>) => {
       m.chat = props;
       useLayoutEffect(() => {
-        // The element's public surface as 0.12.0 has it: `draft` and `dictating` are read-only getters.
-        if (props.chatRef)
-          props.chatRef.current = {
-            newChat: m.newChat,
-            send: m.send,
-            compose: m.compose,
-            get draft() {
-              return m.box;
-            },
-            get dictating() {
-              return m.dictating;
-            },
-          };
+        // The element's public surface as 0.13.0 has it: `draft`, `dictating` and `canSend` are
+        // read-only getters, and `can-send-change` fires on the element.
+        if (!props.chatRef) return;
+        m.element ??= Object.defineProperties(new EventTarget(), {
+          newChat: { value: m.newChat },
+          send: { value: m.send },
+          compose: { value: m.compose },
+          draft: { get: () => m.box },
+          dictating: { get: () => m.dictating },
+          canSend: { get: () => m.canSend() },
+        });
+        props.chatRef.current = m.element;
       });
+      // A new `holdReason` re-renders the element, which announces a change of `canSend`.
+      useLayoutEffect(() => m.announce(), [props.holdReason]);
       return <div data-testid="chat" />;
     },
   };
@@ -194,7 +211,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   }),
 }));
 
-const { AppAssistantWorkspace, HELD_TIMEOUT_MS, releaseHeld } = await import(
+const { AppAssistantWorkspace, HELD_TIMEOUT_MS, releaseHeld, stopRelease } = await import(
   './AppAssistantWorkspace'
 );
 const { AssistantTokenError } = await import('~/components/Apps/AppAssistant/assistantToken');
@@ -255,6 +272,18 @@ function type(text: string) {
  */
 const typeElsewhere = () => fireInput();
 
+/** The chat starts or stops listing a just-added app's tools, and says so if that changes `canSend`. */
+function setListing(listing: boolean) {
+  m.listing = listing;
+  m.announce();
+}
+
+/** A reply starts or ends, and the chat says so if that changes `canSend`. */
+function setRunning(running: boolean) {
+  m.running = running;
+  m.announce();
+}
+
 /** The user types `text` and presses Send, which does nothing while the chat holds or replies. */
 async function userSends(text: string) {
   type(text);
@@ -302,6 +331,8 @@ beforeEach(() => {
   m.running = false;
   m.dictating = false;
   m.delivered = [];
+  m.element = null;
+  m.announced = false;
   m.deferOpen = false;
   m.resume.mockClear();
   m.settleOpen = null;
@@ -625,10 +656,10 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
     await userSends('and a timer');
     expect(m.box).toBe('and a timer');
-    m.listing = true;
+    setListing(true);
     runsB(screen);
     await settle(100);
-    m.listing = false;
+    setListing(false);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
     expect(m.box).toBe('and a timer');
   });
@@ -636,10 +667,10 @@ describe('AppAssistantWorkspace auto-resume', () => {
   test('a released message the chat still holds (listing the app’s tools) goes once it can, and its copy leaves the box', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
-    m.listing = true;
+    setListing(true);
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    m.listing = false;
+    setListing(false);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
     await vi.waitFor(() => expect(m.box).toBe(''));
   });
@@ -647,11 +678,11 @@ describe('AppAssistantWorkspace auto-resume', () => {
   test('🟡 a copy the user edits while the chat holds is theirs: the original is not sent over it', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
-    m.listing = true;
+    setListing(true);
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
     type('Add a light mode');
-    m.listing = false;
+    setListing(false);
     await settle(1200);
     expect(m.delivered).toEqual([]);
     expect(m.box).toBe('Add a light mode');
@@ -751,9 +782,8 @@ describe('AppAssistantWorkspace auto-resume', () => {
     type('and a timer');
     m.listing = true;
     runsB(screen);
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
-    // The chat has listed the tools; the user presses Send before the page tries again.
+    // The chat has listed the tools; the user presses Send before its can-send-change reaches the page.
     m.listing = false;
     await userSends('and a timer');
     expect(m.delivered).toEqual(['and a timer']);
@@ -764,7 +794,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     expect(m.delivered).toEqual(['and a timer']);
   });
 
-  test('🟡 a released message the chat never takes, because a reply outlasts the tries, is reported unsent', async () => {
+  test('🟡 a released message the chat never takes, because a reply outlasts the wait, is reported unsent', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     await vi.waitFor(() => expect(m.chat!.holdReason).toBe('Your app is starting…'));
@@ -772,7 +802,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS);
     vi.useRealTimers();
     await expect
       .element(page.getByText('This message was not sent: “Add a dark mode”'))
@@ -787,20 +817,54 @@ describe('AppAssistantWorkspace auto-resume', () => {
     m.running = true;
     runsB(screen);
     await vi.waitFor(() => expect(m.send).toHaveBeenCalled());
-    m.running = false;
+    setRunning(false);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
     await settle(100);
     expect(document.body.textContent).not.toMatch(/was not sent/);
+  });
+
+  test('🔴 a released message whose hold ends late (after 25 s) goes the moment the hold lifts', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    setListing(true);
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(m.delivered).toEqual([]);
+    setListing(false);
+    // No timer has to run: the chat's can-send-change sends it.
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 500 });
+    await vi.waitFor(() => expect(m.box).toBe(''));
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+  });
+
+  test('🔴 nothing polls while the chat holds a released message: one send in a minute, one more when it lifts', async () => {
+    const screen = await openPaused();
+    await userSends('Add a dark mode');
+    setListing(true);
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    m.send.mockClear();
+    runsB(screen);
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.useRealTimers();
+    expect(m.send).toHaveBeenCalledTimes(1);
+    setListing(false);
+    await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']));
+    expect(m.send).toHaveBeenCalledTimes(2);
   });
 
   test('🟡 typing in another of the chat’s fields while it resumes leaves no sent copy in the box', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     typeElsewhere();
-    m.listing = true;
+    setListing(true);
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
-    m.listing = false;
+    setListing(false);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
     await vi.waitFor(() => expect(m.box).toBe(''));
   });
@@ -877,13 +941,13 @@ describe('AppAssistantWorkspace auto-resume', () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     m.dictating = true;
-    m.listing = true;
+    setListing(true);
     runsB(screen);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     await settle(700);
     endDictation('and a timer');
     expect(m.box).toBe('and a timer');
-    m.listing = false;
+    setListing(false);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
     expect(m.box).toBe('and a timer');
   });
@@ -891,11 +955,11 @@ describe('AppAssistantWorkspace auto-resume', () => {
   test('🟡 a released copy the chat parked before the user began dictating still goes, and leaves the box to what they say', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
-    m.listing = true;
+    setListing(true);
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
     m.dictating = true;
-    m.listing = false;
+    setListing(false);
     await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
     await vi.waitFor(() => expect(m.box).toBe(''));
     endDictation('and a timer');
@@ -903,7 +967,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     expect(document.body.textContent).not.toMatch(/was not sent/);
   });
 
-  test('🟡 a released copy the chat still holds when the tries run out mid-dictation is cleared from the box and offered back', async () => {
+  test('🟡 a released copy the chat still holds when the wait runs out mid-dictation is cleared from the box and offered back', async () => {
     const screen = await openPaused();
     await userSends('Add a dark mode');
     m.listing = true;
@@ -911,7 +975,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
     runsB(screen);
     await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
     m.dictating = true;
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS);
     vi.useRealTimers();
     await vi.waitFor(() => expect(m.box).toBe(''));
     await expect
@@ -1528,64 +1592,162 @@ describe('AppAssistantWorkspace tool gate', () => {
 
 describe('releaseHeld', () => {
   const HELD = 'Add a dark mode';
+  type Replaying = { current: Release | null };
+
+  /**
+   * A chat as 0.13.0 has it, alone: while it holds, a send only fills an EMPTY box; once it can send, a
+   * send goes (and the page's before-send marks the release as gone). `lift()` ends the hold and fires
+   * `can-send-change`, as the element does.
+   */
+  function heldChat(replaying: Replaying, after?: () => void) {
+    const state = { box: '', canSend: false, went: [] as string[] };
+    // defineProperty, not Object.assign: assign would copy `canSend`'s value once, not the getter.
+    const chat = Object.assign(
+      Object.defineProperty(new EventTarget(), 'canSend', {
+        get: () => state.canSend,
+      }) as EventTarget & { readonly canSend: boolean },
+      {
+        send: vi.fn(async (text: string) => {
+          if (!state.canSend) {
+            if (!state.box) state.box = text;
+            return;
+          }
+          state.went.push(text);
+          const release = replaying.current;
+          if (release?.text === text) {
+            release.went = true;
+            release.wake();
+          }
+          after?.();
+        }),
+        compose: vi.fn(async (text: string) => {
+          state.box = text;
+        }),
+        lift() {
+          state.canSend = true;
+          chat.dispatchEvent(new CustomEvent('can-send-change', { detail: { canSend: true } }));
+        },
+      }
+    );
+    return { chat, state };
+  }
 
   test('🟢 a copy the user rewrites while the message goes out is left in the box', async () => {
-    let box = '';
-    const replaying: { current: { text: string; went: boolean } | null } = { current: null };
-    const chat = {
-      send: vi
-        .fn<(text: string) => Promise<void>>()
-        // The chat holds and puts the message in the empty box.
-        .mockImplementationOnce(async (text) => {
-          if (!box) box = text;
-        })
-        // The hold lifts and the message goes; the send resolves after the user rewrote the box.
-        .mockImplementationOnce(async () => {
-          replaying.current!.went = true;
-          box = 'Add a light mode';
-        }),
-      compose: vi.fn(async (text: string) => {
-        box = text;
-      }),
-    };
-    const kept = await releaseHeld(
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying, () => (state.box = 'Add a light mode'));
+    const kept = releaseHeld(
       { current: chat },
       replaying,
-      () => box,
+      () => state.box,
       () => false,
-      HELD,
-      1
+      HELD
     );
+    await vi.waitFor(() => expect(state.box).toBe(HELD));
+    chat.lift();
+    expect(await kept).toBe(true);
     expect(chat.send).toHaveBeenCalledTimes(2);
-    expect(box).toBe('Add a light mode');
-    expect(kept).toBe(true);
+    expect(state.went).toEqual([HELD]);
+    expect(state.box).toBe('Add a light mode');
   });
 
   test('NEGATIVE CONTROL: an untouched copy is cleared once the message went', async () => {
-    let box = '';
-    const replaying: { current: { text: string; went: boolean } | null } = { current: null };
-    const chat = {
-      send: vi
-        .fn<(text: string) => Promise<void>>()
-        .mockImplementationOnce(async (text) => {
-          if (!box) box = text;
-        })
-        .mockImplementationOnce(async () => {
-          replaying.current!.went = true;
-        }),
-      compose: vi.fn(async (text: string) => {
-        box = text;
-      }),
-    };
-    const kept = await releaseHeld(
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    const kept = releaseHeld(
       { current: chat },
       replaying,
-      () => box,
+      () => state.box,
       () => false,
-      HELD,
-      1
+      HELD
     );
-    expect(box).toBe('');
-    expect(kept).toBe(true);
+    await vi.waitFor(() => expect(state.box).toBe(HELD));
+    chat.lift();
+    expect(await kept).toBe(true);
+    expect(state.went).toEqual([HELD]);
+    expect(state.box).toBe('');
+  });
+
+  test('🔴 a hold that ends late (after 25 s) still sends the message, the moment it lifts', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    let settled = false;
+    const kept = releaseHeld(
+      { current: chat },
+      replaying,
+      () => state.box,
+      () => false,
+      HELD
+    ).then((value) => ((settled = true), value));
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(settled).toBe(false);
+    expect(state.went).toEqual([]);
+    chat.lift();
+    // No timer has to run for it to go: the chat's own event sends it.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(state.went).toEqual([HELD]);
+    expect(await kept).toBe(true);
+    expect(state.box).toBe('');
+  });
+
+  test('🔴 nothing polls: a minute of holding is one send (the one that puts the message in the box)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    const kept = releaseHeld(
+      { current: chat },
+      replaying,
+      () => state.box,
+      () => false,
+      HELD
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(chat.send).toHaveBeenCalledTimes(1);
+    expect(state.box).toBe(HELD);
+    chat.lift();
+    expect(await kept).toBe(true);
+    expect(chat.send).toHaveBeenCalledTimes(2);
+  });
+
+  test('🟡 the wait is bounded by HELD_TIMEOUT_MS: a hold that never lifts leaves the copy to the user then, not before', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    let settled = false;
+    const kept = releaseHeld(
+      { current: chat },
+      replaying,
+      () => state.box,
+      () => false,
+      HELD
+    ).then((value) => ((settled = true), value));
+    await vi.advanceTimersByTimeAsync(HELD_TIMEOUT_MS - 1000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(settled).toBe(true);
+    // The copy is still in the box, so it is not reported unsent.
+    expect(await kept).toBe(true);
+    expect(state.box).toBe(HELD);
+    expect(replaying.current).toBeNull();
+  });
+
+  test('a release stopped while it waits ends at once and sends nothing more', async () => {
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    // The user is dictating into an empty box, so nothing is put there and nothing is kept.
+    const kept = releaseHeld(
+      { current: chat },
+      replaying,
+      () => state.box,
+      () => true,
+      HELD
+    );
+    await vi.waitFor(() => expect(replaying.current).not.toBeNull());
+    stopRelease(replaying);
+    expect(await kept).toBe(false);
+    chat.lift();
+    await settle();
+    expect(chat.send).not.toHaveBeenCalled();
+    expect(state.went).toEqual([]);
   });
 });

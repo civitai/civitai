@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import type { CivitaiChat } from '@civitai/components-chat/civitai-chat';
 import '@civitai/components-chat/civitai-chat/define';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
+import { releaseHeld, type Release } from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
 
 afterEach(() => {
   document.querySelectorAll('civitai-chat').forEach((el) => el.remove());
@@ -152,4 +153,45 @@ test('tracks the real chat’s dictation: while recording, in the moment after t
   await expect.element(box).toBeVisible();
   expect(isDictating(chat)).toBe(false);
   expect(messageBoxText(chat)).toBe('draw');
+});
+
+test('a message released into the real chat waits out its hold in the box, sends nothing meanwhile, and goes once the chat says it can', async () => {
+  const { chat, box } = await realSignedInChat();
+  chat.holdReason = 'Your app is starting…';
+  await chat.updateComplete;
+  expect(chat.canSend).toBe(false);
+  const replaying: { current: Release | null } = { current: null };
+  const went: string[] = [];
+  // The page's before-send, as the workspace has it: the message it is sending went.
+  chat.addEventListener('before-send', (event) => {
+    const text = (event as CustomEvent<{ text: string }>).detail.text;
+    went.push(text);
+    const release = replaying.current;
+    if (release?.text === text) {
+      release.went = true;
+      release.wake();
+    }
+  });
+  const sends = vi.spyOn(chat, 'send');
+
+  const kept = releaseHeld(
+    { current: chat },
+    replaying,
+    () => messageBoxText(chat),
+    () => isDictating(chat),
+    'Add a dark mode'
+  );
+  // The chat holds, so the message waits in its box for the user to see.
+  await expect.element(box).toHaveValue('Add a dark mode');
+  // Longer than several of the old retry intervals: still the one send that put it there.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  expect(sends).toHaveBeenCalledTimes(1);
+  expect(went).toEqual([]);
+
+  chat.holdReason = undefined;
+  expect(await kept).toBe(true);
+  expect(went).toEqual(['Add a dark mode']);
+  expect(sends).toHaveBeenCalledTimes(2);
+  // The untouched copy leaves the box once the message went.
+  await expect.element(box).toHaveValue('');
 });
