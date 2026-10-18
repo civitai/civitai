@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createNamedMasterQuery,
   createNamedMasterSource,
+  createRateLimitedLog,
   createSentinelStaleMasterGuard,
   type NamedMasterSource,
   type SentinelNode,
@@ -455,6 +456,50 @@ describe('createNamedMasterQuery', () => {
     await expect(query()).resolves.toBeUndefined();
   });
 
+  it('reports why a query got no answer: a refused node password, an unreachable Sentinel', async () => {
+    const { sentinel } = await sentinelNaming('master', { node: 'node-pw' });
+    const closed = net.createServer();
+    await new Promise<void>((r) => closed.listen(0, '127.0.0.1', r));
+    const deadPort = (closed.address() as net.AddressInfo).port;
+    await new Promise((r) => closed.close(r));
+    const failures: string[] = [];
+    const query = createNamedMasterQuery({
+      sentinels: [
+        { host: '127.0.0.1', port: deadPort },
+        { host: '127.0.0.1', port: sentinel.port },
+      ],
+      name: 'itmaster',
+      nodePassword: 'wrong-pw',
+      timeoutMs: 1000,
+      onFailure: (reason) => failures.push(reason),
+    });
+    await expect(query()).resolves.toBeUndefined();
+    expect(failures).toHaveLength(1); // one report per query
+    expect(failures[0]).toMatch(
+      new RegExp(`^SENTINEL 127\\.0\\.0\\.1:${deadPort}: .*ECONNREFUSED`)
+    );
+    expect(failures[0]).toMatch(/; ROLE 127\.0\.0\.1:\d+: .*WRONGPASS/);
+  });
+
+  it('does not report a query that got an answer, or one that simply found no master', async () => {
+    const failures: string[] = [];
+    const master = await sentinelNaming('master');
+    await createNamedMasterQuery({
+      sentinels: [{ host: '127.0.0.1', port: master.sentinel.port }],
+      name: 'itmaster',
+      timeoutMs: 1000,
+      onFailure: (reason) => failures.push(reason),
+    })();
+    const replica = await sentinelNaming('slave');
+    await createNamedMasterQuery({
+      sentinels: [{ host: '127.0.0.1', port: replica.sentinel.port }],
+      name: 'itmaster',
+      timeoutMs: 1000,
+      onFailure: (reason) => failures.push(reason),
+    })();
+    expect(failures).toEqual([]);
+  });
+
   it('ignores a named node that is not a master (a Sentinel lagging behind a failover)', async () => {
     const { node, sentinel } = await sentinelNaming('slave');
     const query = createNamedMasterQuery({
@@ -478,5 +523,23 @@ describe('createNamedMasterQuery', () => {
     expect(Date.now() - started).toBeLessThan(2000);
     await new Promise((r) => setTimeout(r, 100));
     expect(sockets.size).toBe(0);
+  });
+});
+
+describe('createRateLimitedLog', () => {
+  it('logs at most once per interval and drops the calls in between', () => {
+    let t = 0;
+    const lines: string[] = [];
+    const warn = createRateLimitedLog(
+      (m) => lines.push(m),
+      60_000,
+      () => t
+    );
+    warn('a');
+    t = 59_999;
+    warn('b');
+    t = 60_000;
+    warn('c');
+    expect(lines).toEqual(['a', 'c']);
   });
 });

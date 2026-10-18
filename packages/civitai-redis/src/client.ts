@@ -15,6 +15,7 @@ import {
 import {
   createNamedMasterQuery,
   createNamedMasterSource,
+  createRateLimitedLog,
   createSentinelStaleMasterGuard,
   type NamedMasterSource,
 } from './sentinel-reconnect';
@@ -636,8 +637,7 @@ export async function forceSysReconnect(
       // chained onto it. A second destroy() would wait on the same in-progress discovery and
       // only queue another connect() behind it. If that teardown never settles (the discovery
       // it waits on cannot finish), this client stays skipped — a second destroy() would hang
-      // on the same thing, so nothing is lost (./sentinel-reconnect's give-up ends such a discovery
-      // once the Sentinel names another node that answers as master).
+      // on the same thing, so nothing is lost (see ./sentinel-reconnect).
       log('Sys self-heal: skipping a client whose previous teardown is still running');
       continue;
     }
@@ -712,8 +712,7 @@ export async function forceSysReconnect(
         `connect() did not settle within ${stepTimeoutMs}ms`
       );
     } catch (err) {
-      // Non-fatal: a connect() that timed out keeps retrying in the background; one that failed
-      // was destroyed (connectOrDestroy). The watchdog re-arms after the cooldown.
+      // Non-fatal: the watchdog re-arms after the cooldown.
       log(
         `Sys self-heal: reconnect() failed or timed out: ${
           err instanceof Error ? err.message : String(err)
@@ -1236,28 +1235,20 @@ export function instrumentCommands(
   };
 }
 
-/**
- * `client.connect()`, destroying the client if that connect fails, then rethrowing.
- *
- * WHY (node-redis @redis/client 5.8.3, sentinel/index.js): a RedisSentinel whose connect() gave up
- * (more than `maxCommandRediscovers` failed discovery passes) keeps the master connections of its
- * last pass and is never ready, and its `#reset()` returns at once while not ready. If that pass
- * opened connections and they gave up, every later command loops `!isReady → #reset() → continue`
- * on microtasks alone and starves the process. destroy() empties that list, so a command fails at
- * once instead. The client then stays down until the process restarts, as a client whose first
- * connect() fails does on the old code too.
- *
- * Only a connect THIS call started is torn down: if the client was already open, the rejection is
- * node-redis refusing a second open, and the connection belongs to whoever opened it. A plain
- * client whose connect() gave up is already closed; its destroy() throws, which is ignored.
- */
-export function connectOrDestroy<T>(client: {
-  connect: () => Promise<T> | T;
-  destroy?: () => unknown;
+export interface ConnectableClient {
   isOpen?: boolean;
-}): Promise<T> {
+  connect(): unknown;
+  destroy?(): unknown;
+}
+
+/**
+ * `client.connect()`, destroying the client if a connect THIS call started fails. A node-redis 5.8.3
+ * RedisSentinel whose connect() gave up keeps closed master connections and its commands spin on
+ * microtasks; destroy() empties them so commands fail fast.
+ */
+export function connectOrDestroy(client: ConnectableClient): Promise<unknown> {
   const wasOpen = client.isOpen === true;
-  let connecting: Promise<T>;
+  let connecting: Promise<unknown>;
   try {
     connecting = Promise.resolve(client.connect());
   } catch (err) {
@@ -1288,6 +1279,7 @@ function namedMasterSourceFor(
   const key = `${sentinels.map((n) => `${n.host}:${n.port}`).join(',')}|${config.sysSentinelName}`;
   let source = namedMasterSources.get(key);
   if (!source) {
+    const warn = createRateLimitedLog((msg) => log(msg), 60_000);
     source = createNamedMasterSource(
       createNamedMasterQuery({
         sentinels,
@@ -1296,6 +1288,8 @@ function namedMasterSourceFor(
         nodePassword,
         // A Sentinel that never replies must not hold the query open, so never unbounded.
         timeoutMs: config.timeout && config.timeout > 0 ? config.timeout : 5000,
+        // A failing query silently disarms the guard.
+        onFailure: (reason) => warn(`Redis Sentinel stale-master query failed: ${reason}`),
       })
     );
     namedMasterSources.set(key, source);

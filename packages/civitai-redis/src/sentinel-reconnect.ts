@@ -1,43 +1,9 @@
 /**
- * Reconnect strategy for the sys client's Sentinel NODE connections (the master pool and its
- * pub/sub connection): keep retrying an address, as before, except that the connections of a
- * discovery that has never had a master connection up give up once the Sentinel names a
- * different master and that node answers as a master.
- *
- * WHY (node-redis @redis/client 5.8.3, sentinel/index.js): when the master closes its
- * connections, the next command makes RedisSentinel rediscover (`#reset` → `#connect`). If the
- * Sentinel has not failed over yet it still names the old master, and because no master
- * connection is ready, `analyze` treats that address as a new master: `transform` opens fresh
- * master connections to it and awaits their `connect()`. A node `connect()` only settles once a
- * connection is up or the reconnect strategy gives up, and this package's backoff never gives up.
- * So when the old master never answers on that address again (it came back somewhere else), the
- * discovery never finishes. Every command awaits it, every later one (the Sentinel's
- * `switch-master` notification, the periodic scan) joins it instead of starting over, and
- * `destroy()` awaits it too, so neither the client nor the sys self-heal can recover: only a
- * process restart does.
- *
- * Not a retry count: that also gives up on the current master and can wedge RedisSentinel (see
- * the commit that added this module).
- *
- * Here a connection gives up only on evidence that the master really is elsewhere: the Sentinel
- * names another node AND that node answers ROLE as a master. A lagging Sentinel still naming the
- * previous master during a blip on the current one is then not enough while that node is gone or
- * already a replica. (Left open: a previous master that stalled, was failed over, and answers
- * ROLE master again before the Sentinels demote it, while a lagging Sentinel still names it.)
- * While the Sentinel still names this address (the failover window, a master restarting in
- * place) nothing changes from before either. A spin can still follow a give-up inside a first
- * `connect()` that later fails; client.ts `connectOrDestroy` cuts it short.
- *
- * Giving up makes that `connect()` reject, so that discovery attempt fails; RedisSentinel's
- * discovery loop waits 1s, asks the Sentinel again and connects to the master it names.
- *
- * The address being dialled is the one RedisSentinel last reported in a MASTER_CHANGE
- * `topology-change` event: every master connection is (re)created by the discovery that emits
- * it, and the pub/sub connection follows the same node. The Sentinel's current answer comes from
- * our own `SENTINEL GET-MASTER-ADDR-BY-NAME` query plus a ROLE check on the node it names
- * (RedisSentinel's own switch-master handling only joins the stuck discovery), asked only while
- * connections are failing. Until an answer asked for after the discovery arrives, or if no
- * Sentinel answers, the strategy keeps retrying.
+ * Reconnect strategy for the sys client's Sentinel node connections. node-redis 5.8.3's
+ * RedisSentinel awaits a discovery's fresh master connects, so one that dials a master gone for
+ * good never finishes and wedges the client until restart. A connection here gives up only when
+ * the Sentinel names another node that answers ROLE master and no connection of its discovery has
+ * been up (see `established`).
  */
 import { createClient } from 'redis';
 import { reconnectDelayMs } from './cluster-reconnect';
@@ -73,8 +39,8 @@ let seq = 0;
 const nextSeq = () => ++seq;
 
 /**
- * The Sentinel's answer to "which master?". Asked when a connection fails, then every second
- * while failures continue (until 10s after the last). At most one query a second and one at a time.
+ * The Sentinel's answer to "which master?". Asked when a connection fails and again while failures
+ * continue; one query at a time, spaced by `NAMED_MASTER_REFRESH_MIN_INTERVAL_MS`.
  */
 export function createNamedMasterSource(query: NamedMasterQuery, now: () => number = Date.now) {
   let answer: NamedMasterAnswer | undefined;
@@ -141,15 +107,8 @@ const sameNode = (a: SentinelNode, b: SentinelNode) =>
 export function createSentinelStaleMasterGuard(opts: SentinelStaleMasterGuardOptions) {
   const now = opts.now ?? Date.now;
   let dialed: { node: SentinelNode; seq: number } | undefined;
-  /**
-   * Whether a connection of the current discovery has been seen up (checked every 250ms, and at
-   * each failure). Once any has been seen up, none may give up for the rest of this discovery:
-   * they are retried forever, as before. This is a second line of defence beside the ROLE check:
-   * a pool connection given up while its partner reconnects stays closed for good, since
-   * RedisSentinel reopens master connections only when none is ready. When such a master is
-   * really gone, the next command's discovery replaces these connections with fresh ones, which
-   * may give up.
-   */
+  /** A connection of this discovery has been seen up: then none may give up, since RedisSentinel
+   * reopens master connections only when none is up on the master the Sentinel names. */
   let established = false;
   let checker: ReturnType<typeof setInterval> | undefined;
   const stopChecker = () => {
@@ -209,10 +168,8 @@ export function createSentinelStaleMasterGuard(opts: SentinelStaleMasterGuardOpt
 }
 
 /**
- * The production query: ask each Sentinel in turn for the master of `name`, then ask that node
- * for its ROLE, each on a short-lived connection that never reconnects and bounded by `timeoutMs`
- * (one that accepts the connection but never replies cannot pin the query). Returns the first
- * named node that answers as a master.
+ * Asks each Sentinel in turn for `name`'s master, then that node for ROLE; returns the first named
+ * node that answers as a master.
  */
 export function createNamedMasterQuery(opts: {
   sentinels: SentinelNode[];
@@ -222,6 +179,8 @@ export function createNamedMasterQuery(opts: {
   /** Redis node auth (the REDIS_SYS_URL password), for the ROLE check. */
   nodePassword?: string;
   timeoutMs: number;
+  /** Called with what failed when no Sentinel gave an answer and at least one could not be asked. */
+  onFailure?: (reason: string) => void;
 }): NamedMasterQuery {
   /** One command on a short-lived connection that never reconnects, bounded by `timeoutMs`. */
   const once = async (node: SentinelNode, password: string | undefined, args: string[]) => {
@@ -247,6 +206,9 @@ export function createNamedMasterQuery(opts: {
         opts.timeoutMs,
         `${args[0]} did not settle within ${opts.timeoutMs}ms`
       );
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      throw new Error(`${args[0]} ${node.host}:${node.port}: ${why}`);
     } finally {
       // Also on a timeout: destroying rejects whatever is still pending and closes the connection.
       if (client.isOpen) client.destroy();
@@ -267,14 +229,30 @@ export function createNamedMasterQuery(opts: {
     return Array.isArray(role) && String(role[0]) === 'master' ? named : undefined;
   };
   return async () => {
+    const failures: string[] = [];
     for (const sentinel of opts.sentinels) {
       try {
         const node = await askOne(sentinel);
         if (node) return node;
-      } catch {
-        // try the next Sentinel
+      } catch (err) {
+        failures.push(err instanceof Error ? err.message : String(err));
       }
     }
+    if (failures.length > 0) opts.onFailure?.(failures.join('; '));
     return undefined;
+  };
+}
+
+/** `log(msg)` at most once per `intervalMs`; the calls in between are dropped. */
+export function createRateLimitedLog(
+  log: (msg: string) => void,
+  intervalMs: number,
+  now: () => number = Date.now
+): (msg: string) => void {
+  let lastAt = -Infinity;
+  return (msg) => {
+    if (now() - lastAt < intervalMs) return;
+    lastAt = now();
+    log(msg);
   };
 }

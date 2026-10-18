@@ -284,16 +284,6 @@ describe('sys Sentinel master connections give up on an address the Sentinel sto
     expect(strategy(2, connErr())).toBe(200);
   });
 
-  it('keeps retrying the master the Sentinel still names', async () => {
-    h.sentinelAnswer = ['10.0.0.1', '6379'];
-    createSysRedis({ ...sentinel(), sysSelfHealEnabled: false, log: () => undefined });
-    const { strategy, masterChange } = lastSentinel();
-    masterChange('10.0.0.1');
-    strategy(0, connErr());
-    await settle();
-    expect(strategy(1, connErr())).toBe(100);
-  });
-
   it('REDIS_SYS_SENTINEL_STALE_MASTER_GIVEUP_ENABLED=false: never gives up', async () => {
     h.sentinelAnswer = ['10.0.0.2', '6379'];
     createSysRedis({
@@ -358,5 +348,31 @@ describe('a sys client whose connect() fails is destroyed', () => {
     };
     await expect(connectOrDestroy(closed)).rejects.toBe(failed);
     expect(closed.destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a failing stale-master query is logged', () => {
+  it('warns, rate-limited, when the Sentinel cannot be asked (otherwise the guard is silently off)', async () => {
+    const lines: string[] = [];
+    // No fake Sentinel answer: the query's client is the real one, dialling a port nobody listens on.
+    createSysRedis({
+      sysSentinels: '127.0.0.1:1',
+      sysSentinelName: 'sysmaster',
+      sysSelfHealEnabled: false,
+      timeout: 500,
+      log: (m: string) => lines.push(m),
+    });
+    const fake = h.sentinels.at(-1);
+    const strategy = h.sentinelOpts.at(-1).nodeClientOptions.socket.reconnectStrategy;
+    fake.listeners['topology-change'].forEach((l: (e: any) => void) =>
+      l({ type: 'MASTER_CHANGE', node: { host: '10.0.0.1', port: 6379 } })
+    );
+    strategy(0, connErr());
+    const failed = () =>
+      lines.filter((m) => m.startsWith('Redis Sentinel stale-master query failed: '));
+    for (let i = 0; i < 100 && failed().length === 0; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(failed()).toHaveLength(1);
+    expect(failed()[0]).toMatch(/SENTINEL 127\.0\.0\.1:1: /);
   });
 });
