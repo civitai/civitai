@@ -117,6 +117,23 @@ export function stopRelease(replaying: { current: Release | null }): void {
   release?.wake();
 }
 
+/**
+ * Sends `text` as the user's. A copy the chat keeps back in a box that was empty (while it holds, or
+ * on a refused grant) is hidden while the user dictates, and their words would be joined to it: such a
+ * copy is taken back out, so the caller can give the message back instead.
+ */
+async function sendNotJoined(
+  chat: Pick<CivitaiChat, 'send' | 'compose'>,
+  text: string,
+  box: () => string,
+  dictating: () => boolean,
+  went: () => boolean
+): Promise<void> {
+  const empty = !box();
+  await chat.send(text);
+  if (empty && !went() && dictating() && box() === text) await chat.compose('');
+}
+
 type ReleaseChat = Pick<
   CivitaiChat,
   'send' | 'compose' | 'canSend' | 'addEventListener' | 'removeEventListener'
@@ -166,11 +183,9 @@ export async function releaseHeld(
       if (parked && box() !== text) break;
       if (chat.canSend) {
         // It goes now, or the chat took it and still kept it back (the page's before-send, a refused
-        // grant): either way there is nothing more to wait for. A refused grant puts it in an empty
-        // box, which the user's dictation would join: that copy is taken out and reported unsent.
-        const hidden = !box() && dictating();
-        await chat.send(text);
-        if (hidden && !release.went && box() === text) await chat.compose('');
+        // grant): either way there is nothing more to wait for. A copy kept back under dictation is
+        // taken out, and the message reported unsent.
+        await sendNotJoined(chat, text, box, dictating, () => release.went);
         break;
       }
       if (!parked && !box() && !dictating()) {
@@ -431,11 +446,10 @@ export function AppAssistantWorkspace({
   const buildWent = useRef(false);
   const buildRef = useRef(async () => {
     buildWent.current = false;
-    const empty = !boxText();
-    await chatRef.current?.send(BUILD_IT_MESSAGE);
+    const chat = chatRef.current;
+    if (chat)
+      await sendNotJoined(chat, BUILD_IT_MESSAGE, boxText, dictating, () => buildWent.current);
     if (buildWent.current) return;
-    // A copy the chat put in a box hidden by dictation would be joined to what the user says.
-    if (empty && dictating() && boxText() === BUILD_IT_MESSAGE) await chatRef.current?.compose('');
     giveBack(BUILD_IT_MESSAGE);
     gate.answered();
   });

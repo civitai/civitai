@@ -809,7 +809,9 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await expect
       .element(page.getByText('This message was not sent: “Add a dark mode”'))
       .toBeVisible();
-    await settle(1200);
+    // The chat's can-send-change then arrives: the ended release sends nothing more.
+    m.announce();
+    await settle(100);
     expect(m.delivered).toEqual(['and a timer']);
   });
 
@@ -1783,12 +1785,33 @@ describe('releaseHeld', () => {
       replaying,
       () => state.box,
       () => true,
-      HELD
+      HELD,
+      // Short, so a release that waits instead fails by assertion, not by the test's timeout.
+      1_000
     );
     expect(chat.send).toHaveBeenCalledTimes(1);
     expect(state.went).toEqual([]);
     expect(state.box).toBe('');
     expect(kept).toBe(false);
+  });
+
+  test('🟡 a message the chat can take goes at once, even while the user dictates into an empty box', async () => {
+    const replaying: Replaying = { current: null };
+    const { chat, state } = heldChat(replaying);
+    state.canSend = true;
+    const kept = await releaseHeld(
+      { current: chat },
+      replaying,
+      () => state.box,
+      () => true,
+      HELD,
+      // Short, so a release that waits instead fails by assertion, not by the test's timeout.
+      1_000
+    );
+    expect(state.went).toEqual([HELD]);
+    expect(chat.send).toHaveBeenCalledTimes(1);
+    expect(state.box).toBe('');
+    expect(kept).toBe(true);
   });
 
   test('NEGATIVE CONTROL: kept back while the user is NOT dictating, the copy stays in the box for them', async () => {

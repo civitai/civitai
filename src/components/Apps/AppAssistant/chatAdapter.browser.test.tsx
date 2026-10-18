@@ -63,8 +63,9 @@ function fakeMicrophone() {
 /**
  * The real element, signed in to a fake app, so it offers the microphone. Every request answers 503,
  * except that once `holdRequests()` is called, new ones never answer: the transcription stays running.
+ * With `grants: false` the viewer refuses the chat their Buzz, so nothing they send goes.
  */
-async function realSignedInChat() {
+async function realSignedInChat({ grants = true } = {}) {
   let hold = false;
   vi.stubGlobal(
     'fetch',
@@ -78,7 +79,7 @@ async function realSignedInChat() {
   const chat = document.createElement('civitai-chat') as CivitaiChat;
   chat.app = {
     getToken: async () => 'token',
-    requestGrants: async () => true,
+    requestGrants: async () => grants,
     site: { get: async () => ({ username: 'viewer' }) },
     orchestration: {
       queryWorkflows: async () => ({ items: [], next: '' }),
@@ -176,7 +177,9 @@ test('a message released into the real chat waits out its hold in the box, sends
     replaying,
     () => messageBoxText(chat),
     () => isDictating(chat),
-    'Add a dark mode'
+    'Add a dark mode',
+    // Short, so an event that never comes fails here by assertion rather than by the test's timeout.
+    5_000
   );
   // The chat holds, so the message waits in its box for the user to see.
   await expect.element(box).toHaveValue('Add a dark mode');
@@ -191,4 +194,26 @@ test('a message released into the real chat waits out its hold in the box, sends
   expect(sends).toHaveBeenCalledTimes(2);
   // The untouched copy leaves the box once the message went.
   await expect.element(box).toHaveValue('');
+});
+
+test('a message the real chat keeps back on a refused grant while the user dictates is taken out of the box and reported unsent', async () => {
+  fakeMicrophone();
+  const { chat } = await realSignedInChat({ grants: false });
+  await press('Talk instead of typing');
+  await expect.element(page.getByRole('group', { name: 'Recording your voice' })).toBeVisible();
+  expect(isDictating(chat)).toBe(true);
+  // Nothing holds the chat: the refusal comes only once the message is sent.
+  expect(chat.canSend).toBe(true);
+  const replaying: { current: Release | null } = { current: null };
+  const kept = await releaseHeld(
+    { current: chat },
+    replaying,
+    () => messageBoxText(chat),
+    () => isDictating(chat),
+    'Add a dark mode',
+    5_000
+  );
+  expect(kept).toBe(false);
+  expect(messageBoxText(chat)).toBe('');
+  expect(isDictating(chat)).toBe(true);
 });
