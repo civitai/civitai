@@ -1850,18 +1850,28 @@ export async function getStorylinePath({
       blockedUserIds,
     });
   const postIds = rows.flatMap((r) => (r.postId != null ? [r.postId] : []));
-  const [posts, joins] = await Promise.all([
+  const [posts, childCounts, joins] = await Promise.all([
     postIds.length
       ? dbRead.post.findMany({ where: { id: { in: postIds } }, select: chapterPostSelect })
+      : [],
+    // The viewer's chapter rail marks where other paths leave the route from these.
+    rows.length
+      ? dbRead.storylineChapterEdge.groupBy({
+          by: ['parentChapterId'],
+          where: { parentChapterId: { in: rows.map((r) => r.id) } },
+          _count: { _all: true },
+        })
       : [],
     getRouteJoins(rows, tombstoneOf),
   ]);
   const postById = new Map(posts.map((p) => [p.id, p]));
+  const childCountById = new Map(childCounts.map((c) => [c.parentChapterId, c._count._all]));
 
   const chapters = rows.map((row) => {
     const post = row.postId != null ? postById.get(row.postId) ?? null : null;
     return {
       ...toPathChapter(row, post, tombstoneOf(post, !!row.removedAt)),
+      childCount: childCountById.get(row.id) ?? 0,
       joins: joins.get(row.id) ?? [],
     };
   });
