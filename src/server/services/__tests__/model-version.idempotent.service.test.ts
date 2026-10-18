@@ -248,6 +248,124 @@ describe('mergeVersions', () => {
 });
 
 // ---------------------------------------------------------------------------
+// mergeVersions file remaps touch only files of the versions being merged
+// ---------------------------------------------------------------------------
+describe('mergeVersions file remaps', () => {
+  const OWNER = 7;
+  const MODEL = 1;
+  const TARGET = 100;
+  const SOURCE = 101;
+  const OTHER_OF_SAME_MODEL = 102;
+  const FILE = 900;
+
+  // Everything after step 1 is out of scope here: the transaction client knows only the two file
+  // methods, so reaching any later step stops the run with this marker.
+  const PAST_REMAP = 'reached the steps after the file remap';
+  const fileFindMany = vi.fn();
+  const fileUpdateMany = vi.fn();
+  const tx = new Proxy(
+    { modelFile: { findMany: fileFindMany, updateMany: fileUpdateMany } },
+    {
+      get(target, key) {
+        if (key in target) return target[key as keyof typeof target];
+        throw new Error(PAST_REMAP);
+      },
+    }
+  );
+
+  const merge = (fileTypeMappings: { fileId: number; type?: string; metadata?: object }[]) =>
+    mergeVersions({
+      modelId: MODEL,
+      targetVersionId: TARGET,
+      sourceVersionIds: [SOURCE],
+      fileTypeMappings,
+      appendDescriptions: false,
+      userId: OWNER,
+    } as any);
+
+  const storedFile = (overrides: Record<string, unknown> = {}) => ({
+    id: FILE,
+    type: 'Model',
+    metadata: { fp: 'fp16' },
+    modelVersion: { uploadType: 'Created', trainingStatus: null },
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    fileFindMany.mockReset().mockResolvedValue([storedFile()]);
+    fileUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockDbRead.model.findUniqueOrThrow.mockResolvedValue({
+      userId: OWNER,
+      modelVersions: [TARGET, SOURCE, OTHER_OF_SAME_MODEL].map((id) => ({
+        id,
+        name: `v${id}`,
+        description: '',
+        status: 'Published',
+        monetization: null,
+        meta: null,
+      })),
+    });
+    mockDbWrite.paidAccess.findMany.mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (client: unknown) => unknown) => fn(tx));
+  });
+
+  const inMerge = {
+    modelVersionId: { in: [TARGET, SOURCE] },
+    modelVersion: { modelId: MODEL, model: { userId: OWNER } },
+  };
+
+  it('looks the mapped files up only among the merged versions of the caller’s model', async () => {
+    await expect(merge([{ fileId: FILE, type: 'VAE' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [FILE] }, ...inMerge } })
+    );
+  });
+
+  // The lookup above returns nothing for a file outside the merge: another owner's file, or a
+  // version of this model that is not being merged.
+  it('refuses a file that is not part of the merge, writing nothing', async () => {
+    fileFindMany.mockResolvedValue([]);
+
+    await expect(merge([{ fileId: 4242, type: 'VAE', metadata: { fp: 'bf16' } }])).rejects.toThrow(
+      'A file to update is not part of this merge.'
+    );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('writes a remap scoped to the merge, merging the stored metadata', async () => {
+    await expect(
+      merge([{ fileId: FILE, type: 'VAE', metadata: { size: 'pruned' } }])
+    ).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany).toHaveBeenCalledWith({
+      where: { id: FILE, ...inMerge },
+      data: { type: 'VAE', metadata: { fp: 'fp16', size: 'pruned' } },
+    });
+  });
+
+  // The file can leave the merge between the lookup and the write (moved, deleted).
+  it('refuses when the scoped write does not land on exactly that file', async () => {
+    fileUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(merge([{ fileId: FILE, type: 'VAE' }])).rejects.toThrow(
+      'A file to update is not part of this merge.'
+    );
+  });
+
+  it('refuses turning a trained version’s file into training data', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ modelVersion: { uploadType: 'Trained', trainingStatus: 'Approved' } }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Training Data' }])).rejects.toThrow(
+      "A file can't be changed to or from training data."
+    );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Complexity review §1a — a SCHEDULED early-access version must materialize endsAt
 // ---------------------------------------------------------------------------
 // The scheduled-publishing job flips status here WITHOUT passing publishedAt (it set it at schedule
