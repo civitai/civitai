@@ -66,12 +66,13 @@ export function StorylineEndOfChapter({
   chapterTombstone,
   parentPostId,
   isOwner = false,
+  layout = 'overlay',
   onContinue,
   onClose,
 }: {
   chapterId: number;
   storylineId: number;
-  /** Depth of the chapter that ends here on the reader's route (chapter 1 is depth 0). */
+  /** Depth of the chapter that ends here (chapter 1 is depth 0); its children are numbered from it. */
   chapterDepth: number;
   chapterTombstone?: Parameters<typeof getStorylineTombstoneLabel>[0] | null;
   onContinue: (child: StorylineChild) => void;
@@ -80,6 +81,8 @@ export function StorylineEndOfChapter({
   parentPostId?: number;
   /** The reader made this storyline: they add chapters directly, never by continuing it. */
   isOwner?: boolean;
+  /** 'section' renders inline in a page instead of covering the viewer's stage. */
+  layout?: 'overlay' | 'section';
 }) {
   const { data: children, isLoading } = useStorylineChildren(chapterId);
   const { data: forkShares } = useStorylineForkShares(chapterId);
@@ -99,8 +102,13 @@ export function StorylineEndOfChapter({
 
   return (
     <div
-      className="absolute inset-0 z-20 overflow-y-auto bg-white p-4 @md:p-7 dark:bg-dark-7"
+      className={
+        layout === 'overlay'
+          ? 'absolute inset-0 z-20 overflow-y-auto bg-white p-4 @md:p-7 dark:bg-dark-7'
+          : 'rounded-xl border border-solid border-gray-3 bg-white p-4 @md:p-6 dark:border-dark-4 dark:bg-dark-7'
+      }
       data-testid="storyline-end-of-chapter"
+      data-layout={layout}
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         <div className="flex items-start justify-between gap-2">
