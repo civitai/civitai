@@ -94,14 +94,14 @@ export const FeatureFlagsProvider = ({
   // `~/utils/trpc`). Set during render, not in an effect: child effects run
   // before parent effects and React Query starts a query's fetch from an
   // effect, so an effect here would miss the first commit's queries.
-  // Browser only — on the server this module flag is shared across concurrent
-  // requests (and `queryRetry` reads it).
+  // Browser only — on the server this module flag would be shared across
+  // concurrent requests.
   if (typeof window !== 'undefined') {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
   }
-  // No dependency array: re-applies this component's committed value after
-  // each of its commits, so a render React discarded cannot leave its value
-  // in place past the next commit.
+  // Safety net, not load-bearing: the render-time write above already carries
+  // every committed value. No dependency array, so it re-applies the committed
+  // value after every commit of this component.
   useEffect(() => {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
   });

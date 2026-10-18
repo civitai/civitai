@@ -8,8 +8,8 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * `FeatureFlagsProvider` applies `trpcBatching` to a MODULE-level flag while it renders. On the
- * server that module is shared by every concurrent request (and `queryRetry` reads the flag), so
- * a server render must never write it — one user's flag would leak into other requests.
+ * server that module is shared by every concurrent request, so a server render must never
+ * write it — one user's flag would leak into other requests.
  */
 
 vi.mock('~/providers/SessionProvider', async (orig) => ({

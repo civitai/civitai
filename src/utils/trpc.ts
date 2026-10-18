@@ -160,9 +160,8 @@ function httpLinkWithLargeQuerySupport({
  * `trpcBatching` feature flag ramps. Set from `FeatureFlagsProvider` while it renders in
  * the browser (so before any query in that commit is sent), never on the server. Kept as a
  * mutable module flag (not React state) because the tRPC terminating link is built once at
- * module init and cannot read a hook;
- * the `splitLink` condition re-reads this per operation, so a later flip takes effect on
- * subsequent queries without rebuilding the client.
+ * module init and cannot read a hook; the `splitLink` condition re-reads this per operation,
+ * so a later flip takes effect on subsequent queries without rebuilding the client.
  */
 let trpcBatchingEnabled = false;
 export function setTrpcBatchingEnabled(enabled: boolean) {
@@ -295,8 +294,9 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
  * 🔴 Neither of those two was ever DELIBERATELY excluded: both were on the never-batch list
  * only because the drift guard's substring test also matched their commented-out code.
  * Making that guard comment-aware is what surfaced them, and it would otherwise have silently
- * started batching both. Listing them here keeps today's behaviour unchanged and gives it an actual reason —
- * changing it is a separate decision, on evidence, not a side effect of a bug fix.
+ * started batching both. Listing them here keeps today's behaviour unchanged and gives it an
+ * actual reason — changing it is a separate decision, on evidence, not a side effect of a bug
+ * fix.
  */
 export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getData',
