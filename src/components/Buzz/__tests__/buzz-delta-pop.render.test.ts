@@ -90,4 +90,38 @@ describe('BuzzDeltaPop', () => {
     advance(1000);
     expect(container.textContent).toBe('');
   });
+
+  it('shows a gain as +N next to a spend', () => {
+    render(['yellow']);
+    record('yellow', -30);
+    record('yellow', 250);
+
+    expect(container.textContent).toContain('−');
+    expect(container.textContent).toContain('+');
+    expect(container.textContent).toContain('250');
+  });
+
+  it('gives a group that opens during the exit fresh digits that roll up from 0', () => {
+    render(['yellow']);
+    record('yellow', -300);
+    advance(BUZZ_DELTA_QUIET_MS + 100);
+    const before = container.querySelector('[aria-hidden] > span');
+
+    record('yellow', -5);
+    const after = container.querySelector('[aria-hidden] > span');
+
+    expect(container.textContent).toContain('5');
+    expect(after).not.toBe(before);
+  });
+
+  it('is not kept alive by spends in accounts it does not show', () => {
+    render(['yellow']);
+    record('yellow', -50);
+    advance(BUZZ_DELTA_QUIET_MS);
+    advance(300);
+    record('green', -10);
+    advance(400);
+
+    expect(container.textContent).toBe('');
+  });
 });

@@ -9,6 +9,7 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 const settings = { value: {} as { hideBlueBuzzInHeader?: boolean } };
 const accountTypesSeen: Array<BuzzSpendType[] | undefined> = [];
+const propsSeen: Array<{ animated?: boolean; withDeltaPop?: boolean }> = [];
 
 vi.mock('~/components/UserSettings/hooks', () => ({
   useCurrentUserSettings: () => settings.value,
@@ -21,8 +22,17 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 
 vi.mock('~/components/User/UserBuzz', () => ({
-  UserBuzz: ({ accountTypes }: { accountTypes?: BuzzSpendType[] }) => {
+  UserBuzz: ({
+    accountTypes,
+    animated,
+    withDeltaPop,
+  }: {
+    accountTypes?: BuzzSpendType[];
+    animated?: boolean;
+    withDeltaPop?: boolean;
+  }) => {
     accountTypesSeen.push(accountTypes);
+    propsSeen.push({ animated, withDeltaPop });
     return null;
   },
 }));
@@ -41,7 +51,14 @@ function render() {
 describe('HeaderUserBuzz', () => {
   beforeEach(() => {
     accountTypesSeen.length = 0;
+    propsSeen.length = 0;
     settings.value = {};
+  });
+
+  it('rolls the digits and shows the spend pop-out', () => {
+    render();
+
+    expect(propsSeen).toEqual([{ animated: true, withDeltaPop: true }]);
   });
 
   it('narrows the header to the domain type when blue is hidden', () => {

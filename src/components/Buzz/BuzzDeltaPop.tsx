@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useBuzzDeltaGroups } from '~/store/buzz-delta.store';
@@ -32,21 +32,28 @@ export function BuzzDeltaPop({ accountTypes }: { accountTypes: BuzzSpendType[] }
   const isOpen = !!open.debit || !!open.credit;
   const [lines, setLines] = useState<Lines | null>(null);
   const [exiting, setExiting] = useState(false);
+  // A group that opens during the exit gets fresh lines, so its digits roll up from 0.
+  const [epoch, setEpoch] = useState(0);
+  const wasOpen = useRef(false);
+  const hasLines = !!lines;
 
   useEffect(() => {
-    if (isOpen) {
-      setLines(open);
-      setExiting(false);
-      return;
-    }
-    if (!lines) return;
+    if (isOpen && !wasOpen.current) setEpoch((value) => value + 1);
+    wasOpen.current = isOpen;
+    if (!isOpen) return;
+    setLines(open);
+    setExiting(false);
+  }, [isOpen, open]);
+
+  useEffect(() => {
+    if (isOpen || !hasLines) return;
     setExiting(true);
     const timer = setTimeout(() => {
       setLines(null);
       setExiting(false);
     }, EXIT_MS);
     return () => clearTimeout(timer);
-  }, [isOpen, open, lines]);
+  }, [isOpen, hasLines]);
 
   if (!lines) return null;
 
@@ -59,8 +66,12 @@ export function BuzzDeltaPop({ accountTypes }: { accountTypes: BuzzSpendType[] }
         (lines.debit?.big || lines.credit?.big) && classes.big
       )}
     >
-      {lines.debit && <PopLine direction="debit" total={lines.debit.total} />}
-      {lines.credit && <PopLine direction="credit" total={lines.credit.total} />}
+      {lines.debit && (
+        <PopLine key={`debit-${epoch}`} direction="debit" total={lines.debit.total} />
+      )}
+      {lines.credit && (
+        <PopLine key={`credit-${epoch}`} direction="credit" total={lines.credit.total} />
+      )}
     </span>
   );
 }

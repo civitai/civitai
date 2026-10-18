@@ -86,7 +86,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             {!features.canWrite ? (
               <ReadOnlyNotice />
             ) : (
-              // Signed-in phone users get this entry in the account menu, which frees room for the Buzz counter.
+              // Hidden on phones for signed-in users to make room for the Buzz counter.
               <div className={clsx({ ['@max-md:hidden']: !!currentUser })}>
                 <SupportButton />
               </div>

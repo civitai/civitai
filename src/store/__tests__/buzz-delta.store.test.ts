@@ -113,3 +113,37 @@ describe('buzz delta store', () => {
     expect(state().groups['yellow:debit']).toMatchObject({ total: 600, count: 3 });
   });
 });
+
+describe('buzz delta store: large spends and empty updates', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    state().reset();
+  });
+
+  afterEach(() => {
+    state().reset();
+    vi.useRealTimers();
+  });
+
+  it('keeps the long hold when a small spend follows a large one', () => {
+    state().record('yellow', -12_500);
+    state().record('yellow', -5);
+    vi.advanceTimersByTime(BUZZ_DELTA_QUIET_MS);
+
+    expect(state().groups['yellow:debit']).toMatchObject({ total: 12_505, big: true });
+  });
+
+  it('treats exactly 10,000 as large and 9,999 as not', () => {
+    state().record('yellow', -9_999);
+    state().record('blue', -10_000);
+
+    expect(state().groups['yellow:debit']!.big).toBe(false);
+    expect(state().groups['blue:debit']!.big).toBe(true);
+  });
+
+  it('ignores an update with no change', () => {
+    state().record('yellow', 0);
+
+    expect(state().groups).toEqual({});
+  });
+});

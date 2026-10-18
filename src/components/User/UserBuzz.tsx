@@ -142,7 +142,7 @@ function AnimatedBalance({
 }) {
   if (!abbreviate) return <CustomNumberFlow value={balance} gradient={gradient} />;
 
-  // Floored like `abbreviateNumber`, which `NumberFlow`'s own compact notation would round instead.
+  // Floored like the non-animated branch; a compact `format` on CustomNumberFlow would round instead.
   const text = abbreviateNumber(balance, { floor: true, decimals: 1 });
   const match = /^(-?\d+(?:\.\d+)?)([kmbt]?)$/.exec(text);
   if (!match) return <>{text}</>;

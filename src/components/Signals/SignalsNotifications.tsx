@@ -14,7 +14,10 @@ function BuzzDeltaAnnouncer() {
 
   return (
     <VisuallyHidden role="status" aria-live="polite" aria-atomic="true">
-      {`${verb} ${settled.total.toLocaleString()} Buzz${transactions}.`}
+      {/* A fresh node per group: identical text twice in a row is otherwise not announced again. */}
+      <span
+        key={settled.seq}
+      >{`${verb} ${settled.total.toLocaleString()} Buzz${transactions}.`}</span>
     </VisuallyHidden>
   );
 }

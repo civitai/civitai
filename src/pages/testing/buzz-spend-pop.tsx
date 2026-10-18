@@ -14,12 +14,7 @@ function randomSpend(max: number) {
   return -(5 + Math.floor(Math.random() * max));
 }
 
-/**
- * Drives the Buzz spend pop-out without a live signal: each button feeds the same path a
- * `BuzzUpdate` signal takes (`recordBuzzUpdate`) and moves the cached balance the way
- * `useBuzzSignalUpdate` does, so the counter rolls and the "-N" coalesces exactly as in the header.
- * Both counters below are the header's `UserBuzz` with `animated` and `withDeltaPop`.
- */
+/** Feeds `recordBuzzUpdate` and mirrors the cache update in `useBuzzSignalUpdate`, so the pop-out can be exercised without a live signal. */
 export default function BuzzSpendPopTest() {
   const queryUtils = trpc.useUtils();
   const groups = useBuzzDeltaStore((state) => state.groups);
@@ -61,8 +56,8 @@ export default function BuzzSpendPopTest() {
     <Stack p="md" gap="md" maw={900} mx="auto">
       <Title>Buzz spend pop-out</Title>
       <Text size="sm" c="dimmed">
-        Each button below takes the path of a <Code>BuzzUpdate</Code> signal. A burst is 20 spends
-        100ms apart; catch-up is 14 spends in the same tick, like a tab that was in the background.
+        Each button below takes the path of a <Code>BuzzUpdate</Code> signal. Catch-up lands all its
+        spends in the same tick, like a tab that was in the background.
       </Text>
 
       <Group gap="xs">
