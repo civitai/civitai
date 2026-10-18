@@ -2,8 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type { dbWrite } from '~/server/db/client';
 import {
   countShopItemSale,
+  countShopItemSaleAfterGrant,
   setShopItemSaleCount,
 } from '~/server/services/cosmetic-shop-sale-count';
 
@@ -75,6 +77,62 @@ describe('countShopItemSale', () => {
     await countShopItemSale(tx(), 1);
 
     expect(await meta(2)).toEqual({ purchases: 9 });
+  });
+});
+
+describe('countShopItemSaleAfterGrant', () => {
+  const runner = {
+    $transaction: async (fn: (t: Prisma.TransactionClient) => Promise<unknown>) => {
+      await db.pg.exec('BEGIN');
+      try {
+        const result = await fn(tx());
+        await db.pg.exec('COMMIT');
+        return result;
+      } catch (error) {
+        await db.pg.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  } as unknown as Pick<typeof dbWrite, '$transaction'>;
+  const seen = async () =>
+    (await db.pg.query<{ value: string }>(`SELECT "value" FROM "LockTimeoutSeen"`)).rows.map(
+      (r) => r.value
+    );
+
+  // PGlite has one session, so no second buyer can hold the row; the timeout's effect is read off
+  // the update itself instead: what `lock_timeout` was while it ran, and after its transaction.
+  beforeAll(async () => {
+    await db.pg.exec(`
+      CREATE TABLE "LockTimeoutSeen" ("value" TEXT NOT NULL);
+      CREATE FUNCTION record_lock_timeout() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO "LockTimeoutSeen" VALUES (current_setting('lock_timeout'));
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER record_lock_timeout BEFORE UPDATE ON "CosmeticShopItem"
+        FOR EACH ROW EXECUTE FUNCTION record_lock_timeout();
+    `);
+  });
+  afterAll(() =>
+    db.pg.exec(`
+      DROP TRIGGER record_lock_timeout ON "CosmeticShopItem";
+      DROP FUNCTION record_lock_timeout();
+      DROP TABLE "LockTimeoutSeen";
+    `)
+  );
+  beforeEach(() => db.pg.exec(`DELETE FROM "LockTimeoutSeen"`));
+
+  it('counts the sale under a lock timeout that ends with its transaction', async () => {
+    await countShopItemSaleAfterGrant(1, runner);
+
+    expect(await meta(1)).toEqual({ purchases: 5, label: 'a', flag: true });
+    // Some bound while the row is written, whatever its value; none once the transaction ends.
+    const during = await seen();
+    expect(during).toHaveLength(1);
+    expect(during[0]).not.toBe('0');
+    const [{ lock_timeout }] = (await db.pg.query<{ lock_timeout: string }>('SHOW lock_timeout'))
+      .rows;
+    expect(lock_timeout).toBe('0');
   });
 });
 

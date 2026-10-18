@@ -41,7 +41,7 @@ import {
   type ShopPurchaseClaim,
   type ShopPurchaseStart,
 } from '~/server/services/shop-purchase-charge';
-import { countShopItemSale } from '~/server/services/cosmetic-shop-sale-count';
+import { countShopItemSaleAfterGrant } from '~/server/services/cosmetic-shop-sale-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -705,8 +705,6 @@ export const purchaseCosmeticPack = async ({
       });
 
       await grantPackMembers({ tx, userId, members: paidFor, claimKey: transactionId });
-
-      await countShopItemSale(tx, shopItem.id);
     });
   } catch (error) {
     // With a client key, a unique violation here means a request with the same
@@ -830,6 +828,9 @@ export const purchaseCosmeticPack = async ({
       data: { shopItemId: shopItem.id, userId, transactionId, error: e },
     });
   }
+
+  // After the payouts: a wait on the listing row must not delay paying the creators.
+  await countShopItemSaleAfterGrant(shopItem.id);
 
   return {
     transactionId,

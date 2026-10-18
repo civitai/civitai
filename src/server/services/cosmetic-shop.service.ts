@@ -87,7 +87,7 @@ import {
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
 import {
-  countShopItemSale,
+  countShopItemSaleAfterGrant,
   setShopItemSaleCount,
 } from '~/server/services/cosmetic-shop-sale-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
@@ -1328,8 +1328,6 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
 
-      await countShopItemSale(tx, shopItemId);
-
       return userCosmetic;
     });
 
@@ -1477,6 +1475,9 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
     }
+
+    // After the payouts: a wait on the listing row must not delay paying the creators.
+    await countShopItemSaleAfterGrant(shopItemId);
 
     return data;
   } catch (error) {
