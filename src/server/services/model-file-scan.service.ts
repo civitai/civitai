@@ -218,8 +218,10 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     data.pickleScanMessage = stripNul(outcome.pickleScan.message);
   }
 
-  if (outcome.headerData !== undefined) {
-    data.headerData = stripNul(outcome.headerData) as Prisma.InputJsonValue;
+  // Stripped once: SSHS_12 below is derived from this header and lands in a text column too.
+  const headerData = stripNul(outcome.headerData);
+  if (headerData !== undefined) {
+    data.headerData = headerData as Prisma.InputJsonValue;
   }
 
   if (outcome.rawScanResult !== undefined) {
@@ -234,7 +236,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       Object.entries(
         // outcome.headerData is absent on a hash-only rescan, and this rebuild deletes every row
         // for the file — so the stored column is what keeps SSHS_12 from being dropped.
-        normalizeScanHashes(outcome.hashes, outcome.headerData ?? file.headerData)
+        normalizeScanHashes(outcome.hashes, headerData ?? file.headerData)
       ) as Array<[ModelHashType, string]>
     )
       .filter(([, hash]) => Boolean(hash))
