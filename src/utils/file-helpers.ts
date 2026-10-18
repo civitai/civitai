@@ -352,7 +352,7 @@ export async function inferGgufQuantType(file: File): Promise<ModelFileQuantType
   return null;
 }
 
-const unscannedFile = {
+export const unscannedFile = {
   scannedAt: null,
   scanRequestedAt: null,
   rawScanResult: null,
