@@ -55,4 +55,12 @@ describe('sys-timeouts record', () => {
     for (let i = 0; i < 2000; i++) r.recordTimeout(i);
     expect(r.count(1_000_000, 2000)).toBe(512);
   });
+
+  it('sums the readings, so a wedge split across two connections counts every timeout', () => {
+    const a = createSysTimeoutRecord();
+    const b = createSysTimeoutRecord();
+    for (let i = 0; i < 6; i++) a.recordTimeout(40_000 + i * 1000);
+    for (let i = 0; i < 7; i++) b.recordTimeout(40_000 + i * 1000);
+    expect(countSysTimeoutsWithoutSuccess(60_000, 60_000)).toBe(13);
+  });
 });

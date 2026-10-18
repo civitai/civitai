@@ -13,10 +13,11 @@
  * THE SIGNAL: each sys base connection (serving + Buffer-mode) keeps its OWN record (one per
  * `instrumentCommands` call). A record reads as the number of its timeouts in the last `windowMs`,
  * or 0 if any of ITS commands succeeded in that window; `countSysTimeoutsWithoutSuccess` is the
- * highest reading across records. The "no success" half is the false-positive guard: a healthy
- * client that times out the odd slow command keeps succeeding at everything else, so it reads 0
- * however many slow commands it has. Per connection, not aggregate, so a wedged connection still
- * heals while the other keeps answering; the heal reconnects all of them, as before.
+ * sum of the readings. The "no success" half is the false-positive guard: a healthy client that
+ * times out the odd slow command keeps succeeding at everything else, so it reads 0 however many
+ * slow commands it has. The guard is per connection, so a wedged connection still heals while the
+ * other keeps answering; the sum still sees a wedge on both connections whose traffic is split
+ * between them. The heal reconnects all of them, as before.
  *
  * "Success" = the underlying command FULFILLED, even if its caller had already been released by
  * the backstop: a late reply still proves the client is talking to the server, and reconnecting a
@@ -82,13 +83,15 @@ export function createSysTimeoutRecord(): SysTimeoutRecord {
 }
 
 /**
- * The highest reading across every sys connection's record: the trigger input the sys watchdog
- * samples. O(records × RING_CAPACITY) at a 1 s watchdog sample.
+ * The SUM of every sys connection's reading: the trigger input the sys watchdog samples. A
+ * connection that succeeded in the window reads 0, so it neither adds to nor hides the others; a
+ * wedge on both connections still counts every timeout when the traffic is split between them.
+ * O(records × RING_CAPACITY) at a 1 s watchdog sample.
  */
 export function countSysTimeoutsWithoutSuccess(windowMs: number, now: number = Date.now()): number {
-  let max = 0;
-  for (const r of records) max = Math.max(max, r.count(windowMs, now));
-  return max;
+  let total = 0;
+  for (const r of records) total += r.count(windowMs, now);
+  return total;
 }
 
 /**

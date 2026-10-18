@@ -29,7 +29,7 @@ const SETTINGS: SysSelfHealSettings = {
 };
 const BACKSTOP_MS = defaults.REDIS_SYS_COMMAND_TIMEOUT_MS;
 // Each case starts at a later clock than every earlier one, so whatever the module-level timeout
-// record kept from an earlier case lies outside every window here.
+// records kept from earlier cases lie outside every window here.
 let T0 = 0;
 
 const never = () => new Promise<never>(() => undefined);
@@ -254,5 +254,13 @@ describe('sys self-heal: timeout-rate trigger (wedged low-traffic client)', () =
     // The wedged connection's timeouts start at 30 s; the 10th lands at 57 s.
     expect(h.healsAt.map((t) => t - T0)).toEqual([57_000]);
     expect(h.target.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a wedge on BOTH connections heals even when the traffic is split between them', async () => {
+    // One command per connection every 9 s: each connection alone times out only ~7 per 60 s,
+    // under the threshold; together ~13.
+    const h = harness({ connections: [() => undefined, () => undefined] });
+    await h.run(200_000, 9000);
+    expect(h.healsAt.length).toBeGreaterThan(0);
   });
 });
