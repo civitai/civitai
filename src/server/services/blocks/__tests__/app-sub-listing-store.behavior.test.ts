@@ -466,7 +466,45 @@ describe('store catalog with sub-listings, executed', () => {
     expect(await cover({ redCapable: true })).toBeNull();
   });
 
-  it('on a red host the parent fallback never shows LESS than off one', async () => {
+  // The ICON counterpart of the test above: the parent icon on a child card follows the same
+  // red-host rule as the parent cover fallback, not the child image's own ceiling.
+  it('on a red host the parent ICON admits the viewer’s opted-in levels, and only theirs', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "postId") VALUES (5, 'parent-icon', ${OWNER}, 4, NULL);
+      UPDATE app_listings SET icon_id = 5, content_rating = 'pg' WHERE id = '${PARENT}'`);
+    const iconOf = async (opts: Partial<NonNullable<ListOpts>>) =>
+      ((await page(opts)).find((i) => i.id === CHILD_A) as { parent?: { iconUrl: string | null } })
+        ?.parent?.iconUrl;
+    // A viewer who opted into PG and R (5), on a red host: the R parent icon shows.
+    expect(await iconOf({ redCapable: true, viewerBrowsingLevel: 5 })).toBe('parent-icon');
+    // The same viewer off a red host: hidden.
+    expect(await iconOf({ redCapable: false, viewerBrowsingLevel: 5 })).toBeNull();
+    // An anonymous viewer on a red host: hidden.
+    expect(await iconOf({ redCapable: true })).toBeNull();
+  });
+
+  // The stated boundary: only the parent FALLBACK takes the red-host rule. The child's OWN image
+  // keeps its pre-existing ceiling (viewer ∩ host ∩ the card's effective rating), so on a red host
+  // an R child image on a `pg` card stays hidden even from a viewer who opted into R, and the card
+  // falls back to the parent cover.
+  it('on a red host the child’s OWN image keeps its card-rating ceiling', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 2;
+      UPDATE app_listings SET content_rating = 'pg' WHERE id = '${PARENT}'`);
+    const cover = async (opts: Partial<NonNullable<ListOpts>>) =>
+      (await page(opts)).find((i) => i.id === CHILD_A)?.coverUrl;
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 5 })).toBe('parent-cover');
+    // Positive control: the same child image at PG is shown, so the fallback above is the gate.
+    await holder.db.exec(`UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = 2`);
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 5 })).toBe('item-a');
+  });
+
+  /**
+   * INVARIANT GUARD, not regression coverage: this also passed before the red-host rule was
+   * introduced (the old code never showed less here either). It pins the "never less on a red host"
+   * property so a future change cannot break it.
+   */
+  it('INVARIANT GUARD: on a red host the parent fallback never shows LESS than off one', async () => {
     // A PG-13 parent cover on a `pg13` card, for a viewer whose level admits PG-13 (3).
     await holder.db.exec(`
       UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2;
