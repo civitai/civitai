@@ -106,7 +106,9 @@ const LOCK_TIMEOUT = {
 let statementConnections: number[];
 /** Runs once, straight after the service's first statement (its read of the purchase). */
 let afterFirstStatement: (() => Promise<unknown>) | null;
-/** Users whose item holder lock fails with this SQLSTATE: 55P03 is a lock timeout. */
+/**
+ * Users whose item holder lock fails, mapped to the SQLSTATE it fails with (55P03 is a lock timeout).
+ */
 let lockFails: Map<number, string>;
 /** Calls the service made to the main app, and how the main app answers them. */
 let mainApp: { url: string; body: unknown; afterCommit: boolean }[];
@@ -610,6 +612,7 @@ describe('moderator grants take the item holder lock', () => {
       grantCosmeticsToUsers({ cosmeticIds: [700], userIds: [BUYER, OTHER] })
     ).rejects.toMatchObject({ code: '40P01' });
     expect(await isRefunded('box-a')).toBe(false);
+    expect(await holdings()).toEqual([]);
   });
 
   it('a bulk grant locks each user in their own transaction', async () => {

@@ -156,7 +156,6 @@ const pgError = (code: string) =>
     clientVersion: 'test',
     meta: { code },
   });
-// A raw query's lock timeout reaches Prisma as P2010, the SQLSTATE in meta.code.
 const lockTimeout = () => pgError('55P03');
 
 type ContentWhere = {

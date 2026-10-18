@@ -3,7 +3,9 @@ import { ITEM_HOLDER_LOCK_CLASS, ITEM_HOLDER_LOCK_TIMEOUT } from '@civitai/share
 
 export { ITEM_HOLDER_LOCK_CLASS };
 
-/** Shown when the buyer's own earlier purchase or box opening is still holding their lock. */
+/**
+ * Shown when this user's lock is held by other work, or too many purchases and opens are in flight.
+ */
 export const ITEM_HOLDER_BUSY_MESSAGE =
   'Your last purchase or box opening is still processing. Try again in a moment.';
 
