@@ -86,6 +86,7 @@ import {
   resumeShopPurchase,
   runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
+import { countShopItemSale } from '~/server/services/cosmetic-shop-sale-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { purchaseMysteryBox } from '~/server/services/mystery-box.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -1334,16 +1335,7 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
 
-      // Update the cosmetic with the new amount:
-      await tx.cosmeticShopItem.update({
-        where: { id: shopItemId },
-        data: {
-          meta: {
-            ...(shopItemMeta ?? {}),
-            purchases: (shopItemMeta?.purchases ?? 0) + 1,
-          },
-        },
-      });
+      await countShopItemSale(tx, shopItemId);
 
       return userCosmetic;
     });

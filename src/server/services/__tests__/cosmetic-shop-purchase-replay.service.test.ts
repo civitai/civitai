@@ -238,17 +238,21 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
-  // Moving this write back to dbWrite makes the grant need a second pooled connection while it
-  // holds the buyer's lock: once the pool is full of waiters it never gets one, and the grant fails
-  // after the charge. The row lock it takes on tx lasts one commit (it is the last write).
-  it("counts the sale on the grant's own transaction, not a second connection", async () => {
+  // On dbWrite, the grant needs a second pooled connection while it holds the buyer's lock: once the
+  // pool is full of waiters it never gets one, and the grant fails after the charge. A write of the
+  // meta the purchase loaded would replace the row's meta wholesale.
+  it("counts the sale on the grant's own transaction, from the row as it is then", async () => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
 
     await purchase();
 
-    expect(mocks.txShopItemUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: SHOP_ITEM_ID } })
+    const counted = mocks.executeRaw.mock.calls.filter(
+      ([strings, ...values]) =>
+        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"') &&
+        values.includes(SHOP_ITEM_ID)
     );
+    expect(counted).toHaveLength(1);
+    expect(mocks.txShopItemUpdate).not.toHaveBeenCalled();
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
@@ -295,7 +299,11 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await purchase();
 
-    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    // The sale counter is the other raw statement; the lock comes first and only once.
+    const locks = mocks.executeRaw.mock.calls.filter(([strings]) =>
+      (strings as string[]).join('').includes('pg_advisory_xact_lock')
+    );
+    expect(locks).toHaveLength(1);
     const [sql, lockClass, lockedUser] = mocks.executeRaw.mock.calls[0] as [
       readonly string[],
       number,

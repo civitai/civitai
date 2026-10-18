@@ -16,7 +16,8 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
   claims.rollbackOnThrow(() =>
     fn({
       cosmeticShopPurchaseClaim: claims.txDelegate,
-      $executeRaw: (...a: unknown[]) => (isHolderLock(a) ? holderLock(...a) : executeRaw(...a)),
+      $executeRaw: (...a: unknown[]) =>
+        isHolderLock(a) ? holderLock(...a) : isSaleCount(a) ? saleCount(...a) : executeRaw(...a),
       userCosmetic: {
         findMany: (...a: unknown[]) => ownedFindMany(...a),
         createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
@@ -50,6 +51,10 @@ const executeRaw = vi.fn();
 const holderLock = vi.fn();
 const isHolderLock = (a: unknown[]) =>
   (a[0] as readonly string[]).join('').includes('pg_advisory_xact_lock');
+// The listing's sale counter (cosmetic-shop-sale-count.ts), also kept apart from the grants.
+const saleCount = vi.fn();
+const isSaleCount = (a: unknown[]) =>
+  (a[0] as readonly string[]).join('').includes('UPDATE "CosmeticShopItem"');
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 const createManyComponents = vi.fn();
 const createManyUserCosmetic = vi.fn();

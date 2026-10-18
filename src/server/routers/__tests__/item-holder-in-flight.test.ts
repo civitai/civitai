@@ -113,7 +113,11 @@ beforeEach(() => {
   outcomes.length = 0;
   installSortedSets();
 });
-afterEach(() => gate.releaseAll());
+// Lets every released request finish, so its slot release cannot land in the next test.
+afterEach(async () => {
+  gate.releaseAll();
+  await settle();
+});
 
 describe('per-user in-flight limit on purchaseShopItem and mysteryBox.open', () => {
   it('refuses a third purchase or open while two are in flight, without reaching the service', async () => {

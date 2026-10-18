@@ -41,6 +41,7 @@ import {
   type ShopPurchaseClaim,
   type ShopPurchaseStart,
 } from '~/server/services/shop-purchase-charge';
+import { countShopItemSale } from '~/server/services/cosmetic-shop-sale-count';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -705,15 +706,7 @@ export const purchaseCosmeticPack = async ({
 
       await grantPackMembers({ tx, userId, members: paidFor, claimKey: transactionId });
 
-      await tx.cosmeticShopItem.update({
-        where: { id: shopItem.id },
-        data: {
-          meta: {
-            ...shopItem.meta,
-            purchases: (shopItem.meta.purchases ?? 0) + 1,
-          } as Prisma.InputJsonValue,
-        },
-      });
+      await countShopItemSale(tx, shopItem.id);
     });
   } catch (error) {
     // With a client key, a unique violation here means a request with the same
