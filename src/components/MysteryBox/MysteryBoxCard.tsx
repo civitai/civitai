@@ -9,6 +9,7 @@ import type { MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   boxActions,
   collectedCount,
+  MYSTERY_BOX_FALLBACK_DESCRIPTION,
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
 
@@ -57,7 +58,7 @@ export function MysteryBoxCard({
           {view.name}
         </Text>
         <Text size="sm" c="dimmed">
-          {view.description ?? "1 random hat you don't own yet."}
+          {view.description ?? MYSTERY_BOX_FALLBACK_DESCRIPTION}
         </Text>
         <MysteryBoxOddsBar tiers={tierSummaries(view)} />
         <Group gap="sm" wrap="nowrap" mt={4}>

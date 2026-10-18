@@ -9,12 +9,11 @@ import type { BoxCatalogEntry, BoxDisplayEntry } from '~/server/services/mystery
 import {
   BOX_TIER_ORDER,
   BOX_TIER_SELECT,
-  boxSaleRefusal,
   getBoxCatalogForDisplay,
   mysteryBoxesHiddenIn,
+  readBoxListings,
 } from '~/server/services/mystery-box.service';
-import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
-import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 
 /**
  * A box's public odds page. Odds and contents come from the live tiers and the contents of the
@@ -169,23 +168,13 @@ export async function getMysteryBoxOddsPage({
   if (event === null) return null;
 
   const now = new Date();
-  const listings = await dbRead.cosmeticShopItem.findMany({
-    where: { itemDefinitionId: box.id, status: CosmeticShopItemStatus.Published },
-    orderBy: { id: 'asc' },
-    select: {
-      id: true,
-      unitAmount: true,
-      availableQuantity: true,
-      availableFrom: true,
-      availableTo: true,
-    },
-  });
+  const { listings, onSale: listingOnSale } = await readBoxListings([box.id]);
   const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
   // A held or opened box went on sale when it was bought: purchase is the only grant of a box today.
   // A grant path that skips the sale (a prize, a mod grant) must make this check ask for a sale.
   if (!started && !viewer?.isModerator && !(await boxEverHeld(box.id))) return null;
 
-  const [tiers, contents, snapshots, sold] = await Promise.all([
+  const [tiers, contents, snapshots] = await Promise.all([
     dbRead.boxTier.findMany({
       where: { boxDefinitionId: box.id },
       orderBy: BOX_TIER_ORDER,
@@ -197,12 +186,9 @@ export async function getMysteryBoxOddsPage({
       orderBy: { version: 'asc' },
       select: { version: true, snapshot: true, createdAt: true },
     }),
-    getSoldCounts(listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)),
   ]);
   const onSale =
-    box.status === ITEM_DEFINITION_STATUS.published
-      ? listings.find((l) => !boxSaleRefusal(l, sold.get(l.id) ?? 0, now))
-      : undefined;
+    box.status === ITEM_DEFINITION_STATUS.published ? listingOnSale(box.id) : undefined;
 
   const noun = rewardNoun(contents);
   const history: BoxOddsHistoryEntry[] = [];

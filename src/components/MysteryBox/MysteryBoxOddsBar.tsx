@@ -1,5 +1,5 @@
 import { Group, Progress, Text } from '@mantine/core';
-import type { TierSummary } from '~/components/MysteryBox/mystery-box.utils';
+import type { OddsContent, TierSummary } from '~/components/MysteryBox/mystery-box.utils';
 import { formatChance, tierColor } from '~/components/MysteryBox/mystery-box.utils';
 
 /** The viewer's tier odds as one bar, commonest first, with a legend. */
@@ -8,7 +8,7 @@ export function MysteryBoxOddsBar({
   legend = true,
 }: {
   /** Rarest first, as `tierSummaries` returns them. */
-  tiers: TierSummary[];
+  tiers: TierSummary<OddsContent>[];
   legend?: boolean;
 }) {
   const commonestFirst = [...tiers].reverse();
