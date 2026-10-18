@@ -60,6 +60,8 @@ export function WornHatPopover({
       radius="md"
       shadow="md"
       withArrow
+      // The app theme defaults Popover to in-place, where a clipping parent (the home block) crops it.
+      withinPortal
       // The arrow points at the hat. Mantine's default pins it 5px from the dropdown's start edge.
       arrowPosition="center"
       arrowSize={10}
