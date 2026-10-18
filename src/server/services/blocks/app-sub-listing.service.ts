@@ -231,7 +231,6 @@ type ResolvedParent = {
   id: string;
   slug: string;
   contentRating: string | null;
-  blockId: string;
   enabled: boolean;
   maxPerAuthor: number;
 };
@@ -245,7 +244,7 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
         id: true,
         slug: true,
         contentRating: true,
-        appBlock: { select: { blockId: true } },
+        appBlock: { select: { id: true } },
         subListingParent: { select: { enabled: true, maxPerAuthor: true } },
       },
     });
@@ -254,7 +253,6 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
       id: listing.id,
       slug: listing.slug,
       contentRating: listing.contentRating,
-      blockId: listing.appBlock.blockId,
       enabled: listing.subListingParent?.enabled ?? false,
       maxPerAuthor: listing.subListingParent?.maxPerAuthor ?? 0,
     };
@@ -263,29 +261,42 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
   }
 }
 
-export type SharedItemRead = { authorUserId: number; hidden: boolean } | null;
+export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | null;
 
-/** The app's shared-storage row for `key`, including a hidden one. */
+/**
+ * The app's shared item stored under `key`, hidden included, from the document store when the
+ * app's approved manifest declares a shared collection, else from the legacy shared storage
+ * (`resolveSharedItem`). A key that does not name one item reads as not
+ * found. A document with no user author has `authorUserId: null`, which matches no publisher.
+ * A store that cannot be read is a 503, never "not found".
+ */
 export async function readSharedItemForSubListing(
-  blockId: string,
+  appBlockId: string,
   key: string
 ): Promise<SharedItemRead> {
-  const { sanitizeAppSlug, appSchemaIdent } = await import('~/server/utils/apps-slug');
-  const slug = sanitizeAppSlug(blockId);
-  if (!slug) return null;
-  const { requireAppsDb } = await import('~/server/db/appsDb');
-  let rows: { author_user_id: number; hidden: boolean }[];
   try {
-    rows = (
-      await requireAppsDb().query<{ author_user_id: number; hidden: boolean }>(
-        `SELECT author_user_id, hidden_at IS NOT NULL AS hidden FROM ${appSchemaIdent(
-          slug
-        )}.shared_kv WHERE key = $1 LIMIT 1`,
-        [key]
-      )
-    ).rows;
+    const block = await dbRead.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: { blockId: true, manifest: true },
+    });
+    if (!block) return null;
+    const { resolveSharedItem } = await import('~/server/services/apps/shared-item-key');
+    const item = await resolveSharedItem({
+      appBlockId,
+      blockId: block.blockId,
+      manifest: block.manifest,
+      key,
+    });
+    if (item.kind === 'ambiguous') {
+      logToAxiom({
+        name: 'app-sub-listing-shared-key-ambiguous',
+        type: 'warning',
+        appBlockId,
+      }).catch(() => null);
+    }
+    return item.kind === 'found' ? { authorUserId: item.authorUid, hidden: item.hidden } : null;
   } catch (err) {
-    // An unprovisioned schema or an unavailable apps database cannot prove the item exists.
+    // A store we cannot read cannot prove the item is missing.
     logToAxiom({
       name: 'app-sub-listing-shared-read-failed',
       type: 'error',
@@ -293,8 +304,6 @@ export async function readSharedItemForSubListing(
     }).catch(() => null);
     throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
   }
-  const row = rows[0];
-  return row ? { authorUserId: row.author_user_id, hidden: row.hidden } : null;
 }
 
 /**
@@ -386,7 +395,7 @@ export async function upsertSubListing(args: {
     );
   }
 
-  const item = await readSharedItemForSubListing(parent.blockId, itemKey);
+  const item = await readSharedItemForSubListing(args.appBlockId, itemKey);
   if (!item || item.hidden) throw new SubListingError(404, 'item_not_found', 'Item not found');
   if (item.authorUserId !== user.id) {
     throw new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
@@ -1254,7 +1263,10 @@ export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
   itemKey: string;
   change: 'withdrawn' | 'hidden';
-  /** For `withdrawn`: only the author's own item follows their withdraw. */
+  /**
+   * Only this author's card follows. Required for `withdrawn`; for `hidden`, given when the key
+   * alone may name another author's item (the document store: one key in several collections).
+   */
   authorUserId?: number;
   /** For `hidden`: the moderator who hid the shared row. */
   moderatorId?: number;
@@ -1279,7 +1291,7 @@ export async function syncSubListingForSharedRow(
     const where: Prisma.AppSubListingWhereInput = {
       parentListingId: parent.id,
       itemKey: args.itemKey,
-      ...(args.change === 'withdrawn' ? { authorUserId: args.authorUserId } : {}),
+      ...(args.authorUserId != null ? { authorUserId: args.authorUserId } : {}),
     };
     // Moves a store-hidden row's version so a restore that read the shared row as live fails
     // its compare-and-set. Best-effort on its own: a failed touch must not stop the transition.
@@ -1456,12 +1468,12 @@ async function isSharedItemLive(row: {
 }): Promise<boolean> {
   const parent = await dbRead.appListing.findUnique({
     where: { id: row.parentListingId },
-    select: { kind: true, appBlock: { select: { blockId: true } } },
+    select: { kind: true, appBlockId: true },
   });
   // An off-site parent's items have no shared row: its platform withdraws them instead.
   if (parent?.kind === 'offsite') return true;
-  if (!parent?.appBlock) return false;
-  const item = await readSharedItemForSubListing(parent.appBlock.blockId, row.itemKey);
+  if (!parent?.appBlockId) return false;
+  const item = await readSharedItemForSubListing(parent.appBlockId, row.itemKey);
   // Same author as the card: a key the app reused for someone else's item is not this item.
   return item != null && !item.hidden && item.authorUserId === row.authorUserId;
 }

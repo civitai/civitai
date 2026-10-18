@@ -63,7 +63,7 @@ import {
 } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
-import type { SyncSubListingForSharedRowArgs } from '~/server/services/blocks/app-sub-listing.service';
+import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -1363,26 +1363,6 @@ async function withdrawSharedRowUnmetered(
     await syncStoreItem({ appBlockId, itemKey: key, change: 'withdrawn', authorUserId: uid });
   }
   return { ok: true as const, deleted };
-}
-
-/**
- * The item's store card (an app sub-listing) follows an in-app withdraw or moderator hide,
- * from the server, so the store never depends on the app to clean up. Best-effort: the
- * shared-storage write has already committed in the apps database.
- */
-async function syncStoreItem(args: SyncSubListingForSharedRowArgs): Promise<void> {
-  try {
-    const { syncSubListingForSharedRow } = await import(
-      '~/server/services/blocks/app-sub-listing.service'
-    );
-    await syncSubListingForSharedRow(args);
-  } catch (err) {
-    logToAxiom({
-      name: 'app-sub-listing-shared-sync-failed',
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
-  }
 }
 
 /**

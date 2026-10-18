@@ -12,6 +12,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as SessionClientModule from '~/server/auth/session-client';
 import type * as Moderation from '~/server/services/apps/shared-data-moderation';
+import type * as SubListingService from '~/server/services/blocks/app-sub-listing.service';
 import type { SharedTextScan } from '~/server/services/apps/shared-data-moderation';
 import type { DocStore } from '~/server/services/apps/doc-store';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
@@ -62,6 +63,16 @@ vi.mock('~/server/auth/session-client', async (importOriginal) => ({
   sessionClient: { getSessionUserById: vi.fn(async (id: number) => h.users.get(id) ?? null) },
 }));
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
+// The App Store card sync is recorded at its entry point (its own effect on the card rows is
+// covered in `app-sub-listing.service.test.ts`).
+const cardSync = vi.hoisted(() => ({ calls: [] as unknown[], fail: false }));
+vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubListingService>()),
+  syncSubListingForSharedRow: vi.fn(async (args: unknown) => {
+    cardSync.calls.push(args);
+    if (cardSync.fail) throw new Error('store card sync unavailable');
+  }),
+}));
 // The scanner is replaced; `enforcedBlockingHit` (which hit refuses) stays real.
 vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) => {
   const real = await importOriginal<typeof Moderation>();
@@ -1680,6 +1691,65 @@ describe('round 1: approved manifests, dot keys, CORS default, failures, deletes
     expect(lua.calls.length).toBe(evalsBefore);
     expect(vi.mocked(scanSharedData)).not.toHaveBeenCalled();
     expect(vi.mocked(scanCounterKey)).not.toHaveBeenCalled();
+  });
+});
+
+describe('the App Store card follows the author deleting a shared document', () => {
+  beforeEach(() => {
+    cardSync.calls = [];
+    cardSync.fail = false;
+  });
+  const put = (token: string, path: string) =>
+    call({ token, method: 'PUT', path, body: { data: { title: path } } });
+  const del = (token: string, path: string) => call({ token, method: 'DELETE', path });
+
+  it("withdraws the author's card for that key in that app", async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(t, '/posts/card-1')).status).toBe(200);
+    const out = await del(t, '/posts/card-1');
+    expect(out).toMatchObject({ status: 200, body: { deleted: true } });
+    expect(cardSync.calls).toEqual([
+      { appBlockId: A.id, itemKey: 'card-1', change: 'withdrawn', authorUserId: VIEWER_IDS.v1 },
+    ]);
+  });
+
+  it("another app's delete of the same key names only that app's card", async () => {
+    const { A, B } = freshApps();
+    const ta = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const tb = await mint({ app: B, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(ta, '/posts/card-2')).status).toBe(200);
+    expect((await put(tb, '/posts/card-2')).status).toBe(200);
+    expect((await del(tb, '/posts/card-2')).body).toEqual({ deleted: true });
+    expect(cardSync.calls).toEqual([
+      { appBlockId: B.id, itemKey: 'card-2', change: 'withdrawn', authorUserId: VIEWER_IDS.v1 },
+    ]);
+  });
+
+  it('a private document, a dev-namespace document and a delete that removed nothing leave cards alone', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(t, '/prefs/card-3')).status).toBe(200);
+    expect((await del(t, '/prefs/card-3')).body).toEqual({ deleted: true });
+    const dev = await mintDevReal(A, VIEWER_IDS.v1, contract.defaultScopes);
+    expect((await put(dev, '/posts/card-4')).status).toBe(200);
+    expect((await del(dev, '/posts/card-4')).body).toEqual({ deleted: true });
+    expect((await del(t, '/posts/never-written')).body).toEqual({ deleted: false });
+    expect(cardSync.calls).toEqual([]);
+    // Positive control: the same token's shared prod delete does sync.
+    expect((await put(t, '/posts/card-5')).status).toBe(200);
+    expect((await del(t, '/posts/card-5')).body).toEqual({ deleted: true });
+    expect(cardSync.calls).toHaveLength(1);
+  });
+
+  it('a failing card sync never fails the delete', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expect((await put(t, '/posts/card-6')).status).toBe(200);
+    cardSync.fail = true;
+    expect(await del(t, '/posts/card-6')).toMatchObject({ status: 200, body: { deleted: true } });
+    expect(cardSync.calls).toHaveLength(1);
+    expect((await call({ token: t, method: 'GET', path: '/posts/card-6' })).status).toBe(404);
   });
 });
 

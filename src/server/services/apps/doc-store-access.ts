@@ -35,7 +35,7 @@ import {
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
-import { reviewNamespace } from '~/server/services/apps/doc-store';
+import { PUBLISHED_NS, reviewNamespace } from '~/server/services/apps/doc-store';
 import type { DocStoreContext } from '~/server/services/apps/doc-store.types';
 import {
   docStoreDependency,
@@ -77,7 +77,7 @@ const ALL_FEATURES = Object.fromEntries(
 const loggedUnparseable = new Set<string>();
 
 /** The declared collections, or a retryable 503 (logged once per app, counted every time). */
-function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
+export function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
   const parsed = parseManifestStorage(manifest, ALL_FEATURES);
   if (parsed.errors.length === 0) return parsed.collections;
   recordStorageManifestUnparseable();
@@ -162,7 +162,7 @@ export async function resolveStorageAccess(
   }
   if (viewerUid !== null) await assertRunEnabled(viewerUid);
 
-  let ns = 'prod';
+  let ns = PUBLISHED_NS;
   if (claims.dev === true) {
     // The dev namespace is per developer, so it needs one.
     if (viewerUid === null) throw new DocStoreError('sign_in_required', 'sign in required');
