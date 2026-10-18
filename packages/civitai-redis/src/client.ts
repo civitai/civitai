@@ -2083,9 +2083,11 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // mirroring the cluster watchdog started in getBaseClient's cluster connect() callback. It
   // reconnects ALL sys base connections when the aggregate sys inflight counter stays wedged or
   // sys commands keep timing out with no success (the timeout-rate trigger): the serving `client`
-  // always, plus the dedicated Buffer-mode base on the sentinel path (both feed both signals). The watchdog only samples a counter + reconnects on a wedge, so starting it here
-  // (before the background connect() settles) is safe. Guarded by sysSelfHealInterval so re-entry /
-  // the buffer-base build can't stack a second interval.
+  // always, plus the dedicated Buffer-mode base on the sentinel path (both feed both signals). It
+  // is started here, before the background connect() settles, so it also watches the first
+  // connect: a first connect that leaves sys commands timing out before any has succeeded can
+  // trigger a reconnect (./sys-timeouts, "BEFORE THE FIRST SUCCESS"). Guarded by
+  // sysSelfHealInterval so re-entry / the buffer-base build can't stack a second interval.
   //
   // SINGLE-SINGLETON INVARIANT — registering only the FIRST getClient('system') set is sufficient
   // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
