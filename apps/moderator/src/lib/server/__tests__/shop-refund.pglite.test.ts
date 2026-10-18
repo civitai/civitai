@@ -486,6 +486,14 @@ describe('a take-back of something equipped refreshes the main app', () => {
 describe('moderator grants take the item holder lock', () => {
   const lockedTransactions = () =>
     statements.flatMap((s, i) => (s.sql === 'begin' ? [statements[i + 1]] : []));
+  // The first word of each statement inside each transaction: the grant must be inside the lock's.
+  const transactions = () =>
+    statements
+      .map((s) => s.sql.trim().split(/\s+/)[0].toLowerCase())
+      .join(' ')
+      .split('begin ')
+      .slice(1)
+      .map((t) => t.split(' commit')[0].split(' '));
 
   it('a single grant locks the user before inserting', async () => {
     await expect(
@@ -494,6 +502,7 @@ describe('moderator grants take the item holder lock', () => {
     expect(lockedTransactions()).toEqual([
       { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
     ]);
+    expect(transactions()).toEqual([['select', 'insert']]);
     expect(await holdings()).toEqual([{ userId: BUYER, cosmeticId: 700, claimKey: 'claimed' }]);
   });
 
@@ -505,6 +514,10 @@ describe('moderator grants take the item holder lock', () => {
     expect(lockedTransactions()).toEqual([
       { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, BUYER] },
       { sql: 'SELECT pg_advisory_xact_lock($1::int, $2::int)', params: [1229455361, OTHER] },
+    ]);
+    expect(transactions()).toEqual([
+      ['select', 'insert'],
+      ['select', 'insert'],
     ]);
     expect(await holdings()).toEqual([
       { userId: BUYER, cosmeticId: 700, claimKey: 'claimed' },
