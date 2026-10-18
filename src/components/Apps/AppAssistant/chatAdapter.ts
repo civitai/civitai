@@ -30,8 +30,23 @@ export function listenChatChange(
  * and empties the box with no `input` at all.
  */
 export function messageBoxText(chat: Pick<CivitaiChat, 'renderRoot'> | null): string {
-  const composer = chat?.renderRoot?.querySelector('civitai-chat-composer') as {
+  const draft = composer(chat)?.draft;
+  return typeof draft === 'string' ? draft : '';
+}
+
+/**
+ * Whether the user is dictating: the message box is hidden under the recording or transcribing bar
+ * and reads empty, but what they said goes into it when dictation ends, joined to whatever is in it.
+ */
+export function isDictating(chat: Pick<CivitaiChat, 'renderRoot'> | null): boolean {
+  const box = composer(chat);
+  return box?.recording === true || box?.transcribing === true;
+}
+
+function composer(chat: Pick<CivitaiChat, 'renderRoot'> | null) {
+  return chat?.renderRoot?.querySelector('civitai-chat-composer') as {
     draft?: unknown;
+    recording?: unknown;
+    transcribing?: unknown;
   } | null;
-  return typeof composer?.draft === 'string' ? composer.draft : '';
 }

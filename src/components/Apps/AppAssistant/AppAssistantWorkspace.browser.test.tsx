@@ -57,6 +57,9 @@ const m = vi.hoisted(() => ({
   listing: false,
   /** A reply is running. */
   running: false,
+  /** The user is dictating: the composer shows its recording or transcribing bar over the box. */
+  recording: false,
+  transcribing: false,
   /** What the chat actually sent to the assistant. */
   delivered: [] as string[],
   /**
@@ -84,6 +87,8 @@ const m = vi.hoisted(() => ({
       get: () => m.box,
       set: (value: string) => (m.box = value),
     });
+    Object.defineProperty(composer, 'recording', { get: () => m.recording });
+    Object.defineProperty(composer, 'transcribing', { get: () => m.transcribing });
     const box = document.createElement('textarea');
     box.setAttribute('aria-label', 'Message');
     composer.append(box);
@@ -205,7 +210,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   }),
 }));
 
-const { AppAssistantWorkspace, HELD_TIMEOUT_MS } = await import('./AppAssistantWorkspace');
+const { AppAssistantWorkspace, HELD_TIMEOUT_MS, releaseHeld } = await import(
+  './AppAssistantWorkspace'
+);
 const { AssistantTokenError } = await import('~/components/Apps/AppAssistant/assistantToken');
 
 const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExample sandbox-dev-tunnel';
@@ -267,6 +274,13 @@ async function userSends(text: string) {
   await m.chatSend(text);
 }
 
+/** Dictation ends as 0.11.0 ends it: what was said is joined to whatever is in the box. */
+function endDictation(words: string) {
+  m.recording = false;
+  m.transcribing = false;
+  m.box = [m.box.trim(), words].filter(Boolean).join(' ');
+}
+
 const settle = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function startPreview(blockId: string) {
@@ -295,6 +309,8 @@ beforeEach(() => {
   m.box = '';
   m.listing = false;
   m.running = false;
+  m.recording = false;
+  m.transcribing = false;
   m.delivered = [];
   m.deferOpen = false;
   m.resume.mockClear();
@@ -649,6 +665,8 @@ describe('AppAssistantWorkspace auto-resume', () => {
     await settle(1200);
     expect(m.delivered).toEqual([]);
     expect(m.box).toBe('Add a light mode');
+    // The edited copy is in the box, so the message is not reported unsent as well.
+    expect(document.body.textContent).not.toMatch(/was not sent/);
   });
 
   test('🟡 an app paused again while the message waits gives it back and lifts the hold', async () => {
@@ -850,6 +868,109 @@ describe('AppAssistantWorkspace auto-resume', () => {
     expect(m.delivered).toEqual([]);
   });
 
+  test.each(['recording', 'transcribing'] as const)(
+    '🟡 a held message given back while the user is %s goes to the notice, not under what they say',
+    async (state) => {
+      await openPaused();
+      m.deferOpen = true;
+      await userSends('Add a dark mode');
+      m[state] = true;
+      m.chat!.onChatChange!('chat-2');
+      await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+      await settle(100);
+      endDictation('and a timer');
+      expect(m.box).toBe('and a timer');
+      await expect
+        .element(page.getByText('This message was not sent: “Add a dark mode”'))
+        .toBeVisible();
+    }
+  );
+
+  test.each(['recording', 'transcribing'] as const)(
+    '🟡 a released message the chat holds while the user is %s is not joined to what they say',
+    async (state) => {
+      const screen = await openPaused();
+      await userSends('Add a dark mode');
+      m[state] = true;
+      m.listing = true;
+      runsB(screen);
+      await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+      await settle(700);
+      endDictation('and a timer');
+      expect(m.box).toBe('and a timer');
+      m.listing = false;
+      await vi.waitFor(() => expect(m.delivered).toEqual(['Add a dark mode']), { timeout: 3000 });
+      expect(m.box).toBe('and a timer');
+    }
+  );
+
+  test('NEGATIVE CONTROL: a held message given back when the user is not dictating goes into the empty box', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    m.chat!.onChatChange!('chat-2');
+    await vi.waitFor(() => expect(m.box).toBe('Add a dark mode'));
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+  });
+
+  test('🟡 a second message that did not go is offered back beside the first, and each puts back its own', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    type('my words');
+    // The assistant planned features before the app came back, so Build it is on offer.
+    const input = { items: [{ label: 'Ask questions' }] };
+    expect(m.chat!.beforeToolCall!('set_checklist', input, conv)).toEqual({ allow: true });
+    const output = await m.chat!.tools.set_checklist.execute(input, ctx);
+    const card = m.chat!.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input,
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    document.body.append(card);
+    // The resume fails, which gives the held message back over what the user typed.
+    m.openReject = new SandboxApiError('busy', 409, 'conflict');
+    m.settleOpen!();
+    const first = page.getByRole('alert').filter({ hasText: '“Add a dark mode”' });
+    await expect.element(first).toBeVisible();
+    // Build it while a reply is still ending comes back too.
+    m.running = true;
+    await page.getByRole('button', { name: 'Build it' }).click();
+    const second = page.getByRole('alert').filter({ hasText: '“Looks good — build it.”' });
+    await expect.element(second).toBeVisible();
+    await expect.element(first).toBeVisible();
+    expect(m.box).toBe('my words');
+
+    await first.getByRole('button', { name: 'Put it back' }).click();
+    expect(m.box).toBe('Add a dark mode\n\nmy words');
+    await expect.element(first).not.toBeInTheDocument();
+    await second.getByRole('button', { name: 'Put it back' }).click();
+    expect(m.box).toBe('Looks good — build it.\n\nAdd a dark mode\n\nmy words');
+    expect(m.delivered).toEqual([]);
+    card.remove();
+  });
+
+  test('🟡 sending another message keeps a notice for one that did not go; sending that one clears it', async () => {
+    await openPaused();
+    m.deferOpen = true;
+    await userSends('Add a dark mode');
+    type('something else');
+    m.chat!.onChatChange!('chat-2');
+    const notice = page.getByText('This message was not sent: “Add a dark mode”');
+    await expect.element(notice).toBeVisible();
+    // The app is still paused, so this one is held in turn.
+    await userSends('something else');
+    await settle(100);
+    await expect.element(notice).toBeVisible();
+    // Another chat gives that one back, and the user sends the first one again by hand.
+    m.chat!.onChatChange!('chat-3');
+    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    type('');
+    await userSends('Add a dark mode');
+    await expect.element(notice).not.toBeInTheDocument();
+  });
+
   test('a running app whose tools cannot be handed over gives the message back rather than holding forever', async () => {
     m.list = [
       sandbox('sbx-aaaaaaaaaaaa'),
@@ -942,6 +1063,32 @@ describe('AppAssistantWorkspace Build it', () => {
     await buildIt().click();
     await expect.element(buildIt()).not.toBeInTheDocument();
     expect(m.box).toBe('Also add a timer');
+    await expect
+      .element(page.getByText('This message was not sent: “Looks good — build it.”'))
+      .toBeVisible();
+    expect(m.delivered).toEqual([]);
+    card.remove();
+  });
+
+  test('🟢 Build it pressed while the chat holds goes into the empty box once, and is not offered back as well', async () => {
+    const card = await checklistCard();
+    m.listing = true;
+    await buildIt().click();
+    await expect.element(buildIt()).not.toBeInTheDocument();
+    expect(m.box).toBe('Looks good — build it.');
+    await settle(100);
+    expect(document.body.textContent).not.toMatch(/was not sent/);
+    card.remove();
+  });
+
+  test('🟡 Build it pressed while the user dictates is offered back, not joined to what they say', async () => {
+    const card = await checklistCard();
+    m.recording = true;
+    m.listing = true;
+    await buildIt().click();
+    await expect.element(buildIt()).not.toBeInTheDocument();
+    endDictation('and a timer');
+    expect(m.box).toBe('and a timer');
     await expect
       .element(page.getByText('This message was not sent: “Looks good — build it.”'))
       .toBeVisible();
@@ -1326,5 +1473,69 @@ describe('AppAssistantWorkspace tool gate', () => {
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
       allow: true,
     });
+  });
+});
+
+describe('releaseHeld', () => {
+  const HELD = 'Add a dark mode';
+
+  test('🟢 a copy the user rewrites while the message goes out is left in the box', async () => {
+    let box = '';
+    const replaying: { current: { text: string; went: boolean } | null } = { current: null };
+    const chat = {
+      send: vi
+        .fn<(text: string) => Promise<void>>()
+        // The chat holds and puts the message in the empty box.
+        .mockImplementationOnce(async (text) => {
+          if (!box) box = text;
+        })
+        // The hold lifts and the message goes; the send resolves after the user rewrote the box.
+        .mockImplementationOnce(async () => {
+          replaying.current!.went = true;
+          box = 'Add a light mode';
+        }),
+      compose: vi.fn(async (text: string) => {
+        box = text;
+      }),
+    };
+    const kept = await releaseHeld(
+      { current: chat },
+      replaying,
+      () => box,
+      () => false,
+      HELD,
+      1
+    );
+    expect(chat.send).toHaveBeenCalledTimes(2);
+    expect(box).toBe('Add a light mode');
+    expect(kept).toBe(true);
+  });
+
+  test('NEGATIVE CONTROL: an untouched copy is cleared once the message went', async () => {
+    let box = '';
+    const replaying: { current: { text: string; went: boolean } | null } = { current: null };
+    const chat = {
+      send: vi
+        .fn<(text: string) => Promise<void>>()
+        .mockImplementationOnce(async (text) => {
+          if (!box) box = text;
+        })
+        .mockImplementationOnce(async () => {
+          replaying.current!.went = true;
+        }),
+      compose: vi.fn(async (text: string) => {
+        box = text;
+      }),
+    };
+    const kept = await releaseHeld(
+      { current: chat },
+      replaying,
+      () => box,
+      () => false,
+      HELD,
+      1
+    );
+    expect(box).toBe('');
+    expect(kept).toBe(true);
   });
 });
