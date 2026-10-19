@@ -158,8 +158,9 @@ describe('which call a surface reads its counts from', () => {
   });
 
   // A choice, pinned so it stays one: an answer already on screen is kept rather than replaced by
-  // an error. Reachable only for a signed-out viewer who revealed, who cannot place, so the
-  // invitation that reads "known zero" off `isError` is never offered on it.
+  // an error. A cached count-only answer exists only where the count-only call ran, which the bar
+  // and the provider do only for a signed-out viewer (it is disabled for anyone signed in); the
+  // bar's invitation also requires a signed-in viewer (`canPlace`), so it is not offered here.
   it('keeps an earlier count-only answer when the combined call fails', () => {
     expect(resolveStickerCounts({ wantPlacements: true, combined: failed, countsOnly })).toEqual({
       counts: { 8100: 2 },

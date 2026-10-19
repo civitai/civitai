@@ -125,10 +125,15 @@ async function renderCard() {
 const entries = () =>
   [...container.querySelectorAll('[data-entry]')].map((el) => el.getAttribute('data-entry'));
 
-/** What a placement mutation's `utils.placement.invalidate()` does to this card's queries. */
+/**
+ * What a remix mutation's `utils.placement.invalidate()` does: every query under the placement
+ * router, and nothing else. Its tRPC keys start with the path `['placement', <procedure>]`.
+ */
 async function invalidatePlacements() {
   await act(async () => {
-    await queryClient.invalidateQueries();
+    await queryClient.invalidateQueries({
+      predicate: ({ queryKey }) => Array.isArray(queryKey[0]) && queryKey[0][0] === 'placement',
+    });
   });
 }
 
