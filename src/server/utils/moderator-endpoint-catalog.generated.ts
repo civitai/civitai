@@ -49,6 +49,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),
+  '/api/mod/storyline/lift-title-takedown': () =>
+    import('~/pages/api/mod/storyline/lift-title-takedown'),
   '/api/mod/storyline/resolve-title-appeal': () =>
     import('~/pages/api/mod/storyline/resolve-title-appeal'),
   '/api/mod/strike/create': () => import('~/pages/api/mod/strike/create'),

@@ -516,6 +516,19 @@
                 </Button>
               </form>
             {/if}
+            {#if storyline?.tosViolationByScan}
+              <p class="mt-3 mb-2 text-sm">
+                Lifting ends the takedown its title scan made for the title above, and a scan of the same title does
+                not take it down again. Read the title first.
+              </p>
+              <form method="POST" action="?/liftStorylineScanTakedown" use:enhance={storylineForm.enhance}>
+                <input type="hidden" name="id" value={selected.id} />
+                <input type="hidden" name="reviewedTitle" value={storyline.title} />
+                <Button type="submit" size="sm" variant="outline" disabled={storylineForm.submitting}>
+                  Lift takedown
+                </Button>
+              </form>
+            {/if}
             {#if storylineForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{storylineForm.error}</p>
             {/if}

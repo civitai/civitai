@@ -225,6 +225,7 @@ export type ModEndpoint =
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
+  | 'storyline/lift-title-takedown'
   | 'storyline/resolve-title-appeal'
   | 'strike/create'
   | 'strike/void'
