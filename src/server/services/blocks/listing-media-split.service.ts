@@ -181,10 +181,13 @@ export async function assertListingMediaSplitDecisionApplicable(
 
 /**
  * Record a moderator's go-live decision on `appListingId` and return whether the listing is
- * split afterwards. `split` stamps the decision with its actor; `rate-mature` and an omitted
- * decision both clear any earlier stamp (default-closed). The review UI always sends an explicit
- * value, preselecting `split` only for a listing that is already split, so re-approving it stamps
- * the moderator who kept it. Refused, before any write, exactly when
+ * split afterwards. `split` stamps the decision with its actor. `rate-mature` clears any earlier
+ * stamp. An omitted decision clears it only when this role may SELECT and UPDATE the table; when
+ * it may not SELECT it, nothing is issued against the table, any stamp stays in place, and the
+ * listing reads as unsplit. The review UI sends an explicit value when it can read the split
+ * (preselecting `split` only for a listing that is already split, so re-approving it stamps the
+ * moderator who kept it), and omits the decision when it reads the split as unreadable
+ * (`mediaSplitApproved: null`). Refused, before any write, exactly when
  * {@link assertListingMediaSplitDecisionApplicable} refuses.
  *
  * `face` is the icon and cover going live — for a revision, the shadow's, while `appListingId`

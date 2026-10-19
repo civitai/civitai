@@ -21,12 +21,21 @@ import { trpc } from '~/utils/trpc';
 /**
  * Shown in place of the choice when the server reports the split as unreadable
  * (`mediaSplitApproved: null`): the app cannot read the record on this environment. Approve stays
- * available and sends NO split decision, which the server carries out exactly as it did before the
- * split existed — nothing issued against the record, an existing split left as it is. Any explicit
- * decision would be refused, so none is offered.
+ * available and sends NO split decision. The server then writes nothing to the record and reads
+ * the listing as unsplit, so the approve leaves it with a rating covering all of its media, as before
+ * the split existed; a split stamped earlier stays in the record but is not applied. Any explicit decision would be
+ * refused, so none is offered.
  */
 export const MEDIA_SPLIT_UNREADABLE_COPY =
-  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing without a split decision: any existing split is left as it is. Split choices are unavailable until the database grant for the media-split record is fixed.';
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing with its rating covering all of its media, as before media splits existed. Any split recorded earlier is kept on file but not applied while this environment cannot read it. Split choices are unavailable until the database grant for the media-split record is fixed.';
+
+/**
+ * {@link MEDIA_SPLIT_UNREADABLE_COPY} for an on-site media revision, whose approve is assets-only
+ * and does not rewrite the rating: the listing reads as unsplit, so its next re-rate floors the
+ * rating by all of its media.
+ */
+export const MEDIA_SPLIT_UNREADABLE_REVISION_COPY =
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving this revision keeps the app’s current rating and records no split decision. Any split recorded earlier is kept on file but not applied while this environment cannot read it, so the next time the listing is re-rated its rating is floored by all of its media. Split choices are unavailable until the database grant for the media-split record is fixed.';
 
 /**
  * Reported by {@link ListingMediaSplitControlForListing} when the listing has loaded but its split

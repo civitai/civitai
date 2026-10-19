@@ -81,6 +81,7 @@ import { RatingMismatchAlert } from '~/components/Apps/ListingRatingNotices';
 import {
   ListingMediaSplitControl,
   MEDIA_SPLIT_UNREADABLE_COPY,
+  MEDIA_SPLIT_UNREADABLE_REVISION_COPY,
 } from '~/components/Apps/ListingMediaSplitControl';
 import {
   ratingFloorAssets,
@@ -503,8 +504,10 @@ export function OffsiteReviewModalBody({
   // Same condition the asset query is enabled on, so a request it never reads is never blocked.
   const splitStateUnknown = !!features?.appBlocks && !!request.appListingId && !assetsQuery.data;
   // A `null` split is one this environment cannot read. No choice is offered and approve sends NO
-  // decision, which the server carries out as it did before the split existed (an existing split
-  // is left as it is); any explicit decision would be refused.
+  // decision; any explicit decision would be refused. The server then reads the listing as unsplit:
+  // the approve floors its rating by all of its media (an on-site media revision rewrites no
+  // rating, and its next re-rate floors by all media), and a split stamped earlier stays in the
+  // record, not applied.
   const splitUnreadable = assetsQuery.data?.mediaSplitApproved === null;
   const resolvedMediaSplit = resolveListingMediaSplitDecision({
     assets: ratingAssets,
@@ -959,7 +962,9 @@ export function OffsiteReviewModalBody({
             />
             {splitUnreadable && (
               <Text size="xs" c="dimmed" data-testid="apps-media-split-unreadable">
-                {MEDIA_SPLIT_UNREADABLE_COPY}
+                {isOnsite && !isOnsiteRepublishReview
+                  ? MEDIA_SPLIT_UNREADABLE_REVISION_COPY
+                  : MEDIA_SPLIT_UNREADABLE_COPY}
               </Text>
             )}
             {splitStateUnknown && (

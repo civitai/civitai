@@ -45,8 +45,10 @@
 --          decision proceeds exactly as before this table existed and issues nothing against
 --          it. An explicit decision (split, or rate by all media) is refused up front with a
 --          moderator-facing message, nothing written or built. Both review surfaces say the split
---          cannot be read, offer no split choice, and approve with no decision, so a moderator's
---          approve proceeds as before (an existing split is left as it is).
+--          cannot be read, offer no split choice, and approve with no decision: the listing
+--          goes live with a rating covering all of its media, as before this table existed, and
+--          a split stamped earlier stays in the table but is not applied (an on-site media
+--          revision rewrites no rating; its next re-rate floors by all media).
 --        - SELECT, but not both INSERT and UPDATE: a split is refused. Without UPDATE, a clear
 --          (rate by all media, or an approve with no decision) is refused only when the listing
 --          IS split — a split the app can see and could not end; otherwise it proceeds.

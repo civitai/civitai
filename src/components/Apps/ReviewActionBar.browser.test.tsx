@@ -410,11 +410,13 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     // proceeds with NO split decision, exactly as before the split existed.
     mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: null };
     bar(reRated());
-    await expect
-      .element(page.getByTestId('apps-media-split-unreadable'))
-      .toHaveTextContent(
-        /cannot read whether this listing’s media is split.*without a split decision.*existing split is left as it is.*Split choices are unavailable until the database grant/
-      );
+    // The WHOLE note, pinned literally: it states what this approve does, so a reword is a claim
+    // change (the on-site approve floors the rating by all media; an earlier split is not applied).
+    const note = page.getByTestId('apps-media-split-unreadable');
+    await expect.element(note).toBeInTheDocument();
+    expect((note.element().textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(
+      'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing with its rating covering all of its media, as before media splits existed. Any split recorded earlier is kept on file but not applied while this environment cannot read it. Split choices are unavailable until the database grant for the media-split record is fixed.'
+    );
     expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
     const approve = page.getByRole('button', { name: 'Approve + build' });
     await expect.element(approve).toBeEnabled();

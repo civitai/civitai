@@ -157,13 +157,19 @@ beforeEach(() => {
  * the write role cannot read the record). The operator's rule (2026-10-18): approve proceeds with
  * NO split decision, exactly as before the split existed — so no choice is offered and none is
  * sent (an explicit one would be refused). Returns the mutation input.
+ *
+ * `note` is the WHOLE expected note, pinned literally: the note states what the approve does
+ * (rated by all media, an earlier split kept but not applied), so a reword is a claim change.
  */
-async function expectUnreadableApproveSendsNoDecision() {
-  await expect
-    .element(page.getByTestId('apps-media-split-unreadable'))
-    .toHaveTextContent(
-      /cannot read whether this listing’s media is split.*without a split decision.*existing split is left as it is.*Split choices are unavailable until the database grant/
-    );
+const UNREADABLE_NOTE =
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing with its rating covering all of its media, as before media splits existed. Any split recorded earlier is kept on file but not applied while this environment cannot read it. Split choices are unavailable until the database grant for the media-split record is fixed.';
+const UNREADABLE_REVISION_NOTE =
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving this revision keeps the app’s current rating and records no split decision. Any split recorded earlier is kept on file but not applied while this environment cannot read it, so the next time the listing is re-rated its rating is floored by all of its media. Split choices are unavailable until the database grant for the media-split record is fixed.';
+
+async function expectUnreadableApproveSendsNoDecision(note: string) {
+  const el = page.getByTestId('apps-media-split-unreadable');
+  await expect.element(el).toBeInTheDocument();
+  expect((el.element().textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(note);
   expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
   expect(page.getByRole('radio', { name: /^Rate by all media/ }).elements()).toHaveLength(0);
   expect(page.getByTestId('apps-media-split-unknown').elements()).toHaveLength(0);
@@ -496,7 +502,7 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
     mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: null };
     renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
     await page.getByTestId('apps-offsite-approve-open').click();
-    const vars = await expectUnreadableApproveSendsNoDecision();
+    const vars = await expectUnreadableApproveSendsNoDecision(UNREADABLE_REVISION_NOTE);
     expect(vars).toEqual(expect.objectContaining({ publishRequestId: 'lmr-1' }));
   });
 
@@ -773,7 +779,7 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
     await page.getByTestId('apps-offsite-approve-open').click();
-    const vars = await expectUnreadableApproveSendsNoDecision();
+    const vars = await expectUnreadableApproveSendsNoDecision(UNREADABLE_NOTE);
     // Rated by all media (the screenshot's R), as before the split existed.
     expect(vars).toEqual(expect.objectContaining({ contentRating: 'r' }));
   });
