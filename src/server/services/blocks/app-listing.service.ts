@@ -464,7 +464,12 @@ export type ListingQueueFacts = {
   reviewMedia: ListingReviewMedia;
 };
 
-type QueueFactsImage = { id?: number; url: string | null; nsfwLevel?: number } | null | undefined;
+/**
+ * A queue / preview image as selected: `id` and `nsfwLevel` REQUIRED, so a select that drops the
+ * level is a type error rather than an image the click-to-reveal shows unblurred (a missing
+ * level would read as "not rated yet", which the reveal does not hold back).
+ */
+type QueueFactsImage = { id: number; url: string | null; nsfwLevel: number } | null | undefined;
 
 export type ListingQueueFactsSource = CardOpenCountSource & {
   icon?: QueueFactsImage;
@@ -490,7 +495,7 @@ function reviewImage(
 ): ListingReviewImage | null {
   if (image?.id == null) return null;
   const url = toUrl(image);
-  return url ? { imageId: image.id, url, nsfwLevel: image.nsfwLevel ?? 0 } : null;
+  return url ? { imageId: image.id, url, nsfwLevel: image.nsfwLevel } : null;
 }
 
 /**

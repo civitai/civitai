@@ -4256,8 +4256,8 @@ function withModQueueListingFacts<
     appListingId?: string | null;
     appListing: {
       kind?: string | null;
-      icon?: { id?: number; url: string | null; nsfwLevel?: number } | null;
-      cover?: { id?: number; url: string | null; nsfwLevel?: number } | null;
+      icon?: { id: number; url: string | null; nsfwLevel: number } | null;
+      cover?: { id: number; url: string | null; nsfwLevel: number } | null;
       metric?: { openCount: number } | null;
     } | null;
   }

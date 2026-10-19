@@ -123,5 +123,15 @@ describe('the on-site (app version) queue', () => {
       redIcon: null,
       redCover: { imageId: 143, url: 'edge:red-on.png@1200', nsfwLevel: NsfwLevel.PG13 },
     });
+    // 🔴 The mock answers whatever was selected, so pin the select itself: without `nsfwLevel`
+    // the level would read as "not rated yet", which the reveal does not hold back. (The
+    // row type is cast, so tsc cannot see a dropped column here.)
+    const select = (
+      dbMock.dbRead.appListing.findMany.mock.calls.find(
+        (c: { where?: { slug?: unknown } }[]) => c[0]?.where?.slug
+      )?.[0] as { select: Record<string, unknown> }
+    ).select;
+    expect(select.icon).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
+    expect(select.cover).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
   });
 });
