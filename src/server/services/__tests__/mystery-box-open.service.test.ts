@@ -606,8 +606,7 @@ describe('opening a mystery box', () => {
   });
 });
 
-// A box can reach a holder who never joined its event (a moderator grants it; nothing is bought, so
-// no purchase placed them). The open itself places them on a team, before the lock, and draws from it.
+// A grant reaches a holder no purchase placed on a team: the open places them, before the lock.
 describe('a holder who never joined the event', () => {
   const GRANTED = modGrantSourceKey('g1', HOLDER, 1);
 
@@ -622,7 +621,7 @@ describe('a holder who never joined the event', () => {
     mocks.getEventBuyerTeam.mockImplementation(actual.getEventBuyerTeam!);
   });
 
-  // A balanced event: the holder has no team until settled, and a strict read refuses them.
+  // Unsettled, the holder has no team and a strict read throws: an open that skips settling fails.
   const balancedEvent = (settle: () => Promise<string>) => {
     let placed: string | undefined;
     return {
@@ -672,7 +671,7 @@ describe('a holder who never joined the event', () => {
 
   it("keeps the box when its event isn't registered any more", async () => {
     mocks.loadEvents.mockResolvedValue([]);
-    await expect(open()).rejects.toThrow('This item is not available');
+    await expect(open()).rejects.toThrow(/^This item is not available$/);
     nothingOpened();
   });
 });

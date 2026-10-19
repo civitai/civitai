@@ -4,7 +4,7 @@
  */
 export const boxOpenClaimKey = (boxItemId: bigint | string) => `box-open-${boxItemId}`;
 
-/** Every `Item.sourceKey` a moderator grant writes starts with this; a purchase's never does. */
+/** A moderator grant's `Item.sourceKey` starts with this; a purchase's never does. */
 export const MOD_GRANT_SOURCE_PREFIX = 'mod-grant-';
 
 /**

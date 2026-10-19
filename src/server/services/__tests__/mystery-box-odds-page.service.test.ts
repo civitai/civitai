@@ -414,8 +414,6 @@ describe('who sees the odds page', () => {
   });
 });
 
-// A box is public once it has gone on sale: a listing's window has opened, or anything was bought from
-// one. Staged ahead of its listing, only moderators see it, and whoever holds or has opened one of it.
 describe('before the box goes on sale', () => {
   const MOD = { id: 5, isModerator: true };
   const HOLDER = { id: 6, isModerator: false };
@@ -444,7 +442,6 @@ describe('before the box goes on sale', () => {
     expect(await read()).toBeNull();
   });
 
-  // A moderator can grant a box before its sale: someone holding one is no proof it was sold.
   it('shows a box granted before its sale to its holder, and to no one else', async () => {
     world.listings = [listing({ availableFrom: nextWeek() })];
     world.items = [heldBy(HOLDER.id)];
@@ -479,9 +476,10 @@ describe('before the box goes on sale', () => {
     expect(await read()).not.toBeNull();
   });
 
-  // The sale happened; a refund afterwards does not un-publish what was disclosed at the time.
+  // A refund does not un-publish a page already disclosed.
   it('counts a refunded purchase as a sale', async () => {
     world.listings = [listing({ status: 'Archived' })];
+    expect(await read()).toBeNull();
     world.purchases = [{ buzzTransactionId: 'item-purchase-v1-r', shopItemId: 42, refunded: true }];
     expect(await read()).not.toBeNull();
   });

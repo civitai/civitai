@@ -141,8 +141,8 @@ export async function getMysteryBoxOddsPage({
   const now = new Date();
   const { listings, onSale: listingOnSale } = await readBoxListings([box.id]);
   const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
-  // Holding one is no proof of a sale (a moderator can grant a box before it), so a holder sees
-  // the page early only for a box of their own.
+  // A grant skips the sale, so holding proves none: a holder sees an unsold box's page only for a
+  // box of their own.
   if (
     !started &&
     !viewer?.isModerator &&
@@ -233,9 +233,8 @@ export async function getMysteryBoxOddsPage({
 }
 
 /**
- * Whether anyone has bought this box from any of its listings, whatever their status now: a listing
- * unpublished after its sale is not read as on sale, but the box was sold. Any purchase row counts,
- * so a grant must never write one.
+ * Whether any listing of this box, of any status, has a purchase: `readBoxListings` sees only
+ * Published ones, but a sold box stays sold. A grant must never write a purchase row.
  */
 async function boxEverSold(boxDefinitionId: number) {
   const listings = await dbRead.cosmeticShopItem.findMany({
@@ -251,7 +250,6 @@ async function boxEverSold(boxDefinitionId: number) {
   return !!purchase;
 }
 
-/** Whether this user holds, or has opened, one of this box. */
 async function viewerHasHeld(boxDefinitionId: number, userId: number) {
   const [held, opened] = await Promise.all([
     countHeldItems(dbRead, { itemDefinitionId: boxDefinitionId, userId }),
