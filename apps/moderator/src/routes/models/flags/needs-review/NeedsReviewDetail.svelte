@@ -8,14 +8,15 @@
   import EnforcementChip from '$lib/components/minor-flags/EnforcementChip.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
   import FlagDecisionForm from '$lib/components/minor-flags/FlagDecisionForm.svelte';
+  import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
+  import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
   import ScannedNamesCard from '$lib/components/minor-flags/ScannedNamesCard.svelte';
-  import ScannedTextCard from '$lib/components/minor-flags/ScannedTextCard.svelte';
   import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
@@ -25,7 +26,12 @@
   import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
   import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import { FLAG_LABEL_NAMES, needsReviewDecisions } from '$lib/minor-flags/flagged-decision';
-  import { fetchModelFlagDetail, flagPromptId, textSinceFlag } from '$lib/minor-flags/model-detail';
+  import {
+    fetchModelFlagDetail,
+    flagPromptId,
+    flagScanSource,
+    textSinceFlag,
+  } from '$lib/minor-flags/model-detail';
   import { leadRefs } from '$lib/minor-flags/needs-review';
   import { MODEL_FLAGS_APPEALS_PATH, MODEL_FLAGS_NEEDS_REVIEW_PATH } from '$lib/minor-flags/paths';
   import { SSR_PENDING } from '$lib/ssr-pending';
@@ -73,6 +79,8 @@
   const leads = $derived(leadRefs(row));
   const labels = $derived([...new Set(leads.map((f) => f.label))]);
   const decisions = $derived(needsReviewDecisions(leads));
+  const scanned = $derived(detections.find((f) => f.redetected?.textHash)?.redetected ?? null);
+  const names = $derived([...new Set(detections.flatMap((f) => f.redetected?.names ?? []))]);
 
   // Derived, never an effect: the shell keys the detail per row. Primitives first, so a reload that
   // hands back an equal row keeps the request.
@@ -138,28 +146,39 @@
       </div>
     {/if}
 
-    {#each detections as flag (flag.label)}
-      {@const detection = flag.redetected!}
-      {@const copy = detectionCopy(detectionKind(detection))}
-      <div class={detection.names?.length ? 'grid gap-4 md:grid-cols-[1fr_minmax(320px,380px)]' : ''}>
-        <ScannedTextCard
-          title={leads.length > 1
-            ? `Why it was detected: ${FLAG_LABEL_NAMES[flag.label]}`
-            : 'Why it was detected'}
-          label={flag.label}
-          {detection}
-          flagged={flag.label === 'poi' ? row.poi : row.minor}
-          explanation={copy.explanation}
-        />
-        {#if detection.names?.length}
+    {#if detections.length}
+      <div class="grid items-start gap-4 lg:grid-cols-[1fr_360px]">
+        <TriageCard dense title="Why it was detected">
+          <div class="space-y-3">
+            {#each detections as flag (flag.label)}
+              {@const detection = flag.redetected!}
+              <FlagVerdictBlock label={flag.label} reason={detection.reason} applied={false}>
+                {#snippet provenance()}
+                  <ScanProvenance
+                    at={detection.at}
+                    source={flagScanSource(detection.workflowId, row.scanRows)}
+                    promptId={flagPromptId(detection.promptIds, flag.label)}
+                    {detail}
+                  /> · {detectionCopy(detectionKind(detection)).provenance}
+                {/snippet}
+                {#if flag.label === 'poi' ? row.poi : row.minor}
+                  <p class="m-0 text-[11px] text-dark-2">The model already carries this flag.</p>
+                {/if}
+              </FlagVerdictBlock>
+            {/each}
+          </div>
+        </TriageCard>
+        <!-- The scan writes every label it detects from one text; no excerpt of it is stored. -->
+        {#if scanned}
           <ScannedNamesCard
-            names={detection.names}
-            textHash={detection.textHash}
-            since={textSinceFlag(flag.textHash, row.scanRows)}
+            {names}
+            textHash={scanned.textHash}
+            since={textSinceFlag(scanned.textHash, row.scanRows)}
+            subject="detection"
           />
         {/if}
       </div>
-    {/each}
+    {/if}
 
     {#if match}
       <div class="grid items-start gap-4 lg:grid-cols-[1fr_400px]">

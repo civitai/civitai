@@ -7,6 +7,7 @@
     names,
     textHash = null,
     since = null,
+    subject = 'flag',
   }: {
     /** What the scan matched in the model's text. */
     names: readonly string[];
@@ -14,6 +15,8 @@
     textHash?: string | null;
     /** Whether the newest scan read the same text; null makes no claim. */
     since?: 'unchanged' | 'changed' | null;
+    /** What `textHash` was read for: an applied flag or a held detection. */
+    subject?: 'flag' | 'detection';
   } = $props();
 </script>
 
@@ -21,8 +24,8 @@
   <div class="space-y-2">
     {#if textHash}
       <p class="m-0 text-[11px] text-dark-2" title={textHash}>hash {shortHash(textHash)}{#if since === 'unchanged'}
-          · unchanged since flag{:else if since === 'changed'}
-          · <span class="text-amber-300">text changed since flag</span>{/if}
+          · unchanged since {subject}{:else if since === 'changed'}
+          · <span class="text-amber-300">text changed since {subject}</span>{/if}
       </p>
     {/if}
     {#if names.length}
