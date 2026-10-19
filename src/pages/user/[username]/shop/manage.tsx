@@ -13,7 +13,7 @@ import { ManageHeader } from '~/components/CreatorShop/Manage/ManageHeader';
 import { ManageItemsTable } from '~/components/CreatorShop/Manage/ManageItemsTable';
 import { ManageStats } from '~/components/CreatorShop/Manage/ManageStats';
 import { ManageToolbar } from '~/components/CreatorShop/Manage/ManageToolbar';
-import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner';
+import { PublishShopBanner } from '~/components/CreatorShop/Manage/PublishShopBanner';
 import { useManageItems } from '~/components/CreatorShop/Manage/manage.util';
 import { ManageServicesPanel } from '~/components/CreatorShop/Services/ManageServicesPanel';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
@@ -112,14 +112,12 @@ function ManageShopPage() {
       />
 
       {settings && settings.enabled !== true && (
-        <ShopDraftBanner
+        <PublishShopBanner
+          cosmeticCount={items.length}
+          cosmeticsLoading={isLoading}
+          servicesCount={showServicesTab}
           onEnable={() => updateSettings.mutate({ enabled: true, userId: manageUserId })}
           enabling={updateSettings.isPending}
-          disabledReason={
-            !isLoading && items.length === 0
-              ? 'Add at least one item before publishing your shop.'
-              : undefined
-          }
         />
       )}
 
