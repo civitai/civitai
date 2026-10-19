@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COMPLETE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { applyStatusUpdates } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
+import { NSFW_CAPPED, WorkflowData } from '~/shared/orchestrator/workflow-data';
 
 // Taken from the production constant: `@civitai/client`'s `WorkflowStatus` members read as
 // `undefined` under Vitest, so a literal 'succeeded' would not be the value the code compares.
@@ -66,6 +67,21 @@ describe('applyStatusUpdates', () => {
     applyStatusUpdates(second, updates);
 
     expect(second.pages[0].items[0].steps[0].output).toEqual([rated]);
+  });
+
+  // The orchestrator can set the cap after submit, so only a refetch knows it; without it the queue
+  // offers a yellow unlock that charges and still serves the blocked placeholder.
+  it('takes the NSFW cap a refetch reports, so a capped output offers no unlock', () => {
+    const matureRated = { ...rated, nsfwLevel: 'r' };
+    const data = cache(FINISHED, [matureRated]);
+    data.pages[0].items[0].allowMatureContent = false;
+    applyStatusUpdates(data, [{ ...update(FINISHED, [matureRated]), nsfwCap: 'pg13' }]);
+
+    const workflow = new WorkflowData(data.pages[0].items[0], {
+      domain: { green: false, blue: false, red: true },
+      nsfwEnabled: true,
+    } as any);
+    expect(workflow.steps[0].output[0].blockedReason).toBe(NSFW_CAPPED);
   });
 
   it('still applies the whole update to a running workflow', () => {

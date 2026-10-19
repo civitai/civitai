@@ -45,7 +45,10 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
-import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  assertUnlockReleasesOutput,
+  formatGenerationResponse2,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
@@ -3951,6 +3954,11 @@ export const comicsRouter = router({
       let token: string;
       try {
         token = await getOrchestratorToken(ctx.user!.id, ctx);
+      } catch (error) {
+        throw throwBadRequestError(getOrchestratorErrorMessage(error));
+      }
+      await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
+      try {
         await updateWorkflow({
           token,
           workflowId: panel.workflowId,
