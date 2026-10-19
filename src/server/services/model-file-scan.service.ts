@@ -188,6 +188,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       where: { id: fileId },
       data: { scanRequestedAt: new Date() },
     });
+    await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId);
     return;
   }
 
@@ -412,6 +413,31 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         'webhooks'
       ).catch(() => undefined)
     );
+}
+
+const FAILURE_BUST_TTL_SECONDS = 60 * 60;
+
+// The orchestrator caches a version's /mini answer for hours, and a scan resolves the file
+// through it. A failing answer cached during an outage fails every later scan, and only a
+// successful scan busts it, so without this the file never recovers. Once per version per hour,
+// since a version's files fail together; logged, not thrown, since the retry bump is written.
+async function bustAfterFailedScan(modelVersionId: number) {
+  try {
+    const key =
+      `${REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST}:${modelVersionId}` as const;
+    if (!(await sysRedis.setNxKeepTtlWithEx(key, '1', FAILURE_BUST_TTL_SECONDS))) return;
+    await bustOrchestratorModelCache(modelVersionId);
+  } catch (e) {
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'model-file-scan',
+        message: `failed-scan bust failed: ${String(e)}`,
+        modelVersionId,
+      },
+      'webhooks'
+    ).catch(() => undefined);
+  }
 }
 
 async function notifyHashFix(modelVersionId: number, fileId: number) {

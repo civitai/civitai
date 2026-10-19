@@ -60,6 +60,19 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   if (!Array.isArray(versionIds)) versionIds = [versionIds];
   if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
 
+  try {
+    await invalidateVersions(versionIds, userId);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      versionIds: versionIds.slice(0, 10),
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateVersions(versionIds: number[], userId?: number) {
   const versions = (await dbWrite.modelVersion.findMany({
     where: { id: { in: versionIds } },
     select: modelVersionAirSelect,

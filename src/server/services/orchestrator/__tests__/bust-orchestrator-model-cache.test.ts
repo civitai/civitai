@@ -7,6 +7,7 @@ vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
 }));
 
 import { Air } from '@civitai/client';
+import { getCurrentLSN } from '~/server/db/db-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -87,5 +88,21 @@ describe('bustOrchestratorModelCache', () => {
     expect(invalidatedAirs()).toEqual([
       expect.stringMatching(/:checkpoint:civitai:2438778@2990235$/),
     ]);
+  });
+
+  // Callers are save paths and the scan webhook, which await this unguarded.
+  it('resolves when the version read fails', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockRejectedValue(new Error('db timeout'));
+
+    await expect(bustOrchestratorModelCache(2990235)).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('resolves when the LSN read fails', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([diffusionModelCheckpoint]);
+    vi.mocked(getCurrentLSN).mockRejectedValueOnce(new Error('replica down'));
+
+    await expect(bustOrchestratorModelCache(2990235)).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
