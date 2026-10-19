@@ -408,7 +408,8 @@ export async function createDraftModelFromWorkflow({
   });
 
   // Not a dataset (the studio uploads blobs, never a zip): this row only carries the run's results
-  // for the epoch picker and training readers. Private keeps it off the public files list.
+  // for the epoch picker and training readers. Private keeps it off the public files list. The url is
+  // the run's own epoch, chosen here, so the client url bound (assertClientFileUrlAllowed) does not apply.
   const placeholder = await createFile({
     name: `${modelVersion.id}_training_data.zip`,
     url: selectedEpoch.modelUrl,
