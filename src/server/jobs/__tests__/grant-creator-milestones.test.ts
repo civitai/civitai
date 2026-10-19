@@ -118,6 +118,17 @@ describe('grant-creator-milestones', () => {
     expect(seen[0]).not.toBe(seen[groups]);
   });
 
+  it('grants every user, not only the flag audience', async () => {
+    const gated: unknown[] = [];
+    mocks.runActivityGroup.mockImplementation(async (_: unknown, deps: { gated: unknown }) => {
+      gated.push(deps.gated);
+      return {};
+    });
+    await grantCreatorMilestones.run({} as never).result;
+    expect(gated).toHaveLength(codeGroups().length);
+    expect(new Set(gated)).toEqual(new Set([false]));
+  });
+
   const run = () =>
     grantCreatorMilestones.run({} as never).result as Promise<Record<string, unknown> | undefined>;
 
