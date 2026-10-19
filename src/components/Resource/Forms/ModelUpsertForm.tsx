@@ -31,6 +31,8 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import { inheritedMetricPrivacyHints } from '~/components/Resource/Forms/metric-privacy-hints';
 import {
   Form,
   InputCheckbox,
@@ -205,6 +207,11 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const features = useFeatureFlags();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const userSettings = useCurrentUserSettings();
+  const metricHints = inheritedMetricPrivacyHints({
+    userSettings,
+    isOwner: !model?.user || model.user.id === currentUser?.id,
+  });
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -510,18 +517,21 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                 </div>
                 <InputSwitch
                   name="meta.hideBuzz"
+                  description={metricHints.buzz}
                   label="Hide tipped / earned Buzz"
                   disabled={!isActiveCreatorMember}
                   styles={{ track: { flex: '0 0 1em' } }}
                 />
                 <InputSwitch
                   name="meta.hideDownloads"
+                  description={metricHints.downloads}
                   label="Hide download count"
                   disabled={!isActiveCreatorMember}
                   styles={{ track: { flex: '0 0 1em' } }}
                 />
                 <InputSwitch
                   name="meta.hideGenerations"
+                  description={metricHints.generations}
                   label="Hide generation count"
                   disabled={!isActiveCreatorMember}
                   styles={{ track: { flex: '0 0 1em' } }}
