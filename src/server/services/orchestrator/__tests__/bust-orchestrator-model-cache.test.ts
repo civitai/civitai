@@ -90,7 +90,7 @@ describe('bustOrchestratorModelCache', () => {
     ]);
   });
 
-  // Callers are save paths and the scan webhook, which await this unguarded.
+  // Callers (save paths, auction cron jobs) await this unguarded.
   it('resolves when the version read fails', async () => {
     dbMock.dbWrite.modelVersion.findMany.mockRejectedValue(new Error('db timeout'));
 

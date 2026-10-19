@@ -417,10 +417,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;
 
-// The orchestrator caches a version's /mini answer for hours, and a scan resolves the file
-// through it. A failing answer cached during an outage fails every later scan, and only a
-// successful scan busts it, so without this the file never recovers. Once per version per hour,
-// since a version's files fail together; logged, not thrown, since the retry bump is written.
+// The orchestrator caches a version's /mini answer for hours, so a failing answer cached during an
+// outage fails every retry until something busts it. At most once per version per hour (its files
+// fail together); logged, not thrown, so the retry bump already written stands.
 async function bustAfterFailedScan(modelVersionId: number) {
   try {
     const key =

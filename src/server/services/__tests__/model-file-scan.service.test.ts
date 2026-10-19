@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -330,8 +330,7 @@ describe('model-file-scan.service', () => {
       expect(mockDataForModelsCacheRefresh).not.toHaveBeenCalled();
     });
 
-    // A failing /mini answer cached by the orchestrator fails every retry of the scan; only a
-    // successful scan used to bust it, so the file could never recover.
+    // A cached failing answer must not outlive the scan that hit it.
     describe('busting the orchestrator after a failed scan', () => {
       beforeEach(() => {
         const held = new Set<string>();
@@ -341,6 +340,8 @@ describe('model-file-scan.service', () => {
           return true;
         });
       });
+
+      afterEach(() => mockSetNxKeepTtlWithEx.mockReset());
 
       it('busts the version once per window, however many of its files fail', async () => {
         setupFileFound();
