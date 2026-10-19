@@ -69,17 +69,16 @@ Decisions & prerequisites:
       was added after deleting its dangling threads) — PR #6155 merged and migration
       `20261101120000_thread_entity_fk_cascade` applied in prod 2026-10-16; all 18
       `ON DELETE CASCADE` keys on `Thread` (16 entity + `parentThreadId`/`rootThreadId`) validated
-- [ ] **(review)** Recapture the prod catalog and run `drift:baseline` — in progress 2026-10-19
-      on its own branch from main: the 15 Thread `referential-action` entries and
-      `missing-foreign-key|Thread|challengeId` drop out, and the `inFlightThreadCascade` carve-out
-      in `production-snapshot.test.ts` goes
+- [x] **(review)** Recapture the prod catalog and run `drift:baseline` — done 2026-10-19
+      (PR #6323, from main): the 15 Thread `referential-action` entries and
+      `missing-foreign-key|Thread|challengeId` dropped out, and the `inFlightThreadCascade`
+      carve-out in `production-snapshot.test.ts` went with them
 - [x] **(review)** Depth clamp applied retroactively to the 692 over-cap comments: approved
       (2026-10-16)
 
 **Gate:** all measurements recorded in the plan doc; the orphan, depth-clamp, purge and FK-flip
 decisions recorded (done 2026-10-16). Still unticked above: the three unmeasured items,
-`ComicChapter` surrogate id, flip order, the ltree infra sign-off and the baseline recapture (in
-progress 2026-10-19).
+`ComicChapter` surrogate id, flip order and the ltree infra sign-off.
 
 ## Phase 1 — Schema (expand)
 

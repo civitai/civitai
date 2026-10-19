@@ -298,8 +298,9 @@ applied by hand in prod on 2026-10-16, separately from the purge migration (data
   first deletes `Thread` rows whose challenge no longer exists (4 rows at the time of writing;
   they take their comments with them), then adds `Thread_challengeId_fkey … ON DELETE CASCADE
 NOT VALID` and validates it. The drift baseline's 15 `referential-action` findings and its
-  `missing-foreign-key|Thread|challengeId` entry drop out with the post-migration catalog
-  recapture (2026-10-19, its own PR), together with the `production-snapshot.test.ts` carve-out.
+  `missing-foreign-key|Thread|challengeId` entry dropped out with the post-migration catalog
+  recapture (PR #6323, merged 2026-10-19), together with the `production-snapshot.test.ts`
+  carve-out.
 - **What changes for users**: deleting an image, post, review, article, bounty, model, … now
   deletes its comments, their reactions and their report links. `Report` rows for those comments
   stay, targetless — the same as any hard-deleted comment today. Account deletion cascades one
