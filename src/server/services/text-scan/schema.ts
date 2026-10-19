@@ -46,6 +46,7 @@ function labelSchema(label: TextScanLabel): Record<string, unknown> {
       };
     case 'minor':
     case 'scam':
+    case 'csam':
       return {
         type: 'object',
         properties: { detected: { ...detected }, reason: { ...reason } },

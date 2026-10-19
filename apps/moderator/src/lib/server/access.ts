@@ -168,6 +168,7 @@ export const NAVIGATION: NavLink[] = [
     label: 'Text Scan',
     path: '/text-scan',
     children: [
+      { path: '/csam/text-holds', label: 'CSAM holds', countKey: 'csamTextHolds' },
       { path: '/text-scan/prompts', label: 'Prompts' },
       { path: '/text-scan/model-rules', label: 'Model rules' },
     ],

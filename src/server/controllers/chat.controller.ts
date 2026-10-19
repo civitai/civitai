@@ -44,6 +44,7 @@ import {
   resolveChatRecipients,
   signalChatMembersUpdated,
   upsertChat,
+  deleteChatMessage,
 } from '~/server/services/chat.service';
 import {
   assertCanPromote,
@@ -1166,51 +1167,12 @@ export const deleteMessageHandler = async ({
     if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
     assertChatRedesign(ctx);
 
-    const existing = await dbWrite.chatMessage.findFirst({
-      where: { id: input.messageId },
-      select: { id: true, userId: true, chatId: true, content: true, deletedAt: true },
+    return await deleteChatMessage({
+      messageId: input.messageId,
+      actorId: userId,
+      isModerator,
+      audit: (event) => ctx.track.chatAudit(event),
     });
-
-    if (!existing || (existing.userId !== userId && !isModerator)) {
-      throw throwNotFoundError(`No message found for ID (${input.messageId})`);
-    }
-    if (existing.deletedAt) return { messageId: existing.id, chatId: existing.chatId };
-
-    const deletedAt = new Date();
-    await dbWrite.chatMessage.update({
-      where: { id: existing.id },
-      data: { deletedAt },
-    });
-
-    const { value, truncated } = truncateAuditValue(existing.content);
-    await ctx.track
-      .chatAudit({
-        type: 'delete',
-        chatId: existing.chatId,
-        messageId: existing.id,
-        actorId: userId,
-        subjectId: existing.userId,
-        actorRole: existing.userId === userId ? 'owner' : 'moderator',
-        oldValue: value,
-        newValue: '',
-        truncated,
-      })
-      .catch(() => undefined);
-
-    // Both sides need to drop it; without this the other participant keeps
-    // rendering a message that no longer exists for anyone.
-    withSignals(() =>
-      fetch(
-        `${env.SIGNALS_ENDPOINT}/groups/chat:${existing.chatId}/signals/${SignalMessages.ChatMessageDeleted}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messageId: existing.id, chatId: existing.chatId }),
-        }
-      )
-    ).catch(() => undefined);
-
-    return { messageId: existing.id, chatId: existing.chatId };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

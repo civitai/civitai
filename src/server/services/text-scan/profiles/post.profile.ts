@@ -4,7 +4,7 @@ import { removeTags } from '~/utils/string-helpers';
 
 registerTextScanProfile({
   entityType: 'Post',
-  labels: ['nsfw'],
+  labels: ['nsfw', 'csam'],
   load: async (ids) => {
     const rows = await dbWrite.post.findMany({
       where: { id: { in: ids } },

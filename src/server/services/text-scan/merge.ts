@@ -59,7 +59,8 @@ export function mergeTextScanOutputs(
         break;
       }
       case 'minor':
-      case 'scam': {
+      case 'scam':
+      case 'csam': {
         const { detecting, source } = firstDetecting(outputs.map((o) => o[label]));
         if (!source) break;
         output[label] = { detected: detecting.length > 0, reason: source.reason };
