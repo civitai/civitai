@@ -146,7 +146,6 @@ describe('tierIdsWithInserted', () => {
       savedTiers
     );
 
-  // The save deletes every tier this map leaves out, so a new tier missing here is deleted.
   it("adds the inserted tiers' ids to the kept tiers' ids", () => {
     expect(tierIdsWithInserted(withEpic(), [{ id: 3, key: 'epic' }])).toEqual(
       new Map([
@@ -443,7 +442,6 @@ describe('oddsChanged', () => {
     ).toBe(true);
   });
 
-  // The event decides which teams the buyers are on, so it changes who can draw what.
   it('is true when only the event changed', () => {
     expect(oddsChanged({ snapshot: live, event: 'party' }, { snapshot: live, event: null })).toBe(
       true

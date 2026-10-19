@@ -578,6 +578,7 @@ describe('a save writes only the tier and content rows it changes', () => {
 
   it.each([
     { dropped: 'one content', keep: [1, 2, 3], deleted: 1 },
+    { dropped: 'all but one content', keep: [1], deleted: 3 },
     { dropped: 'every content', keep: [], deleted: 4 },
   ])('$dropped dropped from the draft is deleted', async ({ keep, deleted }) => {
     const { boxId, draft } = await draftBox();
@@ -674,6 +675,26 @@ describe('a draft', () => {
     await expect(
       recordOutsideChange({ boxId, expectedVersion: 2, userId: MOD })
     ).rejects.toBeInstanceOf(BoxRefusal);
+  });
+
+  it('bumps when only the event changed: the event decides who can draw what', async () => {
+    const boxId = await createBox({ name: 'Party Box', userId: MOD });
+    const base = await partyDraft();
+    await saveAt({ boxId, expectedVersion: 1, draft: base, publish: false, userId: MOD });
+    const draft = await savedDraft(boxId, base);
+
+    expect(await saveAt({ boxId, expectedVersion: 2, draft, publish: false, userId: MOD })).toEqual(
+      { version: 2, status: 'draft', bumped: false }
+    );
+    expect(
+      await saveAt({
+        boxId,
+        expectedVersion: 2,
+        draft: { ...draft, event: '' },
+        publish: false,
+        userId: MOD,
+      })
+    ).toEqual({ version: 3, status: 'draft', bumped: true });
   });
 });
 

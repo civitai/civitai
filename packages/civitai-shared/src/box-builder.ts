@@ -250,9 +250,8 @@ export function planTierWrites(
 }
 
 /**
- * Every tier id the save keeps, by key: the plan's kept tiers plus the rows the tier insert returned.
- * The save deletes every tier missing from it, so a new tier left out would vanish with no error
- * whenever nothing is in it.
+ * The kept tiers' ids plus the inserted ones, by key. The save deletes every tier missing from this
+ * map, so a new tier with no contents that was left out would vanish silently.
  */
 export function tierIdsWithInserted(
   plan: Pick<ReturnType<typeof planTierWrites>, 'newTiers' | 'tierIdByKey'>,
@@ -304,8 +303,8 @@ export function planContentWrites(
 type BoxOddsState = { snapshot: BoxOddsSnapshotData; event: string | null };
 
 /**
- * Whether a save changed what a buyer can draw: the tiers, weights or contents, or the event, which
- * decides the buyers' teams. A change bumps the box's version.
+ * Whether the odds snapshot or the event differs. The event is outside the snapshot but decides the
+ * buyers' teams.
  */
 export const oddsChanged = (before: BoxOddsState, after: BoxOddsState) =>
   !snapshotsMatch(before.snapshot, after.snapshot) || before.event !== after.event;
