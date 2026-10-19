@@ -7,6 +7,15 @@
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { triggerOrigin, type SourceState } from '$lib/restrictions/origin';
+  import {
+    explainMatches,
+    fieldLabel,
+    hasNoRecordedMatch,
+    highlightSets,
+    humanizeCategory,
+    promptTesterHref,
+    sourceLabel,
+  } from '$lib/restrictions/trigger-evidence';
   import type {
     RemixSource,
     RestrictionTriggerView,
@@ -35,6 +44,9 @@
   } = $props();
 
   const origin = $derived(triggerOrigin(trigger));
+  const matches = $derived(explainMatches(trigger));
+  const highlights = $derived(highlightSets(matches));
+  const noRecordedMatch = $derived(hasNoRecordedMatch(trigger));
   const isRemix = $derived(origin.kind === 'remix' || origin.kind === 'legacy-remix');
   const canDiff = $derived(isRemix && !!source?.prompt && !!trigger.prompt);
   // A diff is only offered when the match was not already settled as identical.
@@ -164,21 +176,55 @@
         {/if}
 
         <div class="flex flex-wrap items-center gap-2">
-          {#if trigger.source}<Badge variant="outline">{trigger.source}</Badge>{/if}
-          {#if trigger.category}<Badge variant="destructive">{trigger.category}</Badge>{/if}
+          {#if trigger.source}<Badge variant="outline">{sourceLabel(trigger.source)}</Badge>{/if}
+          {#if trigger.category && !matches.length}
+            <Badge variant="destructive">{humanizeCategory(trigger.category)}</Badge>
+          {/if}
         </div>
 
-        {#if trigger.matchedWord}
-          <div>
-            <p class="m-0 text-xs text-dark-2">Matched text</p>
-            <code class="text-sm break-all text-dark-0">{trigger.matchedWord}</code>
+        {#if matches.length}
+          <div class="space-y-2">
+            <p class="m-0 text-xs text-dark-2">Why blocked</p>
+            {#each matches as m, i (i)}
+              <div class="space-y-1 rounded-md border border-dark-4 bg-dark-6 p-2">
+                {#if m.category}
+                  <Badge variant="destructive">{humanizeCategory(m.category)}</Badge>
+                {/if}
+                {#if m.text}
+                  <p class="m-0 text-xs text-dark-0">
+                    <code class="break-all">"{m.text}"</code>
+                    {m.field ? `in ${fieldLabel(m.field)}` : ''}
+                  </p>
+                {/if}
+                {#if m.gateWord}
+                  <p class="m-0 text-xs text-dark-2">
+                    with NSFW term <code class="break-all text-dark-0">"{m.gateWord}"</code>
+                  </p>
+                {/if}
+                {#if m.regex}
+                  <details>
+                    <summary class="cursor-pointer text-xs text-dark-2">Pattern</summary>
+                    <code class="text-xs break-all text-dark-0">{m.regex}</code>
+                  </details>
+                {/if}
+              </div>
+            {/each}
           </div>
-        {/if}
-        {#if trigger.matchedRegex}
-          <div>
-            <p class="m-0 text-xs text-dark-2">Regex pattern</p>
-            <code class="text-xs break-all text-dark-0">{trigger.matchedRegex}</code>
-          </div>
+        {:else if noRecordedMatch && trigger.prompt}
+          <p class="m-0 text-xs text-dark-2">
+            Match not recorded.
+            <a
+              href={promptTesterHref({
+                prompt: trigger.prompt,
+                negativePrompt: trigger.negativePrompt,
+              })}
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}
+            >
+              Re-run in the prompt tester ↗
+            </a>
+          </p>
         {/if}
         {#if trigger.time}
           <div>
@@ -218,7 +264,7 @@
         {#if trigger.prompt}
           <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Prompt</p>
           <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
-            <HighlightedText text={trigger.prompt} highlight={trigger.matchedWord} />
+            <HighlightedText text={trigger.prompt} highlight={highlights.prompt} />
           </div>
         {/if}
         {#if trigger.negativePrompt}
@@ -226,7 +272,7 @@
             Negative
           </p>
           <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
-            <HighlightedText text={trigger.negativePrompt} highlight={trigger.matchedWord} />
+            <HighlightedText text={trigger.negativePrompt} highlight={highlights.negativePrompt} />
           </div>
         {/if}
 
