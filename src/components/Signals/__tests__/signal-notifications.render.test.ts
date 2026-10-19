@@ -27,7 +27,10 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => flag
 vi.mock('~/components/Buzz/useBuzz', () => ({
   useUserMultipliers: () => ({ multipliers: { globalRewardsBonus: 1 } }),
 }));
-vi.mock('~/utils/notifications', () => ({ showBuzzNotification }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/utils/notifications')>()),
+  showBuzzNotification,
+}));
 
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 
