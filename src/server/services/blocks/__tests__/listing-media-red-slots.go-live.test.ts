@@ -374,3 +374,33 @@ describe('off-site revision apply — the rating is floored by the overrides tha
     expectRating(true, 'g');
   });
 });
+
+describe.each(SITES.filter((s) => s.goesLive === SHADOW_ID))(
+  '$site — the scan gate checks the overrides that END UP live',
+  ({ wire }) => {
+    it('🔴 a revision that staged no overrides keeps a live Blocked override, so it is refused', async () => {
+      // No shadow row: `applyRevisionRedSlots` leaves the parent's Blocked icon live, so the
+      // gate must check it — reading the shadow's (none) would put a Blocked image back live.
+      await split.setRedSlots(PARENT_ID, { icon: BLOCKED_OVERRIDE });
+      wire();
+      await expect(approve()).rejects.toThrow(/blocked: civitai\.red icon/);
+      expect(goLiveWrite()).toBeUndefined();
+    });
+
+    it('🔴 a revision that staged no overrides keeps a live still-scanning override, so it is refused', async () => {
+      await split.setRedSlots(PARENT_ID, { cover: SCANNING_OVERRIDE });
+      wire();
+      await expect(approve()).rejects.toThrow(/still scanning: civitai\.red cover/);
+      expect(goLiveWrite()).toBeUndefined();
+    });
+
+    it('positive control: a revision that CLEARED both overrides (a row of nulls) is not refused for the live Blocked one', async () => {
+      await split.setRedSlots(PARENT_ID, { icon: BLOCKED_OVERRIDE });
+      await split.setRedSlots(SHADOW_ID, { icon: null, cover: null });
+      wire();
+      await approve();
+      expect(goLiveWrite()).toBeDefined();
+      expect(await split.redSlots(PARENT_ID)).toEqual({ icon: null, cover: null });
+    });
+  }
+);

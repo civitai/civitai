@@ -3704,14 +3704,23 @@ async function applyApprovedRevision(opts: {
     // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — a revision cannot go
     // live while any of its media is still scanning or was `Blocked`. Rolls the
     // whole apply back (parent stays exactly as it was) on any non-`Scanned` asset.
+    //
+    // The civitai.red overrides it checks are the ones live AFTER step (4b): the shadow's when
+    // it staged a row (a row of nulls included, which clears them), otherwise the parent's,
+    // which `applyRevisionRedSlots` leaves in place. Both kinds. The rating floor below reads
+    // the same listing (`redSlotsListingId`), so the two cannot disagree about which overrides
+    // go live.
     const shadowRedSlots = await readListingRedSlots(tx, shadowId);
+    const redSlotsListingId = shadowRedSlots.staged ? shadowId : parentId;
+    const liveRedSlots =
+      redSlotsListingId === shadowId ? shadowRedSlots : await readListingRedSlots(tx, parentId);
     await assertAssetsScanClean(
       {
         iconId: shadow.iconId,
         coverId: shadow.coverId,
         screenshotImageIds: shadowScreenshotImageIds,
-        redIconId: shadowRedSlots.redIconId,
-        redCoverId: shadowRedSlots.redCoverId,
+        redIconId: liveRedSlots.redIconId,
+        redCoverId: liveRedSlots.redCoverId,
       },
       tx
     );
@@ -3857,9 +3866,8 @@ async function applyApprovedRevision(opts: {
         coverId: shadow.coverId,
         override: opts.contentRating,
         mediaSplit,
-        // The overrides live AFTER step (4b): the shadow's when it staged a row, otherwise the
-        // parent's, which `applyRevisionRedSlots` leaves in place.
-        redSlotsListingId: shadowRedSlots.staged ? shadowId : parentId,
+        // The overrides live AFTER step (4b) — the same listing the scan gate above checked.
+        redSlotsListingId,
       });
       appliedOffsiteRating = finalRating;
       await tx.appListing.update({
