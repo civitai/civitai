@@ -111,6 +111,9 @@ beforeEach(() => {
   mocks.hasModeratorGrant.mockResolvedValue(true);
   findFirst.mockResolvedValue(pendingHold());
   updateMany.mockResolvedValue({ count: 1 });
+  dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: readonly string[]) =>
+    strings.join('?').includes('decisionClaim') ? [{ at: '2026-10-20T10:00:00Z' }] : []
+  );
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null });
   dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: {}, nsfw: false });
   mocks.bulkSetCommentTosViolation.mockResolvedValue({ count: 1 });

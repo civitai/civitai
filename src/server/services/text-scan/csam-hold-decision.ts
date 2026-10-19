@@ -175,7 +175,7 @@ const subjectTypeOf = (entityType: string) =>
 
 /**
  * Applies a moderator's decision to a pending csam hold. The content, strike and ban run first and each is
- * safe to repeat, so a failure leaves the hold pending for a retry; the decision and its label-store
+ * safe to repeat, so the hold is claimed first, and a failure releases the claim and leaves it pending for a retry; the decision and its label-store
  * record are one transaction.
  */
 export async function decideCsamHold(args: DecideArgs) {
@@ -204,49 +204,71 @@ export async function decideCsamHold(args: DecideArgs) {
   if ((plan.strike || plan.ban) && !hold.userId)
     throw throwBadRequestError('This hold has no recorded author to strike or ban.');
 
-  if (plan.remove) await removeContent(hold, args);
-  if (plan.strike) await strikeAuthor(hold, args);
-  if (plan.ban) await banAuthor(hold, args);
+  // A claim older than this is a crashed decision; the slowest ban or NCMEC decision seen took under 20 s.
+  const claimed = await dbWrite.$queryRaw<{ at: string }[]>`
+    UPDATE "TextScanHold"
+    SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
+      || jsonb_build_object('decisionClaim', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending'
+      AND ("meta"->'decisionClaim' IS NULL
+        OR ("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
+    RETURNING "meta"->'decisionClaim'->>'at' AS "at"
+  `;
+  if (!claimed.length) throw throwConflictError('Hold already decided or missing.');
 
   const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
-  const decidedAt = new Date();
-  await dbWrite.$transaction(async (tx) => {
-    const { count } = await tx.textScanHold.updateMany({
-      where: { id: holdId, label: 'csam', status: 'Pending' },
-      data: {
-        status,
-        decidedAt,
-        decidedById: actor.id,
-        decisionNote: note || null,
-        meta: {
-          ...((hold.meta as Prisma.JsonObject | null) ?? {}),
-          decision,
-        },
-      },
-    });
-    if (count === 0) throw throwConflictError('Hold already decided or missing.');
+  try {
+    if (plan.remove) await removeContent(hold, args);
+    if (plan.strike) await strikeAuthor(hold, args);
+    if (plan.ban) await banAuthor(hold, args);
 
-    // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
-    // decision; it lands in `label_store.record_failure`.
-    await tx.$queryRaw`
-      SELECT label_store.record_label(
-        p_subject_type => ${subjectTypeOf(hold.entityType)},
-        p_subject_id => ${String(hold.entityId)},
-        p_content_hash => label_store.text_hash(${hold.text}),
-        p_family => 'csam_text_hold',
-        p_question => 'csam_text.verdict',
-        p_value => ${decision === 'dismiss' ? 'not_csam' : 'csam'},
-        p_labeller_kind => 'moderator',
-        p_source_ref => ${`TextScanHold:${holdId}`},
-        p_labelled_at => ${decidedAt}::timestamptz,
-        p_labeller_user_id => ${actor.id}::int,
-        p_reason => ${decision},
-        p_reason_note => ${note || null},
-        p_snapshot => ${JSON.stringify({ text: hold.text })}::jsonb,
-        p_owner_user_id => ${hold.userId}::int
-      )
-    `;
-  });
+    const status = decision === 'dismiss' ? 'Dismissed' : 'Confirmed';
+    const decidedAt = new Date();
+    await dbWrite.$transaction(async (tx) => {
+      const { count } = await tx.textScanHold.updateMany({
+        where: { id: holdId, label: 'csam', status: 'Pending' },
+        data: {
+          status,
+          decidedAt,
+          decidedById: actor.id,
+          decisionNote: note || null,
+          meta: {
+            ...((hold.meta as Prisma.JsonObject | null) ?? {}),
+            decision,
+          },
+        },
+      });
+      if (count === 0) throw throwConflictError('Hold already decided or missing.');
+
+      // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
+      // decision; it lands in `label_store.record_failure`.
+      await tx.$queryRaw`
+        SELECT label_store.record_label(
+          p_subject_type => ${subjectTypeOf(hold.entityType)},
+          p_subject_id => ${String(hold.entityId)},
+          p_content_hash => label_store.text_hash(${hold.text}),
+          p_family => 'csam_text_hold',
+          p_question => 'csam_text.verdict',
+          p_value => ${decision === 'dismiss' ? 'not_csam' : 'csam'},
+          p_labeller_kind => 'moderator',
+          p_source_ref => ${`TextScanHold:${holdId}`},
+          p_labelled_at => ${decidedAt}::timestamptz,
+          p_labeller_user_id => ${actor.id}::int,
+          p_reason => ${decision},
+          p_reason_note => ${note || null},
+          p_snapshot => ${JSON.stringify({ text: hold.text })}::jsonb,
+          p_owner_user_id => ${hold.userId}::int
+        )
+      `;
+    });
+  } catch (error) {
+    // Only our own claim, so a takeover after expiry is not undone by a late failure here.
+    await dbWrite.$executeRaw`UPDATE "TextScanHold" SET "meta" = "meta" - 'decisionClaim'
+        WHERE "id" = ${holdId} AND "status" = 'Pending' AND "meta"->'decisionClaim'->>'at' = ${claimed[0].at}`.catch(
+      () => null
+    );
+    throw error;
+  }
 
   return { status, entityType: hold.entityType, entityId: hold.entityId, userId: hold.userId };
 }
