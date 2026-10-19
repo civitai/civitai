@@ -199,38 +199,58 @@ describe('quoted', () => {
 });
 
 describe('reactorClusters', () => {
-  // Each address is `name:breadth`; breadth `null` is an address with no measured account count.
-  const acct = (userId: number, addresses: [string, number | null][], withTarget = false) => ({
+  // Each address is `[name, breadth]`; breadth `null` is an address with no measured account count.
+  // `addressCount` defaults to the listed addresses, i.e. nothing was cut by the per-account cap.
+  const acct = (
+    userId: number,
+    addresses: [string, number | null][],
+    {
+      withTarget = false,
+      peers = [] as number[],
+      addressCount = addresses.length,
+    }: { withTarget?: boolean; peers?: number[]; addressCount?: number } = {}
+  ) => ({
     userId,
     username: `u${userId}`,
     withTarget,
+    addressCount,
     addresses: addresses.map(([cluster, totalAccounts]) => ({ cluster, totalAccounts })),
+    peers: peers.map((p) => ({ userId: p, username: `u${p}`, isTarget: false })),
   });
   const members = (...ids: number[]) => ids.map((id) => ({ userId: id, username: `u${id}` }));
 
   it('groups reactors linked to each other, through a chain, whether or not to the creator', () => {
     // 1-2-3 is a chain (1 never shares with 3 directly); 4-5 a pair also on the creator's address; 6
     // shares only with the creator, who is not in the list.
-    const clusters = reactorClusters([
+    const { clusters, unmeasuredLinks } = reactorClusters([
       acct(1, [['a', 2]]),
       acct(2, [
         ['a', 2],
         ['b', 3],
       ]),
       acct(3, [['b', 3]]),
-      acct(4, [['c', 3]], true),
+      acct(4, [['c', 3]], { withTarget: true }),
       acct(5, [['c', 3]]),
-      acct(6, [['d', 2]], true),
+      acct(6, [['d', 2]], { withTarget: true }),
     ]);
     expect(clusters).toEqual([
-      { size: 3, linkedToCreator: false, widestLink: 3, members: members(1, 2, 3) },
-      { size: 2, linkedToCreator: true, widestLink: 3, members: members(4, 5) },
+      {
+        size: 3,
+        linkedToCreator: false,
+        widestLink: 3,
+        complete: true,
+        members: members(1, 2, 3),
+      },
+      { size: 2, linkedToCreator: true, widestLink: 3, complete: true, members: members(4, 5) },
     ]);
+    expect(unmeasuredLinks).toEqual([]);
   });
 
   it('reports the broadest address a group rests on, not the narrowest', () => {
     // 1-2 share a 2-account address; 3 joins only through a 358-account one.
-    const [cluster] = reactorClusters([
+    const {
+      clusters: [cluster],
+    } = reactorClusters([
       acct(1, [['home', 2]]),
       acct(2, [
         ['home', 2],
@@ -242,13 +262,16 @@ describe('reactorClusters', () => {
       size: 3,
       linkedToCreator: false,
       widestLink: 358,
+      complete: true,
       members: members(1, 2, 3),
     });
   });
 
   it('does not count a crowded address that a narrower one already links', () => {
     // The crowded address is listed first, so only merging narrowest first gets this right.
-    const [cluster] = reactorClusters([
+    const {
+      clusters: [cluster],
+    } = reactorClusters([
       acct(1, [
         ['vpn', 358],
         ['home', 2],
@@ -262,7 +285,28 @@ describe('reactorClusters', () => {
   });
 
   it('never links through an address of unknown breadth', () => {
-    expect(reactorClusters([acct(1, [['x', null]]), acct(2, [['x', null]])])).toEqual([]);
+    expect(reactorClusters([acct(1, [['x', null]]), acct(2, [['x', null]])]).clusters).toEqual([]);
+  });
+
+  it('marks a group incomplete when a member had addresses cut by the cap', () => {
+    // 2 has 13 shared addresses but lists only the crowded one; a narrower link to 1 may be among the rest.
+    const {
+      clusters: [cluster],
+    } = reactorClusters([
+      acct(1, [['vpn', 358]], { peers: [2] }),
+      acct(2, [['vpn', 358]], { peers: [1], addressCount: 13 }),
+    ]);
+    expect(cluster).toMatchObject({ widestLink: 358, complete: false });
+  });
+
+  it('returns pairs linked only past the cap, instead of dropping them', () => {
+    // 1 and 2 share an address neither lists; 3 is the creator, outside the reactor set.
+    const { clusters, unmeasuredLinks } = reactorClusters([
+      acct(1, [['own1', 2]], { peers: [2, 3] }),
+      acct(2, [['own2', 2]], { peers: [1, 3], addressCount: 13 }),
+    ]);
+    expect(clusters).toEqual([]);
+    expect(unmeasuredLinks).toEqual([[1, 2]]);
   });
 });
 

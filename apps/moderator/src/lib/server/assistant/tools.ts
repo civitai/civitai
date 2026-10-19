@@ -184,15 +184,26 @@ function reportRow(r: UserReportRow) {
  * answer can cite. `peers` is not used: it spans every shared address, and one public VPN exit would
  * chain strangers into a "ring". `widestLink` is the site-wide account count of the broadest address
  * holding the group together (merged narrowest first), so a group that rests on a crowded address says so.
+ *
+ * `addresses` is capped per account, so a link can sit past the cap. A group with a member whose list
+ * was cut is not `complete` (a narrower link may be hidden), and two accounts `peers` links that no
+ * listed address does come back as `unmeasuredLinks` rather than vanishing.
  */
 export function reactorClusters(
-  shared: Pick<SharedIpAccount, 'userId' | 'username' | 'withTarget' | 'addresses'>[]
+  shared: Pick<
+    SharedIpAccount,
+    'userId' | 'username' | 'withTarget' | 'addresses' | 'addressCount' | 'peers'
+  >[]
 ): {
-  size: number;
-  linkedToCreator: boolean;
-  widestLink: number;
-  members: { userId: number; username: string | null }[];
-}[] {
+  clusters: {
+    size: number;
+    linkedToCreator: boolean;
+    widestLink: number;
+    complete: boolean;
+    members: { userId: number; username: string | null }[];
+  }[];
+  unmeasuredLinks: [number, number][];
+} {
   const parent = new Map(shared.map((s) => [s.userId, s.userId]));
   const widest = new Map<number, number>();
   const root = (id: number): number => {
@@ -221,15 +232,23 @@ export function reactorClusters(
 
   const groups = new Map<number, typeof shared>();
   for (const s of shared) groups.set(root(s.userId), [...(groups.get(root(s.userId)) ?? []), s]);
-  return [...groups.entries()]
+  const clusters = [...groups.entries()]
     .filter(([, g]) => g.length > 1)
     .map(([r, g]) => ({
       size: g.length,
       linkedToCreator: g.some((s) => s.withTarget),
       widestLink: widest.get(r) ?? 0,
+      complete: g.every((s) => s.addressCount <= s.addresses.length),
       members: g.map((s) => ({ userId: s.userId, username: s.username })),
     }))
     .sort((a, b) => b.size - a.size || a.widestLink - b.widestLink);
+
+  const unmeasuredLinks: [number, number][] = [];
+  for (const s of shared)
+    for (const p of s.peers)
+      if (p.userId > s.userId && parent.has(p.userId) && root(p.userId) !== root(s.userId))
+        unmeasuredLinks.push([s.userId, p.userId]);
+  return { clusters, unmeasuredLinks };
 }
 
 export const TOOLS = [
@@ -375,7 +394,7 @@ export const TOOLS = [
   tool({
     name: 'reactors_of',
     description:
-      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
+      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` has a member with more shared addresses than were checked, so a narrower link may exist; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
     input: z.object({
       userId,
       days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
@@ -392,7 +411,7 @@ export const TOOLS = [
       const label = shownAddress(ctx);
       return {
         data: {
-          clusters: reactorClusters(shared),
+          ...reactorClusters(shared),
           breadth,
           overFloor: report.total,
           belowFloor: report.belowFloor,
