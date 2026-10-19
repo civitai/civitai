@@ -13,4 +13,6 @@ export const load: LayoutServerLoad = ({ locals }) => ({
   })),
   // Every tab sizes itself against the viewport; the layout owns the header above them.
   fullBleed: true,
+  // The title shares the sidebar trigger's row; the header below pads past it.
+  headerInline: true,
 });

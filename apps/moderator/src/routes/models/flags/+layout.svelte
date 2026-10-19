@@ -17,8 +17,10 @@
   const KBD = 'h-[15px] min-w-[15px] rounded border border-dark-4 bg-dark-6 px-1 text-[11px] font-semibold text-dark-0';
 </script>
 
-<div class="flex flex-col lg:h-[calc(100svh-3rem)]">
-  <header class="flex flex-nowrap items-center justify-between gap-6 px-6 pt-4">
+<!-- The root layout floats the sidebar trigger over this header (headerInline): pl-14 clears it and
+     pt-2.5 centres the title's line on the trigger's 48px row. -->
+<div class="flex flex-col lg:h-svh">
+  <header class="flex flex-nowrap items-start justify-between gap-6 pt-2.5 pr-6 pl-14">
     <div class="min-w-0 flex-1">
       <h1 class="m-0 text-xl font-semibold text-white">Model Flags</h1>
       <p class="m-0 mt-0.5 text-[13px] text-dark-2">
