@@ -190,6 +190,7 @@ import {
   gateHiddenMetrics,
   getMetaMetricPrivacy,
   getUserMetricPrivacyDefaults,
+  pickMetaMetricPrivacy,
   resolveModelHiddenMetrics,
   resolveVersionHiddenMetrics,
   type HiddenModelMetrics,
@@ -1317,7 +1318,7 @@ export const getModelsRaw = async ({
             },
             cosmetic: cosmetics[model.id] ?? null,
             eventDecoration: eventDecorations?.[model.id] ?? null,
-            metricPrivacy: getMetaMetricPrivacy(meta),
+            metricPrivacy: pickMetaMetricPrivacy(meta),
           };
         })
         .filter(isDefined)
@@ -1715,16 +1716,11 @@ export const getModelsWithImagesAndModelVersions = async ({
       const ownerId = it.user.id;
       if (isMod || ownerId === user?.id) continue;
       const defHidden = getUserMetricPrivacyDefaults(feedOwnerSettingsMap.get(ownerId));
-      if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+      if (anyMetricHidden(getMetaMetricPrivacy(it.metricPrivacy)) || anyMetricHidden(defHidden))
         membershipCandidates.add(ownerId);
     }
     feedMembershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
   }
-  const toMetaShape = (h: HiddenModelMetrics) => ({
-    hideBuzz: h.buzz,
-    hideDownloads: h.downloads,
-    hideGenerations: h.generations,
-  });
 
   const next = await nextCoverageEnabled();
   const result = {
@@ -1758,7 +1754,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         const isOwner = isMod || model.user.id === user?.id;
         const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
           resolveModelHiddenMetrics({
-            modelMeta: toMetaShape(metricPrivacy),
+            modelMeta: metricPrivacy,
             userSettings: feedOwnerSettingsMap.get(model.user.id),
             isOwnerOrModerator: isOwner,
             hasValidMembership: feedMembershipMap.get(model.user.id) ?? false,
@@ -5007,7 +5003,7 @@ export async function getModelsWithVersions({
     const ownerId = it.user.id;
     if (isMod || ownerId === user?.id) continue;
     const defHidden = getUserMetricPrivacyDefaults(apiOwnerSettingsMap.get(ownerId));
-    if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+    if (anyMetricHidden(getMetaMetricPrivacy(it.metricPrivacy)) || anyMetricHidden(defHidden))
       apiMembershipCandidates.add(ownerId);
   }
   const apiMembershipMap = await getValidCreatorMembershipMap([...apiMembershipCandidates]);
@@ -5060,11 +5056,7 @@ export async function getModelsWithVersions({
       }) => {
         const isOwner = isMod || user.id === viewerId;
         const modelHidden = resolveModelHiddenMetrics({
-          modelMeta: {
-            hideBuzz: metricPrivacy.buzz,
-            hideDownloads: metricPrivacy.downloads,
-            hideGenerations: metricPrivacy.generations,
-          },
+          modelMeta: metricPrivacy,
           userSettings: apiOwnerSettingsMap.get(user.id),
           isOwnerOrModerator: isOwner,
           hasValidMembership: apiMembershipMap.get(user.id) ?? false,
@@ -5077,11 +5069,7 @@ export async function getModelsWithVersions({
             ({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
               const versionHidden = resolveVersionHiddenMetrics({
                 versionMeta: versionMetaMap.get(version.id),
-                modelMeta: {
-                  hideBuzz: metricPrivacy.buzz,
-                  hideDownloads: metricPrivacy.downloads,
-                  hideGenerations: metricPrivacy.generations,
-                },
+                modelMeta: metricPrivacy,
                 userSettings: apiOwnerSettingsMap.get(user.id),
                 isOwnerOrModerator: isOwner,
                 hasValidMembership: apiMembershipMap.get(user.id) ?? false,
