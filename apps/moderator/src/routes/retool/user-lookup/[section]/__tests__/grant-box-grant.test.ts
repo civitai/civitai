@@ -12,6 +12,7 @@ const { grantMysteryBoxes, takeBackGrantedBox } = vi.hoisted(() => ({
     grantedUserIds: [8675309],
     alreadyGrantedUserIds: [] as number[],
     busyUserIds: [] as number[],
+    failedUserIds: [] as number[],
   })),
   takeBackGrantedBox: vi.fn(async () => ({ ok: true as const })),
 }));
@@ -60,11 +61,12 @@ describe('grantBox action', () => {
     });
   });
 
-  it('is a failure, not a success, when the user was busy or the form was already used', async () => {
+  it('is a failure, not a success, when the user was busy, failed, or the form was already used', async () => {
     grantMysteryBoxes.mockResolvedValueOnce({
       grantedUserIds: [],
       alreadyGrantedUserIds: [],
       busyUserIds: [TARGET],
+      failedUserIds: [],
     });
     expect(
       await actions.grantBox(formEvent({ 'items.boxes.grant': true }, grantFields))
@@ -74,6 +76,17 @@ describe('grantBox action', () => {
       grantedUserIds: [],
       alreadyGrantedUserIds: [TARGET],
       busyUserIds: [],
+      failedUserIds: [],
+    });
+    expect(
+      await actions.grantBox(formEvent({ 'items.boxes.grant': true }, grantFields))
+    ).toMatchObject({ status: 400, data: { scope: 'shop' } });
+
+    grantMysteryBoxes.mockResolvedValueOnce({
+      grantedUserIds: [],
+      alreadyGrantedUserIds: [],
+      busyUserIds: [],
+      failedUserIds: [TARGET],
     });
     expect(
       await actions.grantBox(formEvent({ 'items.boxes.grant': true }, grantFields))

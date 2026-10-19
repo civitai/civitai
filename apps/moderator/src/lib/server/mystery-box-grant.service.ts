@@ -1,8 +1,21 @@
-import { ITEM_DEFINITION_STATUS, ITEM_TYPE, modGrantSourceKey } from '@civitai/shared/mystery-box';
+import { z } from 'zod';
+import {
+  ITEM_DEFINITION_STATUS,
+  ITEM_TYPE,
+  MOD_GRANT_SOURCE_PREFIX,
+  modGrantSourceKey,
+} from '@civitai/shared/mystery-box';
 import { MAX_BOXES_PER_USER, MAX_GRANT_USERS } from '$lib/mystery-box';
 import { dbRead, dbWrite } from './db';
+import { escapeLike } from './like';
 import { isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { recordModActivity } from './mod-activity';
+
+/** The form fields every box-grant action takes besides who receives it. */
+export const boxGrantFields = {
+  count: z.coerce.number().int().min(1).max(MAX_BOXES_PER_USER),
+  grantId: z.string().trim().min(1).max(64),
+};
 
 /** A grant refused before anything was written. */
 export class BoxGrantRefused extends Error {}
@@ -10,10 +23,12 @@ export class BoxGrantRefused extends Error {}
 export type BoxGrantResult = {
   /** Users who got `count` new boxes. */
   grantedUserIds: number[];
-  /** Users this grant id had already given its boxes to: a resubmitted form. */
+  /** Users this grant id had already given boxes to, held or opened: a resubmitted form. */
   alreadyGrantedUserIds: number[];
   /** Skipped: a purchase, box opening or moderator change held their lock. Granting again is safe. */
   busyUserIds: number[];
+  /** Nothing written for them: their grant failed for another reason. Granting again is safe. */
+  failedUserIds: number[];
 };
 
 /**
@@ -21,9 +36,11 @@ export type BoxGrantResult = {
  * No purchase, claim or Buzz is involved, and none may be: the main app reads any purchase of a box
  * as its having gone on sale.
  *
- * `grantId` is minted when the form renders, so submitting the same form twice finds its keys taken
- * and grants nothing more, while granting again to the users it skipped as busy finishes the job.
- * One transaction per user under their item-holder lock, as the main app's purchases and opens take it.
+ * `grantId` is minted when the form renders. A user this grant id already reached gets nothing more,
+ * whatever `count` is now and whether or not they opened what it gave, so a resubmitted form never
+ * grants twice; granting again to the users it skipped finishes the job. One transaction per user under
+ * their item-holder lock, as the main app's purchases and opens take it; a failure for one user is
+ * reported, not thrown, since the users before them already have their boxes.
  */
 export async function grantMysteryBoxes({
   boxId,
@@ -69,13 +86,37 @@ export async function grantMysteryBoxes({
   const missing = uniqueUserIds.filter((id) => !users.some((u) => u.id === id));
   if (missing.length) throw new BoxGrantRefused(`These users don't exist: ${missing.join(', ')}`);
 
-  const result: BoxGrantResult = { grantedUserIds: [], alreadyGrantedUserIds: [], busyUserIds: [] };
+  const result: BoxGrantResult = {
+    grantedUserIds: [],
+    alreadyGrantedUserIds: [],
+    busyUserIds: [],
+    failedUserIds: [],
+  };
   for (const userId of uniqueUserIds) {
-    let inserted: number;
+    // Every key this grant id has ever given this user, whatever the count was.
+    const given = `${escapeLike(`${MOD_GRANT_SOURCE_PREFIX}${grantId}-${userId}-`)}%`;
+    let outcome: 'granted' | 'already';
     try {
-      inserted = await dbWrite.transaction().execute(async (trx) => {
+      outcome = await dbWrite.transaction().execute(async (trx) => {
         await lockItemHolder(trx, userId);
-        const written = await trx
+        // An opened box's Item is gone and its key lives on in its BoxOpening, so both are asked.
+        const held = await trx
+          .selectFrom('Item')
+          .select('id')
+          .where('sourceKey', 'like', given)
+          .where('holderType', '=', 'user')
+          .where('holderId', '=', userId)
+          .executeTakeFirst();
+        const opened = held
+          ? undefined
+          : await trx
+              .selectFrom('BoxOpening')
+              .select('boxItemId')
+              .where('boxSourceKey', 'like', given)
+              .where('userId', '=', userId)
+              .executeTakeFirst();
+        if (held || opened) return 'already' as const;
+        await trx
           .insertInto('Item')
           .values(
             keysFor(userId).map((sourceKey) => ({
@@ -85,16 +126,18 @@ export async function grantMysteryBoxes({
               sourceKey,
             }))
           )
-          .onConflict((oc) => oc.column('sourceKey').doNothing())
-          .executeTakeFirst();
-        return Number(written.numInsertedOrUpdatedRows ?? 0);
+          .execute();
+        return 'granted' as const;
       });
     } catch (error) {
-      if (!isItemHolderBusy(error)) throw error;
-      result.busyUserIds.push(userId);
+      if (isItemHolderBusy(error)) result.busyUserIds.push(userId);
+      else {
+        console.error('[mystery-box-grant] grant failed', { boxId: box.id, userId, error });
+        result.failedUserIds.push(userId);
+      }
       continue;
     }
-    if (inserted === 0) {
+    if (outcome === 'already') {
       result.alreadyGrantedUserIds.push(userId);
       continue;
     }

@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
+import { listGrantableBoxes } from '$lib/server/mystery-box-builder.service';
 import {
   getAvailableBadges,
   getBounties,
@@ -9,7 +10,6 @@ import {
   getComments,
   getCommentsV2,
   getCosmetics,
-  getGrantableBoxes,
   getGrantedBoxes,
   getReceivedReviews,
   getReviews,
@@ -50,7 +50,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     getShopPurchases(userId),
     getAvailableBadges(userId),
     getGrantedBoxes(userId),
-    getGrantableBoxes(),
+    listGrantableBoxes(),
   ]);
 
   return json({

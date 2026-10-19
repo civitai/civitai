@@ -1,10 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import {
-  BOX_OPENING_REWARD_STATUS,
-  ITEM_DEFINITION_STATUS,
-  ITEM_TYPE,
-  MOD_GRANT_SOURCE_PREFIX,
-} from '@civitai/shared/mystery-box';
+import { BOX_OPENING_REWARD_STATUS, MOD_GRANT_SOURCE_PREFIX } from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
@@ -676,19 +671,6 @@ export async function getGrantedBoxes(userId: number, limit = 50): Promise<Cappe
     })),
   ].sort((a, b) => b.at.getTime() - a.at.getTime());
   return capped(rows, limit);
-}
-
-// Published boxes, for the grant picker: an archived box is no longer handed out.
-export type GrantableBox = { id: number; name: string };
-
-export async function getGrantableBoxes(): Promise<GrantableBox[]> {
-  return dbRead
-    .selectFrom('ItemDefinition')
-    .select(['id', 'name'])
-    .where('type', '=', ITEM_TYPE.box)
-    .where('status', '=', ITEM_DEFINITION_STATUS.published)
-    .orderBy('id', 'desc')
-    .execute();
 }
 
 // Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.

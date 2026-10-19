@@ -1,9 +1,11 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { onMount } from 'svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { denied } from '$lib/permissions';
   import {
@@ -11,35 +13,35 @@
     MAX_BOXES_PER_USER,
     MAX_GRANT_USERS,
     newBoxGrantId,
+    parseUserIdList,
   } from '$lib/mystery-box';
+  import type { BoxGrantResult } from '$lib/server/mystery-box-grant.service';
 
   let { boxStatus, canGrant }: { boxStatus: string; canGrant: boolean } = $props();
 
-  type GrantResult = {
-    grantedUserIds: number[];
-    alreadyGrantedUserIds: number[];
-    busyUserIds: number[];
-  };
-
   let userIds = $state('');
-  let count = $state(1);
-  let grantId = $state(newBoxGrantId());
-  let last = $state<(GrantResult & { count: number }) | null>(null);
+  let count = $state<number | null>(1);
+  // Minted in the browser only, so the id the form posts is the one this page holds.
+  let grantId = $state('');
+  onMount(() => (grantId = newBoxGrantId()));
+  let last = $state<(BoxGrantResult & { count: number }) | null>(null);
 
   const granting = new FormState({
+    onSubmit: () => (last = null),
     onSuccess: (data) => {
-      const result = data as GrantResult;
-      last = { ...result, count };
-      // Busy users stay in the box with the same grant id: granting again finishes the job and
-      // cannot give anyone twice. Once nobody is left, the next grant is a new one.
-      userIds = result.busyUserIds.join(' ');
-      if (!result.busyUserIds.length) grantId = newBoxGrantId();
+      const result = data as BoxGrantResult & { count: number };
+      last = result;
+      // The users left out stay in the box with the same grant id: granting again finishes the job
+      // and cannot give anyone twice. Once nobody is left, the next grant is a new one.
+      const retry = [...result.busyUserIds, ...result.failedUserIds];
+      userIds = retry.join(' ');
+      if (!retry.length) grantId = newBoxGrantId();
     },
     reset: false,
   });
 
   const published = $derived(boxStatus === ITEM_DEFINITION_STATUS.published);
-  const named = $derived(userIds.split(/[\s,]+/).filter(Boolean).length);
+  const named = $derived(parseUserIdList(userIds).length);
 </script>
 
 <section class="mb-6 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -78,7 +80,11 @@
           type="submit"
           size="sm"
           class="ml-auto"
-          disabled={granting.submitting || named === 0 || named > MAX_GRANT_USERS}
+          disabled={granting.submitting ||
+            !grantId ||
+            !count ||
+            named === 0 ||
+            named > MAX_GRANT_USERS}
         >
           Grant
         </Button>
@@ -92,7 +98,7 @@
     <ErrorAlert class="mt-3" message={granting.error} />
   {/if}
   {#if last}
-    <div class="mt-3 space-y-1 text-sm" role="status">
+    <div class="mt-3 space-y-2 text-sm" role="status">
       <p class="text-dark-0">
         Granted {last.count} box{last.count === 1 ? '' : 'es'} each to {last.grantedUserIds.length}
         user{last.grantedUserIds.length === 1 ? '' : 's'}.
@@ -103,10 +109,15 @@
         </p>
       {/if}
       {#if last.busyUserIds.length}
-        <p class="text-amber-300">
-          Skipped {last.busyUserIds.join(', ')}: a purchase, box opening or moderator change was in
-          progress. They are left above; grant again in a moment to finish.
-        </p>
+        <WarningAlert
+          message={`Skipped ${last.busyUserIds.join(', ')}: a purchase, box opening or moderator change was in progress.`}
+        />
+      {/if}
+      {#if last.failedUserIds.length}
+        <ErrorAlert message={`Nothing was given to ${last.failedUserIds.join(', ')}: their grant failed.`} />
+      {/if}
+      {#if last.busyUserIds.length || last.failedUserIds.length}
+        <p class="text-dark-2">They are left above; grant again in a moment to finish.</p>
       {/if}
     </div>
   {/if}

@@ -10,9 +10,7 @@
   import { denied } from '$lib/permissions';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import WarningAlert from '$lib/components/WarningAlert.svelte';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { MAX_BOXES_PER_USER, newBoxGrantId } from '$lib/mystery-box';
+  import GrantedBoxesCard from './GrantedBoxesCard.svelte';
 
   let {
     account,
@@ -33,22 +31,7 @@
   // Called through, not captured: reading the prop inside the closure is what stops a re-passed
   // callback being ignored (svelte’s `state_referenced_locally`).
   const form = new FormState({ onSuccess: () => onSuccess() });
-  let grantId = $state('');
-
-  // A new id once a grant lands, so the next one is a new grant rather than a repeat of this one.
-  // `reset: false`: a reset would empty the box picker's hidden input under a still-shown choice.
-  const boxForm = new FormState({
-    onSuccess: () => {
-      boxGrantId = newBoxGrantId();
-      boxId = '';
-      onSuccess();
-    },
-    reset: false,
-  });
-  let boxGrantId = $state(newBoxGrantId());
-  let boxId = $state('');
-
-  const STATE_LABEL = { held: 'unopened', opened: 'opened', takenBack: 'taken back' } as const;
+  let badgeId = $state('');
 </script>
 
 {#if form.error}
@@ -112,9 +95,9 @@
           <form method="POST" action="?/grantCosmetic" use:enhance={form.enhance}>
             <input type="hidden" name="userId" value={userId} />
             <div class="flex flex-wrap items-end gap-2">
-              <Select.Root type="single" name="cosmeticId" bind:value={grantId}>
+              <Select.Root type="single" name="cosmeticId" bind:value={badgeId}>
                 <Select.Trigger class="min-w-56 flex-1">
-                  {result.availableBadges.find((b) => String(b.id) === grantId)?.name ??
+                  {result.availableBadges.find((b) => String(b.id) === badgeId)?.name ??
                     'Choose a badge'}
                 </Select.Trigger>
                 <Select.Content>
@@ -123,92 +106,20 @@
                   {/each}
                 </Select.Content>
               </Select.Root>
-              <Button type="submit" size="sm" disabled={!grantId || form.submitting}>Grant</Button>
+              <Button type="submit" size="sm" disabled={!badgeId || form.submitting}>Grant</Button>
             </div>
           </form>
         {/if}
       </div>
     </section>
 
-    <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
-      <h3 class="mb-1 text-sm font-semibold text-white">Mystery boxes</h3>
-      <p class="mb-3 text-xs text-dark-2">
-        A granted box is free: no purchase, no Buzz. Taking one back removes the box, or what it gave
-        once opened.
-      </p>
-      {#if boxForm.error}
-        <ErrorAlert class="mb-3" message={boxForm.error} />
-      {/if}
-      {#if boxForm.warning}
-        <WarningAlert class="mb-3" message={boxForm.warning} />
-      {/if}
-      {#if !canGrantBoxes}
-        <p class="text-sm text-dark-2">{denied('items.boxes.grant')}</p>
-      {:else if result.grantableBoxes.length === 0}
-        <p class="text-sm text-dark-2">No box is published.</p>
-      {:else}
-        <form method="POST" action="?/grantBox" use:enhance={boxForm.enhance} class="mb-4">
-          <input type="hidden" name="userId" value={userId} />
-          <input type="hidden" name="grantId" value={boxGrantId} />
-          <div class="flex flex-wrap items-end gap-2">
-            <Select.Root type="single" name="boxId" bind:value={boxId}>
-              <Select.Trigger class="min-w-56 flex-1">
-                {result.grantableBoxes.find((b) => String(b.id) === boxId)?.name ?? 'Choose a box'}
-              </Select.Trigger>
-              <Select.Content>
-                {#each result.grantableBoxes as b (b.id)}
-                  <Select.Item value={String(b.id)}>#{b.id} {b.name}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-            <Input
-              type="number"
-              name="count"
-              min={1}
-              max={MAX_BOXES_PER_USER}
-              value={1}
-              class="h-8 w-20"
-              aria-label="How many boxes"
-            />
-            <Button type="submit" size="sm" disabled={!boxId || boxForm.submitting}>Grant</Button>
-          </div>
-        </form>
-      {/if}
-
-      {#if result.grantedBoxes.items.length}
-        <ul class="space-y-1 text-sm">
-          {#each result.grantedBoxes.items as box (box.sourceKey)}
-            <li class="flex flex-wrap items-baseline gap-x-2">
-              <span class="text-dark-0">{box.boxName}</span>
-              <Badge variant="secondary">{STATE_LABEL[box.state]}</Badge>
-              {#if box.reward}
-                <span class="text-xs text-dark-2">gave {box.reward}</span>
-              {/if}
-              <span class="text-xs text-dark-2">{dateTime(box.at)}</span>
-              {#if canGrantBoxes && box.state !== 'takenBack'}
-                <form method="POST" action="?/takeBackGrantedBox" use:enhance={boxForm.enhance}>
-                  <input type="hidden" name="userId" value={userId} />
-                  <input type="hidden" name="sourceKey" value={box.sourceKey} />
-                  <ConfirmButton
-                    label="Take back"
-                    title="Take back this box?"
-                    description={box.state === 'held'
-                      ? 'The unopened box is removed from this account.'
-                      : `The ${box.reward ?? 'reward'} it gave is removed from this account. The opening stays on record.`}
-                    disabled={boxForm.submitting}
-                  />
-                </form>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-        {#if result.grantedBoxes.truncated}
-          <p class="mt-2 text-xs text-dark-2">Showing the latest {result.grantedBoxes.items.length}.</p>
-        {/if}
-      {:else}
-        <p class="text-sm text-dark-2">No boxes granted to this account.</p>
-      {/if}
-    </section>
+    <GrantedBoxesCard
+      grantedBoxes={result.grantedBoxes}
+      grantableBoxes={result.grantableBoxes}
+      {userId}
+      {canGrantBoxes}
+      onSuccess={() => onSuccess()}
+    />
   {/if}
 {:catch}
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">

@@ -1,5 +1,5 @@
+import type { GrantableBox } from '$lib/server/mystery-box-builder.service';
 import type {
-  GrantableBox,
   GrantedBox as GrantedBoxRow,
   UserReview,
   ReceivedReview as ReceivedReviewRow,

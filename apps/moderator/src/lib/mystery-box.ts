@@ -26,6 +26,11 @@ export function newBoxGrantId() {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** A pasted list of user ids, split on commas, spaces or new lines, repeats dropped. Not validated. */
+export const parseUserIdList = (value: string) => [
+  ...new Set(value.split(/[\s,]+/).filter(Boolean)),
+];
+
 /**
  * Base odds (nothing owned) for one team, through the draw's own `computeBoxOdds`. Ids are positions
  * in the draft, so unsaved rows preview too. Null when the weights can't be computed.

@@ -671,6 +671,7 @@ describe('grantMysteryBoxes', () => {
       grantedUserIds: [BUYER, OTHER],
       alreadyGrantedUserIds: [],
       busyUserIds: [],
+      failedUserIds: [],
     });
     expect(await items()).toEqual([
       { itemDefinitionId: 1, holderId: BUYER, sourceKey: `mod-grant-g1-${BUYER}-1` },
@@ -699,6 +700,7 @@ describe('grantMysteryBoxes', () => {
       grantedUserIds: [],
       alreadyGrantedUserIds: [BUYER, OTHER],
       busyUserIds: [],
+      failedUserIds: [],
     });
     expect(await items()).toHaveLength(4);
     expect(recordModActivity).not.toHaveBeenCalled();
@@ -710,6 +712,7 @@ describe('grantMysteryBoxes', () => {
       grantedUserIds: [OTHER],
       alreadyGrantedUserIds: [],
       busyUserIds: [BUYER],
+      failedUserIds: [],
     });
     expect((await items()).map((i) => i.holderId)).toEqual([OTHER, OTHER]);
 
@@ -718,6 +721,7 @@ describe('grantMysteryBoxes', () => {
       grantedUserIds: [BUYER],
       alreadyGrantedUserIds: [OTHER],
       busyUserIds: [],
+      failedUserIds: [],
     });
     expect((await items()).map((i) => i.holderId)).toEqual([BUYER, BUYER, OTHER, OTHER]);
   });
@@ -726,18 +730,75 @@ describe('grantMysteryBoxes', () => {
     await grantBoxes();
     const begins = statements.flatMap((st, i) => (st.sql === 'begin' ? [i] : []));
     expect(begins).toHaveLength(2);
-    for (const [n, user] of [BUYER, OTHER].entries())
-      expect(statements.slice(begins[n] + 1, begins[n] + 4).map((st) => st.params)).toEqual([
+    for (const [n, user] of [BUYER, OTHER].entries()) {
+      const commit = statements.findIndex((st, i) => i > begins[n] && st.sql === 'commit');
+      const own = statements.slice(begins[n] + 1, commit);
+      expect(own.slice(0, 2).map((st) => st.params)).toEqual([
         [ITEM_HOLDER_LOCK_TIMEOUT],
         [1229455361, user],
-        expect.arrayContaining([`mod-grant-g1-${user}-1`, `mod-grant-g1-${user}-2`]),
       ]);
+      // The prior-grant reads and the insert all run after the lock, on this user's keys.
+      expect(own.slice(2).map((st) => st.sql.trim().split(/\s+/)[0].toLowerCase())).toEqual([
+        'select',
+        'select',
+        'insert',
+      ]);
+      expect(own.at(-1)?.params).toEqual(
+        expect.arrayContaining([`mod-grant-g1-${user}-1`, `mod-grant-g1-${user}-2`])
+      );
+    }
   });
 
-  it('a database error other than a lock timeout is not answered as busy', async () => {
+  // The users before a failure already have their boxes: throwing would hide that, and the form's
+  // grant id with it, so the next attempt would give them a second set.
+  it('reports a user whose grant fails for another reason, and goes on to the rest', async () => {
     lockFails.set(BUYER, '40P01');
-    await expect(grantBoxes()).rejects.toMatchObject({ code: '40P01' });
+    await expect(grantBoxes()).resolves.toEqual({
+      grantedUserIds: [OTHER],
+      alreadyGrantedUserIds: [],
+      busyUserIds: [],
+      failedUserIds: [BUYER],
+    });
+    expect((await items()).map((i) => i.holderId)).toEqual([OTHER, OTHER]);
+  });
+
+  it('gives nothing more to a user who already opened what this form gave', async () => {
+    await grantBoxes({ userIds: [BUYER], count: 1 });
+    // The open deletes the Item; its key lives on in the opening.
+    await db.query(`DELETE FROM "Item"`);
+    await openedBox(modGrantSourceKey('g1', BUYER, 1), 77, 2, HAT);
+
+    await expect(grantBoxes({ userIds: [BUYER], count: 1 })).resolves.toMatchObject({
+      grantedUserIds: [],
+      alreadyGrantedUserIds: [BUYER],
+    });
     expect(await items()).toEqual([]);
+  });
+
+  it('gives nothing more when the same form comes back with a higher count', async () => {
+    await grantBoxes({ userIds: [BUYER], count: 1 });
+    await expect(grantBoxes({ userIds: [BUYER], count: 3 })).resolves.toMatchObject({
+      grantedUserIds: [],
+      alreadyGrantedUserIds: [BUYER],
+    });
+    expect(await items()).toHaveLength(1);
+  });
+
+  // User 1's keys must not be read as already covering user 12's, nor the reverse.
+  it('tells apart users whose ids share a prefix', async () => {
+    await db.exec(`INSERT INTO "User" ("id") VALUES (1), (12)`);
+    await expect(grantBoxes({ userIds: [12, 1], count: 1 })).resolves.toMatchObject({
+      grantedUserIds: [12, 1],
+      alreadyGrantedUserIds: [],
+    });
+  });
+
+  it("is not stopped by another grant id's boxes, nor by another user's", async () => {
+    await grantBoxes({ userIds: [OTHER], count: 1 });
+    await holdBox(modGrantSourceKey('g2', BUYER, 1));
+    await expect(grantBoxes({ userIds: [BUYER], count: 1 })).resolves.toMatchObject({
+      grantedUserIds: [BUYER],
+    });
   });
 
   it.each([

@@ -42,8 +42,11 @@ import {
   updateUserIdentity,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
-import { BoxGrantRefused, grantMysteryBoxes } from '$lib/server/mystery-box-grant.service';
-import { MAX_BOXES_PER_USER } from '$lib/mystery-box';
+import {
+  boxGrantFields,
+  BoxGrantRefused,
+  grantMysteryBoxes,
+} from '$lib/server/mystery-box-grant.service';
 import { ITEM_HOLDER_BUSY_MESSAGE } from '$lib/server/item-holder-lock';
 import { accountEnforcementActions } from '$lib/server/account-actions';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
@@ -405,11 +408,7 @@ export const actions: Actions = {
 
   grantBox: requiresGrant('items.boxes.grant', async ({ request, locals }) => {
     const input = parseForm(
-      userIdSchema.extend({
-        boxId: int4Id,
-        count: z.coerce.number().int().min(1).max(MAX_BOXES_PER_USER),
-        grantId: z.string().trim().min(1).max(64),
-      }),
+      userIdSchema.extend({ boxId: int4Id, ...boxGrantFields }),
       await request.formData()
     );
     if (typeof input === 'string') return shopFail(input);
@@ -423,6 +422,8 @@ export const actions: Actions = {
         moderatorId: locals.user.id,
       });
       if (result.busyUserIds.length) return shopFail(ITEM_HOLDER_BUSY_MESSAGE);
+      if (result.failedUserIds.length)
+        return shopFail('The grant failed. Nothing was given; try again.');
       if (result.alreadyGrantedUserIds.length)
         return shopFail('This grant was already made. Reload to grant again.');
       return { success: true };

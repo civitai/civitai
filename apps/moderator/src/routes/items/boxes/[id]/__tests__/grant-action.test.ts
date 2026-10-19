@@ -12,6 +12,7 @@ const { grantMysteryBoxes } = vi.hoisted(() => ({
     grantedUserIds: [11, 22, 33],
     alreadyGrantedUserIds: [] as number[],
     busyUserIds: [] as number[],
+    failedUserIds: [] as number[],
   })),
 }));
 vi.mock('$lib/server/mystery-box-grant.service', async (importOriginal) => ({
@@ -46,7 +47,7 @@ describe('grant action', () => {
   });
 
   it('reads ids split by commas, spaces and new lines, and answers with what happened', async () => {
-    const result = await actions.grant(grantEvent(GRANTER, fields(' 11, 22\n33 ')));
+    const result = await actions.grant(grantEvent(GRANTER, fields(' 11, 22\n33 22')));
     expect(grantMysteryBoxes).toHaveBeenCalledWith({
       boxId: 7,
       userIds: [11, 22, 33],
@@ -54,11 +55,14 @@ describe('grant action', () => {
       grantId: 'abc123',
       moderatorId: MODERATOR,
     });
+    // The count as posted, so the confirmation names what was granted, not what the field says now.
     expect(result).toEqual({
       scope: 'grant',
+      count: 3,
       grantedUserIds: [11, 22, 33],
       alreadyGrantedUserIds: [],
       busyUserIds: [],
+      failedUserIds: [],
     });
   });
 

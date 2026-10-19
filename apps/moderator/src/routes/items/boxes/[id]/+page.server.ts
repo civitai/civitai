@@ -2,12 +2,7 @@ import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
 import { MAX_BOX_WEIGHT } from '@civitai/shared/box-odds';
-import {
-  EMPTY_RULES,
-  MAX_BOXES_PER_USER,
-  MAX_GRANT_USERS,
-  TIER_KEY_PATTERN,
-} from '$lib/mystery-box';
+import { EMPTY_RULES, MAX_GRANT_USERS, parseUserIdList, TIER_KEY_PATTERN } from '$lib/mystery-box';
 import {
   archiveBox,
   BoxRefusal,
@@ -21,7 +16,11 @@ import { readCosmeticEvents } from '$lib/server/item-definitions.service';
 import { int4Id, jsonField, parseForm } from '$lib/server/query';
 import { recordModActivity } from '$lib/server/mod-activity';
 import { requiresGrant } from '$lib/server/access';
-import { BoxGrantRefused, grantMysteryBoxes } from '$lib/server/mystery-box-grant.service';
+import {
+  boxGrantFields,
+  BoxGrantRefused,
+  grantMysteryBoxes,
+} from '$lib/server/mystery-box-grant.service';
 
 const boxIdOf = (params: { id: string }) => {
   const parsed = int4Id.safeParse(params.id);
@@ -82,7 +81,7 @@ const versionSchema = z.object({ expectedVersion: z.coerce.number().int().positi
 const grantSchema = z.object({
   // Ids separated by commas, spaces or new lines, as pasted from a sheet.
   userIds: z.string().transform((value, ctx) => {
-    const ids = value.split(/[\s,]+/).filter(Boolean);
+    const ids = parseUserIdList(value);
     const bad = ids.find((id) => !int4Id.safeParse(id).success);
     if (bad !== undefined) ctx.addIssue({ code: 'custom', message: `Not a user id: ${bad}` });
     else if (!ids.length) ctx.addIssue({ code: 'custom', message: 'Name at least one user id.' });
@@ -90,8 +89,7 @@ const grantSchema = z.object({
       ctx.addIssue({ code: 'custom', message: `At most ${MAX_GRANT_USERS} users at a time.` });
     return ids.map(Number);
   }),
-  count: z.coerce.number().int().min(1).max(MAX_BOXES_PER_USER),
-  grantId: z.string().trim().min(1).max(64),
+  ...boxGrantFields,
 });
 
 const listingSchema = z
@@ -187,7 +185,8 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { scope: 'grant', error: input });
     try {
       const result = await grantMysteryBoxes({ boxId, ...input, moderatorId: locals.user.id });
-      return { scope: 'grant', ...result };
+      // The count as granted, for the confirmation: the field may have changed since it was posted.
+      return { scope: 'grant', count: input.count, ...result };
     } catch (e) {
       if (e instanceof BoxGrantRefused) return fail(409, { scope: 'grant', error: e.message });
       throw e;

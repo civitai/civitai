@@ -34,4 +34,7 @@
 
 <ListingPanel boxStatus={data.box.status} listings={data.listings} />
 
-<GrantPanel boxStatus={data.box.status} canGrant={!!data.grants['items.boxes.grant']} />
+<!-- A grant id belongs to one box's form: its keys do not name the box. -->
+{#key data.box.id}
+  <GrantPanel boxStatus={data.box.status} canGrant={!!data.grants['items.boxes.grant']} />
+{/key}
