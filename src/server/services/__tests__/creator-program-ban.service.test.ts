@@ -230,5 +230,6 @@ describe('setCreatorProgramBan: a failed session refresh', () => {
     refreshSession.mockRejectedValueOnce(new Error('hub unreachable'));
     await expect(ban('set')).resolves.toMatchObject({ before: 15, after: 47, changed: true });
     expect(await onboarding()).toBe(47);
+    expect(refreshSession).toHaveBeenCalledTimes(1);
   });
 });
