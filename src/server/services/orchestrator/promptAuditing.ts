@@ -81,6 +81,7 @@ const truncateForRecord = (text: string | undefined) =>
   text != null && text.length > OVER_LENGTH_RECORDED_CHARS
     ? `${text.slice(0, OVER_LENGTH_RECORDED_CHARS)}… [truncated from ${text.length} chars]`
     : text;
+const TRUNCATED_RECORD = /… \[truncated from \d+ chars\]$/;
 
 /** The evidence a blocked entry keeps from the audit's first trigger. */
 function triggerEvidence(trigger?: PromptTrigger) {
@@ -94,6 +95,40 @@ function triggerEvidence(trigger?: PromptTrigger) {
     matches: trigger?.matches,
   };
 }
+
+/**
+ * What the regex audit says about a row read back from the audit log. The log does not record
+ * whether a row was a hard block, so a soft one is recognised by its re-audit and an over-length
+ * refusal by the truncation it was recorded with. A row the audit no longer matches is kept
+ * without evidence, as is an External row, which the regex layer cannot explain.
+ */
+async function reauditSeededRow(row: {
+  prompt: string;
+  negativePrompt: string;
+  source: string;
+}): Promise<{ hardBlock: boolean; evidence?: PromptTrigger }> {
+  if (TRUNCATED_RECORD.test(row.prompt) || TRUNCATED_RECORD.test(row.negativePrompt ?? '')) {
+    return { hardBlock: false };
+  }
+  if (row.source === 'External') return { hardBlock: true };
+
+  try {
+    const negativePrompt =
+      row.negativePrompt === LEGACY_MISSING_NEGATIVE_PROMPT ? '' : row.negativePrompt;
+    const [prompt, negative] = await Promise.all([
+      stripBenignPhrases(normalizeText(row.prompt), BlocklistType.PromptBenignPhrase),
+      stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
+    ]);
+    // Profanity is checked because a soft row recorded on the green domain can only be told apart by it.
+    const { success, triggers } = auditPromptEnriched(prompt ?? row.prompt, negative, true);
+    if (success || triggers.length === 0) return { hardBlock: true };
+    if (isSoftBlock(triggers)) return { hardBlock: false };
+    return { hardBlock: true, evidence: triggers[0] };
+  } catch {
+    return { hardBlock: true };
+  }
+}
+
 const RESET_MARKER = '__RESET__';
 
 export function getBlockedPromptsKey(userId: number) {
@@ -127,28 +162,27 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     ORDER BY time ASC
   `;
 
-  if (data.length === 0) {
-    // No violations today, set reset marker
-    await sysRedis.lPush(key, RESET_MARKER);
-  } else {
-    // Add all violations (oldest first, so newest ends up at head)
-    for (const row of data) {
-      const entry: BlockedPromptEntry = {
-        prompt: row.prompt,
-        negativePrompt: row.negativePrompt,
-        source: row.source,
-        category: undefined,
-        matchedWord: undefined,
-        matchedRegex: undefined,
-        imageId: null,
-        remixOfId: row.remixOfId ?? null,
-        inputImages: row.inputImages?.length ? row.inputImages : undefined,
-        inputVideo: row.inputVideo || undefined,
-        time: row.time,
-      };
-      await sysRedis.rPush(key, JSON.stringify(entry));
-    }
+  // Add the hard blocks (oldest first, so newest ends up at head)
+  let seeded = 0;
+  for (const row of data) {
+    const { hardBlock, evidence } = await reauditSeededRow(row);
+    if (!hardBlock) continue;
+    const entry: BlockedPromptEntry = {
+      prompt: row.prompt,
+      negativePrompt: row.negativePrompt,
+      source: row.source,
+      ...triggerEvidence(evidence),
+      imageId: null,
+      remixOfId: row.remixOfId ?? null,
+      inputImages: row.inputImages?.length ? row.inputImages : undefined,
+      inputVideo: row.inputVideo || undefined,
+      time: row.time,
+    };
+    await sysRedis.rPush(key, JSON.stringify(entry));
+    seeded++;
   }
+  // Nothing to count, set reset marker
+  if (seeded === 0) await sysRedis.lPush(key, RESET_MARKER);
   await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
 }
 

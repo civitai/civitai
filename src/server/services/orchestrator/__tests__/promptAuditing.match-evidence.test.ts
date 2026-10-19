@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
-/** A stored blocked prompt carries the evidence for why it was blocked. */
+/**
+ * A stored blocked prompt carries the evidence for why it was blocked, whether it was written live
+ * or rebuilt from the audit log, and the rebuild only counts hard blocks.
+ */
+
+const { mockClickhouseQuery } = vi.hoisted(() => ({ mockClickhouseQuery: vi.fn() }));
 
 vi.mock('~/server/integrations/moderation', () => ({
   extModeration: { moderatePrompt: vi.fn(async () => ({ flagged: false, categories: [] })) },
@@ -10,7 +15,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: vi.fn(async (text?: string) => text),
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: mockClickhouseQuery } }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
 vi.mock('~/server/auth/session-invalidation', () => ({
@@ -34,13 +39,83 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const mockSysRedis = redisMock.sysRedis;
 
-// A hard minor-rule block whose NSFW gate word is `nude`.
+// `daughter` is a soft-tier blocklist entry; the other prompt is a hard minor-rule block whose
+// NSFW gate word is `nude`.
 const HARD_PROMPT = 'nude, young stepson';
+const SOFT_PROMPT = 'daughter';
+
+const row = (prompt: string, overrides: Record<string, unknown> = {}) => ({
+  prompt,
+  negativePrompt: '',
+  source: 'Regex',
+  remixOfId: null,
+  inputImages: [],
+  inputVideo: null,
+  time: '2026-01-01 00:00:00',
+  ...overrides,
+});
+
+const seededEntries = () =>
+  mockSysRedis.rPush.mock.calls.map(([, json]: unknown[]) => JSON.parse(json as string));
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockSysRedis.exists.mockResolvedValue(1);
   mockSysRedis.lLen.mockResolvedValue(1);
+});
+
+describe('cold-seeding the blocked-prompt list from the audit log', () => {
+  beforeEach(() => {
+    mockSysRedis.exists.mockResolvedValue(0);
+  });
+
+  const seed = async (rows: ReturnType<typeof row>[]) => {
+    mockClickhouseQuery.mockResolvedValue(rows);
+    await expect(
+      auditPromptServer({ prompt: HARD_PROMPT, userId: 5, isGreen: false })
+    ).rejects.toBeDefined();
+    return seededEntries();
+  };
+
+  it('fills category and matched text from a re-audit of the stored prompt', async () => {
+    const [entry] = await seed([row(HARD_PROMPT)]);
+    expect(entry).toMatchObject({
+      category: 'inappropriate_minor',
+      matchedField: 'prompt',
+      gateWord: 'nude',
+    });
+    expect(entry.matchedWord).toEqual(expect.any(String));
+    expect(entry.matchedRegex).toEqual(expect.any(String));
+  });
+
+  it('leaves a soft block out of the list', async () => {
+    const entries = await seed([row(SOFT_PROMPT), row(HARD_PROMPT)]);
+    expect(entries.map((e) => e.prompt)).toEqual([HARD_PROMPT]);
+  });
+
+  it('leaves an over-length refusal out of the list', async () => {
+    const entries = await seed([row('a prompt… [truncated from 30000 chars]'), row(HARD_PROMPT)]);
+    expect(entries.map((e) => e.prompt)).toEqual([HARD_PROMPT]);
+  });
+
+  it('keeps a row the audit does not explain, without inventing evidence', async () => {
+    const [entry] = await seed([row('a quiet landscape')]);
+    expect(entry.prompt).toBe('a quiet landscape');
+    expect(entry.category).toBeUndefined();
+    expect(entry.matchedWord).toBeUndefined();
+  });
+
+  it('keeps an External row without re-auditing it as a regex block', async () => {
+    const [entry] = await seed([row(SOFT_PROMPT, { source: 'External' })]);
+    expect(entry).toMatchObject({ prompt: SOFT_PROMPT, source: 'External' });
+    expect(entry.category).toBeUndefined();
+  });
+
+  it('writes the reset marker when no row was a hard block', async () => {
+    await seed([row(SOFT_PROMPT)]);
+    expect(mockSysRedis.rPush).not.toHaveBeenCalled();
+    expect(mockSysRedis.lPush).toHaveBeenCalledWith(expect.anything(), '__RESET__');
+  });
 });
 
 describe('a live hard block', () => {
