@@ -1,9 +1,8 @@
-import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { assertTrainingTextAllowed } from '~/server/services/orchestrator/training/training-label-check';
 import { checkFixedWindow } from '~/server/utils/block-catalog-rate-limit';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { BodyTooLargeError, readCappedBody } from '~/server/utils/read-capped-body';
 import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 import { MAX_AUDIT_PROMPT_LENGTH } from '~/utils/metadata/audit';
@@ -24,7 +23,7 @@ const schema = z.object({
 /**
  * The training text rule for the Training Studio, which submits to the orchestrator itself: both of
  * its surfaces call this for every run before submitting. POST { triggerWord, captions } → 200
- * { ok: true }; 400 with the refusal's reason; 413 when the text is beyond what is checked.
+ * { ok: true }; 400 with the refusal's reason in `message`; 413 when the text is beyond what is checked.
  */
 export default AuthedEndpoint(
   async (req, res, user) => {
@@ -62,9 +61,8 @@ export default AuthedEndpoint(
         log: { userId: user.id, source: 'training-studio' },
       });
     } catch (e) {
-      if (e instanceof TRPCError && e.code === 'BAD_REQUEST')
-        return res.status(400).json({ error: e.message });
-      throw e;
+      // A refusal reaches the Studio as a 400 carrying its reason; anything else as a generic 5xx.
+      return handleEndpointError(res, e);
     }
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ ok: true });

@@ -9,7 +9,7 @@ import { mainAppSessionOrigin } from './main-app';
 /** Long enough to classify a dataset at the main app's text cap. */
 const CHECK_TIMEOUT_MS = 120_000;
 
-type Answer = { ok?: unknown; error?: string } | null;
+type Answer = { ok?: unknown; message?: string; error?: string } | null;
 
 /**
  * The main app's training text rule, called as this user: their shared .civitai.com session cookie
@@ -20,8 +20,9 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
   return async (input) => {
     let status: number | undefined;
     let data = null as Answer;
-    const reason = () =>
-      data?.error ?? `The training text check failed (${status ?? 'unreachable'}).`;
+    // A refusal's reason arrives as `message`; the route's own answers (413, 429) use `error`.
+    const detail = () => data?.message ?? data?.error;
+    const reason = () => detail() ?? `The training text check failed (${status ?? 'unreachable'}).`;
     try {
       const res = await fetch(`${mainAppSessionOrigin()}/api/training-studio/check-text`, {
         method: 'POST',
@@ -33,7 +34,7 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
       status = res.status;
       data = (await res.json().catch(() => null)) as Answer;
       if (res.ok && data?.ok === true) return;
-      if (status === 400) throw new TrainingTextRefusedError(data?.error ?? 'Refused.');
+      if (status === 400) throw new TrainingTextRefusedError(detail() ?? 'Refused.');
     } catch (err) {
       if (err instanceof TrainingTextRefusedError) throw err;
       data = { error: (err as Error)?.message };
@@ -44,7 +45,7 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
       type: 'error',
       userId,
       status,
-      message: data?.error,
+      message: detail(),
     });
     throw new TrainingTextCheckError(reason(), status);
   };

@@ -33,7 +33,7 @@ describe('mainAppTextCheck', () => {
   });
 
   it('turns a 400 into a refusal carrying the reason', async () => {
-    answer(400, { error: 'blocked: x' });
+    answer(400, { message: 'blocked: x' });
     await expect(mainAppTextCheck('', 1)(input)).rejects.toThrow(
       new TrainingTextRefusedError('blocked: x')
     );

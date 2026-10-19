@@ -1,5 +1,6 @@
 import { Readable } from 'stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /** The Training Studio's call into the training text rule (real rule, classifier mocked): how its
  *  verdicts reach the Studio. */
@@ -14,8 +15,10 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ classifyPrompt
 const gate = vi.hoisted(() => ({ allow: vi.fn(), rate: vi.fn() }));
 vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({ checkFixedWindow: gate.rate }));
-// The auth wrapper is the shared one; here it only supplies the caller.
-vi.mock('~/server/utils/endpoint-helpers', () => ({
+// The auth wrapper is the shared one; here it only supplies the caller. Errors go through the real
+// handler, so the response bodies are the ones the Studio receives.
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  handleEndpointError: (await importOriginal<typeof EndpointHelpers>()).handleEndpointError,
   AuthedEndpoint:
     (handler: (req: unknown, res: unknown, user: { id: number }) => unknown) =>
     (req: unknown, res: unknown) =>
@@ -68,7 +71,7 @@ describe('POST /api/training-studio/check-text', () => {
   it('passes a refusal on as a 400 with its reason', async () => {
     const res = await call({ triggerWord: '8 year old girl', captions: [] });
     expect(res.statusCode).toBe(400);
-    expect(res.body).toEqual({ error: expect.stringContaining('have been blocked') });
+    expect(res.body).toEqual({ message: expect.stringContaining('have been blocked') });
   });
 
   it('answers a body past the cap as too large, without parsing or checking it', async () => {
@@ -81,7 +84,7 @@ describe('POST /api/training-studio/check-text', () => {
   it('refuses more text than one check covers, before the classifier', async () => {
     const res = await call({ triggerWord: 'x', captions: Array(300).fill('a, '.repeat(5000)) });
     expect(res.statusCode).toBe(400);
-    expect(res.body).toEqual({ error: expect.stringContaining('more text than can be checked') });
+    expect(res.body).toEqual({ message: expect.stringContaining('more text than can be checked') });
     expect(classifyPromptExternally).not.toHaveBeenCalled();
   });
 
@@ -129,8 +132,10 @@ describe('POST /api/training-studio/check-text', () => {
     expect(classifyPromptExternally).not.toHaveBeenCalled();
   });
 
-  it('lets an unexpected failure surface as a server error, never as ok', async () => {
+  it('answers an unexpected failure as a generic server error, never as ok', async () => {
     classifyPromptExternally.mockRejectedValueOnce(new Error('boom'));
-    await expect(call({ triggerWord: 'mystyle', captions: ['a cat'] })).rejects.toThrow('boom');
+    const res = await call({ triggerWord: 'mystyle', captions: ['a cat'] });
+    expect(res.statusCode).toBe(500);
+    expect(JSON.stringify(res.body)).not.toContain('boom');
   });
 });

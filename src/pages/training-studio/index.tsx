@@ -170,12 +170,15 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           });
           const data = (await r.json().catch(() => null)) as {
             ok?: unknown;
+            message?: string;
             error?: string;
           } | null;
+          // A refusal's reason arrives as `message`; the route's own answers (413, 429) use `error`.
+          const detail = data?.message ?? data?.error;
           // Only an explicit verdict passes.
           if (r.ok && data?.ok === true) return { ok: true as const };
-          if (r.status === 400) return { ok: false as const, error: data?.error ?? 'Refused.' };
-          throw new Error(data?.error ?? `The training text check failed (${r.status}).`);
+          if (r.status === 400) return { ok: false as const, error: detail ?? 'Refused.' };
+          throw new Error(detail ?? `The training text check failed (${r.status}).`);
         },
         // Without this the element has no Blue balance to compare against, and its Review step's
         // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
