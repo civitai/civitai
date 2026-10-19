@@ -1,11 +1,12 @@
 import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
 import { matchesMarkerTags } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { watchHeldOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 
@@ -36,6 +37,8 @@ export function Feed() {
       ),
     [requests, markerTags]
   );
+
+  useEffect(() => watchHeldOutputs(requests), [requests]);
 
   if (isError)
     return (

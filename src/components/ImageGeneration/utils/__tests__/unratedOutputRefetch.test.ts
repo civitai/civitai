@@ -9,9 +9,17 @@ import {
   UNRATED_REFETCH_MIN_INTERVAL_MS,
   createUnratedRefetchScheduler,
   readCachedGeneratorWorkflows,
+  scheduleUnratedRefetch,
   selectUnratedRefetch,
+  watchHeldOutputs,
+  watchUnratedRefetch,
 } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
-import { trpc } from '~/utils/trpc';
+import { updateWorkflowsStatus } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
+import { queryClient, trpc } from '~/utils/trpc';
+
+vi.mock('~/components/ImageGeneration/utils/useGenerationSignalUpdate', () => ({
+  updateWorkflowsStatus: vi.fn(async () => undefined),
+}));
 
 const workflow = (id: string, output: Array<Record<string, unknown>>) => ({
   id,
@@ -276,6 +284,68 @@ describe('createUnratedRefetchScheduler', () => {
 
     expect(refetch).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('the generator re-reads only what is on screen', () => {
+  const cache = (id: string) =>
+    queryClient.setQueryData(
+      [...getQueryKey(trpc.orchestrator.queryGeneratedImages), { input: { id } }],
+      { pages: [{ items: [workflow(id, [image(`${id}-output`)])] }] }
+    );
+  beforeEach(() => {
+    // The shared query client refuses to exist outside a browser.
+    vi.stubGlobal('window', {});
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    queryClient.clear();
+    vi.unstubAllGlobals();
+    vi.mocked(updateWorkflowsStatus).mockClear();
+    vi.useRealTimers();
+  });
+
+  it('does not re-read a held output whose card is off screen', async () => {
+    cache('offscreen');
+    scheduleUnratedRefetch();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_GIVE_UP_MS);
+
+    expect(updateWorkflowsStatus).not.toHaveBeenCalled();
+  });
+
+  it('re-reads while the card is on screen and stops once it leaves', async () => {
+    cache('shown');
+    const unwatch = watchUnratedRefetch('shown');
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
+    expect(updateWorkflowsStatus).toHaveBeenLastCalledWith(['shown']);
+
+    unwatch();
+    vi.mocked(updateWorkflowsStatus).mockClear();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_GIVE_UP_MS);
+    expect(updateWorkflowsStatus).not.toHaveBeenCalled();
+  });
+
+  it('keeps re-reading while a second copy of the card is still on screen', async () => {
+    cache('twice');
+    watchUnratedRefetch('twice');
+    watchUnratedRefetch('twice')();
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
+
+    expect(updateWorkflowsStatus).toHaveBeenLastCalledWith(['twice']);
+  });
+
+  it('re-reads the workflows the feed is holding back an output for', async () => {
+    cache('held');
+    cache('not-held');
+    const unwatch = watchHeldOutputs([
+      { id: 'held', pendingRatingOutput: [{}] },
+      { id: 'not-held', pendingRatingOutput: [] },
+    ]);
+    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
+    unwatch();
+
+    expect(updateWorkflowsStatus).toHaveBeenCalledTimes(1);
+    expect(updateWorkflowsStatus).toHaveBeenLastCalledWith(['held']);
   });
 });
 

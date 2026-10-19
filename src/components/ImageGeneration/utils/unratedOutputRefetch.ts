@@ -105,7 +105,29 @@ export function readCachedGeneratorWorkflows(
     .flatMap(([, data]) => data?.pages.flatMap((page) => page.items) ?? []) as CachedWorkflow[];
 }
 
+// Only workflows with a card on screen are re-read, so scrolled-away history costs nothing.
+const onScreen = new Map<string, number>();
+
 export const scheduleUnratedRefetch = createUnratedRefetchScheduler({
-  readWorkflows: () => readCachedGeneratorWorkflows(),
+  readWorkflows: () => readCachedGeneratorWorkflows().filter(({ id }) => onScreen.has(id)),
   refetch: updateWorkflowsStatus,
 });
+
+/** Returns the unwatch; a workflow stays watched until every watcher has unwatched. */
+export function watchUnratedRefetch(workflowId: string) {
+  onScreen.set(workflowId, (onScreen.get(workflowId) ?? 0) + 1);
+  scheduleUnratedRefetch();
+  return () => {
+    const count = (onScreen.get(workflowId) ?? 0) - 1;
+    if (count > 0) onScreen.set(workflowId, count);
+    else onScreen.delete(workflowId);
+  };
+}
+
+/** The feed shows no tile for an output held for its rating, so it watches the workflow instead. */
+export function watchHeldOutputs(workflows: Array<{ id: string; pendingRatingOutput: unknown[] }>) {
+  const unwatch = workflows
+    .filter((workflow) => workflow.pendingRatingOutput.length)
+    .map((workflow) => watchUnratedRefetch(workflow.id));
+  return () => unwatch.forEach((fn) => fn());
+}

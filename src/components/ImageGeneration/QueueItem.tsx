@@ -43,6 +43,7 @@ import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { watchUnratedRefetch } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -128,6 +129,7 @@ export function QueueItem({
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
+  useEffect(() => (inView ? watchUnratedRefetch(request.id) : undefined), [inView, request.id]);
 
   const { unstableResources } = useGenerationConfig();
 
