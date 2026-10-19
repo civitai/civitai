@@ -87,7 +87,10 @@ const SENT_BACK: Listing = {
   rejectionReason: 'Visual quality',
   lastApprovedAmount: 500,
 };
-const RELISTED: Listing = { status: 'PendingReview', history: [submitted(), reviewed('approve', 2)] };
+const RELISTED: Listing = {
+  status: 'PendingReview',
+  history: [submitted(), reviewed('approve', 2)],
+};
 const LIVE: Listing = { status: 'Published', history: [submitted(), reviewed('approve', 2)] };
 
 describe('whether a listing can be shown by its holders', () => {
@@ -96,7 +99,10 @@ describe('whether a listing can be shown by its holders', () => {
     ['rejected', { status: 'Rejected', history: [submitted(), reviewed('reject', 2)] }],
     [
       'unpublished by a moderator',
-      { status: 'PendingReview', history: [submitted(), reviewed('approve', 2), reviewed('revert', 3)] },
+      {
+        status: 'PendingReview',
+        history: [submitted(), reviewed('approve', 2), reviewed('revert', 3)],
+      },
     ],
     ['never reviewed', { status: 'PendingReview', history: [submitted()] }],
     [
@@ -127,14 +133,25 @@ describe('whether a listing can be shown by its holders', () => {
     ['relisted or restored from the archive', RELISTED],
     [
       'back in review for a large price edit',
-      { status: 'PendingReview', history: [submitted(), reviewed('approve', 2), edited('price', 3)] },
+      {
+        status: 'PendingReview',
+        history: [submitted(), reviewed('approve', 2), edited('price', 3)],
+      },
     ],
-    ['archived after approval', { status: 'Archived', history: [submitted(), reviewed('approve', 2)] }],
+    [
+      'archived after approval',
+      { status: 'Archived', history: [submitted(), reviewed('approve', 2)] },
+    ],
     [
       'its art was fixed before it was approved',
       {
         status: 'Archived',
-        history: [submitted(), reviewed('request-changes', 2), edited('artwork', 3), reviewed('approve', 4)],
+        history: [
+          submitted(),
+          reviewed('request-changes', 2),
+          edited('artwork', 3),
+          reviewed('approve', 4),
+        ],
       },
     ],
     [
@@ -310,9 +327,7 @@ describe('withholding takes the cosmetic off everyone', () => {
     await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'approve' });
 
     const [grant] = dbMock.dbWrite.userCosmetic.createMany.mock.calls.at(-1)!;
-    expect(grant.data).toEqual([
-      expect.not.objectContaining({ equippedAt: expect.anything() }),
-    ]);
+    expect(grant.data).toEqual([expect.not.objectContaining({ equippedAt: expect.anything() })]);
     expect(grant.data[0]).not.toHaveProperty('equippedToId');
     for (const method of ['updateMany', 'update', 'upsert'] as const)
       expect(dbMock.dbWrite.userCosmetic[method]).not.toHaveBeenCalled();
