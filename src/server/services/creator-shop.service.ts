@@ -8,6 +8,7 @@ import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   revokeCosmeticsFromUsers,
+  unequipWithheldCosmetic,
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
@@ -18,8 +19,10 @@ import {
   REJECTED_IS_FINAL,
   appendItemHistory,
   buildCosmeticData,
+  changesDisplay,
   creatorGrantRemaining,
   patchCosmeticData,
+  recordedDisplayVerdict,
   shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
@@ -957,6 +960,14 @@ export const updateCreatorShopItem = async ({
         }
       : {}),
     ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
+    displayApproved:
+      !isModerator && changesDisplay(changes)
+        ? false
+        : recordedDisplayVerdict({
+            status: existing.status,
+            meta,
+            rejectionReason: existing.rejectionReason,
+          }),
   };
   // An edit that moved nothing (e.g. a resubmit with identical values) isn't
   // worth a row in the history.
@@ -971,7 +982,7 @@ export const updateCreatorShopItem = async ({
       })
     : updatedMeta;
 
-  return dbWrite.cosmeticShopItem.update({
+  const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
       ...(name !== undefined ? { title: name } : {}),
@@ -985,6 +996,8 @@ export const updateCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+  await unequipWithheldCosmetic(existing.cosmeticId);
+  return updated;
 };
 
 /**
@@ -1129,6 +1142,14 @@ export const setCreatorShopItemListed = async ({
             rejectionReason: null,
             reviewedById: null,
             reviewedAt: null,
+            meta: {
+              ...(existing.meta as CosmeticShopItemMeta | null),
+              displayApproved: recordedDisplayVerdict({
+                status: existing.status,
+                meta: existing.meta as CosmeticShopItemMeta | null,
+                rejectionReason: existing.rejectionReason,
+              }),
+            } as Prisma.InputJsonValue,
           }
         : {}),
     },
@@ -1194,7 +1215,14 @@ export const unarchiveCreatorShopItem = async ({
       rejectionReason: null,
       reviewedById: null,
       reviewedAt: null,
-      meta: meta as Prisma.InputJsonValue,
+      meta: {
+        ...meta,
+        displayApproved: recordedDisplayVerdict({
+          status: existing.status,
+          meta,
+          rejectionReason: existing.rejectionReason,
+        }),
+      } as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });
@@ -2101,7 +2129,7 @@ export const reviewCreatorShopItem = async ({
             ...reviewFields,
             status: nextStatus,
             rejectionReason: null,
-            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount }),
+            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount, displayApproved: true }),
           },
           select: creatorShopItemSelect,
         })
@@ -2114,7 +2142,7 @@ export const reviewCreatorShopItem = async ({
             ...reviewFields,
             status: nextStatus,
             rejectionReason: rejectionReason ?? null,
-            meta: reviewedMeta({}),
+            meta: reviewedMeta({ displayApproved: false }),
           },
           select: creatorShopItemSelect,
         });
@@ -2139,6 +2167,7 @@ export const reviewCreatorShopItem = async ({
   // D14: an item leaving Published is no longer bundlable, so packs holding it
   // have to come off sale too.
   if (action !== 'approve' && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
+  if (action !== 'approve') await unequipWithheldCosmetic(item.cosmeticId);
 
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {

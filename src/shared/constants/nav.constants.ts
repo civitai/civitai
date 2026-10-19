@@ -37,7 +37,6 @@ export const NAV_KEYS = [
   'challenges',
   'crucibles',
   'apps',
-  'events',
   'updates',
   'shop',
   'leaderboard',

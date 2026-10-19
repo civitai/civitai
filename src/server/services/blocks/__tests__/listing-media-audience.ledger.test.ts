@@ -53,9 +53,9 @@ const RAW_DEFINITION = 'server/services/blocks/listing-media-url.ts';
 const MEDIA_MODULE_IMPORT =
   /from\s*['"][^'"]*listing-media-(?:url|audience)(?:\.[jt]sx?)?['"]|import\(\s*['"][^'"]*listing-media-(?:url|audience)['"]/;
 const MEDIA_CALL =
-  /\b(?:listingIconUrl|listingCoverUrl|projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible)\s*\(/;
+  /\b(?:listingIconUrl|listingCoverUrl|projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible|listingSocialImage)\s*\(/;
 const GATE_CALL =
-  /\b(?:projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible)\s*\(/;
+  /\b(?:projectListingMedia|gatedListingIconUrl|gatedListingCoverUrl|gatedListingScreenshots|isListingImageVisible|listingSocialImage)\s*\(/;
 
 /**
  * A listing image `url` read without the gate's columns. Three shapes: an icon/cover relation
@@ -119,6 +119,7 @@ const EXPECTED_PROJECTORS: Record<
   | 'gated + raw: moderator'
   | 'ceiling only: labels'
   | 'hydrates for the gate'
+  | 'carries the gated social image'
 > = {
   // The rule itself.
   'server/services/blocks/listing-media-audience.ts': 'gate',
@@ -137,6 +138,11 @@ const EXPECTED_PROJECTORS: Record<
   // url; `app-listing.service.ts` gates them in `projectListingMedia`. Its render read is called
   // only for a red-capable request — pinned behaviourally in `listing-media-red-slots.seam.test.ts`.
   'server/services/blocks/listing-media-split.service.ts': 'hydrates for the gate',
+  // The listing page's `og:image`: the one image `listingSocialImage` chose (through
+  // `getListingSocialImage` in `app-listing.service.ts`), carried as-is with its own level. Neither
+  // module reads an `Image` or builds a url; both only name the gated result's type.
+  'server/services/blocks/listing-page-social-image.ts': 'carries the gated social image',
+  'pages/apps/store-preview/[slug].tsx': 'carries the gated social image',
 };
 
 /** Modules that read a listing image url without the gate's columns — none of them public. */

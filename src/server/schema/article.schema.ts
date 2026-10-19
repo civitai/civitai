@@ -62,10 +62,6 @@ export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
 export const articleWhereSchema = baseQuerySchema.extend({
   query: z.string().optional(),
   tags: z.array(z.number()).optional(),
-  // `true` narrows to Civitai-published articles. `false` is NOT the inverse — it is
-  // absent, the same as not filtering — so a stale `?isOfficial=false` in a url cannot
-  // silently hide every official article from a feed.
-  isOfficial: z.boolean().optional(),
   favorites: z.boolean().optional(),
   hidden: z.boolean().optional(),
   username: z.string().optional(),

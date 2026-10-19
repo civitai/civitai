@@ -10,13 +10,15 @@
  *   leaderboard <id|username> <bool> Set leaderboard eligibility
  *   remove-content <id|username>    Remove all user content
  *   dm <id|username>                Send a DM to a user
+ *   creator-program-ban <id|username> <set|clear>  Ban from / unban from the Creator Program
  *
  * Options:
  *   --json                Output raw JSON
  *   --dry-run             Preview without making changes
  *   --reason <code>       Ban reason code
  *   --message <text>      External message for user / DM content
- *   --internal <text>     Internal notes
+ *   --internal <text>     Internal notes (the required audit reason for creator-program-ban)
+ *   --gate <ref>          Approval this acts on, e.g. a hub card id (creator-program-ban)
  */
 
 import {
@@ -42,6 +44,7 @@ let dryRun = false;
 let reasonCode = null;
 let messageText = null;
 let internalNotes = null;
+let gateRef = null;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -55,6 +58,8 @@ for (let i = 0; i < args.length; i++) {
     messageText = args[++i];
   } else if (arg === '--internal') {
     internalNotes = args[++i];
+  } else if (arg === '--gate') {
+    gateRef = args[++i];
   } else if (!command) {
     command = arg;
   } else if (!targetInput) {
@@ -74,13 +79,17 @@ Commands:
   leaderboard <id|username> <bool> Set leaderboard eligibility
   remove-content <id|username>    Remove all user content
   dm <id|username>                Send a DM to a user
+  creator-program-ban <id|username> <set|clear>
+                                  Ban from / unban from the Creator Program
+                                  (needs the user.creatorProgram.ban permission)
 
 Options:
   --json                Output raw JSON
   --dry-run             Preview without making changes
   --reason <code>       Ban reason code
   --message <text>      External message for user / DM content
-  --internal <text>     Internal notes
+  --internal <text>     Internal notes; the required reason for creator-program-ban
+  --gate <ref>          Approval this acts on (creator-program-ban), e.g. a hub card id
 
 Ban Reason Codes:
   ${BAN_REASONS.join(', ')}
@@ -93,6 +102,7 @@ Examples:
   node query.mjs leaderboard 3879899 false
   node query.mjs remove-content 3879899 --dry-run
   node query.mjs dm 3879899 --message "Hello, this is a message from the mod team"
+  node query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
 
 Configuration:
   Set CIVITAI_API_KEY and CIVITAI_API_URL in .claude/skills/mod-actions/.env
@@ -414,6 +424,50 @@ async function main() {
         console.log(`Buzz Credited: ${reprocessResult.buzzAmount || 0}`);
         console.log(`Transaction ID: ${reprocessResult.transactionId || 'N/A'}`);
         console.log(`Success: Yes`);
+      }
+      break;
+    }
+
+    case 'creator-program-ban': {
+      // Sets or clears only the BannedCreatorProgram onboarding bit, through
+      // /api/mod/user/creator-program-ban (audited; a repeat call changes nothing).
+      if (!targetInput || !['set', 'clear'].includes(arg2) || !internalNotes) {
+        console.error('Usage: node query.mjs creator-program-ban <id|username> <set|clear> --internal "<reason>" [--gate <ref>]');
+        process.exit(1);
+      }
+
+      const user = await lookupUser(targetInput);
+      if (!user) {
+        console.error('Error: User not found');
+        process.exit(1);
+      }
+
+      const body = { userId: user.id, action: arg2, reason: internalNotes, ...(gateRef ? { gateRef } : {}) };
+      if (dryRun) {
+        console.log(`[DRY RUN] Would POST ${API_URL}/api/mod/user/creator-program-ban`);
+        console.log(JSON.stringify(body, null, 2));
+        break;
+      }
+
+      const response = await fetch(`${API_URL}/api/mod/user/creator-program-ban`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        console.error(`creator-program-ban failed: ${response.status} ${text.slice(0, 500)}`);
+        process.exit(1);
+      }
+
+      const result = JSON.parse(text);
+      if (jsonOutput) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Action: CREATOR PROGRAM BAN ${arg2.toUpperCase()}`);
+        console.log(`User: ${user.username} (${user.id})`);
+        console.log(`Onboarding: ${result.before} -> ${result.after}`);
+        console.log(`Changed: ${result.changed ? 'Yes' : 'No (already in that state; still audited)'}`);
       }
       break;
     }
