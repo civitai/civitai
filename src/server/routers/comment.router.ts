@@ -26,7 +26,7 @@ import {
   getCommentReactionsSchema,
   toggleReactionInput,
 } from '~/server/schema/comment.schema';
-import { getCommentCountByModel, getVisibleCommentCount } from '~/server/services/comment.service';
+import { getVisibleCommentCount } from '~/server/services/comment.service';
 import {
   guardedProcedure,
   middleware,
@@ -123,10 +123,6 @@ export const commentRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(getCommentCommentsCountHandler),
-  getCommentCountByModel: publicProcedure
-    .meta({ requiredScope: TokenScope.MediaRead })
-    .input(getCommentCountByModelSchema)
-    .query(({ input }) => getCommentCountByModel(input)),
   getVisibleCountByModel: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCommentCountByModelSchema)

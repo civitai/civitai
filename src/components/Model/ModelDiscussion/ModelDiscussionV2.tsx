@@ -42,7 +42,7 @@ export function ModelDiscussionV2({
   }, [data?.pages]);
   const hasItems = comments.length > 0;
 
-  const { data: hiddenCommentsCount = 0 } = trpc.comment.getCommentCountByModel.useQuery(
+  const { data: hiddenCommentsCount = 0 } = trpc.comment.getVisibleCountByModel.useQuery(
     {
       modelId,
       hidden: true,

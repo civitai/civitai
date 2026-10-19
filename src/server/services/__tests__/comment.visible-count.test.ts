@@ -77,9 +77,12 @@ describe('getVisibleCommentCount', () => {
   it('does not filter tosViolation for moderators and honours the hidden flag', async () => {
     await getVisibleCommentCount({ input: { modelId: MODEL_ID, hidden: true }, user: user(true) });
 
+    // Hidden replies render in their thread, not in the "See N hidden comments" modal, so the
+    // hidden count must stay top-level too.
     for (const where of countWheres()) {
       expect(where.tosViolation).toBeUndefined();
       expect(where.hidden).toBe(true);
+      expect(where.parentId).toEqual({ equals: null });
     }
   });
 

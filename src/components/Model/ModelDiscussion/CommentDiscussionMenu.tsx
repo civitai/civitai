@@ -150,10 +150,6 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       await queryUtils.comment.getVisibleCountByModel.invalidate();
-      await queryUtils.comment.getCommentCountByModel.invalidate({
-        modelId: comment.modelId,
-        hidden: true,
-      });
     },
     onError(error) {
       showErrorNotification({

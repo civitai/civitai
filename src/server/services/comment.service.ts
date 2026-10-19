@@ -429,13 +429,6 @@ export async function bulkDeleteComments({ ids }: { ids: number[] }) {
   return { count: result.count };
 }
 
-export const getCommentCountByModel = ({
-  modelId,
-  hidden = false,
-}: GetCommentCountByModelInput) => {
-  return dbRead.comment.count({ where: { modelId, hidden, parentId: null } });
-};
-
 /**
  * The legacy twin of `bulkClearCommentV2TosViolation` — see that function for why an unflag exists at
  * all and for the two steps it deliberately does not mirror (rewards are not clawed back, and no
