@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   APPLY_STATES,
   DECISION_RULINGS,
@@ -23,6 +23,9 @@ import {
  * the database refuses is a 500 on a moderator's click, and a value the database admits that the code
  * never offers is a silent fourth category every count drops.
  */
+
+// Each case boots PGlite (WASM Postgres) and applies the schema; the existing-database cases do it twice.
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 let open: PGlite[] = [];
 const db = async () => {
