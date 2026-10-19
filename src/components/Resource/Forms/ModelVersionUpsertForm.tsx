@@ -1235,8 +1235,12 @@ export function ModelVersionUpsertForm({
                             variant: 'default',
                             h: 'auto',
                             leftSection: null,
-                            className: 'border-2 border-dashed border-gray-5 dark:border-dark-3',
-                            styles: { label: { whiteSpace: 'normal' } },
+                            className: 'border-2 border-dashed',
+                            // Dividers draw with this token, so the box reads as part of the section.
+                            styles: {
+                              root: { borderColor: 'var(--mantine-color-default-border)' },
+                              label: { whiteSpace: 'normal' },
+                            },
                           }}
                           value={turboLora}
                           onChange={(resource) => {
