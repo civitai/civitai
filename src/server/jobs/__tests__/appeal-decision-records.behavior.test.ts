@@ -664,7 +664,7 @@ describe('sweepLabelStore', () => {
 });
 
 describe('sweepLabelStore, model text', () => {
-  const ruled = (modelId: number) =>
+  const ruled = (modelId: number | string) =>
     holder.db.query(
       `SELECT label_store.record_label(
          p_subject_type => 'model_text', p_subject_id => $1, p_content_hash => $2, p_family => 'text_scan',
@@ -716,6 +716,22 @@ describe('sweepLabelStore, model text', () => {
       { subjectId: '3', excludedReason: 'removed', snapshot: null, labels: 1 },
     ]);
     expect(await sweepLabelStore()).toBe(0);
+  });
+
+  // An id no model can have must not fail the sweep (a cast error would abort the whole run); no
+  // model owns it, so its text goes like a deleted model's.
+  it('does not fail on a subject id that is not an int4 model id', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (1, 5)`);
+    await ruled(1);
+    await ruled('99999999999');
+    await ruled('not-a-model');
+
+    expect(await sweepLabelStore()).toBe(2);
+    expect((await subjects()).map((s) => [s.subjectId, s.excludedReason])).toEqual([
+      ['1', null],
+      ['99999999999', 'removed'],
+      ['not-a-model', 'removed'],
+    ]);
   });
 });
 

@@ -385,7 +385,7 @@ describe('a moderator ruling on a text-scan model flag is recorded as a label', 
           textHash: SCANNED,
           userId: MOD,
         })
-      ).rejects.toThrow();
+      ).rejects.toThrow('This re-detection changed or was already resolved');
 
       expect(await labels()).toEqual([]);
     });

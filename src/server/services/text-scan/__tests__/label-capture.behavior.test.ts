@@ -15,9 +15,16 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const db = { pg: null as unknown as PGlite };
 // Statements the connection refuses, to drive the savepoint's own failure paths.
 const refused = new Set<string>();
+// The statement timeout in force each time the store is called, read on the same connection.
+const storeCallTimeouts: string[] = [];
 const tx = {
   $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const { text, values: params } = Prisma.sql(strings, ...(values as never[]));
+    if (text.includes('label_store.record_label('))
+      storeCallTimeouts.push(
+        (await db.pg.query<{ statement_timeout: string }>('SHOW statement_timeout')).rows[0]
+          .statement_timeout
+      );
     return (await db.pg.query(text, params as unknown[])).rows;
   },
   $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -231,34 +238,17 @@ describe('recordTextScanModelLabel', () => {
     expect(await failures()).toHaveLength(1);
   });
 
-  // What statement_timeout raises; record_label's own handler does not catch it.
-  it('leaves the decision standing when the store call is cancelled', async () => {
-    const signature = `text, text, text, text, text, text, text, text, timestamptz, integer, text,
-      integer, text, text, integer, jsonb, bigint, integer`;
-    await db.pg.exec(`
-      ALTER FUNCTION label_store.record_label(${signature}) RENAME TO record_label_real;
-      CREATE FUNCTION label_store.record_label(
-        p_subject_type text, p_subject_id text, p_content_hash text, p_family text, p_question text,
-        p_value text, p_labeller_kind text, p_source_ref text, p_labelled_at timestamptz,
-        p_labeller_user_id integer DEFAULT NULL, p_labeller_ref text DEFAULT NULL,
-        p_question_version integer DEFAULT 1, p_reason text DEFAULT NULL,
-        p_reason_note text DEFAULT NULL, p_ms_on_item integer DEFAULT NULL,
-        p_snapshot jsonb DEFAULT NULL, p_phash bigint DEFAULT NULL, p_owner_user_id integer DEFAULT NULL
-      ) RETURNS bigint LANGUAGE plpgsql AS $$
-      BEGIN
-        RAISE EXCEPTION 'canceling statement due to statement timeout' USING ERRCODE = 'query_canceled';
-      END $$;
-    `);
-    try {
-      expect(await decide(ruling())).toBe(false);
-      expect(await minorFlag()).toBe(true);
-      expect(await labels()).toEqual([]);
-    } finally {
-      await db.pg.exec(`
-        DROP FUNCTION label_store.record_label(${signature});
-        ALTER FUNCTION label_store.record_label_real(${signature}) RENAME TO record_label;
-      `);
-    }
+  // A slow store is cut off and rolled back to the savepoint instead of running the ruling's
+  // transaction out of time; the cap ends with that transaction.
+  it('caps each store call with a statement timeout for the rest of the decision only', async () => {
+    storeCallTimeouts.length = 0;
+
+    expect(await decide(ruling())).toBe(true);
+
+    expect(storeCallTimeouts).toEqual(['3s']);
+    expect((await rows<{ statement_timeout: string }>('SHOW statement_timeout'))[0]).toEqual({
+      statement_timeout: '0',
+    });
   });
 
   // A failed rollback leaves the transaction aborted, and its COMMIT would silently roll the
