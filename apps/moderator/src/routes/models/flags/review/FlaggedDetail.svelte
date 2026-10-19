@@ -164,9 +164,12 @@
     const finish = await submit(outcomeOf(decisions[index].keep))(input);
     return async (result) => {
       await finish?.(result);
-      // Some flags were ruled before one failed: reload so the row shows only what is still waiting.
-      // The refusal stays on the page's form and renders as the banner.
-      if (result.result.type === 'failure' && result.result.data?.partial === true)
+      // Some flags were ruled before one failed, or the action died and nobody knows: reload so the
+      // row shows only what is still waiting. A refusal stays on the page's form as the banner.
+      if (
+        result.result.type === 'error' ||
+        (result.result.type === 'failure' && result.result.data?.partial === true)
+      )
         await invalidateAll();
     };
   };

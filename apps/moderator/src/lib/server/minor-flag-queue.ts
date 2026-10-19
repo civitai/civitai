@@ -365,10 +365,18 @@ const decideFlags: Actions[string] = async (event) => {
   }
 
   // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
-  // stop the moderator from seeing which ones landed.
+  // stop the moderator from seeing which ones landed. A throw counts as that flag's failure: letting
+  // it escape would hide the flags already ruled.
   const outcomes = [];
-  for (const [i, flag] of plan.entries())
-    outcomes.push({ flag, result: await ruleFlag(modelId, flag, flag.keep, reasons[i]) });
+  for (const [i, flag] of plan.entries()) {
+    const result = await ruleFlag(modelId, flag, flag.keep, reasons[i]).catch(
+      (err: unknown): { ok: false; error: string } => {
+        console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);
+        return { ok: false, error: err instanceof Error ? err.message : 'Action failed.' };
+      }
+    );
+    outcomes.push({ flag, result });
+  }
 
   const failed = outcomes.filter((o) => !o.result.ok);
   if (failed.length) {

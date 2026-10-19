@@ -326,6 +326,22 @@ describe('one decision over every flag on the model', () => {
     });
   });
 
+  it('names what landed when a later flag throws instead of refusing', async () => {
+    confirmMinorFlag.mockResolvedValue({ ok: true });
+    ruleTextScanFlag.mockRejectedValue(new Error('socket hang up'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await decide([minorHash, poiText], 'minor:hash,poi:text-scan', kept);
+    expect(confirmMinorFlag).toHaveBeenCalledWith(42);
+    expect(result).toMatchObject({
+      status: 400,
+      data: {
+        error: 'Real person (text scan) not ruled: socket hang up. Minor (hash) kept.',
+        modelId: 42,
+        partial: true,
+      },
+    });
+  });
+
   it('reports a refusal of every flag without calling it partial', async () => {
     confirmMinorFlag.mockResolvedValue({ ok: false, error: 'Appeal open.' });
     const result = await decide([minorHash], 'minor:hash');

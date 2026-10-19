@@ -659,12 +659,12 @@ const redetectedAt = sql`(l.entry->'redetected'->>'at')::timestamptz`;
 
 const userRefs = { modelId: 'm.id', userId: 'm.userId', username: 'u.username' };
 
-/** Both branches select the same columns, in this order, so they can be UNIONed and paged once. */
+/** Every branch selects the same columns, in this order, so they can be UNIONed and grouped. Only the
+ *  model id and the flag's own facts: the model's columns are joined once after grouping, so no
+ *  difference between branches can split a model into two rows. */
 const hashBranch = (search: MinorSearch | undefined) => sql`
-  SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-         m.status::text AS status, m.minor, m.poi,
+  SELECT m.id AS "modelId",
          'minor'::text AS label, 'hash'::text AS source, NULL::text AS "textHash",
-         m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
          (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
          NULL::jsonb AS redetected, NULL::jsonb AS "scanEntry",
          NULL::jsonb AS granted, NULL::text AS "grantedByUsername",
@@ -678,11 +678,9 @@ const hashBranch = (search: MinorSearch | undefined) => sql`
 `;
 
 const redetectedBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
-  SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-         m.status::text AS status, m.minor, m.poi,
+  SELECT m.id AS "modelId",
          l.label::text AS label, 'redetected'::text AS source,
          l.entry->'redetected'->>'textHash' AS "textHash",
-         m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
          ${redetectedAt} AS "flaggedAt",
          l.entry->'redetected' AS redetected, NULL::jsonb AS "scanEntry",
          l.entry->'appealGranted' AS granted,
@@ -737,11 +735,9 @@ const inFlaggedQueueSql = sql`EXISTS (
 )`;
 
 const textScanBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
-  SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-         m.status::text AS status, m.minor, m.poi,
+  SELECT m.id AS "modelId",
          l.label::text AS label, 'text-scan'::text AS source,
          l.entry->>'textHash' AS "textHash",
-         m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt",
          (l.entry->>'at')::timestamptz AS "flaggedAt",
          NULL::jsonb AS redetected, l.entry AS "scanEntry",
          NULL::jsonb AS granted, NULL::text AS "grantedByUsername",
@@ -812,9 +808,8 @@ export async function getFlaggedModels({
       ];
 
   const rows = await sql<FlaggedSqlRow>`
-    WITH pg AS (
-      SELECT "modelId", "modelName", "userId", username, status, minor, poi, "modelType",
-             "modelCreatedAt", ${sortAt} AS "flaggedAt",
+    WITH grouped AS (
+      SELECT "modelId", ${sortAt} AS "flaggedAt",
              jsonb_agg(jsonb_build_object(
                'label', label, 'source', source, 'textHash', "textHash", 'flaggedAt', "flaggedAt",
                'redetected', redetected, 'scanEntry', "scanEntry", 'granted', granted,
@@ -824,10 +819,16 @@ export async function getFlaggedModels({
              bool_or(source <> 'hash') AS "hasScanFlag",
              bool_or(source = 'text-scan') AS "hasTextScanFlag"
       FROM (${sql.join(branches, sql` UNION ALL `)}) flagged
-      GROUP BY "modelId", "modelName", "userId", username, status, minor, poi, "modelType",
-               "modelCreatedAt"
+      GROUP BY "modelId"
       ORDER BY ${inner}
       LIMIT ${limit + 1} OFFSET ${offset}
+    ),
+    pg AS (
+      SELECT g.*, m.name AS "modelName", m."userId", u.username, m.status::text AS status,
+             m.minor, m.poi, m.type::text AS "modelType", m."createdAt" AS "modelCreatedAt"
+      FROM grouped g
+      JOIN "Model" m ON m.id = g."modelId"
+      LEFT JOIN "User" u ON u.id = m."userId"
     )
     SELECT pg."modelId", pg."modelName", pg."userId", pg.username, pg.status, pg.minor, pg.poi,
            pg."modelType", pg."modelCreatedAt", pg."flaggedAt", pg.flags,

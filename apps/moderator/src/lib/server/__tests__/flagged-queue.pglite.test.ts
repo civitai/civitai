@@ -580,6 +580,36 @@ describe('text-scan auto-flags', () => {
     expect(new Date(row.flaggedAt!).toISOString()).toBe(new Date(row.scanEntry!.at!).toISOString());
   });
 
+  it('keeps one row per model across all three sources, with the model columns once', async () => {
+    // A hash minor flag, a held real-person re-detection and nothing else: two branches, one model.
+    await seed(
+      38,
+      2,
+      { minor: true, poi: true },
+      {
+        minorFlagSnapshot: { source: 'auto', at: daysAgo(2), prevNsfw: false },
+        textScanFlags: {
+          poi: {
+            appealGranted: {},
+            redetected: { workflowId: 'w', textHash: 'n', at: daysAgo(1) },
+          },
+        },
+      }
+    );
+    const { items } = await getFlaggedModels({ limit: 20, search: { modelOrUserId: 38 } });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      key: '38',
+      modelName: 'model 38',
+      userId: 2,
+      username: 'other',
+      minor: true,
+      poi: true,
+    });
+    expect(flagKeys(items)).toEqual(['38:minor:hash', '38:poi:redetected']);
+    expect(await getFlaggedCount({ search: { modelOrUserId: 38 } })).toBe(1);
+  });
+
   it('lists a hash-flagged model once for minor, and still lists its poi text-scan row', async () => {
     const keysFor31 = (await keys()).filter((k) => k.startsWith('31:'));
     expect(keysFor31).toEqual(['31:minor:hash', '31:poi:text-scan']);
