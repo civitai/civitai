@@ -65,6 +65,10 @@ export function UserBuzz({
   const label = createBuzzDistributionLabel({
     typeDistribution,
   });
+  // A text-clipped background paints every descendant glyph where it sits before transforms, so on
+  // an ancestor of the rolling digits it draws each digit stack's "0" row behind the real digit.
+  // The animated counter paints its own text instead.
+  const clipText = !!gradient && !animated;
 
   const content = isLoading ? (
     <Group gap={4} wrap="nowrap">
@@ -80,7 +84,7 @@ export function UserBuzz({
         '--buzz-gradient': gradient || config.color,
         ...textProps.style,
       }}
-      className={clsx(classes.userBuzz, gradient && classes.withGradient, textProps.className)}
+      className={clsx(classes.userBuzz, clipText && classes.withGradient, textProps.className)}
       {...textProps}
     >
       <Group gap={4} wrap="nowrap">
@@ -94,7 +98,7 @@ export function UserBuzz({
           size={textSize}
           fw={600}
           lh={0}
-          className={clsx(classes.buzzText, gradient && classes.withGradient)}
+          className={clsx(classes.buzzText, clipText && classes.withGradient)}
           span
         >
           {balance === null ? (
@@ -145,12 +149,13 @@ function AnimatedBalance({
   // Floored like the non-animated branch; a compact `format` on CustomNumberFlow would round instead.
   const text = abbreviateNumber(balance, { floor: true, decimals: 1 });
   const match = /^(-?\d+(?:\.\d+)?)([kmbt]?)$/.exec(text);
-  if (!match) return <>{text}</>;
+  const textClass = clsx(classes.buzzText, gradient && classes.withGradient);
+  if (!match) return <span className={textClass}>{text}</span>;
 
   return (
     <span className="inline-flex items-baseline leading-none">
       <CustomNumberFlow value={Number(match[1])} gradient={gradient} />
-      {match[2]}
+      {match[2] && <span className={textClass}>{match[2]}</span>}
     </span>
   );
 }
