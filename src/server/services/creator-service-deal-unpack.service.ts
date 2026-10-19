@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  isFinalsMalwareScanOn,
   submitFinalScan,
   type FinalScanTarget,
 } from '~/server/services/creator-service-deal-file-scan';
@@ -113,8 +114,17 @@ const markUnpacked = (fileId: number, repacked: boolean) =>
       "repackedAt" = CASE WHEN ${repacked} THEN now() ELSE NULL END
     WHERE "id" = ${fileId}::int`;
 
-/** Hands a file to the malware scan once it is ready, naming the object a buyer would download. */
+/**
+ * Hands a file to the malware scan once it is ready, naming the object a buyer would download. With
+ * the scan off it records the step as skipped instead (see `isFinalsMalwareScanOn`).
+ */
 export async function handOffToScan(fileId: number) {
+  if (!(await isFinalsMalwareScanOn())) {
+    await dbWrite.$executeRaw`
+      UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
+      WHERE "id" = ${fileId}::int AND "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
+    return;
+  }
   const [target] = await dbWrite.$queryRaw<FinalScanTarget[]>`
     SELECT "id", "dealId", "mimeType",
       COALESCE("deliveryKey", "s3Key") AS "s3Key", COALESCE("deliverySize", "size") AS "size"
@@ -358,9 +368,26 @@ export async function settleEntryScans() {
 
 /**
  * Step 3: a Final's verdict from its parts. One failed image, or a failed malware scan, fails it.
- * It passes only when it is unpacked and every image and the malware scan passed.
+ * It passes only when it is unpacked and every image and the malware scan passed; while the scan is
+ * off, a skipped one counts. Once it is on, a Final still waiting whose scan was skipped is handed
+ * to it again. One already Passed on a skipped scan stays Passed.
  */
 export async function settleFinals() {
+  const malwareScanOn = await isFinalsMalwareScanOn();
+  if (malwareScanOn) {
+    const skipped = await dbWrite.$queryRaw<{ id: number }[]>`
+      UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+      WHERE "id" IN (
+        SELECT "id" FROM "ServiceDealFile"
+        WHERE "kind" = 'Final'::"ServiceDealFileKind"
+          AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+          AND "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
+        ORDER BY "id" LIMIT 50)
+      RETURNING "id"`;
+    for (const { id } of skipped) await handOffToScan(id);
+    if (skipped.length) logUnpack('skipped malware scans resubmitted', { count: skipped.length });
+  }
+
   const failing = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT f."id" FROM "ServiceDealFile" f
     WHERE f."kind" = 'Final'::"ServiceDealFileKind"
@@ -388,7 +415,8 @@ export async function settleFinals() {
       AND f."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND f."unpackedAt" IS NOT NULL
       AND f."repackedAt" IS NOT NULL
-      AND f."malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+      AND (f."malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+        OR (f."malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}))
       AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
     ORDER BY f."id" LIMIT 50`;

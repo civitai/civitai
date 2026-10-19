@@ -396,6 +396,12 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
+  // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step.
+  creatorServicesFinalsMalwareScan: {
+    availability: [],
+    fliptKey: 'creator-services-finals-malware-scan',
+  },
   // One flag drives both halves of creator announcements: these surfaces and the
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
