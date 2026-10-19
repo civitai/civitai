@@ -3,7 +3,10 @@ import { useShallow } from 'zustand/react/shallow';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { EngagedModelType } from '~/store/engaged-models.store';
 import { useEngagedModelsStore } from '~/store/engaged-models.store';
-import { initEngagedModelsPersistence } from '~/store/engaged-models.persist';
+import {
+  excludeFromEngagedPersistence,
+  initEngagedModelsPersistence,
+} from '~/store/engaged-models.persist';
 import { trpcVanilla } from '~/utils/trpc';
 
 /**
@@ -92,6 +95,7 @@ function flush() {
           // this rare error case the F1 wrong-direction risk returns for a genuinely-ON
           // model (it reads not-engaged) — a usable button beats a dead one, and the
           // optimistic dual-write self-heals the store on the user's next interaction.
+          excludeFromEngagedPersistence(ids);
           useEngagedModelsStore.getState().applyServerResult({}, ids);
         }
       )

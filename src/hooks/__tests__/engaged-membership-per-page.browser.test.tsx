@@ -18,6 +18,7 @@ import type * as ReactModule from 'react';
 const h = vi.hoisted(() => {
   const requests: number[][] = [];
   const gate: { current: Promise<void> | null } = { current: null };
+  const failing = { current: false };
   const reviewed = new Set<number>();
   const reveal = {
     count: 0,
@@ -64,9 +65,14 @@ const h = vi.hoisted(() => {
       gate.current = new Promise<void>((r) => (release = r));
       return () => release();
     },
+    failing,
     query: async ({ modelIds }: { modelIds: number[] }) => {
       requests.push([...modelIds]);
       await gate.current;
+      if (failing.current) {
+        failing.current = false;
+        throw new Error('boom');
+      }
       return { Recommended: modelIds.filter((id) => reviewed.has(id)) };
     },
   };
@@ -169,12 +175,16 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { ModelsHitList } from '~/pages/search/models';
 import { __resetEngagedMembershipBatcher } from '~/hooks/useEngagedModelMembership';
-import { __resetEngagedModelsPersistenceForTests } from '~/store/engaged-models.persist';
+import {
+  __resetEngagedModelsPersistenceForTests,
+  flushEngagedModelsPersistence,
+} from '~/store/engaged-models.persist';
 import { useEngagedModelsStore } from '~/store/engaged-models.store';
 import { applyFavoriteToggled } from '~/store/engaged-models.optimistic';
 
 /** Distinct, non-contiguous ids, so a union, a slice and a single row can never coincide. */
 const PAGE = [101, 205, 309, 412, 517, 623, 731, 840, 952, 1063, 1177, 1290];
+const NEXT_PAGE = [1404, 1519, 1633, 1748, 1862, 1977, 2081, 2196];
 const ROW = 4;
 /** Longer than the batcher's window, so a row that would get its own request has had time to. */
 const PAST_WINDOW_MS = 300;
@@ -185,22 +195,31 @@ const attr = (id: number, name: string) =>
 const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Reveal the page a row at a time, each row only once the previous one is known. */
-async function scrollThroughPage() {
-  for (let shown = ROW; shown <= PAGE.length; shown += ROW) {
+/** Reveal ids a row at a time, each row only once the rows before it are known. */
+async function scrollThrough(ids: number[], alreadyShown = 0) {
+  for (let shown = alreadyShown + ROW; shown <= alreadyShown + ids.length; shown += ROW) {
     h.reveal.set(shown);
     await vi.waitFor(() => {
       expect(cardsEl()).toHaveLength(shown);
-      for (const id of PAGE.slice(0, shown)) expect(attr(id, 'data-known')).toBe('true');
+      for (const el of cardsEl()) expect(el.getAttribute('data-known')).toBe('true');
     });
-    await wait(PAST_WINDOW_MS);
   }
+  await wait(PAST_WINDOW_MS);
 }
 
+const feed = () => <ModelsInfinite />;
 const surfaces = [
-  { name: 'model feed (ModelsInfinite)', element: () => <ModelsInfinite /> },
+  { name: 'model feed (ModelsInfinite)', element: feed },
   { name: 'search hits (ModelsHitList)', element: () => <ModelsHitList /> },
 ];
+
+/** What a fresh tab keeps: only storage. */
+function simulateReload() {
+  flushEngagedModelsPersistence();
+  __resetEngagedModelsPersistenceForTests();
+  useEngagedModelsStore.getState().reset();
+  __resetEngagedMembershipBatcher();
+}
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -209,6 +228,7 @@ beforeEach(() => {
   __resetEngagedMembershipBatcher();
   h.requests.length = 0;
   h.gate.current = null;
+  h.failing.current = false;
   h.reviewed.clear();
   h.reveal.count = ROW;
   h.user.current = { id: 7 };
@@ -220,7 +240,7 @@ describe.each(surfaces)('engaged membership on the $name', ({ element }) => {
 
   test('a page scrolled a row at a time costs ONE request, for the whole page', async () => {
     await render();
-    await scrollThroughPage();
+    await scrollThrough(PAGE);
 
     expect(h.requests).toHaveLength(1);
     expect(sorted(h.requests[0])).toEqual(sorted(PAGE));
@@ -240,38 +260,16 @@ describe.each(surfaces)('engaged membership on the $name', ({ element }) => {
     expect(h.requests).toHaveLength(1);
   });
 
-  test('every card shows its own engaged state from the one request', async () => {
-    h.reviewed.add(205).add(952);
-    await render();
-    await scrollThroughPage();
+  test('the next page costs one more request, for only its new ids', async () => {
+    const screen = await render();
+    await scrollThrough(PAGE);
 
-    for (const id of PAGE) {
-      expect(attr(id, 'data-reviewed'), `card ${id}`).toBe(String(id === 205 || id === 952));
-    }
-  });
+    h.feed.models = [...PAGE, ...NEXT_PAGE].map((id) => ({ id }));
+    await screen.rerender(element());
+    await scrollThrough(NEXT_PAGE, PAGE.length);
 
-  test('a like after the page loaded updates that card, and only that card', async () => {
-    await render();
-    await scrollThroughPage();
-
-    applyFavoriteToggled(840, true);
-    await vi.waitFor(() => expect(attr(840, 'data-reviewed')).toBe('true'));
-    for (const id of PAGE.filter((x) => x !== 840)) expect(attr(id, 'data-reviewed')).toBe('false');
-  });
-
-  test('a like made while the page request is in flight survives its stale answer', async () => {
-    h.reviewed.add(412); // the server's snapshot predates the un-like below
-    h.reveal.count = PAGE.length;
-    const release = h.holdResponses();
-    await render();
-    await vi.waitFor(() => expect(h.requests).toHaveLength(1));
-    expect(h.requests[0]).toContain(412);
-
-    applyFavoriteToggled(412, false);
-    release();
-    await vi.waitFor(() => expect(attr(205, 'data-known')).toBe('true'));
-
-    expect(attr(412, 'data-reviewed')).toBe('false');
+    expect(h.requests).toHaveLength(2);
+    expect(sorted(h.requests[1])).toEqual(sorted(NEXT_PAGE));
   });
 
   test('a signed-out viewer sends no request at all', async () => {
@@ -312,5 +310,71 @@ describe.each(surfaces)('engaged membership on the $name', ({ element }) => {
     await wait(PAST_WINDOW_MS);
     expect(h.requests).toHaveLength(1);
     expect(sorted(h.requests[0])).toEqual(sorted(PAGE));
+  });
+});
+
+// Properties of the shared store and batcher rather than of a surface, so run once.
+describe('engaged membership after the page request', () => {
+  const render = () => renderWithProviders(feed());
+
+  test('every card shows its own engaged state from the one request', async () => {
+    h.reviewed.add(205).add(952);
+    await render();
+    await scrollThrough(PAGE);
+
+    for (const id of PAGE) {
+      expect(attr(id, 'data-reviewed'), `card ${id}`).toBe(String(id === 205 || id === 952));
+    }
+  });
+
+  test('a like after the page loaded updates that card, and only that card', async () => {
+    await render();
+    await scrollThrough(PAGE);
+
+    applyFavoriteToggled(840, true);
+    await vi.waitFor(() => expect(attr(840, 'data-reviewed')).toBe('true'));
+    for (const id of PAGE.filter((x) => x !== 840)) expect(attr(id, 'data-reviewed')).toBe('false');
+  });
+
+  test('a like made while the page request is in flight survives its stale answer', async () => {
+    h.reviewed.add(412); // the server's snapshot predates the un-like below
+    h.reveal.count = PAGE.length;
+    const release = h.holdResponses();
+    await render();
+    await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+    expect(h.requests[0]).toContain(412);
+
+    applyFavoriteToggled(412, false);
+    release();
+    await vi.waitFor(() => expect(attr(205, 'data-known')).toBe('true'));
+
+    expect(attr(412, 'data-reviewed')).toBe('false');
+  });
+
+  test('a page that loaded is remembered across a reload (control for the next test)', async () => {
+    h.reveal.count = PAGE.length;
+    const screen = await render();
+    await vi.waitFor(() => expect(attr(1290, 'data-known')).toBe('true'));
+    await screen.unmount();
+    simulateReload();
+
+    await render();
+    await vi.waitFor(() => expect(attr(1290, 'data-known')).toBe('true'));
+    await wait(PAST_WINDOW_MS);
+    expect(h.requests).toHaveLength(1);
+  });
+
+  test('a page whose request FAILED is asked for again after a reload', async () => {
+    h.failing.current = true;
+    h.reveal.count = PAGE.length;
+    const screen = await render();
+    // Usable after the error: a failed id reads known-not-engaged rather than loading forever.
+    await vi.waitFor(() => expect(attr(1290, 'data-known')).toBe('true'));
+    await screen.unmount();
+    simulateReload();
+
+    await render();
+    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+    expect(sorted(h.requests[1])).toEqual(sorted(PAGE));
   });
 });
