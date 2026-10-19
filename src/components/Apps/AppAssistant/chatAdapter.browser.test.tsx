@@ -271,6 +271,21 @@ test('the real chat’s ask by itself as the page comes back online is kept back
   stop();
 });
 
+test('POSITIVE CONTROL: an ask by itself the page kept back does not count: the real chat asks again on the next wake', async () => {
+  const { chat, asked } = await realChatWhoseRepliesFail();
+  const triggers: string[] = [];
+  const stop = listenReplyResume(chat, (trigger) => {
+    triggers.push(trigger);
+    return true;
+  });
+  window.dispatchEvent(new Event('online'));
+  window.dispatchEvent(new Event('online'));
+  expect(triggers).toEqual(['online', 'online']);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(asked()).toBe(1);
+  stop();
+});
+
 test('NEGATIVE CONTROL: a reply-resume listener that does not hold lets the real chat ask by itself', async () => {
   const { chat, asked } = await realChatWhoseRepliesFail();
   const triggers: string[] = [];

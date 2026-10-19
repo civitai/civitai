@@ -519,21 +519,23 @@ export function AppAssistantWorkspace({
       } finally {
         clearTimeout(timer);
       }
-      if (resumeAskRef.current !== ask) return;
+      // Ended meanwhile (or the page went away), or taken over by Retry, which is followed as is.
+      const now = resumeAskRef.current;
+      if (!now || now.stop !== ask.stop || ask.stop.signal.aborted) return;
       const app = fresh?.find((s) => s.app === ask.app);
       const paused = app?.state === 'suspended';
       // Waking it pauses whichever other app runs: not without the user asking.
       const pausesAnother = fresh?.some((s) => s.app !== ask.app && s.state !== 'suspended');
       if (
         !app ||
-        (app.state !== 'running' && !paused) ||
-        (paused && (pausesAnother || autoWoke.current.has(ask.key)))
+        (app.state !== 'running' && !paused && (now.auto || app.state !== 'starting')) ||
+        (paused && now.auto && (pausesAnother || autoWoke.current.has(ask.key)))
       )
         return endResumeAsk();
-      resumeAskRef.current = { ...ask, checking: false };
+      resumeAskRef.current = { ...now, checking: false };
       setResumeAsk(resumeAskRef.current);
       if (!paused) return;
-      autoWoke.current.add(ask.key);
+      if (now.auto) autoWoke.current.add(ask.key);
       wakeForAsk(ask.app);
     },
     [endResumeAsk, wakeForAsk]
@@ -542,8 +544,16 @@ export function AppAssistantWorkspace({
     (trigger: ReplyResumeDetail['trigger']) => {
       const app = live.current.active;
       if (!app) return false;
-      if (resumeAskRef.current) return true;
       const auto = trigger !== 'retry';
+      const current = resumeAskRef.current;
+      if (current) {
+        // Retry pressed while the page refreshes the list for the chat's own ask: it is the user's.
+        if (!auto && current.auto) {
+          resumeAskRef.current = { ...current, auto: false };
+          setResumeAsk(resumeAskRef.current);
+        }
+        return true;
+      }
       // Retry: the user pressed it now, so the list is current.
       if (!auto && app.state !== 'suspended' && app.state !== 'starting') return false;
       const key = `${app.app}\n${chatIdRef.current}`;
@@ -745,6 +755,9 @@ export function AppAssistantWorkspace({
   const onSend = useCallback(
     (text: string) => {
       endResumeAsk();
+      // A new turn: the chat's own asks for a reply after it start afresh.
+      const chat = `\n${chatIdRef.current}`;
+      autoGaveUp.current.forEach((key) => key.endsWith(chat) && autoGaveUp.current.delete(key));
       return onBeforeSend(text);
     },
     [endResumeAsk, onBeforeSend]

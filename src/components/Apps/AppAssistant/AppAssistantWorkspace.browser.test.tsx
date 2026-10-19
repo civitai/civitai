@@ -1441,6 +1441,46 @@ describe('AppAssistantWorkspace auto-resume', () => {
         expect(m.resume.mock.calls).toEqual([['app-bbbb']]);
       });
 
+      test('🟡 Retry pressed while the page refreshes the list is followed as Retry: it wakes the app though another runs', async () => {
+        await openRunningB();
+        m.service = pausedWhileAsleep('running');
+        m.failed = true;
+        m.pageWakes('visible');
+        // Before the refresh answers.
+        expect(m.resumeReply('retry')).toBe(false);
+        await vi.waitFor(() => expect(m.resume.mock.calls).toEqual([['app-bbbb']]));
+        expect(m.refetches).toBe(1);
+      });
+
+      test('🟡 a message the user sends after a give-up lets the chat’s own ask for a later reply go again', async () => {
+        await openRunningB();
+        m.refetchFails = true;
+        m.failed = true;
+        m.pageWakes('visible');
+        await vi.waitFor(() => expect(m.refetches).toBe(1));
+        await settle(50);
+        m.refetchFails = false;
+        await userSends('Add a dark mode');
+        // That reply fails too; the app still runs with its tools.
+        m.failed = true;
+        m.autoResumed = false;
+        m.autoCancelled = false;
+        m.pageWakes('online');
+        await vi.waitFor(() => expect(m.retried).toEqual(['retryReply']));
+        expect(m.refetches).toBe(2);
+      });
+
+      test('🟡 the page going away while it refreshes the list wakes nothing', async () => {
+        const screen = await openRunningB();
+        m.service = pausedWhileAsleep();
+        m.failed = true;
+        m.pageWakes('visible');
+        screen.unmount();
+        await vi.waitFor(() => expect(m.refetches).toBe(1));
+        await settle(100);
+        expect(m.resume).not.toHaveBeenCalled();
+      });
+
       test('🟡 the chat asking by itself wakes an app once for a chat, however often the page wakes', async () => {
         const screen = await openRunningB();
         m.service = pausedWhileAsleep();
@@ -1459,6 +1499,8 @@ describe('AppAssistantWorkspace auto-resume', () => {
         await settle(100);
         expect(m.resume).toHaveBeenCalledTimes(1);
         expect(m.retryReply).not.toHaveBeenCalled();
+        // Kept back without a second refresh: given up, not merely not woken again.
+        expect(m.refetches).toBe(1);
       });
     });
 
@@ -1653,6 +1695,8 @@ describe('AppAssistantWorkspace auto-resume', () => {
       m.pageWakes('online');
       expect(m.retried).toEqual([]);
       expect(m.resume).toHaveBeenCalledTimes(1);
+      await settle(50);
+      expect(m.refetches).toBe(1);
       // The user pressing Retry still wakes it.
       expect(m.resumeReply('retry')).toBe(false);
       expect(m.resume).toHaveBeenCalledTimes(2);
