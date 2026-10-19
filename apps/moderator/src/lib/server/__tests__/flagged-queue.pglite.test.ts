@@ -48,7 +48,7 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
-  "index" INTEGER
+  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE "ModActivity" (
 );
 CREATE TABLE "EntityModeration" (
   "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, "status" TEXT NOT NULL DEFAULT 'Succeeded',
-  "result" JSONB, "updatedAt" TIMESTAMP NOT NULL DEFAULT now()
+  "result" JSONB, "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), "workflowId" TEXT
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -236,6 +236,11 @@ describe('getFlaggedModels', () => {
     expect(covers(1)).toEqual(['published.jpg', 'draft.jpg']);
     expect(covers(7)).toEqual(['only-draft.jpg']);
     expect(covers(2)).toEqual([]);
+    expect(items.find((r) => r.modelId === 1)?.coverImages[0]).toEqual({
+      id: 11,
+      url: 'published.jpg',
+      nsfwLevel: 1,
+    });
   });
 
   it('keeps the page cut at the limit when images multiply rows', async () => {
@@ -667,6 +672,25 @@ describe('text-scan auto-flags', () => {
       source: 'main',
     });
     expect(byKey['30:poi:text-scan']?.poi).toBeNull();
+    expect(byKey['31:minor:hash']).toBeNull();
+  });
+
+  it('carries the scan rows on text-scan rows, for provenance and the text hash, and not on hash rows', async () => {
+    await pg.exec(`INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", "status", "result", "updatedAt")
+      VALUES ('Model:search', 30, 'wf', 'Succeeded', '{"textHash":"h-1"}', '2026-10-01T00:00:00'),
+             ('Model', 31, 'wf-x', 'Succeeded', '{"textHash":"h-9"}', '2026-10-01T00:00:00')`);
+    const { items } = await getFlaggedModels({ limit: 20 });
+    const byKey = Object.fromEntries(items.map((r) => [r.key, r.scanRows]));
+    expect(byKey['30:minor:text-scan']).toEqual({
+      main: null,
+      search: {
+        workflowId: 'wf',
+        textHash: 'h-1',
+        status: 'Succeeded',
+        updatedAt: '2026-10-01T00:00:00.000Z',
+      },
+    });
+    expect(byKey['31:poi:text-scan']?.main).toMatchObject({ workflowId: 'wf-x', textHash: 'h-9' });
     expect(byKey['31:minor:hash']).toBeNull();
   });
 

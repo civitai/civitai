@@ -1,6 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
 import { dbRead } from './db';
+import { getUserNotes, strikeCountsByUserIds } from './moderation-memory.service';
 import {
   DEFAULT_APPEAL_FILTERS,
   SNAPSHOT_SOURCE,
@@ -23,6 +24,7 @@ import type {
   PriorClearView,
   RedetectionView,
 } from '$lib/minor-flags/text-scan-verdicts';
+import type { ModelFlagDetail, ScanRows } from '$lib/minor-flags/model-detail';
 
 /**
  * The read half of the main app's `/moderator/minor-hash-matches`, ported per
@@ -131,6 +133,9 @@ export type MinorHashReviewRow = {
   username: string | null;
   status: string;
   hash: string;
+  /** This model's file carrying the shared hash, as it named it. */
+  fileName: string | null;
+  fileSizeKB: number | null;
   createdAt: Date;
   modelVersionId: number | null;
   minorModelId: number;
@@ -164,7 +169,9 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0, search }
              -- Same ORDER BY in both aggregates so element [1] of each comes from the same row: the
              -- reported version is the one carrying the reported hash, not just any version.
              (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash,
-             (array_agg(mv.id ORDER BY mfh.hash, mv.id))[1] AS "modelVersionId"
+             (array_agg(mv.id ORDER BY mfh.hash, mv.id))[1] AS "modelVersionId",
+             (array_agg(mf.name ORDER BY mfh.hash, mv.id))[1] AS "fileName",
+             (array_agg(mf."sizeKB" ORDER BY mfh.hash, mv.id))[1] AS "fileSizeKB"
       FROM "ModelFileHash" mfh
       JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
       JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
@@ -179,7 +186,7 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0, search }
     ),
     pg AS (
     SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",
-           c."modelVersionId",
+           c."modelVersionId", c."fileName", c."fileSizeKB",
            s."minorModelId", mm.name AS "minorModelName", s."userId" AS "minorUserId",
            (SELECT mv2.id
             FROM "ModelFileHash" h2
@@ -237,7 +244,7 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0, search }
   return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
 }
 
-export type AppealCoverImage = { id: number; url: string };
+export type AppealCoverImage = { id: number; url: string; nsfwLevel: number };
 
 export type MinorFlagAppealRow = {
   appealId: number;
@@ -269,6 +276,12 @@ export type MinorFlagAppealRow = {
   flaggedByAt: Date | null;
   otherFlaggedModels: number;
   pastAppeals: { approved: number; rejected: number; void: number; pending: number };
+  /** This appeal's place among the uploader's model appeals this calendar year, counting it. */
+  appealNthThisYear: number;
+  /** The Flagged tab lists this model too (a hash flag in its window, a held re-detection or an open
+   *  text-scan flag), so ruling there and here touch the same flag. */
+  alsoInFlagged: boolean;
+  scanRows: ScanRows;
 };
 
 export type AppealQuery = Page & { filters?: AppealFilters };
@@ -282,14 +295,14 @@ const APPEAL_COVER_COUNT = 4;
 const coverImagesJoin = sql`
 LEFT JOIN LATERAL (
   SELECT jsonb_agg(
-           jsonb_build_object('id', c.id, 'url', c.url)
+           jsonb_build_object('id', c.id, 'url', c.url, 'nsfwLevel', c."nsfwLevel")
            ORDER BY c.unpublished, c."versionIndex" ASC NULLS LAST, c."postId",
                     c."imageIndex" ASC NULLS LAST, c.id
          ) AS images
   FROM (
     -- Unpublishing a model clears its posts' publishedAt, so filtering on it would show an
     -- unpublished or draft model with no images at all.
-    SELECT i.id, i.url, p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
+    SELECT i.id, i.url, i."nsfwLevel", p."publishedAt" IS NULL AS unpublished, mv.index AS "versionIndex",
            p.id AS "postId", i.index AS "imageIndex"
     FROM "ModelVersion" mv
     JOIN "Post" p ON p."modelVersionId" = mv.id
@@ -389,6 +402,20 @@ const latestScanLabelSql = (label: FlagLabel) => {
   END`;
 };
 
+const scanRowSql = (row: ScanRowAlias) => {
+  const r = sql.raw(row);
+  return sql`CASE WHEN ${r}."entityId" IS NOT NULL THEN jsonb_build_object(
+    'workflowId', ${r}."workflowId", 'textHash', ${r}.result->>'textHash', 'status', ${r}.status::text,
+    'updatedAt', to_char(${r}."updatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ) END`;
+};
+
+/** Both text-scan rows as they stand: which pass raised a flag (its workflow) and whether the text
+ *  has changed since (its hash) are read from these. Needs `sm` and `ss` joined. */
+const scanRowsSql = sql`jsonb_build_object('main', ${scanRowSql('sm')}, 'search', ${scanRowSql(
+  'ss'
+)})`;
+
 /** A text-scan real-person flag sets `poi` and `meta.textScanFlags.poi` but writes no snapshot, so the
  *  snapshot source alone would file it under "No flag record". One expression feeds the list predicate,
  *  the facet groups and the returned row. */
@@ -487,10 +514,13 @@ export async function getMinorFlagAppealsForReview({
            COALESCE(up."otherFlaggedModels", 0) AS "otherFlaggedModels",
            CASE WHEN ls.poi IS NULL AND ls.minor IS NULL THEN NULL
                 ELSE jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
+           ${scanRowsSql} AS "scanRows",
            jsonb_build_object(
              'approved', COALESCE(ap.approved, 0), 'rejected', COALESCE(ap.rejected, 0),
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
-           ) AS "pastAppeals"
+           ) AS "pastAppeals",
+           ya.nth AS "appealNthThisYear",
+           ${inFlaggedQueueSql} AS "alsoInFlagged"
     FROM pg
     ${modelFactsJoin}
     ${coverImagesJoin}
@@ -514,6 +544,13 @@ export async function getMinorFlagAppealsForReview({
       SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
     ) ls ON TRUE
     ${pastAppealsJoin(sql`AND pa.id <> pg."appealId"`)}
+    LEFT JOIN LATERAL (
+      SELECT count(*)::int + 1 AS nth
+      FROM "Appeal" ya
+      WHERE ya."userId" = pg."userId" AND ya."entityType" = 'Model'
+        AND ya."createdAt" >= date_trunc('year', pg."appealCreatedAt")
+        AND (ya."createdAt", ya.id) < (pg."appealCreatedAt", pg."appealId")
+    ) ya ON TRUE
     ORDER BY ${outer}
   `.execute(dbRead);
 
@@ -564,6 +601,8 @@ export type FlaggedRow = {
   scanEntry: TextScanFlagView | null;
   /** Text-scan flags only: what the latest scan rows say now. */
   latestScan: LatestScan | null;
+  /** Text-scan and re-detected rows: both scan rows, for provenance and "unchanged since flag". */
+  scanRows: ScanRows;
   granted: PriorClearView | null;
   grantedByUsername: string | null;
   rulings: FlagRulingView[] | null;
@@ -668,6 +707,19 @@ const textScanFlaggedPredicate = sql`
   AND NOT (l.label = 'minor' AND m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY})
 `;
 
+/** The Flagged tab lists the model under any of its three sources; the appeals rows say so. Takes a
+ *  model id from `pg`, so it is evaluated once per page row. */
+const inFlaggedQueueSql = sql`EXISTS (
+  SELECT 1 FROM "Model" m
+  ${redetectedLabelsJoin}
+  WHERE m.id = pg."modelId"
+    AND (
+      (l.label = 'minor' AND ${hashFlaggedPredicate()})
+      OR (${redetectedIndexPredicate} AND l.entry ? 'redetected')
+      OR (${textScanFlaggedPredicate})
+    )
+)`;
+
 const textScanBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
   SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
          m.status::text AS status, m.minor, m.poi,
@@ -755,12 +807,13 @@ export async function getFlaggedModels({
              'void', COALESCE(ap.void, 0), 'pending', COALESCE(ap.pending, 0)
            ) AS "pastAppeals",
            CASE WHEN pg.source = 'text-scan'
-                THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan"
+                THEN jsonb_build_object('poi', ls.poi, 'minor', ls.minor) END AS "latestScan",
+           CASE WHEN pg.source <> 'hash' THEN ${scanRowsSql} END AS "scanRows"
     FROM pg
     LEFT JOIN "EntityModeration" sm
-      ON pg.source = 'text-scan' AND sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
+      ON pg.source <> 'hash' AND sm."entityType" = 'Model' AND sm."entityId" = pg."modelId"
     LEFT JOIN "EntityModeration" ss
-      ON pg.source = 'text-scan' AND ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}
+      ON pg.source <> 'hash' AND ss."entityType" = ${TEXT_SCAN_SEARCH_ENTITY_TYPE}
          AND ss."entityId" = pg."modelId"
     LEFT JOIN LATERAL (
       SELECT ${latestScanLabelSql('poi')} AS poi, ${latestScanLabelSql('minor')} AS minor
@@ -918,6 +971,9 @@ export async function getMinorHashMatchDetail({
 }
 
 export type AutoFlaggedMinorMatch = {
+  /** This model's file carrying the shared hash. */
+  fileName: string;
+  fileSizeKB: number;
   minorModelId: number;
   minorModelName: string | null;
   minorModelVersionId: number | null;
@@ -936,7 +992,7 @@ export async function getAutoFlaggedMinorMatch({ modelId }: { modelId: number })
   const result = await sql<AutoFlaggedMinorMatch>`
     SELECT m.id AS "minorModelId", m.name AS "minorModelName",
            smv.id AS "minorModelVersionId", m."deletedAt" AS "minorModelDeletedAt",
-           mfh.hash, mv.id AS "modelVersionId"
+           mfh.hash, mv.id AS "modelVersionId", mf.name AS "fileName", mf."sizeKB" AS "fileSizeKB"
     FROM "ModelFileHash" mfh
     JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
     JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId" AND mv."modelId" = ${modelId}
@@ -1019,4 +1075,124 @@ async function fetchCounts(): Promise<MinorQueueCounts> {
   `.execute(dbRead);
 
   return { pending: Number(pending.rows[0]?.count ?? 0) };
+}
+
+type ModelFactsRow = Omit<ModelFlagDetail, 'strikes' | 'notes' | 'promptVersions'> & {
+  userId: number;
+};
+
+/** A flag lifted on a model: a hash flag rolled back (`minorHashCleared`) or a text-scan flag cleared
+ *  on appeal or by a moderator (`appealGranted`). `o` is the model. */
+const revertedAtSql = sql`GREATEST(
+  (o.meta->${MINOR_HASH_CLEARED_KEY}->>'at')::timestamptz,
+  (o.meta->'textScanFlags'->'minor'->'appealGranted'->>'at')::timestamptz,
+  (o.meta->'textScanFlags'->'poi'->'appealGranted'->>'at')::timestamptz
+)`;
+const revertedSql = sql`(
+  o.meta ? ${MINOR_HASH_CLEARED_KEY}
+  OR o.meta->'textScanFlags'->'minor' ? 'appealGranted'
+  OR o.meta->'textScanFlags'->'poi' ? 'appealGranted'
+)`;
+
+/**
+ * What only the open detail pane shows, for one model: fetched on selection rather than joined into
+ * the list, so a 50-row page does not pay for facts 49 rows never show. One statement on the main
+ * database, then the uploader's strikes and notes from the moderator database, which degrade to null
+ * rather than failing the pane.
+ */
+export async function getModelFlagDetail({
+  modelId,
+  promptIds = [],
+}: {
+  modelId: number;
+  /** TextScanPrompt ids from the flag entries on screen, to number within their key. */
+  promptIds?: readonly number[];
+}): Promise<ModelFlagDetail | null> {
+  const [facts, prompts] = await Promise.all([
+    sql<ModelFactsRow>`
+      SELECT m."userId", m."nsfwLevel",
+             'nsfwLevel' = ANY(m."lockedProperties") AS "ratingLocked",
+             u."createdAt" AS "uploaderJoinedAt",
+             mm."downloadCount" AS downloads, mm."generationCount" AS generations,
+             v."versionCount", v."latestPublishedAt",
+             CASE WHEN f.name IS NOT NULL THEN jsonb_build_object(
+               'name', f.name, 'sizeKB', f."sizeKB", 'scansOk', f."scansOk", 'otherFiles', f."otherFiles"
+             ) END AS "mainFile",
+             -- The same set the cover images come from: images on the owner's posts of the model.
+             (SELECT count(*)::int
+              FROM "ModelVersion" pv
+              JOIN "Post" p ON p."modelVersionId" = pv.id AND p."userId" = m."userId"
+              JOIN "Image" i ON i."postId" = p.id AND i.type::text = 'image'
+              WHERE pv."modelId" = m.id) AS "previewCount",
+             (SELECT count(*)::int
+              FROM "ModelReport" mr
+              JOIN "Report" r ON r.id = mr."reportId"
+              WHERE mr."modelId" = m.id AND r.status::text IN ('Pending', 'Processing')) AS "openReports",
+             up."uploaderPublished", up."uploaderModUnpublished",
+             jsonb_build_object('count', up."revertedCount", 'lastAt', up."revertedLastAt") AS "flagsReverted"
+      FROM "Model" m
+      LEFT JOIN "User" u ON u.id = m."userId"
+      LEFT JOIN "ModelMetric" mm ON mm."modelId" = m.id
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS "versionCount",
+               max(mv."publishedAt") FILTER (WHERE mv.status::text = 'Published') AS "latestPublishedAt"
+        FROM "ModelVersion" mv WHERE mv."modelId" = m.id
+      ) v ON TRUE
+      -- The latest version as the model facts pick it, then its model file over any other file.
+      LEFT JOIN LATERAL (
+        SELECT mv.id FROM "ModelVersion" mv
+        WHERE mv."modelId" = m.id
+        ORDER BY (mv.status::text = 'Published') DESC, mv."createdAt" DESC, mv.id DESC
+        LIMIT 1
+      ) lv ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT mf.name, mf."sizeKB",
+               (mf."pickleScanResult"::text = 'Success' AND mf."virusScanResult"::text = 'Success') AS "scansOk",
+               (count(*) OVER ())::int - 1 AS "otherFiles"
+        FROM "ModelFile" mf
+        WHERE mf."modelVersionId" = lv.id AND mf."replacedAt" IS NULL
+        ORDER BY (mf.type = 'Model') DESC, mf.id
+        LIMIT 1
+      ) f ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT count(*) FILTER (WHERE o.status::text = 'Published')::int AS "uploaderPublished",
+               count(*) FILTER (WHERE o.status::text = 'UnpublishedViolation')::int AS "uploaderModUnpublished",
+               count(*) FILTER (WHERE o.id <> m.id AND ${revertedSql})::int AS "revertedCount",
+               to_char(max(${revertedAtSql}) FILTER (WHERE o.id <> m.id) AT TIME ZONE 'UTC',
+                       'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "revertedLastAt"
+        FROM "Model" o WHERE o."userId" = m."userId"
+      ) up ON TRUE
+      WHERE m.id = ${modelId}
+    `.execute(dbRead),
+    promptIds.length
+      ? sql<{ id: number; version: number }>`
+          SELECT p.id,
+                 (SELECT count(*)::int FROM "TextScanPrompt" q WHERE q.key = p.key AND q.id <= p.id) AS version
+          FROM "TextScanPrompt" p
+          WHERE p.id IN (${sql.join(promptIds)})
+        `.execute(dbRead)
+      : { rows: [] },
+  ]);
+
+  const row = facts.rows[0];
+  if (!row) return null;
+  const { userId, ...model } = row;
+
+  const [strikes, notes] = await Promise.all([
+    strikeCountsByUserIds([userId]).then(
+      (counts) => counts.get(userId) ?? 0,
+      () => null
+    ),
+    getUserNotes(userId, null).then(
+      (list) => list.length,
+      () => null
+    ),
+  ]);
+
+  return {
+    ...model,
+    strikes,
+    notes,
+    promptVersions: Object.fromEntries(prompts.rows.map((p) => [p.id, p.version])),
+  };
 }

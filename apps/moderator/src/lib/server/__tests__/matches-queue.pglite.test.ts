@@ -19,7 +19,9 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
 
-const { getMinorHashMatchesForReview } = await import('../minor-hash.service');
+const { getAutoFlaggedMinorMatch, getMinorHashMatchesForReview } = await import(
+  '../minor-hash.service'
+);
 
 const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
@@ -28,7 +30,7 @@ CREATE TABLE "Model" (
   "status" TEXT NOT NULL DEFAULT 'Published', "type" TEXT NOT NULL DEFAULT 'LORA',
   "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE, "meta" JSONB,
-  "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
+  "deletedAt" TIMESTAMP, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
 );
 CREATE TABLE "ModelVersion" (
   "id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER,
@@ -37,7 +39,8 @@ CREATE TABLE "ModelVersion" (
 );
 CREATE TABLE "ModelFile" (
   "id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER NOT NULL, "type" TEXT NOT NULL,
-  "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "name" TEXT NOT NULL DEFAULT 'file',
+  "sizeKB" DOUBLE PRECISION NOT NULL DEFAULT 0
 );
 CREATE TABLE "ModelFileHash" ("fileId" INTEGER NOT NULL, "type" TEXT NOT NULL, "hash" TEXT NOT NULL);
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL);
@@ -47,7 +50,7 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "url" TEXT NOT NULL, "type" TEXT NOT NULL DEFAULT 'image',
-  "index" INTEGER
+  "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -86,10 +89,10 @@ const seedModel = async (
     `INSERT INTO "ModelVersion" (id, "modelId", "baseModel", "trainedWords") VALUES ($1, $2, 'SDXL 1.0', $3)`,
     [versionId, id, ['chibi', 'cute']]
   );
-  await pg.query(`INSERT INTO "ModelFile" (id, "modelVersionId", type) VALUES ($1, $2, 'Model')`, [
-    fileId,
-    versionId,
-  ]);
+  await pg.query(
+    `INSERT INTO "ModelFile" (id, "modelVersionId", type, name, "sizeKB") VALUES ($1, $2, 'Model', $3, 1024)`,
+    [fileId, versionId, `file-${id}.safetensors`]
+  );
   await pg.query(`INSERT INTO "ModelFileHash" ("fileId", type, hash) VALUES ($1, 'SHA256', $2)`, [
     fileId,
     hash,
@@ -133,7 +136,9 @@ describe('getMinorHashMatchesForReview', () => {
       otherFlaggedModels: 1,
       pastAppeals: { approved: 0, rejected: 0, void: 0, pending: 0 },
     });
-    expect(row.coverImages).toEqual([{ id: 1, url: 'cover-url' }]);
+    expect(row.coverImages).toEqual([{ id: 1, url: 'cover-url', nsfwLevel: 1 }]);
+    // The shared file as this model stores it: its own name for the bytes the seed also carries.
+    expect(row).toMatchObject({ fileName: 'file-11.safetensors', fileSizeKB: 1024 });
   });
 
   it('pages with one extra row to know there is another page', async () => {
@@ -144,5 +149,18 @@ describe('getMinorHashMatchesForReview', () => {
     const second = await getMinorHashMatchesForReview({ limit: 1, offset: 1 });
     expect(second.items.map((r) => r.modelId)).toEqual([15]);
     expect(second.hasMore).toBe(false);
+  });
+});
+
+describe('getAutoFlaggedMinorMatch', () => {
+  it("names this model's copy of the shared file, with its size", async () => {
+    await seedModel(10, 1, 'aa', { minor: true });
+    await seedModel(12, 1, 'aa');
+    expect(await getAutoFlaggedMinorMatch({ modelId: 12 })).toMatchObject({
+      minorModelId: 10,
+      hash: 'aa',
+      fileName: 'file-12.safetensors',
+      fileSizeKB: 1024,
+    });
   });
 });

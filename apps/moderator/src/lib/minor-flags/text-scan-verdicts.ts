@@ -3,6 +3,9 @@ export type TextScanFlagView = {
   workflowId?: string;
   reason?: string;
   names?: string[];
+  textHash?: string;
+  /** TextScanPrompt ids the scan ran with (`base` and one per label). */
+  promptIds?: unknown;
   appealGranted?: unknown;
 };
 
@@ -20,6 +23,7 @@ export type RedetectionView = {
   reason?: string;
   names?: string[];
   textHash: string;
+  promptIds?: unknown;
   model?: string | null;
 };
 

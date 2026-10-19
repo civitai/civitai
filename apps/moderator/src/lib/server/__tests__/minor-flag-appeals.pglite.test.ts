@@ -62,7 +62,7 @@ CREATE TABLE "ModActivity" (
 );
 CREATE TABLE "EntityModeration" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Pending', "result" JSONB,
+  "workflowId" TEXT, "status" TEXT NOT NULL DEFAULT 'Pending', "result" JSONB,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-01-01',
   UNIQUE ("entityType", "entityId")
 );
@@ -332,7 +332,7 @@ describe('row context', () => {
   it('serves up to four owner-posted images, published posts first, in version then post then image order', async () => {
     const row = await rowFor(1);
     expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-c', 'u-d']);
-    expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b' });
+    expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b', nsfwLevel: 4 });
     expect((await rowFor(2)).coverImages).toEqual([]);
   });
 
@@ -348,7 +348,7 @@ describe('row context', () => {
         (9, 'u-unpub', 1, 204, 0, 'image'), (10, 'u-early-unpub', 1, 205, 0, 'image'),
         (11, 'u-late-pub', 1, 206, 0, 'image');
     `);
-    expect((await rowFor(3)).coverImages).toEqual([{ id: 9, url: 'u-unpub' }]);
+    expect((await rowFor(3)).coverImages).toEqual([{ id: 9, url: 'u-unpub', nsfwLevel: 1 }]);
     expect((await rowFor(4)).coverImages.map((i) => i.url)).toEqual([
       'u-late-pub',
       'u-early-unpub',
@@ -367,6 +367,77 @@ describe('row context', () => {
     expect(row.otherFlaggedModels).toBe(0);
     expect(row.pastAppeals).toEqual({ approved: 1, rejected: 2, void: 0, pending: 1 });
     expect((await rowFor(5)).otherFlaggedModels).toBe(1);
+  });
+
+  it("numbers the appeal among the uploader's model appeals this year, any status", async () => {
+    // Owner 10: three July appeals, then this one (Oct 1), then model 5's (Oct 5); the Image appeal
+    // and appeals from last year do not count.
+    await db.exec(`INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt") VALUES
+      (63, 10, 'Model', 9, 'Rejected', '2025-12-30')`);
+    expect((await rowFor(1)).appealNthThisYear).toBe(4);
+    expect((await rowFor(5)).appealNthThisYear).toBe(5);
+    expect((await rowFor(2)).appealNthThisYear).toBe(2);
+    expect((await rowFor(4)).appealNthThisYear).toBe(1);
+  });
+});
+
+describe('also in Flagged', () => {
+  const flagged = async () => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    return Object.fromEntries(items.map((i) => [i.modelId, i.alsoInFlagged]));
+  };
+
+  it('marks the models the Flagged tab lists too, whatever raised them', async () => {
+    // Model 2: a hash auto-flag inside its review window. Model 4: a held re-detection. Model 7: an
+    // open text-scan real-person flag.
+    await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
+      JSON.stringify(snapshot('auto', new Date(Date.now() - 86_400_000).toISOString())),
+    ]);
+    await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 4`, [
+      JSON.stringify({
+        textScanFlags: { minor: { redetected: { workflowId: 'w', textHash: 'h' } } },
+      }),
+    ]);
+    expect(await flagged()).toEqual({
+      1: false,
+      2: true,
+      3: false,
+      4: true,
+      5: false,
+      6: false,
+      7: true,
+    });
+  });
+
+  it('drops a hash flag once its review window has closed', async () => {
+    await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
+      JSON.stringify(snapshot('auto', '2020-01-01T00:00:00Z')),
+    ]);
+    expect((await flagged())[2]).toBe(false);
+  });
+});
+
+describe('scan rows', () => {
+  it('carries both text-scan rows with their workflow and text hash', async () => {
+    await db.exec(`INSERT INTO "EntityModeration" ("entityType","entityId","workflowId","status","result","updatedAt") VALUES
+      ('Model', 7, 'wf-1', 'Succeeded', '{"textHash": "h1"}', '2026-10-08T01:02:03.456'),
+      ('Model:search', 7, 'wf-2', 'Pending', NULL, '2026-10-09T00:00:00')`);
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 7)!.scanRows).toEqual({
+      main: {
+        workflowId: 'wf-1',
+        textHash: 'h1',
+        status: 'Succeeded',
+        updatedAt: '2026-10-08T01:02:03.456Z',
+      },
+      search: {
+        workflowId: 'wf-2',
+        textHash: null,
+        status: 'Pending',
+        updatedAt: '2026-10-09T00:00:00.000Z',
+      },
+    });
+    expect(items.find((i) => i.modelId === 1)!.scanRows).toEqual({ main: null, search: null });
   });
 });
 

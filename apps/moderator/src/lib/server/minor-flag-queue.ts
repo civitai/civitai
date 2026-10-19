@@ -1,4 +1,4 @@
-import { fail } from '@sveltejs/kit';
+import { fail, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, RequestEvent } from '@sveltejs/kit';
 import { parseQuery } from '$lib/server/query';
@@ -10,6 +10,7 @@ import {
   getMinorQueueCounts,
   getFlaggedCount,
   getFlaggedModels,
+  getModelFlagDetail,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
 import {
@@ -141,6 +142,31 @@ export async function loadFlaggedQueue(url: URL) {
 }
 
 export type FlaggedQueueData = Awaited<ReturnType<typeof loadFlaggedQueue>>;
+
+/** At most this many prompt ids per request: a pane shows two labels' entries. */
+const MAX_PROMPT_IDS = 10;
+
+/**
+ * Each tab's `detail/[modelId]` endpoint: the facts only the open detail pane shows, fetched when a row
+ * is selected so the paged list never pays for them. Served under each tab's own path, so the global
+ * route gate checks that tab's grant.
+ */
+export async function modelFlagDetailResponse(rawModelId: string, url: URL) {
+  const modelId = Number(rawModelId);
+  if (!Number.isInteger(modelId) || modelId <= 0 || modelId > MAX_INT4)
+    return json({ error: 'Bad model id.' }, { status: 400 });
+  const promptIds = [
+    ...new Set(
+      (url.searchParams.get('prompts') ?? '')
+        .split(',')
+        .map(Number)
+        .filter((id) => Number.isInteger(id) && id > 0 && id <= MAX_INT4)
+    ),
+  ].slice(0, MAX_PROMPT_IDS);
+  const detail = await getModelFlagDetail({ modelId, promptIds });
+  if (!detail) return json({ error: 'No such model.' }, { status: 404 });
+  return json(detail);
+}
 
 /** The shell prefixes a refusal with this so a moderator knows which item it was about. */
 const modelSubject = (modelId: number) => `Model #${modelId}`;
