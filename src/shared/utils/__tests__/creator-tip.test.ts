@@ -44,4 +44,19 @@ describe('anyTipEligible', () => {
   it('counts a resource with unknown eligibility as eligible', () => {
     expect(anyTipEligible([{ tipsEnabled: false }, {}])).toBe(true);
   });
+
+  it('does not count a resource the generating user owns', () => {
+    expect(
+      anyTipEligible([{ tipsEnabled: false }, { tipsEnabled: true, isOwnedByUser: true }])
+    ).toBe(false);
+  });
+
+  it("is true when another creator's resource sits beside the user's own", () => {
+    expect(
+      anyTipEligible([
+        { tipsEnabled: true, isOwnedByUser: true },
+        { tipsEnabled: true, isOwnedByUser: false },
+      ])
+    ).toBe(true);
+  });
 });

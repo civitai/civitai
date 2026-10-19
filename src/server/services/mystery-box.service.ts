@@ -724,7 +724,7 @@ export async function purchaseMysteryBox({
 
   const box = await dbWrite.itemDefinition.findUnique({
     where: { id: boxDefinitionId },
-    select: { id: true, type: true, status: true, version: true, params: true },
+    select: { id: true, type: true, status: true, version: true, params: true, sellerId: true },
   });
 
   const start = await beginShopPurchase({
@@ -746,6 +746,8 @@ export async function purchaseMysteryBox({
       throw throwBadRequestError('This box is not available');
     if (!box || box.type !== ITEM_TYPE.box || box.status !== ITEM_DEFINITION_STATUS.published)
       throw throwBadRequestError('This box is not available');
+    // A creator's pack isn't sold until its sale pays the creator; approving one doesn't open it.
+    if (box.sellerId != null) throw throwBadRequestError('This box is not available');
 
     if (isMysteryBoxBlockedIn(countryCode, await getMysteryBoxBlockedRegions()))
       throw throwBadRequestError('Mystery boxes are not available in your region');
@@ -1022,13 +1024,17 @@ export async function openMysteryBox({
       // FOR SHARE holds the version until commit: a builder save locks this row FOR NO KEY UPDATE
       // and waits for opens in flight, so this open cannot pass the check at one version and draw
       // from the next one's tiers and contents. After the Item lock, never before it.
-      const [box] = await tx.$queryRaw<{ id: number; type: string; version: number }[]>`
-        SELECT "id", "type", "version" FROM "ItemDefinition"
+      const [box] = await tx.$queryRaw<
+        { id: number; type: string; version: number; sellerId: number | null }[]
+      >`
+        SELECT "id", "type", "version", "sellerId" FROM "ItemDefinition"
         WHERE "id" = ${item.itemDefinitionId}
         FOR SHARE
       `;
       if (!box || box.type !== ITEM_TYPE.box)
         throw throwBadRequestError('This box cannot be opened');
+      // Not sold or granted yet; whatever path reached one, it doesn't open before it pays its creator.
+      if (box.sellerId != null) throw throwBadRequestError('This box cannot be opened');
       // The holder was shown this version's contents and odds.
       if (expectedVersion !== box.version)
         throw throwBadRequestError("This box's contents changed. Check them and try again.");

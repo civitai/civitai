@@ -55,16 +55,19 @@ const chunk = (delta: object, finish: string | null = null) => ({
 /** Every model request a reply makes asks with tools; anything else (a title, a lookup) does not count. */
 function stubModel(answer: (request: number) => Response) {
   const replyRequests: number[] = [];
+  /** The `model` of every chat request, the title's included, in order. */
+  const models: unknown[] = [];
   const realFetch = globalThis.fetch;
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (!url.endsWith('/v1/chat/completions')) return new Response('{}', { status: 404 });
-    const body = JSON.parse(String(init?.body ?? '{}')) as { tools?: unknown[] };
+    const body = JSON.parse(String(init?.body ?? '{}')) as { tools?: unknown[]; model?: unknown };
+    models.push(body.model);
     if (!body.tools?.length) return sse([chunk({ content: 'A title' }, 'stop')]);
     replyRequests.push(replyRequests.length + 1);
     return answer(replyRequests.length);
   });
-  return { replyRequests, restore: () => vi.stubGlobal('fetch', realFetch) };
+  return { replyRequests, models, restore: () => vi.stubGlobal('fetch', realFetch) };
 }
 
 /** A step that calls the `noop` tool `count` times at once. */
@@ -190,5 +193,21 @@ describe('the per-reply tool-call limit, in the real chat', () => {
     expect(ran).toHaveBeenCalledTimes(APP_ASSISTANT_TURN_TOOL_CALL_LIMIT);
     expect(results.filter((result) => result.stopped)).toHaveLength(0);
     expect(shownText(el)).not.toContain(LIMIT_MESSAGE);
+  });
+});
+
+describe('the model App Assistant asks for', () => {
+  test('with no model chosen, every request, the title included, asks for GPT-6 Luna', async () => {
+    const model = stubModel(() => sayDone());
+    restore = model.restore;
+    const { el } = await mountChat();
+
+    await el.send('Build it.');
+    await vi.waitFor(() => expect(model.replyRequests).toEqual([1]), { timeout: 10_000 });
+    await vi.waitFor(() => expect(model.models.length).toBeGreaterThanOrEqual(2), {
+      timeout: 10_000,
+    });
+
+    expect(new Set(model.models)).toEqual(new Set(['openai/gpt-6-luna']));
   });
 });

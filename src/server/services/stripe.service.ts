@@ -398,13 +398,24 @@ export const createSubscribeSession = async ({
       );
       const releasedGiftMonth = await releaseArmedGiftMonth({ userId: user.id });
 
+      // 'default_incomplete' applies the new price at once and leaves the subscription past_due,
+      // which ends the plan the member already paid for. 'pending_if_incomplete' holds the price
+      // change until the invoice is paid. A paused subscription was just resumed without payment,
+      // so holding its change would leave it active unpaid; it keeps the old behaviour.
+      const holdUntilPaid = isUpgrade && activeSubscription.status !== 'paused';
+
+      let updated: Stripe.Subscription;
       try {
-        await stripe.subscriptions.update(subscriptionId, {
+        updated = await stripe.subscriptions.update(subscriptionId, {
           items,
           billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
           proration_behavior: 'none',
-          // Makes it so that if a sub. is not paid, it won't start right away. Should cover us for failed payments during upgrades
-          payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
+          payment_behavior: holdUntilPaid
+            ? 'pending_if_incomplete'
+            : isUpgrade
+            ? 'default_incomplete'
+            : undefined,
+          expand: holdUntilPaid ? ['latest_invoice'] : undefined,
           ...(releasedGiftMonth
             ? { coupon: '' }
             : {
@@ -421,6 +432,17 @@ export const createSubscribeSession = async ({
       if (sanitizedRefCode) {
         const { bindReferralCodeForUser } = await import('~/server/services/referral.service');
         await bindReferralCodeForUser(user.id, sanitizedRefCode).catch(handleLogError);
+      }
+
+      // The released gifted month is NOT restored here: Stripe removes the coupon immediately
+      // even while the price change is held, and the subscription.updated webhook re-arms it.
+      if (updated.pending_update) {
+        const invoice = updated.latest_invoice;
+        const hostedInvoiceUrl = typeof invoice === 'object' ? invoice?.hosted_invoice_url : null;
+        if (hostedInvoiceUrl) return { sessionId: null, url: hostedInvoiceUrl };
+        throw throwBadRequestError(
+          `Your payment for the upgrade did not go through, so your current membership is unchanged. Please check your payment method and try again.`
+        );
       }
 
       await refreshSession(user.id, { caller: 'subscription' });

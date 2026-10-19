@@ -1,6 +1,6 @@
 import { Avatar } from '@mantine/core';
 import { IconApps } from '@tabler/icons-react';
-import { chromeRecentAppIconSrc } from './chromeRecentAppIcon';
+import { chromeRecentAppIconSrc } from './chromeRecentAppIconSrc';
 import { useChromeListingDetail } from './useChromeListingDetail';
 
 /**

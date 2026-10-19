@@ -77,7 +77,8 @@ export function GeneratorMediaPicker({
     () =>
       data.flatMap((wf) =>
         wf.succeededOutput.filter(
-          (x): x is ImageBlob | VideoBlob | AudioBlob => x.available && x.type !== 'model3d'
+          (x): x is ImageBlob | VideoBlob | AudioBlob =>
+            x.available && x.type !== 'model3d' && x.canUse('post')
         )
       ),
     [data]
@@ -91,7 +92,8 @@ export function GeneratorMediaPicker({
     );
   }
 
-  if (generatedMedia.length === 0) {
+  // Keep paging while there is more: a page can hold only outputs that can't be posted.
+  if (generatedMedia.length === 0 && !hasNextPage) {
     return <NoContent message="No generated images found. Create some images first!" />;
   }
 

@@ -602,8 +602,9 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     );
     expect(selects).toHaveLength(3);
     for (const select of selects) {
-      expect(select.icon).toEqual({ select: { url: true } });
-      expect(select.cover).toEqual({ select: { url: true } });
+      // `id` + `nsfwLevel` for the review's click-to-reveal (`reviewMedia`) — moderator-only.
+      expect(select.icon).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
+      expect(select.cover).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
       expect(select.metric).toEqual({ select: { openCount: true } });
       // The LISTING's kind — what `cardOpenCount` discriminates on.
       expect(select.kind).toBe(true);

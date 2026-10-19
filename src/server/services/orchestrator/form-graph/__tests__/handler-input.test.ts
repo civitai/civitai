@@ -389,10 +389,11 @@ describe('moss-image.handler', () => {
     expect(firstInput(steps)).toMatchObject({ model: 'sft', steps: n, cfgScale: 1 });
   });
 
-  it('the Base ecosystem selects the base model and keeps the graph defaults', async () => {
+  it('the Base version selects the base model and keeps the graph defaults', async () => {
     const steps = await dispatch({
       workflow: 'txt2img',
-      ecosystem: 'MossImage_base',
+      ecosystem: 'MossImage',
+      model: { id: 3409868, baseModel: 'MOSS Image' },
       prompt: 'a cat',
     });
     expect(firstInput(steps)).toMatchObject({

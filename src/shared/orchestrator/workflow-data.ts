@@ -17,6 +17,9 @@ import {
   isPrivateMature,
   isMature,
 } from '~/shared/constants/orchestrator.constants';
+import { canUseWorkflowOutput } from '~/shared/generation/config/output-uses';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
+import type { OutputUse } from '~/shared/generation/config/types';
 import {
   orchestratorCompletedStatuses,
   orchestratorRefundableStatuses,
@@ -467,6 +470,22 @@ export abstract class BlobData {
 
   get pendingRating() {
     return this.blockedReason === PENDING_RATING;
+  }
+
+  /** The workflow that made this output: the generation's key, over a step's. */
+  #workflowKey() {
+    return this.#step.workflow.params.workflow ?? this.params.workflow;
+  }
+
+  /** Whether this output can be used for `use`, by the workflow that made it. */
+  canUse(use: OutputUse) {
+    return canUseWorkflowOutput(this.#workflowKey(), use);
+  }
+
+  /** Whether the workflow that made this output keeps its prompt and details hidden. */
+  get hideDetails() {
+    const key = this.#workflowKey();
+    return typeof key === 'string' && !!workflowConfigByKey.get(key)?.hideDetails;
   }
 
   /** Whether this image's block can be resolved in-place (upgrade or redirect). */

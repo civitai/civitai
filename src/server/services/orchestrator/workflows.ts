@@ -27,7 +27,6 @@ import type {
   TagsPatchSchema,
   workflowIdSchema,
   workflowQuerySchema,
-  workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
@@ -831,22 +830,6 @@ export function throwOrchestratorFailure({
         error ?? new Error('orchestrator returned no data', { cause: error })
       );
   }
-}
-
-export async function updateManyWorkflows({
-  workflows,
-  token,
-}: {
-  workflows: z.infer<typeof workflowUpdateSchema>[];
-  token: string;
-}) {
-  const client = createOrchestratorClient(token);
-
-  await Promise.all(
-    workflows.map(({ workflowId, metadata }) =>
-      clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } })
-    )
-  );
 }
 
 export async function patchWorkflows({

@@ -51,6 +51,13 @@ import {
  * terminal scan refusal hide the image whatever its level, and an image nothing has rated yet is
  * `pending`, which here means NOT SHOWN. Every caller treats anything but `visible` as hidden.
  *
+ * THE civitai.red ICON / COVER OVERRIDES (`ListingMediaView.red`). A listing may carry an icon
+ * and a cover shown INSTEAD of its own on a red-capable host only. They are gated per image by
+ * the SAME ceiling as the listing's own media, and fall back to it: a hidden icon override to
+ * the listing's own icon, a hidden cover override to the listing's own cover, then to the first
+ * screenshot this viewer may see. A view that is not red-capable never uses them, and the store
+ * never reads them for one (`readListingRedMediaManyForRender`, red-capable reads only).
+ *
  * WHAT A HIDDEN ASSET BECOMES. A hidden icon is `null` (every renderer already draws its own
  * placeholder for that). A hidden cover falls back to the first screenshot THIS viewer may see,
  * then to `null`. A hidden screenshot is dropped from the gallery and order is preserved. Nothing
@@ -217,16 +224,18 @@ export function gatedListingScreenshots(
 }
 
 /**
- * The cover: the cover image if the viewer may see it, else the first screenshot they may see,
- * else null. The fallback is filtered by the SAME ceiling — a screenshot the viewer may not see
- * can never become the cover.
+ * The cover: the cover image if the viewer may see it, else `fallbackCover` (the listing's own
+ * cover, when `cover` is a civitai.red override) if they may see it, else the first screenshot
+ * they may see, else null. Every fallback is filtered by the SAME ceiling — an image the viewer
+ * may not see can never become the cover.
  */
 export function gatedListingCoverUrl(
   cover: ListingMediaImage | null | undefined,
   screenshots: readonly ScreenshotRow[],
-  ceiling: number
+  ceiling: number,
+  fallbackCover?: ListingMediaImage | null
 ): string | null {
-  const coverUrl = visibleUrl(cover, ceiling);
+  const coverUrl = visibleUrl(cover, ceiling) ?? visibleUrl(fallbackCover, ceiling);
   if (coverUrl) return listingCoverUrl({ url: coverUrl }, null);
   for (const s of screenshots) {
     const url = visibleUrl(s.image, ceiling);
@@ -244,11 +253,24 @@ export type ListingMediaRow = {
 };
 
 /**
+ * A listing's civitai.red icon / cover overrides as the store read them (each image with the
+ * columns {@link isListingImageVisible} reads), or `null` for an empty slot.
+ */
+export type ListingRedOverrides = {
+  icon: ListingMediaImage | null;
+  cover: ListingMediaImage | null;
+};
+
+/**
  * How a projection should treat media: gated for a public `audience`, or shown as attached for a
  * moderator reviewing the listing.
+ *
+ * `red` carries the listing's civitai.red icon / cover overrides. They are honoured ONLY when
+ * `audience.redCapable` — a non-red view ignores them even if a caller passed them, and the store
+ * never reads them for one (`readListingRedMediaManyForRender` is called only on a red host).
  */
 export type ListingMediaView =
-  | { kind: 'public'; audience: ListingMediaAudience }
+  | { kind: 'public'; audience: ListingMediaAudience; red?: ListingRedOverrides | null }
   | { kind: 'moderator-review' };
 
 /**
@@ -301,9 +323,15 @@ export function projectListingMedia(
     };
   }
   const ceiling = listingMediaCeiling(view.audience, row.contentRating);
+  // 🔴 THE OVERRIDES EXIST ONLY ON A RED-CAPABLE HOST. Each is gated by the SAME ceiling as the
+  // listing's own media and falls back to it when hidden, so a red host shows an override only to
+  // a viewer the store rule lets see it, and otherwise exactly what it showed without one.
+  const red = view.audience.redCapable ? view.red ?? null : null;
   return {
-    iconUrl: gatedListingIconUrl(row.icon, ceiling),
-    coverUrl: gatedListingCoverUrl(row.cover, row.screenshots, ceiling),
+    iconUrl: gatedListingIconUrl(red?.icon, ceiling) ?? gatedListingIconUrl(row.icon, ceiling),
+    coverUrl: red
+      ? gatedListingCoverUrl(red.cover, row.screenshots, ceiling, row.cover)
+      : gatedListingCoverUrl(row.cover, row.screenshots, ceiling),
     screenshots: gallery ? gatedListingScreenshots(row.screenshots, ceiling) : [],
   };
 }

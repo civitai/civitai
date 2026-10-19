@@ -107,10 +107,7 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
-import {
-  canAddManualResources,
-  getManualResourceLimitError,
-} from '~/utils/manual-image-resources';
+import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import { CacheTTL } from '../common/constants';
@@ -812,7 +809,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
       thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
     }))
-    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];

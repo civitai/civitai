@@ -62,6 +62,12 @@ import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import {
+  GenerationSummaryStrip,
+  OutputActions,
+  workflowDisplays,
+  type OutputAction,
+} from '~/components/ImageGeneration/workflow-display';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -235,6 +241,9 @@ export function QueueItem({
     !!sourceLineageStep;
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
+  const hideDetails = !!workflowDefinition?.hideDetails;
+  const display = workflowDisplays[params.workflow as string];
+  const summary = inView ? display?.summary?.(request) : undefined;
 
   // PolyGen workflows don't always carry `params.workflow` consistently
   // (the orchestrator-side step is the source of truth), so derive the
@@ -348,7 +357,7 @@ export function QueueItem({
               )}
             </div>
             <div className="flex gap-1">
-              <SubmitBlockedImagesForReviewButton request={request} />
+              <SubmitBlockedImagesForReviewButton request={request} hideDetails={hideDetails} />
               {currentUser?.isModerator && (
                 <ButtonTooltip {...tooltipProps} label="Go to Workflow">
                   <LegacyActionIcon
@@ -393,7 +402,7 @@ export function QueueItem({
       {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+            {prompt && !hideDetails && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
             {resources.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -406,6 +415,8 @@ export function QueueItem({
                 ))}
               </div>
             )}
+
+            {summary && <GenerationSummaryStrip summary={summary} />}
 
             {waitingOnDownloads && <DownloadBoostPanel request={request} downloads={downloads} />}
 
@@ -433,6 +444,7 @@ export function QueueItem({
                         queuePosition={queuePosition}
                         waitingOnDownloads={waitingOnDownloads}
                         markerTags={markerTags}
+                        outputActions={display?.outputActions}
                       />
                     </div>
                   );
@@ -447,13 +459,14 @@ export function QueueItem({
                 queuePosition={queuePosition}
                 waitingOnDownloads={waitingOnDownloads}
                 markerTags={markerTags}
+                outputActions={display?.outputActions}
               />
             )}
           </div>
         </>
       )}
 
-      {inView && (
+      {inView && !hideDetails && (
         <Card.Section withBorder className="-mx-2">
           <GenerationDetails
             label="Additional Details"
@@ -591,6 +604,7 @@ function StepOutputs({
   queuePosition,
   waitingOnDownloads,
   markerTags,
+  outputActions,
 }: {
   step: StepData | null;
   request: WorkflowData;
@@ -601,6 +615,7 @@ function StepOutputs({
   /** The download panel stands in for the pending tile. */
   waitingOnDownloads?: boolean;
   markerTags?: string[];
+  outputActions?: readonly OutputAction[];
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
   const allDisplayImages = step ? step.displayOutput : request.displayOutput;
@@ -633,6 +648,11 @@ function StepOutputs({
         {displayImages.map((image) =>
           image.blockedReason === 'siteRestricted' ? (
             <SiteRestrictedBlock key={image.id} image={image} />
+          ) : outputActions && image.type === 'image' && image.available && !image.blockedReason ? (
+            <div key={image.id} className="flex flex-col gap-1.5">
+              <GeneratedOutput image={image} />
+              <OutputActions output={image} actions={outputActions} />
+            </div>
           ) : (
             <GeneratedOutput key={image.id} image={image} />
           )
@@ -772,9 +792,18 @@ function CancelOrDeleteWorkflow({
   );
 }
 
-function SubmitBlockedImagesForReviewButton({ request }: { request: WorkflowData }) {
+function SubmitBlockedImagesForReviewButton({
+  request,
+  hideDetails,
+}: {
+  request: WorkflowData;
+  hideDetails: boolean;
+}) {
   const currentUser = useCurrentUser();
   if (!request.blockedCount || !currentUser?.username) return null;
+
+  const prompt = hideDetails ? '' : (request.params?.prompt as string) ?? '';
+  const negativePrompt = hideDetails ? '' : (request.params?.negativePrompt as string) ?? '';
 
   return (
     <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
@@ -787,10 +816,8 @@ function SubmitBlockedImagesForReviewButton({ request }: { request: WorkflowData
         color="orange"
         href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
           currentUser.username
-        )}&Prompt=${encodeURIComponent(
-          (request.params?.prompt as string) ?? ''
-        )}&Negative%20Prompt=${encodeURIComponent(
-          (request.params?.negativePrompt as string) ?? ''
+        )}&Prompt=${encodeURIComponent(prompt)}&Negative%20Prompt=${encodeURIComponent(
+          negativePrompt
         )}&Workflow%20ID=${request.id}`}
       >
         <IconFlagQuestion size={20} />

@@ -1,8 +1,7 @@
-import { Badge, Group, Radio, Stack, Text } from '@mantine/core';
+import { Group, Radio, Stack, Text } from '@mantine/core';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import { ListingAudienceBadge } from '~/components/Apps/ListingAudienceBadge';
 import {
-  LISTING_ASSET_AUDIENCE_LABEL,
-  listingAssetAudience,
   resolveListingMediaSplitDecision,
   summarizeListingMediaSplit,
   type ListingMediaSplitDecision,
@@ -143,22 +142,16 @@ export function ListingMediaSplitControl({
       </Radio.Group>
       {appliesRating && (
         <Stack gap={2} data-testid="apps-media-split-audiences">
-          {assets.map((asset, i) => {
-            const audience = listingAssetAudience(asset.nsfwLevel, projected);
-            return (
-              <Group key={`${asset.kind}-${asset.position ?? i}`} gap={6}>
-                <Text size="xs">{listingRatingAssetLabel(asset)}</Text>
-                <Badge
-                  size="xs"
-                  variant="light"
-                  color={audience === 'red-only' ? 'red' : audience === 'unrated' ? 'gray' : 'blue'}
-                  data-testid={`apps-media-split-audience-${asset.kind}-${asset.position ?? 0}`}
-                >
-                  {LISTING_ASSET_AUDIENCE_LABEL[audience]}
-                </Badge>
-              </Group>
-            );
-          })}
+          {assets.map((asset, i) => (
+            <Group key={`${asset.kind}-${asset.position ?? i}`} gap={6}>
+              <Text size="xs">{listingRatingAssetLabel(asset)}</Text>
+              <ListingAudienceBadge
+                asset={asset}
+                rating={projected}
+                testId={`apps-media-split-audience-${asset.kind}-${asset.position ?? 0}`}
+              />
+            </Group>
+          ))}
         </Stack>
       )}
     </Stack>

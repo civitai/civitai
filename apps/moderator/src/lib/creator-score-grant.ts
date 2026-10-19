@@ -2,6 +2,8 @@
 // src/server/services/creator-score-grant.constants.ts, which enforces them.
 
 export const CREATOR_SCORE_GRANT_MAX_AMOUNT = 10_000;
+/** With `user.creatorScore.grantLarge`. */
+export const CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT = 1_000_000;
 export const CREATOR_SCORE_GRANT_DAILY_CAP = 20;
 export const CREATOR_SCORE_GRANT_REASON_MAX = 500;
 

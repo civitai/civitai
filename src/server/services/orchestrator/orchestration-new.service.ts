@@ -40,6 +40,8 @@ import {
 import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
+import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
+import { workflowOutputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -136,6 +138,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 
 // Ecosystem handlers - unified router
 import { createFormGraphStepInput } from './form-graph';
+import { createAvatarSteps, expandAvatarData } from './form-graph/avatar.handler';
 import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
@@ -1100,6 +1103,10 @@ async function createStepInputs(
       rawResult = createVideoPreprocessStep(data as never) as StepInput;
       break;
 
+    case 'img2img:avatar':
+      rawResult = createAvatarSteps(data as LooseGenerationData, handlerCtx);
+      break;
+
     default: {
       // Ecosystem workflows - ecosystem must be defined
       if (!('ecosystem' in data) || !data.ecosystem) {
@@ -1311,6 +1318,8 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
 }> {
+  data = expandAvatarData(data);
+
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
   // Span localizes the gen-path park: resource validation/enrichment sub-step.
@@ -1542,6 +1551,7 @@ export async function createWorkflowStepsFromGraph({
 
     const extraTags: string[] = [];
     if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
+    if (data.workflow === AVATAR_WORKFLOW) extraTags.push('avatar');
 
     return {
       steps: wrappedSteps,
@@ -2046,9 +2056,11 @@ export async function generateFromGraph({
       experimental,
       metadata: metadataWithSubstitutions,
       callbacks: getOrchestratorCallbacks(userId),
-      // Private generation restrictions
-      nsfwLevel: isPrivateGeneration ? 'pg13' : undefined,
-      allowMatureContent: isPrivateGeneration ? false : allowMatureContent,
+      ...workflowOutputRestrictions({
+        workflow: data.workflow,
+        isPrivateGeneration,
+        allowMatureContent,
+      }),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
@@ -2203,7 +2215,11 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
-import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import {
+  exceedsNsfwLevel,
+  isMature,
+  maxNsfwLevel,
+} from '~/shared/constants/orchestrator.constants';
 
 // =============================================================================
 // Types
@@ -3102,11 +3118,38 @@ function formatStep(
 /**
  * Simplified formatGenerationResponse.
  */
+/**
+ * The orchestrator charges the yellow-Buzz unlock without lifting the workflow's `nsfwLevel` cap, so
+ * when every mature output is rated above the cap the unlock takes the Buzz and releases nothing.
+ */
+export async function assertUnlockReleasesOutput({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const workflow = await getWorkflow({ token, path: { workflowId } });
+  const cap = workflow.nsfwLevel;
+  if (!cap) return;
+  const matureLevels = (workflow.steps ?? [])
+    .flatMap((step) => normalizeStepOutput(step as StepWithOutput))
+    .map((item) => item.nsfwLevel)
+    .filter((level): level is NsfwLevel => !!isMature(level));
+  if (matureLevels.length && matureLevels.every((level) => exceedsNsfwLevel(level, cap)))
+    throw throwBadRequestError(
+      `This generation is limited to ${cap
+        .toUpperCase()
+        .replace('PG13', 'PG-13')}, so unlocking it would not show its mature results.`
+    );
+}
+
 /** Update a workflow and return the normalized response. */
 export async function updateWorkflow({
   user,
   ...props
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
+  if (props.allowMatureContent === true) await assertUnlockReleasesOutput(props);
   const workflow = await clientUpdateWorkflow(props);
   const [formatted] = await formatGenerationResponse2([workflow], user);
   return formatted;
@@ -3482,6 +3525,7 @@ export async function getWorkflowStatusUpdate({
       id: workflowId,
       status: result.status!,
       downloadPriority: readDownloadPriority(result),
+      nsfwCap: result.nsfwLevel,
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 

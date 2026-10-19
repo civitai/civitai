@@ -13,6 +13,7 @@ export type ModeratorGrantId =
   | 'user.removeReactions'
   | 'user.membership.code'
   | 'user.creatorScore.grant'
+  | 'user.creatorScore.grantLarge'
   | 'creatorServices.resolveDispute'
   | 'image.removal.confirm'
   | 'labelStore.submitPrediction';
