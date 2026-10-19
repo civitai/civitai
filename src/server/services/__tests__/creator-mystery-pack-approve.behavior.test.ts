@@ -931,6 +931,9 @@ describe("a moderator's verdict", () => {
 
     expect((await listingOf(boxId)).status).toBe('RequestedChanges');
     expect((await revisionsOf(boxId)).at(-1)).toMatchObject({ status: 'stale' });
+    expect(notifications.createNotification).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: 'creator-shop-item-changes-requested', userId: CREATOR })
+    );
   });
 
   it.each([

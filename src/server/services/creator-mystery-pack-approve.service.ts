@@ -53,13 +53,14 @@ type ReviewedBox = {
   updatedAt: Date;
   listingId: number;
   listingStatus: CosmeticShopItemStatus;
+  title: string;
   meta: CosmeticShopItemMeta | null;
 };
 
 async function readBox(tx: Tx, boxId: number) {
   const [box] = await tx.$queryRaw<ReviewedBox[]>`
     SELECT d.id, d.name, d.status, d.version, d."updatedAt", s.id AS "listingId",
-      s.status::text AS "listingStatus", s.meta
+      s.status::text AS "listingStatus", s.title, s.meta
     FROM "ItemDefinition" d
     JOIN "CosmeticShopItem" s ON s."itemDefinitionId" = d.id
     WHERE d.id = ${boxId} AND d.type = ${ITEM_TYPE.box} AND d."sellerId" IS NOT NULL
@@ -97,10 +98,13 @@ const closeRevision = (
       note = ${note ?? null}, "appliedVersion" = ${appliedVersion ?? null}
     WHERE id = ${revisionId}`;
 
-/** A pack waiting for review goes back to its creator, who can then edit it again. */
+/**
+ * A pack waiting for review goes back to its creator, who can then edit it again. Says whether it
+ * did, so the creator is told.
+ */
 async function markStale(tx: Tx, revisionId: number, box: ReviewedBox, moderatorId: number) {
   await closeRevision(tx, revisionId, { status: 'stale', reviewerId: moderatorId });
-  if (box.listingStatus !== 'PendingReview') return;
+  if (box.listingStatus !== 'PendingReview') return false;
   const meta = appendItemHistory(box.meta ?? { purchases: 0 }, {
     at: new Date().toISOString(),
     userId: moderatorId,
@@ -114,6 +118,7 @@ async function markStale(tx: Tx, revisionId: number, box: ReviewedBox, moderator
     SET status = 'RequestedChanges', "rejectionReason" = ${STALE}, "reviewedById" = ${moderatorId},
       "reviewedAt" = now(), meta = ${JSON.stringify(meta)}::jsonb
     WHERE id = ${box.listingId}`;
+  return true;
 }
 
 /** Defines each content's cosmetic as a reward if it isn't one yet, as the builder's define step does. */
@@ -344,8 +349,8 @@ export async function applyBoxRevision({
           "This pack's creator is muted, banned or deleted, so it can't be approved. The edit stays waiting."
         );
       if (box.version !== revision.baseVersion) {
-        await markStale(tx, revision.id, box, moderatorId);
-        return { stale: true as const };
+        const sentBack = await markStale(tx, revision.id, box, moderatorId);
+        return { stale: true as const, sentBack, title: box.title, listingId: box.listingId };
       }
 
       // Nothing guards an unreviewed pack's contents, so every check runs again.
@@ -367,8 +372,8 @@ export async function applyBoxRevision({
 
       const locked = await lockBox(tx, boxId);
       if (locked.version !== revision.baseVersion) {
-        await markStale(tx, revision.id, box, moderatorId);
-        return { stale: true as const };
+        const sentBack = await markStale(tx, revision.id, box, moderatorId);
+        return { stale: true as const, sentBack, title: box.title, listingId: box.listingId };
       }
       if (locked.status === ITEM_DEFINITION_STATUS.archived)
         throw throwBadRequestError('This mystery pack is archived');
@@ -467,7 +472,17 @@ export async function applyBoxRevision({
     throw error;
   }
   // Thrown after commit: throwing inside the transaction would roll back the stale mark.
-  if (outcome.stale) throw throwBadRequestError(STALE);
+  if (outcome.stale) {
+    if (outcome.sentBack)
+      await createNotification({
+        type: VERDICT_NOTIFICATION['request-changes'],
+        userId: owner.sellerId,
+        category: NotificationCategory.System,
+        key: `${VERDICT_NOTIFICATION['request-changes']}:${outcome.listingId}:${Date.now()}`,
+        details: { title: outcome.title, reason: STALE },
+      });
+    throw throwBadRequestError(STALE);
+  }
   return { version: outcome.version, listingId: outcome.listingId };
 }
 
