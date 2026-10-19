@@ -43,17 +43,15 @@
 </script>
 
 {#snippet cover(url: string | null | undefined, type: string | null | undefined)}
-  <!-- Same box for both, `object-contain`: the two covers are here to be COMPARED, and cropping to
-       fill the box can hide the thing being judged. -->
-  <div
-    class="flex h-[90px] w-full items-center justify-center overflow-hidden rounded-md border border-dark-4 bg-dark-6"
-  >
+  <!-- Same box for both, filled per the design; cropped from the top, where a subject's face usually
+       is. The full previews are one click away in the preview card. -->
+  <div class="h-[90px] w-full overflow-hidden rounded-md border border-dark-4 bg-dark-6">
     {#if url}
       <EdgeMedia
         src={url}
         type={(type ?? 'image') as 'image' | 'video'}
         width={450}
-        class="h-full w-auto max-w-full object-contain"
+        class="h-full w-full object-cover object-top"
       />
     {/if}
   </div>
