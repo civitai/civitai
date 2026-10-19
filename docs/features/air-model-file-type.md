@@ -30,7 +30,7 @@ addition to) the `ModelType`. This doc enumerates both vocabularies and the bloc
 | **Produced** | [`stringifyAIR`](../../src/shared/utils/air.ts) | `type: ModelType` → `typeUrnMap[type] ?? 'unknown'` |
 | Generation panel | [`generation.service.ts` `bringItAllTogether`](../../src/server/services/generation/generation.service.ts) | passes `type: resource.model.type` plus the type of the file `getGenerationFile` chooses |
 | Version → AIR | [`resource-air.ts`](../../src/server/utils/resource-air.ts) (`modelVersionToAir`) | passes the model type plus the file `getGenerationFile` chooses; that file's type can override the segment (`fileTypeUrnMap`) |
-| File scanning | [`resource-air.ts`](../../src/server/utils/resource-air.ts) (`modelFileScanAir`) | passes `type: modelType`, no file kind, pinned `@<version>+<fileId>`; the scan submit and the failed-scan bust both build it here so the busted string matches the cached one |
+| File scanning | [`model-file-scan-air.ts`](../../src/shared/utils/model-file-scan-air.ts) | passes `type: modelType`, no file kind, pinned `@<version>+<fileId>`; the scan submit and the failed-scan bust both build it here so the busted string matches the cached one |
 | Public API | `src/pages/api/v1/model-versions/[id].ts`, `.../mini/[id].ts` | emit AIR in responses |
 | Display | [`ModelURN.tsx`](../../src/components/Model/ModelURN/ModelURN.tsx) | user-facing URN on model pages |
 | **Consumed** | [`comfy.utils.ts`](../../src/server/services/orchestrator/comfy/comfy.utils.ts) | branches on `parsedAir.type === 'checkpoint' \| 'vae' \| 'embedding'` and `LORA_TYPES.includes(...)` |

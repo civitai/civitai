@@ -21,7 +21,7 @@ import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
-import { modelFileScanAir } from '~/server/utils/resource-air';
+import { modelFileScanAir } from '~/shared/utils/model-file-scan-air';
 import {
   DeliveryWorkerError,
   StorageResolverError,

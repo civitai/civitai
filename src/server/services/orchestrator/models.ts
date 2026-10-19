@@ -9,12 +9,11 @@ import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.sc
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
-  modelFileScanAir,
   modelVersionAirSelect,
   modelVersionToAir,
-  type ModelFileScanAirInput,
   type ModelVersionAirInput,
 } from '~/server/utils/resource-air';
+import { modelFileScanAir, type ModelFileScanAirInput } from '~/shared/utils/model-file-scan-air';
 
 export async function getModelClient({
   token,

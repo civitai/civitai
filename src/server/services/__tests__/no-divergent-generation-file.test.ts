@@ -17,6 +17,8 @@ const repoRoot = path.resolve(__dirname, '../../../..');
 const AIR_ALLOWLIST = [
   'src/shared/utils/air.ts',
   'src/server/utils/resource-air.ts',
+  // A model-file scan addresses one file by id, not a generation resource.
+  'src/shared/utils/model-file-scan-air.ts',
   // Epoch resources are orchestrator-hosted; the civitai arm takes its file from getGenerationFile.
   'src/server/services/generation/generation.service.ts',
   // What the orchestrator reads. Default pick is getGenerationFile; an explicit modelFileId adds
