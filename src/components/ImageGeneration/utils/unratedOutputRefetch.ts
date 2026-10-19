@@ -166,14 +166,14 @@ export function createHeldOutputsWatch() {
  * the workflows holding one while the list is mounted.
  */
 export function useWatchHeldOutputs(workflows: HoldingWorkflow[]) {
-  // Keyed by the held ids: re-watching on every cache write would restart their backoff.
+  // Keyed by the held ids, so a cache write that changes none of them does no work.
   const held = workflows.filter((workflow) => workflow.pendingRatingOutput.length);
   const key = held.map(({ id }) => id).join(',');
   const watch = useRef<ReturnType<typeof createHeldOutputsWatch>>();
   watch.current ??= createHeldOutputsWatch();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     watch.current?.update(held);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   useEffect(() => () => watch.current?.stop(), []);
 }
