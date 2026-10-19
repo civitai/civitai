@@ -68,11 +68,12 @@ produced the verdict, and the moderator's `reason` and `note` (absent on `closed
 
 ## Moderator app
 
-The **Flagged** tab of Model Flags (`/models/flags/review`, see [moderator-model-flags.md](moderator-model-flags.md))
-lists first detections and re-detections together with hash auto-flags, each badged with its kind, in the
-shared triage layout: **Flag (1)** / **Don't flag (2)**. It replaces the Held Detections page; the old
-`/models/held-detections` and `/models/flag-appeals?view=redetected` URLs redirect to
-`/models/flags/review?source=redetected`. The tab lists held poi (real person) re-detections as well as minor ones, so it is not minor-only. Each verdict requires a reason from a fixed list (plus a note for Other), sent as `resolvedReason`/`internalNotes` on `resolve-redetection` and stamped on the label's decision; the server treats both as optional.
+The **Needs review** tab of Model Flags (`/models/flags/needs-review`, see
+[moderator-model-flags.md](moderator-model-flags.md)) lists first detections and re-detections together with
+file matches (nothing applied for either), each badged with its kind, in the shared triage layout: **Flag (1)** /
+**Don't flag (2)**. Detections show only to holders of the `modelFlags.detections.decide` permission. It
+replaces the Held Detections page; the old `/models/held-detections` and
+`/models/flag-appeals?view=redetected` URLs redirect to `/models/flags/needs-review?source=text-scan`. The tab lists held poi (real person) re-detections as well as minor ones, so it is not minor-only. Each verdict requires a reason from a fixed list (plus a note for Other), sent as `resolvedReason`/`internalNotes` on `resolve-redetection` and stamped on the label's decision; the server treats both as optional.
 
 ## Rollout
 
