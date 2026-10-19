@@ -869,7 +869,9 @@ export async function resolveMinorFlagAppeal({
     grantHashes[label] = hash;
   }
 
-  if (upheld.includes('minor')) await confirmMinorHashAutoFlag({ modelId, userId });
+  // The sign-off only: the appeal's own upheld stamp below is the ruling.
+  if (upheld.includes('minor'))
+    await confirmMinorHashAutoFlag({ modelId, userId, recordTextScanRuling: false });
   const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
   if (upheldVerdicts.length)
     await stampModelTextScanAppeal({

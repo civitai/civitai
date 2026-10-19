@@ -36,6 +36,7 @@ import {
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
   resolvePerCallBuzzBudget,
+  isAppStorageScope,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -170,6 +171,12 @@ const requestSchema = z.object({
   // a block's iframe JS can never self-declare/widen its own scopes. (The bearer
   // `/api/v1/blocks/dev-token` localhost path legitimately body-sources; this
   // cookie-authed page-host path does not.)
+  //
+  // `devTunnel` — sent by `DevTunnelBlockHost`. It can only NARROW a token: the
+  // ordinary mint drops every document-store scope when it is set, and the
+  // tunnel-only branches ignore it. A client-asserted flag is therefore safe —
+  // omitting it yields exactly what `/apps/run/<slug>` already mints for this viewer.
+  devTunnel: z.boolean().optional(),
 });
 
 // W10 — synthetic block-instance id prefix for a stateless full-page app. The
@@ -187,6 +194,11 @@ const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
 const PER_IP_RATE_LIMIT_WINDOW_SECONDS = 60;
 const PER_IP_RATE_LIMIT_MAX = 120;
+
+/** `scopes` minus the whole `isAppStorageScope` family, legacy scopes included. */
+function withoutDocumentStoreScopes(scopes: readonly string[]): string[] {
+  return scopes.filter((s) => !isAppStorageScope(s));
+}
 
 function projectClientCtx(slotContext: Record<string, unknown>): Record<string, unknown> {
   // What goes in the JWT ctx claim is ONLY what a downstream scope might
@@ -1105,7 +1117,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten() });
     return;
   }
-  const { blockInstanceId, slotContext } = parsed.data;
+  const { blockInstanceId, slotContext, devTunnel } = parsed.data;
 
   // H3 order: per-IP rate limit FIRST (before any DB read). The per-(subject,
   // instance) limit runs after the session lookup but BEFORE findUnique.
@@ -1529,6 +1541,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // into a sign-in prompt, not a re-consent flow.
     missingScopes = [];
     needsConsent = false;
+  }
+
+  // civitai#2989 Decision 1: a tunnel preview's token carries no document-store
+  // scopes, whatever the app's approval state (the tunnel-only branches enforce it
+  // for non-approved apps through their allowlists). Stripped from the consent
+  // signal too, so the preview is never prompted for a scope it cannot receive.
+  if (devTunnel === true) {
+    manifestScopes = withoutDocumentStoreScopes(manifestScopes);
+    missingScopes = withoutDocumentStoreScopes(missingScopes);
+    needsConsent = missingScopes.length > 0;
   }
 
   // C8 (now INERT — retained as fail-safe): settings scopes were publisher-only,

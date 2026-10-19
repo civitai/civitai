@@ -186,9 +186,9 @@ describe('production catalog snapshot (2026-08-03)', () => {
  * case to 2026-08-03 above, so it pins what a recapture should change. Containment, not totals,
  * for the same reason.
  */
-describe('production catalog snapshot (2026-10-16)', () => {
+describe('production catalog snapshot (2026-10-19)', () => {
   const current = JSON.parse(
-    readFileSync(join(here, 'fixtures/catalog-production-2026-10-16.json'), 'utf8')
+    readFileSync(join(here, 'fixtures/catalog-production-2026-10-19.json'), 'utf8')
   ) as DbCatalog;
   const currentReport = compareSchemaToCatalog(schema, current);
   const currentFound = (kind: DriftKind) =>
@@ -199,7 +199,7 @@ describe('production catalog snapshot (2026-10-16)', () => {
   it('is a catalog the differ could actually read, captured with a real instant', () => {
     expect(() => assertCatalogSanity(current)).not.toThrow();
     expect(assessCoverage(currentReport)).toEqual([]);
-    expect(current.capturedAt).toBe('2026-10-16T02:45:53.108Z');
+    expect(current.capturedAt).toBe('2026-10-19T17:31:16.592Z');
   });
 
   it('compares every referential action (a live capture carries them)', () => {
@@ -209,32 +209,16 @@ describe('production catalog snapshot (2026-10-16)', () => {
     expect(currentReport.counts.referentialActionDrifts).toBeGreaterThan(0);
   });
 
-  it('finds referential-action drift on ON UPDATE only, except the in-flight Thread cascade', () => {
-    // The accepted batch is declared `ON UPDATE Cascade` against a database `NoAction` on the
-    // hand-written App Blocks tables. Inert while ids are never updated. An ON DELETE
-    // disagreement is a different, live hazard and must not hide inside this batch.
-    //
-    // Exception: the `Thread` entity FKs declare Cascade ahead of the hand-applied
-    // `20261101120000_thread_entity_fk_cascade` migration. Remove this carve-out when the catalog
-    // is recaptured after that migration.
+  it('finds referential-action drift on ON UPDATE only', () => {
+    // The accepted batch is declared `ON UPDATE Cascade` against a database `NoAction` on
+    // hand-written foreign keys (App Blocks, mystery box). Inert while ids are never updated. An
+    // ON DELETE disagreement is a different, live hazard and must not hide inside this batch.
     const actions = currentReport.findings.filter((f) => f.kind === 'referential-action');
     const onDelete = (s: string) => /ON DELETE (\w+)/.exec(s)?.[1];
     const onUpdate = (s: string) => /ON UPDATE (\w+)/.exec(s)?.[1];
-    const inFlightThreadCascade = (f: (typeof actions)[number]) =>
-      f.table === 'Thread' &&
-      f.columns[0] !== 'commentId' &&
-      onDelete(f.declared) === 'Cascade' &&
-      onDelete(f.actual) === 'SetNull' &&
-      onUpdate(f.declared) === onUpdate(f.actual);
     expect(actions.length).toBeGreaterThan(0);
-    expect(
-      actions.filter(
-        (f) => onDelete(f.declared) !== onDelete(f.actual) && !inFlightThreadCascade(f)
-      )
-    ).toEqual([]);
-    expect(
-      actions.every((f) => onUpdate(f.declared) !== onUpdate(f.actual) || inFlightThreadCascade(f))
-    ).toBe(true);
+    expect(actions.filter((f) => onDelete(f.declared) !== onDelete(f.actual))).toEqual([]);
+    expect(actions.every((f) => onUpdate(f.declared) !== onUpdate(f.actual))).toBe(true);
     // Every one parsed — an unparseable string reads `undefined === undefined` above.
     expect(actions.every((f) => onDelete(f.actual) && onUpdate(f.actual))).toBe(true);
   });
@@ -264,16 +248,7 @@ describe('production catalog snapshot (2026-10-16)', () => {
   });
 
   it('reports no missing columns: every declared column was live at capture', () => {
-    // Exceptions: columns declared ahead of their hand-applied migrations. Remove each when the
-    // catalog is recaptured after it:
-    //   `Appeal.category` / `Appeal.context`: `20261102120000_appeal_category`
-    //   `CosmeticShopItem.itemDefinitionId`: `20261105120000_mystery_box_items`
-    const inFlightColumns = new Set([
-      'Appeal.category',
-      'Appeal.context',
-      'CosmeticShopItem.itemDefinitionId',
-    ]);
-    expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
+    expect(currentFound('missing-column')).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
     expect(found('missing-column').length).toBeGreaterThan(0);
   });

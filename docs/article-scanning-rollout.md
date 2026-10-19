@@ -18,7 +18,7 @@ Ships the full "articles get scanned like everything else" system and turns it o
 1. **Image extraction** — every `<img>` / `<edge-media>` inside article HTML is walked out of the Tiptap AST, persisted as `Image` + `ImageConnection` rows, and queued for the standard ingestion pipeline (WD14 / Hive / Clavata / Hash). Cover images already went through this; content images now do too.
 2. **Text moderation via xGuard** — on every article create/update, `(title + stripped content)` is fire-and-forget submitted to the orchestrator xGuard workflow with `labels: ['nsfw']`. A content-hash on `EntityModeration` dedupes unchanged text.
 3. **Composite NSFW level** — `updateArticleNsfwLevels` computes `GREATEST(userNsfwLevel, image-derived level, moderation floor)`, where the moderation floor is an `EXISTS` subquery against `EntityModeration` (text-mod Succeeded + NSFW-or-blocked) and `ArticleReport`/`Report` (Actioned NSFW reports) that returns R when either is present, else 0. Because the floor is re-evaluated on every recompute, a text-flagged article lands at R minimum regardless of image ratings, and the floor drops automatically if a mod invalidates the underlying record. (Previously this was gated on `a.nsfw = TRUE` forcing the full `nsfwBrowsingLevelsFlag` mask — see deprecation note above.)
-4. **Serving-path hygiene for Civitai Green** — closed every read path that previously ignored `nsfwLevel` on articles (`getCivitaiNews`, `getCivitaiEvents`, `getArticleById`, `sitemap-articles.xml`, `/api/og`) so articles can be served to the `public` audience safely.
+4. **Serving-path hygiene for Civitai Green** — closed every read path that previously ignored `nsfwLevel` on articles (`getCivitaiNews`, `getCivitaiEvents` (since removed), `getArticleById`, `sitemap-articles.xml`, `/api/og`) so articles can be served to the `public` audience safely.
 5. **Profanity filter retired from articles** — orchestrator text moderation supersedes the lexical profanity keyword filter. `ArticleMetadata.profanityMatches`/`profanityEvaluation` fields were removed; the legacy `migrate-profanity-nsfw.ts` admin backfill no longer accepts `entity=articles` (models + bounties still use it).
 6. **Backfill endpoints** — `migrate-article-images.ts` backfills image links, `migrate-article-text-moderation.ts` backfills xGuard submissions. Both are cancellable on client disconnect.
 
@@ -266,7 +266,7 @@ Old articles that mixed PG and NSFW content images have multi-bit masks like `5`
 - `getArticles` (`src/server/services/article.service.ts:257`) — non-owner, non-mod callers get `a.status = 'Published'` hard-filtered into the SQL WHERE clause.
 - `getArticleById` (`src/server/services/article.service.ts:639-641`) — non-mod callers see an article only if `status = Published` **or** they're the owner; otherwise 404.
 - `articles.search-index.ts:175` — Meilisearch pull is scoped to `status = Published`, so Processing articles are not indexed or searchable.
-- Feeds, sitemap, OG cards, `getCivitaiNews`, `getCivitaiEvents` all flow through the same `getArticles`-style gates.
+- Feeds, sitemap, OG cards and `getCivitaiNews` all flow through the same `getArticles`-style gates.
 
 **Therefore**: downstream code that filters `status === 'Published'` is **correct and intended**. Do not "audit" it. The contract is: Processing is an internal transient state, owner + mods only, eventually becomes Published (or stays Processing indefinitely if scans genuinely fail, which is a separate operational concern covered in §6).
 

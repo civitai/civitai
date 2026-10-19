@@ -189,16 +189,8 @@ export const MODEL_CARDS: ModelCard[] = [
     released: '2026-10-11',
     flag: 'new',
     flagKey: 'moss-image-training',
+    // Base first: OpenMOSS recommends Base for training and SFT for generating.
     versions: [
-      {
-        key: 'mossimage_sft',
-        label: 'SFT',
-        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
-        baseModel: 'MOSS Image',
-        ecosystem: 'mossImage' satisfies MossImageSftAiToolkitTrainingInput['ecosystem'],
-        modelVariant: 'sft' satisfies MossImageSftAiToolkitTrainingInput['modelVariant'],
-        isNew: true,
-      },
       {
         key: 'mossimage_base',
         label: 'Base',
@@ -206,6 +198,15 @@ export const MODEL_CARDS: ModelCard[] = [
         baseModel: 'MOSS Image',
         ecosystem: 'mossImage' satisfies MossImageBaseAiToolkitTrainingInput['ecosystem'],
         modelVariant: 'base' satisfies MossImageBaseAiToolkitTrainingInput['modelVariant'],
+        isNew: true,
+      },
+      {
+        key: 'mossimage_sft',
+        label: 'SFT',
+        air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+        baseModel: 'MOSS Image',
+        ecosystem: 'mossImage' satisfies MossImageSftAiToolkitTrainingInput['ecosystem'],
+        modelVariant: 'sft' satisfies MossImageSftAiToolkitTrainingInput['modelVariant'],
         isNew: true,
       },
     ],
@@ -1446,6 +1447,19 @@ export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies P
  * with no way to abort (tester-confirmed). The Review step locks the TE learning-rate at 0 for
  * these instead of letting the run burn Buzz and hang. Anima's TE training works — don't add it.
  */
+/** Ecosystems the orchestrator trains on a pasted custom base for. Every other ecosystem ignores a
+ *  custom model and trains (and charges) on its official base, so Custom is offered and accepted
+ *  only for these. */
+const CUSTOM_BASE_ECOSYSTEMS: ReadonlySet<string> = new Set(['anima', 'sd1', 'sdxl']);
+
+export const ecosystemAllowsCustomBase = (ecosystem: string): boolean =>
+  CUSTOM_BASE_ECOSYSTEMS.has(ecosystem);
+
+/** A Custom run resolves to the card's primary version (`runVersion`), so that version's ecosystem
+ *  decides: the same ecosystem the submit check sees. */
+export const allowsCustomBase = (card: ModelCard): boolean =>
+  ecosystemAllowsCustomBase(card.versions[0]!.ecosystem);
+
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =
   'its backend cannot train the text encoder, and a run that tries hangs without finishing.';

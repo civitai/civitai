@@ -111,6 +111,14 @@ A label's action is one of: raise the content rating (the owner can dispute it),
 the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
 (a storyline title appeal is on Storylines > Title Appeals); text scan adds no queue of its own.
 
+Every moderator ruling on a Model's `minor` or `poi` flag that carries a text-scan verdict (keep,
+lift, confirm, revert, appeal, held-detection keep or dismiss) is also recorded in the label store, in
+the same transaction as the ruling: family `text_scan`, questions `text_scan.model.minor` /
+`text_scan.model.poi`, values `flag` / `clear`, with the scanned text when it is unchanged
+(`text-scan/label-capture.ts`; see `docs/features/label-store.md`). A flag with no verdict records
+nothing, and a store that is missing, refuses or is slow never fails the ruling: the label is dropped
+and logged.
+
 ## Modes
 
 Each entity type has a rollout in the sysRedis hash `system:text-scan:modes`: field = entity type,
